@@ -4,7 +4,7 @@ A torch-free nanobind extension for MoE `dispatch` / `combine` primitives in
 MSCCL++. The module builds two active backends:
 
 - **Low-latency (LL)**: `MoERuntime` / `MoECommunicator(mode=LOW_LATENCY)`,
-  backed by `kernels/low_latency.cu`.
+  backed by `low_latency/dispatch.cu` and `low_latency/combine.cu`.
 - **High-throughput (HT)**: `ExpertParallelRuntime` /
   `MoECommunicator(mode=HIGH_THROUGHPUT)`, backed by `ht_runtime.cc` and
   `ht/kernels/*`.
@@ -488,11 +488,19 @@ Env knobs:
 
 | Backend | Python API | C++ runtime | Kernel sources | Layout |
 |---------|------------|-------------|----------------|--------|
-| LL | `MoECommunicator(mode=MoEMode.LOW_LATENCY)` / `MoERuntime` | `moe_runtime.cc` | `kernels/low_latency.cu` | `EXPERT_MAJOR` |
+| LL | `MoECommunicator(mode=MoEMode.LOW_LATENCY)` / `MoERuntime` | `moe_runtime.cc` | `low_latency/{dispatch,combine}.cu` | `EXPERT_MAJOR` |
 | HT | `MoECommunicator(mode=MoEMode.HIGH_THROUGHPUT)` / `ExpertParallelRuntime` | `ht_runtime.cc` | `ht/kernels/*` | `FLAT` |
 
-The `ht/` directory is active source code for the HT backend in the current
-build.
+Shared internal headers live in `include/`. The previous LL implementation is
+kept in `legacy/low_latency.cu` for reference and is not compiled.
+
+The LL runtime uses one `low_latency_num_blocks` setting. Its default is 130:
+dispatch launches 128 workers plus scheduler/notify blocks, while combine
+launches 128 workers. `RANK_LOCAL_REDUCE` is the default combine mode;
+`DIRECT_SEND` preserves bit-exact top-k reduction order.
+
+The LL payload layout reserves optional scale storage for future quantization,
+but the active LL kernels currently accept BF16 inputs and expert outputs only.
 
 ### MSCCL++ EP LL vs NCCL EP LL vs DeepEP elastic dispatch payloads
 

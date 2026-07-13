@@ -1272,7 +1272,7 @@ void MoEHighThroughputRuntime::intranodeCombine(void* combinedX, float* combined
 // -----------------------------------------------------------------------------
 // Internode (NVLink + RDMA) high-throughput path. Ported from DeepEP
 // `csrc/deep_ep.cpp`; the kernels it drives are in
-// `src/ext/ep/kernels/internode.cu`. Validated end-to-end on 2 x H100 x 8
+// `src/ext/ep/ht/kernels/internode.cu`. Validated end-to-end on 2 x H100 x 8
 // via `test/python/ep/test_internode_multirank.py`. De-torched the same
 // way as the intranode path: tensor params became raw pointers + size ints,
 // output tensors became caller pointers, the EventHandle / async / record_stream

@@ -8,6 +8,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,8 @@ class MoERuntime {
   std::vector<void*> peerRdmaBases_;
   std::vector<mscclpp::RegisteredMemory> peerRdmaMemories_;
   void** peerRdmaBasesGpu_ = nullptr;
+  std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
 
   void setup();
 };

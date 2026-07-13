@@ -12,7 +12,8 @@
 
 namespace mscclpp {
 namespace ep {
-namespace low_latency_opt {
+namespace low_latency {
+namespace detail {
 
 constexpr int DispatchNWarps = 16;
 constexpr int DispatchMinNWarpsPerGroup = 8;
@@ -22,15 +23,13 @@ constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;
 constexpr size_t OptimizedDynamicSharedMemoryBytes = 226 * 1024;
 constexpr size_t TmaWorkerControlBytes = DispatchMaxNWarpGroups * WARP_SIZE * sizeof(int);
 static_assert(DispatchNWarps % DispatchMinNWarpsPerGroup == 0);
+static_assert(sizeof(mscclpp::DeviceSemaphore) == sizeof(int));
+static_assert(alignof(mscclpp::DeviceSemaphore) <= alignof(int));
 static_assert(sizeof(mscclpp::DeviceSyncer) % sizeof(int) == 0);
 static_assert(alignof(mscclpp::DeviceSyncer) <= alignof(int));
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
-  return configAlign<size_t>(static_cast<size_t>(2 * nRanks + nExperts) * sizeof(mscclpp::LL8Packet), 128);
-}
-
-MSCCLPP_DEVICE_INLINE mscclpp::LL8Packet* dispatchReadyPackets(void* recvBuffer, int nRanks, int nExperts) {
-  return reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + nRanks + nExperts;
+  return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), 128);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk) {
@@ -47,11 +46,14 @@ struct RecvTask {
   int tokenBegin_;
   int tokenEnd_;
 };
+static_assert(sizeof(RecvTask) % sizeof(int) == 0);
+static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
   uint32_t* metadataEpoch_;
   int* rankPayloadSlots_;
   int* rankPayloadCompletions_;
+  mscclpp::DeviceSemaphore* localPayloadReady_;
   int* recvExpertCopiedCounts_;
   uint32_t* rankReadyEpochs_;
   RecvTask* recvTasks_;
@@ -66,20 +68,28 @@ struct WorkspaceView {
     cursor += nRanks;
     rankPayloadCompletions_ = cursor;
     cursor += nRanks;
+    localPayloadReady_ = reinterpret_cast<mscclpp::DeviceSemaphore*>(cursor++);
     recvExpertCopiedCounts_ = cursor;
     cursor += nExperts;
     rankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
     recvTasks_ = reinterpret_cast<RecvTask*>(cursor);
-    cursor += 3 * low_latency::MaxWorkerBlocks;
+    cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
     tasksAssignedEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     nRecvTasks_ = cursor++;
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts) {
-    return static_cast<size_t>(3 * nRanks + nExperts + 3 * low_latency::MaxWorkerBlocks + 3) * sizeof(int) +
-           sizeof(mscclpp::DeviceSyncer);
+    return sizeof(uint32_t) +                                                            // metadataEpoch_
+           static_cast<size_t>(nRanks) * sizeof(int) +                                   // rankPayloadSlots_
+           static_cast<size_t>(nRanks) * sizeof(int) +                                   // rankPayloadCompletions_
+           sizeof(mscclpp::DeviceSemaphore) +                                            // localPayloadReady_
+           static_cast<size_t>(nExperts) * sizeof(int) +                                 // recvExpertCopiedCounts_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // rankReadyEpochs_
+           static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // tasksAssignedEpoch_
+           sizeof(int) +                                                                 // nRecvTasks_
+           sizeof(mscclpp::DeviceSyncer);                                                // combineSyncer_
   }
 };
 
@@ -90,7 +100,7 @@ struct KernelConfigCache {
 };
 
 template <typename Kernel>
-inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const low_latency::CommContext& comm,
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const CommContext& comm,
                            KernelConfigCache& cache) {
   if (cache.deviceId_ != comm.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
     cudaFuncAttributes attributes;
@@ -148,6 +158,7 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, 
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
 }
 
-}  // namespace low_latency_opt
+}  // namespace detail
+}  // namespace low_latency
 }  // namespace ep
 }  // namespace mscclpp

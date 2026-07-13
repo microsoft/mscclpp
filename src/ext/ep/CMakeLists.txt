@@ -6,7 +6,7 @@
 #
 # Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
 # nanobind API so the module never links libtorch:
-#  - Low-latency (LL): moe_runtime.cc + kernels/low_latency.cu.
+#  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
 #  - High-throughput (HT): ht_runtime.cc + ht/kernels/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
 #    recv sizing via the two-phase notify -> allocate -> dispatch API).

@@ -21,12 +21,6 @@ add_mscclpp_test_executable(sendrecv_test_perf sendrecv_test.cu)
 add_mscclpp_test_executable(allgather_test_perf allgather_test.cu)
 add_mscclpp_test_executable(allreduce_test_perf allreduce_test.cu)
 add_mscclpp_test_executable(alltoall_test_perf alltoall_test.cu)
-add_mscclpp_test_executable(ep_low_latency_opt_signal_perf ep_low_latency_opt_signal_perf.cu)
-target_sources(ep_low_latency_opt_signal_perf PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/ext/ep/low_latency/dispatch.cu)
-target_include_directories(ep_low_latency_opt_signal_perf PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/ext/ep
-    ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
 if(MSCCLPP_USE_CUDA)
     set(_mscclpp_ep_test_gpu_archs "")
     foreach(_arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
@@ -39,9 +33,6 @@ if(MSCCLPP_USE_CUDA)
             endif()
         endif()
     endforeach()
-    set_target_properties(ep_low_latency_opt_signal_perf PROPERTIES
-        CUDA_ARCHITECTURES "${_mscclpp_ep_test_gpu_archs}")
-
     add_executable(tma_pipeline_perf tma_pipeline_perf.cu)
     target_link_libraries(tma_pipeline_perf PRIVATE ${GPU_LIBRARIES})
     target_include_directories(tma_pipeline_perf ${TEST_INC_COMMON})

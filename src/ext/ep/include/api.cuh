@@ -222,6 +222,8 @@ struct Workload {
 struct CommContext {
   /// Base address of the locally-registered RDMA buffer.
   void* rdmaBufferBase_;
+  /// Base memory channel handles used only for signal/wait synchronization.
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   /// Peer-mapped base addresses.
   void* const* peerBases_;
   /// Maximum shared memory available to one block after opt-in.
@@ -235,6 +237,12 @@ struct CommContext {
   /// Total number of ranks.
   int numRanks_;
 };
+
+/// Return the optimized low-latency workspace size.
+/// @param[in] numRanks Total number of ranks.
+/// @param[in] numExperts Total number of experts.
+/// @return Required workspace bytes.
+size_t workspaceSize(int numRanks, int numExperts);
 
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major packed output
@@ -264,7 +272,6 @@ void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outp
 /// @param[in] layoutRange Per-[local expert, source rank] packed count and offset.
 /// @param[in] workload Per-call workload dimensions.
 /// @param[in,out] recvBuffer Current symmetric ping-pong buffer receiving partials or expert rows.
-/// @param[in,out] readyPackets One readiness packet per sender rank in the current symmetric buffer.
 /// @param[in] dispatchRecvBuffer Previous dispatch buffer containing rewritten routing metadata.
 /// @param[in] comm Persistent communication context.
 /// @param[in,out] workspace Persistent dispatch metadata plus the combine device barrier.
@@ -272,9 +279,8 @@ void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outp
 /// @param[in] mode Combine algorithm.
 /// @param[in] stream CUDA stream.
 void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, mscclpp::LL8Packet* readyPackets,
-             void* dispatchRecvBuffer, const CommContext& comm, void* workspace, int numBlocks, CombineMode mode,
-             cudaStream_t stream);
+             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+             const CommContext& comm, void* workspace, int numBlocks, CombineMode mode, cudaStream_t stream);
 
 }  // namespace low_latency
 

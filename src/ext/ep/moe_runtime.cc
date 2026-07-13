@@ -114,6 +114,7 @@ void MoERuntime::setup() {
   communicator_->bootstrap()->barrier();
   CUDA_CHECK(cudaDeviceSynchronize());
 
+  const mscclpp::EndpointConfig ipcConfig(ipcTransport);
   const int ipcDomainSize = useFabricIpcAlloc ? numRanks_ : numNvlRanks_;
   auto isIpcPeer = [&](int peer) {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
@@ -123,28 +124,39 @@ void MoERuntime::setup() {
   peerRdmaMemories_.resize(numRanks_);
   peerRdmaMemories_[rank_] = communicator_->registerMemory(rdmaBufferPtr_, numRdmaBytes_, ipcTransport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isIpcPeer(r)) continue;
     communicator_->sendMemory(peerRdmaMemories_[rank_], r, IpcTag);
     remoteFutures[r] = communicator_->recvMemory(r, IpcTag);
+    connectionFutures[r] = communicator_->connect(ipcConfig, r, IpcTag);
   }
 
   peerRdmaBases_.assign(numRanks_, nullptr);
   peerRdmaBases_[rank_] = rdmaBufferPtr_;
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isIpcPeer(r)) continue;
     peerRdmaMemories_[r] = remoteFutures[r].get();
     peerRdmaBases_[r] = peerRdmaMemories_[r].data();
+    auto semaphore =
+        std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator_, connectionFutures[r].get());
+    baseMemoryChannels_.emplace_back(semaphore);
+    baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
   }
 
   CUDA_CHECK(cudaMalloc(&peerRdmaBasesGpu_, sizeof(void*) * numRanks_));
   CUDA_CHECK(cudaMemcpy(peerRdmaBasesGpu_, peerRdmaBases_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
+  baseMemoryChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
 
   int maxSharedMemoryPerBlock;
   int numSms;
   CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
   CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
   commContext_ = {.rdmaBufferBase_ = rdmaBufferPtr_,
+                  .baseMemoryChannels_ = baseMemoryChannelHandles_.get(),
                   .peerBases_ = peerRdmaBasesGpu_,
                   .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
                   .numSms_ = numSms,
@@ -174,8 +186,7 @@ void MoERuntime::dispatch(void* output, int* outputSrcInfo, int64_t* outputLayou
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank};
-  const size_t workspaceBytes =
-      static_cast<size_t>(3 * numRanks_ + numExperts + 3 * 128 + 3) * sizeof(int) + sizeof(mscclpp::DeviceSyncer);
+  const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
   low_latency::dispatch(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, workload,
                         recvBuffer, commContext_, workspace_, numBlocks, stream);
@@ -192,9 +203,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
 
   low_latency::Layout layout(rdmaBufferPtr_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(numRdmaBytes_));
-  auto& combineBuffer = layout.buffers_[lowLatencyBufferIdx_];
-  void* recvBuffer = combineBuffer.combineData_;
-  auto* readyPackets = combineBuffer.combineReadyPackets_;
+  void* recvBuffer = layout.buffers_[lowLatencyBufferIdx_].combineData_;
   lowLatencyBufferIdx_ ^= 1;
   void* dispatchRecvBuffer = layout.buffers_[lowLatencyBufferIdx_].dispatchData_;
 
@@ -203,7 +212,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank};
-  low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, readyPackets,
+  low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);
 }
 

@@ -143,7 +143,6 @@ struct PayloadView {
 struct Buffer {
   void* dispatchData_;
   void* combineData_;
-  mscclpp::LL8Packet* combineReadyPackets_;
 };
 
 struct Layout {
@@ -154,15 +153,12 @@ struct Layout {
     const PayloadView<__bfloat16> bf16Payload(hidden, numTopk);
     const PayloadView<__nv_fp8_storage_t, float> fp8Payload(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
-        configAlign<size_t>(static_cast<size_t>(2 * numRanks + numExperts) * sizeof(uint64_t), 128);
+        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), 128);
     const size_t dispatchPayloadStride =
         configAlign<size_t>(std::max(bf16Payload.numBytes_, fp8Payload.numBytes_), 128);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
-    const size_t combineControlBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(mscclpp::LL8Packet), 128);
-    const size_t combineBufferBytes =
-        combineControlBytes + static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(__bfloat16);
+    const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(__bfloat16);
     const size_t bufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
     totalBytes_ = 2 * bufferBytes;
 
@@ -172,8 +168,7 @@ struct Layout {
         auto* bufferBase = base + static_cast<size_t>(bufferIdx) * bufferBytes;
         buffers_[bufferIdx] = {
             .dispatchData_ = bufferBase,
-            .combineData_ = bufferBase + combineControlBytes,
-            .combineReadyPackets_ = reinterpret_cast<mscclpp::LL8Packet*>(bufferBase),
+            .combineData_ = bufferBase,
         };
       }
     }

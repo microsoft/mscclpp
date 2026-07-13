@@ -66,17 +66,6 @@ __device__ __forceinline__ void memory_fence_gpu() { asm volatile("fence.acq_rel
 
 __device__ __forceinline__ void memory_fence_cta() { asm volatile("fence.acq_rel.cta;" ::: "memory"); }
 
-MSCCLPP_DEVICE_INLINE void publishLl8Packet(mscclpp::LL8Packet *packet, uint32_t value, uint32_t flag) {
-  memory_fence();
-  packet->write(value, flag);
-}
-
-MSCCLPP_DEVICE_INLINE uint32_t waitLl8Packet(const mscclpp::LL8Packet *packet, uint32_t flag) {
-  const uint32_t value = packet->read(flag, -1);
-  memory_fence();
-  return value;
-}
-
 __device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBufferBase, void *peerBufferBase) {
   if (localBufferBase == nullptr) return peerBufferBase;
   const auto offset = reinterpret_cast<uint8_t *>(localBuffer) - reinterpret_cast<uint8_t *>(localBufferBase);

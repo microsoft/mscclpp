@@ -10,7 +10,8 @@
 
 namespace mscclpp {
 namespace ep {
-namespace low_latency_opt {
+namespace low_latency {
+namespace detail {
 
 constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
@@ -42,8 +43,8 @@ MSCCLPP_DEVICE_INLINE int4 reduceWeightedBf16x8(const void* expertOutput, int ro
     const int sourceRowOffset = warpBroadcast(rowOffset, topkLane);
     if (sourceRowOffset < 0) continue;
     const float sourceWeight = warpBroadcast(weight, topkLane);
-    const int4 packed = ld_nc_global(reinterpret_cast<const int4*>(expertOutput) +
-                                     static_cast<size_t>(sourceRowOffset) * HiddenInt4 + hiddenIdx);
+    const int4 packed =
+        reinterpret_cast<const int4*>(expertOutput)[static_cast<size_t>(sourceRowOffset) * HiddenInt4 + hiddenIdx];
     const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
     for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
@@ -70,9 +71,8 @@ MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffe
   for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
     const int partialRank = warpBroadcast(partialRankCandidate, topkLane);
     if (partialRank < 0) continue;
-    const int4 packed =
-        ld_nc_global(reinterpret_cast<const int4*>(combineRecvBuffer) +
-                     (static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx);
+    const int4 packed = reinterpret_cast<const int4*>(
+        combineRecvBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
     const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
     for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
@@ -128,8 +128,8 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
       const auto* sourcePayload =
           reinterpret_cast<const uint8_t*>(dispatchRecvBuffer) + dispatchMetadataSize +
           (static_cast<size_t>(sourceRank) * maxTokensPerRank + sourceTokenSlot) * payloadStride;
-      const int rowOffset = laneId < nTopk ? ld_nc_global(payloadView.topKIndices(sourcePayload) + laneId) : -1;
-      const float weight = laneId < nTopk ? ld_nc_global(payloadView.topKValues(sourcePayload) + laneId) : 0.0f;
+      const int rowOffset = laneId < nTopk ? payloadView.topKIndices(sourcePayload)[laneId] : -1;
+      const float weight = laneId < nTopk ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
       if (rowOffset >= 0) EP_DEVICE_ASSERT(rowOffset < nExpertOutputRows);
 
       int4 reduced[ChunksPerThread] = {};
@@ -154,8 +154,7 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
 
       if (threadId == 0) {
         fenceProxyAsyncSharedCta();
-        const int sourceTokenIdx =
-            ld_nc_global(payloadView.srcTokenGlobalIdx(sourcePayload)) - sourceRank * maxTokensPerRank;
+        const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
         void* destinationBuffer = sourceRank == rank
                                       ? combineRecvBuffer
@@ -222,7 +221,7 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
       }
       EP_DEVICE_ASSERT(sourceRank < nRanks);
       const int inputRowOffset = localExpertIdx * nOutputSlotsPerExpert + expertTokenIdx;
-      const int sourceTokenIdx = ld_nc_global(srcInfo + inputRowOffset);
+      const int sourceTokenIdx = srcInfo[inputRowOffset];
       EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
       const auto* inputRow =
           reinterpret_cast<const uint8_t*>(expertOutput) + static_cast<size_t>(inputRowOffset) * HiddenBytes;
@@ -243,21 +242,24 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
   }
 }
 
-MSCCLPP_DEVICE_INLINE void combineSynchronize(mscclpp::LL8Packet* readyPackets, void* rdmaBufferBase,
-                                              void* const* peerRecvBuffers, int rank, int nRanks, uint32_t readyFlag) {
+MSCCLPP_DEVICE_INLINE void combineSynchronize(mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels,
+                                              mscclpp::DeviceSemaphore* localReady, int rank, int nRanks) {
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
-    void* destination =
-        peerRank == rank ? readyPackets : peerBufferPtr(readyPackets, rdmaBufferBase, peerRecvBuffers[peerRank]);
-    publishLl8Packet(reinterpret_cast<mscclpp::LL8Packet*>(destination) + rank, 1, readyFlag);
-    waitLl8Packet(readyPackets + peerRank, readyFlag);
+    if (peerRank == rank) {
+      localReady->release();
+      localReady->acquire();
+    } else {
+      baseMemoryChannels[peerRank].signal();
+      baseMemoryChannels[peerRank].wait(-1);
+    }
   }
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* topkIndices, int nTokens, int nTopk,
-                                                 int nExperts, int nRanks, int maxTokensPerRank,
+MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __restrict__ topkIndices, int nTokens,
+                                                 int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
                                                  const void* combineRecvBuffer, uint8_t* sharedMemory) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = get_lane_id();
@@ -273,7 +275,7 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* to
        tokenIdx += static_cast<int>(gridDim.x), ++tokenIteration) {
     const int stage = tokenIteration % CombineNStages;
     auto* outputTile = reinterpret_cast<int4*>(outputTiles + static_cast<size_t>(stage) * HiddenBytes);
-    const int globalExpertIdx = laneId < nTopk ? static_cast<int>(__ldg(topkIndices + tokenIdx * nTopk + laneId)) : -1;
+    const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
     const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
     const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
     const int partialRank = destinationRank >= 0 && firstLaneForRank ? destinationRank : -1;
@@ -308,9 +310,9 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* to
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* topkIndices, const float* topkWeights,
-                                                int nTokens, int nTopk, int maxTokensPerRank,
-                                                const void* combineRecvBuffer) {
+MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __restrict__ topkIndices,
+                                                const float* __restrict__ topkWeights, int nTokens, int nTopk,
+                                                int maxTokensPerRank, const void* combineRecvBuffer) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(__bfloat16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -319,8 +321,8 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* top
     int regTopkIndices[CombineMaxNTopk];
     float regTopkWeights[CombineMaxNTopk];
     for (int topkIdx = 0; topkIdx < nTopk; ++topkIdx) {
-      regTopkIndices[topkIdx] = static_cast<int>(__ldg(topkIndices + tokenIdx * nTopk + topkIdx));
-      regTopkWeights[topkIdx] = topkWeights == nullptr ? 1.0f : __ldg(topkWeights + tokenIdx * nTopk + topkIdx);
+      regTopkIndices[topkIdx] = static_cast<int>(topkIndices[tokenIdx * nTopk + topkIdx]);
+      regTopkWeights[topkIdx] = topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + topkIdx];
     }
 
 #pragma unroll
@@ -331,7 +333,7 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* top
         if (expertIdx < 0) continue;
         const auto* expertRow = reinterpret_cast<const int4*>(combineRecvBuffer) +
                                 (static_cast<size_t>(expertIdx) * maxTokensPerRank + tokenIdx) * HiddenInt4;
-        const int4 packed = ld_nc_global(expertRow + hiddenIdx);
+        const int4 packed = expertRow[hiddenIdx];
         const auto* values = reinterpret_cast<const __bfloat16*>(&packed);
 #pragma unroll
         for (int elemIdx = 0; elemIdx < Bf16PerInt4; ++elemIdx) {
@@ -353,13 +355,13 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* top
 
 template <low_latency::CombineMode Mode, int Hidden>
 __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
-    void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
-    const int64_t* layoutRange, int nTokens, int nExperts, int rank, int nRanks, int nTopk, int maxTokensPerRank,
-    void* combineRecvBuffer, const void* dispatchRecvBuffer, void* rdmaBufferBase, void* const* peerRecvBuffers,
-    mscclpp::LL8Packet* readyPackets, void* workspace) {
+    void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
+    const float* __restrict__ topkWeights, const int* srcInfo, const int64_t* layoutRange, int nTokens, int nExperts,
+    int rank, int nRanks, int nTopk, int maxTokensPerRank, void* combineRecvBuffer, const void* dispatchRecvBuffer,
+    void* rdmaBufferBase, void* const* peerRecvBuffers, mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels,
+    void* workspace) {
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
-  const uint32_t readyFlag = *workspaceView.metadataEpoch_;
 
   if constexpr (Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
     sendRankReducedPartials<Hidden>(expertOutput, nExperts, rank, nRanks, nTopk, maxTokensPerRank, combineRecvBuffer,
@@ -370,7 +372,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
   }
 
   workspaceView.combineSyncer_->sync(gridDim.x);
-  combineSynchronize(readyPackets, rdmaBufferBase, peerRecvBuffers, rank, nRanks, readyFlag);
+  combineSynchronize(baseMemoryChannels, workspaceView.localPayloadReady_, rank, nRanks);
   workspaceView.combineSyncer_->sync(gridDim.x);
 
   if constexpr (Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
@@ -384,9 +386,9 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
 template <low_latency::CombineMode Mode, int Hidden>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
-                              const low_latency::Workload& workload, void* recvBuffer, mscclpp::LL8Packet* readyPackets,
-                              void* dispatchRecvBuffer, const low_latency::CommContext& comm, void* workspace,
-                              int numBlocks, cudaStream_t stream) {
+                              const low_latency::Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                              const low_latency::CommContext& comm, void* workspace, int numBlocks,
+                              cudaStream_t stream) {
   static_assert(Hidden == 4096 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
   if constexpr (Mode == low_latency::CombineMode::DIRECT_SEND) {
     static_assert(tmaWorkerCount<Hidden, DirectSendMaxNWorkers>() > 0);
@@ -407,31 +409,30 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
 
   combineKernel<Mode, Hidden><<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, nTokens, nExperts, rank, nRanks, nTopk,
-      maxTokensPerRank, recvBuffer, dispatchRecvBuffer, comm.rdmaBufferBase_, comm.peerBases_, readyPackets, workspace);
+      maxTokensPerRank, recvBuffer, dispatchRecvBuffer, comm.rdmaBufferBase_, comm.peerBases_, comm.baseMemoryChannels_,
+      workspace);
   CUDA_CHECK(cudaGetLastError());
 }
 
 template <int Hidden>
 inline void combineHidden(void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights,
                           const int* srcInfo, const int64_t* layoutRange, const low_latency::Workload& workload,
-                          void* recvBuffer, mscclpp::LL8Packet* readyPackets, void* dispatchRecvBuffer,
-                          const low_latency::CommContext& comm, void* workspace, int numBlocks,
-                          low_latency::CombineMode mode, cudaStream_t stream) {
+                          void* recvBuffer, void* dispatchRecvBuffer, const low_latency::CommContext& comm,
+                          void* workspace, int numBlocks, low_latency::CombineMode mode, cudaStream_t stream) {
   if (mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
     return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden>(
-        output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, readyPackets,
-        dispatchRecvBuffer, comm, workspace, numBlocks, stream);
+        output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+        comm, workspace, numBlocks, stream);
   }
   return combineHiddenMode<low_latency::CombineMode::DIRECT_SEND, Hidden>(
-      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, readyPackets,
-      dispatchRecvBuffer, comm, workspace, numBlocks, stream);
+      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+      comm, workspace, numBlocks, stream);
 }
 
 inline void combine(void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights,
                     const int* srcInfo, const int64_t* layoutRange, const low_latency::Workload& workload,
-                    void* recvBuffer, mscclpp::LL8Packet* readyPackets, void* dispatchRecvBuffer,
-                    const low_latency::CommContext& comm, void* workspace, int numBlocks, low_latency::CombineMode mode,
-                    cudaStream_t stream) {
+                    void* recvBuffer, void* dispatchRecvBuffer, const low_latency::CommContext& comm, void* workspace,
+                    int numBlocks, low_latency::CombineMode mode, cudaStream_t stream) {
   const int nExperts = workload.numExperts_;
   const int rank = comm.rank_;
   const int nRanks = comm.numRanks_;
@@ -440,10 +441,10 @@ inline void combine(void* output, const void* expertOutput, const int64_t* topkI
   EP_HOST_ASSERT(expertOutput != nullptr);
   EP_HOST_ASSERT(topkIndices != nullptr);
   EP_HOST_ASSERT(recvBuffer != nullptr);
-  EP_HOST_ASSERT(readyPackets != nullptr);
   EP_HOST_ASSERT(dispatchRecvBuffer != nullptr);
   EP_HOST_ASSERT(comm.rdmaBufferBase_ != nullptr);
   EP_HOST_ASSERT(comm.peerBases_ != nullptr);
+  EP_HOST_ASSERT(comm.baseMemoryChannels_ != nullptr);
   EP_HOST_ASSERT(workspace != nullptr);
   EP_HOST_ASSERT(nRanks > 0 && nRanks <= 2 * WARP_SIZE);
   EP_HOST_ASSERT(nExperts > 0 && nExperts % nRanks == 0);
@@ -460,35 +461,28 @@ inline void combine(void* output, const void* expertOutput, const int64_t* topkI
   switch (workload.hidden_) {
     case 4096:
       return combineHidden<4096>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
-                                 recvBuffer, readyPackets, dispatchRecvBuffer, comm, workspace, numBlocks, mode,
-                                 stream);
+                                 recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
     case 7168:
       return combineHidden<7168>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
-                                 recvBuffer, readyPackets, dispatchRecvBuffer, comm, workspace, numBlocks, mode,
-                                 stream);
+                                 recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
     case 8192:
       return combineHidden<8192>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
-                                 recvBuffer, readyPackets, dispatchRecvBuffer, comm, workspace, numBlocks, mode,
-                                 stream);
+                                 recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
     case 9216:
       return combineHidden<9216>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
-                                 recvBuffer, readyPackets, dispatchRecvBuffer, comm, workspace, numBlocks, mode,
-                                 stream);
+                                 recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
     default:
       EP_HOST_ASSERT(false && "unsupported optimized low-latency hidden size");
   }
 }
 
-}  // namespace low_latency_opt
-
-namespace low_latency {
+}  // namespace detail
 
 void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, mscclpp::LL8Packet* readyPackets,
-             void* dispatchRecvBuffer, const CommContext& comm, void* workspace, int numBlocks, CombineMode mode,
-             cudaStream_t stream) {
-  low_latency_opt::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-                           readyPackets, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
+             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+             const CommContext& comm, void* workspace, int numBlocks, CombineMode mode, cudaStream_t stream) {
+  detail::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                  comm, workspace, numBlocks, mode, stream);
 }
 
 }  // namespace low_latency
