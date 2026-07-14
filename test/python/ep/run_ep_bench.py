@@ -3,10 +3,9 @@
 # Licensed under the MIT License.
 """Unified EP low-latency benchmark driver.
 
-Runs the *same* low-latency dispatch/combine benchmark -- identical tokens,
+Runs a common low-latency dispatch/combine workload -- identical tokens,
 experts, hidden size, top-k, warmup and iteration counts -- against a
-selectable expert-parallel library, then prints one normalized summary so the
-libraries can be compared apples-to-apples.
+selectable expert-parallel library, then prints one normalized summary.
 
 Backends (``--ep-lib``):
 
@@ -325,7 +324,8 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
     bench_flags = (
         f"-a ll -t {args.num_tokens} -d {args.hidden} -k {args.num_topk} "
         f"-e {args.num_experts} -w {args.num_warmup} -i {args.num_iters} "
-        f"--dispatch-dtype {args.dispatch_dtype} --combine-mode {args.combine_mode} --num-blocks {args.num_blocks}"
+        f"--dispatch-dtype {args.dispatch_dtype} --combine-mode {args.combine_mode} "
+        f"--num-blocks {args.num_blocks}"
     )
     cupti_build = ""
     extra_exports = ""

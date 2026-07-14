@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified low-latency EP benchmark for MSCCL++ EP — an apples-to-apples port of
-NCCL-EP's ``contrib/nccl_ep/ep_bench.cu`` low-latency (LL) flow, with the NCCL-EP
-API (``ncclEpDispatch`` / ``ncclEpCombine``) replaced by the MSCCL++ EP high-level
-``MoECommunicator.dispatch`` / ``MoECommunicator.combine`` (feature/ep API).
+"""Unified steady-state low-latency EP benchmark for MSCCL++.
 
 Why this exists
 ---------------
-``ep_bench`` is the reference NCCL-EP micro-benchmark. To compare MSCCL++ EP
-against it fairly we must measure *the same thing the same way*. This script is a
-line-for-line reimplementation of ``ep_bench``'s LL measurement methodology, only
-swapping the collective API underneath:
+``ep_bench`` is the reference NCCL-EP micro-benchmark. This script uses the same
+workload, byte accounting, CUDA-event timing, and summary format while replacing
+the NCCL-EP collective API with MSCCL++ ``MoECommunicator`` calls.
 
-* **Paired** dispatch→sync→combine→sync→barrier per iteration (``runPairedBenchmark``).
-* **Per-iteration CUDA events** recorded on the stream *around each kernel launch*;
-  the ``cudaStreamSynchronize`` and ``MPI_Barrier`` (here ``dist.barrier``) happen
-  **outside** the timed region, exactly as in ``ep_bench``.
+Iterations are queued as dispatch→combine pairs on one CUDA stream and
+synchronized once, matching ``test_low_latency_multirank.py --bench`` and
+measuring steady-state device latency without Python rank-launch skew.
+
+* **Paired** dispatch→combine ordering on the same CUDA stream.
+* **Per-iteration CUDA events** recorded around each dispatch/combine operation.
 * **Skip the first timed iteration** (warmup outlier) — matches ``ep_bench``'s
   ``calc_stats`` which trims ``times[0]`` when ``num_iters > 1``.
 * **Byte accounting** identical to ``calculateLowLatencyBytes``:
@@ -38,13 +36,11 @@ CLI mirrors ``ep_bench``'s LL-relevant flags (long + short):
 
 Fidelity note
 -------------
-``ep_bench`` is C++/MPI; MSCCL++ EP's LL API is Python/torch, so this harness is
-Python. The *measurement* is identical: both bracket the same dispatch/combine
-kernels with CUDA events and report GPU-side host-observed time. The only
-difference is host-side launch latency, which sits *outside* the recorded events
-for the async kernels and is the same definitional gap ``ep_bench`` has (larger
-in Python, but not counted in the kernel elapsed time). For a pure kernel number,
-run under ``nsys``/CUPTI as with ``ep_bench``'s ``--- Kernel-only ---`` section.
+``ep_bench`` is C++/MPI; MSCCL++ EP's LL API is Python/torch. Synchronized
+per-call pacing makes early ranks wait inside the LL receive-spin for later
+Python ranks, so this benchmark reports steady-state queued latency. Host launch
+latency still sits outside the CUDA events. For a pure kernel number, run under
+``nsys``/CUPTI as with ``ep_bench``'s ``--- Kernel-only ---`` section.
 
 Launch
 ------
@@ -74,7 +70,7 @@ import torch.distributed as dist
 # ----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="MSCCL++ EP low-latency benchmark (ep_bench parity)",
+        description="MSCCL++ EP steady-state low-latency benchmark",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # Env fallbacks keep the existing MSCCLPP_EP_BENCH_* launchers working.
@@ -365,6 +361,7 @@ def main() -> None:
             f"[cfg] algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} top_k={num_topk} warmup={warmup} iters={iters} "
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} "
+            f"pacing=batched_steady_state "
             f"num_rdma_bytes={num_rdma_bytes}",
             flush=True,
         )
@@ -415,18 +412,19 @@ def main() -> None:
 
     stream = torch.cuda.current_stream()
 
-    # ---- runPairedBenchmark: warmup (paired), then per-iter timed (paired). ----
+    # Warm up with the same pacing as the timed loop. Same-stream ordering keeps
+    # dispatch output alive until combine consumes it without host synchronization.
     for _ in range(warmup):
         dout = dispatch_fn()
-        stream.synchronize()
         combine_fn(dout)
-        stream.synchronize()
-        dist.barrier(group=group)
 
-    # CUPTI/nsys region: capture ONLY the post-warmup timed kernels, matching
-    # ep_bench's KernelTimer.start() (called after warmup). An external nsys run
-    # with --capture-range=cudaProfilerApi records exactly the dispatch/combine
-    # kernels between these two calls.
+    # Drain warmup work and align ranks once before recording timed events.
+    torch.cuda.synchronize()
+    dist.barrier(group=group)
+
+    # CUPTI/nsys region: capture only the post-warmup timed kernels. An external
+    # nsys run with --capture-range=cudaProfilerApi records exactly the
+    # dispatch/combine kernels between these two calls.
     _cupti = bool(getattr(args, "cupti_region", False))
     if _cupti:
         torch.cuda.synchronize()
@@ -477,13 +475,10 @@ def main() -> None:
     for i in range(iters):
         d_start[i].record(stream)
         dout = dispatch_fn()
-        d_end[i].record(stream)  # record before sync
-        stream.synchronize()  # sync outside timing
-        c_start[i].record(stream)  # record after sync, before combine
+        d_end[i].record(stream)
+        c_start[i].record(stream)
         combine_fn(dout)
-        c_end[i].record(stream)  # record before sync
-        stream.synchronize()  # sync outside timing
-        dist.barrier(group=group)  # keep ranks in lockstep, outside timing
+        c_end[i].record(stream)
 
     torch.cuda.synchronize()
     if _cupti:
@@ -590,6 +585,7 @@ def main() -> None:
 
         print(f"\n=== Summary (Low Latency, across {num_ranks} ranks) ===")
         print("\n--- Host-observed performance ---")
+        print("Pacing: batched steady state")
         print(f"Dispatch ({dispatch_label}):  avg={g_d_avg:.2f} us, min={g_d_min:.2f} us, max={g_d_max:.2f} us")
         print(
             f"                  throughput: avg={avg_d_tp:.2f} GB/s, "
