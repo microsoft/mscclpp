@@ -9,6 +9,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode);
+  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t symmetricBufferBytes, MoEMode mode);
   ~MoERuntime() noexcept(false);
 
   bool isAvailable() const;
@@ -50,22 +51,26 @@ class MoERuntime {
   int numRdmaRanks_;
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
+  int directIpcDomainSize_;
   int deviceId_;
   int64_t numNvlBytes_;
-  int64_t numRdmaBytes_;
+  int64_t symmetricBufferBytes_;
   MoEMode mode_;
   bool available_ = false;
-  void* rdmaBufferPtr_ = nullptr;
+  void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   low_latency::CommContext commContext_{};
 
   mscclpp::Communicator* communicator_ = nullptr;
 
-  std::vector<void*> peerRdmaBases_;
-  std::vector<mscclpp::RegisteredMemory> peerRdmaMemories_;
-  void** peerRdmaBasesGpu_ = nullptr;
+  std::vector<void*> peerMappedBufferBases_;
+  std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
+  void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  std::vector<std::shared_ptr<mscclpp::ProxyService>> proxyServices_;
+  std::vector<mscclpp::PortChannel> portChannels_;
+  std::shared_ptr<mscclpp::PortChannelDeviceHandle> portChannelHandles_;
 
   void setup();
 };

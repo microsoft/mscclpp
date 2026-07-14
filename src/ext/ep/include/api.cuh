@@ -232,12 +232,16 @@ struct Workload {
 
 /// Persistent communication resources shared by low-latency operations.
 struct CommContext {
-  /// Base address of the locally-registered RDMA buffer.
-  void* rdmaBufferBase_;
+  /// Base address of the local symmetric communication buffer.
+  void* symmetricBufferBase_;
   /// Base memory channel handles used only for signal/wait synchronization.
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
-  /// Peer-mapped base addresses.
-  void* const* peerBases_;
+  /// Port channels used for peers outside the local CUDA IPC domain.
+  mscclpp::PortChannelDeviceHandle* portChannels_;
+  /// Directly mapped symmetric-buffer bases for self and IPC peers; nullptr for PortChannel peers.
+  void* const* peerMappedBufferBases_;
+  /// Number of consecutive ranks in one direct CUDA IPC domain.
+  int ranksPerIpcDomain_;
   /// Maximum shared memory available to one block after opt-in.
   int maxSharedMemoryPerBlock_;
   /// Number of streaming multiprocessors on the device.
@@ -269,7 +273,8 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
 /// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
 /// @param[in] workload Per-call workload dimensions.
-/// @param[in,out] recvBuffer Current symmetric ping-pong buffer used for incoming payloads and rewritten metadata.
+/// @param[in,out] recvBuffer Current symmetric ping-pong buffer. Derived regions hold incoming data,
+/// compact destination slots, and registered PortChannel staging.
 /// @param[in] comm Persistent communication context.
 /// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
@@ -286,7 +291,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
 /// @param[in] srcInfo Original source-token index for every packed expert row.
 /// @param[in] layoutRange Per-[local expert, source rank] packed count and offset.
 /// @param[in] workload Per-call workload dimensions.
-/// @param[in,out] recvBuffer Current symmetric ping-pong buffer receiving partials or expert rows.
+/// @param[in,out] recvBuffer Current symmetric ping-pong buffer. Its derived staging region is used for PortChannel.
 /// @param[in] dispatchRecvBuffer Previous dispatch buffer containing rewritten routing metadata.
 /// @param[in] comm Persistent communication context.
 /// @param[in,out] workspace Persistent dispatch metadata plus the combine device barrier.

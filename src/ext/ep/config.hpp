@@ -135,43 +135,109 @@ struct PayloadView {
   }
 };
 
+MSCCLPP_HOST_DEVICE_INLINE size_t combineDataBytes(int maxTokensPerRank, int hidden, int numExperts) {
+  return static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t combineStagingDataBytes(int maxTokensPerRank, int hidden, int numRanks, int numTopk) {
+  return static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataRegionBytes(int numRanks, int numExperts) {
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet), 128);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t maxDispatchPayloadStride(int hidden, int numTopk) {
+  const size_t bf16Bytes = PayloadView<Bf16>(hidden, numTopk).numBytes_;
+  const size_t fp8Bytes128 = PayloadView<Fp8E4M3, float>(hidden, numTopk, 128).numBytes_;
+  const size_t fp8Bytes64 = PayloadView<Fp8E4M3, float>(hidden, numTopk, 64).numBytes_;
+  const size_t maxFp8Bytes = fp8Bytes128 > fp8Bytes64 ? fp8Bytes128 : fp8Bytes64;
+  return configAlign<size_t>(bf16Bytes > maxFp8Bytes ? bf16Bytes : maxFp8Bytes, 128);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadRegionBytes(int maxTokensPerRank, int hidden, int numRanks,
+                                                             int numTopk) {
+  return static_cast<size_t>(numRanks) * maxTokensPerRank * maxDispatchPayloadStride(hidden, numTopk);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t rankTokenCompactSlotMapRegionBytes(int maxTokensPerRank, int numRanks) {
+  return static_cast<size_t>(numRanks) * maxTokensPerRank * sizeof(int);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t bufferDataRegionBytes(int maxTokensPerRank, int hidden, int numRanks, int numExperts,
+                                                        int numTopk) {
+  const size_t dispatchBytes = dispatchMetadataRegionBytes(numRanks, numExperts) +
+                               dispatchPayloadRegionBytes(maxTokensPerRank, hidden, numRanks, numTopk) +
+                               rankTokenCompactSlotMapRegionBytes(maxTokensPerRank, numRanks);
+  const size_t combineBytes = combineDataBytes(maxTokensPerRank, hidden, numExperts);
+  return configAlign<size_t>(dispatchBytes > combineBytes ? dispatchBytes : combineBytes, 128);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE int* rankTokenCompactSlotMap(void* buffer, int maxTokensPerRank, int hidden, int numRanks,
+                                                        int numExperts, int numTopk) {
+  return reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(buffer) + dispatchMetadataRegionBytes(numRanks, numExperts) +
+                                dispatchPayloadRegionBytes(maxTokensPerRank, hidden, numRanks, numTopk));
+}
+
+MSCCLPP_HOST_DEVICE_INLINE const int* rankTokenCompactSlotMap(const void* buffer, int maxTokensPerRank, int hidden,
+                                                              int numRanks, int numExperts, int numTopk) {
+  return reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(buffer) +
+                                      dispatchMetadataRegionBytes(numRanks, numExperts) +
+                                      dispatchPayloadRegionBytes(maxTokensPerRank, hidden, numRanks, numTopk));
+}
+
+MSCCLPP_HOST_DEVICE_INLINE void* dispatchPayloadStaging(void* buffer, int maxTokensPerRank, int hidden, int numRanks,
+                                                        int numExperts, int numTopk) {
+  return reinterpret_cast<uint8_t*>(buffer) +
+         bufferDataRegionBytes(maxTokensPerRank, hidden, numRanks, numExperts, numTopk);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE void* dispatchMetadataStaging(void* buffer, int maxTokensPerRank, int hidden, int numRanks,
+                                                         int numExperts, int numTopk) {
+  return reinterpret_cast<uint8_t*>(
+             dispatchPayloadStaging(buffer, maxTokensPerRank, hidden, numRanks, numExperts, numTopk)) +
+         dispatchPayloadRegionBytes(maxTokensPerRank, hidden, numRanks, numTopk);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE void* combineStaging(void* buffer, int maxTokensPerRank, int hidden, int numRanks,
+                                                int numExperts, int numTopk) {
+  return reinterpret_cast<uint8_t*>(buffer) +
+         bufferDataRegionBytes(maxTokensPerRank, hidden, numRanks, numExperts, numTopk);
+}
+
 struct Buffer {
-  void* dispatchData_;
-  void* combineData_;
+  void* data_;
 };
 
 struct Layout {
   size_t totalBytes_;
   Buffer buffers_[2];
 
-  Layout(void* rdmaBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
-    const PayloadView<Bf16> bf16Payload(hidden, numTopk);
-    const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
-    const PayloadView<Fp8E4M3, float> fp8Payload64(hidden, numTopk, 64);
-    const size_t dispatchMetadataBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), 128);
-    const size_t dispatchPayloadStride =
-        configAlign<size_t>(std::max({bf16Payload.numBytes_, fp8Payload128.numBytes_, fp8Payload64.numBytes_}), 128);
-    const size_t dispatchBufferBytes =
-        dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
-    const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t bufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
+  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+    const size_t dataBytes = bufferDataRegionBytes(maxTokensPerRank, hidden, numRanks, numExperts, numTopk);
+    const size_t dispatchPayloadStagingBytes = dispatchPayloadRegionBytes(maxTokensPerRank, hidden, numRanks, numTopk);
+    const size_t dispatchMetadataBlockBytes =
+        static_cast<size_t>(1 + numExperts / numRanks) * sizeof(mscclpp::LL8Packet);
+    const size_t dispatchMetadataStagingBytes = static_cast<size_t>(numRanks) * dispatchMetadataBlockBytes;
+    const size_t dispatchStagingBytes = dispatchPayloadStagingBytes + dispatchMetadataStagingBytes;
+    const size_t combineStagingBytes = combineStagingDataBytes(maxTokensPerRank, hidden, numRanks, numTopk);
+    const size_t stagingBytes = std::max(dispatchStagingBytes, combineStagingBytes);
+    const size_t bufferBytes = configAlign<size_t>(dataBytes + stagingBytes, 128);
     totalBytes_ = 2 * bufferBytes;
 
-    if (rdmaBuffer != nullptr) {
-      auto* base = reinterpret_cast<uint8_t*>(rdmaBuffer);
+    if (symmetricBuffer != nullptr) {
+      auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       for (int bufferIdx = 0; bufferIdx < 2; ++bufferIdx) {
         auto* bufferBase = base + static_cast<size_t>(bufferIdx) * bufferBytes;
         buffers_[bufferIdx] = {
-            .dispatchData_ = bufferBase,
-            .combineData_ = bufferBase,
+            .data_ = bufferBase,
         };
       }
     }
   }
 };
 
-inline size_t getRdmaSizeHint(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+inline size_t getSymmetricBufferSizeHint(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
   const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk).totalBytes_;
   return configAlign<size_t>(numBytes, NUM_BUFFER_ALIGNMENT_BYTES);
 }

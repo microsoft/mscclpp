@@ -70,12 +70,6 @@ __device__ __forceinline__ void syncNamedBarrier(int barrierId, int numThreads) 
   asm volatile("bar.sync %0, %1;" ::"r"(barrierId), "r"(numThreads) : "memory");
 }
 
-__device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBufferBase, void *peerBufferBase) {
-  if (localBufferBase == nullptr) return peerBufferBase;
-  const auto offset = reinterpret_cast<uint8_t *>(localBuffer) - reinterpret_cast<uint8_t *>(localBufferBase);
-  return reinterpret_cast<uint8_t *>(peerBufferBase) + offset;
-}
-
 #if defined(__CUDACC__)
 __device__ __forceinline__ void fenceProxyAsyncSharedCta() {
   asm volatile("fence.proxy.async.shared::cta;" ::: "memory");

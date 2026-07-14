@@ -251,7 +251,8 @@ int main(int argc, char** argv) {
   bootstrap->initialize(uid);
   mscclpp::Communicator comm(bootstrap);
 
-  const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::low_latency::getRdmaSizeHint(T, H, W, E, K));
+  const int64_t numRdmaBytes =
+      static_cast<int64_t>(mscclpp::ep::low_latency::getSymmetricBufferSizeHint(T, H, W, E, K));
   mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");

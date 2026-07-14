@@ -14,7 +14,7 @@ MSCCL++. The module builds two active backends:
 | Feature                          | Status |
 |----------------------------------|--------|
 | `mscclpp_ep_cpp` module          | ✅ builds LL + HT backends when `MSCCLPP_BUILD_EXT_EP=ON` |
-| LL dispatch/combine              | ✅ validated on 8-rank H100; cross-node requires one detected GPU IPC fabric domain |
+| LL dispatch/combine              | ✅ validated on 8-rank H100 with direct IPC and a forced mixed IPC/PortChannel topology |
 | HT dispatch/combine              | ✅ active DeepEP-style backend with intranode and internode paths |
 | HT GB200 direct/flat fast paths  | ✅ runtime-gated by `MSCCLPP_EP_DIRECT`, `MSCCLPP_EP_INTRA_DIRECT`, and `MSCCLPP_EP_FLAT` |
 | LL topology discovery            | ✅ automatic node + NVML fabric-domain detection through `Bootstrap` |
@@ -22,15 +22,19 @@ MSCCL++. The module builds two active backends:
 
 ### LL topology and transport
 
-The optimized LL backend uses direct peer mappings:
+The optimized LL backend selects the transport per peer:
 
 - Same-host peers use regular CUDA IPC mappings.
 - Cross-host peers use CUDA fabric handles when all ranks belong to one
   NVML-reported GPU fabric domain, such as GB200 NVL72 with `nvidia-imex`.
-- `BaseMemoryChannel` handles are used only for signal/wait synchronization;
-  LL payload data does not flow through `MemoryChannel` or `PortChannel`.
-- There is no CPU-proxy/IB fallback in the optimized LL backend. If the full
-  communicator is not one GPU IPC domain, `MoERuntime::isAvailable()` is false.
+- Peers outside the direct IPC domain use an IB `PortChannel`. Metadata LL8
+  packets are sent as soon as they are staged; the later payload uses
+  `putWithSignal`, and the receiver waits only when metadata reports nonzero
+  tokens. Devices without RDMA atomics use the core HostNoAtomic fallback and
+  require GDRCopy.
+- `BaseMemoryChannel` handles provide synchronization for direct-IPC peers.
+  Each non-IPC peer has its own PortChannel QP, proxy service, and FIFO so
+  independent peer traffic is not serialized by one CPU proxy thread.
 
 Topology is automatic. `TcpBootstrap` detects:
 
@@ -44,7 +48,7 @@ LL therefore does **not** require topology environment variables such as
 `NCCL_MNNVL_ENABLE`. Socket/HCA variables are only optional launch overrides
 when the generic bootstrap or an HT/IB test selects the wrong interface.
 
-### HT / legacy proxy sharding
+### HT proxy sharding
 
 A single `mscclpp::ProxyService` is one CPU host thread driving one
 FIFO. With 8 GPUs / node sharing one proxy, the host thread becomes the
@@ -65,8 +69,10 @@ dst_rank)`.
   `DispatchLayout.EXPERT_MAJOR`.
 - HT currently supports BF16 input and `DispatchLayout.FLAT`; quantized HT
   dispatch is not implemented.
-- Optimized LL requires all participating ranks to share one detected CUDA IPC
-  domain; ordinary multi-node H100 jobs should use HT.
+- LL PortChannel fallback requires an available IB transport. GDRCopy is
+  required only when the selected device falls back to HostNoAtomic mode. The
+  registered symmetric buffer must remain below 4 GiB because PortChannel
+  offsets are 32-bit.
 - HT direct and flat paths are GB200/NVL72 optimizations. Leave the env vars
   unset for the baseline DeepEP-style HT path.
 
@@ -137,8 +143,8 @@ Runtime prerequisites on GB200:
   form the IPC domain automatically.
 - The LL runtime verifies CUDA fabric-handle allocation and NVLS-backed
   semaphore-token support. If either capability is unavailable on any rank,
-  all ranks consistently fall back to host-local IPC and LL reports unavailable
-  rather than attempting an IB fallback.
+  all ranks consistently use host-local IPC within each node and PortChannel
+  for peers outside that IPC domain.
 - RT priority is required by NCCL/glibc. On each node:
 
   ```bash
@@ -164,7 +170,7 @@ are only needed when generic launch components choose the wrong interface:
 export NCCL_SOCKET_IFNAME=enP22p1s0f1
 export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
 export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
-# HT/IB only, if automatic HCA selection chooses a down/bond device:
+# IB transports (LL fallback and HT), if automatic HCA selection is wrong:
 export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3
 ```
 
@@ -300,12 +306,10 @@ src/ext/ep/
 │       ├── internode.cu
 │       └── internode_ncclep.cuh
 ├── include/                    — shared EP headers and quantization helpers
-├── low_latency/
-│   ├── dispatch.cu             — optimized LL dispatch
-│   ├── combine.cu              — optimized LL combine
-│   └── config.cuh              — LL launch/workspace configuration
-└── legacy/
-    └── low_latency.cu          — reference-only previous LL implementation
+└── low_latency/
+    ├── dispatch.cu             — optimized LL dispatch
+    ├── combine.cu              — optimized LL combine
+    └── config.cuh              — LL launch/workspace configuration
 
 python/mscclpp/ep/
 ├── __init__.py                 — public exports
@@ -417,8 +421,10 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
              exec python3 test/python/ep/test_internode_multirank.py'
 ```
 
-Cross-node LL is supported only when bootstrap reports one GPU IPC domain
-(for example GB200 NVL72 with IMEX). The launch does not pass a domain size:
+Cross-node LL automatically uses direct CUDA fabric mappings when bootstrap
+reports one GPU IPC domain (for example GB200 NVL72 with IMEX), otherwise it
+uses PortChannel for peers outside each host-local IPC domain. The launch does
+not pass a domain size:
 
 ```bash
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
@@ -493,8 +499,7 @@ HT multirank test benchmark env knobs:
 | LL | `MoECommunicator(mode=MoEMode.LOW_LATENCY)` / `MoERuntime` | `moe_runtime.cc` | `low_latency/{dispatch,combine}.cu` | `EXPERT_MAJOR` |
 | HT | `MoECommunicator(mode=MoEMode.HIGH_THROUGHPUT)` / `ExpertParallelRuntime` | `ht_runtime.cc` | `ht/kernels/*` | `FLAT` |
 
-Shared internal headers live in `include/`. The previous LL implementation is
-kept in `legacy/low_latency.cu` for reference and is not compiled.
+Shared internal headers live in `include/`.
 
 The LL runtime uses one `low_latency_num_blocks` setting. Its default is 130:
 dispatch launches 128 workers plus scheduler/notify blocks, while combine
@@ -504,6 +509,11 @@ launches 128 workers. `RANK_LOCAL_REDUCE` is the default combine mode;
 LL accepts BF16 input and can produce BF16 or FP8 E4M3 dispatch output. FP8
 uses one FP32 scale per 128 hidden elements. Expert output passed to combine is
 always BF16.
+
+Each ping-pong slot is one symmetric registered buffer. Kernel APIs pass only
+the current/previous slot base; `BufferView` derives payload, compact-slot-map,
+and staging regions, while `TransportView` owns self/IPC/Port peer selection
+and symmetric offsets.
 
 ### LL dispatch payload
 
@@ -520,10 +530,10 @@ contains:
 [source token global index: int32]
 ```
 
-Small rank/expert counts are sent as LL8 packets. After every payload TMA store
-has completed, the sender publishes readiness through a lightweight
-`BaseMemoryChannel` signal; the receiver waits on that signal before copying
-data into expert-major output.
+Small rank/expert counts are sent as LL8 packets. Direct-IPC peers use a
+`BaseMemoryChannel` signal after payload stores. PortChannel peers send metadata
+first, batch staged payloads into one `putWithSignal` per nonempty peer, then
+wait on that signal before consuming payload data. No PortChannel flush is used.
 
 The optimized kernels are instantiated for hidden sizes `4096`, `7168`,
 `8192`, and `9216`; other hidden sizes are rejected. FP8 E4M3 currently fixes
@@ -544,6 +554,30 @@ CUDA Graph dispatch+combine E2E:
 | BF16 | direct send | 101.3 µs |
 | FP8 E4M3 | rank-local reduce | 71.8 µs |
 | FP8 E4M3 | direct send | 94.5 µs |
+
+Forced 4+4 IPC-domain split (`MSCCLPP_EP_TEST_IPC_DOMAIN_SIZE=4`), where
+cross-group traffic uses one QP and one batched payload put per peer:
+
+| Dispatch format | Combine mode | E2E |
+|---|---|---:|
+| BF16 | rank-local reduce | 278.6 µs |
+| BF16 | direct send | 422.2 µs |
+| FP8 E4M3 | rank-local reduce | 230.9 µs |
+| FP8 E4M3 | direct send | 391.6 µs |
+
+A no-payload probe measured about 47.5 µs dispatch and 58.0 µs combine,
+isolating roughly 105 µs of fixed kernel, staging, proxy, and completion
+overhead before payload transfer.
+
+Rank-local combine preserves the compact destination slot assigned during
+dispatch. Each PortChannel peer therefore sends exactly its metadata count
+rather than a fixed `max_tokens_per_rank` slab. With this routing, the average
+cross-domain segment is about 85 rows instead of 128.
+
+Combine uses one PortChannel semaphore token per peer per iteration. Rank-local
+nonempty segments use `putWithSignal`; zero-token peers send a standalone
+signal. Direct-send signals after all per-row puts have been issued. Receivers
+wait exactly once before reducing.
 
 Pure-C++ paired benchmark (`dispatch → synchronize → combine → synchronize`):
 

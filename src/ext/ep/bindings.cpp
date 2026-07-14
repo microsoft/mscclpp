@@ -63,7 +63,7 @@ std::string bytesToString(nb::handle h) {
 NB_MODULE(mscclpp_ep_cpp, m) {
   m.doc() = "MSCCL++ Expert-Parallel (MoE dispatch/combine) extension";
 
-  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::low_latency::getRdmaSizeHint,
+  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::low_latency::getSymmetricBufferSizeHint,
         nb::arg("num_max_dispatch_tokens_per_rank"), nb::arg("hidden"), nb::arg("num_ranks"), nb::arg("num_experts"),
         nb::arg("num_topk"));
 
