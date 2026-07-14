@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include "configs.cuh"
+#include "constants.cuh"
 
 #ifndef SETUP_LAUNCH_CONFIG
 #define SETUP_LAUNCH_CONFIG(num_sms, num_threads, stream)                     \

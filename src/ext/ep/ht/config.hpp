@@ -5,7 +5,8 @@
 #include <cstdlib>
 
 #include "../config.hpp"
-#include "../kernels/api.cuh"
+#include "api.cuh"
+#include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -55,7 +56,7 @@ struct Config {
 
     // Ceil up RDMA buffer size
     this->num_max_rdma_chunked_recv_tokens =
-        align<int>(num_max_rdma_chunked_recv_tokens, num_max_rdma_chunked_send_tokens);
+        configAlign<int>(num_max_rdma_chunked_recv_tokens, num_max_rdma_chunked_send_tokens);
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens < num_max_rdma_chunked_recv_tokens);
     // NOTES: this assertion is related to RDMA lazy head update, we must ensure senders always have space to push
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens <= num_max_rdma_chunked_recv_tokens / 2);

@@ -8,7 +8,6 @@
 namespace mscclpp {
 namespace collective {
 
-__device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh2(void* sendbuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
@@ -17,10 +16,12 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t lid = tid % WARP_SIZE;
   const size_t wid = tid / WARP_SIZE;
-
-  const size_t nThread = blockDim.x * gridDim.x;
-  const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
+
+  // Round down to multiple of peer count.
+  const size_t nThread = (blockDim.x * gridDim.x) / WARP_SIZE / nPeer * nPeer * WARP_SIZE;
+  bool isWorker = tid < nThread;
+  const size_t nWarp = nThread / WARP_SIZE;
   const size_t chanOffset = nPeer * blockIdx.x;
   auto memChans = memoryChannels + chanOffset;
 
@@ -30,76 +31,80 @@ __global__ void __launch_bounds__(1024, 1)
   }
   __syncthreads();
 
-  const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
-  const size_t bytes = bytesPerGPU * nPeer;
-  size_t unitBytesPerThread;
-  if (bytes >= nThread * 64) {
-    unitBytesPerThread = 64;
-  } else {
-    unitBytesPerThread = 16;
-  }
-  const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
-  const size_t unitBytes = unitBytesPerWarp * nWarp;
-  const size_t nLoop = bytes / unitBytes;
-
-  if (nLoop > 0) {
-    // First loop unrolling
-    const size_t peerIdx = wid % nPeer;
-    const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
-    if constexpr (IsOutOfPlace) {
-      char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
-      char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
-      char* buff = reinterpret_cast<char*>(sendbuff);
-      const size_t offsetWithinRank = (wid / nPeer) * unitBytesPerWarp;
-      mscclpp::copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                               WARP_SIZE);
-      mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                               WARP_SIZE);
+  if (isWorker) {
+    const size_t bytesPerGPU = nelemsPerGPU * sizeof(int);
+    const size_t bytes = bytesPerGPU * nPeer;
+    size_t unitBytesPerThread;
+    if (bytes >= nThread * 64) {
+      unitBytesPerThread = 64;
     } else {
-      memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
+      unitBytesPerThread = 16;
     }
-  }
+    const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
+    const size_t unitBytes = unitBytesPerWarp * nWarp;
+    const size_t nLoop = bytes / unitBytes;
 
-  for (size_t i = 1; i < nLoop; ++i) {
-    const size_t gWid = wid + i * nWarp;
-    const size_t peerIdx = gWid % nPeer;
-    const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
-    if constexpr (IsOutOfPlace) {
-      char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
-      char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
-      char* buff = reinterpret_cast<char*>(sendbuff);
-      const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-      mscclpp::copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                               WARP_SIZE);
-      mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
-                               WARP_SIZE);
-    } else {
-      memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
-    }
-  }
-
-  if (bytes % unitBytes > 0) {
-    const size_t gWid = wid + nLoop * nWarp;
-    const size_t peerIdx = gWid % nPeer;
-    const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
-    const size_t offset = bytesPerGPU * rank + offsetWithinRank;
-    const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
-                                   ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
-                                   : unitBytesPerWarp;
-    if (remainBytes > 0) {
+    if (nLoop > 0) {
+      // First loop unrolling
+      const size_t peerIdx = wid % nPeer;
+      const size_t offset = bytesPerGPU * rank + (wid / nPeer) * unitBytesPerWarp;
       if constexpr (IsOutOfPlace) {
         char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
         char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
         char* buff = reinterpret_cast<char*>(sendbuff);
-        mscclpp::copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
-        mscclpp::copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid, WARP_SIZE);
+        const size_t offsetWithinRank = (wid / nPeer) * unitBytesPerWarp;
+        mscclpp::copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+                                 WARP_SIZE);
+        mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+                                 WARP_SIZE);
       } else {
-        memChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
+        memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
+      }
+    }
+
+    for (size_t i = 1; i < nLoop; ++i) {
+      const size_t gWid = wid + i * nWarp;
+      const size_t peerIdx = gWid % nPeer;
+      const size_t offset = bytesPerGPU * rank + (gWid / nPeer) * unitBytesPerWarp;
+      if constexpr (IsOutOfPlace) {
+        char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
+        char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
+        char* buff = reinterpret_cast<char*>(sendbuff);
+        const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+        mscclpp::copy<16, false>(src + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+                                 WARP_SIZE);
+        mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
+                                 WARP_SIZE);
+      } else {
+        memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
+      }
+    }
+
+    if (bytes % unitBytes > 0) {
+      const size_t gWid = wid + nLoop * nWarp;
+      const size_t peerIdx = gWid % nPeer;
+      const size_t offsetWithinRank = (gWid / nPeer) * unitBytesPerWarp;
+      const size_t offset = bytesPerGPU * rank + offsetWithinRank;
+      const size_t remainBytes = (offsetWithinRank + unitBytesPerWarp > bytesPerGPU)
+                                     ? ((bytesPerGPU > offsetWithinRank) ? (bytesPerGPU - offsetWithinRank) : 0)
+                                     : unitBytesPerWarp;
+      if (remainBytes > 0) {
+        if constexpr (IsOutOfPlace) {
+          char* dst = reinterpret_cast<char*>(memChans[peerIdx].dst_);
+          char* src = reinterpret_cast<char*>(memChans[peerIdx].src_);
+          char* buff = reinterpret_cast<char*>(sendbuff);
+          mscclpp::copy<16, true>(src + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
+                                  WARP_SIZE);
+          mscclpp::copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
+                                  WARP_SIZE);
+        } else {
+          memChans[peerIdx].put<16, true>(offset + channelOutOffset, remainBytes, lid, WARP_SIZE);
+        }
       }
     }
   }
 
-  deviceSyncer.sync(gridDim.x);
+  __syncthreads();
 
   if (threadIdx.x < nPeer) {
     memChans[threadIdx.x].signal();
@@ -134,6 +139,24 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
     } else {
       numBlocksAndThreads.first = 35;
     }
+  }
+  const int nPeer = ctx->nRanksPerNode - 1;
+  const int nWarp = numBlocksAndThreads.first * numBlocksAndThreads.second / WARP_SIZE;
+  if (numBlocksAndThreads.first > nChannelsPerConnection_ || numBlocksAndThreads.first <= 0 ||
+      numBlocksAndThreads.second <= 0) {
+    WARN(
+        "AllgatherFullmesh2: number of blocks must be a positive multiple of peer count and no more than %d, threads "
+        "per block must be positive; got nBlocks=%d, nThreadsPerBlock=%d, nPeers=%d",
+        nChannelsPerConnection_, numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
+    return CommResult::CommInvalidArgument;
+  }
+  if (nWarp < nPeer) {
+    WARN(
+        "AllgatherFullmesh2: total number of warps must be no less than peer count; got nBlocks=%d, "
+        "nThreadsPerBlock=%d, "
+        "nPeers=%d",
+        numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
+    return CommResult::CommInvalidArgument;
   }
 
   size_t channelOutOffset = *static_cast<size_t*>(ctx->extras["channel_out_offset"].get());

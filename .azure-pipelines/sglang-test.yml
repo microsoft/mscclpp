@@ -1,0 +1,65 @@
+# =============================================================================
+# Single-node SGLang integration test pipeline.
+#
+# Runs MSCCL++ SGLang tests on a single H100 GPU node from the `msccl-ci-h100`
+# pool. All deploy / run / teardown logic is delegated to
+# `templates/sglang-test.yml`.
+#
+# Docs / non-code changes are excluded from triggering this pipeline.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+parameters:
+# Docker image used for the SGLang test container on the GPU node.
+- name: sglangImage
+  type: string
+  default: lmsysorg/sglang:latest-cu129
+
+jobs:
+- job: SGLangTest
+  displayName: SGLang Test
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+  pool:
+    name: msccl-ci-h100
+  container:
+    image: $(containerImage)
+
+  steps:
+  # Deploy MSCCL++ to the GPU node and run the SGLang single-node tests.
+  - template: templates/sglang-test.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: mscclpp-h100-ci
+      gpuArch: '90'
+      sglangImage: ${{ parameters.sglangImage }}

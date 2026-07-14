@@ -14,6 +14,7 @@
 #include <library_types.h>
 
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 #include <vector>
 
@@ -188,53 +189,34 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
 // ===========================================================================
 namespace low_latency {
 
-/// Element type used by low-latency dispatch data path.
-enum class DType {
-  /// NVIDIA bfloat16.
+/// Number of non-worker blocks in the dispatch grid.
+inline constexpr int DispatchControlBlocks = 2;
+/// Maximum worker blocks used by dispatch or combine.
+inline constexpr int MaxWorkerBlocks = 128;
+/// Maximum total dispatch grid size.
+inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+
+/// Low-latency combine algorithm.
+enum class CombineMode {
+  /// Reduce expert rows on each destination rank before sending one partial per rank and token.
+  RANK_LOCAL_REDUCE,
+  /// Send every expert row directly and perform the full weighted reduction on the source rank.
+  DIRECT_SEND
+};
+
+/// Dispatch payload data format.
+enum class DispatchDataType {
+  /// Unquantized BF16 payload.
   BF16,
-  /// NVIDIA FP8 E4M3.
-  F8E4M3
+  /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
+  FP8_E4M3,
+  /// Reserved for MXFP8 E4M3 payloads with micro-scales.
+  MXFP8_E4M3
 };
 
-/// Transport context that encapsulates all transport-related state.
-struct TransportContext {
-  /// Base address of the locally-registered RDMA buffer.
-  void* rdmaBufferBase_;
-  /// Port channel device handles for RDMA transport.
-  mscclpp::PortChannelDeviceHandle* portChannels_;
-  /// Base memory channel handles for IPC transport barrier (nullable).
-  mscclpp::BaseMemoryChannelDeviceHandle* memoryChannels_;
-  /// Peer-mapped base addresses for IPC path (nullable).
-  void* const* peerBases_;
-  /// True if IPC path is ready, false to use RDMA.
-  bool ipcReady_;
-  /// Current rank ID.
-  int rank_;
-  /// Total number of ranks.
-  int numRanks_;
-  /// Number of ranks in one IPC-reachable domain (0 when IPC is unavailable).
-  int ranksPerIpcDomain_;
-};
-
-/// Buffer set that encapsulates ping-pong buffer layout.
-struct BufferSet {
-  /// Send data buffer.
-  void* sendDataBuffer_;
-  /// Send count buffer.
-  int64_t* sendCountBuffer_;
-  /// Receive data buffer.
-  void* recvDataBuffer_;
-  /// Receive count buffer.
-  int64_t* recvCountBuffer_;
-  /// Cleanup region for next iteration.
-  int64_t* cleanupRegion_;
-  /// Size of cleanup region in int64_t elements.
-  int cleanupSize_;
-};
-
-/// Configuration for dispatch operation.
-struct DispatchConfig {
-  /// Number of input tokens to dispatch.
+/// Per-call low-latency workload dimensions.
+struct Workload {
+  /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.
   int hidden_;
@@ -242,97 +224,78 @@ struct DispatchConfig {
   int numTopk_;
   /// Total number of experts.
   int numExperts_;
-  /// Maximum tokens per rank in packed layout.
-  int numMaxTokensPerRank_;
-  /// Input dtype for source tokens.
-  DType inputDType_;
-  /// Output dtype for packed receive buffer.
-  DType outputDType_;
-  /// Logical output layout.
-  DispatchLayout outputLayout_ = DispatchLayout::EXPERT_MAJOR;
+  /// Maximum tokens per rank in the packed layout.
+  int maxTokensPerRank_;
+  /// Dispatch payload data format.
+  DispatchDataType dispatchDataType_;
 };
 
-/// Configuration for combine operation.
-struct CombineConfig {
-  /// Number of tokens to combine.
-  int numCombinedTokens_;
-  /// Hidden dimension size.
-  int hidden_;
-  /// Number of top-k experts per token.
-  int numTopk_;
-  /// Total number of experts.
-  int numExperts_;
-  /// Maximum tokens per rank in packed layout.
-  int numMaxTokensPerRank_;
-  /// Input dtype for expert outputs.
-  DType inputDType_;
-  /// Output dtype for combined tokens.
-  DType outputDType_;
-  /// True to use zero-copy optimization.
-  bool zeroCopy_;
+/// Persistent communication resources shared by low-latency operations.
+struct CommContext {
+  /// Base address of the local symmetric communication buffer.
+  void* symmetricBufferBase_;
+  /// Base memory channel handles used only for signal/wait synchronization.
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
+  /// Directly mapped symmetric-buffer bases for all participating peers.
+  void* const* peerMappedBufferBases_;
+  /// Maximum shared memory available to one block after opt-in.
+  int maxSharedMemoryPerBlock_;
+  /// Number of streaming multiprocessors on the device.
+  int numSms_;
+  /// CUDA device ID associated with this communicator.
+  int deviceId_;
+  /// Current rank ID.
+  int rank_;
+  /// Total number of ranks.
+  int numRanks_;
 };
 
-/// Phase control for send/recv operations.
-enum Phase {
-  /// Execute send phase only.
-  SEND_ONLY = 0x1,
-  /// Execute recv phase only.
-  RECV_ONLY = 0x2,
-  /// Execute both send and recv phases.
-  SEND_AND_RECV = 0x3
-};
+/// Return the optimized low-latency workspace size.
+/// @param[in] numRanks Total number of ranks.
+/// @param[in] numExperts Total number of experts.
+/// @return Required workspace bytes.
+size_t workspaceSize(int numRanks, int numExperts);
 
-/// Clean low-latency buffers (both ping-pong buffers).
-/// @param buffer0 First cleanup region pointer.
-/// @param numInt0 Size of first cleanup region in int64_t elements.
-/// @param buffer1 Second cleanup region pointer.
-/// @param numInt1 Size of second cleanup region in int64_t elements.
-/// @param transport Transport context with channel handles and topology info.
-/// @param stream CUDA stream to launch the kernel on.
-void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, const TransportContext& transport,
-                  cudaStream_t stream);
-
-/// Low-latency dispatch kernel that distributes tokens to experts across ranks.
-/// @param output Output packed data buffer. EXPERT_MAJOR shape is
-/// [num_local_experts, num_ranks*max_tokens, hidden]; FLAT is the same
-/// local-expert-major storage viewed as [num_local_experts*num_ranks*max_tokens, hidden].
-/// @param outputScales FP8 scales (nullable if not using FP8).
-/// @param outputSrcInfo Source rank info per token.
-/// @param outputLayout Layout range [expert, rank] -> (offset, count).
-/// @param outputCount Total count per expert.
-/// @param input Input tokens [num_tokens, hidden].
-/// @param topkIdx Expert indices [num_tokens, num_topk].
-/// @param config Dispatch configuration.
-/// @param currentBuffer Current iteration buffer set.
-/// @param nextBuffer Next iteration buffer set (for cleanup).
-/// @param transport Transport context.
-/// @param workspace Temporary workspace buffer.
-/// @param stream CUDA stream to launch the kernel on.
-/// @param phase Phase control (default: SEND_AND_RECV).
+/// Low-latency dispatch that distributes tokens to experts across ranks.
+/// @param[out] output Expert-major packed output
+/// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+/// @param[out] outputScales FP8 block scales in
+/// [num_local_experts, hidden / 128, num_ranks * max_tokens_per_rank],
+/// or nullptr for BF16 dispatch.
+/// @param[out] outputSrcInfo Original source-token index for every packed expert row.
+/// @param[out] outputLayout Per-[local expert, source rank] packed count and offset.
+/// @param[out] outputCount Total packed token count for every local expert.
+/// @param[in] input Local input tokens [num_tokens, hidden].
+/// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
+/// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
+/// @param[in] workload Per-call workload dimensions.
+/// @param[in,out] recvBuffer Current symmetric ping-pong buffer used for incoming payloads and rewritten metadata.
+/// @param[in] comm Persistent communication context.
+/// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
+/// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
+/// @param[in] stream CUDA stream.
 void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-              const void* input, const int64_t* topkIdx, const DispatchConfig& config, const BufferSet& currentBuffer,
-              const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
-              Phase phase = SEND_AND_RECV);
+              const void* input, const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+              void* recvBuffer, const CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream);
 
-/// Low-latency combine kernel that aggregates expert outputs back to tokens.
-/// @param output Combined output [num_combined_tokens, hidden].
-/// @param input Expert outputs [num_local_experts * num_ranks * max_tokens, hidden].
-/// @param inputScales Optional FP8 scales for expert outputs.
-/// @param topkIdx Expert indices [num_combined_tokens, num_topk].
-/// @param topkWeights Weights [num_combined_tokens, num_topk].
-/// @param srcInfo Source rank info.
-/// @param layoutRange Layout range.
-/// @param config Combine configuration.
-/// @param currentBuffer Current iteration buffer set.
-/// @param nextBuffer Next iteration buffer set (for cleanup).
-/// @param transport Transport context.
-/// @param workspace Temporary workspace buffer.
-/// @param stream CUDA stream to launch the kernel on.
-/// @param phase Phase control (default: SEND_AND_RECV).
-void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-             const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, const CombineConfig& config,
-             const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
-             void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
+/// Low-latency combine that aggregates expert outputs back to tokens.
+/// @param[out] output Combined local tokens [num_tokens, hidden].
+/// @param[in] input Expert outputs [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+/// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
+/// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
+/// @param[in] srcInfo Original source-token index for every packed expert row.
+/// @param[in] layoutRange Per-[local expert, source rank] packed count and offset.
+/// @param[in] workload Per-call workload dimensions.
+/// @param[in,out] recvBuffer Current symmetric ping-pong buffer receiving partials or expert rows.
+/// @param[in] dispatchRecvBuffer Previous dispatch buffer containing rewritten routing metadata.
+/// @param[in] comm Persistent communication context.
+/// @param[in,out] workspace Persistent dispatch metadata plus the combine device barrier.
+/// @param[in] numBlocks Number of combine blocks.
+/// @param[in] mode Combine algorithm.
+/// @param[in] stream CUDA stream.
+void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+             const CommContext& comm, void* workspace, int numBlocks, CombineMode mode, cudaStream_t stream);
 
 }  // namespace low_latency
 
