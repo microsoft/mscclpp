@@ -4,10 +4,7 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// Kernel-side configuration. This is the MSCCL++ version of
-// `DeepEP/csrc/kernels/configs.cuh` with NVSHMEM / IBGDA / mlx5dv includes
-// removed so the intranode (NVLink-only) kernels can be built standalone.
-// Include this file **only** from `.cu` files.
+// Shared EP capacity, timeout, alignment, and CUDA type configuration.
 
 #pragma once
 
@@ -39,12 +36,6 @@
 #endif
 #define NUM_WAIT_NANOSECONDS 500
 
-// Phase control for low-latency kernels (internal use in kernel code)
-// Public API uses low_latency::Phase enum instead
-#define LOW_LATENCY_SEND_PHASE 1  // = low_latency::SEND_ONLY
-#define LOW_LATENCY_RECV_PHASE 2  // = low_latency::RECV_ONLY
-// (SEND_AND_RECV = 3)
-
 // Make CLion CUDA indexing work.
 #ifdef __CLION_IDE__
 #define __CUDA_ARCH__ 900  // NOLINT(*-reserved-identifier)
@@ -73,7 +64,3 @@ __host__ __device__ __forceinline__ void host_device_printf(const char* format, 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
 #include <cuda_runtime.h>
-
-// NVSHMEM / IBGDA / mlx5dv are only required for the RDMA internode paths and
-// are not included here. The internode/low-latency kernels that need them
-// will include them directly under `#ifdef MSCCLPP_EP_HAVE_NVSHMEM`.

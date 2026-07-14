@@ -10,19 +10,22 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import DispatchLayout, MoEMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 
 # Quantization metadata.
 
 
 @dataclass
 class QuantConfig:
-    """Quantization metadata associated with an activation tensor."""
+    """Quantization metadata associated with an activation tensor.
 
-    dtype: Optional[torch.dtype] = None
+    Low-latency FP8 dispatch returns ``block_scales`` with the activation's
+    leading dimensions and a format-defined final scale dimension.
+    """
+
+    format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
     global_scale: Optional[torch.Tensor] = None
-    block_size: Optional[int] = None
 
 
 # Communicator construction.
@@ -56,6 +59,8 @@ class MoECommunicatorConfig:
     # Transport / launch tuning
     num_rdma_qps_per_rank: int = 12
     num_sms: int = 20
+    low_latency_num_blocks: int = 130
+    low_latency_combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
     # HT-only buffer/launch tuning (advanced)
@@ -103,7 +108,7 @@ class ExpertMajorCombineContext:
     """Combine context for expert-major dispatch output."""
 
     topk_ids: torch.Tensor
-    weights: torch.Tensor
+    weights: Optional[torch.Tensor]
     num_experts: int
     num_tokens: int
     hidden_size: int

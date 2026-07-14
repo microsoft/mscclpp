@@ -5,114 +5,169 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/device.hpp>
+#include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/packet_device.hpp>
+#include <type_traits>
 
-#include "kernels/configs.cuh"
-#include "kernels/exception.cuh"
+#include "constants.cuh"
 
 namespace mscclpp {
 namespace ep {
 
 template <typename dtype_t>
-dtype_t cellDiv(dtype_t a, dtype_t b) {
+MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
 }
 
 template <typename dtype_t>
-dtype_t align(dtype_t a, dtype_t b) {
-  return cellDiv<dtype_t>(a, b) * b;
+MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
+  return configCellDiv<dtype_t>(a, b) * b;
 }
 
-struct LowLatencyBuffer {
-  int numCleanInt = 0;
+namespace low_latency {
 
-  void* dispatchRdmaSendBuffer = nullptr;
-  void* dispatchRdmaRecvDataBuffer = nullptr;
-  // NOTE: signaling buffers are int64_t (not int) so that IB atomic ops
-  // (IBV_WR_ATOMIC_FETCH_AND_ADD is a 64-bit, 8-byte-aligned op) always
-  // target an 8-byte-aligned address. Using int32 slots produced unaligned
-  // atomics at odd indices that the NIC silently drops.
-  int64_t* dispatchRdmaRecvCountBuffer = nullptr;
+using Bf16 = typename mscclpp::bf16x2::ElementType;
+using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 
-  void* combineRdmaSendBuffer = nullptr;
-  void* combineRdmaRecvDataBuffer = nullptr;
-  int64_t* combineRdmaRecvFlagBuffer = nullptr;
+// Rank-deduplicated dispatch payload layout:
+//
+//   [data: DataType[hidden]]
+//   [optional scales: ScaleType[hidden / format scale block size]]
+//   [topKIndices: int[topK]]
+//   [topKValues: float[topK]]
+//   [srcTokenGlobalIdx: int]
+//
+// The payload is 32-byte aligned as a whole.
+template <typename DataType, typename ScaleType = void>
+struct PayloadView {
+  static constexpr bool HasScales = !std::is_void_v<ScaleType>;
 
-  void* combineRdmaSendBufferDataStart = nullptr;
-  size_t numBytesPerCombineMsg = 0;
+  int topK_;
+  size_t scaleOffset_;
+  size_t metadataOffset_;
+  size_t numBytes_;
 
-  std::pair<int64_t*, int> cleanMeta() {
-    EP_HOST_ASSERT(dispatchRdmaRecvCountBuffer == combineRdmaRecvFlagBuffer);
-    return {dispatchRdmaRecvCountBuffer, numCleanInt};
+  MSCCLPP_HOST_DEVICE_INLINE static int numScales([[maybe_unused]] int hidden, [[maybe_unused]] int scaleBlockSize) {
+    if constexpr (HasScales) {
+      return hidden / scaleBlockSize;
+    }
+    return 0;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t hiddenBytes(int hidden) {
+    return static_cast<size_t>(hidden) * sizeof(DataType);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t scaleOffset(int hidden) {
+    if constexpr (HasScales) {
+      return configAlign<size_t>(hiddenBytes(hidden), alignof(ScaleType));
+    }
+    return 0;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t scaleBytes([[maybe_unused]] int hidden,
+                                                      [[maybe_unused]] int scaleBlockSize) {
+    if constexpr (HasScales) {
+      return static_cast<size_t>(numScales(hidden, scaleBlockSize)) * sizeof(ScaleType);
+    }
+    return 0;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t metadataOffset(int hidden, int scaleBlockSize) {
+    if constexpr (HasScales) {
+      return configAlign<size_t>(scaleOffset(hidden) + scaleBytes(hidden, scaleBlockSize), alignof(int));
+    }
+    return configAlign<size_t>(hiddenBytes(hidden), alignof(int));
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t metadataBytes(int topK) {
+    return static_cast<size_t>(topK) * sizeof(int) + static_cast<size_t>(topK) * sizeof(float) + sizeof(int);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int hidden, int topK, int scaleBlockSize) {
+    return configAlign<size_t>(metadataOffset(hidden, scaleBlockSize) + metadataBytes(topK), 32);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE PayloadView(int hidden, int topK, int scaleBlockSize = (HasScales ? 128 : 0))
+      : topK_(topK),
+        scaleOffset_(scaleOffset(hidden)),
+        metadataOffset_(metadataOffset(hidden, scaleBlockSize)),
+        numBytes_(numBytes(hidden, topK, scaleBlockSize)) {}
+
+  template <typename T>
+  MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
+    return reinterpret_cast<T*>(base);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE ScaleType* scaleFactors(void* base) const {
+    static_assert(HasScales, "Payload has no scale factors");
+    return reinterpret_cast<ScaleType*>(reinterpret_cast<uint8_t*>(base) + scaleOffset_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const ScaleType* scaleFactors(const void* base) const {
+    static_assert(HasScales, "Payload has no scale factors");
+    return reinterpret_cast<const ScaleType*>(reinterpret_cast<const uint8_t*>(base) + scaleOffset_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base) const {
+    return reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(base) + metadataOffset_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base) const {
+    return reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(base) + metadataOffset_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base) const {
+    return reinterpret_cast<float*>(topKIndices(base) + topK_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base) const {
+    return reinterpret_cast<const float*>(topKIndices(base) + topK_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE int* srcTokenGlobalIdx(void* base) const {
+    return reinterpret_cast<int*>(topKValues(base) + topK_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const int* srcTokenGlobalIdx(const void* base) const {
+    return reinterpret_cast<const int*>(topKValues(base) + topK_);
   }
 };
 
-struct LowLatencyLayout {
-  size_t totalBytes = 0;
-  LowLatencyBuffer buffers[2];
+struct Layout {
+  size_t totalBytes_;
+  void* dispatchRecvBuffer_;
+  void* combineRecvBuffer_;
 
-  template <typename out_ptr_t = void*, typename count_ptr_t = uint8_t*, typename in_ptr_t = void*>
-  out_ptr_t advance(const in_ptr_t& ptr, size_t count) {
-    return reinterpret_cast<out_ptr_t>(reinterpret_cast<count_ptr_t>(ptr) + count);
-  }
+  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+    const PayloadView<Bf16> bf16Payload(hidden, numTopk);
+    const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
+    const PayloadView<Fp8E4M3, float> fp8Payload64(hidden, numTopk, 64);
+    const size_t dispatchMetadataBytes =
+        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), 128);
+    const size_t dispatchPayloadStride =
+        configAlign<size_t>(std::max({bf16Payload.numBytes_, fp8Payload128.numBytes_, fp8Payload64.numBytes_}), 128);
+    const size_t dispatchBufferBytes =
+        dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
+    const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t recvBufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
+    totalBytes_ = 2 * recvBufferBytes;
 
-  LowLatencyLayout(void* rdmaBuffer, int numMaxDispatchTokensPerRank, int hidden, int numRanks, int numExperts) {
-    (void)numRanks;
-    const int numScales = hidden / 128;
-
-    // Dispatch and combine layout:
-    //  - 2 symmetric odd/even send buffer
-    //  - 2 symmetric odd/even receive buffers
-    //  - 2 symmetric odd/even signaling buffers
-
-    // Message sizes
-    // NOTES: you should add a control `int4` for combine messages if you want to do data transformation
-    EP_HOST_ASSERT(numScales * static_cast<int>(sizeof(float)) <= hidden);
-    size_t numBytesPerDispatchMsg =
-        sizeof(int4) + std::max(hidden * sizeof(nv_bfloat16), hidden + numScales * sizeof(float));
-    size_t numBytesPerCombineMsg = hidden * sizeof(nv_bfloat16);
-
-    // Send buffer
-    size_t dispatchSendBufferBytes = numMaxDispatchTokensPerRank * numBytesPerDispatchMsg;
-    size_t combineSendBufferBytes = numExperts * numMaxDispatchTokensPerRank * numBytesPerCombineMsg;
-    size_t sendBufferBytes = std::max(dispatchSendBufferBytes, combineSendBufferBytes);
-    EP_HOST_ASSERT(sendBufferBytes % sizeof(int4) == 0);
-    totalBytes += sendBufferBytes * 2;
-
-    // Symmetric receive buffers
-    // TODO: optimize memory usages
-    size_t dispatchRecvDataBufferBytes = numExperts * numMaxDispatchTokensPerRank * numBytesPerDispatchMsg;
-    size_t combineRecvBufferBytes = numExperts * numMaxDispatchTokensPerRank * numBytesPerCombineMsg;
-    size_t recvBufferBytes = std::max(dispatchRecvDataBufferBytes, combineRecvBufferBytes);
-    EP_HOST_ASSERT(recvBufferBytes % sizeof(int4) == 0);
-    totalBytes += recvBufferBytes * 2;
-
-    // Symmetric signaling buffers (int64_t slots for 8-byte-aligned IB atomics).
-    size_t dispatchRecvCountBufferBytes = numExperts * sizeof(int64_t);
-    size_t combineRecvFlagBufferBytes = dispatchRecvCountBufferBytes;
-    size_t signalingBufferBytes = std::max(dispatchRecvCountBufferBytes, combineRecvFlagBufferBytes);
-    totalBytes += signalingBufferBytes * 2;
-
-    // Assign pointers
-    // NOTES: we still leave some space for distinguishing dispatch/combine buffer,
-    // so you may see some parameters are duplicated
-    for (int i = 0; i < 2; ++i) {
-      buffers[i] = {static_cast<int>(signalingBufferBytes / sizeof(int64_t)),
-                    advance(rdmaBuffer, sendBufferBytes * i),
-                    advance(rdmaBuffer, sendBufferBytes * 2 + recvBufferBytes * i),
-                    advance<int64_t*>(rdmaBuffer, sendBufferBytes * 2 + recvBufferBytes * 2 + signalingBufferBytes * i),
-                    advance(rdmaBuffer, sendBufferBytes * i),
-                    advance(rdmaBuffer, sendBufferBytes * 2 + recvBufferBytes * i),
-                    advance<int64_t*>(rdmaBuffer, sendBufferBytes * 2 + recvBufferBytes * 2 + signalingBufferBytes * i),
-                    advance(rdmaBuffer, sendBufferBytes * i),
-                    numBytesPerCombineMsg};
+    if (symmetricBuffer != nullptr) {
+      auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
+      dispatchRecvBuffer_ = base;
+      combineRecvBuffer_ = base + recvBufferBytes;
     }
   }
 };
 
-inline size_t getLowLatencyRdmaSizeHint(int numMaxDispatchTokensPerRank, int hidden, int numRanks, int numExperts) {
-  auto numBytes = LowLatencyLayout(nullptr, numMaxDispatchTokensPerRank, hidden, numRanks, numExperts).totalBytes;
-  return ((numBytes + NUM_BUFFER_ALIGNMENT_BYTES) / NUM_BUFFER_ALIGNMENT_BYTES) * NUM_BUFFER_ALIGNMENT_BYTES;
+inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk).totalBytes_;
+  return configAlign<size_t>(numBytes, NUM_BUFFER_ALIGNMENT_BYTES);
 }
+
+}  // namespace low_latency
 
 }  // namespace ep
 }  // namespace mscclpp

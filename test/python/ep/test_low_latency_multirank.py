@@ -20,20 +20,17 @@ Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
             --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
 
-Exercises the LL dispatch + combine round-trip on a single node. The
-minimal correctness check:
+Exercises the optimized BF16 or FP8 E4M3 LL dispatch plus the default combine
+path on a single node. The experimental optimized combine performs rank-local
+partial reduction, TMA send, and source-rank reduction. The correctness check:
   - dispatch: per-expert received token counts agree with an all-gathered
-    reference computed from topk_idx across all ranks;
+    reference computed from topk_idx across all ranks, and FP8 data/scales
+    agree with a block-128 quantization reference;
   - combine: the reconstructed x matches the analytical sum
     ``x * sum(topk_weights, masked by topk_idx == -1)``.
 
-Known limitation (see src/ext/ep/README.md): the LL kernels drive every
-peer via MSCCL++ PortChannel. Intra-node IB loopback between two HCAs on
-the same host (what an 8-GPU single-node launch exercises) currently hangs
-during dispatch; cross-node LL with one GPU per node works as designed.
-
 Adapted from DeepEP/tests/test_low_latency.py stripped to the bare checks
-we need for an LL port smoke test. BF16-only (no FP8 check).
+we need for an LL port smoke test.
 """
 
 from __future__ import annotations
@@ -55,9 +52,30 @@ import torch.distributed as dist
 def parse_args():
     parser = argparse.ArgumentParser(description="MSCCL++ EP low-latency multi-rank correctness/benchmark test")
     parser.add_argument("--num-tokens", type=int, default=128)
-    parser.add_argument("--hidden", type=int, default=7168, help="LL kernels are compiled for a fixed hidden set")
+    parser.add_argument(
+        "--hidden",
+        type=int,
+        default=7168,
+        choices=(4096, 7168, 8192, 9216),
+        help="BF16 hidden size compiled into the optimized low-latency kernels",
+    )
     parser.add_argument("--num-topk", type=int, default=8)
     parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument("--num-active-ranks", type=int, default=0, help="Limit routing to the first N ranks")
+    parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
+    parser.add_argument(
+        "--dispatch-dtype",
+        choices=("bf16", "fp8_e4m3"),
+        default="bf16",
+        help="Wire format for low-latency dispatch",
+    )
+    parser.add_argument("--num-blocks", type=int, default=130)
+    parser.add_argument(
+        "--combine-mode",
+        "--optimized-combine-mode",
+        choices=("rank_local_reduce", "direct_send"),
+        default="rank_local_reduce",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
         "--cuda-graph",
@@ -84,17 +102,48 @@ def init_dist():
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
 
 
+def fp8_e4m3_block128_scales(x):
+    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)
+    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
+    return max_abs / 448.0
+
+
+def simulated_gemm_output(dispatch_out):
+    if dispatch_out.quant is None:
+        return dispatch_out.tokens
+    assert dispatch_out.tokens.dtype == torch.float8_e4m3fn
+    assert dispatch_out.quant.block_scales is not None
+    tokens = dispatch_out.tokens
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
+    return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+
+
+def validate_combine_output(actual, expected, *, exact, group):
+    local_diff = (actual.float() - expected.float()).abs().max()
+    global_diff = local_diff.clone()
+    dist.all_reduce(global_diff, op=dist.ReduceOp.MAX, group=group)
+    all_finite = torch.tensor(int(torch.isfinite(actual).all()), dtype=torch.int32, device=actual.device)
+    dist.all_reduce(all_finite, op=dist.ReduceOp.MIN, group=group)
+    assert all_finite.item() == 1, "LL combine output contains NaN or Inf"
+
+    if exact:
+        all_equal = torch.tensor(int(torch.equal(actual, expected)), dtype=torch.int32, device=actual.device)
+        dist.all_reduce(all_equal, op=dist.ReduceOp.MIN, group=group)
+        assert all_equal.item() == 1, f"LL direct-send combine is not bit-exact; max diff={global_diff.item()}"
+    else:
+        assert (
+            torch.isfinite(global_diff).item() and global_diff.item() <= 8.0
+        ), f"LL rank-local combine mismatch; max diff={global_diff.item()}"
+    return local_diff.item(), global_diff.item()
+
+
 def main():
     args = parse_args()
-    rank, num_ranks, local_rank, group = init_dist()
+    rank, num_ranks, _, group = init_dist()
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
-
-    # Shrink the "bf16 precision" anchor to keep values small.
-    rank_offset = 128
-    assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
 
     num_tokens = args.num_tokens
     hidden = args.hidden
@@ -102,17 +151,34 @@ def main():
     num_experts = args.num_experts
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
+    combine_mode = {
+        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.CombineMode.DIRECT_SEND,
+    }[args.combine_mode]
+    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
+    dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
 
-    x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
-    # Encode the per-token index into the last 128 elements so the receiver
-    # can verify which source token it is looking at.
-    x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
+    if dispatch_quant is None:
+        # Shrink the "bf16 precision" anchor to keep values small.
+        rank_offset = 128
+        assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
+        x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
+        # Encode the per-token index into the last 128 elements so the receiver
+        # can verify which source token it is looking at.
+        x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
+    else:
+        x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * 8
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
+    if args.num_active_ranks:
+        assert num_topk <= args.num_active_ranks * num_local_experts
+        scores[:, args.num_active_ranks * num_local_experts :] = float("-inf")
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
-    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    topk_weights = (
+        None if args.no_weights else torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    )
 
     # Randomly mask some positions
     for _ in range(min(10, num_tokens)):
@@ -126,12 +192,14 @@ def main():
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+        low_latency_num_blocks=args.num_blocks,
+        low_latency_combine_mode=combine_mode,
+        quant=dispatch_quant,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk}",
+            f"num_experts={num_experts} num_topk={num_topk} dispatch_dtype={args.dispatch_dtype}",
             flush=True,
         )
     print(
@@ -148,7 +216,7 @@ def main():
     # --- Dispatch ---
     dispatch_output_buffer = torch.empty(
         (num_local_experts, num_ranks * num_tokens, hidden),
-        dtype=torch.bfloat16,
+        dtype=dispatch_dtype,
         device="cuda",
     )
     dispatch_out, handle = moe_comm.dispatch(
@@ -169,6 +237,20 @@ def main():
     # Reference: gather all ranks' topk_idx and count expected tokens per expert.
     all_topk_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=topk_idx.dtype, device="cuda")
     dist.all_gather_into_tensor(all_topk_idx, topk_idx, group=group)
+    all_x = None
+    expected_scales = None
+    if dispatch_quant is not None:
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.format == ep.DispatchDataType.FP8_E4M3
+        assert dispatch_out.quant.block_scales is not None
+        assert dispatch_out.quant.block_scales.shape == (
+            num_local_experts,
+            num_ranks * num_tokens,
+            hidden // 128,
+        )
+        all_x = torch.empty((num_ranks, num_tokens, hidden), dtype=x.dtype, device="cuda")
+        dist.all_gather_into_tensor(all_x, x, group=group)
+        expected_scales = fp8_e4m3_block128_scales(all_x)
 
     int_mask = (1 << 32) - 1
     for i in range(num_local_experts):
@@ -186,11 +268,46 @@ def main():
 
         if recv_count:
             recv_x = packed_recv_x[i, :recv_count]
-            # All columns except the last 128 should share the value (src_rank - rank_offset)
-            recv_x_lo = recv_x[:, :-128]
-            amin = recv_x_lo.amin(dim=-1)
-            amax = recv_x_lo.amax(dim=-1)
-            assert torch.equal(amin, amax), f"rank{rank} expert{expert_id}: non-uniform recv block"
+            if dispatch_quant is None:
+                # All columns except the last 128 should share the value (src_rank - rank_offset)
+                recv_x_lo = recv_x[:, :-128]
+                amin = recv_x_lo.amin(dim=-1)
+                amax = recv_x_lo.amax(dim=-1)
+                assert torch.equal(amin, amax), f"rank{rank} expert{expert_id}: non-uniform recv block"
+            else:
+                assert all_x is not None
+                assert expected_scales is not None
+                assert dispatch_out.quant is not None
+                assert dispatch_out.quant.block_scales is not None
+                for source_rank in range(num_ranks):
+                    packed_range = int(recv_layout_range[source_rank].item())
+                    source_count = packed_range & int_mask
+                    output_offset = packed_range >> 32
+                    if source_count == 0:
+                        continue
+                    source_tokens = handle.combine_context.src_info[
+                        i, output_offset : output_offset + source_count
+                    ].long()
+                    actual_tokens = recv_x[output_offset : output_offset + source_count]
+                    actual_scales = dispatch_out.quant.block_scales[i, output_offset : output_offset + source_count]
+                    reference_scales = expected_scales[source_rank, source_tokens]
+                    torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+                    actual_dequantized = actual_tokens.float().reshape(
+                        source_count, hidden // 128, 128
+                    ) * actual_scales.unsqueeze(-1)
+                    reference_tokens = (
+                        all_x[source_rank, source_tokens].float().reshape(source_count, hidden // 128, 128)
+                    )
+                    quant_error = (actual_dequantized - reference_tokens).abs()
+                    # E4M3 spacing at the maximum finite magnitude is 32, so
+                    # nearest rounding is bounded by 16 scale units. Add margin
+                    # for FP32 scale arithmetic.
+                    quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
+                    max_scale_error = (quant_error / reference_scales.unsqueeze(-1)).max().item()
+                    assert torch.all(quant_error <= quant_error_bound), (
+                        f"rank{rank} expert{expert_id}: FP8 payload mismatch from rank {source_rank}, "
+                        f"max scale error={max_scale_error}"
+                    )
 
     if rank == 0:
         print(f"[dispatch] OK (ranks={num_ranks})", flush=True)
@@ -198,7 +315,30 @@ def main():
     # --- Combine ---
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
     # returns sum(x * weight) across experts.
-    simulated_gemm_x = packed_recv_x.clone()
+    simulated_gemm_x = simulated_gemm_output(dispatch_out)
+    reference_x = x
+    if dispatch_quant is not None:
+        first_expert = all_topk_idx.gather(
+            -1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)
+        ).squeeze(-1)
+        first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
+        dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        for i in range(num_local_experts):
+            expert_id = rank * num_local_experts + i
+            recv_layout_range = packed_recv_layout_range[i]
+            for source_rank in range(num_ranks):
+                packed_range = int(recv_layout_range[source_rank].item())
+                source_count = packed_range & int_mask
+                output_offset = packed_range >> 32
+                if source_count == 0:
+                    continue
+                source_tokens = handle.combine_context.src_info[i, output_offset : output_offset + source_count].long()
+                selected = first_expert[source_rank, source_tokens] == expert_id
+                dispatched_reference_x[source_rank, source_tokens[selected]] = simulated_gemm_x[
+                    i, output_offset : output_offset + source_count
+                ][selected]
+        dist.all_reduce(dispatched_reference_x, group=group)
+        reference_x = dispatched_reference_x[rank]
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
     combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
 
@@ -206,25 +346,31 @@ def main():
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
     expected_f = torch.zeros_like(x, dtype=torch.float32)
-    x_f = x.float()
+    x_f = reference_x.float()
     for j in range(num_topk):
-        weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0).view(-1, 1)
-        expected_f += x_f * weight_j
+        weight_j = (
+            (topk_idx[:, j] != -1).float()
+            if topk_weights is None
+            else topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0)
+        ).view(-1, 1)
+        expected_f = torch.addcmul(expected_f, x_f, weight_j)
     expected = expected_f.to(torch.bfloat16)
-    diff = (combined_x.float() - expected.float()).abs().max().item()
+    local_diff, _ = validate_combine_output(
+        combined_x,
+        expected,
+        exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+        group=group,
+    )
     max_exp = expected.float().abs().max().item()
     print(
-        f"[combine r{rank}] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}",
+        f"[combine r{rank}] max|got-expected|={local_diff:.4e} max|expected|={max_exp:.4e}",
         flush=True,
     )
-    assert torch.isnan(combined_x).any().item() is False
-    assert diff < 1e-2, f"rank{rank}: LL combine mismatch diff={diff}"
 
-    dist.barrier(group=group)
     if rank == 0:
         print("PASS", flush=True)
 
-    def _graph_capture(dispatch_buffer, combine_out):
+    def _graph_capture(dispatch_buffer, combine_out, expert_output=None):
         graph = torch.cuda.CUDAGraph()
         torch.cuda.synchronize()
         dist.barrier(group=group)
@@ -235,7 +381,8 @@ def main():
                 topk_weights,
                 output_buffer=dispatch_buffer,
             )
-            graph_combined_x = moe_comm.combine(graph_dout[0].tokens, graph_dout[1], out=combine_out)
+            graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+            graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
         return graph, graph_dout, graph_combined_x
 
     def _run_cuda_graph_correctness():
@@ -245,10 +392,12 @@ def main():
         graph.replay()
         torch.cuda.synchronize()
 
-        graph_diff = (graph_combined_x.float() - expected.float()).abs().max().item()
-        assert torch.isnan(graph_combined_x).any().item() is False
-        assert graph_diff < 1e-2, f"rank{rank}: LL CUDA graph combine mismatch diff={graph_diff}"
-        dist.barrier(group=group)
+        _, graph_diff = validate_combine_output(
+            graph_combined_x,
+            expected,
+            exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+            group=group,
+        )
         if rank == 0:
             print(f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}", flush=True)
 
@@ -281,12 +430,12 @@ def main():
     # to each combine sample and masking kernel-level changes.)
     bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
-    def _combine(dout, out_):
-        dispatch_out_, handle_ = dout
-        moe_comm.combine(dispatch_out_.tokens, handle_, out=out_)
+    def _combine(expert_output, handle_, out_):
+        moe_comm.combine(expert_output, handle_, out=out_)
 
     if args.cuda_graph:
-        e2e_graph, e2e_dout, _ = _graph_capture(bench_dispatch_output_buffer, bench_out)
+        bench_expert_output = None if dispatch_quant is None else simulated_gemm_x
+        e2e_graph, e2e_dout, _ = _graph_capture(bench_dispatch_output_buffer, bench_out, bench_expert_output)
         for _ in range(warmup):
             e2e_graph.replay()
         torch.cuda.synchronize()
@@ -304,36 +453,45 @@ def main():
         e2e_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
     else:
         for _ in range(warmup):
-            _combine(_dispatch(), bench_out)
+            warmup_dout = _dispatch()
+            _combine(simulated_gemm_output(warmup_dout[0]), warmup_dout[1], bench_out)
         torch.cuda.synchronize()
         dist.barrier(group=group)
 
-        start_ev = torch.cuda.Event(enable_timing=True)
-        end_ev = torch.cuda.Event(enable_timing=True)
-        start_ev.record()
+        dispatch_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        dispatch_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
         dout = None
-        for _ in range(iters):
+        for i in range(iters):
+            dispatch_start_events[i].record()
             dout = _dispatch()
-        end_ev.record()
+            dispatch_end_events[i].record()
+            _combine(simulated_gemm_output(dout[0]), dout[1], bench_out)
         torch.cuda.synchronize()
-        disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+        disp_us = sum(start.elapsed_time(end) for start, end in zip(dispatch_start_events, dispatch_end_events)) * 1e3
+        disp_us /= iters
         assert dout[0].layout.num_tokens_per_expert is not None
         recv_tokens = int(dout[0].layout.num_tokens_per_expert.sum().item())
 
         dist.barrier(group=group)
-        start_ev.record()
-        for _ in range(iters):
-            _combine(dout, bench_out)
-        end_ev.record()
+        combine_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        combine_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        for i in range(iters):
+            dout = _dispatch()
+            bench_expert_output = simulated_gemm_output(dout[0])
+            combine_start_events[i].record()
+            _combine(bench_expert_output, dout[1], bench_out)
+            combine_end_events[i].record()
         torch.cuda.synchronize()
-        comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+        comb_us = sum(start.elapsed_time(end) for start, end in zip(combine_start_events, combine_end_events)) * 1e3
+        comb_us /= iters
 
-    # Dispatch payload: recv_tokens × hidden × bf16 (received on this rank).
+    # Dispatch payload: recv_tokens × hidden data plus optional FP8 scales.
     # Combine payload: recv_tokens × hidden × bf16 as well -- each local expert
     # sends one copy per dispatched token back to its owner, so the bytes on
     # the wire match dispatch. Using num_tokens × hidden here would under-count
     # the actual send payload by ~num_topk×.
-    disp_bytes = recv_tokens * hidden * 2
+    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // 128 * 4
+    disp_bytes = recv_tokens * dispatch_bytes_per_token
     comb_bytes = recv_tokens * hidden * 2
 
     if args.cuda_graph:
