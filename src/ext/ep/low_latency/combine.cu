@@ -403,7 +403,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
                               const low_latency::Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const low_latency::CommContext& comm, void* workspace, int numBlocks,
                               cudaStream_t stream) {
-  static_assert(Hidden == 4096 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
+  static_assert(Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
   const int nExperts = workload.numExperts_;
   const int nRanks = comm.numRanks_;
   const int nLocalExperts = nExperts / nRanks;
@@ -491,6 +491,9 @@ inline void combine(void* output, const void* expertOutput, const int64_t* topkI
   switch (workload.hidden_) {
     case 4096:
       return combineHidden<4096>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
+                                 recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
+    case 6656:
+      return combineHidden<6656>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
                                  recvBuffer, dispatchRecvBuffer, comm, workspace, numBlocks, mode, stream);
     case 7168:
       return combineHidden<7168>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,

@@ -529,10 +529,10 @@ has completed, the sender publishes readiness through a lightweight
 `BaseMemoryChannel` signal; the receiver waits on that signal before copying
 data into expert-major output.
 
-The optimized kernels are instantiated for hidden sizes `4096`, `7168`,
-`8192`, and `9216`; other hidden sizes are rejected. FP8 E4M3 currently fixes
-the scale block at 128. A future scale layout must use a distinct
-`DispatchDataType`.
+The optimized kernels are instantiated for hidden sizes `4096`, `6656`,
+`7168`, `8192`, and `9216`; other hidden sizes are rejected. FP8 E4M3
+currently fixes the scale block at 128. A future scale layout must use a
+distinct `DispatchDataType`.
 
 ### Current H100 performance
 
