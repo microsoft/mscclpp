@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
         "--hidden",
         type=int,
         default=7168,
-        choices=(4096, 7168, 8192, 9216),
+        choices=(4096, 6656, 7168, 8192, 9216),
         help="hidden dimension",
     )
     p.add_argument("-k", "--num-topk", type=int, default=8, choices=range(1, 10), help="top-k experts per token")

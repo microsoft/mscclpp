@@ -56,7 +56,7 @@ def parse_args():
         "--hidden",
         type=int,
         default=7168,
-        choices=(4096, 7168, 8192, 9216),
+        choices=(4096, 6656, 7168, 8192, 9216),
         help="BF16 hidden size compiled into the optimized low-latency kernels",
     )
     parser.add_argument("--num-topk", type=int, default=8)

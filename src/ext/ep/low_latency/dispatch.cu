@@ -304,7 +304,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
       sharedMem[warpId] = rankTokenPrefix;
       sharedMem[nRankWarps + warpId] = activeRankPrefix;
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(DispatchSchedulerPrefixBarrier), "r"(nRankWarps * WARP_SIZE) : "memory");
+    syncNamedBarrier(DispatchSchedulerPrefixBarrier, nRankWarps * WARP_SIZE);
 
     if (warpId == 0) {
       const int tokenTotal = laneId < nRankWarps ? sharedMem[laneId] : 0;
@@ -320,7 +320,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
         sharedMem[2 * nRankWarps + 1] = activePrefix;
       }
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(DispatchSchedulerPrefixBarrier), "r"(nRankWarps * WARP_SIZE) : "memory");
+    syncNamedBarrier(DispatchSchedulerPrefixBarrier, nRankWarps * WARP_SIZE);
 
     rankTokenPrefix += sharedMem[warpId];
     activeRankPrefix += sharedMem[nRankWarps + warpId];
@@ -351,8 +351,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
     }
     if (threadId == 0) *workspaceView.dispatchNumRecvTasks_ = nTasks;
 
-    asm volatile("bar.sync %0, %1;" ::"r"(DispatchSchedulerReadyBarrier), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
-                 : "memory");
+    syncNamedBarrier(DispatchSchedulerReadyBarrier, (nRankWarps + nLayoutWarps) * WARP_SIZE);
     if (threadId == 0) {
       mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.dispatchTasksReadyEpoch_, dispatchEpoch,
                                                            mscclpp::memoryOrderRelease);
@@ -381,8 +380,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
       }
       outputCount[localExpertIdx] = outputOffset;
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(DispatchSchedulerReadyBarrier), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
-                 : "memory");
+    syncNamedBarrier(DispatchSchedulerReadyBarrier, (nRankWarps + nLayoutWarps) * WARP_SIZE);
   }
 }
 
@@ -554,7 +552,7 @@ inline void dispatchHiddenMode(void* output, float* outputScales, int* outputSrc
                                const low_latency::Workload& workload, void* recvBuffer,
                                const low_latency::CommContext& comm, void* workspace, int numBlocks,
                                cudaStream_t stream) {
-  static_assert(Hidden == 4096 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
+  static_assert(Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
   constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, OutputType, DispatchMaxNRecvTmaWorkers>();
   static_assert(NRecvTmaWorkers > 0);
@@ -628,6 +626,9 @@ inline void dispatch(void* output, float* outputScales, int* outputSrcInfo, int6
   switch (workload.hidden_) {
     case 4096:
       return dispatchHidden<4096>(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx,
+                                  topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+    case 6656:
+      return dispatchHidden<6656>(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx,
                                   topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
     case 7168:
       return dispatchHidden<7168>(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx,

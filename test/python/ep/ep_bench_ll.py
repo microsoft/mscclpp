@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
         "--hidden",
         type=int,
         default=int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "7168")),
-        choices=(4096, 7168, 8192, 9216),
+        choices=(4096, 6656, 7168, 8192, 9216),
         help="hidden dimension",
     )
     p.add_argument(
@@ -165,8 +165,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     args = p.parse_args()
-    if args.hidden not in (4096, 7168, 8192, 9216):
-        p.error("--hidden must be one of 4096, 7168, 8192, 9216")
+    if args.hidden not in (4096, 6656, 7168, 8192, 9216):
+        p.error("--hidden must be one of 4096, 6656, 7168, 8192, 9216")
     if not 1 <= args.num_topk <= 9:
         p.error("--num-topk must be in [1, 9]")
     if args.num_tokens <= 0 or args.num_experts <= 0:

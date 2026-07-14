@@ -205,8 +205,8 @@ int main(int argc, char** argv) {
     if (rank == 0) fprintf(stderr, "tokens, experts, and iters must be positive; warmup must be non-negative\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
-  if (H != 4096 && H != 7168 && H != 8192 && H != 9216) {
-    if (rank == 0) fprintf(stderr, "hidden must be one of 4096, 7168, 8192, 9216\n");
+  if (H != 4096 && H != 6656 && H != 7168 && H != 8192 && H != 9216) {
+    if (rank == 0) fprintf(stderr, "hidden must be one of 4096, 6656, 7168, 8192, 9216\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   if (K <= 0 || K > 9) {
