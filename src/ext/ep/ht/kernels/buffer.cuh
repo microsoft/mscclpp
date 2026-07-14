@@ -4,8 +4,8 @@
 
 #include <cstdint>
 
-#include "../../kernels/configs.cuh"
-#include "../../kernels/exception.cuh"
+#include "constants.cuh"
+#include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {

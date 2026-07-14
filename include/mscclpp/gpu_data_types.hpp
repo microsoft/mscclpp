@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_GPU_DATA_TYPES_HPP_
 #define MSCCLPP_GPU_DATA_TYPES_HPP_
 
+#include <cstdint>
 #include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -186,7 +187,7 @@ template <int Bytes, bool Enabled = (Bytes >= 4 && Bytes % 4 == 0)>
 struct alignas(Bytes) Words {
   uint32_t w[Bytes / 4];
 
-  MSCCLPP_HOST_DEVICE_INLINE Words() {}
+  Words() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE uint32_t& operator[](int i) { return w[i]; }
 
@@ -209,7 +210,7 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
   using ElementType = T;
   constexpr static int Size = N;
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl() {}
+  VectorTypeImpl() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const StorageT& value) : storage(value) {}
 
@@ -685,6 +686,18 @@ MSCCLPP_DEVICE_INLINE To to(const From& v) {
   }
 }
 
+/// Convert a packed BF16 pair to a packed FP32 pair.
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, bf16x2>(const bf16x2& v) {
+  return __bfloat1622float2(v.storage);
+}
+
+/// Convert a packed FP32 pair to a packed BF16 pair using round-to-nearest.
+template <>
+MSCCLPP_DEVICE_INLINE bf16x2 to<bf16x2, f32x2>(const f32x2& v) {
+  return __float22bfloat162_rn(v.storage);
+}
+
 #if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 min(const __fp8_e4m3& a, const __fp8_e4m3& b) {
@@ -865,7 +878,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f32x2>(const f32x2& v) {
   uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[0], v.data[1], 0, false);
   return bit_cast<f8_e4m3x2>(static_cast<__hip_fp8x2_storage_t>(packed));
 #elif defined(MSCCLPP_DEVICE_CUDA)
-  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_float2_to_fp8x2(make_float2(v.data[0], v.data[1]), __NV_SATFINITE, __NV_E4M3);
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_float2_to_fp8x2(v.storage, __NV_SATFINITE, __NV_E4M3);
   return bit_cast<f8_e4m3x2>(fp8x2);
 #else
   f8_e4m3x2 result;

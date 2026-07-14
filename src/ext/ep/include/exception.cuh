@@ -5,7 +5,7 @@
 #include <exception>
 #include <string>
 
-#include "configs.cuh"
+#include "constants.cuh"
 
 #ifndef EP_STATIC_ASSERT
 #define EP_STATIC_ASSERT(cond, reason) static_assert(cond, reason)

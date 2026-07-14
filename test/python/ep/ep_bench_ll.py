@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified low-latency EP benchmark for MSCCL++ EP — an apples-to-apples port of
-NCCL-EP's ``contrib/nccl_ep/ep_bench.cu`` low-latency (LL) flow, with the NCCL-EP
-API (``ncclEpDispatch`` / ``ncclEpCombine``) replaced by the MSCCL++ EP high-level
-``MoECommunicator.dispatch`` / ``MoECommunicator.combine`` (feature/ep API).
+"""Unified steady-state low-latency EP benchmark for MSCCL++.
 
 Why this exists
 ---------------
-``ep_bench`` is the reference NCCL-EP micro-benchmark. To compare MSCCL++ EP
-against it fairly we must measure *the same thing the same way*. This script is a
-line-for-line reimplementation of ``ep_bench``'s LL measurement methodology, only
-swapping the collective API underneath:
+``ep_bench`` is the reference NCCL-EP micro-benchmark. This script uses the same
+workload, byte accounting, CUDA-event timing, and summary format while replacing
+the NCCL-EP collective API with MSCCL++ ``MoECommunicator`` calls.
 
-* **Paired** dispatch→sync→combine→sync→barrier per iteration (``runPairedBenchmark``).
-* **Per-iteration CUDA events** recorded on the stream *around each kernel launch*;
-  the ``cudaStreamSynchronize`` and ``MPI_Barrier`` (here ``dist.barrier``) happen
-  **outside** the timed region, exactly as in ``ep_bench``.
+Iterations are queued as dispatch→combine pairs on one CUDA stream and
+synchronized once, matching ``test_low_latency_multirank.py --bench`` and
+measuring steady-state device latency without Python rank-launch skew.
+
+* **Paired** dispatch→combine ordering on the same CUDA stream.
+* **Per-iteration CUDA events** recorded around each dispatch/combine operation.
 * **Skip the first timed iteration** (warmup outlier) — matches ``ep_bench``'s
   ``calc_stats`` which trims ``times[0]`` when ``num_iters > 1``.
 * **Byte accounting** identical to ``calculateLowLatencyBytes``:
@@ -38,13 +36,11 @@ CLI mirrors ``ep_bench``'s LL-relevant flags (long + short):
 
 Fidelity note
 -------------
-``ep_bench`` is C++/MPI; MSCCL++ EP's LL API is Python/torch, so this harness is
-Python. The *measurement* is identical: both bracket the same dispatch/combine
-kernels with CUDA events and report GPU-side host-observed time. The only
-difference is host-side launch latency, which sits *outside* the recorded events
-for the async kernels and is the same definitional gap ``ep_bench`` has (larger
-in Python, but not counted in the kernel elapsed time). For a pure kernel number,
-run under ``nsys``/CUPTI as with ``ep_bench``'s ``--- Kernel-only ---`` section.
+``ep_bench`` is C++/MPI; MSCCL++ EP's LL API is Python/torch. Synchronized
+per-call pacing makes early ranks wait inside the LL receive-spin for later
+Python ranks, so this benchmark reports steady-state queued latency. Host launch
+latency still sits outside the CUDA events. For a pure kernel number, run under
+``nsys``/CUPTI as with ``ep_bench``'s ``--- Kernel-only ---`` section.
 
 Launch
 ------
@@ -74,7 +70,7 @@ import torch.distributed as dist
 # ----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="MSCCL++ EP low-latency benchmark (ep_bench parity)",
+        description="MSCCL++ EP steady-state low-latency benchmark",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     # Env fallbacks keep the existing MSCCLPP_EP_BENCH_* launchers working.
@@ -97,6 +93,7 @@ def parse_args() -> argparse.Namespace:
         "--hidden",
         type=int,
         default=int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "7168")),
+        choices=(4096, 7168, 8192, 9216),
         help="hidden dimension",
     )
     p.add_argument(
@@ -104,6 +101,7 @@ def parse_args() -> argparse.Namespace:
         "--num-topk",
         type=int,
         default=int(os.environ.get("MSCCLPP_EP_BENCH_TOPK", "8")),
+        choices=range(1, 10),
         help="top-k experts per token",
     )
     p.add_argument(
@@ -128,6 +126,19 @@ def parse_args() -> argparse.Namespace:
         help="timed iterations",
     )
     p.add_argument(
+        "--dispatch-dtype",
+        choices=("bf16", "fp8_e4m3"),
+        default="bf16",
+        help="low-latency dispatch payload format",
+    )
+    p.add_argument(
+        "--combine-mode",
+        choices=("rank_local_reduce", "direct_send"),
+        default="rank_local_reduce",
+        help="low-latency combine algorithm",
+    )
+    p.add_argument("--num-blocks", type=int, default=130, help="total low-latency dispatch blocks")
+    p.add_argument(
         "--no-kernel-timing",
         dest="kernel_timing",
         action="store_false",
@@ -149,12 +160,22 @@ def parse_args() -> argparse.Namespace:
         help="use the in-process CUPTI collector (libcupti_kernel_timer.so, a faithful "
         "port of ep_bench's KernelTimer): CUPTI Activity API records per-kernel GPU "
         "time over the post-warmup timed loop, near-zero host perturbation, and works "
-        "multinode without nsys. Uses CUPTI_ACTIVITY_KIND_KERNEL (which -- unlike "
-        "CONCURRENT_KERNEL -- captures mscclpp's cudaLaunchCooperativeKernel LL kernels); "
-        "matches the mangled name substring dispatch/combine. Replaces the torch.profiler pass.",
+        "multinode without nsys. Matches mangled dispatch/combine kernel names and "
+        "replaces the torch.profiler pass.",
     )
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.hidden not in (4096, 7168, 8192, 9216):
+        p.error("--hidden must be one of 4096, 7168, 8192, 9216")
+    if not 1 <= args.num_topk <= 9:
+        p.error("--num-topk must be in [1, 9]")
+    if args.num_tokens <= 0 or args.num_experts <= 0:
+        p.error("--num-tokens and --num-experts must be positive")
+    if args.num_topk > args.num_experts:
+        p.error("--num-topk must not exceed --num-experts")
+    if args.num_warmup < 0 or args.num_iters <= 0:
+        p.error("--num-warmup must be non-negative and --num-iters must be positive")
+    return args
 
 
 def init_dist():
@@ -257,7 +278,10 @@ class _InProcCupti:
         import ctypes
         import os as _os
 
-        so = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "libcupti_kernel_timer.so")
+        so = _os.environ.get(
+            "MSCCLPP_EP_CUPTI_TIMER_LIB",
+            _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "build", "libcupti_kernel_timer.so"),
+        )
         self.lib = ctypes.CDLL(so)
         self.lib.kt_start.restype = ctypes.c_int
         self.lib.kt_stop.restype = ctypes.c_int
@@ -284,7 +308,6 @@ def main() -> None:
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
     import mscclpp.ep as ep
-    from mscclpp.ep._cpp import get_low_latency_rdma_size_hint
 
     ep_group = CommGroup(torch_group=group)
 
@@ -296,6 +319,19 @@ def main() -> None:
     iters = args.num_iters
     assert num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
     num_local_experts = num_experts // num_ranks
+    dispatch_data_type = {
+        "bf16": ep.DispatchDataType.BF16,
+        "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
+    }[args.dispatch_dtype]
+    combine_mode = {
+        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.CombineMode.DIRECT_SEND,
+    }[args.combine_mode]
+    dispatch_quant = (
+        None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
+    )
+    dispatch_dtype = torch.bfloat16 if dispatch_quant is None else torch.float8_e4m3fn
+    dispatch_label = "BF16" if dispatch_quant is None else "FP8_E4M3"
 
     # bf16 precision anchor (same convention as test_low_latency_multirank.py).
     rank_offset = 128
@@ -314,15 +350,16 @@ def main() -> None:
     # ep_bench byte accounting: num_valid_selections = count(topk_idx >= 0). We
     # keep every selection valid (a full LL load), so this equals num_tokens*top_k.
     num_valid_selections = int((topk_idx >= 0).sum().item())
-    disp_bytes = num_valid_selections * hidden * 2  # BF16
+    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // 128 * 4
+    disp_bytes = num_valid_selections * dispatch_bytes_per_token
     comb_bytes = num_valid_selections * hidden * 2  # BF16 (symmetric, per ep_bench)
 
-    num_rdma_bytes = get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
     if rank == 0:
         print(
             f"[cfg] algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} top_k={num_topk} warmup={warmup} iters={iters} "
-            f"num_rdma_bytes={num_rdma_bytes}",
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} "
+            f"pacing=batched_steady_state",
             flush=True,
         )
 
@@ -336,7 +373,9 @@ def main() -> None:
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+        low_latency_num_blocks=args.num_blocks,
+        low_latency_combine_mode=combine_mode,
+        quant=dispatch_quant,
     )
     assert moe_comm.is_available()
     if rank == 0:
@@ -348,7 +387,12 @@ def main() -> None:
     # owns its src_info/layout_range/count buffers internally; we only supply the
     # dispatch output buffer and the combine output tensor.
     output_buffer = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda"
+        (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
+    )
+    expert_output = (
+        None
+        if dispatch_quant is None
+        else torch.zeros((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
     )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
@@ -360,22 +404,23 @@ def main() -> None:
 
     def combine_fn(dout):
         dispatch_out, handle = dout
-        moe_comm.combine(dispatch_out.tokens, handle, out=out)
+        moe_comm.combine(dispatch_out.tokens if expert_output is None else expert_output, handle, out=out)
 
     stream = torch.cuda.current_stream()
 
-    # ---- runPairedBenchmark: warmup (paired), then per-iter timed (paired). ----
+    # Warm up with the same pacing as the timed loop. Same-stream ordering keeps
+    # dispatch output alive until combine consumes it without host synchronization.
     for _ in range(warmup):
         dout = dispatch_fn()
-        stream.synchronize()
         combine_fn(dout)
-        stream.synchronize()
-        dist.barrier(group=group)
 
-    # CUPTI/nsys region: capture ONLY the post-warmup timed kernels, matching
-    # ep_bench's KernelTimer.start() (called after warmup). An external nsys run
-    # with --capture-range=cudaProfilerApi records exactly the dispatch/combine
-    # kernels between these two calls.
+    # Drain warmup work and align ranks once before recording timed events.
+    torch.cuda.synchronize()
+    dist.barrier(group=group)
+
+    # CUPTI/nsys region: capture only the post-warmup timed kernels. An external
+    # nsys run with --capture-range=cudaProfilerApi records exactly the
+    # dispatch/combine kernels between these two calls.
     _cupti = bool(getattr(args, "cupti_region", False))
     if _cupti:
         torch.cuda.synchronize()
@@ -385,20 +430,38 @@ def main() -> None:
     # In-process CUPTI collector (ep_bench KernelTimer analog). start() after
     # warmup, stop() after the timed loop -- same window as the CUDA events.
     _inproc = None
-    if bool(getattr(args, "cupti_inproc", False)):
+    inproc_requested = bool(getattr(args, "cupti_inproc", False))
+    local_inproc_ready = False
+    if inproc_requested:
         try:
             _inproc = _InProcCupti()
-            torch.cuda.synchronize()
-            dist.barrier(group=group)
-            _rc = _inproc.start()
-            if _rc != 0:
-                if rank == 0:
-                    print(f"[warn] in-proc CUPTI kt_start rc={_rc}; disabling", flush=True)
-                _inproc = None
+            local_inproc_ready = True
         except Exception as exc:
             if rank == 0:
                 print(f"[warn] in-proc CUPTI unavailable ({exc}); host-observed only", flush=True)
             _inproc = None
+        ready = torch.tensor(int(local_inproc_ready), dtype=torch.int32, device="cuda")
+        dist.all_reduce(ready, op=dist.ReduceOp.MIN, group=group)
+        if ready.item() == 0:
+            if rank == 0:
+                print("[warn] in-proc CUPTI unavailable on at least one rank; disabling globally", flush=True)
+            _inproc = None
+        else:
+            torch.cuda.synchronize()
+            dist.barrier(group=group)
+            try:
+                _rc = _inproc.start()
+            except Exception:
+                _rc = -1
+            started = torch.tensor(int(_rc == 0), dtype=torch.int32, device="cuda")
+            dist.all_reduce(started, op=dist.ReduceOp.MIN, group=group)
+            if started.item() == 0:
+                if _rc == 0:
+                    _inproc.stop()
+                if rank == 0:
+                    print("[warn] in-proc CUPTI failed to start on at least one rank; disabling globally", flush=True)
+                _inproc = None
+            dist.barrier(group=group)
 
     d_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     d_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -408,13 +471,10 @@ def main() -> None:
     for i in range(iters):
         d_start[i].record(stream)
         dout = dispatch_fn()
-        d_end[i].record(stream)  # record before sync
-        stream.synchronize()  # sync outside timing
-        c_start[i].record(stream)  # record after sync, before combine
+        d_end[i].record(stream)
+        c_start[i].record(stream)
         combine_fn(dout)
-        c_end[i].record(stream)  # record before sync
-        stream.synchronize()  # sync outside timing
-        dist.barrier(group=group)  # keep ranks in lockstep, outside timing
+        c_end[i].record(stream)
 
     torch.cuda.synchronize()
     if _cupti:
@@ -521,7 +581,8 @@ def main() -> None:
 
         print(f"\n=== Summary (Low Latency, across {num_ranks} ranks) ===")
         print("\n--- Host-observed performance ---")
-        print(f"Dispatch (BF16):  avg={g_d_avg:.2f} us, min={g_d_min:.2f} us, max={g_d_max:.2f} us")
+        print("Pacing: batched steady state")
+        print(f"Dispatch ({dispatch_label}):  avg={g_d_avg:.2f} us, min={g_d_min:.2f} us, max={g_d_max:.2f} us")
         print(
             f"                  throughput: avg={avg_d_tp:.2f} GB/s, "
             f"min={d_lo:.2f} GB/s (rank {d_lo_r}), max={d_hi:.2f} GB/s (rank {d_hi_r})"
@@ -551,13 +612,11 @@ def main() -> None:
                 f"[avg={g_dk_avg:.2f}, max={g_dk_max:.2f} us -- inflated by profiler recv-spin skew]"
             )
             print(f"                  throughput @min: {(disp_bytes / 1e9) / (g_dk_min * 1e-6):.2f} GB/s")
-            print(f"Combine:     avg={g_ck_avg:.2f} us, min={g_ck_min:.2f} us, max={g_ck_max:.2f} us")
             print(
-                f"                  throughput: avg={(comb_bytes / 1e9) / (g_ck_avg * 1e-6):.2f} GB/s, "
-                f"min={(comb_bytes / 1e9) / (g_ck_min * 1e-6):.2f} GB/s, "
-                f"max={(comb_bytes / 1e9) / (g_ck_max * 1e-6):.2f} GB/s"
+                f"Combine:     min={g_ck_min:.2f} us (representative)  "
+                f"[avg={g_ck_avg:.2f}, max={g_ck_max:.2f} us -- inflated by profiler rank skew]"
             )
-            print(f"Total (D+C): {g_dk_min + g_ck_avg:.2f} us (dispatch min + combine avg)")
+            print(f"                  throughput @min: {(comb_bytes / 1e9) / (g_ck_min * 1e-6):.2f} GB/s")
             print(
                 "  NOTE: for an authoritative low-perturbation kernel-only number, run under "
                 "nsys (as ep_bench's CUPTI path does); torch.profiler perturbs the LL recv-spin."
@@ -579,18 +638,16 @@ def main() -> None:
                     f"[avg={g_ik_d_avg:.2f}, max={g_ik_d_max:.2f} us -- recv-spin skew on lagging ranks]"
                 )
                 print(f"                  throughput @min: {(disp_bytes / 1e9) / (g_ik_d_min * 1e-6):.2f} GB/s")
-                print(f"Combine:     avg={g_ik_c_avg:.2f} us, min={g_ik_c_min:.2f} us, max={g_ik_c_max:.2f} us")
                 print(
-                    f"                  throughput: avg={(comb_bytes / 1e9) / (g_ik_c_avg * 1e-6):.2f} GB/s, "
-                    f"min={(comb_bytes / 1e9) / (g_ik_c_max * 1e-6):.2f} GB/s, "
-                    f"max={(comb_bytes / 1e9) / (g_ik_c_min * 1e-6):.2f} GB/s"
+                    f"Combine:     min={g_ik_c_min:.2f} us (representative)  "
+                    f"[avg={g_ik_c_avg:.2f}, max={g_ik_c_max:.2f} us -- rank skew on lagging ranks]"
                 )
-                print(f"Total (D+C): {g_ik_d_min + g_ik_c_avg:.2f} us (dispatch min + combine avg)")
+                print(f"                  throughput @min: {(comb_bytes / 1e9) / (g_ik_c_min * 1e-6):.2f} GB/s")
             else:
                 print("  NOTE: in-process CUPTI collector unavailable (see [warn] above).")
 
         print(
-            f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
+            f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB ({dispatch_label}), "
             f"combine={comb_bytes / 1e6:.2f} MB (BF16), selections={num_valid_selections}"
         )
 

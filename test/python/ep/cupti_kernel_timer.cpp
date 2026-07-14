@@ -11,16 +11,9 @@
 // ep_bench's methodology exactly: start() after warmup, stop() after the timed
 // loop, get_avg_us("dispatch"/"combine") buckets by mangled-name substring.
 //
-// COOPERATIVE-LAUNCH NOTE (GB200 / CUDA 13): the mscclpp LL dispatch/combine
-// kernels are launched with cudaLaunchCooperativeKernel. Those are NOT reported
-// by CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL on this driver, but they ARE reported
-// by CUPTI_ACTIVITY_KIND_KERNEL (the serialized-kernel activity), which is what
-// we subscribe to below. KIND_KERNEL only serializes *inter*-kernel concurrency;
-// in this dispatch->sync->combine->sync paired loop the kernels already run one
-// at a time, so the measured per-kernel GPU duration is unaffected. The activity
-// record carries the RAW MANGLED name (e.g. ...low_latency8dispatch...), so the
-// caller matches the substring "dispatch"/"combine" (present in the mangled form)
-// rather than the demangled "low_latency::dispatch".
+// CONCURRENT_KERNEL records ordinary LL kernel launches without serializing
+// activity. The record carries the raw mangled name; the caller matches
+// "dispatch"/"combine" substrings.
 //
 // Build (host-only C++, links libcupti):
 //   g++ -O2 -fPIC -shared cupti_kernel_timer.cpp -o libcupti_kernel_timer.so \
@@ -57,10 +50,8 @@ void CUPTIAPI bufferCompleted(CUcontext, uint32_t, uint8_t* buffer, size_t, size
   CUpti_Activity* record = nullptr;
   std::lock_guard<std::mutex> lock(g_mutex);
   while (cuptiActivityGetNextRecord(buffer, validSize, &record) == CUPTI_SUCCESS) {
-    if (record->kind == CUPTI_ACTIVITY_KIND_KERNEL) {
-      // CUpti_ActivityKernel10 is the record layout for CUDA 13 CUPTI. start/end
-      // (GPU HW timestamps, ns) and name have been stable across versions.
-      auto* k = reinterpret_cast<CUpti_ActivityKernel10*>(record);
+    if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL) {
+      auto* k = reinterpret_cast<CUpti_ActivityKernel9*>(record);
       if (k->name) {
         auto& s = g_stats[k->name];
         s.total_ns += (k->end - k->start);
@@ -75,8 +66,7 @@ void CUPTIAPI bufferCompleted(CUcontext, uint32_t, uint8_t* buffer, size_t, size
 
 extern "C" {
 
-// Clear stats, register the buffer callbacks, and enable concurrent-kernel
-// activity recording. Call AFTER warmup (like ep_bench's KernelTimer::start()).
+// Clear stats, register callbacks, and enable kernel activity recording after warmup.
 int kt_start() {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -84,14 +74,14 @@ int kt_start() {
   }
   CUptiResult r = cuptiActivityRegisterCallbacks(bufferRequested, bufferCompleted);
   if (r != CUPTI_SUCCESS) return static_cast<int>(r);
-  r = cuptiActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL);
+  r = cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
   return static_cast<int>(r);
 }
 
 // Flush pending buffers and disable recording. Returns CUPTI result code (0=ok).
 int kt_stop() {
   cuptiActivityFlushAll(0);
-  CUptiResult r = cuptiActivityDisable(CUPTI_ACTIVITY_KIND_KERNEL);
+  CUptiResult r = cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
   return static_cast<int>(r);
 }
 

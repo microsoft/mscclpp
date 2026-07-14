@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 from .high_throughput import HighThroughputBackend
 from .low_latency import LowLatencyBackend
 from .types import (
@@ -34,7 +34,9 @@ __all__ = [
     "CommOverlapConfig",
     "BlockOverlapConfig",
     "CombineContext",
+    "CombineMode",
     "DispatchHandle",
+    "DispatchDataType",
     "DispatchLayout",
     "DispatchLayoutInfo",
     "DispatchOutput",
