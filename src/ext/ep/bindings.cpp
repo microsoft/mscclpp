@@ -76,8 +76,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("FLAT", mscclpp::ep::DispatchLayout::FLAT);
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, mscclpp::ep::MoEMode>(), nb::arg("comm"),
-           nb::arg("num_nvl_bytes"), nb::arg("num_rdma_bytes"), nb::arg("mode"))
+      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, mscclpp::ep::MoEMode, int>(), nb::arg("comm"),
+           nb::arg("num_nvl_bytes"), nb::arg("num_rdma_bytes"), nb::arg("mode"), nb::arg("num_qps_per_rank"))
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
       .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::getNumRdmaRanks)

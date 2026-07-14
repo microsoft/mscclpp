@@ -23,7 +23,8 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode);
+  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode,
+             int numQpsPerRank);
   ~MoERuntime() noexcept(false);
 
   bool isAvailable() const;
@@ -52,6 +53,7 @@ class MoERuntime {
   int numRanks_;
   int numRdmaRanks_;
   int numNvlRanks_;
+  int numQpsPerRank_ = 0;
   int deviceId_;
   int64_t numNvlBytes_;
   int64_t numRdmaBytes_;

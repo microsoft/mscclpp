@@ -49,7 +49,7 @@ class LowLatencyRuntime:
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
         self.num_qps_per_rank = num_qps_per_rank
-        self.cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode)
+        self.cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode, num_qps_per_rank)
 
     def is_available(self) -> bool:
         return self.cpp_runtime.is_available()
@@ -129,7 +129,7 @@ class LowLatencyBackend:
             num_nvl_bytes=0,
             num_rdma_bytes=num_rdma_bytes,
             mode=self.mode,
-            num_qps_per_rank=config.num_rdma_qps_per_rank,
+            num_qps_per_rank=self.num_local_experts,
         )
         # LL always uses the RDMA transport, but a single-node LL job is not
         # internode topology-wise. num_rdma_ranks > 1 iff world_size spans more

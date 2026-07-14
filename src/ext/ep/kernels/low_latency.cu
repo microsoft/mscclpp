@@ -299,7 +299,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
             if (laneId == 0) {
               const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
               const auto srcOff = portChannelOffsetOf(srcPtr, rdmaBufferPtr);
-              const int channelIdx = (dstExpertLocalIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+              const int channelIdx = (dstExpertLocalIdx % (numExperts / numRanks)) * numRanks + dstRank;
               portChannelHandles[channelIdx].put(dstOff, srcOff, numBytesPerMsg);
             }
             __syncwarp();
@@ -355,7 +355,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
 
     while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
     auto* counterPtr = stagedRecvCountBuffer + dstExpertLocalIdx * numRanks + rank;
-    const int channelIdx = (dstExpertLocalIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+    const int channelIdx = (dstExpertLocalIdx % (numExperts / numRanks)) * numRanks + dstRank;
     auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + channelIdx;
     publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
                               portChannelHandle, peerRdmaBases, ranksPerIpcDomain);
@@ -672,7 +672,7 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
           if (laneId == 0) {
             const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
             const auto srcOff = portChannelOffsetOf(static_cast<uint64_t>(stagedSendPtr), rdmaBufferPtr);
-            const int channelIdx = (localExpertIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+            const int channelIdx = (localExpertIdx % (numExperts / numRanks)) * numRanks + dstRank;
             portChannelHandles[channelIdx].put(dstOff, srcOff, hidden * sizeof(OutputType));
           }
           __syncwarp();
@@ -685,7 +685,7 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
     if (subWarpId == 1 and laneId == 0) {
       while (ld_acquire_global(atomicCleanFlag) == 0);
       auto* flagPtr = stagedRecvFlagBuffer + globalExpertIdx;
-      const int channelIdx = (localExpertIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+      const int channelIdx = (localExpertIdx % (numExperts / numRanks)) * numRanks + dstRank;
       auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + channelIdx;
       publishSingleWriterSignal(flagPtr, static_cast<int64_t>(1), rank, dstRank, rdmaBufferPtr, portChannelHandle,
                                 peerRdmaBases, ranksPerIpcDomain);

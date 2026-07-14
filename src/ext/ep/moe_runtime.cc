@@ -70,7 +70,8 @@ bool resolveFabricIpcSupported() {
 
 }  // namespace
 
-MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode)
+MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode,
+                       int numQpsPerRank)
     : rank_(communicator.bootstrap()->getRank()),
       numRanks_(communicator.bootstrap()->getNranks()),
       numNvlBytes_(numNvlBytes),
@@ -98,6 +99,8 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes,
   CUDA_CHECK(cudaMalloc(&workspace_, NUM_WORKSPACE_BYTES));
   CUDA_CHECK(cudaMemsetAsync(workspace_, 0, NUM_WORKSPACE_BYTES, commStream_));
   for (auto& ps : proxyServices_) ps->startProxy();
+  numQpsPerRank_ = numQpsPerRank;
+  EP_HOST_ASSERT(numQpsPerRank_ > 0);
   setup();
 }
 
@@ -174,7 +177,8 @@ void MoERuntime::setup() {
   const mscclpp::EndpointConfig ibConfig(ibTransport);
   connections[rank_].emplace_back(communicator_->connect(ipcConfig, rank_, kRdmaTag).get());
 
-  constexpr int kNumIbConnectionsPerRank = 12;
+  // NCCL-EP strategy: one IB QP (and one PortChannel) per local expert.
+  const int kNumIbConnectionsPerRank = numQpsPerRank_;
   for (int r = 0; r < numRanks_; ++r) {
     if (r == rank_) continue;
     std::vector<std::shared_future<mscclpp::Connection>> futures;
@@ -185,7 +189,7 @@ void MoERuntime::setup() {
   }
 
   std::unordered_map<int, std::vector<std::pair<int, mscclpp::SemaphoreId>>> semaphoreIds;
-  constexpr int kNumSemaphoresPerRank = NUM_PORT_CHANNELS_PER_RANK;
+  const int kNumSemaphoresPerRank = kNumIbConnectionsPerRank;
   for (int i = 0; i < kNumSemaphoresPerRank; ++i) {
     for (int r = 0; r < numRanks_; ++r) {
       auto& conns = connections[r];
@@ -273,6 +277,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(numQpsPerRank_ == numExperts / numRanks_);
   EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
@@ -322,6 +327,7 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(numQpsPerRank_ == numExperts / numRanks_);
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));

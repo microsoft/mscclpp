@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
   mscclpp::Communicator comm(bootstrap);
 
   const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::getLowLatencyRdmaSizeHint(T, H, W, E));
-  mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY);
+  mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY, E / W);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
