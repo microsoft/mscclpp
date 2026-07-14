@@ -261,10 +261,9 @@ can leave those fields as `None`.
 ```python
 @dataclass
 class QuantConfig:
-    dtype: Optional[torch.dtype] = None
+    format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
     global_scale: Optional[torch.Tensor] = None
-    block_size: Optional[int] = None
 
 
 class DispatchLayout(str, Enum):
@@ -473,17 +472,17 @@ combine to reduce the `K` expert results for each token back to `[T, H]`.
 ### `quant`
 
 `quant` contains activation quantization metadata for `input`. It should be
-`None` for BF16/FP16 input. The quantized tensor dtype is stored in
-`quant.dtype`.
+`None` for BF16/FP16 input. `quant.format` defines the tensor representation
+and scale layout.
 
 Examples:
 
-| Format | `input` | `quant.dtype` | `quant.block_scales` | `quant.global_scale` |
-|---|---|---|---|---|
-| BF16/FP16 | `[T, H]` | `None` | `None` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `torch.float8_e4m3fn` | `[T, H / block_size]`, often block size 128 | usually `None` |
-| NVFP4 | backend-defined packed/logical `[T, H]` | backend-defined | block scale tensor | optional global scale |
-| MXFP8 | backend-defined `[T, H]` | backend-defined | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
+| Format | `input` | `quant.block_scales` | `quant.global_scale` |
+|---|---|---|---|
+| BF16/FP16 | `[T, H]` | `None` | `None` |
+| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` | usually `None` |
+| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor | optional global scale |
+| MXFP8 | backend-defined `[T, H]` | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -504,7 +503,7 @@ output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
-matching dtype and scale tensor.
+matching format and scale tensor.
 
 `output_buffer` is required for LL because the MLP runner often owns or reuses
 workspace memory. `MoECommunicator` writes dispatch output into the provided
@@ -816,15 +815,16 @@ output = moe_comm.combine(expert_output, handle)
 Quantized path:
 
 ```python
+moe_comm = MoECommunicator(
+    ...,
+    quant=QuantConfig(format=DispatchDataType.FP8_E4M3),
+)
+
 recv, handle = moe_comm.dispatch(
-    input=x_fp8,
+    input=hidden_states,          # BF16 input, quantized during dispatch
     topk_ids=topk_ids,
     weights=topk_weights,
-    quant=QuantConfig(
-        dtype=torch.float8_e4m3fn,
-        block_scales=x_scales,
-        block_size=128,
-    ),
+    quant=None,
     output_buffer=recv_buffer,
 )
 

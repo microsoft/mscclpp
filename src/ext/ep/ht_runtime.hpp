@@ -26,9 +26,9 @@
 #include <string>
 #include <vector>
 
+#include "constants.cuh"
+#include "exception.cuh"
 #include "ht/config.hpp"
-#include "kernels/configs.cuh"
-#include "kernels/exception.cuh"
 
 namespace mscclpp {
 namespace ep {

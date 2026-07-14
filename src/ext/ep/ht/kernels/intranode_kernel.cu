@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 #include <limits>
 
-#include "../../kernels/configs.cuh"
-#include "../../kernels/exception.cuh"
-#include "../../kernels/launch.cuh"
-#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
+#include "constants.cuh"
+#include "device_helpers.cuh"
+#include "exception.cuh"
+#include "launch.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -1066,7 +1066,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
       if (lane_id == 0) {
         const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
         asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(mbar_a));
-        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+        fenceProxyAsyncSharedCta();
         const uint32_t cbytes = static_cast<uint32_t>(csize_int4 * static_cast<int>(sizeof(int4)));
         for (int j = 0; j < num_topk_ranks; ++j) {
           const uint8_t* src =
@@ -1099,7 +1099,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
         }
       }
       __syncwarp();
-      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+      fenceProxyAsyncSharedCta();
     };
 
     auto reduce_store = [&](int s, int c0, int csize_int4) {
