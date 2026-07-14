@@ -73,10 +73,8 @@ jobs:
   analyze-rocm:
     name: Analyze (ROCm)
     runs-on: 'ubuntu-latest'
-    # NOTE: No job-level container here. The ROCm image (especially rocm7.2) is
-    # too large to pull on ubuntu-latest runners (~14 GB free) because the job-level
-    # container: is pulled before any steps can free disk space. Instead we free disk
-    # space first, then run the build inside a docker container manually.
+    container:
+      image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.version }}
 
     permissions:
       actions: read
@@ -90,17 +88,6 @@ jobs:
         version: [ 'rocm6.2', 'rocm7.2' ]
 
     steps:
-    - name: Free Disk Space
-      run: |
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/.ghcup
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/share/swift
-        docker image prune -a -f
-        df -h
-
     - name: Checkout repository
       uses: actions/checkout@v4
 
@@ -115,38 +102,13 @@ jobs:
 
     - name: Dubious ownership exception
       run: |
-        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git config --global --add safe.directory /__w/mscclpp/mscclpp
 
     - name: Build
-      if: matrix.language == 'cpp'
       run: |
-        # Collect CodeQL environment variables to pass into the build container so
-        # the CodeQL tracer (stored under $RUNNER_TOOL_CACHE) can intercept compiler
-        # calls made by hipcc and record them in the CodeQL database.
-        CODEQL_ENV_ARGS=()
-        while IFS= read -r line; do
-          key="${line%%=*}"
-          CODEQL_ENV_ARGS+=("-e" "$key")
-        done < <(env | grep '^CODEQL_')
-
-        docker run --rm \
-          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
-          -v "$RUNNER_TEMP:$RUNNER_TEMP" \
-          -v "$RUNNER_TOOL_CACHE:$RUNNER_TOOL_CACHE" \
-          -w "$GITHUB_WORKSPACE" \
-          -e GITHUB_WORKSPACE \
-          -e RUNNER_TEMP \
-          -e RUNNER_TOOL_CACHE \
-          -e "PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:$PATH" \
-          -e LD_PRELOAD \
-          "${CODEQL_ENV_ARGS[@]}" \
-          ghcr.io/microsoft/mscclpp/mscclpp:base-dev-${{ matrix.version }} \
-          bash -c '
-            git config --global --add safe.directory "$GITHUB_WORKSPACE"
-            rm -rf build && mkdir build && cd build
-            CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_BUILD_TESTS=OFF ..
-            make -j4
-          '
+        rm -rf build && mkdir build && cd build
+        CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_BUILD_TESTS=OFF ..
+        make -j4
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
