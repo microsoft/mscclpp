@@ -192,7 +192,6 @@ def main():
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
         quant=dispatch_quant,

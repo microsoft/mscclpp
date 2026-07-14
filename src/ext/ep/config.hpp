@@ -16,12 +16,12 @@ namespace mscclpp {
 namespace ep {
 
 template <typename dtype_t>
-__host__ __device__ constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
+MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
 }
 
 template <typename dtype_t>
-__host__ __device__ constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
+MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
 
@@ -135,16 +135,12 @@ struct PayloadView {
   }
 };
 
-struct Buffer {
-  void* dispatchData_;
-  void* combineData_;
-};
-
 struct Layout {
   size_t totalBytes_;
-  Buffer buffers_[2];
+  void* dispatchRecvBuffer_;
+  void* combineRecvBuffer_;
 
-  Layout(void* rdmaBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const PayloadView<Fp8E4M3, float> fp8Payload64(hidden, numTopk, 64);
@@ -155,23 +151,18 @@ struct Layout {
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t bufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
-    totalBytes_ = 2 * bufferBytes;
+    const size_t recvBufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
+    totalBytes_ = 2 * recvBufferBytes;
 
-    if (rdmaBuffer != nullptr) {
-      auto* base = reinterpret_cast<uint8_t*>(rdmaBuffer);
-      for (int bufferIdx = 0; bufferIdx < 2; ++bufferIdx) {
-        auto* bufferBase = base + static_cast<size_t>(bufferIdx) * bufferBytes;
-        buffers_[bufferIdx] = {
-            .dispatchData_ = bufferBase,
-            .combineData_ = bufferBase,
-        };
-      }
+    if (symmetricBuffer != nullptr) {
+      auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
+      dispatchRecvBuffer_ = base;
+      combineRecvBuffer_ = base + recvBufferBytes;
     }
   }
 };
 
-inline size_t getRdmaSizeHint(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
   const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk).totalBytes_;
   return configAlign<size_t>(numBytes, NUM_BUFFER_ALIGNMENT_BYTES);
 }

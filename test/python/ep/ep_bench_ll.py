@@ -308,7 +308,6 @@ def main() -> None:
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
     import mscclpp.ep as ep
-    from mscclpp.ep._cpp import get_low_latency_rdma_size_hint
 
     ep_group = CommGroup(torch_group=group)
 
@@ -355,14 +354,12 @@ def main() -> None:
     disp_bytes = num_valid_selections * dispatch_bytes_per_token
     comb_bytes = num_valid_selections * hidden * 2  # BF16 (symmetric, per ep_bench)
 
-    num_rdma_bytes = get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts, num_topk)
     if rank == 0:
         print(
             f"[cfg] algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} top_k={num_topk} warmup={warmup} iters={iters} "
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} "
-            f"pacing=batched_steady_state "
-            f"num_rdma_bytes={num_rdma_bytes}",
+            f"pacing=batched_steady_state",
             flush=True,
         )
 
@@ -376,7 +373,6 @@ def main() -> None:
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
         quant=dispatch_quant,

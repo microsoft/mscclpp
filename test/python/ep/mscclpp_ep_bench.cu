@@ -251,18 +251,18 @@ int main(int argc, char** argv) {
   bootstrap->initialize(uid);
   mscclpp::Communicator comm(bootstrap);
 
-  const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::low_latency::getRdmaSizeHint(T, H, W, E, K));
-  mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY);
+  mscclpp::ep::MoERuntime rt(comm, T, H, E, K);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   if (rank == 0) {
+    const size_t symmetricBufferBytes = mscclpp::ep::low_latency::symmetricBufferSize(T, H, W, E, K);
     printf(
         "[cfg] algorithm=LOW_LATENCY num_ranks=%d tokens/rank=%d hidden=%d num_experts=%d "
-        "top_k=%d warmup=%d iters=%d dispatch_dtype=%s combine_mode=%s num_rdma_bytes=%lld is_internode=%d\n",
-        W, T, H, E, K, warmup, iters, args.dispatch_dtype.c_str(), args.combine_mode.c_str(), (long long)numRdmaBytes,
-        (int)rt.isInternodeAvailable());
+        "top_k=%d warmup=%d iters=%d dispatch_dtype=%s combine_mode=%s symmetric_buffer_bytes=%zu is_internode=%d\n",
+        W, T, H, E, K, warmup, iters, args.dispatch_dtype.c_str(), args.combine_mode.c_str(), symmetricBufferBytes,
+        static_cast<int>(rt.isInternodeAvailable()));
     fflush(stdout);
   }
 

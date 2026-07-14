@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, _cpp, get_low_latency_rdma_size_hint
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, MoERuntime
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -48,39 +48,21 @@ class LowLatencyRuntime:
     def __init__(
         self,
         comm: Any,
-        num_nvl_bytes: int = 0,
-        num_rdma_bytes: int = 0,
-        mode: MoEMode = MoEMode.LOW_LATENCY,
+        max_tokens_per_rank: int,
+        hidden: int,
+        num_experts: int,
+        num_topk: int,
     ) -> None:
-        if not isinstance(mode, MoEMode):
-            raise TypeError("mode must be a MoEMode")
-        if mode != MoEMode.LOW_LATENCY:
-            raise NotImplementedError("LowLatencyRuntime supports only MoEMode.LOW_LATENCY")
-        self.mode = mode
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
-        self.num_nvl_bytes = num_nvl_bytes
-        self.num_rdma_bytes = num_rdma_bytes
-        self.cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode)
+        self.cpp_runtime = MoERuntime(comm.communicator, max_tokens_per_rank, hidden, num_experts, num_topk)
 
     def is_available(self) -> bool:
         return self.cpp_runtime.is_available()
 
     def is_internode_available(self) -> bool:
         return self.cpp_runtime.is_internode_available()
-
-    def get_local_device_id(self) -> int:
-        return self.cpp_runtime.get_local_device_id()
-
-    def get_num_rdma_ranks(self) -> int:
-        return self.cpp_runtime.get_num_rdma_ranks()
-
-    def get_rdma_rank(self) -> int:
-        return self.cpp_runtime.get_rdma_rank()
-
-    def get_root_rdma_rank(self, global_: bool) -> int:
-        return self.cpp_runtime.get_root_rdma_rank(global_)
 
 
 class LowLatencyBackend:
@@ -129,9 +111,6 @@ class LowLatencyBackend:
             raise NotImplementedError("low-latency mode currently uses max_tokens_per_rank as recv capacity")
         self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
 
-        num_rdma_bytes = get_low_latency_rdma_size_hint(
-            self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts, self.topk
-        )
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
         self._dispatch_layout_range: Optional[torch.Tensor] = None
@@ -139,12 +118,12 @@ class LowLatencyBackend:
 
         self._runtime = LowLatencyRuntime(
             comm,
-            num_nvl_bytes=0,
-            num_rdma_bytes=num_rdma_bytes,
-            mode=self.mode,
+            max_tokens_per_rank=self.max_tokens_per_rank,
+            hidden=self.hidden_size,
+            num_experts=self.num_experts,
+            num_topk=self.topk,
         )
-        # Bootstrap automatically detects physical-node and GPU IPC-domain topology.
-        self._is_internode = self._runtime.get_num_rdma_ranks() > 1
+        self._is_internode = self._runtime.is_internode_available()
 
     def is_available(self) -> bool:
         return self._runtime.is_available()

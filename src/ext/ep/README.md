@@ -27,6 +27,8 @@ The optimized LL backend uses direct peer mappings:
 - Same-host peers use regular CUDA IPC mappings.
 - Cross-host peers use CUDA fabric handles when all ranks belong to one
   NVML-reported GPU fabric domain, such as GB200 NVL72 with `nvidia-imex`.
+- LL always allocates its symmetric buffer with CUDA physical memory
+  (`cuMemCreate`/`cuMemMap`); there is no `cudaMalloc` fallback.
 - `BaseMemoryChannel` handles are used only for signal/wait synchronization;
   LL payload data does not flow through `MemoryChannel` or `PortChannel`.
 - There is no CPU-proxy/IB fallback in the optimized LL backend. If the full
@@ -61,6 +63,7 @@ dst_rank)`.
 ### Known limitations
 
 - ROCm is not supported for the EP extension yet.
+- LL requires Hopper or newer and CUDA physical-memory allocation support.
 - LL currently supports BF16 input, optional FP8 E4M3 dispatch output, and
   `DispatchLayout.EXPERT_MAJOR`.
 - HT currently supports BF16 input and `DispatchLayout.FLAT`; quantized HT
@@ -135,10 +138,9 @@ Runtime prerequisites on GB200:
 - NVML must report a completed fabric state with a common cluster UUID and
   clique ID for all participating ranks. Bootstrap uses this information to
   form the IPC domain automatically.
-- The LL runtime verifies CUDA fabric-handle allocation and NVLS-backed
-  semaphore-token support. If either capability is unavailable on any rank,
-  all ranks consistently fall back to host-local IPC and LL reports unavailable
-  rather than attempting an IB fallback.
+- The symmetric allocation requests POSIX-FD handles and fabric handles when
+  the device exposes them. If bootstrap does not detect one IPC domain spanning
+  every rank, LL reports unavailable rather than attempting an IB fallback.
 - RT priority is required by NCCL/glibc. On each node:
 
   ```bash
@@ -300,12 +302,10 @@ src/ext/ep/
 │       ├── internode.cu
 │       └── internode_ncclep.cuh
 ├── include/                    — shared EP headers and quantization helpers
-├── low_latency/
-│   ├── dispatch.cu             — optimized LL dispatch
-│   ├── combine.cu              — optimized LL combine
-│   └── config.cuh              — LL launch/workspace configuration
-└── legacy/
-    └── low_latency.cu          — reference-only previous LL implementation
+└── low_latency/
+    ├── dispatch.cu             — optimized LL dispatch
+    ├── combine.cu              — optimized LL combine
+    └── config.cuh              — LL launch/workspace configuration
 
 python/mscclpp/ep/
 ├── __init__.py                 — public exports
@@ -493,8 +493,7 @@ HT multirank test benchmark env knobs:
 | LL | `MoECommunicator(mode=MoEMode.LOW_LATENCY)` / `MoERuntime` | `moe_runtime.cc` | `low_latency/{dispatch,combine}.cu` | `EXPERT_MAJOR` |
 | HT | `MoECommunicator(mode=MoEMode.HIGH_THROUGHPUT)` / `ExpertParallelRuntime` | `ht_runtime.cc` | `ht/kernels/*` | `FLAT` |
 
-Shared internal headers live in `include/`. The previous LL implementation is
-kept in `legacy/low_latency.cu` for reference and is not compiled.
+Shared internal headers live in `include/`.
 
 The LL runtime uses one `low_latency_num_blocks` setting. Its default is 130:
 dispatch launches 128 workers plus scheduler/notify blocks, while combine
@@ -504,6 +503,11 @@ launches 128 workers. `RANK_LOCAL_REDUCE` is the default combine mode;
 LL accepts BF16 input and can produce BF16 or FP8 E4M3 dispatch output. FP8
 uses one FP32 scale per 128 hidden elements. Expert output passed to combine is
 always BF16.
+
+The runtime owns two fixed communication receive regions inside one symmetric
+allocation: dispatch always writes `dispatchRecvBuffer`, while combine reads
+that region and writes `combineRecvBuffer`. Buffer sizing and allocation remain
+entirely inside C++; Python passes only the static workload dimensions.
 
 ### LL dispatch payload
 
@@ -540,10 +544,10 @@ CUDA Graph dispatch+combine E2E:
 
 | Dispatch format | Combine mode | E2E |
 |---|---|---:|
-| BF16 | rank-local reduce | 81.5 µs |
-| BF16 | direct send | 101.3 µs |
-| FP8 E4M3 | rank-local reduce | 71.8 µs |
-| FP8 E4M3 | direct send | 94.5 µs |
+| BF16 | rank-local reduce | 81.2 µs |
+| BF16 | direct send | 100.2 µs |
+| FP8 E4M3 | rank-local reduce | 73.1 µs |
+| FP8 E4M3 | direct send | 93.5 µs |
 
 Pure-C++ paired benchmark (`dispatch → synchronize → combine → synchronize`):
 

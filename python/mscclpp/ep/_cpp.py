@@ -16,12 +16,5 @@ DispatchLayout = _cpp.DispatchLayout
 MoEMode = _cpp.MoEMode
 CombineMode = _cpp.CombineMode
 DispatchDataType = _cpp.DispatchDataType
+MoERuntime = _cpp.MoERuntime
 Config = getattr(_cpp, "Config", None)
-
-
-def get_low_latency_rdma_size_hint(
-    num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int, num_topk: int
-) -> int:
-    return _cpp.get_low_latency_rdma_size_hint(
-        num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts, num_topk
-    )

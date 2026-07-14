@@ -20,16 +20,11 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode);
+  MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts, int numTopk);
   ~MoERuntime() noexcept(false);
 
   bool isAvailable() const;
   bool isInternodeAvailable() const;
-  int getNumRdmaRanks() const;
-  int getRdmaRank() const;
-  int getRootRdmaRank(bool global) const;
-  int getLocalDeviceId() const;
-  std::string getLocalIpcHandle() const;
 
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
                 const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden,
@@ -42,28 +37,22 @@ class MoERuntime {
                cudaStream_t stream);
 
  private:
-  int lowLatencyBufferIdx_ = 0;
   int rank_;
-  int rdmaRank_;
-  int nvlRank_;
   int numRanks_;
-  int numRdmaRanks_;
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
   int deviceId_;
-  int64_t numNvlBytes_;
-  int64_t numRdmaBytes_;
-  MoEMode mode_;
+  int64_t symmetricBufferBytes_;
   bool available_ = false;
-  void* rdmaBufferPtr_ = nullptr;
+  void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   low_latency::CommContext commContext_{};
 
   mscclpp::Communicator* communicator_ = nullptr;
 
-  std::vector<void*> peerRdmaBases_;
-  std::vector<mscclpp::RegisteredMemory> peerRdmaMemories_;
-  void** peerRdmaBasesGpu_ = nullptr;
+  std::vector<void*> peerMappedBufferBases_;
+  std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
+  void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
 

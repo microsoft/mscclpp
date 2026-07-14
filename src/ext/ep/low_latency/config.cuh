@@ -32,6 +32,27 @@ static_assert(alignof(mscclpp::DeviceSemaphore) <= alignof(int));
 static_assert(sizeof(mscclpp::DeviceSyncer) % sizeof(int) == 0);
 static_assert(alignof(mscclpp::DeviceSyncer) <= alignof(int));
 
+struct TransportView {
+  void* symmetricBufferBase_;
+  void* const* peerMappedBufferBases_;
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
+  int rank_;
+
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
+      : symmetricBufferBase_(comm.symmetricBufferBase_),
+        peerMappedBufferBases_(comm.peerMappedBufferBases_),
+        baseMemoryChannels_(comm.baseMemoryChannels_),
+        rank_(comm.rank_) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
+    if (isSelf(peerRank)) return localBuffer;
+    const auto offset = reinterpret_cast<uint8_t*>(localBuffer) - reinterpret_cast<uint8_t*>(symmetricBufferBase_);
+    return reinterpret_cast<uint8_t*>(peerMappedBufferBases_[peerRank]) + offset;
+  }
+};
+
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
   return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), 128);
 }
@@ -83,45 +104,45 @@ static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
-  uint32_t* metadataEpoch_;
-  int* rankPayloadSlots_;
-  int* rankPayloadCompletions_;
-  mscclpp::DeviceSemaphore* localPayloadReady_;
-  int* recvExpertCopiedCounts_;
-  uint32_t* rankReadyEpochs_;
-  RecvTask* recvTasks_;
-  uint32_t* tasksAssignedEpoch_;
-  int* nRecvTasks_;
+  uint32_t* dispatchEpoch_;
+  int* dispatchRankPayloadSlots_;
+  int* dispatchRankPayloadCompletions_;
+  mscclpp::DeviceSemaphore* dispatchLocalPayloadReady_;
+  int* dispatchExpertCopiedCounts_;
+  uint32_t* dispatchRankReadyEpochs_;
+  RecvTask* dispatchRecvTasks_;
+  uint32_t* dispatchTasksReadyEpoch_;
+  int* dispatchNumRecvTasks_;
   mscclpp::DeviceSyncer* combineSyncer_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
-    metadataEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
-    rankPayloadSlots_ = cursor;
+    dispatchEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
+    dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
-    rankPayloadCompletions_ = cursor;
+    dispatchRankPayloadCompletions_ = cursor;
     cursor += nRanks;
-    localPayloadReady_ = reinterpret_cast<mscclpp::DeviceSemaphore*>(cursor++);
-    recvExpertCopiedCounts_ = cursor;
+    dispatchLocalPayloadReady_ = reinterpret_cast<mscclpp::DeviceSemaphore*>(cursor++);
+    dispatchExpertCopiedCounts_ = cursor;
     cursor += nExperts;
-    rankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
+    dispatchRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
-    recvTasks_ = reinterpret_cast<RecvTask*>(cursor);
+    dispatchRecvTasks_ = reinterpret_cast<RecvTask*>(cursor);
     cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
-    tasksAssignedEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
-    nRecvTasks_ = cursor++;
+    dispatchTasksReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
+    dispatchNumRecvTasks_ = cursor++;
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts) {
-    return sizeof(uint32_t) +                                                            // metadataEpoch_
-           static_cast<size_t>(nRanks) * sizeof(int) +                                   // rankPayloadSlots_
-           static_cast<size_t>(nRanks) * sizeof(int) +                                   // rankPayloadCompletions_
-           sizeof(mscclpp::DeviceSemaphore) +                                            // localPayloadReady_
-           static_cast<size_t>(nExperts) * sizeof(int) +                                 // recvExpertCopiedCounts_
-           static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // rankReadyEpochs_
-           static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // tasksAssignedEpoch_
-           sizeof(int) +                                                                 // nRecvTasks_
+    return sizeof(uint32_t) +                                // dispatchEpoch_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
+           sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
+           static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
+           static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
+           sizeof(int) +                                                                 // dispatchNumRecvTasks_
            sizeof(mscclpp::DeviceSyncer);                                                // combineSyncer_
   }
 };

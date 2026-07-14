@@ -63,10 +63,6 @@ std::string bytesToString(nb::handle h) {
 NB_MODULE(mscclpp_ep_cpp, m) {
   m.doc() = "MSCCL++ Expert-Parallel (MoE dispatch/combine) extension";
 
-  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::low_latency::getRdmaSizeHint,
-        nb::arg("num_max_dispatch_tokens_per_rank"), nb::arg("hidden"), nb::arg("num_ranks"), nb::arg("num_experts"),
-        nb::arg("num_topk"));
-
   nb::module_::import_("mscclpp._mscclpp");
 
   nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
@@ -86,16 +82,10 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("MXFP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3);
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, mscclpp::ep::MoEMode>(), nb::arg("comm"),
-           nb::arg("num_nvl_bytes"), nb::arg("num_rdma_bytes"), nb::arg("mode"))
+      .def(nb::init<mscclpp::Communicator&, int, int, int, int>(), nb::arg("comm"), nb::arg("max_tokens_per_rank"),
+           nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"))
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
-      .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::getNumRdmaRanks)
-      .def("get_rdma_rank", &mscclpp::ep::MoERuntime::getRdmaRank)
-      .def("get_root_rdma_rank", &mscclpp::ep::MoERuntime::getRootRdmaRank)
-      .def("get_local_device_id", &mscclpp::ep::MoERuntime::getLocalDeviceId)
-      .def("get_local_ipc_handle",
-           [](const mscclpp::ep::MoERuntime& self) { return stringToBytes(self.getLocalIpcHandle()); })
       .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,

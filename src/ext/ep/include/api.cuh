@@ -232,12 +232,12 @@ struct Workload {
 
 /// Persistent communication resources shared by low-latency operations.
 struct CommContext {
-  /// Base address of the locally-registered RDMA buffer.
-  void* rdmaBufferBase_;
+  /// Base address of the local symmetric communication buffer.
+  void* symmetricBufferBase_;
   /// Base memory channel handles used only for signal/wait synchronization.
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
-  /// Peer-mapped base addresses.
-  void* const* peerBases_;
+  /// Directly mapped symmetric-buffer bases for all participating peers.
+  void* const* peerMappedBufferBases_;
   /// Maximum shared memory available to one block after opt-in.
   int maxSharedMemoryPerBlock_;
   /// Number of streaming multiprocessors on the device.
