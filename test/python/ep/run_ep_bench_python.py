@@ -48,7 +48,13 @@ Launch environment
 ------------------
 NCCL-EP JIT-compiles its LL kernels with ``nvcc`` at first use and dynamically links
 ``libnccl_ep.so`` / ``libnccl.so``, which must match NCCL major/minor. mscclpp's LL
-RDMA setup needs the active HCA list. A working single-node 4-GPU launch::
+runtime supports both CUDA-IPC (NVLink) and RDMA/IB transports. When every peer is
+reachable over CUDA IPC -- i.e. on the same node or within the same NVLink/MNNVL
+domain -- the LL path runs entirely over CUDA IPC and derives its NVLink/IPC domain
+from the bootstrap (ranks-per-node / ranks-per-IPC-domain); in that case NO HCA list
+(``MSCCLPP_HCA_DEVICES``) or fabric-IPC env is required for the mscclpp backend.
+Cross-domain peers use the RDMA/IB path, which does need the active HCA list. A
+working single-node 4-GPU (CUDA-IPC) launch::
 
     NCCL_BUILD=/opt/microsoft/mrc/ep/nccl/build
     mpirun -np 4 --bind-to none \
@@ -57,10 +63,15 @@ RDMA setup needs the active HCA list. A working single-node 4-GPU launch::
         -x LD_PRELOAD=$NCCL_BUILD/lib/libnccl.so.2.30.7 \
         -x NCCL_EP_JIT_SOURCE_DIR=/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep \
         -x NCCL_EP_JIT_BUILD_INCLUDE_DIR=$NCCL_BUILD/include \
-        -x MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3 \
-        -x MSCCLPP_EP_FABRIC_IPC=1 -x MSCCLPP_EP_LOCAL_WORLD_SIZE=4 \
         -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
         python run_ep_bench_python.py --backend both -e 128
+
+Multi-node (same NVLink/MNNVL fabric): launch with HPCX Open MPI 4 (rebuild mpi4py
+against it) and ``-x LD_PRELOAD=<hpcx>/ompi/lib/libmpi.so.40:<in-tree libnccl.so>``,
+set ``-x NCCL_MNNVL_ENABLE=1`` so NCCL-EP uses the cross-node NVLink clique, and
+pass a hostfile with ``--map-by ppr:<gpus>:node``. Within a shared NVLink/MNNVL
+domain the mscclpp backend needs no extra transport env (CUDA-IPC path); for peers
+outside a shared IPC domain, provide ``MSCCLPP_HCA_DEVICES`` for the RDMA/IB path.
 
 ``LD_PRELOAD`` of the in-tree ``libnccl.so`` is required whenever the environment's
 default ``libnccl`` is older than the one ``libnccl_ep.so`` was built against.
@@ -168,14 +179,13 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
 def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     from mscclpp import CommGroup
     import mscclpp.ep as ep
-    from mscclpp.ep._cpp import get_low_latency_rdma_size_hint
 
     x, topk_idx, topk_weights, _ = inputs
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
 
-    num_rdma_bytes = get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
+    num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
         print(
             f"[cfg] backend=mscclpp algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
