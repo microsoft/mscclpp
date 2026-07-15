@@ -317,9 +317,9 @@ test/python/ep/
 ├── test_intranode_multirank.py        — intranode HT dispatch+combine
 ├── test_internode_multirank.py        — internode HT dispatch+combine
 ├── test_low_latency_multirank.py      — LL correctness + CUDA Graph
-├── ep_bench_ll.py                     — Python NCCL-style LL benchmark
 ├── mscclpp_ep_bench.cu                — pure-C++ NCCL-style LL benchmark
-└── run_ep_bench.py                    — unified MSCCL++ / NCCL-EP driver
+├── ep_bench_unified.py               — in-process MSCCL++ vs NCCL-EP Python bench
+└── run_ep_bench.py                    — unified MSCCL++-cpp / NCCL-EP driver
 ```
 
 ## Running the tests
@@ -467,7 +467,8 @@ python3 test/python/ep/run_ep_bench.py \
     --dispatch-dtype fp8_e4m3 --combine-mode direct_send
 ```
 
-`ep_bench_ll.py` provides the high-level Python equivalent. The existing
+`ep_bench_unified.py` provides the high-level Python equivalent (drives both the
+MSCCL++ and NCCL-EP Python APIs in-process). The existing
 multirank HT tests also expose their older env-controlled benchmark pass.
 
 HT multirank test benchmark env knobs:

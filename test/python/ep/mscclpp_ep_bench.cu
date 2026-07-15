@@ -403,7 +403,7 @@ int main(int argc, char** argv) {
   }
   Stat d = stats(disp_us), c = stats(comb_us), tt = stats(tot_us);
 
-  // --- Cross-rank reduction (MPI), mirroring ep_bench / ep_bench_ll. ---
+  // --- Cross-rank reduction (MPI), mirroring ep_bench. ---
   auto reduce3 = [&](double avg, double mn, double mx, double& g_avg, double& g_min, double& g_max) {
     MPI_Reduce(&avg, &g_avg, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&mn, &g_min, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);

@@ -146,7 +146,7 @@ def _mpi_stats(comm, avg: float, mn: float, mx: float, num_ranks: int):
 
 # ----------------------------------------------------------------------------
 # Routing inputs — shared by both backends so the comparison is apples-to-apples.
-# Mirrors ep_bench_ll.py's setup (BF16 tokens + top-k routing).
+# BF16 tokens + top-k routing setup.
 # ----------------------------------------------------------------------------
 def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
     torch.manual_seed(seed + rank)
