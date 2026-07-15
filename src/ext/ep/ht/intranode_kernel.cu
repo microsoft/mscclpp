@@ -754,6 +754,7 @@ __global__ void __launch_bounds__(kNumThreads, 1)
     const auto send_lane_id = send_thread_id % 32;
     const auto send_rank_id = thread_id / num_threads_per_rank;
     const auto send_warp_id_in_rank = send_thread_id % num_threads_per_rank / 32;
+    if (send_rank_id >= kNumRanks) return;
 
     // Calculate pointers by the specific layout
     auto ptr = reinterpret_cast<void*>(reinterpret_cast<int8_t*>(buffer_ptrs[send_rank_id]));
@@ -1012,14 +1013,23 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 #ifndef EP_ICMB_TMA_WARPS
 #define EP_ICMB_TMA_WARPS 16  // token-parallel warps per block
 #endif
+#ifndef EP_ICMB_TMA_WARPS_WIDE
+#define EP_ICMB_TMA_WARPS_WIDE 14  // low block count: more token-parallelism
+#endif
+#ifndef EP_ICMB_TMA_WARPS_NARROW
+#define EP_ICMB_TMA_WARPS_NARROW 12  // high block count: less scheduling overhead
+#endif
+#ifndef EP_ICMB_TMA_WARPS_MAX_BLOCKS
+#define EP_ICMB_TMA_WARPS_MAX_BLOCKS 24
+#endif
 
-template <typename dtype_t, int kNumRanks, int kWarps>
+template <typename dtype_t, int kNumRanks, int kMaxContrib, int kWarps>
 __global__ void __launch_bounds__(kWarps * 32, 1)
     combine_intranode_gather_tma(int4* combined_x, float* combined_topk_weights, const int* send_head,
                                  int num_combined_tokens, int hidden, int num_topk, int num_ranks,
                                  void** recv_pool_ptrs, const int* ep_combine_recv_idx,
                                  int64_t recv_pool_header_bytes) {
-  constexpr int kMaxContrib = kNumRanks;
+  static_assert(kMaxContrib <= kNumRanks);
   constexpr int kChunkInt4 = EP_ICMB_TMA_CHUNK_INT4;
   constexpr int kStages = EP_ICMB_TMA_STAGES;
   constexpr int kChunkBytes = kChunkInt4 * static_cast<int>(sizeof(int4));
@@ -1166,14 +1176,14 @@ bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_wei
   constexpr int kStages = EP_ICMB_TMA_STAGES;
   constexpr int kChunkInt4 = EP_ICMB_TMA_CHUNK_INT4;
   const int num_blocks = std::max(1, combine_sms);
+  const bool use_wide_kernel = num_blocks <= EP_ICMB_TMA_WARPS_MAX_BLOCKS;
 
-  // SMEM/block = kWarps*kStages*kMaxContrib(=ranks)*kChunkBytes + mbars. kChunkBytes=1KB,
-  // kStages=2. Keep it under the GB200 ~227KB opt-in cap: 16 warps for <=4 ranks (128KB),
-  // 12 warps for 8 ranks (192KB).
-#define COMBINE_INTRANODE_TMA_LAUNCH(ranks, WARPS)                                                                   \
+  // Rank discovery still scans every GPU rank. Staging capacity only needs to
+  // cover distinct contributors, which cannot exceed top-k.
+#define COMBINE_INTRANODE_TMA_LAUNCH(ranks, MAX_CONTRIB, WARPS)                                                      \
   {                                                                                                                  \
-    auto tma_func = combine_intranode_gather_tma<nv_bfloat16, ranks, WARPS>;                                         \
-    const size_t tma_smem = static_cast<size_t>(WARPS) * kStages * (ranks) * kChunkInt4 * sizeof(int4) +             \
+    auto tma_func = combine_intranode_gather_tma<nv_bfloat16, ranks, MAX_CONTRIB, WARPS>;                            \
+    const size_t tma_smem = static_cast<size_t>(WARPS) * kStages * (MAX_CONTRIB) * kChunkInt4 * sizeof(int4) +       \
                             static_cast<size_t>(WARPS) * kStages * sizeof(uint64_t);                                 \
     CUDA_CHECK(                                                                                                      \
         cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(tma_smem)));    \
@@ -1181,16 +1191,31 @@ bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_wei
         static_cast<unsigned>(num_blocks), static_cast<unsigned>((WARPS) * 32), tma_smem, stream, nullptr, 0};       \
     LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights, send_head, num_tokens, \
                   hidden, num_topk, num_ranks, recv_pool_ptrs, ep_combine_recv_idx, recv_pool_header_bytes);         \
-  }                                                                                                                  \
-  break
+  }
 
   switch (num_ranks) {
     case 2:
-      COMBINE_INTRANODE_TMA_LAUNCH(2, EP_ICMB_TMA_WARPS);
+      COMBINE_INTRANODE_TMA_LAUNCH(2, 2, EP_ICMB_TMA_WARPS);
+      break;
     case 4:
-      COMBINE_INTRANODE_TMA_LAUNCH(4, EP_ICMB_TMA_WARPS);
+      COMBINE_INTRANODE_TMA_LAUNCH(4, 4, EP_ICMB_TMA_WARPS);
+      break;
     case 8:
-      COMBINE_INTRANODE_TMA_LAUNCH(8, 12);
+      if (use_wide_kernel)
+        COMBINE_INTRANODE_TMA_LAUNCH(8, 8, EP_ICMB_TMA_WARPS_WIDE)
+      else
+        COMBINE_INTRANODE_TMA_LAUNCH(8, 8, EP_ICMB_TMA_WARPS_NARROW)
+      break;
+    case 16:
+      if (num_topk <= 8) {
+        if (use_wide_kernel)
+          COMBINE_INTRANODE_TMA_LAUNCH(16, 8, EP_ICMB_TMA_WARPS_WIDE)
+        else
+          COMBINE_INTRANODE_TMA_LAUNCH(16, 8, EP_ICMB_TMA_WARPS_NARROW)
+      } else {
+        COMBINE_INTRANODE_TMA_LAUNCH(16, 16, 7);
+      }
+      break;
     default:
       EP_HOST_ASSERT(false and "Unsupported ranks");
   }
