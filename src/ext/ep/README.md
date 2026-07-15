@@ -312,9 +312,6 @@ mpirun -np "$NPROC" --bind-to none \
     -x LD_PRELOAD="$PRELOAD_NCCL" \
     -x NCCL_EP_JIT_SOURCE_DIR="$NCCL_SRC" \
     -x NCCL_EP_JIT_BUILD_INCLUDE_DIR="$NCCL_BUILD/include" \
-    -x MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3 \
-    -x MSCCLPP_EP_FABRIC_IPC=1 \
-    -x MSCCLPP_EP_LOCAL_WORLD_SIZE="$NPROC" \
     -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
     python test/python/ep/run_ep_bench_python.py \
         --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
