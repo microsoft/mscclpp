@@ -35,7 +35,7 @@ struct Config {
 
   size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
     EP_HOST_ASSERT(hidden_bytes > 0);
-    EP_HOST_ASSERT(num_ranks == 2 or num_ranks == 4 or num_ranks == 8);
+    EP_HOST_ASSERT(num_ranks == 2 or num_ranks == 4 or num_ranks == 8 or num_ranks == 16);
 
     const size_t ranks = static_cast<size_t>(num_ranks);
     const size_t recv_tokens = static_cast<size_t>(num_max_nvl_chunked_recv_tokens);

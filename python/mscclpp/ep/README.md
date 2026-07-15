@@ -152,7 +152,7 @@ specialized advanced path.
 The active implementation supports `mode=MoEMode.LOW_LATENCY` and
 `mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
 string. LL uses an expert-major output layout. HT uses a flat output layout and
-supports only 2, 4, or 8 ranks within one detected GPU IPC/NVL fabric domain;
+supports 2, 4, 8, or 16 ranks within one detected GPU IPC/NVL fabric domain;
 that domain may span multiple hosts.
 
 ```python

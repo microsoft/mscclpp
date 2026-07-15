@@ -13,7 +13,7 @@ It builds two backends:
 | Feature | Status |
 |---|---|
 | LL dispatch/combine | Validated on Hopper and newer GPUs |
-| HT dispatch/combine | Supports 2, 4, or 8 ranks in one GPU IPC/NVL fabric domain |
+| HT dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
 | HT RDMA/IB fallback | Not supported |
 | Python frontend | `mscclpp.ep.MoECommunicator` selects LL or HT with `MoEMode` |
 | ROCm | Not supported |
