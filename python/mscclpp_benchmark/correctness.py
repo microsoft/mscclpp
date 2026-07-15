@@ -62,7 +62,6 @@ def check_correctness(
     local_total = 0
     for iteration in range(niter):
         _fill_case_for_correctness(case, comm.rank, iteration)
-        comm.comm_group.barrier()
         ret = comm.run(case, config)
         cp.cuda.runtime.deviceSynchronize()
         comm.comm_group.barrier()

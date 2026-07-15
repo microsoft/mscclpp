@@ -94,10 +94,9 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 namespace {
 auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
-// TODO(binyli): Need to add NVL domain check.
-auto useIB = [](int rank1, int rank2, int nranksPerNode) {
-  bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
-  return hasIBDevices() && !inSameNode;
+auto useIB = [](int rank1, int rank2, int nranksPerIpcDomain) {
+  bool inSameIpcDomain = rank1 / nranksPerIpcDomain == rank2 / nranksPerIpcDomain;
+  return hasIBDevices() && !inSameIpcDomain;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -138,6 +137,7 @@ struct ExecutionContext {
 
 struct Executor::Impl {
   int nranksPerNode;
+  int nranksPerIpcDomain;
   int nranks;
   std::shared_ptr<Communicator> comm;
   const size_t defaultScratchBufferSize = (1 << 27);
@@ -148,6 +148,7 @@ struct Executor::Impl {
   Impl(std::shared_ptr<Communicator> comm, std::shared_ptr<char> defaultScratchBuffer = nullptr)
       : comm(comm), defaultScratchBuffer(defaultScratchBuffer) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
+    this->nranksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
     this->proxyService->startProxy(true);
@@ -217,7 +218,7 @@ struct Executor::Impl {
       if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
       } else if (type == ChannelType::PORT) {
-        if (useIB(rank, info.accessRank, this->nranksPerNode)) {
+        if (useIB(rank, info.accessRank, this->nranksPerIpcDomain)) {
           flags |= IBs[rank % this->nranksPerNode];
         } else
           flags |= Transport::CudaIpc;
@@ -275,7 +276,7 @@ struct Executor::Impl {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
-          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerNode)
+          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerIpcDomain)
                                     ? ibTransport
                                     : Transport::CudaIpc;
           connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));
@@ -284,7 +285,7 @@ struct Executor::Impl {
       channelInfos = plan.impl_->getUnpairedChannelInfos(nranks, channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
-          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerNode)
+          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerIpcDomain)
                                     ? ibTransport
                                     : Transport::CudaIpc;
           connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));

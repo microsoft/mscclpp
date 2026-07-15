@@ -59,7 +59,6 @@ class OfflineTuner:
                     if not self._check_correctness(self.comm, case, config):
                         self.comm.reset(config)
                         continue
-                    self.comm.reset(config)
                     time_us = self._measure(
                         self.comm,
                         case,

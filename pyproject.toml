@@ -21,10 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda11 = [
-    "cupy-cuda11x",
-    "cuda-bindings>=11.8,<12",
-]
 cuda12 = [
     "cupy-cuda12x",
     "cuda-bindings>=12,<13",
@@ -36,6 +32,10 @@ cuda13 = [
 rocm6 = [
     "cupy",
     "hip-python>=6,<7",
+]
+rocm7 = [
+    "cupy",
+    "hip-python>=7,<8",
 ]
 benchmark = [
     "mpi4py",
