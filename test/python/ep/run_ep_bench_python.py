@@ -620,14 +620,24 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
         if cupti is not None:
             print("\n--- Kernel-only performance (in-process CUPTI Activity API) ---")
             if kernel_ok:
+                # Report BOTH min and avg for dispatch and combine. The LL dispatch
+                # kernel ends in a cross-rank recv spin-wait, so its avg/max carry
+                # wait skew on lagging ranks; the cross-rank MIN is the representative
+                # kernel floor. Combine has little recv-spin, so its min ~ avg.
                 print(
-                    f"Dispatch:    min={gk_d_min:.2f} us (representative)  "
-                    f"[avg={gk_d_avg:.2f}, max={gk_d_max:.2f} us -- recv-spin skew on lagging ranks]"
+                    f"Dispatch:    avg={gk_d_avg:.2f} us, min={gk_d_min:.2f} us (representative), "
+                    f"max={gk_d_max:.2f} us [avg/max carry recv-spin skew on lagging ranks]"
                 )
-                print(f"                  throughput @min: {(disp_bytes / 1e9) / (gk_d_min * 1e-6):.2f} GB/s")
+                print(
+                    f"                  throughput: avg={(disp_bytes / 1e9) / (gk_d_avg * 1e-6):.2f} GB/s, "
+                    f"@min={(disp_bytes / 1e9) / (gk_d_min * 1e-6):.2f} GB/s"
+                )
                 print(f"Combine:     avg={gk_c_avg:.2f} us, min={gk_c_min:.2f} us, max={gk_c_max:.2f} us")
                 print(f"                  throughput: avg={(comb_bytes / 1e9) / (gk_c_avg * 1e-6):.2f} GB/s")
-                print(f"Total (D+C): {gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)")
+                print(
+                    f"Total (D+C): avg={gk_d_avg + gk_c_avg:.2f} us (dispatch avg + combine avg), "
+                    f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
+                )
             else:
                 print("  NOTE: in-process CUPTI captured 0 LL kernels (collector unavailable).")
 
