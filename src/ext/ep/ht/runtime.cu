@@ -4,10 +4,8 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// Intranode runtime helpers. Only the NVLink barrier launcher is ported here
-// (see DeepEP `csrc/kernels/runtime.cu::intranode::barrier`). The
-// internode/NVSHMEM init helpers are deliberately omitted; the MSCCL++ port
-// uses `mscclpp::Bootstrap`/`ProxyService` instead of NVSHMEM.
+// HT runtime helpers. This file contains the device barrier launcher
+// used to coordinate direct peer access to the symmetric HT buffers.
 
 #include "constants.cuh"
 #include "device_helpers.cuh"
