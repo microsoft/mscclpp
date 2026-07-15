@@ -34,7 +34,8 @@ MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& commun
   EP_HOST_ASSERT(numNvlRanks_ > 0);
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
-  if ((numRanks_ != 2 and numRanks_ != 4 and numRanks_ != 8) or numRanksPerIpcDomain_ < numRanks_) return;
+  if ((numRanks_ != 2 and numRanks_ != 4 and numRanks_ != 8 and numRanks_ != 16) or numRanksPerIpcDomain_ < numRanks_)
+    return;
 
   ringBufferBytes_ = config_.get_nvl_buffer_size_hint(static_cast<size_t>(maxHiddenBytes_), numRanks_);
   EP_HOST_ASSERT(ringBufferBytes_ <= static_cast<size_t>(std::numeric_limits<int>::max()));
