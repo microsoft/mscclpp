@@ -1,307 +1,124 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A torch-free nanobind extension for MoE `dispatch` / `combine` primitives in
-MSCCL++. The module builds two active backends:
+The EP extension is a torch-free nanobind module for MoE dispatch and combine.
+It builds two backends:
 
-- **Low-latency (LL)**: `MoERuntime` / `MoECommunicator(mode=LOW_LATENCY)`,
-  backed by `low_latency/dispatch.cu` and `low_latency/combine.cu`.
-- **High-throughput (HT)**: `ExpertParallelRuntime` /
-  `MoECommunicator(mode=HIGH_THROUGHPUT)`, backed by `ht_runtime.cc` and
-  `ht/kernels/*`.
+- **Low latency (LL)**: `MoERuntime`, backed by
+  `low_latency/{dispatch,combine}.cu`.
+- **High throughput (HT)**: `ExpertParallelRuntime`, backed by
+  `ht_runtime.cc` and the CUDA sources under `ht/`.
 
 ## Status
 
-| Feature                          | Status |
-|----------------------------------|--------|
-| `mscclpp_ep_cpp` module          | ✅ builds LL + HT backends when `MSCCLPP_BUILD_EXT_EP=ON` |
-| LL dispatch/combine              | ✅ validated on 8-rank H100; cross-node requires one detected GPU IPC fabric domain |
-| HT dispatch/combine              | ✅ active DeepEP-style backend with intranode and internode paths |
-| HT GB200 direct/flat fast paths  | ✅ runtime-gated by `MSCCLPP_EP_DIRECT`, `MSCCLPP_EP_INTRA_DIRECT`, and `MSCCLPP_EP_FLAT` |
-| LL topology discovery            | ✅ automatic node + NVML fabric-domain detection through `Bootstrap` |
-| Python frontend `mscclpp.ep` | ✅ `MoECommunicator` selects LL or HT by `MoEMode` |
+| Feature | Status |
+|---|---|
+| LL dispatch/combine | Validated on Hopper and newer GPUs |
+| HT dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
+| HT RDMA/IB fallback | Not supported |
+| Python frontend | `mscclpp.ep.MoECommunicator` selects LL or HT with `MoEMode` |
+| ROCm | Not supported |
 
-### LL topology and transport
+## Runtime architecture
 
-The optimized LL backend uses direct peer mappings:
+### Low latency
 
-- Same-host peers use regular CUDA IPC mappings.
-- Cross-host peers use CUDA fabric handles when all ranks belong to one
-  NVML-reported GPU fabric domain, such as GB200 NVL72 with `nvidia-imex`.
-- LL always allocates its symmetric buffer with CUDA physical memory
-  (`cuMemCreate`/`cuMemMap`); there is no `cudaMalloc` fallback.
-- `BaseMemoryChannel` handles are used only for signal/wait synchronization;
-  LL payload data does not flow through `MemoryChannel` or `PortChannel`.
-- There is no CPU-proxy/IB fallback in the optimized LL backend. If the full
-  communicator is not one GPU IPC domain, `MoERuntime::isAvailable()` is false.
+LL allocates CUDA physical symmetric memory and maps peer buffers through the
+existing `mscclpp::Communicator`. Payloads use direct peer mappings;
+`BaseMemoryChannel` handles are used only for synchronization.
 
-Topology is automatic. `TcpBootstrap` detects:
+The optimized LL backend is available when all participating ranks belong to
+one detected GPU IPC domain. That domain may span hosts when CUDA fabric handles
+and the required fabric services are available.
 
-1. ranks per host from bootstrap peer addresses;
-2. ranks per GPU IPC domain from NVML fabric `clusterUuid + cliqueId`;
-3. host-local IPC domains as a safe fallback when NVML fabric information is
-   unavailable or incomplete.
+### High throughput
 
-LL therefore does **not** require topology environment variables such as
-`MSCCLPP_EP_LOCAL_WORLD_SIZE`, `MSCCLPP_EP_FABRIC_IPC`, an NVML-domain ID, or
-`NCCL_MNNVL_ENABLE`. Socket/HCA variables are only optional launch overrides
-when the generic bootstrap or an HT/IB test selects the wrong interface.
+HT follows the same direct-mapping resource model:
 
-### HT / legacy proxy sharding
+1. Python passes the existing `mscclpp::Communicator` into
+   `ExpertParallelRuntime`.
+2. Each rank allocates a ring/FIFO region plus a CUDA physical direct receive
+   pool. Same-host ring buffers use `cudaMalloc` runtime IPC for peak latency;
+   a fabric-domain job spanning hosts uses CUDA physical memory for the ring.
+3. The runtime exchanges and maps those allocations with
+   `Communicator::sendMemory` / `recvMemory`.
+4. Dispatch and combine launch directly on the caller's CUDA stream.
 
-A single `mscclpp::ProxyService` is one CPU host thread driving one
-FIFO. With 8 GPUs / node sharing one proxy, the host thread becomes the
-bottleneck for cross-node proxy traffic. The HT runtime therefore allocates `N`
-ProxyServices and shards `PortChannel`s across them by `(qp_idx,
-dst_rank)`.
+The detected GPU IPC domain may span multiple hosts, such as an NVL fabric
+domain with CUDA fabric handles. HT does not create a private bootstrap, proxy
+service, RDMA channel, NVLS multicast object, or private communication stream,
+and it has no RDMA/IB fallback outside that domain.
 
-- Default: `8` on Hopper (sm_90), `1` on Blackwell / sm_100+ (NVSwitch).
-- Override at runtime: `MSCCLPP_EP_NUM_PROXIES=<N>` (clamped to ≥1).
-  Rank 0 prints the resolved value at construction.
-- Sweet spot on 2×H100×8 is `N=8`; `N=12` over-subscribes the host CPUs
-  and collapses throughput.
+The HT dispatch API remains two-phase because the receive token count is data
+dependent:
 
-### Known limitations
+1. `notify_dispatch` exchanges counts and produces prefix matrices.
+2. Python allocates the exact receive tensors.
+3. `dispatch` moves token data and metadata.
 
-- ROCm is not supported for the EP extension yet.
-- LL requires Hopper or newer and CUDA physical-memory allocation support.
-- LL currently supports BF16 input, optional FP8 E4M3 dispatch output, and
-  `DispatchLayout.EXPERT_MAJOR`.
-- HT currently supports BF16 input and `DispatchLayout.FLAT`; quantized HT
-  dispatch is not implemented.
-- Optimized LL requires all participating ranks to share one detected CUDA IPC
-  domain; ordinary multi-node H100 jobs should use HT.
-- HT direct and flat paths are GB200/NVL72 optimizations. Leave the env vars
-  unset for the baseline DeepEP-style HT path.
+Cached dispatch reuses the previous receive count and prefix matrices.
+
+## HT data paths
+
+The baseline path uses the DeepEP-style intranode ring. Optional runtime paths
+use the peer-mapped receive pool:
+
+- `MSCCLPP_EP_INTRA_DIRECT=1`: send hidden rows directly to their final receive
+  slots. The physical receive pool is allocated and mapped only when this flag
+  is enabled before runtime construction.
+- `MSCCLPP_EP_INTRA_ALLSENDER=0|1`: controls the all-sender dispatch path when
+  direct dispatch and TMA combine are enabled; default is enabled.
+- `MSCCLPP_EP_COMBINE_TMA=0|1`: selects TMA direct-gather combine; default is
+  enabled when its inputs are available.
+- `MSCCLPP_EP_DISPATCH_NSM=<N>`: overrides the dispatch block count, rounded
+  down to an even value.
+- `MSCCLPP_EP_COMBINE_NSM=<N>`: overrides the TMA combine block count.
+
+The persistent HT configuration contains only:
+
+| Field | Meaning |
+|---|---|
+| `num_sms` | Maximum HT communication block budget |
+| `num_max_nvl_chunked_send_tokens` | Ring send chunk size |
+| `num_max_nvl_chunked_recv_tokens` | Ring receive capacity |
 
 ## Build
 
-Python installs build the EP extension by default:
+Python builds include the EP extension by default:
 
 ```bash
-python -m pip install .
-# Optional CuPy dependency:
-python -m pip install ".[cuda12]"
+python3 -m pip install .
 ```
 
-The EP extension targets CUDA architectures **90 or newer**. Plain CMake builds
-can enable it explicitly:
+Plain CMake builds can enable it explicitly:
 
 ```bash
-cmake -S . -B build \
-      -DMSCCLPP_BUILD_EXT_EP=ON
-cmake --build build -j
-```
-
-This produces `mscclpp_ep_cpp.so` — a nanobind extension module.
-The Python frontend picks it up automatically:
-
-```python
-import mscclpp.ep as ep
-moe_comm = ep.MoECommunicator(...)
-```
-
-### Build-time CMake options
-
-| Variable                              | Default | Meaning                                                       |
-|---------------------------------------|---------|---------------------------------------------------------------|
-| `MSCCLPP_BUILD_EXT_EP`                | `ON` in Python wheels | Build the EP extension at all                |
-| `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | HT compile-time NVLink peer capacity; optimized LL topology is detected at runtime |
-| `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT`     | `OFF`   | Use a short ~10s kernel spin timeout (default is ~100s)       |
-
-### Azure GB200 (NVL72, 4 GPUs / NUMA host)
-
-GB200 NVL72 nodes expose **4 GPUs per NUMA host** (not 8 like HGX
-H100). The optimized LL backend discovers this topology from bootstrap/NVML
-and needs no GB200-specific build option. HT kernels still use the compile-time
-NVLink peer capacity and should be built with:
-
-```bash
-cmake -S . -B build \
-      -DMSCCLPP_BUILD_EXT_EP=ON \
-      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4
+cmake -S . -B build -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j 64
-
-python3 -m pip install . \
-    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4
 ```
 
-Add `-DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON` only when triaging hangs (it
-shortens the kernel-side spin timeout from ~100s to ~10s).
+The EP extension requires CUDA architecture 90 or newer.
 
-Runtime prerequisites on GB200:
+Available CMake options:
 
-- CUDA Toolkit ≥ 12.5 (the `cuCtxCreate` proxy-context path uses the
-  4-arg signature added in 12.5; older toolkits compile against the
-  3-arg fallback automatically).
-- Driver ≥ 555 with nvidia-imex configured so cuMem fabric handles
-  (`POSIX_FD | FABRIC`) can be exchanged across nodes.
-- NVML must report a completed fabric state with a common cluster UUID and
-  clique ID for all participating ranks. Bootstrap uses this information to
-  form the IPC domain automatically.
-- The symmetric allocation requests POSIX-FD handles and fabric handles when
-  the device exposes them. If bootstrap does not detect one IPC domain spanning
-  every rank, LL reports unavailable rather than attempting an IB fallback.
-- RT priority is required by NCCL/glibc. On each node:
+| Variable | Default | Meaning |
+|---|---:|---|
+| `MSCCLPP_BUILD_EXT_EP` | Python builds: `ON` | Build the EP extension |
+| `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT` | `OFF` | Use a shorter kernel spin timeout |
 
-  ```bash
-  sudo tee -a /etc/security/limits.conf > /dev/null <<'EOF'
-  * soft rtprio 99
-  * hard rtprio 99
-  EOF
-  # Re-login so `ulimit -r` reports 99.
-  ```
-- `nvidia-imex` must be active on every node with an identical
-  `/etc/nvidia-imex/nodes_config.cfg` listing all node IPs. Verify:
+## Source layout
 
-  ```bash
-  sudo systemctl status nvidia-imex
-  sudo cat /etc/nvidia-imex/nodes_config.cfg
-  ls /dev/nvidia-caps-imex-channels/   # channel0 must exist
-  ```
-
-No LL-specific runtime environment variables are required. Optional overrides
-are only needed when generic launch components choose the wrong interface:
-
-```bash
-export NCCL_SOCKET_IFNAME=enP22p1s0f1
-export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
-export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
-# HT/IB only, if automatic HCA selection chooses a down/bond device:
-export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3
-```
-
-`NCCL_IB_DISABLE` and `NCCL_MNNVL_ENABLE` configure NCCL, not the MSCCL++ LL
-runtime. Set them only when the surrounding PyTorch/NCCL test launcher needs
-those overrides.
-
-HT runtime knobs (env vars exposed by `test_intranode_multirank.py` /
-`test_internode_multirank.py` — defaults below are the test-script defaults,
-**not** the `ep.Config(...)` constructor defaults):
-
-| Variable                  | Maps to (`ep.Config` field)         | Default | Notes                                  |
-|---------------------------|--------------------------------------|--------:|-----------------------------------------|
-| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `20`    | HT intranode test only. Try `64` on GB200 intranode for `dispatch` BW. |
-| `MSCCLPP_EP_NSM`          | `num_sms`                            | `152`   | HT internode test only. |
-| `MSCCLPP_EP_NVL_SEND`     | `num_max_nvl_chunked_send_tokens`    | `8`     | Must be `<` `MSCCLPP_EP_NVL_RECV`.     |
-| `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
-| `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `16`    | Internode only.                        |
-| `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | `128`   | Scale **down** as `num_rdma_ranks` grows (4n→128, 8n→64, 16n→32) to keep the RDMA buffer under the 2 GiB `INT_MAX` limit. |
-| `MSCCLPP_EP_DIRECT`       | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only.** `1` enables the sender direct-write dispatch **and** receiver gather-direct combine (see [GB200 direct-path optimization](#gb200-direct-path-optimization-mscclpp_ep_direct--mscclpp_ep_intra_direct)). Unset = byte-identical 2-hop baseline. |
-| `MSCCLPP_EP_INTRA_DIRECT` | — (runtime `getenv`)                 | unset   | **GB200 single-node only.** `1` enables sender direct-write for the intra-node kernel. Independent of `MSCCLPP_EP_DIRECT` (see below). |
-| `MSCCLPP_EP_FLAT`         | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only; requires `MSCCLPP_EP_DIRECT=1`.** `1` enables the flat all-sender dispatch (removes the forwarder / coordinator / receiver roles; per-token metadata goes straight to the dest recv pool) + direct-gather combine (see [flat all-sender path](#gb200-flat-all-sender-path-mscclpp_ep_flat)). Unset = the `MSCCLPP_EP_DIRECT` path. |
-| `MSCCLPP_EP_DISPATCH_NSM` | — (runtime `getenv`)                 | `num_sms`/2 | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Sets the all-sender dispatch block count independently of `num_sms`; clamped to `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM budget — e.g. `num_sms=16` + `DISPATCH_NSM=16` → 16 blocks). The RDMA/NVL buffers are auto-sized to match. Lower it to free SMs for overlapping compute, or set it to `num_sms` to maximize dispatch throughput. |
-| `MSCCLPP_EP_COMBINE_NSM`  | — (runtime `getenv`)                 | `num_sms`   | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Caps the combine block count independently of `num_sms`; clamped to `[2, num_sms]`. Flat combine saturates ~76 blocks. |
-| `MSCCLPP_EP_COMBINE_TMA`  | — (runtime `getenv`)                 | `1` (on) | **Flat path only (`MSCCLPP_EP_FLAT=1` + `MSCCLPP_EP_DIRECT=1`).** Selects the combine flat-gather implementation. Default (`1`) uses the TMA-staged gather (`cp.async.bulk` contributor rows → SMEM → reduce), which hides remote-NVLink read latency via the async copy engine and wins at every channel count and node scale. `0` falls back to the synchronous register-MLP gather (lean kernel ≤14 channels, else the unified flat branch). |
-
-Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
-tokens=4096, experts=256, topk=8):
-
-- HT internode: `NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32` →
-  dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg.
-
-### GB200 direct-path optimization (`MSCCLPP_EP_DIRECT` / `MSCCLPP_EP_INTRA_DIRECT`)
-
-On GB200 NVL72 the cross-node "RDMA send" is a cuMem-fabric VA write over
-NVLink, so a sender can reach any peer GPU's recv pool directly. Two
-env-gated flags exploit this to remove the classic DeepEP 2-hop (forwarder
-transpose on dispatch / ring drain on intra-node), turning a
-structural-/handshake-bound copy into a bandwidth-bound 1-hop that scales
-with SM count. Both default **off**, and the binary is byte-identical to the
-2-hop baseline when unset (one `.so`, runtime `getenv`-gated).
-
-- **`MSCCLPP_EP_DIRECT=1`** — internode HT (`test_internode_multirank.py`).
-  One master flag that turns on **both**:
-  - *Dispatch sender direct-write:* `kRDMASender` writes each token's hidden
-    straight to `recv_pool_global_ptrs[dst] + header + idx*hidden_bytes`
-    (1 hop), instead of the forwarder transpose to local NVL peers (2 hops).
-  - *Combine receiver gather-direct:* each token gathers its top-k expert
-    contributions directly from the peer recv pools and reduces locally,
-    skipping the `nvl_channel + forwarder + rdma_channel` path.
-  - *Prerequisite:* cross-node fabric-IPC pool mapping — auto-detected on
-    GB200; force with `MSCCLPP_EP_FABRIC_IPC=1` if needed. The combine input
-    must live in the recv pool (DeepEP contract; satisfied by the round-trip,
-    where combine input = dispatch output).
-- **`MSCCLPP_EP_INTRA_DIRECT=1`** — single-node
-  (`test_intranode_multirank.py`), a **separate** flag for the intra-node
-  kernel. The sender writes hidden into the destination GPU's peer-mapped
-  pool and the receiver skips the ring drain.
-
-Measured on Azure GB200 NVL72 (2 nodes × 4 GPU, HIDDEN=7168, tokens=4096,
-topk=8, experts=256):
-
-- HT internode dispatch+combine round-trip (NSM=20): **~3 850 µs → ~1 750 µs
-  (−54 %)** vs the 2-hop baseline; the win grows with node count.
-- HT intra-node `INTRA_DIRECT=1` dispatch scales **980 µs (16 SM) → 285 µs
-  (152 SM, ~206 GB/s per rank)**, whereas the 2-hop baseline is SM-flat at
-  ~3.8 ms.
-
-> **Single-node launch note.** Launch the intra-node test with an explicit
-> `127.0.0.1` rendezvous (not `torchrun --standalone`, whose hostname
-> rendezvous is not DNS-resolvable on these nodes) and set
-> `NCCL_NET_PLUGIN=none` + `NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3` so NCCL's
-> built-in IB probe does not crash `ep.MoECommunicator` construction.
-
-### GB200 flat all-sender path (`MSCCLPP_EP_FLAT`)
-
-`MSCCLPP_EP_FLAT=1` (requires `MSCCLPP_EP_DIRECT=1`) takes the direct path one
-step further. The `MSCCLPP_EP_DIRECT` dispatch still runs a sender + forwarder
-pair per channel and routes per-token metadata through the 2-hop RDMA ring →
-forwarder → NVL-receiver pipeline; the flat path removes the forwarder,
-sender-coordinator, and NVL-receiver roles entirely, so dispatch launches
-**all-sender** (one block per channel) and each sender writes its tokens'
-metadata straight into the destination recv pool. Combine is a flat
-direct-gather (no forwarder); by default it uses a **TMA-staged** gather that
-streams each contributor's hidden chunks through shared memory via `cp.async.bulk`
-(`MSCCLPP_EP_COMBINE_TMA=1`, the default), letting the async copy engine hide the
-remote-NVLink read latency. A small post-dispatch drain copies the pool metadata
-into the `recv_*` output tensors.
-
-Because both legs are now bandwidth-bound 1-hops, they saturate the NVLink
-write/read ceiling well below the full SM grid, so the dispatch and combine
-block counts can be capped **independently** of `num_sms` to free SMs for
-overlapping compute:
-
-- `MSCCLPP_EP_DISPATCH_NSM=<N>` — flat dispatch block count, clamped to
-  `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM
-  budget; the RDMA/NVL buffers are auto-sized to the chosen count).
-  Default = `num_sms/2`.
-- `MSCCLPP_EP_COMBINE_NSM=<N>` — flat combine block count, clamped to
-  `[2, num_sms]`. Default = `num_sms`.
-
-Both are flat-only and leave the `MSCCLPP_EP_DIRECT` / 2-hop paths byte-
-identical when unset. Measured on Azure GB200 NVL72 (2 nodes × 4 GPU,
-HIDDEN=7168, tokens=4096, topk=8, experts=256, `MSCCLPP_EP_NSM=152`):
-
-- Dispatch (combine grid fixed): `DISPATCH_NSM` 16→**698 µs**, 32→544,
-  64→498, 76→**495 µs** — knee at ~64 blocks.
-- Combine (dispatch grid fixed): `COMBINE_NSM` 16→**1006 µs**, 32→577,
-  64→514, 152→**451 µs** — knee at ~76 blocks.
-
-So flat dispatch reaches its floor at ~64 of 76 possible blocks and combine at
-~76 of 152, leaving the remaining SMs free for the model's compute to overlap
-the communication.
-
-## Layout
-
-```
+```text
 src/ext/ep/
-├── CMakeLists.txt              — builds mscclpp_ep_cpp (nanobind)
-├── README.md                   — this file
-├── moe_runtime.hpp / .cc       — LL MoE runtime state and raw-pointer dispatch/combine
-├── config.hpp                  — LL layout helpers and size hints
-├── bindings.cpp                — nanobind module definition
-├── ht_runtime.hpp / .cc        — HT runtime state and raw-pointer dispatch/combine
-├── ht/                         — active HT kernel/config sources
-│   ├── buffer.hpp / buffer.cc
+├── bindings.cpp
+├── moe_runtime.{cc,hpp}
+├── ht_runtime.{cc,hpp}
+├── ht/
 │   ├── config.hpp
-│   ├── event.hpp
-│   └── kernels/
-│       ├── buffer.cuh
-│       ├── runtime.cu
-│       ├── intranode_kernel.cu
-│       ├── internode.cu
-│       └── internode_ncclep.cuh
-├── include/                    — shared EP headers and quantization helpers
+│   ├── buffer.cuh
+│   ├── layout.cu
+│   ├── intranode_kernel.cu
+│   └── runtime.cu
+├── include/
 └── low_latency/
     ├── dispatch.cu             — optimized LL dispatch
     ├── combine.cu              — optimized LL combine
@@ -322,55 +139,24 @@ test/python/ep/
 └── run_ep_bench.py                    — unified MSCCL++-cpp / NCCL-EP driver
 ```
 
-## Running the tests
+## Validation
 
-### Test prerequisites
-
-The Python tests are launched through `torchrun` / `mpirun` and require
-PyTorch + a few support packages in the active environment. A minimal
-install (matches the GB200 reference setup):
+Build the extension, then run the single-node HT test:
 
 ```bash
-# Conda env (any Python >= 3.10). Use the appropriate Miniconda variant
-# for the host arch (`aarch64` shown; use `x86_64` on x86 clusters).
-wget -O /tmp/Miniconda3-latest-Linux-aarch64.sh \
-    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-bash /tmp/Miniconda3-latest-Linux-aarch64.sh -b -p $HOME/miniconda3
-source $HOME/miniconda3/etc/profile.d/conda.sh
-conda create -n torch python=3.14 -y
-conda activate torch
-
-# Runtime libs used by the tests / launcher.
-conda install -c conda-forge -y cupy mpi4py nanobind blake3 sortedcontainers
-
-# PyTorch (pulls a matching cuda-toolkit + NCCL).
-pip3 install torch
-
-# mscclpp build deps (used by `pip install .` of this repo).
-pip install scikit-build-core nanobind setuptools_scm
-```
-
-Then build the EP extension (see [Build](#build)) — `pip install .` from
-the repo root installs `mscclpp_ep_cpp.so` into the active env so the
-test scripts can `import mscclpp.ep as ep`.
-
-Intranode (single node, 8 GPUs) — HT:
-
-```bash
-MSCCLPP_EP_BENCH=1 \
-MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
-MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
-torchrun --nnodes=1 --nproc_per_node=8 \
+HWLOC_COMPONENTS=-gl \
+LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
+torchrun --standalone --nproc_per_node=8 \
     test/python/ep/test_intranode_multirank.py
 ```
 
-Intranode LL (single node, 8 GPUs), with no topology env:
+The LL validation remains:
 
 ```bash
+HWLOC_COMPONENTS=-gl \
+LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
 torchrun --standalone --nproc_per_node=8 \
-    test/python/ep/test_low_latency_multirank.py \
-    --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
-    --cuda-graph
+    test/python/ep/test_low_latency_multirank.py
 ```
 
 Internode HT (2 nodes × 8 GPUs), torchrun:

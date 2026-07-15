@@ -8,15 +8,6 @@
 
 #pragma once
 
-// Maximum number of intra-node NVLink peers per RDMA rank.
-// - 8 for H100 NVL8 / HGX-style nodes (DeepEP upstream default).
-// - 4 for Azure GB200 NVL72 (4 GPUs per NUMA host).
-// Configurable via the CMake cache var `MSCCLPP_EP_NUM_MAX_NVL_PEERS`
-// (see `src/ext/ep/CMakeLists.txt`). Default keeps DeepEP-parity at 8.
-#ifndef NUM_MAX_NVL_PEERS
-#define NUM_MAX_NVL_PEERS 8
-#endif
-#define NUM_MAX_RDMA_PEERS 20
 #define NUM_MAX_FIFO_SLOTS 32768
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)
 #define NUM_MAX_LOCAL_EXPERTS 1024

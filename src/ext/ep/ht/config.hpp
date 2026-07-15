@@ -2,143 +2,81 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include <cstdlib>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 
 #include "../config.hpp"
-#include "api.cuh"
+#include "constants.cuh"
 #include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {
 
-// inc7: resolve the flat all-sender dispatch channel count (== block count).
-// Default num_sms/2; MSCCLPP_EP_DISPATCH_NSM (flat path only) overrides it, clamped
-// to [1, num_sms]. The flat path launches one sender block per channel (no forwarder),
-// so it can use the FULL SM budget with a SINGLE knob. Non-flat/unset -> num_sms/2.
-inline int ep_flat_dispatch_channels(int num_sms) {
-  const char* f = std::getenv("MSCCLPP_EP_FLAT");
-  const char* d = std::getenv("MSCCLPP_EP_DIRECT");
-  if (!(f != nullptr && std::atoi(f) != 0 && d != nullptr && std::atoi(d) != 0)) return num_sms / 2;
-  const char* e = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
-  if (e == nullptr) return num_sms / 2;
-  const int n = std::atoi(e);
-  if (n < 1) return num_sms / 2;
-  return n < num_sms ? n : num_sms;
-}
-
-// Channel count the RDMA/NVL buffers must hold: max of the flat dispatch channels
-// and the default num_sms/2 (combine grid). Keeps per-channel offsets in bounds when
-// DISPATCH_NSM raises/lowers the dispatch channel count relative to num_sms/2.
-inline int ep_buffer_channels(int num_sms) {
-  const int dc = ep_flat_dispatch_channels(num_sms);
-  const int half = num_sms / 2;
-  return dc > half ? dc : half;
-}
-
 struct Config {
+  static constexpr int MaxTopk = 32;
+  static constexpr int MaxScales = 128;
+  static constexpr int RecvPoolMaxTokens = 65536;
+  static constexpr int64_t RecvPoolMaxHiddenBytes = 16384;
+  static constexpr int64_t RecvPoolMetaBytes = 128;
+
   int num_sms;
   int num_max_nvl_chunked_send_tokens;
   int num_max_nvl_chunked_recv_tokens;
-  int num_max_rdma_chunked_send_tokens;
-  int num_max_rdma_chunked_recv_tokens;
 
-  Config(int num_sms, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens,
-         int num_max_rdma_chunked_send_tokens, int num_max_rdma_chunked_recv_tokens)
+  Config(int num_sms, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens)
       : num_sms(num_sms),
         num_max_nvl_chunked_send_tokens(num_max_nvl_chunked_send_tokens),
-        num_max_nvl_chunked_recv_tokens(num_max_nvl_chunked_recv_tokens),
-        num_max_rdma_chunked_send_tokens(num_max_rdma_chunked_send_tokens),
-        num_max_rdma_chunked_recv_tokens(num_max_rdma_chunked_recv_tokens) {
-    EP_HOST_ASSERT(num_sms >= 0);
+        num_max_nvl_chunked_recv_tokens(num_max_nvl_chunked_recv_tokens) {
+    EP_HOST_ASSERT(num_sms > 0 and num_sms % 2 == 0);
     EP_HOST_ASSERT(num_max_nvl_chunked_send_tokens > 0 and num_max_nvl_chunked_recv_tokens > 0);
     EP_HOST_ASSERT(num_max_nvl_chunked_send_tokens < num_max_nvl_chunked_recv_tokens);
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens > 0 and num_max_rdma_chunked_recv_tokens > 0);
-
-    // Ceil up RDMA buffer size
-    this->num_max_rdma_chunked_recv_tokens =
-        configAlign<int>(num_max_rdma_chunked_recv_tokens, num_max_rdma_chunked_send_tokens);
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens < num_max_rdma_chunked_recv_tokens);
-    // NOTES: this assertion is related to RDMA lazy head update, we must ensure senders always have space to push
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens <= num_max_rdma_chunked_recv_tokens / 2);
   }
-
-  size_t get_nvl_base_bytes(size_t hidden_bytes, int num_ranks) const {
-    // Below are some assumptions
-    // TODO: add assertions
-    constexpr int kNumMaxTopK = 128;
-    constexpr int kNumMaxScales = 128;
-    EP_HOST_ASSERT(num_ranks < NUM_MAX_NVL_PEERS or num_ranks % NUM_MAX_NVL_PEERS == 0);
-    EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS or num_sms % 2 == 0);
-    const auto num_rdma_ranks = std::max(num_ranks / NUM_MAX_NVL_PEERS, 1);
-    const auto num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
-    const int num_channels = ep_buffer_channels(num_sms);
-
-    size_t num_bytes = 0;
-    num_bytes += num_channels * num_nvl_ranks * (2 * num_rdma_ranks + 3) * sizeof(int);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * hidden_bytes;
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * internode::get_source_meta_bytes();
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxTopK * sizeof(int64_t);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxTopK * sizeof(float);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxScales * sizeof(float);
-    num_bytes = ((num_bytes + 127) / 128) * 128;
-    return num_bytes;
-  }
-
-#ifdef EP_DISPATCH_NCCLEP
-  static constexpr int kEpRecvPoolMaxTokens = 65536;
-  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
-  // inc6 (flat all-sender dispatch): per-token meta region appended AFTER the
-  // worst-case hidden region. The flat sender writes SourceMeta + scales + topk
-  // straight into the dest pool meta region; a local consumer copies it into the
-  // recv_* tensors. 128B/token (allocated unconditionally; only touched under flat).
-  static constexpr int64_t kEpRecvPoolMetaBytes = 128;  // per-token meta slot (128B aligned)
-  size_t get_recv_pool_header_bytes(int num_ranks) const {
-    return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-  }
-  // Byte offset (from pool base) where the inc6 meta region starts: after the
-  // header and the full worst-case hidden region, so it never overlaps runtime
-  // hidden tokens regardless of the runtime hidden dim.
-  static size_t get_recv_pool_meta_base(int num_ranks) {
-    size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-    size_t hidden = static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
-    return ((header + hidden + 127) / 128) * 128;
-  }
-  static size_t recv_pool_bytes_static(int num_ranks) {
-    size_t meta_base = get_recv_pool_meta_base(num_ranks);
-    size_t b = meta_base + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMetaBytes);
-    return ((b + 127) / 128) * 128;
-  }
-#endif
 
   size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
-    return get_nvl_base_bytes(hidden_bytes, num_ranks);
+    EP_HOST_ASSERT(hidden_bytes > 0);
+    EP_HOST_ASSERT(num_ranks == 2 or num_ranks == 4 or num_ranks == 8 or num_ranks == 16);
+
+    const size_t ranks = static_cast<size_t>(num_ranks);
+    const size_t recv_tokens = static_cast<size_t>(num_max_nvl_chunked_recv_tokens);
+    const size_t ring_channels = static_cast<size_t>(num_sms / 2);
+    const size_t all_sender_channels = static_cast<size_t>(num_sms);
+    const size_t prefix_bytes = ranks * ranks * sizeof(int);
+    const size_t expert_scratch_bytes = ranks * NUM_MAX_LOCAL_EXPERTS * sizeof(int);
+
+    const size_t dispatch_metadata_bytes = 4 * ring_channels * ranks * sizeof(int);
+    const size_t dispatch_token_bytes =
+        hidden_bytes + sizeof(int) + MaxTopk * sizeof(int64_t) + MaxTopk * sizeof(float) + MaxScales * sizeof(float);
+    const size_t dispatch_bytes =
+        prefix_bytes + std::max(expert_scratch_bytes,
+                                dispatch_metadata_bytes + ring_channels * ranks * recv_tokens * dispatch_token_bytes);
+
+    const size_t combine_metadata_bytes = 2 * ring_channels * ranks * sizeof(int);
+    const size_t combine_token_bytes = hidden_bytes + sizeof(int) + MaxTopk * sizeof(float);
+    const size_t combine_bytes = combine_metadata_bytes + ring_channels * ranks * recv_tokens * combine_token_bytes;
+
+    const size_t all_sender_bytes =
+        prefix_bytes + std::max(expert_scratch_bytes, 4 * all_sender_channels * ranks * sizeof(int));
+    return configAlign<size_t>(std::max({dispatch_bytes, combine_bytes, all_sender_bytes}), NUM_BUFFER_ALIGNMENT_BYTES);
   }
 
-  size_t get_rdma_buffer_size_hint(int64_t hidden_bytes, int num_ranks) const {
-    // Legacy mode
-    if (num_ranks <= NUM_MAX_NVL_PEERS) return 0;
+  static size_t get_recv_pool_header_bytes(int num_ranks) {
+    return configAlign<size_t>(static_cast<size_t>(num_ranks) * sizeof(int), NUM_BUFFER_ALIGNMENT_BYTES);
+  }
 
-    // Below are some assumptions
-    // TODO: add assertions
-    constexpr int kNumMaxTopK = 128;
-    constexpr int kNumMaxScales = 128;
-    EP_HOST_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0);
-    EP_HOST_ASSERT(num_sms % 2 == 0);
-    const int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
-    const int num_channels = ep_buffer_channels(num_sms);
+  static size_t get_recv_pool_meta_base(int num_ranks) {
+    const size_t hidden_bytes = static_cast<size_t>(RecvPoolMaxTokens) * static_cast<size_t>(RecvPoolMaxHiddenBytes);
+    return configAlign<size_t>(get_recv_pool_header_bytes(num_ranks) + hidden_bytes, NUM_BUFFER_ALIGNMENT_BYTES);
+  }
 
-    size_t num_bytes = 0;
-    num_bytes += num_channels * num_rdma_ranks * (NUM_MAX_NVL_PEERS * 2 + 2) * 2 * sizeof(int);
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * hidden_bytes * 2;
-    num_bytes +=
-        num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * internode::get_source_meta_bytes() * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxTopK * sizeof(int64_t) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxTopK * sizeof(float) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxScales * sizeof(float) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * sizeof(int4) * 2;
-    num_bytes += num_channels * num_rdma_ranks * sizeof(uint64_t) * 2;
-    num_bytes = ((num_bytes + 127) / 128) * 128;
-    return num_bytes;
+  static size_t get_recv_pool_hidden_bytes(int num_ranks) {
+    return get_recv_pool_meta_base(num_ranks) - get_recv_pool_header_bytes(num_ranks);
+  }
+
+  static size_t recv_pool_bytes_static(int num_ranks) {
+    const size_t bytes =
+        get_recv_pool_meta_base(num_ranks) + static_cast<size_t>(RecvPoolMaxTokens) * RecvPoolMetaBytes;
+    return configAlign<size_t>(bytes, NUM_BUFFER_ALIGNMENT_BYTES);
   }
 };
 

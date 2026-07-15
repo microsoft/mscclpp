@@ -18,6 +18,8 @@
 #define LAUNCH_KERNEL(config, kernel, ...) CUDA_CHECK(cudaLaunchKernelEx(config, kernel, ##__VA_ARGS__))
 #endif
 
+// HT uses the rank index as a named-barrier ID and dispatch assigns one warp
+// per rank, so 16 is the architectural maximum for this launch family.
 #define SWITCH_RANKS(case_macro)                       \
   do {                                                 \
     switch (num_ranks) {                               \
@@ -27,31 +29,11 @@
         case_macro(4);                                 \
       case 8:                                          \
         case_macro(8);                                 \
+      case 16:                                         \
+        case_macro(16);                                \
       default:                                         \
         EP_HOST_ASSERT(false and "Unsupported ranks"); \
     }                                                  \
-  } while (false)
-
-#define SWITCH_RDMA_RANKS(case_macro)                       \
-  do {                                                      \
-    switch (num_ranks / NUM_MAX_NVL_PEERS) {                \
-      case 2:                                               \
-        case_macro(2);                                      \
-      case 3:                                               \
-        case_macro(3);                                      \
-      case 4:                                               \
-        case_macro(4);                                      \
-      case 8:                                               \
-        case_macro(8);                                      \
-      case 16:                                              \
-        case_macro(16);                                     \
-      case 18:                                              \
-        case_macro(18);                                     \
-      case 20:                                              \
-        case_macro(20);                                     \
-      default:                                              \
-        EP_HOST_ASSERT(false and "Unsupported RDMA ranks"); \
-    }                                                       \
   } while (false)
 
 #define SWITCH_RANKS_WITH_DTYPE(dtype, case_macro)    \
@@ -63,6 +45,8 @@
         case_macro(dtype, 4);                         \
       case 8:                                         \
         case_macro(dtype, 8);                         \
+      case 16:                                        \
+        case_macro(dtype, 16);                        \
       default:                                        \
         EP_HOST_ASSERT(false && "Unsupported ranks"); \
     }                                                 \

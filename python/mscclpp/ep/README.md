@@ -69,8 +69,7 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Transport resources
-    num_rdma_qps_per_rank: int = 12  # RDMA QPs per peer rank; advanced tuning
+    # Launch resources
     num_sms: int = 20
 
     # Overlap
@@ -141,7 +140,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `max_tokens_per_rank` | dispatch capacity |
 | `max_recv_tokens_per_rank` | recv buffer capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_rdma_qps_per_rank`, `num_sms` | backend launch/resource tuning |
+| `num_sms` | backend launch/resource tuning |
 | `dispatch_config`, `combine_config` | backend-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 
@@ -152,8 +151,9 @@ specialized advanced path.
 
 The active implementation supports `mode=MoEMode.LOW_LATENCY` and
 `mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
-string. LL uses an expert-major output layout; HT uses a flat output layout and
-selects intranode vs internode transport from the runtime size hints.
+string. LL uses an expert-major output layout. HT uses a flat output layout and
+supports 2, 4, 8, or 16 ranks within one detected GPU IPC/NVL fabric domain;
+that domain may span multiple hosts.
 
 ```python
 moe_comm = MoECommunicator(..., mode=MoEMode.LOW_LATENCY)
@@ -304,16 +304,11 @@ class ExpertMajorCombineContext:
 
 
 @dataclass
-class RowMajorIntranodeCombineContext:
+class RowMajorCombineContext:
     ...
 
 
-@dataclass
-class RowMajorInternodeCombineContext:
-    ...
-
-
-CombineContext = ExpertMajorCombineContext | RowMajorIntranodeCombineContext | RowMajorInternodeCombineContext
+CombineContext = ExpertMajorCombineContext | RowMajorCombineContext
 
 
 class DispatchHandle:
@@ -326,12 +321,8 @@ class ExpertMajorDispatchHandle(DispatchHandle):
     combine_context: ExpertMajorCombineContext
 
 
-class RowMajorIntranodeDispatchHandle(DispatchHandle):
-    combine_context: RowMajorIntranodeCombineContext
-
-
-class RowMajorInternodeDispatchHandle(DispatchHandle):
-    combine_context: RowMajorInternodeCombineContext
+class RowMajorDispatchHandle(DispatchHandle):
+    combine_context: RowMajorCombineContext
 
 
 @dataclass
@@ -418,7 +409,7 @@ overlap is operation-level only.
 Each concrete `DispatchHandle` stores a layout-specific `combine_context` used
 to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
-shape, and capacity). Row-major handles use intranode or internode combine contexts with
+shape, and capacity). Row-major handles use the intranode combine context with
 receive-side weights, source indices, prefix matrices, and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
