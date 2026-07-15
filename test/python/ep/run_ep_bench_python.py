@@ -78,20 +78,20 @@ A working 2-node, 8-GPU launch (both nodes on one NVLink/MNNVL fabric)::
     NCCL_BUILD=/opt/microsoft/mrc/ep/nccl/build
     HPCXLIB=/opt/hpcx-.../ompi/lib          # HPCX Open MPI 4 (mpi4py built against it)
     PRELOAD_NCCL=$(ls -1 $NCCL_BUILD/lib/libnccl.so.*.* | sort -V | tail -1)
-    printf '10.0.4.82 slots=4\n10.0.4.93 slots=4\n' > /tmp/hostfile
+    printf '<ip_address1> slots=4\n<ip_address2> slots=4\n' > /tmp/hostfile
 
     mpirun -np 8 --hostfile /tmp/hostfile --map-by ppr:4:node --bind-to none \
         -mca plm_rsh_args '-o StrictHostKeyChecking=no' \
-        -mca pml ob1 -mca btl self,tcp -mca btl_tcp_if_include 10.0.4.0/22 \
-        -mca oob_tcp_if_include 10.0.4.0/22 -mca coll_hcoll_enable 0 \
+        -mca pml ob1 -mca btl self,tcp -mca btl_tcp_if_include <subnet/prefix> \
+        -mca oob_tcp_if_include <subnet/prefix> -mca coll_hcoll_enable 0 \
         -mca coll_ucc_enable 0 -mca mtl ^ofi -mca osc ^ucx \
         -x PATH -x CUDA_HOME=/usr/local/cuda \
         -x LD_LIBRARY_PATH=$HPCXLIB:$NCCL_BUILD/lib:$LD_LIBRARY_PATH \
         -x LD_PRELOAD="$HPCXLIB/libmpi.so.40 $PRELOAD_NCCL" \
         -x NCCL_EP_JIT_SOURCE_DIR=/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep \
         -x NCCL_EP_JIT_BUILD_INCLUDE_DIR=$NCCL_BUILD/include \
-        -x UCX_TLS=tcp,self,cuda_copy -x UCX_NET_DEVICES=enP22p1s0f1 \
-        -x NCCL_SOCKET_IFNAME=enP22p1s0f1 -x MSCCLPP_SOCKET_IFNAME=enP22p1s0f1 \
+        -x UCX_TLS=tcp,self,cuda_copy -x UCX_NET_DEVICES=<iface> \
+        -x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface> \
         -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=1 -x NCCL_NET_PLUGIN=none \
         python test/python/ep/run_ep_bench_python.py \
             --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
