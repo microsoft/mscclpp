@@ -115,6 +115,7 @@ import gc
 import glob
 import os
 import subprocess
+import time
 
 import torch
 from mpi4py import MPI
@@ -159,7 +160,16 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("NCCL_EP_JIT_BUILD_INCLUDE_DIR", "/opt/microsoft/mrc/ep/nccl/build/include"),
         help="NCCL_EP_JIT_BUILD_INCLUDE_DIR (NCCL public headers for the runtime JIT)",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.num_tokens <= 0 or args.num_experts <= 0:
+        raise SystemExit("--num-tokens and --num-experts must be positive")
+    if args.num_topk <= 0 or args.num_topk > args.num_experts:
+        raise SystemExit("--num-topk must be in [1, num-experts]")
+    if args.hidden <= 0:
+        raise SystemExit("--hidden must be positive")
+    if args.num_warmup < 0 or args.num_iters <= 0:
+        raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
+    return args
 
 
 # ----------------------------------------------------------------------------
@@ -519,16 +529,38 @@ def _cuda_inc_lib():
 
 def _ensure_cupti_lib(comm, local_rank):
     """Build libcupti_kernel_timer.so next to this file if missing. Only one rank
-    per node compiles (avoids a shared-path write race); everyone waits."""
+    per node attempts to compile, and an O_EXCL lock file guarantees that even
+    across nodes sharing the filesystem only a single compiler runs at a time
+    (the losers wait for the winner's build); everyone then barriers."""
     here = os.path.dirname(os.path.abspath(__file__))
     so = os.path.join(here, "libcupti_kernel_timer.so")
     src = os.path.join(here, "cupti_kernel_timer.cpp")
+    lock = so + ".lock"
     if not os.path.exists(so) and local_rank == 0 and os.path.exists(src):
-        inc, lib = _cuda_inc_lib()
-        subprocess.run(
-            ["g++", "-O2", "-fPIC", "-shared", src, "-o", so, f"-I{inc}", f"-L{lib}", "-lcupti"],
-            check=True,
-        )
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            fd = None
+        if fd is not None:
+            try:
+                if not os.path.exists(so):
+                    inc, lib = _cuda_inc_lib()
+                    subprocess.run(
+                        ["g++", "-O2", "-fPIC", "-shared", src, "-o", so, f"-I{inc}", f"-L{lib}", "-lcupti"],
+                        check=True,
+                    )
+            finally:
+                os.close(fd)
+                try:
+                    os.unlink(lock)
+                except FileNotFoundError:
+                    pass
+        else:
+            # Another builder holds the lock; wait for the .so to appear.
+            for _ in range(600):
+                if os.path.exists(so):
+                    break
+                time.sleep(0.5)
     comm.Barrier()
     return so if os.path.exists(so) else None
 

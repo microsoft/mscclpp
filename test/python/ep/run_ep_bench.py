@@ -204,6 +204,10 @@ def parse_args() -> argparse.Namespace:
         if not num_ranks + 2 <= args.num_blocks <= 130:
             raise SystemExit("num-blocks must be in [total ranks + 2, 130]")
 
+    # --cupti-inproc is a true alias for --kernel-only (kept for compatibility).
+    if args.cupti_inproc:
+        args.kernel_only = True
+
     return args
 
 
