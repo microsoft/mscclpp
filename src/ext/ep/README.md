@@ -480,6 +480,77 @@ Env knobs:
 | `MSCCLPP_EP_BENCH_TOPK`       | top-k routing                          | `8`     |
 | `MSCCLPP_EP_NUM_PROXIES`      | Number of runtime `ProxyService`s      | 8 (Hopper) / 1 (Blackwell) |
 
+### Unified in-process benchmark (mscclpp vs NCCL-EP)
+
+`test/python/ep/ep_bench_unified.py` drives **both** the mscclpp EP Python API
+(`MoECommunicator.dispatch` / `.combine`) and NVIDIA NCCL-EP's `nccl.ep`
+(`nccl4py`) dispatch / combine in a **single process**, through one shared paired
+`dispatch -> sync -> combine -> sync -> barrier` loop. Both backends are therefore
+timed with byte-for-byte the same methodology and emit the same
+`=== Summary (Low Latency) ===` block as the C++ `mscclpp_ep_bench`, so the two can
+be diffed directly. `--backend {mscclpp,nccl,both}` selects the backend(s); `both`
+runs `nccl` first, then `mscclpp`.
+
+Bootstrap is MPI (`mpi4py` + `mpirun`), shared by both backends (mscclpp via
+`CommGroup(mpi_comm=...)`, NCCL-EP via a unique-id broadcast over MPI); torch is
+used only for CUDA tensors and event timing, not for its distributed backend.
+
+The NCCL-EP path additionally needs, in the launch environment: `nvcc` on `PATH`
+(it JIT-compiles its LL kernels on first use), its build's `lib/` on
+`LD_LIBRARY_PATH`, and -- when the environment's default `libnccl` is older than
+the one `libnccl_ep.so` was built against -- an `LD_PRELOAD` of the in-tree
+`libnccl.so`. mscclpp's LL RDMA setup needs the active HCA list
+(`MSCCLPP_HCA_DEVICES`).
+
+Single node, 4 GPUs (Azure GB200), comparing both backends at `e128`:
+
+```bash
+# Point these at your local NCCL-EP build and CUDA toolkit.
+NCCL_BUILD=/opt/microsoft/mrc/ep/nccl/build
+NCCL_SRC=/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep
+CUDA_HOME=/usr/local/cuda
+NPROC=4
+
+# libnccl_ep.so is built against the in-tree libnccl; preload it so an older
+# environment libnccl (e.g. a pip nvidia-nccl wheel) does not win the dynamic
+# link race and trip NCCL-EP's version check. Highest-versioned libnccl.so.* wins.
+PRELOAD_NCCL="$(ls -1 "$NCCL_BUILD"/lib/libnccl.so.*.* | sort -V | tail -1)"
+
+mpirun -np "$NPROC" --bind-to none \
+    -x PATH="$CUDA_HOME/bin:$PATH" \
+    -x CUDA_HOME="$CUDA_HOME" \
+    -x LD_LIBRARY_PATH="$NCCL_BUILD/lib:$LD_LIBRARY_PATH" \
+    -x LD_PRELOAD="$PRELOAD_NCCL" \
+    -x NCCL_EP_JIT_SOURCE_DIR="$NCCL_SRC" \
+    -x NCCL_EP_JIT_BUILD_INCLUDE_DIR="$NCCL_BUILD/include" \
+    -x MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3 \
+    -x MSCCLPP_EP_FABRIC_IPC=1 \
+    -x MSCCLPP_EP_LOCAL_WORLD_SIZE="$NPROC" \
+    -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
+    python test/python/ep/ep_bench_unified.py \
+        --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
+```
+
+For mscclpp only, pass `--backend mscclpp`; the NCCL-EP-specific env vars
+(`NCCL_EP_JIT_*`, `LD_PRELOAD`, the NCCL build `lib/`) are then unnecessary.
+
+Pure kernel (device) time: add `--kernel-timing`. Both backends launch their LL
+dispatch/combine as *cooperative* kernels, which `torch.profiler` / Kineto
+mis-handles; the in-process CUPTI Activity collector (`cupti_kernel_timer.cpp`,
+built to `libcupti_kernel_timer.so` next to the script on first use) captures them
+via `CUPTI_ACTIVITY_KIND_KERNEL` and buckets by the mangled-name substrings
+`dispatch` / `combine` (both backends' LL kernels are named exactly that). This
+adds a `--- Kernel-only performance ---` block per backend alongside the
+host-observed one. The dispatch kernel ends in a cross-rank recv spin-wait, so the
+cross-rank **min** (the rank that did not wait) is reported as the representative
+kernel floor; combine has little recv-spin and is stable, so its avg/min/max are
+all shown.
+
+Ordering note: initializing mscclpp's LL `MoECommunicator` perturbs CUDA state
+that breaks a *later* NCCL-EP cooperative-launch dispatch, so `--backend both`
+runs NCCL-EP first. Each backend self-warms, so the ordering does not affect the
+reported numbers.
+
 ## Implementation notes
 
 ### Backend map
