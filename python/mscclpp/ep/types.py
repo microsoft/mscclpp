@@ -56,8 +56,7 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Transport / launch tuning
-    num_rdma_qps_per_rank: int = 12
+    # Launch tuning
     num_sms: int = 20
     low_latency_num_blocks: int = 130
     low_latency_combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
@@ -67,8 +66,6 @@ class MoECommunicatorConfig:
     expert_alignment: int = 1
     nvl_chunked_send: int = 8
     nvl_chunked_recv: int = 256
-    rdma_chunked_send: int = 16
-    rdma_chunked_recv: int = 128
 
 
 # MLP-facing dispatch output.
@@ -118,8 +115,8 @@ class ExpertMajorCombineContext:
 
 
 @dataclass
-class RowMajorIntranodeCombineContext:
-    """Combine context for row-major intranode dispatch output."""
+class RowMajorCombineContext:
+    """Combine context for row-major high-throughput dispatch output."""
 
     recv_topk_weights: Optional[torch.Tensor]
     src_idx: torch.Tensor
@@ -128,21 +125,7 @@ class RowMajorIntranodeCombineContext:
     send_head: torch.Tensor
 
 
-@dataclass
-class RowMajorInternodeCombineContext:
-    """Combine context for row-major internode dispatch output."""
-
-    recv_topk_weights: Optional[torch.Tensor]
-    src_meta: torch.Tensor
-    is_token_in_rank: torch.Tensor
-    recv_rdma_channel_prefix_matrix: torch.Tensor
-    recv_rdma_rank_prefix_sum: torch.Tensor
-    recv_gbl_channel_prefix_matrix: torch.Tensor
-    send_rdma_head: torch.Tensor
-    send_nvl_head: torch.Tensor
-
-
-CombineContext = Union[ExpertMajorCombineContext, RowMajorIntranodeCombineContext, RowMajorInternodeCombineContext]
+CombineContext = Union[ExpertMajorCombineContext, RowMajorCombineContext]
 
 
 # Opaque dispatch handles returned by dispatch() and consumed by combine().
@@ -161,13 +144,8 @@ class ExpertMajorDispatchHandle(DispatchHandle):
 
 
 @dataclass
-class RowMajorIntranodeDispatchHandle(DispatchHandle):
-    combine_context: RowMajorIntranodeCombineContext
-
-
-@dataclass
-class RowMajorInternodeDispatchHandle(DispatchHandle):
-    combine_context: RowMajorInternodeCombineContext
+class RowMajorDispatchHandle(DispatchHandle):
+    combine_context: RowMajorCombineContext
 
 
 # Optional async/overlap configuration.

@@ -3,7 +3,6 @@
 #pragma once
 
 #include <cstdint>
-#include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
 #include "exception.cuh"

@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Multi-rank intranode functional validation for mscclpp_ep.
+"""Multi-rank direct-fabric HT functional validation for mscclpp_ep.
 
 Launch with:
     torchrun --nproc_per_node=<N> test/python/ep/test_intranode_multirank.py
 
-Tests that the high-level ``MoECommunicator`` succeeds across N GPUs on a single
-node and that a round-trip dispatch + combine preserves data (sum of top-k
-weighted copies).
+Tests that the high-level ``MoECommunicator`` succeeds across GPUs in one
+detected GPU IPC/NVL fabric domain, including domains that span hosts, and that
+a round-trip dispatch + combine preserves data.
 
 Set ``MSCCLPP_EP_BENCH=1`` to also run a post-correctness benchmark pass
 that times dispatch and combine **separately** with CUDA events and
@@ -127,6 +127,10 @@ def main():
         )
     print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
     assert moe.is_available()
+    local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(num_ranks)))
+    expected_internode = num_ranks > local_world_size
+    assert moe.is_internode_available() == expected_internode
+    assert moe.is_internode() == expected_internode
 
     dispatch_out, handle = moe.dispatch(
         x,
@@ -271,16 +275,13 @@ def main():
     torch.cuda.synchronize()
     comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
 
-    # Per-rank "send bytes" matches NCCL-EP's `ep_bench` accounting (`RDMA_send`):
+    # Per-rank "send bytes" matches NCCL-EP's `ep_bench` accounting:
     # bench_tokens * hidden * sizeof(bf16). Each rank ships its `bench_tokens`
     # input rows out (some replicated to multiple peers); NCCL-EP normalizes by
     # the input footprint, not by the recv-side fan-out. We use the same
     # convention here so `per_rank_bw` is directly comparable across stacks.
     bytes_one_way = bench_tokens * bench_hidden * x_b.element_size()
 
-    # NCCL-EP `ep_bench` six-metric breakdown
-    # (intranode -> single node, so rdma_*=0; nvl_*=total_*).
-    #
     # Send side follows NCCL-EP: count unique (token, dst_node) pairs. With a
     # single node every selected destination collapses to that node, so a
     # token with at least one valid expert contributes exactly one to
@@ -288,32 +289,23 @@ def main():
     # landing on this rank.
     bytes_per_token = bench_hidden * x_b.element_size()
     total_send_tokens_local = int(is_token_in_rank_b.any(dim=1).sum().item())
-    rdma_send_tokens_local = 0  # intranode: no remote nodes
-    # Replaced dist.all_to_all_single (NCCL socket transport fails with
-    # NCCL_IB_DISABLE=1 internode) with all_gather_into_tensor + transpose,
-    # which works on the same socket-NCCL setup the LL test uses.
     _send_row = num_tokens_per_rank_b.to(torch.int64).contiguous()
     _gathered = torch.empty(num_ranks * num_ranks, dtype=torch.int64, device="cuda")
     dist.all_gather_into_tensor(_gathered, _send_row, group=group)
     recv_from_src = _gathered.view(num_ranks, num_ranks)[:, rank].contiguous()
     total_recv_tokens_local = int(recv_from_src.sum().item())
-    rdma_recv_tokens_local = 0  # intranode
 
     # Average per-rank token counts across ranks (matches NCCL-EP `Byte counts (per rank avg)`).
     counts_t = torch.tensor(
-        [total_send_tokens_local, rdma_send_tokens_local, total_recv_tokens_local, rdma_recv_tokens_local],
+        [total_send_tokens_local, total_recv_tokens_local],
         dtype=torch.float64,
         device="cuda",
     )
     dist.all_reduce(counts_t, op=dist.ReduceOp.SUM, group=group)
     counts_avg = (counts_t / num_ranks).tolist()
-    total_send_avg, rdma_send_avg, total_recv_avg, rdma_recv_avg = counts_avg
+    total_send_avg, total_recv_avg = counts_avg
     total_send_bytes = total_send_avg * bytes_per_token
-    rdma_send_bytes = rdma_send_avg * bytes_per_token
     total_recv_bytes = total_recv_avg * bytes_per_token
-    rdma_recv_bytes = rdma_recv_avg * bytes_per_token
-    nvl_send_bytes = total_send_bytes - rdma_send_bytes
-    nvl_recv_bytes = total_recv_bytes - rdma_recv_bytes
 
     # Reduce timings: report min/avg/max and base BW on AVG to match NCCL-EP's
     # `ep_bench.cu` convention.
@@ -333,21 +325,12 @@ def main():
     comb_avg_us = comb_avg_t.item() / num_ranks
     disp_bw_per_rank = bytes_one_way / (disp_avg_us * 1e-6) / 1e9
     comb_bw_per_rank = bytes_one_way / (comb_avg_us * 1e-6) / 1e9
-    # Six-metric BW (NCCL-EP convention). Combine reverses send<->recv.
     disp_t_s = disp_avg_us * 1e-6
     comb_t_s = comb_avg_us * 1e-6
     d_send_total_bw = total_send_bytes / disp_t_s / 1e9
-    d_send_nvl_bw = nvl_send_bytes / disp_t_s / 1e9
-    d_send_rdma_bw = rdma_send_bytes / disp_t_s / 1e9
     d_recv_total_bw = total_recv_bytes / disp_t_s / 1e9
-    d_recv_nvl_bw = nvl_recv_bytes / disp_t_s / 1e9
-    d_recv_rdma_bw = rdma_recv_bytes / disp_t_s / 1e9
     c_send_total_bw = total_recv_bytes / comb_t_s / 1e9  # combine sends back what dispatch received
-    c_send_nvl_bw = nvl_recv_bytes / comb_t_s / 1e9
-    c_send_rdma_bw = rdma_recv_bytes / comb_t_s / 1e9
     c_recv_total_bw = total_send_bytes / comb_t_s / 1e9  # combine receives back what dispatch sent
-    c_recv_nvl_bw = nvl_send_bytes / comb_t_s / 1e9
-    c_recv_rdma_bw = rdma_send_bytes / comb_t_s / 1e9
     if rank == 0:
         print(
             f"[bench intranode HT] tokens={bench_tokens} hidden={bench_hidden} "
@@ -362,8 +345,7 @@ def main():
             flush=True,
         )
         print(
-            f"            send: total={d_send_total_bw:.2f}  nvl={d_send_nvl_bw:.2f}  rdma={d_send_rdma_bw:.2f} GB/s  "
-            f"recv: total={d_recv_total_bw:.2f}  nvl={d_recv_nvl_bw:.2f}  rdma={d_recv_rdma_bw:.2f} GB/s",
+            f"            send={d_send_total_bw:.2f} GB/s  recv={d_recv_total_bw:.2f} GB/s",
             flush=True,
         )
         print(
@@ -373,16 +355,13 @@ def main():
             flush=True,
         )
         print(
-            f"            send: total={c_send_total_bw:.2f}  nvl={c_send_nvl_bw:.2f}  rdma={c_send_rdma_bw:.2f} GB/s  "
-            f"recv: total={c_recv_total_bw:.2f}  nvl={c_recv_nvl_bw:.2f}  rdma={c_recv_rdma_bw:.2f} GB/s",
+            f"            send={c_send_total_bw:.2f} GB/s  recv={c_recv_total_bw:.2f} GB/s",
             flush=True,
         )
         print(
             f"  byte counts (per rank avg): "
             f"total_send={total_send_bytes/1e6:.2f} MB ({total_send_avg:.0f} tok)  "
-            f"rdma_send={rdma_send_bytes/1e6:.2f} MB ({rdma_send_avg:.0f} tok)  "
-            f"total_recv={total_recv_bytes/1e6:.2f} MB ({total_recv_avg:.0f} tok)  "
-            f"rdma_recv={rdma_recv_bytes/1e6:.2f} MB ({rdma_recv_avg:.0f} tok)",
+            f"total_recv={total_recv_bytes/1e6:.2f} MB ({total_recv_avg:.0f} tok)",
             flush=True,
         )
 

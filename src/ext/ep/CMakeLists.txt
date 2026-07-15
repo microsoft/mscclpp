@@ -7,7 +7,7 @@
 # Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
 # nanobind API so the module never links libtorch:
 #  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
-#  - High-throughput (HT): ht_runtime.cc + ht/kernels/*.cu, a DeepEP-style
+#  - High-throughput (HT): ht_runtime.cc + ht/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
 #    recv sizing via the two-phase notify -> allocate -> dispatch API).
 
@@ -44,15 +44,15 @@ set(EP_SOURCES
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
-    ht/kernels/internode.cu
-    ht/kernels/intranode_kernel.cu
-    ht/kernels/runtime.cu
+    ht/layout.cu
+    ht/intranode_kernel.cu
+    ht/runtime.cu
 )
 
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu ht/kernels/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu ht/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -73,10 +73,6 @@ target_include_directories(mscclpp_ep_cpp PRIVATE
 )
 target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
 
-# The HT NCCL-EP dispatch/combine (sender-direct + flat all-sender + TMA) path
-# is compiled in unconditionally for this branch (the validated GB200 fast path).
-target_compile_definitions(mscclpp_ep_cpp PRIVATE EP_DISPATCH_NCCLEP)
-
 # The EP CUDA kernels call constexpr __host__ helpers (std::max / std::pair) and
 # use extended lambdas in device code. These flags were previously injected
 # implicitly by Torch's CMake package; add them explicitly now that the module
@@ -87,14 +83,6 @@ if(MSCCLPP_USE_CUDA)
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>
     )
 endif()
-
-# Number of intra-node NVLink peers compiled into the EP kernels.
-#  - 8 (default) matches DeepEP upstream and H100/HGX 8-GPU nodes.
-#  - 4 is required for Azure GB200 NVL72 (4 GPUs per NUMA host).
-set(MSCCLPP_EP_NUM_MAX_NVL_PEERS "8" CACHE STRING
-    "Compile-time NUM_MAX_NVL_PEERS for the EP kernels (8 for HGX, 4 for GB200)")
-target_compile_definitions(mscclpp_ep_cpp PRIVATE
-    NUM_MAX_NVL_PEERS=${MSCCLPP_EP_NUM_MAX_NVL_PEERS})
 
 # Kernel-side debug timeout (~10s) — set via:
 #   -DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON
