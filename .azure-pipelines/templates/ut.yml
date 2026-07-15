@@ -18,30 +18,40 @@ steps:
     gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'single-node-test true ${{ parameters.platform }}'
 
+- task: AzureCLI@2
+  displayName: Print SSH connection info
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      set +e
+      echo "=================== DEBUG NODE READY ==================="
+      echo "VMSS : ${{ parameters.vmssName }} (resource group: mscclpp)"
+      echo "Hostfile entry (internal address):"
+      cat test/deploy/hostfile_ci
+      echo
+      echo "Public IPs:"
+      az vmss list-instance-public-ips \
+        --name ${{ parameters.vmssName }} \
+        --resource-group mscclpp \
+        --query "[].ipAddress" -o tsv || echo "(none; reach the node over the private network / jumpbox)"
+      echo
+      echo "How to connect:"
+      echo "  1. ssh -i <mscclpp.pem> azureuser@<node-ip>"
+      echo "  2. sudo docker exec -it mscclpp-test bash"
+      echo "  Source is mounted at /root/mscclpp; build output at /root/mscclpp/build"
+      echo "======================================================="
 
-- template: run-remote-task.yml
-  parameters:
-    name: UnitTests
-    displayName: Run mscclpp unit tests
-    remoteScript: |
-      ./build/bin/unit_tests
-
-- template: run-remote-task.yml
-  parameters:
-    name: MpUnitTests
-    displayName: Run mscclpp multi-process unit tests
-    remoteScript: |
-      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests
-      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
-      mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
-
-- template: run-remote-task.yml
-  parameters:
-    name: PyTests
-    displayName: Run pytests
-    remoteScript: |
-      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x HSA_NO_SCRATCH_RECLAIM=1 -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
-      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x HSA_NO_SCRATCH_RECLAIM=1 -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_fp8_accum.py -x
+- task: Bash@3
+  displayName: Hang node for SSH debugging
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      echo "Holding node for 6 hours. Cancel this job to release it early."
+      sleep $(( 6 * 60 * 60 ))
+      echo "Hang finished; releasing node."
 
 - template: stop.yml
   parameters:

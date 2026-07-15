@@ -144,7 +144,21 @@ steps:
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
+      deadline=$(( SECONDS + 6 * 60 * 60 ))
+      attempt=0
+      until az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }} >/dev/null 2>&1; do
+        attempt=$((attempt + 1))
+        if [ ${SECONDS} -ge ${deadline} ]; then
+          echo "VMSS start did not succeed within 6 hours (${attempt} attempts); giving up."
+          exit 1
+        fi
+        # Retry every minute, but log only once every 5 minutes.
+        if [ $(( attempt % 5 )) -eq 0 ]; then
+          echo "VMSS start still failing after ${attempt} attempts (~${attempt} min); retrying every 60s..."
+        fi
+        sleep 60
+      done
+      echo "VMSS started after ${attempt} retr$([ ${attempt} -eq 1 ] && echo y || echo ies)."
 
 # 4. Deploy test environment
 - task: Bash@3
