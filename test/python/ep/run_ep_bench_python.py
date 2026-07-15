@@ -73,6 +73,34 @@ pass a hostfile with ``--map-by ppr:<gpus>:node``. Within a shared NVLink/MNNVL
 domain the mscclpp backend needs no extra transport env (CUDA-IPC path); for peers
 outside a shared IPC domain, provide ``MSCCLPP_HCA_DEVICES`` for the RDMA/IB path.
 
+A working 2-node, 8-GPU launch (both nodes on one NVLink/MNNVL fabric)::
+
+    NCCL_BUILD=/opt/microsoft/mrc/ep/nccl/build
+    HPCXLIB=/opt/hpcx-.../ompi/lib          # HPCX Open MPI 4 (mpi4py built against it)
+    PRELOAD_NCCL=$(ls -1 $NCCL_BUILD/lib/libnccl.so.*.* | sort -V | tail -1)
+    printf '10.0.4.82 slots=4\n10.0.4.93 slots=4\n' > /tmp/hostfile
+
+    mpirun -np 8 --hostfile /tmp/hostfile --map-by ppr:4:node --bind-to none \
+        -mca plm_rsh_args '-o StrictHostKeyChecking=no' \
+        -mca pml ob1 -mca btl self,tcp -mca btl_tcp_if_include 10.0.4.0/22 \
+        -mca oob_tcp_if_include 10.0.4.0/22 -mca coll_hcoll_enable 0 \
+        -mca coll_ucc_enable 0 -mca mtl ^ofi -mca osc ^ucx \
+        -x PATH -x CUDA_HOME=/usr/local/cuda \
+        -x LD_LIBRARY_PATH=$HPCXLIB:$NCCL_BUILD/lib:$LD_LIBRARY_PATH \
+        -x LD_PRELOAD="$HPCXLIB/libmpi.so.40 $PRELOAD_NCCL" \
+        -x NCCL_EP_JIT_SOURCE_DIR=/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep \
+        -x NCCL_EP_JIT_BUILD_INCLUDE_DIR=$NCCL_BUILD/include \
+        -x UCX_TLS=tcp,self,cuda_copy -x UCX_NET_DEVICES=enP22p1s0f1 \
+        -x NCCL_SOCKET_IFNAME=enP22p1s0f1 -x MSCCLPP_SOCKET_IFNAME=enP22p1s0f1 \
+        -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=1 -x NCCL_NET_PLUGIN=none \
+        python test/python/ep/run_ep_bench_python.py \
+            --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
+
+Here ``LD_PRELOAD`` forces HPCX Open MPI 4 (``libmpi.so.40``, matching the mpi4py
+rebuild) ahead of any conda Open MPI 5, and the in-tree ``libnccl`` ahead of an
+older environment one. ``NCCL_MNNVL_ENABLE=1`` lets NCCL-EP use the cross-node
+NVLink clique; the mscclpp backend runs the same NVLink/MNNVL fabric over CUDA IPC.
+
 ``LD_PRELOAD`` of the in-tree ``libnccl.so`` is required whenever the environment's
 default ``libnccl`` is older than the one ``libnccl_ep.so`` was built against.
 See ``src/ext/ep/README.md`` ("Unified in-process benchmark") for a ready-to-run
