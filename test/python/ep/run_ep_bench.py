@@ -133,16 +133,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--nodes",
         default="",
-        help="space-separated node IPs for a multi-node run (first = master). Empty = single "
-        "local node.",
+        help="space-separated node IPs for a multi-node run (first = master). Empty = single " "local node.",
     )
     p.add_argument("--iface", default="", help="optional socket interface name (NCCL/GLOO/UCX)")
     p.add_argument("--hca", default="", help="optional comma-separated mscclpp HCA devices")
 
     # Kernel-timing options.
-    p.add_argument(
-        "--cupti-inproc", action="store_true", help="alias for --kernel-only (kept for compatibility)"
-    )
+    p.add_argument("--cupti-inproc", action="store_true", help="alias for --kernel-only (kept for compatibility)")
     p.add_argument(
         "--kernel-only",
         action="store_true",
