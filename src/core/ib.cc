@@ -188,6 +188,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
       numStagedRecv_(0),
       numPostedSignaledSend_(0),
       numStagedSignaledSend_(0),
+      maxSendCqSize_(maxSendCqSize),
       maxSendCqPollNum_(maxSendCqPollNum),
       maxSendWr_(maxSendWr),
       maxWrPerSend_(maxWrPerSend),
@@ -402,9 +403,9 @@ void IbQp::postSend() {
   numStagedSend_ = 0;
   numPostedSignaledSend_ += numStagedSignaledSend_;
   numStagedSignaledSend_ = 0;
-  if (numPostedSignaledSend_ + 4 > sendCq_->cqe) {
-    WARN(NET, "IB: CQ is almost full ( ", numPostedSignaledSend_, " / ", sendCq_->cqe,
-         " ). The connection needs to be flushed to prevent timeout errors.");
+  if (numPostedSignaledSend_ + 4 > maxSendCqSize_) {
+    WARN(NET, "IB: CQ is almost full (", numPostedSignaledSend_, " / ", maxSendCqSize_,
+         "). The connection needs to be flushed to prevent timeout errors.");
   }
 }
 
