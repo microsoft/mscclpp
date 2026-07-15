@@ -1,0 +1,120 @@
+# Manual pipeline to hold a CI node open for interactive debugging.
+# It provisions the target VMSS, builds mscclpp, starts the test container,
+# prints SSH connection info, then sleeps so a developer can ssh in and debug.
+# The node is deallocated automatically when the sleep ends or the job is cancelled.
+
+trigger: none
+pr: none
+
+parameters:
+- name: target
+  displayName: CI node to debug
+  type: string
+  default: a100
+  values:
+  - a100
+  - h100
+  - mi300x
+- name: containerImage
+  displayName: Container image (leave empty to use the default for the target)
+  type: string
+  default: ''
+- name: sleepMinutes
+  displayName: Minutes to keep the node alive for SSH debugging
+  type: number
+  default: 60
+
+jobs:
+- job: DebugNode
+  displayName: Hold CI node for debugging
+  # Headroom for build + the requested sleep window. Keep sleepMinutes well below this.
+  timeoutInMinutes: 240
+  variables:
+    ${{ if eq(parameters.target, 'a100') }}:
+      poolName: msccl-ci
+      subscription: mscclpp-ci
+      vmssName: mscclpp-ci
+      gpuArch: '80'
+      platform: cuda
+      defaultImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+    ${{ if eq(parameters.target, 'h100') }}:
+      poolName: msccl-ci-h100
+      subscription: mscclpp-ci-h100
+      vmssName: mscclpp-h100-ci
+      gpuArch: '90'
+      platform: cuda
+      defaultImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+    ${{ if eq(parameters.target, 'mi300x') }}:
+      poolName: msccl-ci-mi300x
+      subscription: mscclpp-ci-mi300x
+      vmssName: mscclpp-mi300x-ci
+      gpuArch: gfx942
+      platform: rocm
+      defaultImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm7.2
+    ${{ if ne(parameters.containerImage, '') }}:
+      containerImage: ${{ parameters.containerImage }}
+    ${{ if eq(parameters.containerImage, '') }}:
+      containerImage: ${{ variables.defaultImage }}
+
+  pool:
+    name: ${{ variables.poolName }}
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  # Build mscclpp, start the test container on the VMSS node.
+  - template: templates/deploy.yml
+    parameters:
+      subscription:     ${{ variables.subscription }}
+      vmssName:         ${{ variables.vmssName }}
+      platform:         ${{ variables.platform }}
+      gpuArch:          ${{ variables.gpuArch }}
+      deployArgs:       'single-node-test true ${{ variables.platform }}'
+
+  - task: AzureCLI@2
+    name: PrintSshInfo
+    displayName: Print SSH connection info
+    inputs:
+      azureSubscription: ${{ variables.subscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set +e
+        echo "=================== DEBUG NODE READY ==================="
+        echo "Target        : ${{ parameters.target }}"
+        echo "VMSS          : ${{ variables.vmssName }} (resource group: mscclpp)"
+        echo "Image         : $(containerImage)"
+        echo "Alive for     : ${{ parameters.sleepMinutes }} minutes"
+        echo
+        echo "Hostfile entry (internal address):"
+        cat test/deploy/hostfile_ci
+        echo
+        echo "Public IPs:"
+        az vmss list-instance-public-ips \
+          --name ${{ variables.vmssName }} \
+          --resource-group mscclpp \
+          --query "[].ipAddress" -o tsv || echo "(none; reach the node over the private network / jumpbox)"
+        echo
+        echo "How to connect:"
+        echo "  1. ssh -i <mscclpp.pem> azureuser@<node-ip>"
+        echo "  2. sudo docker exec -it mscclpp-test bash"
+        echo "  Source is mounted at /root/mscclpp; build output at /root/mscclpp/build"
+        echo "======================================================="
+
+  - task: Bash@3
+    name: KeepAlive
+    displayName: Keep node alive for SSH debugging
+    inputs:
+      targetType: inline
+      script: |
+        set -e
+        echo "Holding node for ${{ parameters.sleepMinutes }} minutes. Cancel this job to release it early."
+        sleep $(( ${{ parameters.sleepMinutes }} * 60 ))
+        echo "Sleep finished; releasing node."
+
+  # Deallocate the VMSS (runs even if the job is cancelled/failed).
+  - template: templates/stop.yml
+    parameters:
+      subscription: ${{ variables.subscription }}
+      vmssName:     ${{ variables.vmssName }}
