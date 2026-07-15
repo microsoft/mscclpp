@@ -143,6 +143,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-i", "--num-iters", type=int, default=50, help="timed iterations")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     p.add_argument(
+        "--dispatch-dtype",
+        choices=("bf16", "fp8_e4m3"),
+        default="bf16",
+        help="mscclpp LL dispatch wire format. NCCL-EP path is bf16 only.",
+    )
+    p.add_argument(
+        "--combine-mode",
+        "--optimized-combine-mode",
+        choices=("rank_local_reduce", "direct_send"),
+        default="rank_local_reduce",
+        help="mscclpp LL combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
+    )
+    p.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="mscclpp: capture dispatch and combine as CUDA graphs and replay them in the timed loop.",
+    )
+    p.add_argument(
+        "--validate",
+        action="store_true",
+        help="mscclpp: run a one-time combine correctness check before timing.",
+    )
+    p.add_argument(
         "--kernel-timing",
         action="store_true",
         help="also measure pure device (kernel) time via the in-process CUPTI Activity "
@@ -169,6 +192,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
+    if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "both"):
+        raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
     return args
 
 
@@ -211,6 +236,40 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
     return x, topk_idx, topk_weights, num_valid_selections
 
 
+# ----------------------------------------------------------------------------
+# LL dtype / combine helpers (ported from test_low_latency_multirank.py).
+# ----------------------------------------------------------------------------
+def fp8_e4m3_block128_scales(x):
+    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)
+    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
+    return max_abs / 448.0
+
+
+def simulated_gemm_output(dispatch_out):
+    """Simulate the downstream expert GEMM so combine consumes BF16 expert output:
+    identity for BF16 dispatch; dequantize (tokens * block_scales) for FP8_E4M3."""
+    if dispatch_out.quant is None:
+        return dispatch_out.tokens
+    tokens = dispatch_out.tokens
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
+    return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+
+
+def validate_combine_output_mpi(actual, expected, comm, *, exact):
+    """MPI analog of the test's validate_combine_output: global max abs diff plus a
+    cross-rank finiteness (and, for direct_send, bit-exactness) assertion."""
+    local_diff = float((actual.float() - expected.float()).abs().max().item())
+    global_diff = comm.allreduce(local_diff, op=MPI.MAX)
+    local_finite = int(torch.isfinite(actual).all().item())
+    assert comm.allreduce(local_finite, op=MPI.MIN) == 1, "LL combine output contains NaN or Inf"
+    if exact:
+        local_equal = int(torch.equal(actual, expected))
+        assert comm.allreduce(local_equal, op=MPI.MIN) == 1, f"LL direct-send combine not bit-exact; diff={global_diff}"
+    else:
+        assert global_diff <= 8.0, f"LL rank-local combine mismatch; max diff={global_diff}"
+    return global_diff
+
+
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
@@ -233,6 +292,12 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         )
 
     ep_group = CommGroup(mpi_comm=comm)
+    combine_mode = {
+        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.CombineMode.DIRECT_SEND,
+    }[args.combine_mode]
+    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
+    dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -241,28 +306,86 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+        low_latency_combine_mode=combine_mode,
+        quant=dispatch_quant,
     )
     assert moe_comm.is_available()
     if rank == 0:
-        print(f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()}", flush=True)
+        print(
+            f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
+            flush=True,
+        )
 
     # Hoist output tensors out of the timed loop (the communicator owns its
     # src_info/layout_range/count buffers internally).
     output_buffer = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda"
+        (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
     )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
-    state = {"moe": moe_comm, "obuf": output_buffer, "out": out, "grp": ep_group}
-
-    def dispatch_fn():
-        # Full (send+recv) LL dispatch inline on the stream; returns (out, handle).
+    def _dispatch():
+        # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
-    def combine_fn(dout):
-        dispatch_out, handle = dout
-        moe_comm.combine(dispatch_out.tokens, handle, out=out)
+    def _combine(dispatch_out, handle):
+        # Feed BF16 expert output (identity for BF16, dequantized for FP8) into combine.
+        moe_comm.combine(simulated_gemm_output(dispatch_out), handle, out=out)
+
+    # Optional one-time correctness check (mirrors test_low_latency_multirank).
+    if args.validate:
+        v_dispatch_out, v_handle = _dispatch()
+        v_out = torch.empty_like(out)
+        moe_comm.combine(simulated_gemm_output(v_dispatch_out), v_handle, out=v_out)
+        torch.cuda.synchronize()
+        if dispatch_quant is None:
+            expected_f = torch.zeros_like(x, dtype=torch.float32)
+            x_f = x.float()
+            for j in range(num_topk):
+                weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
+                expected_f = torch.addcmul(expected_f, x_f, weight_j)
+            gdiff = validate_combine_output_mpi(
+                v_out, expected_f.to(torch.bfloat16), comm, exact=args.combine_mode == "direct_send"
+            )
+            if rank == 0:
+                print(f"[validate] mscclpp combine OK max|got-expected|={gdiff:.4e}", flush=True)
+        else:
+            assert torch.isfinite(v_out).all().item(), "FP8 LL combine produced NaN/Inf"
+            if rank == 0:
+                print("[validate] mscclpp FP8 combine finite OK", flush=True)
+
+    state = {"moe": moe_comm, "obuf": output_buffer, "out": out, "grp": ep_group}
+
+    if args.cuda_graph:
+        # Prime once, then capture dispatch and combine as separate CUDA graphs so
+        # the shared timed loop keeps its per-phase dispatch/combine events.
+        prime_out, prime_handle = _dispatch()
+        _combine(prime_out, prime_handle)
+        torch.cuda.synchronize()
+
+        g_dispatch = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_dispatch):
+            g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
+        g_combine = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_combine):
+            moe_comm.combine(simulated_gemm_output(g_dispatch_out), g_handle, out=out)
+        state["graphs"] = (g_dispatch, g_combine)
+
+        def dispatch_fn():
+            g_dispatch.replay()
+            return (g_dispatch_out, g_handle)
+
+        def combine_fn(dout):
+            g_combine.replay()
+
+    else:
+
+        def dispatch_fn():
+            return _dispatch()
+
+        def combine_fn(dout):
+            dispatch_out, handle = dout
+            _combine(dispatch_out, handle)
 
     def teardown():
         state.clear()
@@ -373,8 +496,9 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
-    disp_bytes = num_valid_selections * hidden * 2  # BF16
-    comb_bytes = num_valid_selections * hidden * 2  # BF16 (symmetric, per ep_bench)
+    disp_elt = 1 if getattr(args, "dispatch_dtype", "bf16") == "fp8_e4m3" else 2
+    disp_bytes = num_valid_selections * hidden * disp_elt  # dispatch wire format
+    comb_bytes = num_valid_selections * hidden * 2  # BF16 combine output (per ep_bench)
 
     stream = torch.cuda.current_stream()
 
