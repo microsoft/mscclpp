@@ -7,7 +7,6 @@
 #
 # Example:
 #   cmake -S test/python/ep -B test/python/ep/build \
-#     -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=8 \
 #     -DCMAKE_CUDA_ARCHITECTURES=90
 #   cmake --build test/python/ep/build -j 64
 
@@ -26,8 +25,6 @@ endif()
 
 get_filename_component(_default_mscclpp_src "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(MSCCLPP_SRC "${_default_mscclpp_src}" CACHE PATH "mscclpp source tree")
-set(MSCCLPP_EP_NUM_MAX_NVL_PEERS "8" CACHE STRING
-    "Compile-time NUM_MAX_NVL_PEERS for the EP kernels (8 for HGX, 4 for GB200)")
 
 find_package(MPI REQUIRED)
 find_package(CUDAToolkit REQUIRED)
@@ -76,10 +73,7 @@ target_include_directories(mscclpp_ep_bench PRIVATE
   "${MSCCLPP_INSTALL_DIR}/include"
   "${CUPTI_INCLUDE_DIR}")
 
-target_compile_definitions(mscclpp_ep_bench PRIVATE
-  MSCCLPP_USE_CUDA
-  EP_DISPATCH_NCCLEP
-  NUM_MAX_NVL_PEERS=${MSCCLPP_EP_NUM_MAX_NVL_PEERS})
+target_compile_definitions(mscclpp_ep_bench PRIVATE MSCCLPP_USE_CUDA)
 
 target_compile_options(mscclpp_ep_bench PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>

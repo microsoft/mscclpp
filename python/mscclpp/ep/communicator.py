@@ -24,10 +24,8 @@ from .types import (
     MoECommunicatorConfig,
     OperationOverlapConfig,
     QuantConfig,
-    RowMajorInternodeDispatchHandle,
-    RowMajorInternodeCombineContext,
-    RowMajorIntranodeDispatchHandle,
-    RowMajorIntranodeCombineContext,
+    RowMajorDispatchHandle,
+    RowMajorCombineContext,
 )
 
 __all__ = [
@@ -48,10 +46,8 @@ __all__ = [
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "RowMajorInternodeDispatchHandle",
-    "RowMajorInternodeCombineContext",
-    "RowMajorIntranodeDispatchHandle",
-    "RowMajorIntranodeCombineContext",
+    "RowMajorDispatchHandle",
+    "RowMajorCombineContext",
 ]
 
 

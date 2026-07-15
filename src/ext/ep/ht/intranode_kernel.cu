@@ -1,5 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+//
+// HT dispatch and combine kernels for directly mapped peers.
+
 #include <limits>
 
 #include "buffer.cuh"
@@ -510,7 +513,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
 // combine gather map, and pack per-token metadata (src_idx, rebased topk_idx,
 // topk_weights, scales) into the destination pool's META region at the final recv
 // slot. A separate intranode_meta_drain kernel then unpacks the local pool META
-// region into the recv_* output tensors (mirrors the internode flat_meta_drain).
+// region into the recv_* output tensors.
 // No ring, no head/tail flow control, no receiver. Pairs with the TMA combine,
 // which is token-parallel and ignores the channel prefix matrix.
 template <int kNumRanks, int kNumThreads>
@@ -592,7 +595,7 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 }
 
 // Unpack the local recv-pool META region (filled by the all-sender dispatch) into the
-// recv_* output tensors. One thread per recv token. Mirrors internode flat_meta_drain.
+// recv_* output tensors. One thread per recv token.
 __global__ void intranode_meta_drain_kernel(const uint8_t* __restrict__ pool_base, int64_t meta_base,
                                             int num_recv_tokens, int* __restrict__ recv_src_idx,
                                             int64_t* __restrict__ recv_topk_idx, float* __restrict__ recv_topk_weights,
@@ -640,8 +643,9 @@ void dispatch_allsender(int* send_head, const void* x, const int64_t* topk_idx, 
   constexpr int kNumThreads = 512;
   EP_HOST_ASSERT(recv_pool_ptrs != nullptr);
   // Meta slot must hold src_idx + topk_idx(int) + topk_weights(float) + scales(float).
-  EP_HOST_ASSERT(static_cast<int64_t>(sizeof(int)) + static_cast<int64_t>(num_topk) * (sizeof(int) + sizeof(float)) +
-                     static_cast<int64_t>(num_scales) * sizeof(float) <=
+  EP_HOST_ASSERT(static_cast<int64_t>(sizeof(int)) +
+                     static_cast<int64_t>(num_topk) * static_cast<int64_t>(sizeof(int) + sizeof(float)) +
+                     static_cast<int64_t>(num_scales) * static_cast<int64_t>(sizeof(float)) <=
                  meta_slot_bytes);
 #define DISPATCH_ALLSENDER_LAUNCH_CASE(ranks)                                                                          \
   LAUNCH_KERNEL(&cfg, (dispatch_allsender<ranks, kNumThreads>), send_head, reinterpret_cast<const int4*>(x), topk_idx, \
@@ -985,11 +989,10 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 }
 
 // ---------------------------------------------------------------------------
-// Intranode TMA-staged direct-gather combine (port of internode
-// combine_flat_gather_tma to the single-node NVLink/IPC path).
+// Intranode TMA-staged direct-gather combine for the single-node peer-mapped path.
 //
-// Mirrors the internode flat direct-gather: for each combined output token, it
-// discovers the contributing ranks and gathers each contributor's hidden row
+// For each combined output token, it discovers the contributing ranks and
+// gathers each contributor's hidden row
 // straight from that rank's IPC-mapped recv-output pool (recv_pool_ptrs[r] at
 // slot ep_combine_recv_idx[t,r]) through a kStages-deep cp.async.bulk (TMA) SMEM
 // pipeline, reduces from SMEM, and writes the summed row to combined_x. No
@@ -999,7 +1002,7 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 // Contributor discovery uses send_head (>=0 == token routed to that rank during
 // dispatch); the per-(token,rank) recv-pool slot comes from ep_combine_recv_idx,
 // which the dispatch sender-direct path fills. combined_topk_weights is zeroed
-// (the intranode test, like the internode flat path, validates only combined_x).
+// (the current intranode test validates only combined_x).
 #ifndef EP_ICMB_TMA_CHUNK_INT4
 #define EP_ICMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors)
 #endif

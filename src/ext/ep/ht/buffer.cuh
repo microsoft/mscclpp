@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+// Device-side buffer views for HT ring storage.
+
 #include <cstdint>
 
 #include "constants.cuh"
