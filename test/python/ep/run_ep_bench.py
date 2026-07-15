@@ -14,7 +14,7 @@ Backends (``--ep-lib``):
   with ``mpirun`` (HPCX).
 * ``both`` / ``all`` -- run mscclpp-cpp then nccl-ep, side by side.
 
-For the mscclpp-vs-nccl-ep *Python* API comparison, use ``ep_bench_unified.py``.
+For the mscclpp-vs-nccl-ep *Python* API comparison, use ``run_ep_bench_python.py``.
 
 Both backends emit the identical ``=== Summary (Low Latency, across N ranks) ===``
 block, so a single parser reads either one.

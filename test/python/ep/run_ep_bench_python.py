@@ -60,7 +60,7 @@ RDMA setup needs the active HCA list. A working single-node 4-GPU launch::
         -x MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3 \
         -x MSCCLPP_EP_FABRIC_IPC=1 -x MSCCLPP_EP_LOCAL_WORLD_SIZE=4 \
         -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
-        python ep_bench_unified.py --backend both -e 128
+        python run_ep_bench_python.py --backend both -e 128
 
 ``LD_PRELOAD`` of the in-tree ``libnccl.so`` is required whenever the environment's
 default ``libnccl`` is older than the one ``libnccl_ep.so`` was built against.

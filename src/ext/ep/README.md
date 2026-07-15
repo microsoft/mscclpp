@@ -318,7 +318,7 @@ test/python/ep/
 ├── test_internode_multirank.py        — internode HT dispatch+combine
 ├── test_low_latency_multirank.py      — LL correctness + CUDA Graph
 ├── mscclpp_ep_bench.cu                — pure-C++ NCCL-style LL benchmark
-├── ep_bench_unified.py               — in-process MSCCL++ vs NCCL-EP Python bench
+├── run_ep_bench_python.py            — in-process MSCCL++ vs NCCL-EP Python bench
 └── run_ep_bench.py                    — unified MSCCL++-cpp / NCCL-EP driver
 ```
 
@@ -467,7 +467,7 @@ python3 test/python/ep/run_ep_bench.py \
     --dispatch-dtype fp8_e4m3 --combine-mode direct_send
 ```
 
-`ep_bench_unified.py` provides the high-level Python equivalent (drives both the
+`run_ep_bench_python.py` provides the high-level Python equivalent (drives both the
 MSCCL++ and NCCL-EP Python APIs in-process). The existing
 multirank HT tests also expose their older env-controlled benchmark pass.
 
@@ -485,7 +485,7 @@ HT multirank test benchmark env knobs:
 
 ### Unified in-process benchmark (mscclpp vs NCCL-EP)
 
-`test/python/ep/ep_bench_unified.py` drives **both** the mscclpp EP Python API
+`test/python/ep/run_ep_bench_python.py` drives **both** the mscclpp EP Python API
 (`MoECommunicator.dispatch` / `.combine`) and NVIDIA NCCL-EP's `nccl.ep`
 (`nccl4py`) dispatch / combine in a **single process**, through one shared paired
 `dispatch -> sync -> combine -> sync -> barrier` loop. Both backends are therefore
@@ -530,7 +530,7 @@ mpirun -np "$NPROC" --bind-to none \
     -x MSCCLPP_EP_FABRIC_IPC=1 \
     -x MSCCLPP_EP_LOCAL_WORLD_SIZE="$NPROC" \
     -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
-    python test/python/ep/ep_bench_unified.py \
+    python test/python/ep/run_ep_bench_python.py \
         --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
 ```
 
