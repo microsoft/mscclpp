@@ -16,6 +16,7 @@ namespace nccl {
 struct AlgorithmSelectorConfig {
   bool symmetricMemory;
   bool nvlsSupported;
+  bool fp8NvlsSupported;
   bool isCuMemMapAllocated;
   bool inCaptureMode;
   std::pair<int, int> computeCapability;

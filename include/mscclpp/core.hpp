@@ -46,6 +46,10 @@ class Bootstrap {
   /// @return The total number of ranks per node.
   virtual int getNranksPerNode() const = 0;
 
+  /// Return the number of ranks in this rank's GPU IPC domain.
+  /// @return The number of ranks in the GPU IPC domain.
+  virtual int getNranksPerIpcDomain() const;
+
   /// Send arbitrary data to another process.
   ///
   /// Data sent via `send(senderBuff, size, receiverRank, tag)` can be received via `recv(receiverBuff, size,
@@ -143,6 +147,9 @@ class TcpBootstrap : public Bootstrap {
 
   /// Return the total number of ranks per node.
   int getNranksPerNode() const override;
+
+  /// Return the number of ranks in this rank's GPU IPC domain.
+  int getNranksPerIpcDomain() const override;
 
   /// Send arbitrary data to another process.
   ///
@@ -391,7 +398,7 @@ struct EndpointConfig {
     static constexpr int DefaultPort = -1;
     static constexpr int DefaultGidIndex = -1;
     static constexpr int DefaultMaxCqSize = 1024;
-    static constexpr int DefaultMaxCqPollNum = 1;
+    static constexpr int DefaultMaxCqPollNum = 256;
     static constexpr int DefaultMaxSendWr = 8192;
     static constexpr int DefaultMaxRecvWr = 16;
     static constexpr int DefaultMaxWrPerSend = 64;
