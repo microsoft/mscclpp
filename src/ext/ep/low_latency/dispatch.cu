@@ -413,6 +413,99 @@ MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, WorkspaceView& worksp
   return task.sourceRank_ >= 0;
 }
 
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
+    void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
+    const DispatchPayloadView<DataType>& payloadView, void* sourcePayload, int localExpertIdx, int sourceRank,
+    int sourceTokenIdx, int nLocalExperts, int nRanks, int nTopk, int maxTokensPerRank, WorkspaceView& workspaceView,
+    uint8_t* sharedTile, uint64_t* tmaBarrier, uint32_t& recvTmaPhase) {
+  using OutputType = DispatchElementType<DataType>;
+  constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
+  constexpr int NumScales = DataType == DispatchDataType::BF16 ? 0 : Hidden / ScaleBlockSize;
+  const int laneId = get_lane_id();
+  const int nOutputSlotsPerExpert = nRanks * maxTokensPerRank;
+  int outputTokenIdx = -1;
+  int combineInputOffset = -1;
+
+  if (localExpertIdx >= 0) {
+    int expertTokenCount;
+    int outputOffset;
+    unpack2(outputLayout[localExpertIdx * nRanks + sourceRank], expertTokenCount, outputOffset);
+    const int copiedTokenIdx =
+        atomicAdd(workspaceView.dispatchExpertCopiedCounts_ + sourceRank * nLocalExperts + localExpertIdx, 1);
+    EP_DEVICE_ASSERT(copiedTokenIdx < expertTokenCount);
+    if (copiedTokenIdx == expertTokenCount - 1) {
+      workspaceView.dispatchExpertCopiedCounts_[sourceRank * nLocalExperts + localExpertIdx] = 0;
+    }
+    outputTokenIdx = outputOffset + copiedTokenIdx;
+    outputSrcInfo[static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx] = sourceTokenIdx;
+    combineInputOffset = localExpertIdx * nOutputSlotsPerExpert + outputTokenIdx;
+  }
+
+  if constexpr (DataType != DispatchDataType::BF16) {
+    const auto* sourceScales = payloadView.scaleFactors(sourcePayload);
+    // Each top-k lane may create a row for a different local expert. All lanes
+    // cooperate to copy the shared payload's scale vector to every such row.
+    for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
+      const int scaleLocalExpertIdx = warpBroadcast(localExpertIdx, topkLane);
+      const int scaleOutputTokenIdx = warpBroadcast(outputTokenIdx, topkLane);
+      if (scaleLocalExpertIdx < 0) continue;
+      for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
+        outputScales[(static_cast<size_t>(scaleLocalExpertIdx) * NumScales + scaleIdx) * nOutputSlotsPerExpert +
+                     scaleOutputTokenIdx] = sourceScales[scaleIdx];
+      }
+    }
+  }
+  if (laneId < nTopk) payloadView.topKIndices(sourcePayload)[laneId] = combineInputOffset;
+
+  if (laneId == 0) waitTmaLoad(tmaBarrier, recvTmaPhase);
+  __syncwarp();
+  fenceProxyAsyncSharedCta();
+
+  if (localExpertIdx < 0) return false;
+  auto* outputData = reinterpret_cast<uint8_t*>(output) +
+                     (static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx) * OutputBytes;
+  issueTmaStore(outputData, sharedTile, static_cast<uint32_t>(OutputBytes));
+  return true;
+}
+
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* outputScales, int* outputSrcInfo,
+                                                        int* outputTopkIdx, float* outputTopkWeights,
+                                                        const DispatchPayloadView<DataType>& payloadView,
+                                                        const void* sourcePayload, int localExpertIdx, int sourceRank,
+                                                        int sourceTokenSlot, int sourceTokenIdx, int nTopk,
+                                                        int maxTokensPerRank, uint8_t* sharedTile, uint64_t* tmaBarrier,
+                                                        uint32_t& recvTmaPhase) {
+  using OutputType = DispatchElementType<DataType>;
+  constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
+  constexpr int NumScales = DataType == DispatchDataType::BF16 ? 0 : Hidden / ScaleBlockSize;
+  const int laneId = get_lane_id();
+  const int outputRow = sourceRank * maxTokensPerRank + sourceTokenSlot;
+
+  if (laneId == 0) outputSrcInfo[outputRow] = sourceTokenIdx;
+  if (laneId < nTopk) {
+    outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] = localExpertIdx;
+    outputTopkWeights[static_cast<size_t>(outputRow) * nTopk + laneId] =
+        localExpertIdx >= 0 ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
+  }
+  if constexpr (DataType != DispatchDataType::BF16) {
+    const auto* sourceScales = payloadView.scaleFactors(sourcePayload);
+    for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
+      outputScales[static_cast<size_t>(outputRow) * NumScales + scaleIdx] = sourceScales[scaleIdx];
+    }
+  }
+
+  if (laneId == 0) waitTmaLoad(tmaBarrier, recvTmaPhase);
+  __syncwarp();
+  fenceProxyAsyncSharedCta();
+
+  if (laneId != 0) return false;
+  auto* outputData = reinterpret_cast<uint8_t*>(output) + static_cast<size_t>(outputRow) * OutputBytes;
+  issueTmaStore(outputData, sharedTile, static_cast<uint32_t>(OutputBytes));
+  return true;
+}
+
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
 MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                               float* outputTopkWeights, int64_t* outputLayout, int nExperts, int rank,
@@ -439,8 +532,6 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
   const size_t payloadStride = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
   constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
   constexpr size_t TileBytes = OutputBytes;
-  constexpr int NumScales = DataType == DispatchDataType::BF16 ? 0 : Hidden / ScaleBlockSize;
-  const int nOutputSlotsPerExpert = nRanks * maxTokensPerRank;
   auto* sourcePayloadBase = reinterpret_cast<uint8_t*>(recvBuffer) + dispatchMetadataBytes(nRanks, nExperts) +
                             static_cast<size_t>(sourceRank) * maxTokensPerRank * payloadStride;
   auto* tmaTiles = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
@@ -470,79 +561,16 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
                                    : -1;
     const int sourceTokenIdx = warpBroadcast(
         laneId == 0 ? *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank : 0, 0);
-    int outputTokenIdx = -1;
-    int combineInputOffset = -1;
     if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
-      if (localExpertIdx >= 0) {
-        int expertTokenCount;
-        int outputOffset;
-        unpack2(outputLayout[localExpertIdx * nRanks + sourceRank], expertTokenCount, outputOffset);
-        const int copiedTokenIdx =
-            atomicAdd(workspaceView.dispatchExpertCopiedCounts_ + sourceRank * nLocalExperts + localExpertIdx, 1);
-        EP_DEVICE_ASSERT(copiedTokenIdx < expertTokenCount);
-        if (copiedTokenIdx == expertTokenCount - 1) {
-          workspaceView.dispatchExpertCopiedCounts_[sourceRank * nLocalExperts + localExpertIdx] = 0;
-        }
-        outputTokenIdx = outputOffset + copiedTokenIdx;
-        outputSrcInfo[static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx] = sourceTokenIdx;
-        combineInputOffset = localExpertIdx * nOutputSlotsPerExpert + outputTokenIdx;
-      }
+      hasPendingStore = dispatchRecvExpertMajorOutput<Hidden, DataType, ScaleBlockSize>(
+          output, outputScales, outputSrcInfo, outputLayout, payloadView, sourcePayload, localExpertIdx, sourceRank,
+          sourceTokenIdx, nLocalExperts, nRanks, nTopk, maxTokensPerRank, workspaceView, sharedTile, tmaBarrier,
+          recvTmaPhase);
     } else {
-      const int outputRow = sourceRank * maxTokensPerRank + sourceTokenSlot;
-      if (laneId == 0) outputSrcInfo[outputRow] = sourceTokenIdx;
-      if (laneId < nTopk) {
-        outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] = localExpertIdx;
-        outputTopkWeights[static_cast<size_t>(outputRow) * nTopk + laneId] =
-            payloadView.topKValues(sourcePayload)[laneId];
-      }
-      outputTokenIdx = sourceTokenSlot;
-      combineInputOffset = outputRow;
-    }
-    if constexpr (DataType != DispatchDataType::BF16) {
-      const auto* sourceScales = payloadView.scaleFactors(sourcePayload);
-      if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
-        // Each top-k lane may create a row for a different local expert. All lanes
-        // cooperate to copy the shared payload's scale vector to every such row.
-        for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
-          const int scaleLocalExpertIdx = warpBroadcast(localExpertIdx, topkLane);
-          const int scaleOutputTokenIdx = warpBroadcast(outputTokenIdx, topkLane);
-          if (scaleLocalExpertIdx < 0) continue;
-          for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
-            outputScales[(static_cast<size_t>(scaleLocalExpertIdx) * NumScales + scaleIdx) * nOutputSlotsPerExpert +
-                         scaleOutputTokenIdx] = sourceScales[scaleIdx];
-          }
-        }
-      } else {
-        for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
-          outputScales[static_cast<size_t>(combineInputOffset) * NumScales + scaleIdx] = sourceScales[scaleIdx];
-        }
-      }
-    }
-    if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
-      if (laneId < nTopk) payloadView.topKIndices(sourcePayload)[laneId] = combineInputOffset;
-    }
-
-    if (laneId == 0) waitTmaLoad(tmaBarrier, recvTmaPhase);
-    __syncwarp();
-    fenceProxyAsyncSharedCta();
-
-    if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
-      if (localExpertIdx >= 0) {
-        auto* outputData = reinterpret_cast<uint8_t*>(output) +
-                           (static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx) * OutputBytes;
-        issueTmaStore(outputData, sharedTile, static_cast<uint32_t>(OutputBytes));
-        hasPendingStore = true;
-      } else {
-        hasPendingStore = false;
-      }
-    } else {
-      if (laneId == 0) {
-        auto* outputData = reinterpret_cast<uint8_t*>(output) + static_cast<size_t>(combineInputOffset) * OutputBytes;
-        issueTmaStore(outputData, sharedTile, static_cast<uint32_t>(OutputBytes));
-        hasPendingStore = true;
-      } else {
-        hasPendingStore = false;
-      }
+      hasPendingStore = dispatchRecvTokenMajorOutput<Hidden, DataType, ScaleBlockSize>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, payloadView, sourcePayload,
+          localExpertIdx, sourceRank, sourceTokenSlot, sourceTokenIdx, nTopk, maxTokensPerRank, sharedTile, tmaBarrier,
+          recvTmaPhase);
     }
   }
 

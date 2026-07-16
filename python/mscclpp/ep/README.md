@@ -180,8 +180,6 @@ Use `DispatchLayout` instead of string literals for this field:
 | `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]`; LL: `[world_size * max_tokens_per_rank, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 
-`DispatchLayout.FLAT` is a compatibility alias for `DispatchLayout.TOKEN_MAJOR`.
-
 ## MoECommunicator methods
 
 ```python
@@ -267,7 +265,6 @@ class QuantConfig:
 class DispatchLayout(str, Enum):
     EXPERT_MAJOR = "expert_major"
     TOKEN_MAJOR = "token_major"
-    FLAT = TOKEN_MAJOR
 
 
 @dataclass
@@ -317,11 +314,11 @@ class TokenMajorCombineContext:
 
 
 @dataclass
-class RowMajorCombineContext:
+class HighThroughputCombineContext:
     ...
 
 
-CombineContext = ExpertMajorCombineContext | TokenMajorCombineContext | RowMajorCombineContext
+CombineContext = ExpertMajorCombineContext | TokenMajorCombineContext | HighThroughputCombineContext
 
 
 class DispatchHandle:
@@ -338,8 +335,8 @@ class TokenMajorDispatchHandle(DispatchHandle):
     combine_context: TokenMajorCombineContext
 
 
-class RowMajorDispatchHandle(DispatchHandle):
-    combine_context: RowMajorCombineContext
+class HighThroughputDispatchHandle(DispatchHandle):
+    combine_context: HighThroughputCombineContext
 
 
 @dataclass
@@ -428,7 +425,7 @@ to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
 shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
 per-source-rank counts, and the original routing needed for cross-rank combine.
-Row-major handles use the intranode combine context with
+High-throughput handles use the intranode combine context with
 receive-side weights, source indices, prefix matrices, and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
@@ -563,7 +560,7 @@ dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 lo
 dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
-Non-local top-k entries use expert ID `-1`. The valid row count in each
+Non-local top-k entries use expert ID `-1` and weight `0`. The valid row count in each
 source-rank region is returned in `dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:

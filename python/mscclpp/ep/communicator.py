@@ -21,11 +21,11 @@ from .types import (
     DispatchOutputInfo,
     ExpertMajorDispatchHandle,
     ExpertMajorCombineContext,
+    HighThroughputDispatchHandle,
+    HighThroughputCombineContext,
     MoECommunicatorConfig,
     OperationOverlapConfig,
     QuantConfig,
-    RowMajorDispatchHandle,
-    RowMajorCombineContext,
     TokenMajorDispatchHandle,
     TokenMajorCombineContext,
 )
@@ -43,13 +43,13 @@ __all__ = [
     "DispatchOutputInfo",
     "ExpertMajorDispatchHandle",
     "ExpertMajorCombineContext",
+    "HighThroughputDispatchHandle",
+    "HighThroughputCombineContext",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "RowMajorDispatchHandle",
-    "RowMajorCombineContext",
     "TokenMajorDispatchHandle",
     "TokenMajorCombineContext",
 ]
@@ -166,7 +166,7 @@ def _validate_common_config(config: MoECommunicatorConfig) -> None:
 
 def _resolve_output_layout(layout: Optional[DispatchLayout], mode: MoEMode) -> DispatchLayout:
     if layout is None:
-        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LOW_LATENCY else DispatchLayout.FLAT
+        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LOW_LATENCY else DispatchLayout.TOKEN_MAJOR
     if not isinstance(layout, DispatchLayout):
         raise TypeError("MoECommunicatorConfig.output_layout must be a DispatchLayout")
     return layout

@@ -131,8 +131,8 @@ class TokenMajorCombineContext:
 
 
 @dataclass
-class RowMajorCombineContext:
-    """Combine context for row-major high-throughput dispatch output."""
+class HighThroughputCombineContext:
+    """Combine context for high-throughput dispatch output."""
 
     recv_topk_weights: Optional[torch.Tensor]
     src_idx: torch.Tensor
@@ -141,7 +141,7 @@ class RowMajorCombineContext:
     send_head: torch.Tensor
 
 
-CombineContext = Union[ExpertMajorCombineContext, TokenMajorCombineContext, RowMajorCombineContext]
+CombineContext = Union[ExpertMajorCombineContext, TokenMajorCombineContext, HighThroughputCombineContext]
 
 
 # Opaque dispatch handles returned by dispatch() and consumed by combine().
@@ -165,8 +165,8 @@ class TokenMajorDispatchHandle(DispatchHandle):
 
 
 @dataclass
-class RowMajorDispatchHandle(DispatchHandle):
-    combine_context: RowMajorCombineContext
+class HighThroughputDispatchHandle(DispatchHandle):
+    combine_context: HighThroughputCombineContext
 
 
 # Optional async/overlap configuration.

@@ -160,6 +160,255 @@ def validate_combine_output(actual, expected, *, exact, group):
     return local_diff.item(), global_diff.item()
 
 
+def validate_expert_major_dispatch(
+    *,
+    rank,
+    num_ranks,
+    hidden,
+    num_local_experts,
+    dispatch_quant,
+    dispatch_out,
+    handle,
+    packed_recv_x,
+    packed_recv_count,
+    packed_recv_layout_range,
+    all_topk_idx,
+    all_x,
+    expected_scales,
+):
+    int_mask = (1 << 32) - 1
+    for local_expert_idx in range(num_local_experts):
+        expert_id = rank * num_local_experts + local_expert_idx
+        recv_count = int(packed_recv_count[local_expert_idx].item())
+        expected_count = int((all_topk_idx == expert_id).sum().item())
+        recv_layout_range = packed_recv_layout_range[local_expert_idx]
+        layout_sum = int((recv_layout_range & int_mask).sum().item())
+        assert (
+            recv_count == expected_count
+        ), f"rank{rank} expert{expert_id}: recv_count={recv_count} != expected={expected_count}"
+        assert (
+            layout_sum == recv_count
+        ), f"rank{rank} expert{expert_id}: layout range sum {layout_sum} != recv_count {recv_count}"
+
+        if recv_count == 0:
+            continue
+        recv_x = packed_recv_x[local_expert_idx, :recv_count]
+        if dispatch_quant is None:
+            recv_x_lo = recv_x[:, :-128]
+            assert torch.equal(
+                recv_x_lo.amin(dim=-1), recv_x_lo.amax(dim=-1)
+            ), f"rank{rank} expert{expert_id}: non-uniform recv block"
+            continue
+
+        assert all_x is not None
+        assert expected_scales is not None
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.block_scales is not None
+        for source_rank in range(num_ranks):
+            packed_range = int(recv_layout_range[source_rank].item())
+            source_count = packed_range & int_mask
+            output_offset = packed_range >> 32
+            if source_count == 0:
+                continue
+            source_tokens = handle.combine_context.src_info[
+                local_expert_idx, output_offset : output_offset + source_count
+            ].long()
+            actual_tokens = recv_x[output_offset : output_offset + source_count]
+            actual_scales = dispatch_out.quant.block_scales[
+                local_expert_idx, output_offset : output_offset + source_count
+            ]
+            reference_scales = expected_scales[source_rank, source_tokens]
+            torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+            actual_dequantized = actual_tokens.float().reshape(
+                source_count, hidden // 128, 128
+            ) * actual_scales.unsqueeze(-1)
+            reference_tokens = all_x[source_rank, source_tokens].float().reshape(source_count, hidden // 128, 128)
+            quant_error = (actual_dequantized - reference_tokens).abs()
+            quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
+            max_scale_error = (quant_error / reference_scales.unsqueeze(-1)).max().item()
+            assert torch.all(quant_error <= quant_error_bound), (
+                f"rank{rank} expert{expert_id}: FP8 payload mismatch from rank {source_rank}, "
+                f"max scale error={max_scale_error}"
+            )
+
+
+def validate_token_major_dispatch(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_topk,
+    num_local_experts,
+    dispatch_quant,
+    dispatch_out,
+    handle,
+    packed_recv_x,
+    packed_recv_count,
+    all_topk_idx,
+    all_topk_weights,
+    all_x,
+    expected_scales,
+):
+    assert all_x is not None
+    assert dispatch_out.topk_ids is not None
+    assert dispatch_out.topk_ids.dtype == torch.int32
+    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
+    assert dispatch_out.weights is not None
+    assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
+    source_token_ids = handle.combine_context.source_token_ids
+    assert source_token_ids.shape == (num_ranks * num_tokens,)
+    local_expert_begin = rank * num_local_experts
+    local_expert_end = local_expert_begin + num_local_experts
+
+    for source_rank in range(num_ranks):
+        recv_count = int(packed_recv_count[source_rank].item())
+        source_routing = all_topk_idx[source_rank]
+        expected_source_tokens = (
+            ((source_routing >= local_expert_begin) & (source_routing < local_expert_end))
+            .any(dim=1)
+            .nonzero()
+            .flatten()
+        )
+        assert recv_count == expected_source_tokens.numel()
+        if recv_count == 0:
+            continue
+
+        row_begin = source_rank * num_tokens
+        row_end = row_begin + recv_count
+        source_tokens = source_token_ids[row_begin:row_end].long()
+        assert torch.equal(torch.sort(source_tokens).values, expected_source_tokens)
+
+        actual_tokens = packed_recv_x[row_begin:row_end]
+        actual_topk_ids = dispatch_out.topk_ids[row_begin:row_end]
+        actual_weights = dispatch_out.weights[row_begin:row_end]
+        expected_global_ids = all_topk_idx[source_rank, source_tokens]
+        local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
+        expected_local_ids = torch.where(
+            local_mask, expected_global_ids - local_expert_begin, torch.full_like(expected_global_ids, -1)
+        )
+        expected_weights = torch.where(
+            local_mask, all_topk_weights[source_rank, source_tokens], torch.zeros_like(actual_weights)
+        )
+        assert torch.equal(actual_topk_ids, expected_local_ids.to(torch.int32))
+        torch.testing.assert_close(actual_weights, expected_weights)
+
+        if dispatch_quant is None:
+            assert torch.equal(actual_tokens, all_x[source_rank, source_tokens])
+            continue
+
+        assert expected_scales is not None
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.block_scales is not None
+        actual_scales = dispatch_out.quant.block_scales[row_begin:row_end]
+        reference_scales = expected_scales[source_rank, source_tokens]
+        torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+        actual_dequantized = actual_tokens.float().reshape(recv_count, hidden // 128, 128) * actual_scales.unsqueeze(-1)
+        reference_tokens = all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // 128, 128)
+        quant_error = (actual_dequantized - reference_tokens).abs()
+        quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
+        assert torch.all(quant_error <= quant_error_bound)
+
+
+def reconstruct_expert_major_reference(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_local_experts,
+    all_topk_idx,
+    packed_recv_layout_range,
+    handle,
+    dequantized_x,
+    group,
+):
+    int_mask = (1 << 32) - 1
+    first_expert = all_topk_idx.gather(-1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)).squeeze(-1)
+    first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
+    dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    for local_expert_idx in range(num_local_experts):
+        expert_id = rank * num_local_experts + local_expert_idx
+        recv_layout_range = packed_recv_layout_range[local_expert_idx]
+        for source_rank in range(num_ranks):
+            packed_range = int(recv_layout_range[source_rank].item())
+            source_count = packed_range & int_mask
+            output_offset = packed_range >> 32
+            if source_count == 0:
+                continue
+            source_tokens = handle.combine_context.src_info[
+                local_expert_idx, output_offset : output_offset + source_count
+            ].long()
+            selected = first_expert[source_rank, source_tokens] == expert_id
+            dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[
+                local_expert_idx, output_offset : output_offset + source_count
+            ][selected]
+    dist.all_reduce(dispatched_reference_x, group=group)
+    return dispatched_reference_x[rank]
+
+
+def reconstruct_token_major_reference(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_local_experts,
+    all_topk_idx,
+    packed_recv_count,
+    handle,
+    dequantized_x,
+    group,
+):
+    source_token_ids = handle.combine_context.source_token_ids
+    destination_ranks = torch.where(
+        all_topk_idx >= 0,
+        all_topk_idx // num_local_experts,
+        torch.full_like(all_topk_idx, num_ranks),
+    )
+    first_destination_rank = destination_ranks.amin(dim=-1)
+    dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    for source_rank in range(num_ranks):
+        source_count = int(packed_recv_count[source_rank].item())
+        if source_count == 0:
+            continue
+        row_begin = source_rank * num_tokens
+        row_end = row_begin + source_count
+        source_tokens = source_token_ids[row_begin:row_end].long()
+        selected = first_destination_rank[source_rank, source_tokens] == rank
+        dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[row_begin:row_end][selected]
+    dist.all_reduce(dispatched_reference_x, group=group)
+    return dispatched_reference_x[rank]
+
+
+def expected_expert_major_output(reference_x, topk_idx, topk_weights):
+    expected = torch.zeros_like(reference_x, dtype=torch.float32)
+    reference_x_f = reference_x.float()
+    for topk_slot in range(topk_idx.size(1)):
+        weight = (
+            (topk_idx[:, topk_slot] != -1).float()
+            if topk_weights is None
+            else topk_weights[:, topk_slot].masked_fill(topk_idx[:, topk_slot] == -1, 0.0)
+        ).view(-1, 1)
+        expected = torch.addcmul(expected, reference_x_f, weight)
+    return expected.to(torch.bfloat16)
+
+
+def expected_token_major_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts):
+    expected = torch.zeros_like(reference_x, dtype=torch.float32)
+    reference_x_f = reference_x.float()
+    for destination_rank in range(num_ranks):
+        rank_partial = torch.zeros_like(reference_x, dtype=torch.float32)
+        for topk_slot in range(topk_idx.size(1)):
+            selected = (topk_idx[:, topk_slot] >= 0) & (topk_idx[:, topk_slot] // num_local_experts == destination_rank)
+            weight = (
+                selected.float() if topk_weights is None else topk_weights[:, topk_slot].masked_fill(~selected, 0.0)
+            ).view(-1, 1)
+            rank_partial = torch.addcmul(rank_partial, reference_x_f, weight)
+        expected += rank_partial.to(torch.bfloat16).float()
+    return expected.to(torch.bfloat16)
+
+
 def main():
     args = parse_args()
     rank, num_ranks, _, group = init_dist()
@@ -296,115 +545,41 @@ def main():
         assert all_x is not None
         expected_scales = fp8_e4m3_block128_scales(all_x)
 
-    int_mask = (1 << 32) - 1
     if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
         assert packed_recv_layout_range is not None
-        for i in range(num_local_experts):
-            expert_id = rank * num_local_experts + i
-            recv_count = int(packed_recv_count[i].item())
-            expected_count = int((all_topk_idx == expert_id).sum().item())
-            recv_layout_range = packed_recv_layout_range[i]
-            layout_sum = int((recv_layout_range & int_mask).sum().item())
-            assert (
-                recv_count == expected_count
-            ), f"rank{rank} expert{expert_id}: recv_count={recv_count} != expected={expected_count}"
-            assert (
-                layout_sum == recv_count
-            ), f"rank{rank} expert{expert_id}: layout range sum {layout_sum} != recv_count {recv_count}"
-
-            if recv_count:
-                recv_x = packed_recv_x[i, :recv_count]
-                if dispatch_quant is None:
-                    recv_x_lo = recv_x[:, :-128]
-                    amin = recv_x_lo.amin(dim=-1)
-                    amax = recv_x_lo.amax(dim=-1)
-                    assert torch.equal(amin, amax), f"rank{rank} expert{expert_id}: non-uniform recv block"
-                else:
-                    assert all_x is not None
-                    assert expected_scales is not None
-                    assert dispatch_out.quant is not None
-                    assert dispatch_out.quant.block_scales is not None
-                    for source_rank in range(num_ranks):
-                        packed_range = int(recv_layout_range[source_rank].item())
-                        source_count = packed_range & int_mask
-                        output_offset = packed_range >> 32
-                        if source_count == 0:
-                            continue
-                        source_tokens = handle.combine_context.src_info[
-                            i, output_offset : output_offset + source_count
-                        ].long()
-                        actual_tokens = recv_x[output_offset : output_offset + source_count]
-                        actual_scales = dispatch_out.quant.block_scales[i, output_offset : output_offset + source_count]
-                        reference_scales = expected_scales[source_rank, source_tokens]
-                        torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
-                        actual_dequantized = actual_tokens.float().reshape(
-                            source_count, hidden // 128, 128
-                        ) * actual_scales.unsqueeze(-1)
-                        reference_tokens = (
-                            all_x[source_rank, source_tokens].float().reshape(source_count, hidden // 128, 128)
-                        )
-                        quant_error = (actual_dequantized - reference_tokens).abs()
-                        quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
-                        max_scale_error = (quant_error / reference_scales.unsqueeze(-1)).max().item()
-                        assert torch.all(quant_error <= quant_error_bound), (
-                            f"rank{rank} expert{expert_id}: FP8 payload mismatch from rank {source_rank}, "
-                            f"max scale error={max_scale_error}"
-                        )
+        validate_expert_major_dispatch(
+            rank=rank,
+            num_ranks=num_ranks,
+            hidden=hidden,
+            num_local_experts=num_local_experts,
+            dispatch_quant=dispatch_quant,
+            dispatch_out=dispatch_out,
+            handle=handle,
+            packed_recv_x=packed_recv_x,
+            packed_recv_count=packed_recv_count,
+            packed_recv_layout_range=packed_recv_layout_range,
+            all_topk_idx=all_topk_idx,
+            all_x=all_x,
+            expected_scales=expected_scales,
+        )
     else:
-        assert all_x is not None
-        assert dispatch_out.topk_ids is not None
-        assert dispatch_out.topk_ids.dtype == torch.int32
-        assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
-        assert dispatch_out.weights is not None
-        assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
-        source_token_ids = handle.combine_context.source_token_ids
-        assert source_token_ids.shape == (num_ranks * num_tokens,)
-        local_expert_begin = rank * num_local_experts
-        local_expert_end = local_expert_begin + num_local_experts
-        for source_rank in range(num_ranks):
-            recv_count = int(packed_recv_count[source_rank].item())
-            source_routing = all_topk_idx[source_rank]
-            expected_source_tokens = (
-                ((source_routing >= local_expert_begin) & (source_routing < local_expert_end))
-                .any(dim=1)
-                .nonzero()
-                .flatten()
-            )
-            assert recv_count == expected_source_tokens.numel()
-            if recv_count == 0:
-                continue
-            row_begin = source_rank * num_tokens
-            row_end = row_begin + recv_count
-            source_tokens = source_token_ids[row_begin:row_end].long()
-            assert torch.equal(torch.sort(source_tokens).values, expected_source_tokens)
-
-            actual_tokens = packed_recv_x[row_begin:row_end]
-            actual_topk_ids = dispatch_out.topk_ids[row_begin:row_end]
-            actual_weights = dispatch_out.weights[row_begin:row_end]
-            expected_global_ids = all_topk_idx[source_rank, source_tokens]
-            expected_local_ids = expected_global_ids - local_expert_begin
-            expected_local_ids.masked_fill_(
-                (expected_global_ids < local_expert_begin) | (expected_global_ids >= local_expert_end), -1
-            )
-            assert torch.equal(actual_topk_ids, expected_local_ids.to(torch.int32))
-            torch.testing.assert_close(actual_weights, all_topk_weights[source_rank, source_tokens])
-
-            if dispatch_quant is None:
-                assert torch.equal(actual_tokens, all_x[source_rank, source_tokens])
-            else:
-                assert expected_scales is not None
-                assert dispatch_out.quant is not None
-                assert dispatch_out.quant.block_scales is not None
-                actual_scales = dispatch_out.quant.block_scales[row_begin:row_end]
-                reference_scales = expected_scales[source_rank, source_tokens]
-                torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
-                actual_dequantized = actual_tokens.float().reshape(
-                    recv_count, hidden // 128, 128
-                ) * actual_scales.unsqueeze(-1)
-                reference_tokens = all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // 128, 128)
-                quant_error = (actual_dequantized - reference_tokens).abs()
-                quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
-                assert torch.all(quant_error <= quant_error_bound)
+        validate_token_major_dispatch(
+            rank=rank,
+            num_ranks=num_ranks,
+            num_tokens=num_tokens,
+            hidden=hidden,
+            num_topk=num_topk,
+            num_local_experts=num_local_experts,
+            dispatch_quant=dispatch_quant,
+            dispatch_out=dispatch_out,
+            handle=handle,
+            packed_recv_x=packed_recv_x,
+            packed_recv_count=packed_recv_count,
+            all_topk_idx=all_topk_idx,
+            all_topk_weights=all_topk_weights,
+            all_x=all_x,
+            expected_scales=expected_scales,
+        )
 
     if rank == 0:
         print(f"[dispatch] OK (ranks={num_ranks})", flush=True)
@@ -416,77 +591,43 @@ def main():
     simulated_gemm_x = simulated_gemm_output(dispatch_out)
     reference_x = x
     if dispatch_quant is not None:
-        dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
             assert packed_recv_layout_range is not None
-            first_expert = all_topk_idx.gather(
-                -1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)
-            ).squeeze(-1)
-            first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
-            for i in range(num_local_experts):
-                expert_id = rank * num_local_experts + i
-                recv_layout_range = packed_recv_layout_range[i]
-                for source_rank in range(num_ranks):
-                    packed_range = int(recv_layout_range[source_rank].item())
-                    source_count = packed_range & int_mask
-                    output_offset = packed_range >> 32
-                    if source_count == 0:
-                        continue
-                    source_tokens = handle.combine_context.src_info[
-                        i, output_offset : output_offset + source_count
-                    ].long()
-                    selected = first_expert[source_rank, source_tokens] == expert_id
-                    dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[
-                        i, output_offset : output_offset + source_count
-                    ][selected]
-        else:
-            source_token_ids = handle.combine_context.source_token_ids
-            destination_ranks = torch.where(
-                all_topk_idx >= 0,
-                all_topk_idx // num_local_experts,
-                torch.full_like(all_topk_idx, num_ranks),
+            reference_x = reconstruct_expert_major_reference(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                hidden=hidden,
+                num_local_experts=num_local_experts,
+                all_topk_idx=all_topk_idx,
+                packed_recv_layout_range=packed_recv_layout_range,
+                handle=handle,
+                dequantized_x=dequantized_x,
+                group=group,
             )
-            first_destination_rank = destination_ranks.amin(dim=-1)
-            for source_rank in range(num_ranks):
-                source_count = int(packed_recv_count[source_rank].item())
-                if source_count == 0:
-                    continue
-                row_begin = source_rank * num_tokens
-                row_end = row_begin + source_count
-                source_tokens = source_token_ids[row_begin:row_end].long()
-                selected = first_destination_rank[source_rank, source_tokens] == rank
-                dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[row_begin:row_end][
-                    selected
-                ]
-        dist.all_reduce(dispatched_reference_x, group=group)
-        reference_x = dispatched_reference_x[rank]
+        else:
+            reference_x = reconstruct_token_major_reference(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                hidden=hidden,
+                num_local_experts=num_local_experts,
+                all_topk_idx=all_topk_idx,
+                packed_recv_count=packed_recv_count,
+                handle=handle,
+                dequantized_x=dequantized_x,
+                group=group,
+            )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
     combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
 
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
-    x_f = reference_x.float()
-    expected_f = torch.zeros_like(x, dtype=torch.float32)
     if output_layout == ep.DispatchLayout.TOKEN_MAJOR:
-        for destination_rank in range(num_ranks):
-            rank_partial = torch.zeros_like(x, dtype=torch.float32)
-            for j in range(num_topk):
-                selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] // num_local_experts == destination_rank)
-                weight_j = (
-                    selected.float() if topk_weights is None else topk_weights[:, j].masked_fill(~selected, 0.0)
-                ).view(-1, 1)
-                rank_partial = torch.addcmul(rank_partial, x_f, weight_j)
-            expected_f += rank_partial.to(torch.bfloat16).float()
+        expected = expected_token_major_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
     else:
-        for j in range(num_topk):
-            weight_j = (
-                (topk_idx[:, j] != -1).float()
-                if topk_weights is None
-                else topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0)
-            ).view(-1, 1)
-            expected_f = torch.addcmul(expected_f, x_f, weight_j)
-    expected = expected_f.to(torch.bfloat16)
+        expected = expected_expert_major_output(reference_x, topk_idx, topk_weights)
     local_diff, _ = validate_combine_output(
         combined_x,
         expected,

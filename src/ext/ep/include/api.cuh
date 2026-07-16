@@ -32,9 +32,7 @@ enum class DispatchLayout {
   /// Token-major rows. Low latency uses
   /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
   /// throughput uses [num_recv_tokens, hidden].
-  TOKEN_MAJOR,
-  /// Backward-compatible alias for TOKEN_MAJOR.
-  FLAT = TOKEN_MAJOR
+  TOKEN_MAJOR
 };
 
 // ===========================================================================

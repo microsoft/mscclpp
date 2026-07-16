@@ -47,12 +47,15 @@ MSCCLPP_HOST_DEVICE_INLINE int directSendWorkerCount(int nLocalExperts) {
   return availableWorkers < DirectSendMaxNWorkers ? availableWorkers : DirectSendMaxNWorkers;
 }
 
-template <int Hidden, low_latency::CombineMode Mode>
+template <int Hidden, low_latency::CombineMode Mode, DispatchLayout Layout>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   constexpr size_t TileBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   if constexpr (Mode == low_latency::CombineMode::DIRECT_SEND) {
     return directSendControlBytes(nLocalExperts) +
            static_cast<size_t>(directSendWorkerCount<Hidden>(nLocalExperts)) * directSendWorkerBytes<Hidden>();
+  }
+  if constexpr (Layout == DispatchLayout::TOKEN_MAJOR) {
+    return CombineNStages * TileBytes;
   }
   return CombineNStages * TileBytes;
 }
@@ -188,10 +191,9 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void sendTokenMajorPartials(const void* expertOutput, const int* srcInfo, int nRanks,
-                                                  int maxTokensPerRank, void* combineRecvBuffer,
-                                                  const TransportView& transport, WorkspaceView& workspaceView,
-                                                  uint8_t* sharedMemory) {
+MSCCLPP_DEVICE_INLINE void sendTokenMajorPartials(const void* expertOutput, const int* srcInfo, int maxTokensPerRank,
+                                                  void* combineRecvBuffer, const TransportView& transport,
+                                                  WorkspaceView& workspaceView, uint8_t* sharedMemory) {
   const int threadId = static_cast<int>(threadIdx.x);
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   constexpr int HiddenInt4 = HiddenBytes / sizeof(int4);
@@ -436,8 +438,8 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
 
   if constexpr (Layout == DispatchLayout::TOKEN_MAJOR) {
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
-    sendTokenMajorPartials<Hidden>(expertOutput, srcInfo, nRanks, maxTokensPerRank, combineRecvBuffer, transport,
-                                   workspaceView, sharedMemory);
+    sendTokenMajorPartials<Hidden>(expertOutput, srcInfo, maxTokensPerRank, combineRecvBuffer, transport, workspaceView,
+                                   sharedMemory);
   } else if constexpr (Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
     sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(
         expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank, combineRecvBuffer, dispatchRecvBuffer, transport,
@@ -476,7 +478,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   }
 
   auto combineFunc = combineKernel<Mode, Hidden, DispatchType, ScaleBlockSize, Layout>;
-  const size_t sharedBytes = combineSharedBytes<Hidden, Mode>(nLocalExperts);
+  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, Layout>(nLocalExperts);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, comm, kernelConfig);
   EP_HOST_ASSERT(residentBlocks >= numBlocks);

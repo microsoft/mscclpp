@@ -24,10 +24,10 @@ from .types import (
     DispatchLayoutInfo,
     DispatchOutput,
     DispatchOutputInfo,
+    HighThroughputCombineContext,
+    HighThroughputDispatchHandle,
     MoECommunicatorConfig,
     QuantConfig,
-    RowMajorCombineContext,
-    RowMajorDispatchHandle,
 )
 from .utils import (
     bf16_view as _bf16_view,
@@ -397,7 +397,7 @@ class HighThroughputBackend:
             recv_topk_idx = cache["recv_topk_idx"]
             recv_topk_weights = cache["recv_topk_weights"]
             num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
-            combine_context = RowMajorCombineContext(
+            combine_context = HighThroughputCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 src_idx=recv_src_idx,
                 rank_prefix_matrix=rank_prefix_matrix,
@@ -430,7 +430,7 @@ class HighThroughputBackend:
                 None,
                 self.expert_alignment,
             )
-            combine_context = RowMajorCombineContext(
+            combine_context = HighThroughputCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 src_idx=recv_src_idx,
                 rank_prefix_matrix=rank_prefix_matrix,
@@ -471,7 +471,7 @@ class HighThroughputBackend:
             topk_ids=recv_topk_idx,
             weights=recv_topk_weights,
         )
-        handle = RowMajorDispatchHandle(output_info=output_info, combine_context=combine_context)
+        handle = HighThroughputDispatchHandle(output_info=output_info, combine_context=combine_context)
         # The torch-free HT runtime orders its work on the caller's CUDA stream
         # (no separate event handle), so there is nothing to attach here.
         handle._event = None  # type: ignore[attr-defined]
@@ -547,7 +547,7 @@ class HighThroughputBackend:
                 raise ValueError("weights shape must match topk_ids")
 
     def _validate_combine_inputs(self, expert_output, handle) -> None:
-        if not isinstance(handle, RowMajorDispatchHandle):
+        if not isinstance(handle, HighThroughputDispatchHandle):
             raise TypeError("handle must be a DispatchHandle returned by dispatch")
         if expert_output.dim() != 2 or not expert_output.is_contiguous():
             raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")

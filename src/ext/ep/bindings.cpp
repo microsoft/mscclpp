@@ -46,7 +46,6 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
       .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
-      .value("FLAT", mscclpp::ep::DispatchLayout::FLAT)
       .value("TOKEN_MAJOR", mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
 
   nb::enum_<mscclpp::ep::low_latency::CombineMode>(m, "CombineMode")
