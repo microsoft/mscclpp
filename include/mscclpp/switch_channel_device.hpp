@@ -46,16 +46,17 @@ struct SwitchChannelDeviceHandle {
   /// Synchronize all ranks in the multicast group using the switch's multimem atomics.
   ///
   /// This is a device-side cross-rank barrier: it lets a kernel synchronize all ranks in the NVLS
-  /// group without a separate set of memory-channel semaphores or any host-side barrier. Memory
-  /// writes issued by any rank before its barrier() call are guaranteed visible to all ranks after
-  /// their barrier() call returns.
+  /// group without a separate set of memory-channel semaphores or any host-side barrier.
   ///
-  /// Ordering is carried by scoped release/acquire on the counter itself -- the arrival is a
-  /// `.release` multimem add and the wait is an `.acquire` load -- rather than by a pair of
-  /// `__threadfence_system()` calls. The release/acquire pair still publishes each rank's prior
-  /// writes before its arrival and makes peers' writes visible after the wait, but at `.sys` scope
-  /// only on the counter, which is much cheaper than a full system fence (this matches NCCL's LSA
-  /// switch barrier in `lsa_barrier__funcs.h`).
+  /// `memoryOrder` selects how much visibility the barrier carries. The default,
+  /// `cuda::memory_order::relaxed`, is a pure execution barrier: it synchronizes rank arrival but
+  /// makes no cross-rank data-visibility guarantee. Pass a stronger order (release/acq_rel/seq_cst)
+  /// to also publish memory -- the arrival then becomes a `.release` multimem add and the wait an
+  /// `.acquire` load, so writes issued by any rank before its barrier() call are visible to all
+  /// ranks after their barrier() call returns. This ordering is carried by scoped release/acquire
+  /// on the counter itself -- at `.sys` scope only on the counter -- rather than by a pair of
+  /// `__threadfence_system()` calls, which is much cheaper than a full system fence (this matches
+  /// NCCL's LSA switch barrier in `lsa_barrier__funcs.h`).
   ///
   /// The protocol: every rank advances its private target by nRanks, performs one multimem add of 1
   /// on the shared counter (which the switch applies to every rank's copy), then spins on its own
@@ -67,21 +68,32 @@ struct SwitchChannelDeviceHandle {
   /// counts ranks, not threads. For a grid-wide cross-rank barrier, converge the grid (e.g. via
   /// `mscclpp::DeviceSyncer::sync`) before and after this call. Requires that the owning
   /// `NvlsConnection` was created with barrier support, i.e. the barrier pointers are non-null.
+  /// @param memoryOrder Ordering applied to the arrival/wait. `relaxed` (default) gives a pure
+  /// execution barrier; a stronger order (release/acq_rel/seq_cst) additionally publishes each
+  /// rank's pre-barrier writes to all ranks via a release arrival paired with an acquire wait.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void barrier([[maybe_unused]] int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void barrier(cuda::memory_order memoryOrder = cuda::memory_order::relaxed,
+                                     [[maybe_unused]] int64_t maxSpinCount = 100000000) {
     // Guard against calling barrier() on a channel whose connection has no barrier support. This is
     // a debug-only diagnostic; in release builds a null pointer here dereferences and crashes, which
     // is intentionally preferred over a silent no-op barrier (that would hide a cross-rank race).
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::barrier() called without barrier support");
     // Advance this rank's private target. All ranks advance identically, so targets stay in lock-step.
     const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
-    // Signal arrival with release ordering: one multimem add increments every rank's copy of the
-    // counter through the switch, publishing this rank's prior writes before the arrival is observed.
-    asm volatile("multimem.red.release.sys.global.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
-    // Wait (acquire) until every rank has arrived. The signed (wrap-safe) compare means "counter is
-    // behind target"; the acquire pairs with peers' release so their pre-barrier writes are visible.
+    // Signal arrival: one multimem add increments every rank's copy of the counter through the switch.
+    if (memoryOrder == cuda::memory_order::relaxed) {
+      // Relaxed arrival: pure execution barrier, no data-visibility ordering.
+      asm volatile("multimem.red.relaxed.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    } else {
+      // Release arrival publishes this rank's prior writes before the arrival is observed by peers.
+      asm volatile("multimem.red.release.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    }
+
+    cuda::memory_order waitOrder =
+        (memoryOrder == cuda::memory_order::relaxed) ? cuda::memory_order::relaxed : cuda::memory_order::acquire;
+    // Wait until every rank has arrived. The signed (wrap-safe) compare means "counter is behind target".
     POLL_MAYBE_JAILBREAK(
-        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, memoryOrderAcquire) - target) < 0),
+        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, waitOrder) - target) < 0),
         maxSpinCount);
   }
 
