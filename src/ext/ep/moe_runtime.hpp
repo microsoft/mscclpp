@@ -29,8 +29,8 @@ class MoERuntime {
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
                 const float* topkWeights, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-                DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType, int numBlocks,
-                cudaStream_t stream);
+                DispatchLayout dispatchLayout, bool initializeTokenMajorPadding,
+                low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream);
 
   void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
                const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,

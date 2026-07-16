@@ -144,6 +144,8 @@ struct Workload {
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
   DispatchLayout outputLayout_;
+  /// Whether token-major padding metadata is initialized to sentinel values.
+  bool initializeTokenMajorPadding_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };

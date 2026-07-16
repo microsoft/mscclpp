@@ -118,7 +118,8 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                           float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                           const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
                           int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
-                          low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream) {
+                          bool initializeTokenMajorPadding, low_latency::DispatchDataType dispatchDataType,
+                          int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
@@ -135,6 +136,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
+                                       .initializeTokenMajorPadding_ = initializeTokenMajorPadding,
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
@@ -163,6 +165,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
+                                       .initializeTokenMajorPadding_ = false,
                                        .dispatchDataType_ = dispatchDataType};
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);

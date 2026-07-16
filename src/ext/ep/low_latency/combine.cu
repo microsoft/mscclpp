@@ -554,9 +554,9 @@ inline void combine(void* output, const void* expertOutput, const int64_t* topkI
   const int rank = comm.rank_;
   const int nRanks = comm.numRanks_;
 
-  EP_HOST_ASSERT(output != nullptr);
+  EP_HOST_ASSERT(workload.numTokens_ == 0 || output != nullptr);
   EP_HOST_ASSERT(expertOutput != nullptr);
-  EP_HOST_ASSERT(topkIndices != nullptr);
+  EP_HOST_ASSERT(workload.numTokens_ == 0 || topkIndices != nullptr);
   EP_HOST_ASSERT(recvBuffer != nullptr);
   EP_HOST_ASSERT(dispatchRecvBuffer != nullptr);
   EP_HOST_ASSERT(comm.symmetricBufferBase_ != nullptr);

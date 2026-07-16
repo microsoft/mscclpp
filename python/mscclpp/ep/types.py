@@ -47,11 +47,11 @@ class MoECommunicatorConfig:
     hidden_size: int = 0
     topk: int = 0
     max_tokens_per_rank: int = 0
-    max_recv_tokens_per_rank: Optional[int] = None
 
     # Runtime mode and output layout
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None
+    token_major_init_padding: bool = False
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None

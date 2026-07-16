@@ -582,7 +582,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
   if (hasPendingStore) waitBulkGroup();
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout,
+          bool InitializeTokenMajorPadding>
 __global__ __launch_bounds__(DispatchNThreads,
                              1) void dispatchKernel(void* output, float* outputScales, int* outputSrcInfo,
                                                     int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
@@ -601,12 +602,21 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(comm);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   const uint32_t dispatchEpoch = *workspaceView.dispatchEpoch_ + 1;
+  static_assert(!InitializeTokenMajorPadding || Layout == DispatchLayout::TOKEN_MAJOR);
 
   dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
                                                  nTokens, nTopk, maxTokensPerRank, recvBuffer, workspace, dispatchEpoch,
                                                  sharedMem);
 
   if (static_cast<int>(blockIdx.x) == 0) {
+    if constexpr (InitializeTokenMajorPadding) {
+      const int nMetadataEntries = nRanks * maxTokensPerRank * nTopk;
+      for (int idx = static_cast<int>(threadIdx.x); idx < nMetadataEntries; idx += static_cast<int>(blockDim.x)) {
+        outputTopkIdx[idx] = -1;
+        outputTopkWeights[idx] = 0.0f;
+      }
+      __syncthreads();
+    }
     dispatchRecvScheduler<Layout>(outputLayout, outputCount, transport, nExperts, nRanks, recvBuffer, workspace,
                                   dispatchEpoch, sharedMem);
   } else if (static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
@@ -619,7 +629,8 @@ __global__ __launch_bounds__(DispatchNThreads,
   }
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout,
+          bool InitializeTokenMajorPadding>
 inline void dispatchHiddenMode(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
@@ -635,17 +646,18 @@ inline void dispatchHiddenMode(void* output, float* outputScales, int* outputSrc
 
   const size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize>(nRanks, nExperts, nTopk);
   static thread_local KernelConfigCache kernelConfig;
-  const int residentBlocks = configureKernel(dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout>, DispatchNThreads,
-                                             dynamicSharedBytes, comm, kernelConfig);
+  const int residentBlocks =
+      configureKernel(dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout, InitializeTokenMajorPadding>,
+                      DispatchNThreads, dynamicSharedBytes, comm, kernelConfig);
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
-  dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout>
+  dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout, InitializeTokenMajorPadding>
       <<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIdx,
           topkWeights, input, workload, recvBuffer, comm, workspace);
   CUDA_CHECK(cudaGetLastError());
 }
 
-template <int Hidden, DispatchLayout Layout>
+template <int Hidden, DispatchLayout Layout, bool InitializeTokenMajorPadding>
 inline void dispatchHidden(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
@@ -653,11 +665,11 @@ inline void dispatchHidden(void* output, float* outputScales, int* outputSrcInfo
                            cudaStream_t stream) {
   switch (workload.dispatchDataType_) {
     case DispatchDataType::BF16:
-      return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout>(
+      return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, InitializeTokenMajorPadding>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
     case DispatchDataType::FP8_E4M3:
-      return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout>(
+      return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout, InitializeTokenMajorPadding>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
     case DispatchDataType::MXFP8_E4M3:
@@ -673,11 +685,16 @@ inline void dispatchLayout(void* output, float* outputScales, int* outputSrcInfo
                            void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
                            cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
-    return dispatchHidden<Hidden, DispatchLayout::EXPERT_MAJOR>(
+    return dispatchHidden<Hidden, DispatchLayout::EXPERT_MAJOR, false>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
         topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
   }
-  return dispatchHidden<Hidden, DispatchLayout::TOKEN_MAJOR>(
+  if (workload.initializeTokenMajorPadding_) {
+    return dispatchHidden<Hidden, DispatchLayout::TOKEN_MAJOR, true>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+  }
+  return dispatchHidden<Hidden, DispatchLayout::TOKEN_MAJOR, false>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
 }
@@ -704,6 +721,7 @@ inline void dispatch(void* output, float* outputScales, int* outputSrcInfo, int*
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR);
+  EP_HOST_ASSERT(!workload.initializeTokenMajorPadding_ || workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 || outputScales != nullptr);
   EP_HOST_ASSERT(outputSrcInfo != nullptr);
@@ -713,8 +731,8 @@ inline void dispatch(void* output, float* outputScales, int* outputSrcInfo, int*
     EP_HOST_ASSERT(outputTopkIdx != nullptr);
     EP_HOST_ASSERT(outputTopkWeights != nullptr);
   }
-  EP_HOST_ASSERT(input != nullptr);
-  EP_HOST_ASSERT(topkIdx != nullptr);
+  EP_HOST_ASSERT(workload.numTokens_ == 0 || input != nullptr);
+  EP_HOST_ASSERT(workload.numTokens_ == 0 || topkIdx != nullptr);
   EP_HOST_ASSERT(recvBuffer != nullptr);
   EP_HOST_ASSERT(comm.symmetricBufferBase_ != nullptr);
   EP_HOST_ASSERT(comm.peerMappedBufferBases_ != nullptr);

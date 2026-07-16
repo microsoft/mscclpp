@@ -86,6 +86,11 @@ def parse_args():
         default="expert_major",
         help="Low-latency dispatch output layout",
     )
+    parser.add_argument(
+        "--token-major-init-padding",
+        action="store_true",
+        help="Initialize unused token-major top-k IDs to -1 and weights to zero",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
         "--cuda-graph",
@@ -249,6 +254,7 @@ def validate_token_major_dispatch(
     all_topk_weights,
     all_x,
     expected_scales,
+    initialize_padding,
 ):
     assert all_x is not None
     assert dispatch_out.topk_ids is not None
@@ -262,7 +268,11 @@ def validate_token_major_dispatch(
     assert rank_offsets.shape == (num_ranks + 1,)
     assert dispatch_out.layout.offsets is rank_offsets
     assert int(rank_offsets[0].item()) == 0
-    assert int(rank_offsets[-1].item()) == int(packed_recv_count.sum().item())
+    total_recv_tokens = int(rank_offsets[-1].item())
+    assert total_recv_tokens == int(packed_recv_count.sum().item())
+    if initialize_padding:
+        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == -1)
+        assert torch.all(dispatch_out.weights[total_recv_tokens:] == 0)
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts
 
@@ -481,6 +491,7 @@ def main():
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
+        token_major_init_padding=args.token_major_init_padding,
         quant=dispatch_quant,
     )
     if rank == 0:
@@ -588,6 +599,7 @@ def main():
             all_topk_weights=all_topk_weights,
             all_x=all_x,
             expected_scales=expected_scales,
+            initialize_padding=args.token_major_init_padding,
         )
 
     if rank == 0:
