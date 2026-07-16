@@ -34,8 +34,10 @@ LL dispatch supports two user-visible layouts:
 
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
 - `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus local top-k expert
-  IDs, routing weights, source-token IDs, and per-source-rank counts. The caller
-  must produce one pre-weighted local partial per row before combine.
+  IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
+  offsets. Valid rows occupy a compact prefix of the caller's worst-case capacity
+  buffer. The caller must produce one pre-weighted local partial per row before
+  combine.
 
 ### High throughput
 

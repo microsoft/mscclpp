@@ -183,7 +183,7 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[out] outputTopkWeights Token-major routing weights
 /// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or
-/// nullptr.
+/// token-major exclusive source-rank offsets [num_ranks + 1].
 /// @param[out] outputCount Per-local-expert counts for expert-major output or per-source-rank counts for token-major.
 /// @param[in] input Local input tokens [num_tokens, hidden].
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
@@ -206,7 +206,8 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* output
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
 /// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
 /// @param[in] srcInfo Original source-token index for every packed expert row.
-/// @param[in] layoutRange Per-[local expert, source rank] packed count and offset.
+/// @param[in] layoutRange Per-[local expert, source rank] packed count and offset for expert-major input, or
+/// token-major exclusive source-rank offsets [num_ranks + 1].
 /// @param[in] workload Per-call workload dimensions.
 /// @param[in,out] recvBuffer Current symmetric ping-pong buffer receiving partials or expert rows.
 /// @param[in] dispatchRecvBuffer Previous dispatch buffer containing rewritten routing metadata.

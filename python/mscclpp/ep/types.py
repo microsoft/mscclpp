@@ -127,6 +127,7 @@ class TokenMajorCombineContext:
     hidden_size: int
     source_token_ids: torch.Tensor
     num_tokens_per_rank: torch.Tensor
+    rank_offsets: torch.Tensor
     num_max_dispatch_tokens_per_rank: int
 
 

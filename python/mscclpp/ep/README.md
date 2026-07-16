@@ -310,6 +310,7 @@ class TokenMajorCombineContext:
     hidden_size: int
     source_token_ids: torch.Tensor
     num_tokens_per_rank: torch.Tensor
+    rank_offsets: torch.Tensor
     num_max_dispatch_tokens_per_rank: int
 
 
@@ -514,9 +515,16 @@ For token-major LL layout:
 output_buffer: [world_size * max_tokens_per_rank, hidden]
 ```
 
-The token-major rows are grouped into fixed source-rank regions. For source rank
-`r`, only the first `dispatch_out.layout.num_tokens_per_rank[r]` rows in region
-`[r * max_tokens_per_rank : (r + 1) * max_tokens_per_rank]` are valid.
+The token-major tensor keeps worst-case capacity to avoid a CPU synchronization,
+but all valid rows are compacted into one contiguous prefix. For source rank
+`r`, its rows are:
+
+```python
+begin = dispatch_out.layout.offsets[r]
+end = dispatch_out.layout.offsets[r + 1]
+```
+
+`offsets[-1]` is the total number of valid rows.
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
@@ -560,8 +568,9 @@ dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 lo
 dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
-Non-local top-k entries use expert ID `-1` and weight `0`. The valid row count in each
-source-rank region is returned in `dispatch_out.layout.num_tokens_per_rank`.
+Only the prefix ending at `dispatch_out.layout.offsets[-1]` is valid. Non-local
+top-k entries use expert ID `-1` and weight `0`. Per-source-rank counts are
+returned in `dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 

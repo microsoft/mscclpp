@@ -258,11 +258,19 @@ def validate_token_major_dispatch(
     assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
     source_token_ids = handle.combine_context.source_token_ids
     assert source_token_ids.shape == (num_ranks * num_tokens,)
+    rank_offsets = handle.combine_context.rank_offsets
+    assert rank_offsets.shape == (num_ranks + 1,)
+    assert dispatch_out.layout.offsets is rank_offsets
+    assert int(rank_offsets[0].item()) == 0
+    assert int(rank_offsets[-1].item()) == int(packed_recv_count.sum().item())
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts
 
     for source_rank in range(num_ranks):
         recv_count = int(packed_recv_count[source_rank].item())
+        row_begin = int(rank_offsets[source_rank].item())
+        row_end = int(rank_offsets[source_rank + 1].item())
+        assert row_end - row_begin == recv_count
         source_routing = all_topk_idx[source_rank]
         expected_source_tokens = (
             ((source_routing >= local_expert_begin) & (source_routing < local_expert_end))
@@ -274,8 +282,6 @@ def validate_token_major_dispatch(
         if recv_count == 0:
             continue
 
-        row_begin = source_rank * num_tokens
-        row_end = row_begin + recv_count
         source_tokens = source_token_ids[row_begin:row_end].long()
         assert torch.equal(torch.sort(source_tokens).values, expected_source_tokens)
 
@@ -361,6 +367,7 @@ def reconstruct_token_major_reference(
     group,
 ):
     source_token_ids = handle.combine_context.source_token_ids
+    rank_offsets = handle.combine_context.rank_offsets
     destination_ranks = torch.where(
         all_topk_idx >= 0,
         all_topk_idx // num_local_experts,
@@ -372,8 +379,9 @@ def reconstruct_token_major_reference(
         source_count = int(packed_recv_count[source_rank].item())
         if source_count == 0:
             continue
-        row_begin = source_rank * num_tokens
-        row_end = row_begin + source_count
+        row_begin = int(rank_offsets[source_rank].item())
+        row_end = int(rank_offsets[source_rank + 1].item())
+        assert row_end - row_begin == source_count
         source_tokens = source_token_ids[row_begin:row_end].long()
         selected = first_destination_rank[source_rank, source_tokens] == rank
         dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[row_begin:row_end][selected]
@@ -519,7 +527,8 @@ def main():
     torch.cuda.synchronize()
     print(f"[rank {rank}] post-dispatch", flush=True)
     # expert-major: packed_recv_x [num_local_experts, num_ranks * max_tokens, hidden]
-    # token-major:  packed_recv_x [num_ranks * max_tokens, hidden], rank-grouped
+    # token-major: packed_recv_x has worst-case capacity, with valid rows compacted
+    # into [0 : layout.offsets[-1]).
 
     # Reference: gather source tokens, routing IDs, and weights from all ranks.
     all_topk_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=topk_idx.dtype, device="cuda")

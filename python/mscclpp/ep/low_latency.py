@@ -189,7 +189,12 @@ class LowLatencyBackend:
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             layout_info = DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_expert=count)
         else:
-            layout_info = DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_rank=count)
+            assert layout_range is not None
+            layout_info = DispatchLayoutInfo(
+                kind=self.output_layout,
+                num_tokens_per_rank=count,
+                offsets=layout_range,
+            )
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
         dispatch_out = DispatchOutput(
             tokens=out_buf,
@@ -214,6 +219,7 @@ class LowLatencyBackend:
                 ),
             )
         else:
+            assert layout_range is not None
             handle = TokenMajorDispatchHandle(
                 output_info=output_info,
                 combine_context=TokenMajorCombineContext(
@@ -223,6 +229,7 @@ class LowLatencyBackend:
                     hidden_size=self.hidden_size,
                     source_token_ids=src_info,
                     num_tokens_per_rank=count,
+                    rank_offsets=layout_range,
                     num_max_dispatch_tokens_per_rank=self.max_tokens_per_rank,
                 ),
             )
@@ -246,7 +253,7 @@ class LowLatencyBackend:
             context = handle.combine_context
             topk_weights = None
             src_info = context.source_token_ids
-            layout_range = None
+            layout_range = context.rank_offsets
         else:
             raise ValueError("DispatchHandle does not contain low-latency combine context")
         if out is None:
@@ -297,7 +304,7 @@ class LowLatencyBackend:
                 self._dispatch_src_info = torch.empty((token_capacity,), dtype=torch.int32, device=device)
                 self._dispatch_topk_ids = torch.empty((token_capacity, self.topk), dtype=torch.int32, device=device)
                 self._dispatch_weights = torch.empty((token_capacity, self.topk), dtype=torch.float32, device=device)
-                self._dispatch_layout_range = None
+                self._dispatch_layout_range = torch.empty((self.world_size + 1,), dtype=torch.int64, device=device)
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
                 if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
                     self._dispatch_scales = torch.empty(
@@ -373,6 +380,8 @@ class LowLatencyBackend:
             expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
         else:
             expected_shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
+            if handle.output_info.layout.offsets is None:
+                raise ValueError("TOKEN_MAJOR DispatchHandle is missing compact rank offsets")
         if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
