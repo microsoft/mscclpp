@@ -142,6 +142,16 @@ def main():
 
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     local_experts = num_experts // num_ranks
+    assert dispatch_out.topk_ids is not None
+    assert dispatch_out.topk_ids.shape == (recv_x.size(0), num_topk)
+    assert ((dispatch_out.topk_ids >= -1) & (dispatch_out.topk_ids < local_experts)).all()
+    assert dispatch_out.weights is not None
+    assert dispatch_out.weights.shape == (recv_x.size(0), num_topk)
+    assert torch.equal(
+        dispatch_out.weights.masked_select(dispatch_out.topk_ids < 0),
+        torch.zeros_like(dispatch_out.weights.masked_select(dispatch_out.topk_ids < 0)),
+    )
+    assert handle.combine_context.src_idx.shape == (recv_x.size(0),)
     all_expert_counts = torch.empty((num_ranks, num_experts), dtype=num_tokens_per_expert.dtype, device="cuda")
     dist.all_gather_into_tensor(all_expert_counts, num_tokens_per_expert, group=group)
     expected_counts = all_expert_counts[:, rank * local_experts : (rank + 1) * local_experts].sum(dim=0).cpu().tolist()

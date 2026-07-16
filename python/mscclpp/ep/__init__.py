@@ -22,13 +22,15 @@ from .communicator import (  # noqa: F401
     DispatchOutputInfo,
     ExpertMajorDispatchHandle,
     ExpertMajorCombineContext,
+    HighThroughputDispatchHandle,
+    HighThroughputCombineContext,
     MoECommunicator,
     MoECommunicatorConfig,
     MoEMode,
     OperationOverlapConfig,
     QuantConfig,
-    RowMajorDispatchHandle,
-    RowMajorCombineContext,
+    TokenMajorDispatchHandle,
+    TokenMajorCombineContext,
 )
 
 __all__ = [
@@ -44,11 +46,13 @@ __all__ = [
     "DispatchOutputInfo",
     "ExpertMajorDispatchHandle",
     "ExpertMajorCombineContext",
+    "HighThroughputDispatchHandle",
+    "HighThroughputCombineContext",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "RowMajorDispatchHandle",
-    "RowMajorCombineContext",
+    "TokenMajorDispatchHandle",
+    "TokenMajorCombineContext",
 ]

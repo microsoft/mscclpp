@@ -167,7 +167,7 @@ The selected mode determines the default dispatch output layout:
 
 | Mode | Default layout |
 |---|---|
-| `ht` | `DispatchLayout.FLAT` |
+| `ht` | `DispatchLayout.TOKEN_MAJOR` |
 | `ll` | `DispatchLayout.EXPERT_MAJOR` |
 
 `output_layout` may still be kept as an advanced override if a backend supports
@@ -177,7 +177,7 @@ Use `DispatchLayout` instead of string literals for this field:
 
 | Layout enum | Tensor shape |
 |---|---|
-| `DispatchLayout.FLAT` | HT: `[total_recv_tokens, hidden]`; LL: `[num_local_experts * max_slots_per_expert, hidden]` |
+| `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]`; LL: `[world_size * max_tokens_per_rank, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 
 ## MoECommunicator methods
@@ -238,11 +238,7 @@ dispatch_out, handle = moe_comm.dispatch(
     output_buffer=output_buffer,
 )
 
-expert_output = mlp(
-    dispatch_out.tokens,
-    dispatch_out.layout,
-    dispatch_out.quant,
-)
+expert_output = mlp(dispatch_out)
 
 output = moe_comm.combine(expert_output, handle)
 ```
@@ -250,7 +246,7 @@ output = moe_comm.combine(expert_output, handle)
 `dispatch_out` is for the local MLP. `handle` is for `combine`. The MLP should
 not need to inspect the opaque handle.
 
-`DispatchOutput.layout` carries both the layout kind (`FLAT` or `EXPERT_MAJOR`)
+`DispatchOutput.layout` carries both the layout kind (`TOKEN_MAJOR` or `EXPERT_MAJOR`)
 and layout-specific metadata.
 Expert-grouped layouts populate
 `num_tokens_per_expert`; future layouts that do not expose per-expert grouping
@@ -267,8 +263,8 @@ class QuantConfig:
 
 
 class DispatchLayout(str, Enum):
-    FLAT = "flat"
     EXPERT_MAJOR = "expert_major"
+    TOKEN_MAJOR = "token_major"
 
 
 @dataclass
@@ -276,6 +272,7 @@ class DispatchLayoutInfo:
     kind: DispatchLayout
     num_tokens_per_expert: Optional[torch.Tensor | list[int]] = None
     offsets: Optional[torch.Tensor] = None
+    num_tokens_per_rank: Optional[torch.Tensor | list[int]] = None
 
 
 @dataclass
@@ -289,6 +286,8 @@ class DispatchOutput:
     tokens: torch.Tensor
     quant: Optional[QuantConfig]
     layout: DispatchLayoutInfo
+    topk_ids: Optional[torch.Tensor] = None
+    weights: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -304,11 +303,22 @@ class ExpertMajorCombineContext:
 
 
 @dataclass
-class RowMajorCombineContext:
+class TokenMajorCombineContext:
+    topk_ids: torch.Tensor
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    source_token_ids: torch.Tensor
+    num_tokens_per_rank: torch.Tensor
+    num_max_dispatch_tokens_per_rank: int
+
+
+@dataclass
+class HighThroughputCombineContext:
     ...
 
 
-CombineContext = ExpertMajorCombineContext | RowMajorCombineContext
+CombineContext = ExpertMajorCombineContext | TokenMajorCombineContext | HighThroughputCombineContext
 
 
 class DispatchHandle:
@@ -321,8 +331,12 @@ class ExpertMajorDispatchHandle(DispatchHandle):
     combine_context: ExpertMajorCombineContext
 
 
-class RowMajorDispatchHandle(DispatchHandle):
-    combine_context: RowMajorCombineContext
+class TokenMajorDispatchHandle(DispatchHandle):
+    combine_context: TokenMajorCombineContext
+
+
+class HighThroughputDispatchHandle(DispatchHandle):
+    combine_context: HighThroughputCombineContext
 
 
 @dataclass
@@ -409,7 +423,9 @@ overlap is operation-level only.
 Each concrete `DispatchHandle` stores a layout-specific `combine_context` used
 to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
-shape, and capacity). Row-major handles use the intranode combine context with
+shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
+per-source-rank counts, and the original routing needed for cross-rank combine.
+High-throughput handles use the intranode combine context with
 receive-side weights, source indices, prefix matrices, and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
@@ -492,6 +508,16 @@ For padded expert-major LL layout:
 output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
 ```
 
+For token-major LL layout:
+
+```text
+output_buffer: [world_size * max_tokens_per_rank, hidden]
+```
+
+The token-major rows are grouped into fixed source-rank regions. For source rank
+`r`, only the first `dispatch_out.layout.num_tokens_per_rank[r]` rows in region
+`[r * max_tokens_per_rank : (r + 1) * max_tokens_per_rank]` are valid.
+
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
 matching format and scale tensor.
@@ -505,38 +531,18 @@ buffer instead of allocating it internally.
 `dispatch` should return MLP-ready tokens. The MLP should not run another
 token-major to expert-major permutation unless it uses a custom adapter.
 
-### Normal / high-throughput flat layout
+### Normal / high-throughput token-major layout
 
-HT uses `DispatchLayout.FLAT`, a flat expert-major layout:
+HT uses `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
 dispatch_out.tokens  # [total_recv_tokens, H]
 ```
 
-Rows are grouped by local expert id:
-
-```text
-expert0 tokens
-expert1 tokens
-expert2 tokens
-...
-```
-
-`dispatch_out.layout.num_tokens_per_expert` is ordered by local expert id:
-
-```python
-num_tokens_per_expert[i] = valid token count for local expert i
-```
-
-For flat layout, `dispatch_out.layout.offsets` may be provided or derived by cumulative sum:
-
-```python
-offsets = cumsum([0] + num_tokens_per_expert)
-tokens[offsets[i] : offsets[i + 1]]
-```
-
-This layout is efficient for Triton or grouped GEMM kernels because it avoids
-padding.
+Each row represents one `(source token, destination rank)` and is accompanied by
+`dispatch_out.topk_ids`, `dispatch_out.weights`, and source-token metadata. A
+token routed to multiple experts on the same destination rank is transferred
+only once.
 
 ### Low-latency output layouts
 
@@ -546,14 +552,18 @@ LL defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 ```
 
-LL can also return `DispatchLayout.FLAT`, which is the same contiguous
-local-expert-major storage viewed as 2D:
+LL can also return `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
-dispatch_out.tokens  # [num_local_experts * max_slots_per_expert, H]
+dispatch_out.tokens            # [world_size * max_tokens_per_rank, H]
+dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 local expert IDs
+dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
-For expert `i`, only the first `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
+Non-local top-k entries use expert ID `-1` and weight `0`. The valid row count in each
+source-rank region is returned in `dispatch_out.layout.num_tokens_per_rank`.
+For expert-major output, only the first
+`dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
 ```python
 expert_major_tokens = dispatch_out.tokens.view(num_local_experts, max_slots_per_expert, H)
@@ -572,8 +582,8 @@ dimension replaced by the scale dimension.
 Examples:
 
 ```text
-flat tokens:          HT [total_recv_tokens, H]; LL [num_local_experts * max_slots, H]
-flat FP8 scales:      HT [total_recv_tokens, H / 128]; LL [num_local_experts, max_slots, H / 128]
+token-major tokens:   HT [total_recv_tokens, H]; LL [world_size * max_tokens_per_rank, H]
+token-major scales:   LL [world_size * max_tokens_per_rank, H / 128]
 
 expert-major tokens:  [num_local_experts, max_slots, H]
 expert-major scales:  [num_local_experts, max_slots, H / 128]
@@ -583,12 +593,15 @@ expert-major scales:  [num_local_experts, max_slots, H / 128]
 
 The MLP consumes `dispatch_out`, not the original token-major input.
 
-For flat expert-major output:
+For token-major output, the local MLP consumes each token once, runs the local
+experts selected by `topk_ids`, applies `weights`, and returns one pre-reduced
+rank partial in the same row:
 
 ```python
-expert_output = triton_mlp(
+rank_partial = token_major_mlp(
     dispatch_out.tokens,
-    dispatch_out.layout,
+    dispatch_out.topk_ids,
+    dispatch_out.weights,
     dispatch_out.quant,
 )
 ```
@@ -603,9 +616,10 @@ expert_output = expert_major_mlp(
 )
 ```
 
-The MLP must preserve the dispatch output layout and row/slot order. It may
-apply expert-specific GEMMs, but it must not compact or reorder tokens unless it
-also produces compatible metadata for combine.
+The MLP must preserve the dispatch output layout and row/slot order. For
+token-major output, combine assumes each row is already weighted and reduced
+across all local experts. `CombineMode.DIRECT_SEND` is therefore available only
+for expert-major output.
 
 ## Combine API
 
