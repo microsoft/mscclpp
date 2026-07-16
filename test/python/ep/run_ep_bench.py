@@ -128,6 +128,12 @@ def parse_args() -> argparse.Namespace:
         default="rank_local_reduce",
         help="MSCCL++ low-latency combine mode",
     )
+    p.add_argument(
+        "--output-layout",
+        choices=("expert_major", "token_major"),
+        default="expert_major",
+        help="MSCCL++ Python low-latency output layout",
+    )
     p.add_argument("--num-blocks", type=int, default=130, help="MSCCL++ low-latency dispatch blocks")
 
     # Launch / fabric.
@@ -325,7 +331,7 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
         f"-a ll -t {args.num_tokens} -d {args.hidden} -k {args.num_topk} "
         f"-e {args.num_experts} -w {args.num_warmup} -i {args.num_iters} "
         f"--dispatch-dtype {args.dispatch_dtype} --combine-mode {args.combine_mode} "
-        f"--num-blocks {args.num_blocks}"
+        f"--output-layout {args.output_layout} --num-blocks {args.num_blocks}"
     )
     cupti_build = ""
     extra_exports = ""

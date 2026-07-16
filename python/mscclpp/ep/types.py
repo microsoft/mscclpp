@@ -78,6 +78,7 @@ class DispatchLayoutInfo:
     kind: DispatchLayout
     num_tokens_per_expert: Optional[Union[torch.Tensor, List[int]]] = None
     offsets: Optional[torch.Tensor] = None
+    num_tokens_per_rank: Optional[Union[torch.Tensor, List[int]]] = None
 
 
 @dataclass
@@ -95,6 +96,8 @@ class DispatchOutput:
     tokens: torch.Tensor
     quant: Optional[QuantConfig]
     layout: DispatchLayoutInfo
+    topk_ids: Optional[torch.Tensor] = None
+    weights: Optional[torch.Tensor] = None
 
 
 # Combine-side context. These objects are layout-specific and opaque to the MLP.
@@ -115,6 +118,19 @@ class ExpertMajorCombineContext:
 
 
 @dataclass
+class TokenMajorCombineContext:
+    """Combine context for token-major, rank-local pre-reduced output."""
+
+    topk_ids: torch.Tensor
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    source_token_ids: torch.Tensor
+    num_tokens_per_rank: torch.Tensor
+    num_max_dispatch_tokens_per_rank: int
+
+
+@dataclass
 class RowMajorCombineContext:
     """Combine context for row-major high-throughput dispatch output."""
 
@@ -125,7 +141,7 @@ class RowMajorCombineContext:
     send_head: torch.Tensor
 
 
-CombineContext = Union[ExpertMajorCombineContext, RowMajorCombineContext]
+CombineContext = Union[ExpertMajorCombineContext, TokenMajorCombineContext, RowMajorCombineContext]
 
 
 # Opaque dispatch handles returned by dispatch() and consumed by combine().
@@ -141,6 +157,11 @@ class DispatchHandle:
 @dataclass
 class ExpertMajorDispatchHandle(DispatchHandle):
     combine_context: ExpertMajorCombineContext
+
+
+@dataclass
+class TokenMajorDispatchHandle(DispatchHandle):
+    combine_context: TokenMajorCombineContext
 
 
 @dataclass

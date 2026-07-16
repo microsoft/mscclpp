@@ -32,7 +32,6 @@ from .types import (
 from .utils import (
     bf16_view as _bf16_view,
     current_stream_ptr as _stream_ptr,
-    exclusive_cumsum,
     ptr as _ptr,
     resolve_expert_placement,
 )
@@ -289,8 +288,8 @@ class HighThroughputBackend:
         self.num_sms = config.num_sms
         self.enable_overlap = config.enable_overlap
 
-        if self.output_layout != DispatchLayout.FLAT:
-            raise NotImplementedError("HT mode currently supports only DispatchLayout.FLAT")
+        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
+            raise NotImplementedError("HT mode currently supports only DispatchLayout.TOKEN_MAJOR")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -351,10 +350,13 @@ class HighThroughputBackend:
         previous_handle: Optional[DispatchHandle],
     ) -> tuple[DispatchOutput, DispatchHandle]:
         self._validate_dispatch_inputs(input, topk_ids, weights, quant)
+        implicit_weights = weights is None
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
         cache = getattr(previous_handle, "_dispatch_cache", None) if previous_handle is not None else None
+        if cache is not None and not self._cache_matches(cache, input, topk_ids, weights, implicit_weights):
+            cache = None
         if cache is not None:
             num_tokens_per_rank = cache["num_tokens_per_rank"]
             num_tokens_per_expert = cache["num_tokens_per_expert"]
@@ -370,9 +372,9 @@ class HighThroughputBackend:
             (
                 recv_x,
                 _recv_x_scales,
-                _recv_topk_idx,
-                recv_topk_weights,
-                num_recv_tokens_per_expert_list,
+                _runtime_recv_topk_idx,
+                _runtime_recv_topk_weights,
+                _runtime_num_recv_tokens_per_expert_list,
                 rank_prefix_matrix,
                 _channel_prefix_matrix,
                 recv_channel_prefix_matrix,
@@ -391,6 +393,10 @@ class HighThroughputBackend:
                 cache["channel_prefix_matrix"],
                 self.expert_alignment,
             )
+            del _runtime_recv_topk_idx, _runtime_recv_topk_weights, _runtime_num_recv_tokens_per_expert_list
+            recv_topk_idx = cache["recv_topk_idx"]
+            recv_topk_weights = cache["recv_topk_weights"]
+            num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
             combine_context = RowMajorCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 src_idx=recv_src_idx,
@@ -403,7 +409,7 @@ class HighThroughputBackend:
             (
                 recv_x,
                 _recv_x_scales,
-                _recv_topk_idx,
+                recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
                 rank_prefix_matrix,
@@ -438,13 +444,23 @@ class HighThroughputBackend:
                 "rank_prefix_matrix": rank_prefix_matrix,
                 "channel_prefix_matrix": channel_prefix_matrix,
                 "num_recv_tokens": int(recv_x.size(0)),
+                "recv_topk_idx": recv_topk_idx,
+                "recv_topk_weights": recv_topk_weights,
+                "num_recv_tokens_per_expert_list": num_recv_tokens_per_expert_list,
+                "backend_id": id(self),
+                "num_tokens": int(input.size(0)),
+                "device": input.device,
+                "topk_ids_ptr": topk_ids.data_ptr(),
+                "topk_ids_version": topk_ids._version,
+                "implicit_weights": implicit_weights,
+                "weights_ptr": 0 if implicit_weights else weights.data_ptr(),
+                "weights_version": 0 if implicit_weights else weights._version,
             }
 
         output_info = DispatchOutputInfo(
             layout=DispatchLayoutInfo(
-                kind=DispatchLayout.FLAT,
+                kind=self.output_layout,
                 num_tokens_per_expert=num_recv_tokens_per_expert_list,
-                offsets=exclusive_cumsum(num_recv_tokens_per_expert_list),
             ),
             quant=None,
         )
@@ -452,6 +468,8 @@ class HighThroughputBackend:
             tokens=recv_x,
             quant=output_info.quant,
             layout=output_info.layout,
+            topk_ids=recv_topk_idx,
+            weights=recv_topk_weights,
         )
         handle = RowMajorDispatchHandle(output_info=output_info, combine_context=combine_context)
         # The torch-free HT runtime orders its work on the caller's CUDA stream
@@ -459,6 +477,18 @@ class HighThroughputBackend:
         handle._event = None  # type: ignore[attr-defined]
         handle._dispatch_cache = dispatch_cache  # type: ignore[attr-defined]
         return dispatch_out, handle
+
+    def _cache_matches(self, cache, input, topk_ids, weights, implicit_weights) -> bool:
+        return (
+            cache.get("backend_id") == id(self)
+            and cache.get("num_tokens") == int(input.size(0))
+            and cache.get("device") == input.device
+            and cache.get("topk_ids_ptr") == topk_ids.data_ptr()
+            and cache.get("topk_ids_version") == topk_ids._version
+            and cache.get("implicit_weights") == implicit_weights
+            and (implicit_weights or cache.get("weights_ptr") == weights.data_ptr())
+            and (implicit_weights or cache.get("weights_version") == weights._version)
+        )
 
     def combine(
         self,

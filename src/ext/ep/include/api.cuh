@@ -29,8 +29,12 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
   EXPERT_MAJOR,
-  /// [num_local_experts * num_ranks * max_tokens_per_rank, hidden].
-  FLAT
+  /// Token-major rows. Low latency uses
+  /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
+  /// throughput uses [num_recv_tokens, hidden].
+  TOKEN_MAJOR,
+  /// Backward-compatible alias for TOKEN_MAJOR.
+  FLAT = TOKEN_MAJOR
 };
 
 // ===========================================================================
@@ -140,6 +144,8 @@ struct Workload {
   int numExperts_;
   /// Maximum tokens per rank in the packed layout.
   int maxTokensPerRank_;
+  /// User-visible dispatch output layout.
+  DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
@@ -171,14 +177,16 @@ struct CommContext {
 size_t workspaceSize(int numRanks, int numExperts);
 
 /// Low-latency dispatch that distributes tokens to experts across ranks.
-/// @param[out] output Expert-major packed output
-/// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
-/// @param[out] outputScales FP8 block scales in
-/// [num_local_experts, hidden / 128, num_ranks * max_tokens_per_rank],
-/// or nullptr for BF16 dispatch.
-/// @param[out] outputSrcInfo Original source-token index for every packed expert row.
-/// @param[out] outputLayout Per-[local expert, source rank] packed count and offset.
-/// @param[out] outputCount Total packed token count for every local expert.
+/// @param[out] output Expert-major or token-major packed output selected by
+/// Workload::outputLayout_.
+/// @param[out] outputScales Layout-matched FP8 block scales, or nullptr for BF16 dispatch.
+/// @param[out] outputSrcInfo Original source-token index for every output row.
+/// @param[out] outputTopkIdx Token-major local expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// @param[out] outputTopkWeights Token-major routing weights
+/// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or
+/// nullptr.
+/// @param[out] outputCount Per-local-expert counts for expert-major output or per-source-rank counts for token-major.
 /// @param[in] input Local input tokens [num_tokens, hidden].
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
 /// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
@@ -188,13 +196,15 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
 /// @param[in] stream CUDA stream.
-void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-              const void* input, const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
-              void* recvBuffer, const CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream);
+void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+              int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
+              const float* topkWeights, const Workload& workload, void* recvBuffer, const CommContext& comm,
+              void* workspace, int numBlocks, cudaStream_t stream);
 
 /// Low-latency combine that aggregates expert outputs back to tokens.
 /// @param[out] output Combined local tokens [num_tokens, hidden].
-/// @param[in] input Expert outputs [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+/// @param[in] input Expert-major expert outputs or token-major pre-weighted
+/// rank-local partials, matching Workload::outputLayout_.
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
 /// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
 /// @param[in] srcInfo Original source-token index for every packed expert row.

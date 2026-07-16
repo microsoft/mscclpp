@@ -29,6 +29,8 @@ from .communicator import (  # noqa: F401
     QuantConfig,
     RowMajorDispatchHandle,
     RowMajorCombineContext,
+    TokenMajorDispatchHandle,
+    TokenMajorCombineContext,
 )
 
 __all__ = [
@@ -51,4 +53,6 @@ __all__ = [
     "QuantConfig",
     "RowMajorDispatchHandle",
     "RowMajorCombineContext",
+    "TokenMajorDispatchHandle",
+    "TokenMajorCombineContext",
 ]
