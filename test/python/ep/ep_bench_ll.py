@@ -17,9 +17,8 @@ measuring steady-state device latency without Python rank-launch skew.
 * **Per-iteration CUDA events** recorded around each dispatch/combine operation.
 * **Skip the first timed iteration** (warmup outlier) — matches ``ep_bench``'s
   ``calc_stats`` which trims ``times[0]`` when ``num_iters > 1``.
-* **Byte accounting** identical to ``calculateLowLatencyBytes``:
-  ``bytes = num_valid_selections * hidden * 2`` (BF16) for *both* dispatch and
-  combine, where ``num_valid_selections = count(topk_idx >= 0)``.
+* **Byte accounting** uses expert selections for expert-major output and unique
+  ``(token, destination rank)`` rows for token-major output.
 * **Cross-rank reduction** identical to ``printLowLatencyResults``: latency
   ``avg = mean``, ``min = MIN``, ``max = MAX``; per-rank throughput min/max are
   tagged with the owning rank (``MPI_MINLOC`` / ``MPI_MAXLOC`` analog).
@@ -136,6 +135,12 @@ def parse_args() -> argparse.Namespace:
         choices=("rank_local_reduce", "direct_send"),
         default="rank_local_reduce",
         help="low-latency combine algorithm",
+    )
+    p.add_argument(
+        "--output-layout",
+        choices=("expert_major", "token_major"),
+        default="expert_major",
+        help="low-latency dispatch output layout",
     )
     p.add_argument("--num-blocks", type=int, default=130, help="total low-latency dispatch blocks")
     p.add_argument(
@@ -327,6 +332,12 @@ def main() -> None:
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
+    output_layout = {
+        "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+    }[args.output_layout]
+    if output_layout == ep.DispatchLayout.TOKEN_MAJOR and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise ValueError("token-major output requires rank_local_reduce combine")
     dispatch_quant = (
         None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
     )
@@ -349,16 +360,25 @@ def main() -> None:
 
     # ep_bench byte accounting: num_valid_selections = count(topk_idx >= 0). We
     # keep every selection valid (a full LL load), so this equals num_tokens*top_k.
-    num_valid_selections = int((topk_idx >= 0).sum().item())
+    if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
+        num_dispatch_rows = int((topk_idx >= 0).sum().item())
+    else:
+        destination_mask = torch.zeros((num_tokens, num_ranks), dtype=torch.bool, device="cuda")
+        for topk_slot in range(num_topk):
+            expert = topk_idx[:, topk_slot]
+            valid = expert >= 0
+            destination_mask[valid, expert[valid] // num_local_experts] = True
+        num_dispatch_rows = int(destination_mask.sum().item())
     dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // 128 * 4
-    disp_bytes = num_valid_selections * dispatch_bytes_per_token
-    comb_bytes = num_valid_selections * hidden * 2  # BF16 (symmetric, per ep_bench)
+    disp_bytes = num_dispatch_rows * dispatch_bytes_per_token
+    comb_bytes = num_dispatch_rows * hidden * 2
 
     if rank == 0:
         print(
             f"[cfg] algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} top_k={num_topk} warmup={warmup} iters={iters} "
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} "
+            f"output_layout={args.output_layout} "
             f"pacing=batched_steady_state",
             flush=True,
         )
@@ -375,6 +395,7 @@ def main() -> None:
         mode=ep.MoEMode.LOW_LATENCY,
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
+        output_layout=output_layout,
         quant=dispatch_quant,
     )
     assert moe_comm.is_available()
@@ -386,13 +407,16 @@ def main() -> None:
     # timed region kernel-bound rather than allocator-bound). The communicator
     # owns its src_info/layout_range/count buffers internally; we only supply the
     # dispatch output buffer and the combine output tensor.
-    output_buffer = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
+    output_shape = (
+        (num_local_experts, num_ranks * num_tokens, hidden)
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+        else (num_ranks * num_tokens, hidden)
     )
+    output_buffer = torch.empty(output_shape, dtype=dispatch_dtype, device="cuda")
     expert_output = (
         None
-        if dispatch_quant is None
-        else torch.zeros((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        if dispatch_quant is None and output_layout == ep.DispatchLayout.EXPERT_MAJOR
+        else torch.zeros(output_shape, dtype=torch.bfloat16, device="cuda")
     )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
@@ -648,7 +672,7 @@ def main() -> None:
 
         print(
             f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB ({dispatch_label}), "
-            f"combine={comb_bytes / 1e6:.2f} MB (BF16), selections={num_valid_selections}"
+            f"combine={comb_bytes / 1e6:.2f} MB (BF16), rows={num_dispatch_rows}"
         )
 
 

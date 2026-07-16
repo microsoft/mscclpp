@@ -30,6 +30,13 @@ The optimized LL backend is available when all participating ranks belong to
 one detected GPU IPC domain. That domain may span hosts when CUDA fabric handles
 and the required fabric services are available.
 
+LL dispatch supports two user-visible layouts:
+
+- `EXPERT_MAJOR`: one row per `(token, local expert)`.
+- `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus local top-k expert
+  IDs, routing weights, source-token IDs, and per-source-rank counts. The caller
+  must produce one pre-weighted local partial per row before combine.
+
 ### High throughput
 
 HT follows the same direct-mapping resource model:
