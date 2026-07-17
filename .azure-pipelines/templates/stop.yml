@@ -8,7 +8,7 @@ parameters:
   default: mscclpp
 
 steps:
-# Skip deallocation for A100 nodes (VMSS "mscclpp-ci") so they stay up for reuse/debugging.
+# Skip deallocation for A100 nodes (VMSS "mscclpp-ci").
 - ${{ if ne(parameters.vmssName, 'mscclpp-ci') }}:
   - task: AzureCLI@2
     name: StopVMSS
