@@ -14,9 +14,11 @@ per-backend process for each measurement), this script calls each backend's Pyth
 API *in one process* through a single shared paired-benchmark loop, so the two are
 timed with byte-for-byte the same methodology:
 
-* **Paired** ``dispatch -> sync -> combine -> sync -> barrier`` per iteration.
-* **Per-iteration CUDA events** recorded on the stream around each launch, with the
-  ``stream.synchronize()`` and the cross-rank barrier *outside* the timed region.
+* **Paired** ``dispatch -> combine`` per iteration, with no per-iteration
+  ``stream.synchronize()`` or cross-rank barrier inside the timed loop -- the
+  dispatch and combine kernels pipeline back-to-back on the stream.
+* **Per-iteration CUDA events** recorded on the stream around each launch; the final
+  ``torch.cuda.synchronize()`` and any barriers are *outside* the timed loop.
 * **Skip the first timed iteration** (warmup outlier), matching ``ep_bench``.
 * **Byte accounting** identical to ``calculateLowLatencyBytes``:
   ``bytes = num_valid_selections * hidden * 2`` (BF16) for both dispatch and combine.
@@ -472,12 +474,10 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
             config=dispatch_config,
             stream=stream_ptr,
         )
-        ep_handle.complete(stream=stream_ptr)
         return None
 
     def combine_fn(_dout):
         ep_handle.combine(combine_inputs, combine_outputs, config=combine_config, stream=stream_ptr)
-        ep_handle.complete(stream=stream_ptr)
 
     def teardown():
         ep_handle.destroy()
@@ -523,17 +523,14 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
     c_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     c_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
 
-    # --- Timed loop (paired); sync + barrier are OUTSIDE the recorded region. ---
+    # --- Timed loop (paired); no per-iter sync/barrier -- kernels pipeline back-to-back. ---
     for i in range(iters):
         d_start[i].record(stream)
         dout = dispatch_fn()
         d_end[i].record(stream)
-        stream.synchronize()
         c_start[i].record(stream)
         combine_fn(dout)
         c_end[i].record(stream)
-        stream.synchronize()
-        comm.Barrier()
 
     torch.cuda.synchronize()
 
