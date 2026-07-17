@@ -37,7 +37,8 @@ LL dispatch supports two user-visible layouts:
   IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
   offsets. Valid rows occupy a compact prefix of the caller-provided capacity
   buffer. With `token_major_init_padding=True`, padding rows have top-k IDs
-  equal to `num_experts`, allowing fixed-capacity Triton kernels to skip them without a CPU count
+  equal to `num_experts`, allowing fixed-capacity Triton kernels to skip them
+  without a CPU count
   synchronization. The option is disabled by default. The caller must produce
   one pre-weighted local partial per valid row before combine.
 
