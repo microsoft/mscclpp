@@ -17,11 +17,12 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk)
+                       int numTopk, bool initializeTokenMajorPadding)
     : rank_(communicator.bootstrap()->getRank()),
       numRanks_(communicator.bootstrap()->getNranks()),
       symmetricBufferBytes_(static_cast<int64_t>(
           low_latency::symmetricBufferSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk))),
+      initializeTokenMajorPadding_(initializeTokenMajorPadding),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % NUM_BUFFER_ALIGNMENT_BYTES == 0);
@@ -135,6 +136,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
+                                       .initializeTokenMajorPadding_ = initializeTokenMajorPadding_,
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
@@ -163,6 +165,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
+                                       .initializeTokenMajorPadding_ = false,
                                        .dispatchDataType_ = dispatchDataType};
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);

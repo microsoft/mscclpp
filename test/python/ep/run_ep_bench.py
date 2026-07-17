@@ -134,6 +134,11 @@ def parse_args() -> argparse.Namespace:
         default="expert_major",
         help="MSCCL++ Python low-latency output layout",
     )
+    p.add_argument(
+        "--token-major-init-padding",
+        action="store_true",
+        help="initialize token-major padding metadata for fixed-capacity kernels",
+    )
     p.add_argument("--num-blocks", type=int, default=130, help="MSCCL++ low-latency dispatch blocks")
 
     # Launch / fabric.
@@ -333,6 +338,8 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
         f"--dispatch-dtype {args.dispatch_dtype} --combine-mode {args.combine_mode} "
         f"--output-layout {args.output_layout} --num-blocks {args.num_blocks}"
     )
+    if args.token_major_init_padding:
+        bench_flags += " --token-major-init-padding"
     cupti_build = ""
     extra_exports = ""
     if args.cupti_inproc or args.kernel_only:

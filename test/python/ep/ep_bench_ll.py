@@ -142,6 +142,11 @@ def parse_args() -> argparse.Namespace:
         default="expert_major",
         help="low-latency dispatch output layout",
     )
+    p.add_argument(
+        "--token-major-init-padding",
+        action="store_true",
+        help="initialize unused token-major top-k IDs and weights for fixed-capacity kernels",
+    )
     p.add_argument("--num-blocks", type=int, default=130, help="total low-latency dispatch blocks")
     p.add_argument(
         "--no-kernel-timing",
@@ -396,6 +401,7 @@ def main() -> None:
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
+        token_major_init_padding=args.token_major_init_padding,
         quant=dispatch_quant,
     )
     assert moe_comm.is_available()
