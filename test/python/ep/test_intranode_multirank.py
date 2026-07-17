@@ -116,8 +116,6 @@ def main():
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.HIGH_THROUGHPUT,
         num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
-        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
-        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
     )
     if rank == 0:
         print(
@@ -151,7 +149,6 @@ def main():
         dispatch_out.weights.masked_select(dispatch_out.topk_ids < 0),
         torch.zeros_like(dispatch_out.weights.masked_select(dispatch_out.topk_ids < 0)),
     )
-    assert handle.combine_context.src_idx.shape == (recv_x.size(0),)
     all_expert_counts = torch.empty((num_ranks, num_experts), dtype=num_tokens_per_expert.dtype, device="cuda")
     dist.all_gather_into_tensor(all_expert_counts, num_tokens_per_expert, group=group)
     expected_counts = all_expert_counts[:, rank * local_experts : (rank + 1) * local_experts].sum(dim=0).cpu().tolist()
@@ -161,13 +158,19 @@ def main():
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
 
-    combined_x = moe.combine(recv_x, handle)
+    # Use a distinct expert-output allocation so the direct TMA path cannot
+    # accidentally read stale dispatch payloads from its receive pool.
+    expert_out = recv_x + torch.ones_like(recv_x)
+    context = handle.combine_context
+    combined_x, combined_weights = moe._backend._runtime.combine(
+        expert_out,
+        context.recv_topk_weights,
+        context.send_head,
+    )
 
-    # Expected: we dispatched with x = rank * ones, so every destination r
-    # received the value `rank` for our token. On combine the destinations
-    # send that value back and we sum: combined[t] = rank * (#destinations).
+    # We dispatched rank-valued rows, then each destination added one.
     num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
-    expected = num_dst * float(rank)
+    expected = num_dst * float(rank + 1)
 
     got = combined_x.float().mean(dim=1)
     diff = (got - expected).abs().max().item()
@@ -175,6 +178,8 @@ def main():
     if rank == 0:
         print(f"[combine] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
     assert diff < 1e-2, f"rank{rank}: combine mismatch max diff {diff}"
+    assert combined_weights is not None
+    assert torch.equal(combined_weights, topk_weights)
 
     dist.barrier(group=group)
     if rank == 0:
@@ -244,8 +249,6 @@ def main():
         max_tokens_per_rank=bench_tokens,
         mode=ep.MoEMode.HIGH_THROUGHPUT,
         num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
-        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
-        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
     )
     assert moe.is_available()
 

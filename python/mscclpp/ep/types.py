@@ -64,8 +64,6 @@ class MoECommunicatorConfig:
 
     # HT-only buffer/launch tuning (advanced)
     expert_alignment: int = 1
-    nvl_chunked_send: int = 8
-    nvl_chunked_recv: int = 256
 
 
 # MLP-facing dispatch output.
@@ -136,9 +134,6 @@ class HighThroughputCombineContext:
     """Combine context for high-throughput dispatch output."""
 
     recv_topk_weights: Optional[torch.Tensor]
-    src_idx: torch.Tensor
-    rank_prefix_matrix: torch.Tensor
-    recv_channel_prefix_matrix: torch.Tensor
     send_head: torch.Tensor
 
 
