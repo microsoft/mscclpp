@@ -51,9 +51,4 @@ steps:
       set -e
       echo "Holding node for 6 hours. Cancel this job to release it early."
       sleep $(( 6 * 60 * 60 ))
-      echo "Hang finished; releasing node."
-
-- template: stop.yml
-  parameters:
-    subscription: ${{ parameters.subscription }}
-    vmssName:     ${{ parameters.vmssName }}
+      echo "Hang finished. VMSS is left running for further debugging; deallocate it manually when done."
