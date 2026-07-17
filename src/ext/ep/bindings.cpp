@@ -57,8 +57,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("MXFP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3);
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, int, int, int, int>(), nb::arg("comm"), nb::arg("max_tokens_per_rank"),
-           nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"))
+      .def(nb::init<mscclpp::Communicator&, int, int, int, int, bool>(), nb::arg("comm"),
+           nb::arg("max_tokens_per_rank"), nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"),
+           nb::arg("initialize_token_major_padding"))
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
       .def(
