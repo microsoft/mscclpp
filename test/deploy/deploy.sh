@@ -18,6 +18,7 @@ IB_ENVIRONMENT="${2:-true}"
 PLATFORM="${3:-cuda}"
 CONTAINER_NAME="${4:-mscclpp-test}"
 SGLANG_IMAGE="${5:-lmsysorg/sglang:latest}"
+PILOT="$(echo "${6:-false}" | tr '[:upper:]' '[:lower:]')"
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"

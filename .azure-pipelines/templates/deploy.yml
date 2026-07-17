@@ -6,6 +6,9 @@ parameters:
 - name: resourceGroup
   type: string
   default: mscclpp
+- name: pilot
+  type: boolean
+  default: false
 # Build parameters
 - name: platform
   type: string
@@ -136,15 +139,16 @@ steps:
       sudo apt-get update -y
       sudo apt-get install pssh -y
 
-- task: AzureCLI@2
-  name: StartVMSS
-  displayName: Start VMSS
-  inputs:
-    azureSubscription: ${{ parameters.subscription }}
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
+- ${{ if not(parameters.pilot) }}:
+  - task: AzureCLI@2
+    name: StartVMSS
+    displayName: Start VMSS
+    inputs:
+      azureSubscription: ${{ parameters.subscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
 
 # 4. Deploy test environment
 - task: Bash@3
@@ -153,5 +157,5 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }} ${{ parameters.sglangImage }}
+    arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }} ${{ parameters.sglangImage }} ${{ parameters.pilot }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
