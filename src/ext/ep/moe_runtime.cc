@@ -17,11 +17,12 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk)
+                       int numTopk, bool initializeTokenMajorPadding)
     : rank_(communicator.bootstrap()->getRank()),
       numRanks_(communicator.bootstrap()->getNranks()),
       symmetricBufferBytes_(static_cast<int64_t>(
           low_latency::symmetricBufferSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk))),
+      initializeTokenMajorPadding_(initializeTokenMajorPadding),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % NUM_BUFFER_ALIGNMENT_BYTES == 0);
@@ -118,8 +119,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                           float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                           const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
                           int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
-                          bool initializeTokenMajorPadding, low_latency::DispatchDataType dispatchDataType,
-                          int numBlocks, cudaStream_t stream) {
+                          low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
@@ -136,7 +136,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                                        .numExperts_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .initializeTokenMajorPadding_ = initializeTokenMajorPadding,
+                                       .initializeTokenMajorPadding_ = initializeTokenMajorPadding_,
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);

@@ -54,11 +54,19 @@ class LowLatencyRuntime:
         hidden: int,
         num_experts: int,
         num_topk: int,
+        initialize_token_major_padding: bool,
     ) -> None:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
-        self.cpp_runtime = MoERuntime(comm.communicator, max_tokens_per_rank, hidden, num_experts, num_topk)
+        self.cpp_runtime = MoERuntime(
+            comm.communicator,
+            max_tokens_per_rank,
+            hidden,
+            num_experts,
+            num_topk,
+            initialize_token_major_padding,
+        )
 
     def is_available(self) -> bool:
         return self.cpp_runtime.is_available()
@@ -131,6 +139,7 @@ class LowLatencyBackend:
             hidden=self.hidden_size,
             num_experts=self.num_experts,
             num_topk=self.topk,
+            initialize_token_major_padding=self.token_major_init_padding,
         )
         self._is_internode = self._runtime.is_internode_available()
 
@@ -177,7 +186,6 @@ class LowLatencyBackend:
             self.max_tokens_per_rank,
             self.num_experts,
             self.output_layout,
-            self.token_major_init_padding,
             self.dispatch_data_type,
             self.num_blocks,
             cuda_stream_ptr(stream),
