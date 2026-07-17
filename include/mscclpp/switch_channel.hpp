@@ -4,11 +4,10 @@
 #ifndef MSCCLPP_SWITCH_CHANNEL_HPP_
 #define MSCCLPP_SWITCH_CHANNEL_HPP_
 
-#include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/switch_channel_device.hpp>
-
 #include <cstdint>
 #include <memory>
+#include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 namespace mscclpp {
 
