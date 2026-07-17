@@ -302,7 +302,7 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
       EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
       const auto* inputRow =
           reinterpret_cast<const uint8_t*>(expertOutput) + static_cast<size_t>(inputRowOffset) * HiddenBytes;
-      issueTmaLoad(inputRow, outputTile, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
+      issueTmaLoadAndExpect(inputRow, outputTile, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
       waitTmaLoad(tmaBarrier, tmaPhase);
       fenceProxyAsyncSharedCta();
       const int globalExpertIdx = transport.rank_ * nLocalExperts + localExpertIdx;

@@ -426,8 +426,8 @@ to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
 shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
 per-source-rank counts, and the original routing needed for cross-rank combine.
-High-throughput handles use the intranode combine context with
-receive-side weights, source indices, prefix matrices, and send-head tensors.
+High-throughput handles use a direct combine context with receive-side weights
+and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
 ## Dispatch inputs
@@ -529,8 +529,9 @@ end = dispatch_out.layout.offsets[r + 1]
 
 Rows after `offsets[-1]` are padding. Set
 `token_major_init_padding=True` when a fixed-capacity Triton kernel should
-process the entire allocation: padding `topk_ids` are then initialized to `-1`
-and weights to `0`, so the kernel can skip a row when all expert IDs are `-1`.
+process the entire allocation: padding `topk_ids` are then initialized to
+`num_experts` and weights to `0`, so the kernel can skip a row when all expert
+IDs equal `num_experts`.
 The option defaults to `False` to avoid initialization overhead when the MLP
 uses the compact valid length.
 
@@ -578,8 +579,9 @@ dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 
 Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
 tokens. Non-local entries always use expert ID `-1` and weight `0`; padding uses
-the same sentinel values when `token_major_init_padding=True`. Per-source-rank
-counts are returned in `dispatch_out.layout.num_tokens_per_rank`.
+expert ID `num_experts` and weight `0` when
+`token_major_init_padding=True`. Per-source-rank counts are returned in
+`dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
