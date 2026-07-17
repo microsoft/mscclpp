@@ -16,4 +16,5 @@ target_sources(unit_tests PRIVATE
     compile_tests.cu
     gpu_data_types_tests.cu
     local_channel_tests.cu
+    fp8_conversion_tests.cu
 )
