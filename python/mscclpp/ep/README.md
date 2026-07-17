@@ -60,11 +60,11 @@ class MoECommunicatorConfig:
     hidden_size: int = 0
     topk: int = 0
     max_tokens_per_rank: int = 0
-    max_recv_tokens_per_rank: Optional[int] = None
 
     # Runtime mode and output layout
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
+    token_major_init_padding: bool = False
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None
@@ -137,8 +137,8 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 |---|---|
 | `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
+| `token_major_init_padding` | Initialize token-major padding metadata for fixed-capacity Triton kernels |
 | `max_tokens_per_rank` | dispatch capacity |
-| `max_recv_tokens_per_rank` | recv buffer capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_sms` | backend launch/resource tuning |
 | `dispatch_config`, `combine_config` | backend-specific tuning configs |
@@ -310,6 +310,7 @@ class TokenMajorCombineContext:
     hidden_size: int
     source_token_ids: torch.Tensor
     num_tokens_per_rank: torch.Tensor
+    rank_offsets: torch.Tensor
     num_max_dispatch_tokens_per_rank: int
 
 
@@ -514,9 +515,24 @@ For token-major LL layout:
 output_buffer: [world_size * max_tokens_per_rank, hidden]
 ```
 
-The token-major rows are grouped into fixed source-rank regions. For source rank
-`r`, only the first `dispatch_out.layout.num_tokens_per_rank[r]` rows in region
-`[r * max_tokens_per_rank : (r + 1) * max_tokens_per_rank]` are valid.
+The caller chooses `max_tokens_per_rank`, allocates that fixed capacity, and may
+pass the resulting row capacity directly to a Triton kernel. This avoids a CPU
+synchronization while keeping a static CUDA Graph shape. All valid rows are
+compacted into one contiguous prefix. For source rank `r`, its rows are:
+
+```python
+begin = dispatch_out.layout.offsets[r]
+end = dispatch_out.layout.offsets[r + 1]
+```
+
+`offsets[-1]` is the total number of valid rows.
+
+Rows after `offsets[-1]` are padding. Set
+`token_major_init_padding=True` when a fixed-capacity Triton kernel should
+process the entire allocation: padding `topk_ids` are then initialized to `-1`
+and weights to `0`, so the kernel can skip a row when all expert IDs are `-1`.
+The option defaults to `False` to avoid initialization overhead when the MLP
+uses the compact valid length.
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
@@ -560,8 +576,10 @@ dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 lo
 dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
-Non-local top-k entries use expert ID `-1` and weight `0`. The valid row count in each
-source-rank region is returned in `dispatch_out.layout.num_tokens_per_rank`.
+Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
+tokens. Non-local entries always use expert ID `-1` and weight `0`; padding uses
+the same sentinel values when `token_major_init_padding=True`. Per-source-rank
+counts are returned in `dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
