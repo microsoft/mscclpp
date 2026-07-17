@@ -97,7 +97,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
             reinterpret_cast<const uint8_t*>(recvPoolPtrs[contributorRanks[contributor]]) + recvPoolHeaderBytes +
             static_cast<int64_t>(contributorSlots[contributor]) * hiddenInt4 * static_cast<int64_t>(sizeof(int4)) +
             static_cast<int64_t>(chunkOffset) * sizeof(int4);
-        issueTmaLoadCopy(source, stage(stageIdx, contributor), &barriers[stageIdx], chunkBytes);
+        issueTmaLoad(source, stage(stageIdx, contributor), &barriers[stageIdx], chunkBytes);
       }
       expectTmaLoad(&barriers[stageIdx], chunkBytes * numContributors);
     };

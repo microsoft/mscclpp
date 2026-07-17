@@ -101,7 +101,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, int nExpert
     const auto* inputData =
         reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
     if (laneId == 0) {
-      issueTmaLoad(inputData, stagedPayload, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
+      issueTmaLoadAndExpect(inputData, stagedPayload, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
     }
     stageDispatchPayloadMetadata<DispatchDataType::BF16>(payloadView, stagedPayload, destinationSlots, workspaceView,
                                                          topkIndices, topkWeights, tokenIdx, nTopk, nLocalExperts,
@@ -555,8 +555,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
 
     auto* sourcePayload = sourcePayloadBase + static_cast<size_t>(sourceTokenSlot) * payloadStride;
     if (laneId == 0) {
-      issueTmaLoad(payloadView.template data<OutputType>(sourcePayload), sharedTile, tmaBarrier,
-                   static_cast<uint32_t>(OutputBytes));
+      issueTmaLoadAndExpect(payloadView.template data<OutputType>(sourcePayload), sharedTile, tmaBarrier,
+                            static_cast<uint32_t>(OutputBytes));
     }
 
     const int routedExpertIdx = laneId < nTopk ? payloadView.topKIndices(sourcePayload)[laneId] : -1;

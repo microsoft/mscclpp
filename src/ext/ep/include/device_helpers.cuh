@@ -80,8 +80,8 @@ __device__ __forceinline__ void initTmaLoadBarrier(uint64_t *sharedBarrier) {
   fenceProxyAsyncSharedCta();
 }
 
-__device__ __forceinline__ void issueTmaLoadCopy(const void *source, void *sharedTile, uint64_t *sharedBarrier,
-                                                 uint32_t nBytes) {
+__device__ __forceinline__ void issueTmaLoad(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                             uint32_t nBytes) {
   const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
   const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   asm volatile(
@@ -99,9 +99,9 @@ __device__ __forceinline__ void expectTmaLoad(uint64_t *sharedBarrier, uint32_t 
                : "r"(barrierAddress), "r"(nBytes));
 }
 
-__device__ __forceinline__ void issueTmaLoad(const void *source, void *sharedTile, uint64_t *sharedBarrier,
-                                             uint32_t nBytes) {
-  issueTmaLoadCopy(source, sharedTile, sharedBarrier, nBytes);
+__device__ __forceinline__ void issueTmaLoadAndExpect(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                                      uint32_t nBytes) {
+  issueTmaLoad(source, sharedTile, sharedBarrier, nBytes);
   expectTmaLoad(sharedBarrier, nBytes);
 }
 
