@@ -126,6 +126,12 @@ def parse_args() -> argparse.Namespace:
         default="rank_local_reduce",
         help="MSCCL++ low-latency combine mode",
     )
+    p.add_argument(
+        "--output-layout",
+        choices=("expert_major", "token_major"),
+        default="expert_major",
+        help="MSCCL++ Python low-latency output layout",
+    )
     p.add_argument("--num-blocks", type=int, default=130, help="MSCCL++ low-latency dispatch blocks")
 
     # Launch / fabric.
