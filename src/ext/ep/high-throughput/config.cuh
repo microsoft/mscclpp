@@ -16,6 +16,8 @@ namespace high_throughput {
 struct Config {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;
+  // Dispatch receive sizes are data-dependent, so peers write into this fixed,
+  // setup-time mapped internal pool before Python can expose the exact-size view.
   static constexpr int RecvPoolMaxTokens = 65536;
   static constexpr int64_t RecvPoolMaxHiddenBytes = 16384;
   static constexpr int64_t RecvPoolMetaBytes =

@@ -612,7 +612,7 @@ __global__ __launch_bounds__(DispatchNThreads,
     if constexpr (InitializeTokenMajorPadding) {
       const int nMetadataEntries = nRanks * maxTokensPerRank * nTopk;
       for (int idx = static_cast<int>(threadIdx.x); idx < nMetadataEntries; idx += static_cast<int>(blockDim.x)) {
-        outputTopkIdx[idx] = -1;
+        outputTopkIdx[idx] = nExperts;
         outputTopkWeights[idx] = 0.0f;
       }
       __syncthreads();

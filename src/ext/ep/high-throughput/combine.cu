@@ -91,24 +91,15 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
       if (laneId != 0) return;
 
       initTmaLoadBarrier(&barriers[stageIdx]);
-      const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(&barriers[stageIdx]));
       const uint32_t chunkBytes = static_cast<uint32_t>(chunkSize * static_cast<int>(sizeof(int4)));
       for (int contributor = 0; contributor < numContributors; ++contributor) {
         const auto* source =
             reinterpret_cast<const uint8_t*>(recvPoolPtrs[contributorRanks[contributor]]) + recvPoolHeaderBytes +
             static_cast<int64_t>(contributorSlots[contributor]) * hiddenInt4 * static_cast<int64_t>(sizeof(int4)) +
             static_cast<int64_t>(chunkOffset) * sizeof(int4);
-        const uint32_t destination = static_cast<uint32_t>(__cvta_generic_to_shared(stage(stageIdx, contributor)));
-        asm volatile(
-            "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
-            "[%0], [%1], %2, [%3];" ::"r"(destination),
-            "l"(source), "r"(chunkBytes), "r"(barrierAddress)
-            : "memory");
+        issueTmaLoadCopy(source, stage(stageIdx, contributor), &barriers[stageIdx], chunkBytes);
       }
-      [[maybe_unused]] uint64_t state;
-      asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
-                   : "=l"(state)
-                   : "r"(barrierAddress), "r"(static_cast<uint32_t>(chunkBytes * numContributors)));
+      expectTmaLoad(&barriers[stageIdx], chunkBytes * numContributors);
     };
 
     auto waitStage = [&](int stageIdx) {

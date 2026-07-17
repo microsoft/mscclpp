@@ -37,7 +37,7 @@ LL dispatch supports two user-visible layouts:
   IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
   offsets. Valid rows occupy a compact prefix of the caller-provided capacity
   buffer. With `token_major_init_padding=True`, padding rows have top-k IDs
-  `-1`, allowing fixed-capacity Triton kernels to skip them without a CPU count
+  equal to `num_experts`, allowing fixed-capacity Triton kernels to skip them without a CPU count
   synchronization. The option is disabled by default. The caller must produce
   one pre-weighted local partial per valid row before combine.
 
@@ -48,7 +48,9 @@ HT follows the same direct-mapping resource model:
 1. Python passes the existing `mscclpp::Communicator` into
    `ExpertParallelRuntime`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
-   direct receive pool.
+   internal receive pool. The pool provides stable peer mappings before the
+   data-dependent receive count is known; Python later exposes its exact-size
+   prefix as the dispatch output.
 3. The runtime exchanges and maps those allocations with
    `Communicator::sendMemory` / `recvMemory`.
 4. Dispatch and combine launch directly on the caller's CUDA stream.
@@ -73,10 +75,8 @@ HT has one direct path. Every dispatch block writes hidden rows and routing
 metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
-There is no ring algorithm or runtime fallback.
-
-- `MSCCLPP_EP_DISPATCH_NSM=<N>`: overrides the direct dispatch block count.
-- `MSCCLPP_EP_COMBINE_NSM=<N>`: overrides the direct TMA combine block count.
+There is no ring algorithm or runtime fallback. Set the communication block
+budget through the `num_sms` API configuration.
 
 The persistent HT configuration contains only:
 
