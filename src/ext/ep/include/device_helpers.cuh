@@ -89,10 +89,20 @@ __device__ __forceinline__ void issueTmaLoad(const void *source, void *sharedTil
       "[%0], [%1], %2, [%3];" ::"r"(tileAddress),
       "l"(source), "r"(nBytes), "r"(barrierAddress)
       : "memory");
+}
+
+__device__ __forceinline__ void expectTmaLoad(uint64_t *sharedBarrier, uint32_t nBytes) {
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   [[maybe_unused]] uint64_t state;
   asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
                : "=l"(state)
                : "r"(barrierAddress), "r"(nBytes));
+}
+
+__device__ __forceinline__ void issueTmaLoadAndExpect(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                                      uint32_t nBytes) {
+  issueTmaLoad(source, sharedTile, sharedBarrier, nBytes);
+  expectTmaLoad(sharedBarrier, nBytes);
 }
 
 __device__ __forceinline__ void waitTmaLoad(uint64_t *sharedBarrier, uint32_t &phase) {

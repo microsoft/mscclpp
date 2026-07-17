@@ -89,7 +89,7 @@ def parse_args():
     parser.add_argument(
         "--token-major-init-padding",
         action="store_true",
-        help="Initialize unused token-major top-k IDs to -1 and weights to zero",
+        help="Initialize unused token-major top-k IDs to num_experts and weights to zero",
     )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
@@ -257,6 +257,7 @@ def validate_token_major_dispatch(
     initialize_padding,
 ):
     assert all_x is not None
+    num_experts = num_local_experts * num_ranks
     assert dispatch_out.topk_ids is not None
     assert dispatch_out.topk_ids.dtype == torch.int32
     assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
@@ -271,7 +272,7 @@ def validate_token_major_dispatch(
     total_recv_tokens = int(rank_offsets[-1].item())
     assert total_recv_tokens == int(packed_recv_count.sum().item())
     if initialize_padding:
-        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == -1)
+        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == num_experts)
         assert torch.all(dispatch_out.weights[total_recv_tokens:] == 0)
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts

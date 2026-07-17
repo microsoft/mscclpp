@@ -20,46 +20,18 @@
 
 // HT uses the rank index as a named-barrier ID and dispatch assigns one warp
 // per rank, so 16 is the architectural maximum for this launch family.
-#define SWITCH_RANKS(case_macro)                       \
-  do {                                                 \
-    switch (num_ranks) {                               \
-      case 2:                                          \
-        case_macro(2);                                 \
-      case 4:                                          \
-        case_macro(4);                                 \
-      case 8:                                          \
-        case_macro(8);                                 \
-      case 16:                                         \
-        case_macro(16);                                \
-      default:                                         \
-        EP_HOST_ASSERT(false and "Unsupported ranks"); \
-    }                                                  \
-  } while (false)
-
-#define SWITCH_RANKS_WITH_DTYPE(dtype, case_macro)    \
+#define SWITCH_RANKS(num_ranks, case_macro)           \
   do {                                                \
     switch (num_ranks) {                              \
       case 2:                                         \
-        case_macro(dtype, 2);                         \
+        case_macro(2);                                \
       case 4:                                         \
-        case_macro(dtype, 4);                         \
+        case_macro(4);                                \
       case 8:                                         \
-        case_macro(dtype, 8);                         \
+        case_macro(8);                                \
       case 16:                                        \
-        case_macro(dtype, 16);                        \
+        case_macro(16);                               \
       default:                                        \
         EP_HOST_ASSERT(false && "Unsupported ranks"); \
     }                                                 \
-  } while (false)
-
-#define SWITCH_TYPES(case_macro)                     \
-  do {                                               \
-    switch (type) {                                  \
-      case CUDA_R_16BF:                              \
-        case_macro(nv_bfloat16);                     \
-      case CUDA_R_32F:                               \
-        case_macro(float);                           \
-      default:                                       \
-        EP_HOST_ASSERT(false && "Unsupported type"); \
-    }                                                \
   } while (false)

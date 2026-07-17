@@ -7,7 +7,7 @@
 # Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
 # nanobind API so the module never links libtorch:
 #  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
-#  - High-throughput (HT): ht_runtime.cc + ht/*.cu, a DeepEP-style
+#  - High-throughput (HT): ht_runtime.cc + high-throughput/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
 #    recv sizing via the two-phase notify -> allocate -> dispatch API).
 
@@ -44,15 +44,16 @@ set(EP_SOURCES
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
-    ht/layout.cu
-    ht/intranode_kernel.cu
-    ht/runtime.cu
+    high-throughput/layout.cu
+    high-throughput/dispatch.cu
+    high-throughput/combine.cu
+    high-throughput/runtime.cu
 )
 
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu ht/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu high-throughput/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -65,7 +66,7 @@ endif()
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/ht
+    ${CMAKE_CURRENT_SOURCE_DIR}/high-throughput
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${PROJECT_SOURCE_DIR}/src/ext/include
