@@ -426,8 +426,8 @@ to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
 shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
 per-source-rank counts, and the original routing needed for cross-rank combine.
-High-throughput handles use the intranode combine context with
-receive-side weights, source indices, prefix matrices, and send-head tensors.
+High-throughput handles use a direct combine context with receive-side weights
+and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
 ## Dispatch inputs
