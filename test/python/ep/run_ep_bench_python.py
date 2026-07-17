@@ -170,9 +170,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--kernel-timing",
         action="store_true",
-        help="also measure pure device (kernel) time via the in-process CUPTI Activity "
-        "collector (libcupti_kernel_timer.so), reported per backend as a separate "
-        "'--- Kernel-only performance ---' block. Off by default.",
+        help="build/use the in-process CUPTI Activity collector (libcupti_kernel_timer.so) "
+        "for the kernel-only block. Only needed when EP_KERNEL_TIMER=cupti; the default "
+        "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
+        "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
     )
     # NCCL-EP JIT knobs (defaults match the in-tree build; used by nccl/both).
     p.add_argument(
@@ -209,6 +210,46 @@ def init_mpi():
     local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", rank))
     torch.cuda.set_device(local_rank)
     return comm, rank, size, local_rank
+
+
+def _init_torch_nccl(comm, rank, num_ranks, local_rank):
+    """Initialize a torch.distributed NCCL group alongside MPI so the kineto
+    timing loop can use a GPU-side all_reduce barrier (DeepEP-style) to align
+    ranks on-device -- much tighter than an MPI host barrier. MPI supplies the
+    rendezvous. Returns a zero-arg GPU barrier callable, or None on failure."""
+    import torch.distributed as dist
+
+    addr = None
+    if rank == 0:
+        addr = os.environ.get("MASTER_ADDR")
+        if not addr:
+            import socket
+
+            _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                _s.connect(("10.255.255.255", 1))  # no packets sent; picks outbound iface IP
+                addr = _s.getsockname()[0]
+            finally:
+                _s.close()
+    addr = comm.bcast(addr, root=0)
+    port = comm.bcast(int(os.environ.get("MASTER_PORT", "29700")), root=0)
+    os.environ["MASTER_ADDR"] = addr
+    os.environ["MASTER_PORT"] = str(port)
+    os.environ["WORLD_SIZE"] = str(num_ranks)
+    os.environ["RANK"] = str(rank)
+    import datetime as _dt
+
+    dist.init_process_group(
+        backend="nccl", init_method="env://", world_size=num_ranks, rank=rank, timeout=_dt.timedelta(seconds=120)
+    )
+    _sync = torch.ones(1, dtype=torch.float, device="cuda")
+
+    def _barrier():
+        dist.all_reduce(_sync)
+
+    _barrier()
+    torch.cuda.synchronize()
+    return _barrier
 
 
 def _mpi_stats(comm, avg: float, mn: float, mx: float, num_ranks: int):
@@ -492,7 +533,53 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 # ============================================================================
 # Shared paired benchmark + summary (mirrors mscclpp_ep_bench.cu / ep_bench).
 # ============================================================================
-def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=None):
+def _flush_l2_cache():
+    torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
+
+
+def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None):
+    """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
+    over the paired dispatch->combine loop, with a per-iteration L2 flush and a
+    cuda._sleep(~10ms) + cross-rank barrier to absorb host launch skew. Returns
+    the average per-kernel GPU time (us) for the dispatch and combine kernels,
+    matched by name substring in the profiler key_averages() table."""
+    import torch.profiler as _tp
+
+    _d = dispatch_fn()
+    combine_fn(_d)
+    torch.cuda.synchronize()
+    schedule = _tp.schedule(wait=0, warmup=1, active=1, repeat=1)
+    with _tp.profile(activities=[_tp.ProfilerActivity.CUDA], schedule=schedule, acc_events=True) as prof:
+        for _ in range(2):
+            for _ in range(num_tests):
+                if flush_l2:
+                    _flush_l2_cache()
+                if use_barrier:
+                    torch.cuda._sleep(int(2e7))  # ~10 ms GPU spin
+                    if barrier is not None:
+                        barrier()  # GPU-side NCCL all_reduce (aligns on-device)
+                    else:
+                        comm.Barrier()  # MPI host barrier (host-only alignment)
+                dout = dispatch_fn()
+                combine_fn(dout)
+            torch.cuda.synchronize()
+            prof.step()
+
+    ka = prof.key_averages()
+
+    def _match_us(substr):
+        total_us = 0.0
+        count = 0
+        for e in ka:
+            if substr in e.key:
+                total_us += float(e.self_device_time_total)
+                count += int(e.count)
+        return (total_us / count) if count else 0.0
+
+    return _match_us("dispatch"), _match_us("combine")
+
+
+def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=None, nccl_barrier=None):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
@@ -510,10 +597,15 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
         stream.synchronize()
         comm.Barrier()
 
-    # In-process CUPTI collector (ep_bench KernelTimer analog): start after warmup,
-    # stop after the timed loop -- the same window as the host CUDA events.
+    # Kernel-only timing. Default (EP_KERNEL_TIMER=kineto): DeepEP bench_kineto-style
+    # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
+    # per iteration (EP_KINETO_BARRIER=nccl) to align ranks on-device -- skew-free avg.
+    # EP_KERNEL_TIMER=cupti falls back to the in-process CUPTI collector (start after
+    # warmup, stop after the timed loop -- same window as the host CUDA events).
+    use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
+    have_kernel = (cupti is not None) or use_kineto
     inproc_rc = -1
-    if cupti is not None:
+    if cupti is not None and not use_kineto:
         torch.cuda.synchronize()
         comm.Barrier()
         inproc_rc = cupti.start()
@@ -536,7 +628,11 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
 
     ck_disp = ck_comb = 0.0
     inproc_ok = False
-    if cupti is not None and inproc_rc == 0:
+    if use_kineto:
+        comm.Barrier()
+        ck_disp, ck_comb = _kineto_kernel_us(dispatch_fn, combine_fn, comm, iters, barrier=nccl_barrier)
+        inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
+    elif cupti is not None and inproc_rc == 0:
         cupti.stop()
         comm.Barrier()
         ck_disp = cupti.avg_us("dispatch")
@@ -577,7 +673,7 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
     kernel_ok = 0
     gk_d_avg = gk_d_min = gk_d_max = 0.0
     gk_c_avg = gk_c_min = gk_c_max = 0.0
-    if cupti is not None:
+    if have_kernel:
         kernel_ok = comm.allreduce(1 if inproc_ok else 0, op=MPI.MIN)
         gk_d_avg, gk_d_min, gk_d_max = _mpi_stats(comm, ck_disp, ck_disp, ck_disp, num_ranks)
         gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
@@ -614,8 +710,9 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
             f"min={t_lo:.2f} GB/s (rank {t_lo_r}), max={t_hi:.2f} GB/s (rank {t_hi_r})"
         )
 
-        if cupti is not None:
-            print("\n--- Kernel-only performance (in-process CUPTI Activity API) ---")
+        if have_kernel:
+            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)" if use_kineto else "in-process CUPTI Activity API"
+            print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
             if kernel_ok:
                 # Report BOTH min and avg for dispatch and combine. The LL dispatch
                 # kernel ends in a cross-rank recv spin-wait, so its avg/max carry
@@ -737,6 +834,23 @@ def main() -> None:
 
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
 
+    nccl_barrier = None
+    if (
+        os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
+        and os.environ.get("EP_KINETO_BARRIER", "nccl") == "nccl"
+    ):
+        try:
+            nccl_barrier = _init_torch_nccl(comm, rank, num_ranks, local_rank)
+            if rank == 0:
+                print("[cfg] kineto barrier: torch NCCL all_reduce (GPU-side)", flush=True)
+        except Exception as exc:
+            if rank == 0:
+                print(
+                    f"[warn] torch NCCL barrier init failed ({type(exc).__name__}: {exc}); using MPI host barrier",
+                    flush=True,
+                )
+            nccl_barrier = None
+
     cupti = None
     if args.kernel_timing:
         so_path = _ensure_cupti_lib(comm, local_rank)
@@ -765,7 +879,18 @@ def main() -> None:
             comm.Barrier()
             continue
         try:
-            run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=cupti)
+            run_backend(
+                name,
+                args,
+                comm,
+                rank,
+                num_ranks,
+                inputs,
+                dispatch_fn,
+                combine_fn,
+                cupti=cupti,
+                nccl_barrier=nccl_barrier,
+            )
         finally:
             torch.cuda.synchronize()
             teardown()
