@@ -246,6 +246,8 @@ int main(int argc, char** argv) {
   }
   const bool fp8Dispatch = dispatchDataType != mscclpp::ep::low_latency::DispatchDataType::BF16;
   const int scaleBlockSize = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3 ? 32 : 128;
+  const int scaleElementSize =
+      dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3 ? sizeof(uint8_t) : sizeof(float);
   const char* dispatchLabel = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3
                                   ? "MXFP8_E4M3"
                                   : (fp8Dispatch ? "FP8_E4M3" : "BF16");
@@ -279,7 +281,7 @@ int main(int argc, char** argv) {
   using Fp8E4M3 = mscclpp::ep::low_latency::Fp8E4M3;
   Bf16 *d_x = nullptr, *d_out = nullptr, *d_expert_output = nullptr;
   void* d_recv = nullptr;
-  float* d_scales = nullptr;
+  void* d_scales = nullptr;
   int64_t *d_topk = nullptr, *d_layout = nullptr;
   float* d_weights = nullptr;
   int *d_srcinfo = nullptr, *d_count = nullptr;
@@ -288,7 +290,7 @@ int main(int argc, char** argv) {
   const size_t recvBytes = (size_t)Elocal * slots * H * (fp8Dispatch ? sizeof(Fp8E4M3) : sizeof(Bf16));
   CUDA_CHECK(cudaMalloc(&d_recv, recvBytes));
   if (fp8Dispatch) {
-    CUDA_CHECK(cudaMalloc(&d_scales, (size_t)Elocal * slots * (H / scaleBlockSize) * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_scales, (size_t)Elocal * slots * (H / scaleBlockSize) * scaleElementSize));
     CUDA_CHECK(cudaMalloc(&d_expert_output, (size_t)Elocal * slots * H * sizeof(Bf16)));
     CUDA_CHECK(cudaMemset(d_expert_output, 0, (size_t)Elocal * slots * H * sizeof(Bf16)));
   } else {
@@ -336,7 +338,7 @@ int main(int argc, char** argv) {
   long long num_valid_selections = 0;
   for (size_t i = 0; i < h_topk.size(); ++i)
     if (h_topk[i] >= 0) ++num_valid_selections;
-  const double dispatchBytesPerToken = fp8Dispatch ? H + (H / scaleBlockSize) * sizeof(float) : H * sizeof(Bf16);
+  const double dispatchBytesPerToken = fp8Dispatch ? H + (H / scaleBlockSize) * scaleElementSize : H * sizeof(Bf16);
   const double disp_bytes = (double)num_valid_selections * dispatchBytesPerToken;
   const double comb_bytes = (double)num_valid_selections * H * sizeof(Bf16);
 

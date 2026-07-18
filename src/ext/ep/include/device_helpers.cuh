@@ -74,6 +74,12 @@ __device__ __forceinline__ void fenceProxyAsyncSharedCta() {
   asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
 }
 
+__device__ __forceinline__ float reciprocalApproximateFtz(float value) {
+  float result;
+  asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(value));
+  return result;
+}
+
 __device__ __forceinline__ void initTmaLoadBarrier(uint64_t *sharedBarrier) {
   const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));

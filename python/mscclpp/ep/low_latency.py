@@ -48,6 +48,14 @@ def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
     return 0
 
 
+def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float32
+    if data_type == DispatchDataType.MXFP8_E4M3:
+        return torch.uint8
+    raise ValueError("BF16 dispatch does not have block scales")
+
+
 class LowLatencyRuntime:
     """Private low-level low-latency runtime wrapper (wraps ``_cpp.MoERuntime``)."""
 
@@ -319,7 +327,9 @@ class LowLatencyBackend:
                 if scale_block_size:
                     num_scales = self.hidden_size // scale_block_size
                     scale_storage = torch.empty(
-                        (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
+                        (self.num_local_experts, num_scales, slots_per_expert),
+                        dtype=_dispatch_scale_dtype(self.dispatch_data_type),
+                        device=device,
                     )
                     self._dispatch_scales = scale_storage.transpose(1, 2)
             elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
@@ -332,7 +342,9 @@ class LowLatencyBackend:
                 scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
                 if scale_block_size:
                     self._dispatch_scales = torch.empty(
-                        (token_capacity, self.hidden_size // scale_block_size), dtype=torch.float32, device=device
+                        (token_capacity, self.hidden_size // scale_block_size),
+                        dtype=_dispatch_scale_dtype(self.dispatch_data_type),
+                        device=device,
                     )
             else:
                 raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")

@@ -160,8 +160,13 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
                                              laneId);
     }
     for (int inputIdx = groupThreadId; inputIdx < HiddenVectors; inputIdx += groupThreadCount) {
-      outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
-          inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
+      if constexpr (DataType == DispatchDataType::MXFP8_E4M3) {
+        outputData[inputIdx] = quantizeBf16x8ToMxFp8E4M3<ScaleBlockSize>(
+            inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
+      } else {
+        outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
+            inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
+      }
     }
     syncNamedBarrier(groupBarrierId, groupThreadCount);
 
@@ -422,7 +427,7 @@ MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, WorkspaceView& worksp
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
-    void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
+    void* output, void* outputScales, int* outputSrcInfo, int64_t* outputLayout,
     const DispatchPayloadView<DataType>& payloadView, void* sourcePayload, int localExpertIdx, int sourceRank,
     int sourceTokenIdx, int nLocalExperts, int nRanks, int nTopk, int maxTokensPerRank, WorkspaceView& workspaceView,
     uint8_t* sharedTile, uint64_t* tmaBarrier, uint32_t& recvTmaPhase) {
@@ -450,7 +455,9 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
   }
 
   if constexpr (DataType != DispatchDataType::BF16) {
+    using ScaleType = DispatchScaleType<DataType>;
     const auto* sourceScales = payloadView.scaleFactors(sourcePayload);
+    auto* typedOutputScales = reinterpret_cast<ScaleType*>(outputScales);
     // Each top-k lane may create a row for a different local expert. All lanes
     // cooperate to copy the shared payload's scale vector to every such row.
     for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
@@ -458,8 +465,8 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
       const int scaleOutputTokenIdx = warpBroadcast(outputTokenIdx, topkLane);
       if (scaleLocalExpertIdx < 0) continue;
       for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
-        outputScales[(static_cast<size_t>(scaleLocalExpertIdx) * NumScales + scaleIdx) * nOutputSlotsPerExpert +
-                     scaleOutputTokenIdx] = sourceScales[scaleIdx];
+        typedOutputScales[(static_cast<size_t>(scaleLocalExpertIdx) * NumScales + scaleIdx) * nOutputSlotsPerExpert +
+                          scaleOutputTokenIdx] = sourceScales[scaleIdx];
       }
     }
   }
@@ -477,7 +484,7 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* outputScales, int* outputSrcInfo,
+MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, void* outputScales, int* outputSrcInfo,
                                                         int* outputTopkIdx, float* outputTopkWeights,
                                                         const DispatchPayloadView<DataType>& payloadView,
                                                         const void* sourcePayload, int routedExpertIdx,
@@ -496,9 +503,11 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* out
         localExpertIdx >= 0 ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
   }
   if constexpr (DataType != DispatchDataType::BF16) {
+    using ScaleType = DispatchScaleType<DataType>;
     const auto* sourceScales = payloadView.scaleFactors(sourcePayload);
+    auto* typedOutputScales = reinterpret_cast<ScaleType*>(outputScales);
     for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
-      outputScales[static_cast<size_t>(outputRow) * NumScales + scaleIdx] = sourceScales[scaleIdx];
+      typedOutputScales[static_cast<size_t>(outputRow) * NumScales + scaleIdx] = sourceScales[scaleIdx];
     }
   }
 
@@ -513,7 +522,7 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* out
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
-MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                               float* outputTopkWeights, int64_t* outputLayout, int nExperts, int rank,
                                               int nRanks, int nTopk, int maxTokensPerRank, void* recvBuffer,
                                               void* workspace, uint32_t dispatchEpoch, int* sharedMem) {
@@ -588,7 +597,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout,
           bool InitializeTokenMajorPadding>
 __global__ __launch_bounds__(DispatchNThreads,
-                             1) void dispatchKernel(void* output, float* outputScales, int* outputSrcInfo,
+                             1) void dispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
                                                     int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
                                                     int* outputCount, const int64_t* __restrict__ topkIndices,
                                                     const float* __restrict__ topkWeights, const void* inputTokens,
@@ -634,7 +643,7 @@ __global__ __launch_bounds__(DispatchNThreads,
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout,
           bool InitializeTokenMajorPadding>
-inline void dispatchHiddenMode(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
                                void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
@@ -661,7 +670,7 @@ inline void dispatchHiddenMode(void* output, float* outputScales, int* outputSrc
 }
 
 template <int Hidden, DispatchLayout Layout, bool InitializeTokenMajorPadding>
-inline void dispatchHidden(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
                            void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
@@ -684,7 +693,7 @@ inline void dispatchHidden(void* output, float* outputScales, int* outputSrcInfo
 }
 
 template <int Hidden>
-inline void dispatchLayout(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+inline void dispatchLayout(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
                            void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
@@ -704,11 +713,10 @@ inline void dispatchLayout(void* output, float* outputScales, int* outputSrcInfo
       topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
 }
 
-inline void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                     float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                     const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
-                     void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
-                     cudaStream_t stream) {
+inline void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+                     int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
+                     const float* topkWeights, const low_latency::Workload& workload, void* recvBuffer,
+                     const low_latency::CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream) {
   const int nExperts = workload.numExperts_;
   const int rank = comm.rank_;
   const int nRanks = comm.numRanks_;
@@ -773,7 +781,7 @@ inline void dispatch(void* output, float* outputScales, int* outputSrcInfo, int*
 
 size_t workspaceSize(int numRanks, int numExperts) { return detail::workspaceBytes(numRanks, numExperts); }
 
-void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
               int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
               const float* topkWeights, const Workload& workload, void* recvBuffer, const CommContext& comm,
               void* workspace, int numBlocks, cudaStream_t stream) {

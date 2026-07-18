@@ -358,6 +358,7 @@ def main() -> None:
         scale_block_size = 128
     elif dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
         scale_block_size = 32
+    scale_element_size = 1 if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3 else 4
 
     # bf16 precision anchor (same convention as test_low_latency_multirank.py).
     rank_offset = 128
@@ -384,7 +385,9 @@ def main() -> None:
             valid = expert >= 0
             destination_mask[valid, expert[valid] // num_local_experts] = True
         num_dispatch_rows = int(destination_mask.sum().item())
-    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * 4
+    dispatch_bytes_per_token = (
+        hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * scale_element_size
+    )
     disp_bytes = num_dispatch_rows * dispatch_bytes_per_token
     comb_bytes = num_dispatch_rows * hidden * 2
 
