@@ -42,8 +42,10 @@ LL dispatch supports two user-visible layouts:
   CPU count synchronization. The option is disabled by default. The caller must
   produce one pre-weighted local partial per valid row before combine.
 
-LL quantized dispatch supports E4M3 payloads with float scales per 128 hidden
-elements (`FP8_E4M3`) or per 32 hidden elements (`MXFP8_E4M3`).
+LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
+elements (`FP8_E4M3`) or UE8M0 scale bytes per 32 elements (`MXFP8_E4M3`).
+MXFP8 scales use linear row-major layout and can be passed to FlashInfer
+`cutlass_fused_moe` with `swizzled_input_sf=False`.
 
 ### High throughput
 
@@ -103,7 +105,12 @@ cmake -S . -B build -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j 64
 ```
 
-The EP extension requires CUDA architecture 90 or newer.
+The EP extension requires CUDA architecture 90 or newer. Without an explicit
+`MSCCLPP_GPU_ARCHS`, it builds for `90`, `100`, `100a`, `103`, and `103a` when
+the CUDA toolkit supports those targets. An explicit `MSCCLPP_GPU_ARCHS`
+overrides this list. Architecture-specific `100a`/`103a` builds use the native
+Blackwell UE8M0 conversion instruction; generic `100`/`103` builds use the
+portable conversion path.
 
 Available CMake options:
 

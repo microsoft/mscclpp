@@ -489,7 +489,7 @@ Examples:
 | BF16/FP16 | `[T, H]` | `None` |
 | FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
-| MXFP8 E4M3 | `[T, H]` FP8 | `[T, H / 32]` float scales |
+| MXFP8 E4M3 | `[T, H]` FP8 | `[T, H / 32]` `uint8` UE8M0 scales |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -608,7 +608,8 @@ expert-major tokens:  [num_local_experts, max_slots, H]
 expert-major scales:  [num_local_experts, max_slots, S]
 ```
 
-`S` is `H / 128` for `FP8_E4M3` and `H / 32` for `MXFP8_E4M3`.
+`S` is `H / 128` with FP32 values for `FP8_E4M3`; it is `H / 32` with
+`uint8` UE8M0 values for `MXFP8_E4M3`.
 
 ## MLP contract
 
@@ -691,8 +692,10 @@ expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 output = moe_comm.combine(expert_output, handle)
 ```
 
-Use `DispatchDataType.MXFP8_E4M3` for the same E4M3 payload with one float
-scale per 32 hidden elements.
+Use `DispatchDataType.MXFP8_E4M3` for E4M3 payloads with one linear UE8M0
+scale byte per 32 hidden elements. The returned scales are directly compatible
+with FlashInfer `cutlass_fused_moe(..., use_mxfp8_act_scaling=True,
+swizzled_input_sf=False)`.
 
 For overlap, expose two optional APIs rather than adding many flags to the
 default path:
