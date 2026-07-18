@@ -95,7 +95,7 @@ enum class DispatchDataType {
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3,
-  /// Reserved for MXFP8 E4M3 payloads with micro-scales.
+  /// FP8 E4M3 payload with one floating-point scale per 32 hidden elements.
   MXFP8_E4M3
 };
 
@@ -150,7 +150,8 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// Workload::outputLayout_.
 /// @param[out] outputScales Layout-matched FP8 block scales, or nullptr for BF16 dispatch.
 /// @param[out] outputSrcInfo Original source-token index for every output row.
-/// @param[out] outputTopkIdx Token-major local expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// Non-local and padding entries use numExperts as the sentinel.
 /// @param[out] outputTopkWeights Token-major routing weights
 /// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or

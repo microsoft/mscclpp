@@ -116,12 +116,13 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, int nExpert
   }
 }
 
-template <int Hidden, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts, int rank, int nRanks,
                                            const int64_t* __restrict__ topkIndices,
                                            const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                            int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                            void* workspace, int* sharedMem) {
+  static_assert(DataType == DispatchDataType::FP8_E4M3 || DataType == DispatchDataType::MXFP8_E4M3);
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
@@ -139,8 +140,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
   constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
   const int nLocalExperts = nExperts / nRanks;
   const size_t metadataBytes = dispatchMetadataBytes(nRanks, nExperts);
-  const DispatchPayloadView<DispatchDataType::FP8_E4M3> payloadView(Hidden, nTopk, ScaleBlockSize);
-  const size_t payloadStride = dispatchPayloadStride<DispatchDataType::FP8_E4M3>(Hidden, nTopk, ScaleBlockSize);
+  const DispatchPayloadView<DataType> payloadView(Hidden, nTopk, ScaleBlockSize);
+  const size_t payloadStride = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
   auto* sharedPayloadBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
   auto* stagedPayload = sharedPayloadBase + static_cast<size_t>(warpGroupId) * payloadStride;
   auto* destinationSlots = sharedMem + warpGroupId * WARP_SIZE;
@@ -154,9 +155,9 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
     const auto* inputData =
         reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
     if (subWarpId == 0) {
-      stageDispatchPayloadMetadata<DispatchDataType::FP8_E4M3>(payloadView, stagedPayload, destinationSlots,
-                                                               workspaceView, topkIndices, topkWeights, tokenIdx, nTopk,
-                                                               nLocalExperts, maxTokensPerRank, rank, laneId);
+      stageDispatchPayloadMetadata<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, topkIndices,
+                                             topkWeights, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, rank,
+                                             laneId);
     }
     for (int inputIdx = groupThreadId; inputIdx < HiddenVectors; inputIdx += groupThreadCount) {
       outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
@@ -166,9 +167,9 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
 
     if (subWarpId == 0) {
       fenceProxyAsyncSharedCta();
-      sendStagedDispatchPayload<DispatchDataType::FP8_E4M3>(payloadView, stagedPayload, destinationSlots, workspaceView,
-                                                            nTopk, nLocalExperts, maxTokensPerRank, metadataBytes,
-                                                            payloadStride, recvBuffer, transport, laneId);
+      sendStagedDispatchPayload<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, nTopk,
+                                          nLocalExperts, maxTokensPerRank, metadataBytes, payloadStride, recvBuffer,
+                                          transport, laneId);
     }
     syncNamedBarrier(groupBarrierId, groupThreadCount);
   }
@@ -262,9 +263,9 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, const Transport
       dispatchSendBf16<Hidden>(inputTokens, nExperts, transport.rank_, nRanks, topkIndices, topkWeights, nTokens, nTopk,
                                maxTokensPerRank, recvBuffer, transport, workspace, sharedMem);
     } else {
-      dispatchSendFp8<Hidden, ScaleBlockSize>(inputTokens, nExperts, transport.rank_, nRanks, topkIndices, topkWeights,
-                                              nTokens, nTopk, maxTokensPerRank, recvBuffer, transport, workspace,
-                                              sharedMem);
+      dispatchSendFp8<Hidden, DataType, ScaleBlockSize>(inputTokens, nExperts, transport.rank_, nRanks, topkIndices,
+                                                        topkWeights, nTokens, nTopk, maxTokensPerRank, recvBuffer,
+                                                        transport, workspace, sharedMem);
     }
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
     dispatchNotify(transport, nExperts, nRanks, topkIndices, nTokens, nTopk, recvBuffer, workspace, dispatchEpoch,
@@ -479,8 +480,9 @@ template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* outputScales, int* outputSrcInfo,
                                                         int* outputTopkIdx, float* outputTopkWeights,
                                                         const DispatchPayloadView<DataType>& payloadView,
-                                                        const void* sourcePayload, int localExpertIdx, int outputRow,
-                                                        int sourceTokenIdx, int nTopk, uint8_t* sharedTile,
+                                                        const void* sourcePayload, int routedExpertIdx,
+                                                        int localExpertIdx, int outputRow, int sourceTokenIdx,
+                                                        int nExperts, int nTopk, uint8_t* sharedTile,
                                                         uint64_t* tmaBarrier, uint32_t& recvTmaPhase) {
   using OutputType = DispatchElementType<DataType>;
   constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
@@ -489,7 +491,7 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, float* out
 
   if (laneId == 0) outputSrcInfo[outputRow] = sourceTokenIdx;
   if (laneId < nTopk) {
-    outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] = localExpertIdx;
+    outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] = localExpertIdx >= 0 ? routedExpertIdx : nExperts;
     outputTopkWeights[static_cast<size_t>(outputRow) * nTopk + laneId] =
         localExpertIdx >= 0 ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
   }
@@ -575,7 +577,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, float* outputScales,
           warpBroadcast(laneId == 0 ? static_cast<int>(outputLayout[sourceRank]) : 0, 0) + sourceTokenSlot;
       hasPendingStore = dispatchRecvTokenMajorOutput<Hidden, DataType, ScaleBlockSize>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, payloadView, sourcePayload,
-          localExpertIdx, outputRow, sourceTokenIdx, nTopk, sharedTile, tmaBarrier, recvTmaPhase);
+          routedExpertIdx, localExpertIdx, outputRow, sourceTokenIdx, nExperts, nTopk, sharedTile, tmaBarrier,
+          recvTmaPhase);
     }
   }
 
@@ -673,7 +676,9 @@ inline void dispatchHidden(void* output, float* outputScales, int* outputSrcInfo
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
     case DispatchDataType::MXFP8_E4M3:
-      EP_HOST_ASSERT(false && "MXFP8 dispatch is not implemented");
+      return dispatchHiddenMode<Hidden, DispatchDataType::MXFP8_E4M3, 32, Layout, InitializeTokenMajorPadding>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
 }
