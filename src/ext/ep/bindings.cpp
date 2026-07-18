@@ -69,14 +69,13 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
              int hidden, int numTopk, int maxTokensPerRank, int numExperts, mscclpp::ep::DispatchLayout dispatchLayout,
              mscclpp::ep::low_latency::DispatchDataType dispatchDataType, int numBlocks, uintptr_t streamPtr) {
-            self.dispatch(ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
-                          reinterpret_cast<int*>(ptr(outputSrcInfoPtr)), reinterpret_cast<int*>(ptr(outputTopkIdxPtr)),
-                          reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
-                          reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
-                          reinterpret_cast<int*>(ptr(outputCountPtr)), ptr(inputPtr),
-                          reinterpret_cast<int64_t*>(ptr(topkIdxPtr)), reinterpret_cast<float*>(ptr(topkWeightsPtr)),
-                          numTokens, hidden, numTopk, maxTokensPerRank, numExperts, dispatchLayout, dispatchDataType,
-                          numBlocks, stream(streamPtr));
+            self.dispatch(
+                ptr(outputPtr), ptr(outputScalesPtr), reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
+                reinterpret_cast<int*>(ptr(outputTopkIdxPtr)), reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
+                reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)), reinterpret_cast<int*>(ptr(outputCountPtr)),
+                ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
+                reinterpret_cast<float*>(ptr(topkWeightsPtr)), numTokens, hidden, numTopk, maxTokensPerRank, numExperts,
+                dispatchLayout, dispatchDataType, numBlocks, stream(streamPtr));
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),

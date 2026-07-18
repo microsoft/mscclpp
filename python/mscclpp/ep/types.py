@@ -20,8 +20,8 @@ class QuantConfig:
     """Quantization metadata associated with an activation tensor.
 
     Low-latency FP8 dispatch returns ``block_scales`` with the activation's
-    leading dimensions and a format-defined final scale dimension (128-element
-    blocks for ``FP8_E4M3`` and 32-element blocks for ``MXFP8_E4M3``).
+    leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
+    uses FP32 scales per 128 elements; ``MXFP8_E4M3`` uses UE8M0 bytes per 32.
     """
 
     format: Optional[DispatchDataType] = None

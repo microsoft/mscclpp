@@ -27,7 +27,7 @@ class MoERuntime {
   bool isAvailable() const;
   bool isInternodeAvailable() const;
 
-  void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+  void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
                 const float* topkWeights, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
                 DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType, int numBlocks,
