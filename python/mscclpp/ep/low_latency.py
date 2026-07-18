@@ -33,13 +33,19 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
         raise TypeError("quant.format must be a DispatchDataType")
     if quant_format is None:
         raise ValueError("quant.format is required")
-    if quant_format == DispatchDataType.MXFP8_E4M3:
-        raise NotImplementedError("MXFP8 dispatch is reserved but not implemented")
-    if quant_format != DispatchDataType.FP8_E4M3:
+    if quant_format not in (DispatchDataType.FP8_E4M3, DispatchDataType.MXFP8_E4M3):
         raise ValueError("unsupported low-latency quantization format")
-    if quant.block_scales is not None or quant.global_scale is not None:
+    if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
-    return DispatchDataType.FP8_E4M3
+    return quant_format
+
+
+def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
+    if data_type == DispatchDataType.FP8_E4M3:
+        return 128
+    if data_type == DispatchDataType.MXFP8_E4M3:
+        return 32
+    return 0
 
 
 class LowLatencyRuntime:
@@ -309,8 +315,9 @@ class LowLatencyBackend:
                     (self.num_local_experts, self.world_size), dtype=torch.int64, device=device
                 )
                 self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
-                if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
-                    num_scales = self.hidden_size // 128
+                scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
+                if scale_block_size:
+                    num_scales = self.hidden_size // scale_block_size
                     scale_storage = torch.empty(
                         (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
                     )
@@ -322,9 +329,10 @@ class LowLatencyBackend:
                 self._dispatch_weights = torch.empty((token_capacity, self.topk), dtype=torch.float32, device=device)
                 self._dispatch_layout_range = torch.empty((self.world_size + 1,), dtype=torch.int64, device=device)
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
-                if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+                scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
+                if scale_block_size:
                     self._dispatch_scales = torch.empty(
-                        (token_capacity, self.hidden_size // 128), dtype=torch.float32, device=device
+                        (token_capacity, self.hidden_size // scale_block_size), dtype=torch.float32, device=device
                     )
             else:
                 raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
@@ -377,7 +385,7 @@ class LowLatencyBackend:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
-        expected_dtype = torch.float8_e4m3fn if self.dispatch_data_type == DispatchDataType.FP8_E4M3 else torch.bfloat16
+        expected_dtype = torch.bfloat16 if self.dispatch_data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:

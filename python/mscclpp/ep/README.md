@@ -259,7 +259,6 @@ can leave those fields as `None`.
 class QuantConfig:
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
-    global_scale: Optional[torch.Tensor] = None
 
 
 class DispatchLayout(str, Enum):
@@ -485,12 +484,12 @@ and scale layout.
 
 Examples:
 
-| Format | `input` | `quant.block_scales` | `quant.global_scale` |
-|---|---|---|---|
-| BF16/FP16 | `[T, H]` | `None` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` | usually `None` |
-| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor | optional global scale |
-| MXFP8 | backend-defined `[T, H]` | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
+| Format | `input` | `quant.block_scales` |
+|---|---|---|
+| BF16/FP16 | `[T, H]` | `None` |
+| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
+| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
+| MXFP8 E4M3 | `[T, H]` FP8 | `[T, H / 32]` float scales |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -573,13 +572,13 @@ LL can also return `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
 dispatch_out.tokens            # [world_size * max_tokens_per_rank, H]
-dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 local expert IDs
+dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 global expert IDs
 dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
 Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
-tokens. Non-local entries always use expert ID `-1` and weight `0`; padding uses
-expert ID `num_experts` and weight `0` when
+tokens. Non-local entries use expert ID `num_experts` and weight `0`; padding
+uses the same sentinel when
 `token_major_init_padding=True`. Per-source-rank counts are returned in
 `dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
@@ -603,11 +602,13 @@ Examples:
 
 ```text
 token-major tokens:   HT [total_recv_tokens, H]; LL [world_size * max_tokens_per_rank, H]
-token-major scales:   LL [world_size * max_tokens_per_rank, H / 128]
+token-major scales:   LL [world_size * max_tokens_per_rank, S]
 
 expert-major tokens:  [num_local_experts, max_slots, H]
-expert-major scales:  [num_local_experts, max_slots, H / 128]
+expert-major scales:  [num_local_experts, max_slots, S]
 ```
+
+`S` is `H / 128` for `FP8_E4M3` and `H / 32` for `MXFP8_E4M3`.
 
 ## MLP contract
 
@@ -689,6 +690,9 @@ dispatch_out, handle = moe_comm.dispatch(
 expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 output = moe_comm.combine(expert_output, handle)
 ```
+
+Use `DispatchDataType.MXFP8_E4M3` for the same E4M3 payload with one float
+scale per 32 hidden elements.
 
 For overlap, expose two optional APIs rather than adding many flags to the
 default path:

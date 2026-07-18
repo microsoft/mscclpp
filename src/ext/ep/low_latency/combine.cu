@@ -511,7 +511,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                               comm, workspace, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
-        EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+        return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                                 DispatchLayout::TOKEN_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                              layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                              comm, workspace, numBlocks, stream);
     }
   } else if (mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
     switch (workload.dispatchDataType_) {
@@ -526,7 +529,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                comm, workspace, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
-        EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+        return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                                 DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                               comm, workspace, numBlocks, stream);
     }
   }
   switch (workload.dispatchDataType_) {
@@ -541,7 +547,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                              layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                              comm, workspace, numBlocks, stream);
     case DispatchDataType::MXFP8_E4M3:
-      EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+      return combineHiddenMode<low_latency::CombineMode::DIRECT_SEND, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                               DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                             layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                             comm, workspace, numBlocks, stream);
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
 }

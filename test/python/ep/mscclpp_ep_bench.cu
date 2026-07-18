@@ -222,12 +222,16 @@ int main(int argc, char** argv) {
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   const int Elocal = E / W;
-  const auto dispatchDataType = args.dispatch_dtype == "fp8_e4m3" ? mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3
-                                                                  : mscclpp::ep::low_latency::DispatchDataType::BF16;
+  auto dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::BF16;
+  if (args.dispatch_dtype == "fp8_e4m3") {
+    dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3;
+  } else if (args.dispatch_dtype == "mxfp8_e4m3") {
+    dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3;
+  }
   const auto combineMode = args.combine_mode == "direct_send"
                                ? mscclpp::ep::low_latency::CombineMode::DIRECT_SEND
                                : mscclpp::ep::low_latency::CombineMode::RANK_LOCAL_REDUCE;
-  if (args.dispatch_dtype != "bf16" && args.dispatch_dtype != "fp8_e4m3") {
+  if (args.dispatch_dtype != "bf16" && args.dispatch_dtype != "fp8_e4m3" && args.dispatch_dtype != "mxfp8_e4m3") {
     if (rank == 0) fprintf(stderr, "unsupported --dispatch-dtype=%s\n", args.dispatch_dtype.c_str());
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
@@ -240,8 +244,11 @@ int main(int argc, char** argv) {
     if (rank == 0) fprintf(stderr, "--num-blocks must be in [world_size + 2, 130]\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
-  const bool fp8Dispatch = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3;
-  const char* dispatchLabel = fp8Dispatch ? "FP8_E4M3" : "BF16";
+  const bool fp8Dispatch = dispatchDataType != mscclpp::ep::low_latency::DispatchDataType::BF16;
+  const int scaleBlockSize = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3 ? 32 : 128;
+  const char* dispatchLabel = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3
+                                  ? "MXFP8_E4M3"
+                                  : (fp8Dispatch ? "FP8_E4M3" : "BF16");
 
   // --- Bootstrap mscclpp::Communicator (TcpBootstrap + MPI_Bcast of UniqueId). ---
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nRanks);
@@ -251,7 +258,7 @@ int main(int argc, char** argv) {
   bootstrap->initialize(uid);
   mscclpp::Communicator comm(bootstrap);
 
-  mscclpp::ep::MoERuntime rt(comm, T, H, E, K);
+  mscclpp::ep::MoERuntime rt(comm, T, H, E, K, false);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
@@ -281,7 +288,7 @@ int main(int argc, char** argv) {
   const size_t recvBytes = (size_t)Elocal * slots * H * (fp8Dispatch ? sizeof(Fp8E4M3) : sizeof(Bf16));
   CUDA_CHECK(cudaMalloc(&d_recv, recvBytes));
   if (fp8Dispatch) {
-    CUDA_CHECK(cudaMalloc(&d_scales, (size_t)Elocal * slots * (H / 128) * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_scales, (size_t)Elocal * slots * (H / scaleBlockSize) * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&d_expert_output, (size_t)Elocal * slots * H * sizeof(Bf16)));
     CUDA_CHECK(cudaMemset(d_expert_output, 0, (size_t)Elocal * slots * H * sizeof(Bf16)));
   } else {
@@ -329,7 +336,7 @@ int main(int argc, char** argv) {
   long long num_valid_selections = 0;
   for (size_t i = 0; i < h_topk.size(); ++i)
     if (h_topk[i] >= 0) ++num_valid_selections;
-  const double dispatchBytesPerToken = fp8Dispatch ? H + (H / 128) * sizeof(float) : H * sizeof(Bf16);
+  const double dispatchBytesPerToken = fp8Dispatch ? H + (H / scaleBlockSize) * sizeof(float) : H * sizeof(Bf16);
   const double disp_bytes = (double)num_valid_selections * dispatchBytesPerToken;
   const double comb_bytes = (double)num_valid_selections * H * sizeof(Bf16);
 
@@ -337,12 +344,13 @@ int main(int argc, char** argv) {
   CUDA_CHECK(cudaStreamCreate(&stream));
 
   auto dispatch = [&]() {
-    rt.dispatch(d_recv, d_scales, d_srcinfo, d_layout, d_count, d_x, d_topk, d_weights, T, H, K,
-                /*maxTokensPerRank=*/T, E, dispatchDataType, args.num_blocks, stream);
+    rt.dispatch(d_recv, d_scales, d_srcinfo, nullptr, nullptr, d_layout, d_count, d_x, d_topk, d_weights, T, H, K,
+                /*maxTokensPerRank=*/T, E, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, dispatchDataType, args.num_blocks,
+                stream);
   };
   auto combine = [&]() {
     rt.combine(d_out, d_expert_output, d_topk, d_weights, d_srcinfo, d_layout, T, H, K,
-               /*maxTokensPerRank=*/T, E, dispatchDataType, combineMode,
+               /*maxTokensPerRank=*/T, E, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, dispatchDataType, combineMode,
                args.num_blocks - mscclpp::ep::low_latency::DispatchControlBlocks, stream);
   };
 
