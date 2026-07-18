@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--dispatch-dtype",
-        choices=("bf16", "fp8_e4m3"),
+        choices=("bf16", "fp8_e4m3", "mxfp8_e4m3"),
         default="bf16",
         help="low-latency dispatch payload format",
     )
@@ -332,6 +332,7 @@ def main() -> None:
     dispatch_data_type = {
         "bf16": ep.DispatchDataType.BF16,
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
+        "mxfp8_e4m3": ep.DispatchDataType.MXFP8_E4M3,
     }[args.dispatch_dtype]
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
@@ -347,7 +348,16 @@ def main() -> None:
         None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
     )
     dispatch_dtype = torch.bfloat16 if dispatch_quant is None else torch.float8_e4m3fn
-    dispatch_label = "BF16" if dispatch_quant is None else "FP8_E4M3"
+    dispatch_label = {
+        ep.DispatchDataType.BF16: "BF16",
+        ep.DispatchDataType.FP8_E4M3: "FP8_E4M3",
+        ep.DispatchDataType.MXFP8_E4M3: "MXFP8_E4M3",
+    }[dispatch_data_type]
+    scale_block_size = 0
+    if dispatch_data_type == ep.DispatchDataType.FP8_E4M3:
+        scale_block_size = 128
+    elif dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
+        scale_block_size = 32
 
     # bf16 precision anchor (same convention as test_low_latency_multirank.py).
     rank_offset = 128
@@ -374,7 +384,7 @@ def main() -> None:
             valid = expert >= 0
             destination_mask[valid, expert[valid] // num_local_experts] = True
         num_dispatch_rows = int(destination_mask.sum().item())
-    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // 128 * 4
+    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * 4
     disp_bytes = num_dispatch_rows * dispatch_bytes_per_token
     comb_bytes = num_dispatch_rows * hidden * 2
 

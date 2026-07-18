@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
     parser.add_argument(
         "--dispatch-dtype",
-        choices=("bf16", "fp8_e4m3"),
+        choices=("bf16", "fp8_e4m3", "mxfp8_e4m3"),
         default="bf16",
         help="Wire format for low-latency dispatch",
     )
@@ -117,8 +117,8 @@ def init_dist():
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
 
 
-def fp8_e4m3_block128_scales(x):
-    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)
+def fp8_e4m3_scales(x, scale_block_size):
+    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // scale_block_size, scale_block_size)
     max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
     return max_abs / 448.0
 
@@ -129,7 +129,9 @@ def dequantized_dispatch_tokens(dispatch_out):
     assert dispatch_out.tokens.dtype == torch.float8_e4m3fn
     assert dispatch_out.quant.block_scales is not None
     tokens = dispatch_out.tokens
-    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
+    num_scales = dispatch_out.quant.block_scales.size(-1)
+    scale_block_size = tokens.size(-1) // num_scales
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], num_scales, scale_block_size)
     return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
 
 
@@ -209,6 +211,7 @@ def validate_expert_major_dispatch(
         assert expected_scales is not None
         assert dispatch_out.quant is not None
         assert dispatch_out.quant.block_scales is not None
+        scale_block_size = hidden // expected_scales.size(-1)
         for source_rank in range(num_ranks):
             packed_range = int(recv_layout_range[source_rank].item())
             source_count = packed_range & int_mask
@@ -225,9 +228,13 @@ def validate_expert_major_dispatch(
             reference_scales = expected_scales[source_rank, source_tokens]
             torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
             actual_dequantized = actual_tokens.float().reshape(
-                source_count, hidden // 128, 128
+                source_count, hidden // scale_block_size, scale_block_size
             ) * actual_scales.unsqueeze(-1)
-            reference_tokens = all_x[source_rank, source_tokens].float().reshape(source_count, hidden // 128, 128)
+            reference_tokens = (
+                all_x[source_rank, source_tokens]
+                .float()
+                .reshape(source_count, hidden // scale_block_size, scale_block_size)
+            )
             quant_error = (actual_dequantized - reference_tokens).abs()
             quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
             max_scale_error = (quant_error / reference_scales.unsqueeze(-1)).max().item()
@@ -301,13 +308,13 @@ def validate_token_major_dispatch(
         actual_weights = dispatch_out.weights[row_begin:row_end]
         expected_global_ids = all_topk_idx[source_rank, source_tokens]
         local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
-        expected_local_ids = torch.where(
-            local_mask, expected_global_ids - local_expert_begin, torch.full_like(expected_global_ids, -1)
+        expected_output_ids = torch.where(
+            local_mask, expected_global_ids, torch.full_like(expected_global_ids, num_experts)
         )
         expected_weights = torch.where(
             local_mask, all_topk_weights[source_rank, source_tokens], torch.zeros_like(actual_weights)
         )
-        assert torch.equal(actual_topk_ids, expected_local_ids.to(torch.int32))
+        assert torch.equal(actual_topk_ids, expected_output_ids.to(torch.int32))
         torch.testing.assert_close(actual_weights, expected_weights)
 
         if dispatch_quant is None:
@@ -317,11 +324,16 @@ def validate_token_major_dispatch(
         assert expected_scales is not None
         assert dispatch_out.quant is not None
         assert dispatch_out.quant.block_scales is not None
+        scale_block_size = hidden // expected_scales.size(-1)
         actual_scales = dispatch_out.quant.block_scales[row_begin:row_end]
         reference_scales = expected_scales[source_rank, source_tokens]
         torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
-        actual_dequantized = actual_tokens.float().reshape(recv_count, hidden // 128, 128) * actual_scales.unsqueeze(-1)
-        reference_tokens = all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // 128, 128)
+        actual_dequantized = actual_tokens.float().reshape(
+            recv_count, hidden // scale_block_size, scale_block_size
+        ) * actual_scales.unsqueeze(-1)
+        reference_tokens = (
+            all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // scale_block_size, scale_block_size)
+        )
         quant_error = (actual_dequantized - reference_tokens).abs()
         quant_error_bound = reference_scales.unsqueeze(-1) * 16.1 + 1e-6
         assert torch.all(quant_error <= quant_error_bound)
@@ -452,8 +464,20 @@ def main():
     }[args.output_layout]
     if output_layout == ep.DispatchLayout.TOKEN_MAJOR:
         assert combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE, "token-major output requires rank-local combine"
-    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
+    dispatch_data_type = {
+        "bf16": ep.DispatchDataType.BF16,
+        "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
+        "mxfp8_e4m3": ep.DispatchDataType.MXFP8_E4M3,
+    }[args.dispatch_dtype]
+    dispatch_quant = (
+        None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
+    )
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
+    scale_block_size = 0
+    if dispatch_data_type == ep.DispatchDataType.FP8_E4M3:
+        scale_block_size = 128
+    elif dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
+        scale_block_size = 32
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -555,16 +579,16 @@ def main():
         dist.all_gather_into_tensor(all_x, x, group=group)
     if dispatch_quant is not None:
         assert dispatch_out.quant is not None
-        assert dispatch_out.quant.format == ep.DispatchDataType.FP8_E4M3
+        assert dispatch_out.quant.format == dispatch_data_type
         assert dispatch_out.quant.block_scales is not None
         expected_scale_shape = (
-            (num_local_experts, num_ranks * num_tokens, hidden // 128)
+            (num_local_experts, num_ranks * num_tokens, hidden // scale_block_size)
             if output_layout == ep.DispatchLayout.EXPERT_MAJOR
-            else (num_ranks * num_tokens, hidden // 128)
+            else (num_ranks * num_tokens, hidden // scale_block_size)
         )
         assert dispatch_out.quant.block_scales.shape == expected_scale_shape
         assert all_x is not None
-        expected_scales = fp8_e4m3_block128_scales(all_x)
+        expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
 
     if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
         assert packed_recv_layout_range is not None
@@ -792,7 +816,7 @@ def main():
     # sends one copy per dispatched token back to its owner, so the bytes on
     # the wire match dispatch. Using num_tokens × hidden here would under-count
     # the actual send payload by ~num_topk×.
-    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // 128 * 4
+    dispatch_bytes_per_token = hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * 4
     disp_bytes = recv_tokens * dispatch_bytes_per_token
     comb_bytes = recv_tokens * hidden * 2
 
