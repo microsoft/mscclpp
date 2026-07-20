@@ -65,6 +65,7 @@ class MoECommunicatorConfig:
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
     token_major_init_padding: bool = False
+    invalid_token_expert_id: Optional[int] = None  # defaults to num_experts
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None
@@ -138,6 +139,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `token_major_init_padding` | Initialize token-major padding metadata for fixed-capacity Triton kernels |
+| `invalid_token_expert_id` | Sentinel for token-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_sms` | backend launch/resource tuning |
@@ -529,8 +531,9 @@ end = dispatch_out.layout.offsets[r + 1]
 Rows after `offsets[-1]` are padding. Set
 `token_major_init_padding=True` when a fixed-capacity Triton kernel should
 process the entire allocation: padding `topk_ids` are then initialized to
-`num_experts` and weights to `0`, so the kernel can skip a row when all expert
-IDs equal `num_experts`.
+`invalid_token_expert_id` and weights to `0`, so the kernel can skip a row when
+all expert IDs equal the configured sentinel. The sentinel defaults to
+`num_experts`.
 The option defaults to `False` to avoid initialization overhead when the MLP
 uses the compact valid length.
 
@@ -577,7 +580,7 @@ dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
 Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
-tokens. Non-local entries use expert ID `num_experts` and weight `0`; padding
+tokens. Non-local entries use `invalid_token_expert_id` and weight `0`; padding
 uses the same sentinel when
 `token_major_init_padding=True`. Per-source-rank counts are returned in
 `dispatch_out.layout.num_tokens_per_rank`.

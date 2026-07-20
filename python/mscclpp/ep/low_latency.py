@@ -113,6 +113,9 @@ class LowLatencyBackend:
         self.num_sms = self.num_blocks - 2
         self.combine_mode = config.low_latency_combine_mode
         self.token_major_init_padding = config.token_major_init_padding
+        self.invalid_token_expert_id = (
+            self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
+        )
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout not in (DispatchLayout.EXPERT_MAJOR, DispatchLayout.TOKEN_MAJOR):
@@ -125,6 +128,12 @@ class LowLatencyBackend:
             raise TypeError("low_latency_combine_mode must be a CombineMode")
         if not isinstance(self.token_major_init_padding, bool):
             raise TypeError("token_major_init_padding must be a bool")
+        if type(self.invalid_token_expert_id) is not int:
+            raise TypeError("invalid_token_expert_id must be an int or None")
+        if not -(1 << 31) <= self.invalid_token_expert_id < (1 << 31):
+            raise ValueError("invalid_token_expert_id must fit in int32")
+        if 0 <= self.invalid_token_expert_id < self.num_experts:
+            raise ValueError("invalid_token_expert_id must not overlap a valid global expert ID")
         if self.token_major_init_padding and self.output_layout != DispatchLayout.TOKEN_MAJOR:
             raise ValueError("token_major_init_padding requires TOKEN_MAJOR output")
         if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
@@ -199,6 +208,7 @@ class LowLatencyBackend:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
+            self.invalid_token_expert_id,
             self.output_layout,
             self.dispatch_data_type,
             self.num_blocks,
