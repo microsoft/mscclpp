@@ -36,10 +36,11 @@ LL dispatch supports two user-visible layouts:
 - `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus global top-k expert
   IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
   offsets. Valid rows occupy a compact prefix of the caller-provided capacity
-  buffer. Entries not owned by the destination rank use expert ID `num_experts`
-  and weight `0`. With `token_major_init_padding=True`, padding rows use the
-  same sentinel, allowing fixed-capacity Triton kernels to skip them without a
-  CPU count synchronization. The option is disabled by default. The caller must
+  buffer. Entries not owned by the destination rank use
+  `invalid_token_expert_id` and weight `0`; the sentinel defaults to
+  `num_experts`. With `token_major_init_padding=True`, padding rows use the same
+  sentinel, allowing fixed-capacity Triton kernels to skip them without a CPU
+  count synchronization. The option is disabled by default. The caller must
   produce one pre-weighted local partial per valid row before combine.
 
 LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden

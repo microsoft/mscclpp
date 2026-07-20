@@ -118,11 +118,12 @@ void MoERuntime::setup() {
 void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                           float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                           const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
-                          int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
+                          int maxTokensPerRank, int numExperts, int invalidTokenExpertId, DispatchLayout dispatchLayout,
                           low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - low_latency::DispatchControlBlocks >= numRanks_ &&
                  numBlocks <= low_latency::MaxDispatchBlocks);
 
@@ -134,6 +135,7 @@ void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, 
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
+                                       .invalidTokenExpertId_ = invalidTokenExpertId,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
                                        .initializeTokenMajorPadding_ = initializeTokenMajorPadding_,
@@ -163,6 +165,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
+                                       .invalidTokenExpertId_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
                                        .initializeTokenMajorPadding_ = false,
