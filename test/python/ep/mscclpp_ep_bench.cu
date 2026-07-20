@@ -347,8 +347,8 @@ int main(int argc, char** argv) {
 
   auto dispatch = [&]() {
     rt.dispatch(d_recv, d_scales, d_srcinfo, nullptr, nullptr, d_layout, d_count, d_x, d_topk, d_weights, T, H, K,
-                /*maxTokensPerRank=*/T, E, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, dispatchDataType, args.num_blocks,
-                stream);
+                /*maxTokensPerRank=*/T, E, /*invalidTokenExpertId=*/E, mscclpp::ep::DispatchLayout::EXPERT_MAJOR,
+                dispatchDataType, args.num_blocks, stream);
   };
   auto combine = [&]() {
     rt.combine(d_out, d_expert_output, d_topk, d_weights, d_srcinfo, d_layout, T, H, K,

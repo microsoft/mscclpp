@@ -52,6 +52,8 @@ class MoECommunicatorConfig:
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None
     token_major_init_padding: bool = False
+    # LL token-major sentinel; None resolves to num_experts.
+    invalid_token_expert_id: Optional[int] = None
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None

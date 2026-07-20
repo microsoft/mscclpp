@@ -273,6 +273,8 @@ class HighThroughputBackend:
 
         if self.output_layout != DispatchLayout.TOKEN_MAJOR:
             raise NotImplementedError("HT mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if config.invalid_token_expert_id is not None:
+            raise ValueError("invalid_token_expert_id is only supported in low-latency mode")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
