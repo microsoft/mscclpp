@@ -109,6 +109,8 @@ struct Workload {
   int numTopk_;
   /// Total number of experts.
   int numExperts_;
+  /// Sentinel used for token-major entries that do not name a valid expert.
+  int invalidTokenExpertId_;
   /// Maximum tokens per rank in the packed layout.
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
@@ -151,7 +153,7 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, UE8M0 bytes for MXFP8_E4M3, or nullptr for BF16.
 /// @param[out] outputSrcInfo Original source-token index for every output row.
 /// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
-/// Non-local and padding entries use numExperts as the sentinel.
+/// Non-local and padding entries use Workload::invalidTokenExpertId_.
 /// @param[out] outputTopkWeights Token-major routing weights
 /// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or

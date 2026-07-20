@@ -489,7 +489,7 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, void* outp
                                                         const DispatchPayloadView<DataType>& payloadView,
                                                         const void* sourcePayload, int routedExpertIdx,
                                                         int localExpertIdx, int outputRow, int sourceTokenIdx,
-                                                        int nExperts, int nTopk, uint8_t* sharedTile,
+                                                        int invalidTokenExpertId, int nTopk, uint8_t* sharedTile,
                                                         uint64_t* tmaBarrier, uint32_t& recvTmaPhase) {
   using OutputType = DispatchElementType<DataType>;
   constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
@@ -498,7 +498,8 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, void* outp
 
   if (laneId == 0) outputSrcInfo[outputRow] = sourceTokenIdx;
   if (laneId < nTopk) {
-    outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] = localExpertIdx >= 0 ? routedExpertIdx : nExperts;
+    outputTopkIdx[static_cast<size_t>(outputRow) * nTopk + laneId] =
+        localExpertIdx >= 0 ? routedExpertIdx : invalidTokenExpertId;
     outputTopkWeights[static_cast<size_t>(outputRow) * nTopk + laneId] =
         localExpertIdx >= 0 ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
   }
@@ -524,8 +525,9 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvTokenMajorOutput(void* output, void* outp
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
 MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                               float* outputTopkWeights, int64_t* outputLayout, int nExperts, int rank,
-                                              int nRanks, int nTopk, int maxTokensPerRank, void* recvBuffer,
-                                              void* workspace, uint32_t dispatchEpoch, int* sharedMem) {
+                                              int nRanks, int nTopk, int invalidTokenExpertId, int maxTokensPerRank,
+                                              void* recvBuffer, void* workspace, uint32_t dispatchEpoch,
+                                              int* sharedMem) {
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA recv requires SM90 or newer");
 #endif
@@ -586,8 +588,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, 
           warpBroadcast(laneId == 0 ? static_cast<int>(outputLayout[sourceRank]) : 0, 0) + sourceTokenSlot;
       hasPendingStore = dispatchRecvTokenMajorOutput<Hidden, DataType, ScaleBlockSize>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, payloadView, sourcePayload,
-          routedExpertIdx, localExpertIdx, outputRow, sourceTokenIdx, nExperts, nTopk, sharedTile, tmaBarrier,
-          recvTmaPhase);
+          routedExpertIdx, localExpertIdx, outputRow, sourceTokenIdx, invalidTokenExpertId, nTopk, sharedTile,
+          tmaBarrier, recvTmaPhase);
     }
   }
 
@@ -610,6 +612,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   const int nRanks = comm.numRanks_;
   const int nTokens = workload.numTokens_;
   const int nTopk = workload.numTopk_;
+  const int invalidTokenExpertId = workload.invalidTokenExpertId_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(comm);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
@@ -624,7 +627,7 @@ __global__ __launch_bounds__(DispatchNThreads,
     if constexpr (InitializeTokenMajorPadding) {
       const int nMetadataEntries = nRanks * maxTokensPerRank * nTopk;
       for (int idx = static_cast<int>(threadIdx.x); idx < nMetadataEntries; idx += static_cast<int>(blockDim.x)) {
-        outputTopkIdx[idx] = nExperts;
+        outputTopkIdx[idx] = invalidTokenExpertId;
         outputTopkWeights[idx] = 0.0f;
       }
       __syncthreads();
@@ -634,7 +637,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   } else if (static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     dispatchRecvWorker<Hidden, DataType, ScaleBlockSize, Layout>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, nExperts, comm.rank_,
-        nRanks, nTopk, maxTokensPerRank, recvBuffer, workspace, dispatchEpoch, sharedMem);
+        nRanks, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, workspace, dispatchEpoch, sharedMem);
   }
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     *workspaceView.dispatchEpoch_ = dispatchEpoch;

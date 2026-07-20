@@ -91,6 +91,12 @@ def parse_args():
         action="store_true",
         help="Initialize unused token-major top-k IDs to num_experts and weights to zero",
     )
+    parser.add_argument(
+        "--invalid-token-expert-id",
+        type=int,
+        default=None,
+        help="Sentinel for token-major non-local and padding expert IDs (default: num_experts)",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
         "--cuda-graph",
@@ -132,8 +138,9 @@ def mxfp8_e4m3_scales(x):
 
 def decode_block_scales(scales):
     if scales.dtype == torch.uint8:
-        decoded = torch.exp2(scales.float() - 127.0)
-        return torch.where(scales == 0, torch.zeros_like(decoded), decoded)
+        bits = scales.to(torch.int32) << 23
+        bits = torch.where(scales == 0, torch.full_like(bits, 0x00400000), bits)
+        return bits.view(torch.float32)
     return scales.float()
 
 
@@ -247,15 +254,17 @@ def validate_expert_major_dispatch(
                 torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
             decoded_actual_scales = decode_block_scales(actual_scales)
             decoded_reference_scales = decode_block_scales(reference_scales)
-            actual_dequantized = actual_tokens.float().reshape(
-                source_count, hidden // scale_block_size, scale_block_size
-            ) * decoded_actual_scales.unsqueeze(-1)
-            reference_tokens = (
+            actual_blocks = actual_tokens.float().reshape(source_count, hidden // scale_block_size, scale_block_size)
+            reference_blocks = (
                 all_x[source_rank, source_tokens]
                 .float()
                 .reshape(source_count, hidden // scale_block_size, scale_block_size)
             )
-            quant_error = (actual_dequantized - reference_tokens).abs()
+            if actual_scales.dtype == torch.uint8:
+                tiny_nonzero_blocks = (reference_scales == 0) & (reference_blocks.abs().amax(dim=-1) > 0)
+                assert torch.all(actual_blocks.abs().amax(dim=-1)[tiny_nonzero_blocks] > 0)
+            actual_dequantized = actual_blocks * decoded_actual_scales.unsqueeze(-1)
+            quant_error = (actual_dequantized - reference_blocks).abs()
             quant_error_bound = decoded_reference_scales.unsqueeze(-1) * 16.1 + 1e-6
             max_scale_error = (quant_error / decoded_reference_scales.unsqueeze(-1)).max().item()
             assert torch.all(quant_error <= quant_error_bound), (
@@ -282,9 +291,9 @@ def validate_token_major_dispatch(
     all_x,
     expected_scales,
     initialize_padding,
+    invalid_token_expert_id,
 ):
     assert all_x is not None
-    num_experts = num_local_experts * num_ranks
     assert dispatch_out.topk_ids is not None
     assert dispatch_out.topk_ids.dtype == torch.int32
     assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
@@ -299,7 +308,7 @@ def validate_token_major_dispatch(
     total_recv_tokens = int(rank_offsets[-1].item())
     assert total_recv_tokens == int(packed_recv_count.sum().item())
     if initialize_padding:
-        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == num_experts)
+        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == invalid_token_expert_id)
         assert torch.all(dispatch_out.weights[total_recv_tokens:] == 0)
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts
@@ -329,7 +338,7 @@ def validate_token_major_dispatch(
         expected_global_ids = all_topk_idx[source_rank, source_tokens]
         local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
         expected_output_ids = torch.where(
-            local_mask, expected_global_ids, torch.full_like(expected_global_ids, num_experts)
+            local_mask, expected_global_ids, torch.full_like(expected_global_ids, invalid_token_expert_id)
         )
         expected_weights = torch.where(
             local_mask, all_topk_weights[source_rank, source_tokens], torch.zeros_like(actual_weights)
@@ -353,13 +362,15 @@ def validate_token_major_dispatch(
             torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
         decoded_actual_scales = decode_block_scales(actual_scales)
         decoded_reference_scales = decode_block_scales(reference_scales)
-        actual_dequantized = actual_tokens.float().reshape(
-            recv_count, hidden // scale_block_size, scale_block_size
-        ) * decoded_actual_scales.unsqueeze(-1)
-        reference_tokens = (
+        actual_blocks = actual_tokens.float().reshape(recv_count, hidden // scale_block_size, scale_block_size)
+        reference_blocks = (
             all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // scale_block_size, scale_block_size)
         )
-        quant_error = (actual_dequantized - reference_tokens).abs()
+        if actual_scales.dtype == torch.uint8:
+            tiny_nonzero_blocks = (reference_scales == 0) & (reference_blocks.abs().amax(dim=-1) > 0)
+            assert torch.all(actual_blocks.abs().amax(dim=-1)[tiny_nonzero_blocks] > 0)
+        actual_dequantized = actual_blocks * decoded_actual_scales.unsqueeze(-1)
+        quant_error = (actual_dequantized - reference_blocks).abs()
         quant_error_bound = decoded_reference_scales.unsqueeze(-1) * 16.1 + 1e-6
         assert torch.all(quant_error <= quant_error_bound)
 
@@ -477,6 +488,7 @@ def main():
     hidden = args.hidden
     num_topk = args.num_topk
     num_experts = args.num_experts
+    invalid_token_expert_id = num_experts if args.invalid_token_expert_id is None else args.invalid_token_expert_id
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
     combine_mode = {
@@ -518,6 +530,8 @@ def main():
         x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
     else:
         x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * 8
+        if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
+            x[0, :32] = torch.finfo(torch.bfloat16).tiny
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
     if args.num_active_ranks:
         assert num_topk <= args.num_active_ranks * num_local_experts
@@ -543,6 +557,7 @@ def main():
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
         token_major_init_padding=args.token_major_init_padding,
+        invalid_token_expert_id=invalid_token_expert_id,
         quant=dispatch_quant,
     )
     if rank == 0:
@@ -657,6 +672,7 @@ def main():
             all_x=all_x,
             expected_scales=expected_scales,
             initialize_padding=args.token_major_init_padding,
+            invalid_token_expert_id=invalid_token_expert_id,
         )
 
     if rank == 0:

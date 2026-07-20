@@ -26,6 +26,13 @@ MSCCLPP_DEVICE_INLINE uint8_t encodeUe8m0RoundUp(float value) {
 #endif
 }
 
+MSCCLPP_DEVICE_INLINE float inverseUe8m0Scale(uint8_t scale) {
+  // UE8M0 code E represents 2^(E - 127), so its inverse is
+  // 2^(127 - E). E=254 requires the float32 subnormal 2^-127.
+  if (scale == 254) return __uint_as_float(0x00400000u);
+  return __uint_as_float(static_cast<uint32_t>(254 - scale) << 23);
+}
+
 MSCCLPP_DEVICE_INLINE float maxAbsF32x8(const mscclpp::f32x8& values, float seed) {
   float maxAbs = seed;
 #pragma unroll
@@ -103,8 +110,7 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToMxFp8E4M3(const mscclpp
     *scaleOut = scale;
   }
 
-  const float decodedScale = __uint_as_float(static_cast<uint32_t>(scale) << 23);
-  const float inverseScale = scale == 0 ? 1.0f : reciprocalApproximateFtz(decodedScale);
+  const float inverseScale = inverseUe8m0Scale(scale);
   mscclpp::f32x8 scaledValues;
 #pragma unroll
   for (int element = 0; element < NumElements; ++element) {

@@ -147,6 +147,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="initialize unused token-major top-k IDs and weights for fixed-capacity kernels",
     )
+    p.add_argument(
+        "--invalid-token-expert-id",
+        type=int,
+        default=None,
+        help="sentinel for token-major non-local and padding expert IDs (default: num_experts)",
+    )
     p.add_argument("--num-blocks", type=int, default=130, help="total low-latency dispatch blocks")
     p.add_argument(
         "--no-kernel-timing",
@@ -325,6 +331,7 @@ def main() -> None:
     hidden = args.hidden
     num_topk = args.num_topk
     num_experts = args.num_experts
+    invalid_token_expert_id = num_experts if args.invalid_token_expert_id is None else args.invalid_token_expert_id
     warmup = args.num_warmup
     iters = args.num_iters
     assert num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
@@ -415,6 +422,7 @@ def main() -> None:
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
         token_major_init_padding=args.token_major_init_padding,
+        invalid_token_expert_id=invalid_token_expert_id,
         quant=dispatch_quant,
     )
     assert moe_comm.is_available()
