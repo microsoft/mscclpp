@@ -133,9 +133,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--backend",
-        choices=["mscclpp", "nccl", "deepep", "all"],
+        choices=["mscclpp", "nccl", "deepep", "flashinfer", "all"],
         default="all",
-        help="which backend(s) to benchmark in this run (all runs nccl, mscclpp, deepep)",
+        help="which backend(s) to benchmark in this run (all runs nccl, mscclpp, deepep, flashinfer)",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
@@ -594,10 +594,13 @@ def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, u
         # Sum each DISTINCT matching kernel's average-per-launch. Single-kernel
         # backends (mscclpp, NCCL-EP) yield that kernel's avg; two-kernel DeepEP
         # (*_impl + *_epilogue) yields their per-iteration SUM (scope-matched).
+        # Case-insensitive so FlashInfer's moeA2ADispatchKernel / moeA2ACombineKernel
+        # (capitalized) match the "dispatch"/"combine" buckets too.
         total_us = 0.0
         matched = False
+        sub = substr.lower()
         for e in ka:
-            if substr in e.key and int(e.count) > 0:
+            if sub in e.key.lower() and int(e.count) > 0:
                 total_us += float(e.self_device_time_total) / int(e.count)
                 matched = True
         return total_us if matched else 0.0
@@ -996,14 +999,105 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     return dispatch_fn, combine_fn, teardown, deepep_barrier
 
 
-_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep}
+# ============================================================================
+# Backend: FlashInfer (flashinfer.comm.trtllm_moe_alltoall, MoeAlltoAll / MNNVL).
+# ============================================================================
+def setup_flashinfer(args, comm, rank, num_ranks, inputs):
+    """FlashInfer throughput MoE all-to-all via `flashinfer.comm.trtllm_moe_alltoall.
+    MoeAlltoAll` over the MNNVL fabric, wired like the other backends: return
+    (dispatch_fn, combine_fn, teardown). No native barrier, so the harness aligns
+    ranks with its GPU-side torch NCCL all_reduce (nccl_barrier). The kernels are
+    named ``moeA2ADispatchKernel`` / ``moeA2ACombineKernel`` (+ prepare kernels),
+    which the kineto timer buckets by the "dispatch"/"combine" substrings.
 
+    Env EP_FLASHINFER_GPUS_PER_NODE (default 4) sets the MNNVL Mapping layout."""
+    from flashinfer.comm.mapping import Mapping
+    import flashinfer.comm.trtllm_moe_alltoall as a2a
+
+    x, topk_idx, _topk_weights, _ = inputs
+    num_tokens, hidden = args.num_tokens, args.hidden
+    num_experts, num_topk = args.num_experts, args.num_topk
+    gpus_per_node = int(os.environ.get("EP_FLASHINFER_GPUS_PER_NODE", "4"))
+    dev = x.device
+    dtype = torch.bfloat16
+
+    if rank == 0:
+        print(
+            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
+            f"warmup={args.num_warmup} iters={args.num_iters}",
+            flush=True,
+        )
+
+    # EP is expressed as tp_size = world with moe_ep_size = world, moe_tp_size = 1
+    # (Mapping requires world_size == tp*pp*cp).
+    mapping = Mapping(
+        world_size=num_ranks,
+        rank=rank,
+        gpus_per_node=gpus_per_node,
+        tp_size=num_ranks,
+        moe_tp_size=1,
+        moe_ep_size=num_ranks,
+    )
+    moe = a2a.MoeAlltoAll(
+        mapping,
+        max_num_tokens=num_tokens,
+        top_k=num_topk,
+        num_experts=num_experts,
+        hidden_size=hidden,
+    )
+
+    # Shared routing inputs: FlashInfer wants int32 expert ids [num_tokens, top_k]
+    # and the hidden-state payload in BF16. Reuse the harness's topk_idx / x so the
+    # workload matches the other backends.
+    token_selected_experts = topk_idx[:, :num_topk].to(torch.int32).contiguous()
+    hidden_payload = x.to(dtype).contiguous()
+    # Combine payload lives in the received layout [ep_size, max_tokens, hidden].
+    combine_payload = torch.randn(num_ranks, num_tokens, hidden, generator=None,
+                                  device=dev, dtype=dtype)
+
+    # FlashInfer's MoeAlltoAll is STATEFUL: dispatch() sets phase="dispatched" and
+    # combine() requires it then resets to "idle". The harness's paired loop calls
+    # dispatch_fn then combine_fn in order (phase satisfied). Each op begins with an
+    # MPI barrier so all ranks enter the kernel roughly aligned -- FlashInfer's
+    # in-kernel peer-readiness spin otherwise deadlocks multi-node when ranks drift
+    # (this is exactly how the standalone FlashInfer bench aligns ranks). The
+    # host barrier is safe here because FlashInfer dispatch/combine are independent
+    # (unlike DeepEP, whose paired ops share symmetric-memory state).
+    # EP_KINETO_SEPARATE is forced off for FlashInfer so the timer replays the
+    # dispatch->combine pair in order (a lone combine would trip the phase assert).
+    os.environ["EP_KINETO_SEPARATE"] = "0"
+
+    def dispatch_fn():
+        comm.Barrier()
+        moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
+        return None
+
+    def combine_fn(_dout):
+        comm.Barrier()
+        moe.combine(combine_payload, num_tokens)
+
+    def teardown():
+        gc.collect()
+        torch.cuda.synchronize()
+
+    return dispatch_fn, combine_fn, teardown
+
+
+_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep,
+          "flashinfer": setup_flashinfer}
 
 def main() -> None:
     args = parse_args()
     comm, rank, num_ranks, local_rank = init_mpi()
+    # Debug aid: EP_FAULTHANDLER_SECS>0 dumps every thread's Python traceback if the
+    # process is still alive after N seconds (surfaces the exact hang location under
+    # an mpirun timeout). Off unless the env var is set.
+    _fh_secs = float(os.environ.get("EP_FAULTHANDLER_SECS", "0") or "0")
+    if _fh_secs > 0:
+        import faulthandler
+        faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
-
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
 
     nccl_barrier = None
@@ -1038,7 +1132,7 @@ def main() -> None:
     # nccl is benchmarked before mscclpp (see module docstring: mscclpp LL init
     # perturbs CUDA state that breaks a later NCCL-EP cooperative launch).
     if args.backend == "all":
-        backends = ["nccl", "mscclpp", "deepep"]
+        backends = ["nccl", "mscclpp", "deepep", "flashinfer"]
     else:
         backends = [args.backend]
 
