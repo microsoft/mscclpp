@@ -547,7 +547,9 @@ def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
 
 
-def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None, mid_barrier=None):
+def _kineto_kernel_us(
+    dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None, mid_barrier=None
+):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
     cuda._sleep(~10ms) + cross-rank barrier to absorb host launch skew. Returns
@@ -586,9 +588,9 @@ def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, u
             return
         torch.cuda._sleep(int(2e7))  # ~10 ms GPU spin to absorb host launch skew
         if barrier is not None:
-            barrier()               # GPU-side barrier (aligns ranks on-device)
+            barrier()  # GPU-side barrier (aligns ranks on-device)
         else:
-            comm.Barrier()          # MPI host barrier (host-only alignment)
+            comm.Barrier()  # MPI host barrier (host-only alignment)
 
     def _parse(ka, substr):
         # Sum each DISTINCT matching kernel's average-per-launch. Single-kernel
@@ -614,8 +616,7 @@ def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, u
             op_fn()  # warm / auto-tune
             torch.cuda.synchronize()
             schedule = _tp.schedule(wait=0, warmup=1, active=1, repeat=1)
-            with _tp.profile(activities=[_tp.ProfilerActivity.CUDA],
-                             schedule=schedule, acc_events=True) as prof:
+            with _tp.profile(activities=[_tp.ProfilerActivity.CUDA], schedule=schedule, acc_events=True) as prof:
                 for _ in range(2):
                     for _ in range(num_tests):
                         if flush_l2:
@@ -658,7 +659,19 @@ def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, u
     return _parse(ka, "dispatch"), _parse(ka, "combine")
 
 
-def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=None, nccl_barrier=None, bench_barrier=None):
+def run_backend(
+    name,
+    args,
+    comm,
+    rank,
+    num_ranks,
+    inputs,
+    dispatch_fn,
+    combine_fn,
+    cupti=None,
+    nccl_barrier=None,
+    bench_barrier=None,
+):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
@@ -709,7 +722,9 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
     inproc_ok = False
     if use_kineto:
         comm.Barrier()
-        ck_disp, ck_comb = _kineto_kernel_us(dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier)
+        ck_disp, ck_comb = _kineto_kernel_us(
+            dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier
+        )
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
     elif cupti is not None and inproc_rc == 0:
         cupti.stop()
@@ -1053,8 +1068,7 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     token_selected_experts = topk_idx[:, :num_topk].to(torch.int32).contiguous()
     hidden_payload = x.to(dtype).contiguous()
     # Combine payload lives in the received layout [ep_size, max_tokens, hidden].
-    combine_payload = torch.randn(num_ranks, num_tokens, hidden, generator=None,
-                                  device=dev, dtype=dtype)
+    combine_payload = torch.randn(num_ranks, num_tokens, hidden, generator=None, device=dev, dtype=dtype)
 
     # FlashInfer's MoeAlltoAll is STATEFUL: dispatch() sets phase="dispatched" and
     # combine() requires it then resets to "idle". The harness's paired loop calls
@@ -1084,8 +1098,8 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     return dispatch_fn, combine_fn, teardown
 
 
-_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep,
-          "flashinfer": setup_flashinfer}
+_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
+
 
 def main() -> None:
     args = parse_args()
@@ -1096,6 +1110,7 @@ def main() -> None:
     _fh_secs = float(os.environ.get("EP_FAULTHANDLER_SECS", "0") or "0")
     if _fh_secs > 0:
         import faulthandler
+
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
