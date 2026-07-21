@@ -38,8 +38,8 @@ Both backends share an MPI ``COMM_WORLD`` bootstrap (the same mechanism the C++
 torch is still used for CUDA tensors and event timing; only its distributed NCCL
 backend is avoided.
 
-Backend ordering (``--backend both``)
--------------------------------------
+Backend ordering (``--backend all``)
+------------------------------------
 NCCL-EP is benchmarked **before** mscclpp. Initializing mscclpp's LL
 ``MoECommunicator`` in a process perturbs CUDA state such that a subsequent NCCL-EP
 cooperative-launch dispatch fails with ``cudaErrorInvalidValue``; the reverse order
@@ -66,7 +66,7 @@ working single-node 4-GPU (CUDA-IPC) launch::
         -x NCCL_EP_JIT_SOURCE_DIR=/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep \
         -x NCCL_EP_JIT_BUILD_INCLUDE_DIR=$NCCL_BUILD/include \
         -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x NCCL_NET_PLUGIN=none \
-        python run_ep_bench_python.py --backend both -e 128
+        python run_ep_bench_python.py --backend all -e 128
 
 Multi-node (same NVLink/MNNVL fabric): launch with HPCX Open MPI 4 (rebuild mpi4py
 against it) and ``-x LD_PRELOAD=<hpcx>/ompi/lib/libmpi.so.40:<in-tree libnccl.so>``,
@@ -96,7 +96,7 @@ A working 2-node, 8-GPU launch (both nodes on one NVLink/MNNVL fabric)::
         -x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface> \
         -x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=1 -x NCCL_NET_PLUGIN=none \
         python test/python/ep/run_ep_bench_python.py \
-            --backend both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
+            --backend all -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50
 
 Here ``LD_PRELOAD`` forces HPCX Open MPI 4 (``libmpi.so.40``, matching the mpi4py
 rebuild) ahead of any conda Open MPI 5, and the in-tree ``libnccl`` ahead of an
@@ -133,9 +133,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--backend",
-        choices=["mscclpp", "nccl", "both"],
-        default="both",
-        help="which backend(s) to benchmark in this run (both runs nccl then mscclpp)",
+        choices=["mscclpp", "nccl", "deepep", "all"],
+        default="all",
+        help="which backend(s) to benchmark in this run (all runs nccl, mscclpp, deepep)",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
@@ -175,7 +175,7 @@ def parse_args() -> argparse.Namespace:
         "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
         "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
     )
-    # NCCL-EP JIT knobs (defaults match the in-tree build; used by nccl/both).
+    # NCCL-EP JIT knobs (defaults match the in-tree build; used by nccl/all).
     p.add_argument(
         "--nccl-jit-source-dir",
         default=os.environ.get("NCCL_EP_JIT_SOURCE_DIR", "/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep"),
@@ -195,7 +195,7 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
-    if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "both"):
+    if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
         raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
     return args
 
@@ -212,36 +212,46 @@ def init_mpi():
     return comm, rank, size, local_rank
 
 
-def _init_torch_nccl(comm, rank, num_ranks, local_rank):
-    """Initialize a torch.distributed NCCL group alongside MPI so the kineto
-    timing loop can use a GPU-side all_reduce barrier (DeepEP-style) to align
-    ranks on-device -- much tighter than an MPI host barrier. MPI supplies the
-    rendezvous. Returns a zero-arg GPU barrier callable, or None on failure."""
+def _ensure_torch_dist(comm, rank, num_ranks):
+    """Lazily initialize the default torch.distributed NCCL group alongside MPI
+    (idempotent). MPI supplies the rendezvous (rank-0 IP + port broadcast). Both
+    the kineto GPU barrier and the DeepEP backend reuse this single group.
+    Returns the world ProcessGroup."""
     import torch.distributed as dist
 
-    addr = None
-    if rank == 0:
-        addr = os.environ.get("MASTER_ADDR")
-        if not addr:
-            import socket
+    if not dist.is_initialized():
+        addr = None
+        if rank == 0:
+            addr = os.environ.get("MASTER_ADDR")
+            if not addr:
+                import socket
 
-            _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                _s.connect(("10.255.255.255", 1))  # no packets sent; picks outbound iface IP
-                addr = _s.getsockname()[0]
-            finally:
-                _s.close()
-    addr = comm.bcast(addr, root=0)
-    port = comm.bcast(int(os.environ.get("MASTER_PORT", "29700")), root=0)
-    os.environ["MASTER_ADDR"] = addr
-    os.environ["MASTER_PORT"] = str(port)
-    os.environ["WORLD_SIZE"] = str(num_ranks)
-    os.environ["RANK"] = str(rank)
-    import datetime as _dt
+                _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    _s.connect(("10.255.255.255", 1))  # no packets sent; picks outbound iface IP
+                    addr = _s.getsockname()[0]
+                finally:
+                    _s.close()
+        addr = comm.bcast(addr, root=0)
+        port = comm.bcast(int(os.environ.get("MASTER_PORT", "29700")), root=0)
+        os.environ["MASTER_ADDR"] = addr
+        os.environ["MASTER_PORT"] = str(port)
+        os.environ["WORLD_SIZE"] = str(num_ranks)
+        os.environ["RANK"] = str(rank)
+        import datetime as _dt
 
-    dist.init_process_group(
-        backend="nccl", init_method="env://", world_size=num_ranks, rank=rank, timeout=_dt.timedelta(seconds=120)
-    )
+        dist.init_process_group(
+            backend="nccl", init_method="env://", world_size=num_ranks, rank=rank, timeout=_dt.timedelta(seconds=120)
+        )
+    return dist.distributed_c10d._get_default_group()
+
+
+def _init_torch_nccl(comm, rank, num_ranks, local_rank):
+    """Return a zero-arg GPU-side barrier (torch NCCL all_reduce) for the kineto
+    timing loop -- aligns ranks on-device, much tighter than an MPI host barrier."""
+    import torch.distributed as dist
+
+    _ensure_torch_dist(comm, rank, num_ranks)
     _sync = torch.ones(1, dtype=torch.float, device="cuda")
 
     def _barrier():
@@ -537,14 +547,93 @@ def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
 
 
-def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None):
+def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None, mid_barrier=None):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
     cuda._sleep(~10ms) + cross-rank barrier to absorb host launch skew. Returns
     the average per-kernel GPU time (us) for the dispatch and combine kernels,
-    matched by name substring in the profiler key_averages() table."""
+    matched by name substring in the profiler key_averages() table.
+
+    EP_KINETO_BARRIER_COMBINE=1 inserts a SECOND GPU-side barrier between
+    dispatch and combine so the combine kernel also enters GPU-aligned across
+    ranks. This is the same treatment the FlashInfer harness applies (barrier
+    before BOTH phases) to collapse the combine recv-spin skew -- without it the
+    single pre-dispatch barrier aligns dispatch but combine drifts again because
+    it is a separate launch whose in-kernel arrival-wait absorbs the skew.
+    The mid barrier uses a PLAIN NCCL all_reduce (``mid_barrier``), not the
+    backend's native barrier.
+
+    NOTE: for DeepEP this is SINGLE-NODE ONLY. Inserting ANY collective (even a
+    plain NCCL all_reduce) between DeepEP's dispatch and combine corrupts the
+    ElasticBuffer's pending symmetric-memory state and crashes on the multi-node
+    scale-out path (Cuda 719 in DeepEP symmetric.hpp). mscclpp / NCCL-EP have
+    independent dispatch/combine and tolerate it at any scale.
+
+    EP_KINETO_SEPARATE (default 1) measures dispatch and combine in TWO separate
+    profiled passes -- each a single op per iteration with the barrier immediately
+    before it -- exactly like DeepEP's own bench_kineto (which is called once per
+    op). This aligns BOTH kernels at entry without ever placing a barrier between
+    a paired dispatch->combine (so it is safe for DeepEP multi-node), collapsing
+    the combine recv-spin skew. Set EP_KINETO_SEPARATE=0 for the legacy paired
+    loop."""
     import torch.profiler as _tp
 
+    use_mid = os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
+    separate = os.environ.get("EP_KINETO_SEPARATE", "1") == "1"
+
+    def _do_barrier():
+        if not use_barrier:
+            return
+        torch.cuda._sleep(int(2e7))  # ~10 ms GPU spin to absorb host launch skew
+        if barrier is not None:
+            barrier()               # GPU-side barrier (aligns ranks on-device)
+        else:
+            comm.Barrier()          # MPI host barrier (host-only alignment)
+
+    def _parse(ka, substr):
+        # Sum each DISTINCT matching kernel's average-per-launch. Single-kernel
+        # backends (mscclpp, NCCL-EP) yield that kernel's avg; two-kernel DeepEP
+        # (*_impl + *_epilogue) yields their per-iteration SUM (scope-matched).
+        total_us = 0.0
+        matched = False
+        for e in ka:
+            if substr in e.key and int(e.count) > 0:
+                total_us += float(e.self_device_time_total) / int(e.count)
+                matched = True
+        return total_us if matched else 0.0
+
+    if separate:
+        # ---- Two separate passes, each: [flush; barrier; single op] ----
+        # This mirrors DeepEP bench_kineto called once per op, aligning each
+        # kernel's entry across ranks. No barrier ever sits between a paired
+        # dispatch->combine, so it is safe for DeepEP multi-node.
+        def _run_pass(op_fn):
+            op_fn()  # warm / auto-tune
+            torch.cuda.synchronize()
+            schedule = _tp.schedule(wait=0, warmup=1, active=1, repeat=1)
+            with _tp.profile(activities=[_tp.ProfilerActivity.CUDA],
+                             schedule=schedule, acc_events=True) as prof:
+                for _ in range(2):
+                    for _ in range(num_tests):
+                        if flush_l2:
+                            _flush_l2_cache()
+                        _do_barrier()
+                        op_fn()
+                    torch.cuda.synchronize()
+                    prof.step()
+            return prof.key_averages()
+
+        # Dispatch pass.
+        ka_d = _run_pass(dispatch_fn)
+        # Combine pass: prime one dispatch to obtain a valid combine input, then
+        # replay combine alone (DeepEP uses its fixed primed handle; mscclpp /
+        # NCCL-EP consume this dout each iteration).
+        dout = dispatch_fn()
+        torch.cuda.synchronize()
+        ka_c = _run_pass(lambda: combine_fn(dout))
+        return _parse(ka_d, "dispatch"), _parse(ka_c, "combine")
+
+    # ---- Legacy paired loop (EP_KINETO_SEPARATE=0) ----
     _d = dispatch_fn()
     combine_fn(_d)
     torch.cuda.synchronize()
@@ -554,32 +643,19 @@ def _kineto_kernel_us(dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, u
             for _ in range(num_tests):
                 if flush_l2:
                     _flush_l2_cache()
-                if use_barrier:
-                    torch.cuda._sleep(int(2e7))  # ~10 ms GPU spin
-                    if barrier is not None:
-                        barrier()  # GPU-side NCCL all_reduce (aligns on-device)
-                    else:
-                        comm.Barrier()  # MPI host barrier (host-only alignment)
+                _do_barrier()
                 dout = dispatch_fn()
+                if use_mid:
+                    mid_barrier()  # align combine entry across ranks (FlashInfer-style)
                 combine_fn(dout)
             torch.cuda.synchronize()
             prof.step()
 
     ka = prof.key_averages()
-
-    def _match_us(substr):
-        total_us = 0.0
-        count = 0
-        for e in ka:
-            if substr in e.key:
-                total_us += float(e.self_device_time_total)
-                count += int(e.count)
-        return (total_us / count) if count else 0.0
-
-    return _match_us("dispatch"), _match_us("combine")
+    return _parse(ka, "dispatch"), _parse(ka, "combine")
 
 
-def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=None, nccl_barrier=None):
+def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_fn, cupti=None, nccl_barrier=None, bench_barrier=None):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
@@ -630,7 +706,7 @@ def run_backend(name, args, comm, rank, num_ranks, inputs, dispatch_fn, combine_
     inproc_ok = False
     if use_kineto:
         comm.Barrier()
-        ck_disp, ck_comb = _kineto_kernel_us(dispatch_fn, combine_fn, comm, iters, barrier=nccl_barrier)
+        ck_disp, ck_comb = _kineto_kernel_us(dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier)
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
     elif cupti is not None and inproc_rc == 0:
         cupti.stop()
@@ -824,7 +900,103 @@ class _InProcCupti:
         return int(self.lib.kt_get_count(substr.encode()))
 
 
-_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl}
+# ============================================================================
+# Backend: DeepEP V2 (deepseek-ai/DeepEP, ElasticBuffer low-latency).
+# ============================================================================
+def setup_deepep(args, comm, rank, num_ranks, inputs):
+    """DeepEP V2 low-latency dispatch/combine via `deep_ep.ElasticBuffer`, wired
+    the same way as the mscclpp / NCCL-EP backends: return (dispatch_fn,
+    combine_fn, teardown). DeepEP needs a torch.distributed NCCL group (reused
+    from `_ensure_torch_dist`) and, for a same-rack NVLink run, `EP_DISABLE_GIN=1`.
+    The dispatch handle (routing) is fixed for the run, so we dispatch once to
+    obtain the handle + combine input and then replay dispatch/combine in the
+    timed loop -- dispatch_impl(+copy) and combine_impl(+reduce) are what the
+    kineto timer buckets by the "dispatch"/"combine" substrings."""
+    import deep_ep
+
+    os.environ.setdefault("EP_DISABLE_GIN", "1")
+    group = _ensure_torch_dist(comm, rank, num_ranks)
+
+    x, topk_idx, topk_weights, _ = inputs
+    num_tokens, hidden = args.num_tokens, args.hidden
+    num_experts, num_topk = args.num_experts, args.num_topk
+
+    if rank == 0:
+        print(
+            f"[cfg] backend=deepep ElasticBuffer(LOW_LATENCY) num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
+            f"warmup={args.num_warmup} iters={args.num_iters}",
+            flush=True,
+        )
+
+    buffer = deep_ep.ElasticBuffer(
+        group,
+        num_max_tokens_per_rank=num_tokens,
+        hidden=hidden,
+        allow_hybrid_mode=1,
+        allow_multiple_reduction=1,
+        explicitly_destroy=True,
+    )
+
+    # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
+    dispatch_args = dict(
+        x=x,
+        topk_idx=topk_idx,
+        topk_weights=topk_weights,
+        num_experts=num_experts,
+        num_max_tokens_per_rank=num_tokens,
+        do_cpu_sync=True,
+    )
+
+    # Prime once to obtain the handle (routing) and the received-token count so we
+    # can size the combine input. Build a realistic BF16 combine input in the
+    # received layout (the role of `simulated_gemm_output`): random values only in
+    # the valid received-token slots, matching test_ep.py's `input_for_combine`.
+    #
+    # NOTE: we use the PLAIN combine (per-expert) here, not the reduced/expand
+    # combine. Measured on this uniform 128-tok/rank workload the reduced/expand
+    # combine is consistently MORE expensive (1n 74 vs 46, 4n 188 vs 136,
+    # 8n 199 vs 120 us avg) because the expanded layout processes more rows in the
+    # reduce epilogue; its intra-scaleup-first advantage does not pay off here.
+    recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(**dispatch_args)
+    recv_x_bf16 = recv_x[0] if isinstance(recv_x, (tuple, list)) else recv_x
+    num_recv_tokens = int(handle.psum_num_recv_tokens_per_scaleup_rank[-1].item())
+    input_for_combine = torch.empty_like(recv_x_bf16, dtype=torch.bfloat16)
+    input_for_combine.normal_(0.0, 0.1)
+    if num_recv_tokens < input_for_combine.shape[0]:
+        input_for_combine[num_recv_tokens:] = 0
+
+    combine_args = dict(
+        x=input_for_combine,
+        topk_weights=recv_topk_weights,
+        handle=handle,
+    )
+
+    # DeepEP native GPU barrier (comm-stream, sequential) -- aligns its dispatch/
+    # combine recv-spin far more tightly than a generic all_reduce; this is what
+    # DeepEP's own test_ep.py uses for kineto profiling.
+    def deepep_barrier():
+        buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
+
+    def dispatch_fn():
+        buffer.dispatch(**dispatch_args)
+        return None
+
+    def combine_fn(_dout):
+        buffer.combine(**combine_args)
+
+    def teardown():
+        try:
+            buffer.destroy()
+        except Exception:
+            pass
+        gc.collect()
+        torch.cuda.synchronize()
+
+    return dispatch_fn, combine_fn, teardown, deepep_barrier
+
+
+_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep}
 
 
 def main() -> None:
@@ -865,14 +1037,19 @@ def main() -> None:
 
     # nccl is benchmarked before mscclpp (see module docstring: mscclpp LL init
     # perturbs CUDA state that breaks a later NCCL-EP cooperative launch).
-    if args.backend == "both":
-        backends = ["nccl", "mscclpp"]
+    if args.backend == "all":
+        backends = ["nccl", "mscclpp", "deepep"]
     else:
         backends = [args.backend]
 
     for name in backends:
         try:
-            dispatch_fn, combine_fn, teardown = _SETUP[name](args, comm, rank, num_ranks, inputs)
+            _setup_ret = _SETUP[name](args, comm, rank, num_ranks, inputs)
+            if len(_setup_ret) == 4:
+                dispatch_fn, combine_fn, teardown, backend_barrier = _setup_ret
+            else:
+                dispatch_fn, combine_fn, teardown = _setup_ret
+                backend_barrier = None
         except Exception as exc:
             if rank == 0:
                 print(f"\n[skip] backend '{name}' setup failed: {type(exc).__name__}: {exc}", flush=True)
@@ -890,6 +1067,7 @@ def main() -> None:
                 combine_fn,
                 cupti=cupti,
                 nccl_barrier=nccl_barrier,
+                bench_barrier=backend_barrier,
             )
         finally:
             torch.cuda.synchronize()
