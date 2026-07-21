@@ -6,7 +6,7 @@
 """Fabric-domain high-throughput backend for the high-level MoE communicator.
 
 The C++ runtime follows the low-latency resource model: it reuses the existing
-MSCCL++ communicator, owns one physical symmetric buffer, and exposes a
+MSCCL++ communicator and writes directly into peer receive pools through a
 torch-free raw-pointer boundary. Dynamic receive sizing uses a two-phase
 ``notify_dispatch`` then ``dispatch`` protocol. Cached dispatches reuse the
 previous routing matrices and receive count.
@@ -154,9 +154,7 @@ class HighThroughputRuntime:
 
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
         recv_x = self._alloc_recv_x(num_tokens, num_recv_tokens, hidden, x_element_size)
-        recv_src_idx = torch.empty((num_recv_tokens,), dtype=torch.int32, device="cuda")
         send_head = torch.empty((num_tokens, self.group_size), dtype=torch.int32, device="cuda")
-        recv_channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
         recv_topk_idx = (
             torch.empty((num_recv_tokens, num_topk), dtype=torch.int64, device="cuda") if topk_idx is not None else None
         )
@@ -176,9 +174,7 @@ class HighThroughputRuntime:
             _ptr(recv_x_scales),
             _ptr(recv_topk_idx),
             _ptr(recv_topk_weights),
-            _ptr(recv_src_idx),
             _ptr(send_head),
-            _ptr(recv_channel_prefix_matrix),
             _ptr(x),
             _ptr(x_scales),
             _ptr(topk_idx),
@@ -204,27 +200,20 @@ class HighThroughputRuntime:
             num_recv_tokens_per_expert_list,
             rank_prefix_matrix,
             channel_prefix_matrix,
-            recv_channel_prefix_matrix,
-            recv_src_idx,
             send_head,
         )
 
     def _alloc_recv_x(self, num_tokens: int, num_recv_tokens: int, hidden: int, x_element_size: int) -> torch.Tensor:
-        """Allocate ``recv_x`` or, when the zero-copy direct path is active, view
-        this rank's recv pool (so the sender writes hidden straight to its final
-        slot and the TMA combine gathers from the same pool)."""
+        """Return this rank's direct receive-pool view."""
         pool_ptr = self.runtime.resolve_recv_x_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
-        if pool_ptr != 0:
-            return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
-        return torch.empty((num_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        if pool_ptr == 0:
+            raise RuntimeError("high-throughput direct receive-pool capacity exceeded")
+        return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
 
     def combine(
         self,
         x: torch.Tensor,
         topk_weights: Optional[torch.Tensor],
-        src_idx: torch.Tensor,
-        rank_prefix_matrix: torch.Tensor,
-        channel_prefix_matrix: torch.Tensor,
         send_head: torch.Tensor,
     ):
         """Returns ``(combined_x, combined_topk_weights|None)``."""
@@ -232,8 +221,6 @@ class HighThroughputRuntime:
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         num_recv_tokens = int(send_head.size(0))
         num_topk = int(topk_weights.size(1)) if topk_weights is not None else 0
-        ring_num_channels = int(channel_prefix_matrix.size(1))
-
         combined_x = torch.empty((num_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
         combined_topk_weights = (
             torch.empty((num_recv_tokens, num_topk), dtype=torch.float32, device="cuda")
@@ -245,16 +232,12 @@ class HighThroughputRuntime:
             _ptr(combined_topk_weights),
             _ptr(x),
             _ptr(topk_weights),
-            _ptr(src_idx),
-            _ptr(rank_prefix_matrix),
-            _ptr(channel_prefix_matrix),
             _ptr(send_head),
             num_tokens,
             num_recv_tokens,
             hidden,
             num_topk,
             x.element_size(),
-            ring_num_channels,
             _stream_ptr(),
         )
         return combined_x, combined_topk_weights
@@ -290,6 +273,8 @@ class HighThroughputBackend:
 
         if self.output_layout != DispatchLayout.TOKEN_MAJOR:
             raise NotImplementedError("HT mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if config.invalid_token_expert_id is not None:
+            raise ValueError("invalid_token_expert_id is only supported in low-latency mode")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -303,11 +288,7 @@ class HighThroughputBackend:
             raise NotImplementedError("HT quantized dispatch (scales) is not implemented yet")
 
         self.expert_alignment = config.expert_alignment
-        self._cfg = Config(
-            self.num_sms,
-            config.nvl_chunked_send,
-            config.nvl_chunked_recv,
-        )
+        self._cfg = Config(self.num_sms)
         hidden_bytes = self.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
         self._runtime = HighThroughputRuntime(
             comm,
@@ -377,8 +358,6 @@ class HighThroughputBackend:
                 _runtime_num_recv_tokens_per_expert_list,
                 rank_prefix_matrix,
                 _channel_prefix_matrix,
-                recv_channel_prefix_matrix,
-                recv_src_idx,
                 send_head,
             ) = self._runtime.dispatch(
                 input,
@@ -399,9 +378,6 @@ class HighThroughputBackend:
             num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
             combine_context = HighThroughputCombineContext(
                 recv_topk_weights=recv_topk_weights,
-                src_idx=recv_src_idx,
-                rank_prefix_matrix=rank_prefix_matrix,
-                recv_channel_prefix_matrix=recv_channel_prefix_matrix,
                 send_head=send_head,
             )
             dispatch_cache = cache
@@ -414,8 +390,6 @@ class HighThroughputBackend:
                 num_recv_tokens_per_expert_list,
                 rank_prefix_matrix,
                 channel_prefix_matrix,
-                recv_channel_prefix_matrix,
-                recv_src_idx,
                 send_head,
             ) = self._runtime.dispatch(
                 input,
@@ -432,9 +406,6 @@ class HighThroughputBackend:
             )
             combine_context = HighThroughputCombineContext(
                 recv_topk_weights=recv_topk_weights,
-                src_idx=recv_src_idx,
-                rank_prefix_matrix=rank_prefix_matrix,
-                recv_channel_prefix_matrix=recv_channel_prefix_matrix,
                 send_head=send_head,
             )
             dispatch_cache = {
@@ -511,9 +482,6 @@ class HighThroughputBackend:
         combined_x, _combined_w = self._runtime.combine(
             expert_output,
             context.recv_topk_weights,
-            context.src_idx,
-            context.rank_prefix_matrix,
-            context.recv_channel_prefix_matrix,
             context.send_head,
         )
         if out is not None:

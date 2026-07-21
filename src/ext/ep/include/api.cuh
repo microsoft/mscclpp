@@ -21,7 +21,7 @@ namespace ep {
 enum class MoEMode {
   /// Low-latency dispatch/combine backend.
   LOW_LATENCY,
-  /// Archived high-throughput backend.
+  /// Direct high-throughput dispatch/combine backend.
   HIGH_THROUGHPUT
 };
 
@@ -36,67 +36,36 @@ enum class DispatchLayout {
 };
 
 // ===========================================================================
-// High-throughput intranode kernels.
+// High-throughput kernels.
 // ===========================================================================
-namespace intranode {
+namespace high_throughput {
 
-void get_dispatch_layout(const int64_t* topk_idx, int* num_tokens_per_rank, int* num_tokens_per_expert,
-                         bool* is_token_in_rank, int num_tokens, int num_topk, int num_ranks, int num_experts,
-                         cudaStream_t stream);
+void getDispatchLayout(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                       int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream);
 
-void barrier(int** task_fifo_ptrs, int head, int rank, int num_ranks, cudaStream_t stream);
+void barrier(int** taskFifoPtrs, int head, int rank, int numRanks, cudaStream_t stream);
 
-void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mapped, int num_ranks,
-                     const int* num_tokens_per_expert, int* moe_recv_expert_counter_mapped, int num_experts,
-                     int num_tokens, const bool* is_token_in_rank, int* channel_prefix_matrix,
-                     int* rank_prefix_matrix_copy, int num_memset_int, int expert_alignment, void** buffer_ptrs,
-                     int** task_fifo_ptrs, int head, int rank, cudaStream_t stream, int num_sms);
+void notifyDispatch(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks, const int* numTokensPerExpert,
+                    int* mappedRecvExpertCounters, int numExperts, int numTokens, const bool* isTokenInRank,
+                    int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
+                    int** taskFifoPtrs, int head, int rank, cudaStream_t stream, int numChannels);
 
-void cached_notify_dispatch(const int* rank_prefix_matrix, int num_memset_int, void** buffer_ptrs, int** task_fifo_ptrs,
-                            int head, int rank, int num_ranks, cudaStream_t stream);
+void cachedNotifyDispatch(const int* rankPrefixMatrix, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
+                          int numRanks, cudaStream_t stream);
 
-void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* recv_topk_idx, float* recv_topk_weights,
-              int* recv_channel_offset, int* send_head, const void* x, const float* x_scales, const int64_t* topk_idx,
-              const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
-              int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-              int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens,
-              void** recv_pool_ptrs = nullptr, int64_t recv_pool_header_bytes = 0, int* ep_combine_recv_idx = nullptr);
+void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+              const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
+              int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
+              float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
+              int numRanks, cudaStream_t stream, int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes,
+              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx);
 
-void cached_notify_combine(void** buffer_ptrs, int* send_head, int num_channels, int num_recv_tokens,
-                           int num_memset_int, int** task_fifo_ptrs, int head, int rank, int num_ranks,
-                           cudaStream_t stream);
+void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
+             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
+             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks,
+             cudaStream_t stream);
 
-void combine(cudaDataType_t type, void* recv_x, float* recv_topk_weights, const void* x, const float* topk_weights,
-             const int* src_idx, const int* rank_prefix_matrix, const int* channel_prefix_matrix, int* send_head,
-             int num_tokens, int num_recv_tokens, int hidden, int num_topk, void** buffer_ptrs, int rank, int num_ranks,
-             cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens);
-
-// Intranode TMA-staged direct-gather combine (MSCCLPP_EP_COMBINE_TMA). Gathers each
-// token's contributions straight from peer recv pools through a cp.async.bulk SMEM
-// pipeline; token-parallel grid so combine_sms is independent of dispatch channels.
-// Returns false (launches nothing) when recv_pool_ptrs/ep_combine_recv_idx are null,
-// so the caller falls back to the 2-hop ring combine.
-bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_weights, int* send_head, int num_tokens,
-                 int hidden, int num_topk, int num_ranks, void** recv_pool_ptrs, const int* ep_combine_recv_idx,
-                 int64_t recv_pool_header_bytes, int combine_sms, cudaStream_t stream);
-
-// All-sender intranode dispatch (MSCCLPP_EP_INTRA_ALLSENDER, INTRA_DIRECT only): every
-// block sends hidden directly to the dest pool (num_sms == num_channels, no receiver
-// blocks). Metadata lands in the dest pool META region; unpack it with intranode_meta_drain.
-void dispatch_allsender(int* send_head, const void* x, const int64_t* topk_idx, const float* topk_weights,
-                        const float* x_scales, const bool* is_token_in_rank, const int* channel_prefix_matrix,
-                        int num_tokens, int hidden_int4, int num_topk, int num_experts, int num_scales,
-                        void** buffer_ptrs, int rank, int num_ranks, cudaStream_t stream, int num_sms,
-                        void** recv_pool_ptrs, int64_t recv_pool_header_bytes, int64_t recv_pool_meta_base,
-                        int64_t meta_slot_bytes, int* ep_combine_recv_idx);
-
-// Unpack the local recv-pool META region (filled by dispatch_allsender) into the recv_*
-// output tensors. recv_topk_idx/recv_x_scales may be null (skipped). One thread per token.
-void intranode_meta_drain(void* pool_base, int64_t meta_base, int num_recv_tokens, int* recv_src_idx,
-                          int64_t* recv_topk_idx, float* recv_topk_weights, float* recv_x_scales, int num_topk,
-                          int num_scales, int64_t meta_slot_bytes, cudaStream_t stream);
-
-}  // namespace intranode
+}  // namespace high_throughput
 
 // ===========================================================================
 // Low-latency kernels for RDMA and IPC paths. Ported from DeepEP
@@ -126,7 +95,7 @@ enum class DispatchDataType {
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3,
-  /// Reserved for MXFP8 E4M3 payloads with micro-scales.
+  /// FP8 E4M3 payload with one UE8M0 scale byte per 32 hidden elements.
   MXFP8_E4M3
 };
 
@@ -140,6 +109,8 @@ struct Workload {
   int numTopk_;
   /// Total number of experts.
   int numExperts_;
+  /// Sentinel used for token-major entries that do not name a valid expert.
+  int invalidTokenExpertId_;
   /// Maximum tokens per rank in the packed layout.
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
@@ -179,9 +150,10 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major or token-major packed output selected by
 /// Workload::outputLayout_.
-/// @param[out] outputScales Layout-matched FP8 block scales, or nullptr for BF16 dispatch.
+/// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, UE8M0 bytes for MXFP8_E4M3, or nullptr for BF16.
 /// @param[out] outputSrcInfo Original source-token index for every output row.
-/// @param[out] outputTopkIdx Token-major local expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
+/// Non-local and padding entries use Workload::invalidTokenExpertId_.
 /// @param[out] outputTopkWeights Token-major routing weights
 /// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or
@@ -196,7 +168,7 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
 /// @param[in] stream CUDA stream.
-void dispatch(void* output, float* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
               int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
               const float* topkWeights, const Workload& workload, void* recvBuffer, const CommContext& comm,
               void* workspace, int numBlocks, cudaStream_t stream);

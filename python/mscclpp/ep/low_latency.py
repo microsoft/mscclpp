@@ -33,13 +33,27 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
         raise TypeError("quant.format must be a DispatchDataType")
     if quant_format is None:
         raise ValueError("quant.format is required")
-    if quant_format == DispatchDataType.MXFP8_E4M3:
-        raise NotImplementedError("MXFP8 dispatch is reserved but not implemented")
-    if quant_format != DispatchDataType.FP8_E4M3:
+    if quant_format not in (DispatchDataType.FP8_E4M3, DispatchDataType.MXFP8_E4M3):
         raise ValueError("unsupported low-latency quantization format")
-    if quant.block_scales is not None or quant.global_scale is not None:
+    if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
-    return DispatchDataType.FP8_E4M3
+    return quant_format
+
+
+def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
+    if data_type == DispatchDataType.FP8_E4M3:
+        return 128
+    if data_type == DispatchDataType.MXFP8_E4M3:
+        return 32
+    return 0
+
+
+def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float32
+    if data_type == DispatchDataType.MXFP8_E4M3:
+        return torch.uint8
+    raise ValueError("BF16 dispatch does not have block scales")
 
 
 class LowLatencyRuntime:
@@ -99,6 +113,9 @@ class LowLatencyBackend:
         self.num_sms = self.num_blocks - 2
         self.combine_mode = config.low_latency_combine_mode
         self.token_major_init_padding = config.token_major_init_padding
+        self.invalid_token_expert_id = (
+            self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
+        )
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout not in (DispatchLayout.EXPERT_MAJOR, DispatchLayout.TOKEN_MAJOR):
@@ -111,6 +128,12 @@ class LowLatencyBackend:
             raise TypeError("low_latency_combine_mode must be a CombineMode")
         if not isinstance(self.token_major_init_padding, bool):
             raise TypeError("token_major_init_padding must be a bool")
+        if type(self.invalid_token_expert_id) is not int:
+            raise TypeError("invalid_token_expert_id must be an int or None")
+        if not -(1 << 31) <= self.invalid_token_expert_id < (1 << 31):
+            raise ValueError("invalid_token_expert_id must fit in int32")
+        if 0 <= self.invalid_token_expert_id < self.num_experts:
+            raise ValueError("invalid_token_expert_id must not overlap a valid global expert ID")
         if self.token_major_init_padding and self.output_layout != DispatchLayout.TOKEN_MAJOR:
             raise ValueError("token_major_init_padding requires TOKEN_MAJOR output")
         if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
@@ -185,6 +208,7 @@ class LowLatencyBackend:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
+            self.invalid_token_expert_id,
             self.output_layout,
             self.dispatch_data_type,
             self.num_blocks,
@@ -309,10 +333,13 @@ class LowLatencyBackend:
                     (self.num_local_experts, self.world_size), dtype=torch.int64, device=device
                 )
                 self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
-                if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
-                    num_scales = self.hidden_size // 128
+                scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
+                if scale_block_size:
+                    num_scales = self.hidden_size // scale_block_size
                     scale_storage = torch.empty(
-                        (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
+                        (self.num_local_experts, num_scales, slots_per_expert),
+                        dtype=_dispatch_scale_dtype(self.dispatch_data_type),
+                        device=device,
                     )
                     self._dispatch_scales = scale_storage.transpose(1, 2)
             elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
@@ -322,9 +349,12 @@ class LowLatencyBackend:
                 self._dispatch_weights = torch.empty((token_capacity, self.topk), dtype=torch.float32, device=device)
                 self._dispatch_layout_range = torch.empty((self.world_size + 1,), dtype=torch.int64, device=device)
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
-                if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+                scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
+                if scale_block_size:
                     self._dispatch_scales = torch.empty(
-                        (token_capacity, self.hidden_size // 128), dtype=torch.float32, device=device
+                        (token_capacity, self.hidden_size // scale_block_size),
+                        dtype=_dispatch_scale_dtype(self.dispatch_data_type),
+                        device=device,
                     )
             else:
                 raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
@@ -377,7 +407,7 @@ class LowLatencyBackend:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
-        expected_dtype = torch.float8_e4m3fn if self.dispatch_data_type == DispatchDataType.FP8_E4M3 else torch.bfloat16
+        expected_dtype = torch.bfloat16 if self.dispatch_data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:

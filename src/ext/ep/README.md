@@ -6,7 +6,7 @@ It builds two backends:
 - **Low latency (LL)**: `MoERuntime`, backed by
   `low_latency/{dispatch,combine}.cu`.
 - **High throughput (HT)**: `ExpertParallelRuntime`, backed by
-  `ht_runtime.cc` and the CUDA sources under `ht/`.
+  `ht_runtime.cc` and the CUDA sources under `high-throughput/`.
 
 ## Status
 
@@ -33,13 +33,20 @@ and the required fabric services are available.
 LL dispatch supports two user-visible layouts:
 
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
-- `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus local top-k expert
+- `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus global top-k expert
   IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
   offsets. Valid rows occupy a compact prefix of the caller-provided capacity
-  buffer. With `token_major_init_padding=True`, padding rows have top-k IDs
-  `-1`, allowing fixed-capacity Triton kernels to skip them without a CPU count
-  synchronization. The option is disabled by default. The caller must produce
-  one pre-weighted local partial per valid row before combine.
+  buffer. Entries not owned by the destination rank use
+  `invalid_token_expert_id` and weight `0`; the sentinel defaults to
+  `num_experts`. With `token_major_init_padding=True`, padding rows use the same
+  sentinel, allowing fixed-capacity Triton kernels to skip them without a CPU
+  count synchronization. The option is disabled by default. The caller must
+  produce one pre-weighted local partial per valid row before combine.
+
+LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
+elements (`FP8_E4M3`) or UE8M0 scale bytes per 32 elements (`MXFP8_E4M3`).
+MXFP8 scales use linear row-major layout and can be passed to FlashInfer
+`cutlass_fused_moe` with `swizzled_input_sf=False`.
 
 ### High throughput
 
@@ -47,9 +54,10 @@ HT follows the same direct-mapping resource model:
 
 1. Python passes the existing `mscclpp::Communicator` into
    `ExpertParallelRuntime`.
-2. Each rank allocates a ring/FIFO region plus a CUDA physical direct receive
-   pool. Same-host ring buffers use `cudaMalloc` runtime IPC for peak latency;
-   a fabric-domain job spanning hosts uses CUDA physical memory for the ring.
+2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
+   internal receive pool. The pool provides stable peer mappings before the
+   data-dependent receive count is known; Python later exposes its exact-size
+   prefix as the dispatch output.
 3. The runtime exchanges and maps those allocations with
    `Communicator::sendMemory` / `recvMemory`.
 4. Dispatch and combine launch directly on the caller's CUDA stream.
@@ -62,35 +70,26 @@ and it has no RDMA/IB fallback outside that domain.
 The HT dispatch API remains two-phase because the receive token count is data
 dependent:
 
-1. `notify_dispatch` exchanges counts and produces prefix matrices.
+1. The notify phase exchanges counts and produces prefix matrices.
 2. Python allocates the exact receive tensors.
 3. `dispatch` moves token data and metadata.
 
 Cached dispatch reuses the previous receive count and prefix matrices.
 
-## HT data paths
+## HT data path
 
-The baseline path uses the DeepEP-style intranode ring. Optional runtime paths
-use the peer-mapped receive pool:
-
-- `MSCCLPP_EP_INTRA_DIRECT=1`: send hidden rows directly to their final receive
-  slots. The physical receive pool is allocated and mapped only when this flag
-  is enabled before runtime construction.
-- `MSCCLPP_EP_INTRA_ALLSENDER=0|1`: controls the all-sender dispatch path when
-  direct dispatch and TMA combine are enabled; default is enabled.
-- `MSCCLPP_EP_COMBINE_TMA=0|1`: selects TMA direct-gather combine; default is
-  enabled when its inputs are available.
-- `MSCCLPP_EP_DISPATCH_NSM=<N>`: overrides the dispatch block count, rounded
-  down to an even value.
-- `MSCCLPP_EP_COMBINE_NSM=<N>`: overrides the TMA combine block count.
+HT has one direct path. Every dispatch block writes hidden rows and routing
+metadata directly into each destination's final receive-pool slots. Combine
+stages any out-of-place expert output back into that pool, synchronizes ranks,
+then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
+There is no ring algorithm or runtime fallback. Set the communication block
+budget through the `num_sms` API configuration.
 
 The persistent HT configuration contains only:
 
 | Field | Meaning |
 |---|---|
 | `num_sms` | Maximum HT communication block budget |
-| `num_max_nvl_chunked_send_tokens` | Ring send chunk size |
-| `num_max_nvl_chunked_recv_tokens` | Ring receive capacity |
 
 ## Build
 
@@ -107,7 +106,12 @@ cmake -S . -B build -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j 64
 ```
 
-The EP extension requires CUDA architecture 90 or newer.
+The EP extension requires CUDA architecture 90 or newer. Without an explicit
+`MSCCLPP_GPU_ARCHS`, it builds for `90`, `100`, `100a`, `103`, and `103a` when
+the CUDA toolkit supports those targets. An explicit `MSCCLPP_GPU_ARCHS`
+overrides this list. Architecture-specific `100a`/`103a` builds use the native
+Blackwell UE8M0 conversion instruction; generic `100`/`103` builds use the
+portable conversion path.
 
 Available CMake options:
 
@@ -123,11 +127,11 @@ src/ext/ep/
 ├── bindings.cpp
 ├── moe_runtime.{cc,hpp}
 ├── ht_runtime.{cc,hpp}
-├── ht/
-│   ├── config.hpp
-│   ├── buffer.cuh
+├── high-throughput/
+│   ├── config.cuh
 │   ├── layout.cu
-│   ├── intranode_kernel.cu
+│   ├── dispatch.cu
+│   ├── combine.cu
 │   └── runtime.cu
 ├── include/
 └── low_latency/

@@ -7,7 +7,7 @@
 # Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
 # nanobind API so the module never links libtorch:
 #  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
-#  - High-throughput (HT): ht_runtime.cc + ht/*.cu, a DeepEP-style
+#  - High-throughput (HT): ht_runtime.cc + high-throughput/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
 #    recv sizing via the two-phase notify -> allocate -> dispatch API).
 
@@ -20,21 +20,34 @@ endif()
 
 set(_mscclpp_ep_gpu_archs "")
 if(MSCCLPP_USE_CUDA)
-    foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
-        if(_arch STREQUAL "native")
-            list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
-        else()
-            string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
-            if(_arch_num AND _arch_num GREATER_EQUAL 90)
+    get_property(_mscclpp_requested_gpu_archs CACHE MSCCLPP_GPU_ARCHS PROPERTY VALUE)
+    if(_mscclpp_requested_gpu_archs)
+        foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
+            if(_arch STREQUAL "native")
                 list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+            else()
+                string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
+                if(_arch_num AND _arch_num GREATER_EQUAL 90)
+                    list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+                endif()
             endif()
+        endforeach()
+    else()
+        list(APPEND _mscclpp_ep_gpu_archs 90)
+        if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.8)
+            list(APPEND _mscclpp_ep_gpu_archs 100 100a)
         endif()
-    endforeach()
+        if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.9)
+            list(APPEND _mscclpp_ep_gpu_archs 103 103a)
+        endif()
+    endif()
     if(NOT _mscclpp_ep_gpu_archs)
         message(FATAL_ERROR
             "MSCCLPP_BUILD_EXT_EP=ON requires CUDA architecture 90 or newer. "
             "Set MSCCLPP_GPU_ARCHS to include 90+ (for example, -DMSCCLPP_GPU_ARCHS=90).")
     endif()
+    list(REMOVE_DUPLICATES _mscclpp_ep_gpu_archs)
+    message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
 endif()
 
 set(EP_SOURCES
@@ -44,15 +57,16 @@ set(EP_SOURCES
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
-    ht/layout.cu
-    ht/intranode_kernel.cu
-    ht/runtime.cu
+    high-throughput/layout.cu
+    high-throughput/dispatch.cu
+    high-throughput/combine.cu
+    high-throughput/runtime.cu
 )
 
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu ht/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu high-throughput/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -65,7 +79,7 @@ endif()
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/ht
+    ${CMAKE_CURRENT_SOURCE_DIR}/high-throughput
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${PROJECT_SOURCE_DIR}/src/ext/include

@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-i", "--num-iters", type=int, default=50, help="timed iterations")
     p.add_argument(
         "--dispatch-dtype",
-        choices=("bf16", "fp8_e4m3"),
+        choices=("bf16", "fp8_e4m3", "mxfp8_e4m3"),
         default="bf16",
         help="MSCCL++ dispatch format; NCCL-EP runs keep their own configured format",
     )

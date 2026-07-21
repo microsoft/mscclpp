@@ -302,7 +302,7 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
       EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
       const auto* inputRow =
           reinterpret_cast<const uint8_t*>(expertOutput) + static_cast<size_t>(inputRowOffset) * HiddenBytes;
-      issueTmaLoad(inputRow, outputTile, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
+      issueTmaLoadAndExpect(inputRow, outputTile, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
       waitTmaLoad(tmaBarrier, tmaPhase);
       fenceProxyAsyncSharedCta();
       const int globalExpertIdx = transport.rank_ * nLocalExperts + localExpertIdx;
@@ -511,7 +511,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                               comm, workspace, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
-        EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+        return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                                 DispatchLayout::TOKEN_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                              layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                              comm, workspace, numBlocks, stream);
     }
   } else if (mode == low_latency::CombineMode::RANK_LOCAL_REDUCE) {
     switch (workload.dispatchDataType_) {
@@ -526,7 +529,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                comm, workspace, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
-        EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+        return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                                 DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                               comm, workspace, numBlocks, stream);
     }
   }
   switch (workload.dispatchDataType_) {
@@ -541,7 +547,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                              layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                              comm, workspace, numBlocks, stream);
     case DispatchDataType::MXFP8_E4M3:
-      EP_HOST_ASSERT(false && "MXFP8 dispatch metadata is not implemented");
+      return combineHiddenMode<low_latency::CombineMode::DIRECT_SEND, Hidden, DispatchDataType::MXFP8_E4M3, 32,
+                               DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                             layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                             comm, workspace, numBlocks, stream);
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
 }

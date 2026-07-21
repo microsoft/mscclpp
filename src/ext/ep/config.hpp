@@ -143,11 +143,11 @@ struct Layout {
   Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
-    const PayloadView<Fp8E4M3, float> fp8Payload64(hidden, numTopk, 64);
+    const PayloadView<Fp8E4M3, uint8_t> mxFp8Payload32(hidden, numTopk, 32);
     const size_t dispatchMetadataBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), 128);
     const size_t dispatchPayloadStride =
-        configAlign<size_t>(std::max({bf16Payload.numBytes_, fp8Payload128.numBytes_, fp8Payload64.numBytes_}), 128);
+        configAlign<size_t>(std::max({bf16Payload.numBytes_, fp8Payload128.numBytes_, mxFp8Payload32.numBytes_}), 128);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);

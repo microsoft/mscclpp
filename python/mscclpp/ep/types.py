@@ -20,12 +20,12 @@ class QuantConfig:
     """Quantization metadata associated with an activation tensor.
 
     Low-latency FP8 dispatch returns ``block_scales`` with the activation's
-    leading dimensions and a format-defined final scale dimension.
+    leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
+    uses FP32 scales per 128 elements; ``MXFP8_E4M3`` uses UE8M0 bytes per 32.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
-    global_scale: Optional[torch.Tensor] = None
 
 
 # Communicator construction.
@@ -52,6 +52,8 @@ class MoECommunicatorConfig:
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None
     token_major_init_padding: bool = False
+    # LL token-major sentinel; None resolves to num_experts.
+    invalid_token_expert_id: Optional[int] = None
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None
@@ -64,8 +66,6 @@ class MoECommunicatorConfig:
 
     # HT-only buffer/launch tuning (advanced)
     expert_alignment: int = 1
-    nvl_chunked_send: int = 8
-    nvl_chunked_recv: int = 256
 
 
 # MLP-facing dispatch output.
@@ -136,9 +136,6 @@ class HighThroughputCombineContext:
     """Combine context for high-throughput dispatch output."""
 
     recv_topk_weights: Optional[torch.Tensor]
-    src_idx: torch.Tensor
-    rank_prefix_matrix: torch.Tensor
-    recv_channel_prefix_matrix: torch.Tensor
     send_head: torch.Tensor
 
 

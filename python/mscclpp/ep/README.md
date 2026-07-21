@@ -65,6 +65,7 @@ class MoECommunicatorConfig:
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
     token_major_init_padding: bool = False
+    invalid_token_expert_id: Optional[int] = None  # defaults to num_experts
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None
@@ -138,6 +139,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `token_major_init_padding` | Initialize token-major padding metadata for fixed-capacity Triton kernels |
+| `invalid_token_expert_id` | Sentinel for token-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_sms` | backend launch/resource tuning |
@@ -259,7 +261,6 @@ can leave those fields as `None`.
 class QuantConfig:
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
-    global_scale: Optional[torch.Tensor] = None
 
 
 class DispatchLayout(str, Enum):
@@ -426,8 +427,8 @@ to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
 shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
 per-source-rank counts, and the original routing needed for cross-rank combine.
-High-throughput handles use the intranode combine context with
-receive-side weights, source indices, prefix matrices, and send-head tensors.
+High-throughput handles use a direct combine context with receive-side weights
+and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
 ## Dispatch inputs
@@ -485,12 +486,12 @@ and scale layout.
 
 Examples:
 
-| Format | `input` | `quant.block_scales` | `quant.global_scale` |
-|---|---|---|---|
-| BF16/FP16 | `[T, H]` | `None` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` | usually `None` |
-| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor | optional global scale |
-| MXFP8 | backend-defined `[T, H]` | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
+| Format | `input` | `quant.block_scales` |
+|---|---|---|
+| BF16/FP16 | `[T, H]` | `None` |
+| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
+| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
+| MXFP8 E4M3 | `[T, H]` FP8 | `[T, H / 32]` `uint8` UE8M0 scales |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -529,8 +530,10 @@ end = dispatch_out.layout.offsets[r + 1]
 
 Rows after `offsets[-1]` are padding. Set
 `token_major_init_padding=True` when a fixed-capacity Triton kernel should
-process the entire allocation: padding `topk_ids` are then initialized to `-1`
-and weights to `0`, so the kernel can skip a row when all expert IDs are `-1`.
+process the entire allocation: padding `topk_ids` are then initialized to
+`invalid_token_expert_id` and weights to `0`, so the kernel can skip a row when
+all expert IDs equal the configured sentinel. The sentinel defaults to
+`num_experts`.
 The option defaults to `False` to avoid initialization overhead when the MLP
 uses the compact valid length.
 
@@ -572,14 +575,15 @@ LL can also return `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
 dispatch_out.tokens            # [world_size * max_tokens_per_rank, H]
-dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 local expert IDs
+dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 global expert IDs
 dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
 ```
 
 Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
-tokens. Non-local entries always use expert ID `-1` and weight `0`; padding uses
-the same sentinel values when `token_major_init_padding=True`. Per-source-rank
-counts are returned in `dispatch_out.layout.num_tokens_per_rank`.
+tokens. Non-local entries use `invalid_token_expert_id` and weight `0`; padding
+uses the same sentinel when
+`token_major_init_padding=True`. Per-source-rank counts are returned in
+`dispatch_out.layout.num_tokens_per_rank`.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
@@ -601,11 +605,14 @@ Examples:
 
 ```text
 token-major tokens:   HT [total_recv_tokens, H]; LL [world_size * max_tokens_per_rank, H]
-token-major scales:   LL [world_size * max_tokens_per_rank, H / 128]
+token-major scales:   LL [world_size * max_tokens_per_rank, S]
 
 expert-major tokens:  [num_local_experts, max_slots, H]
-expert-major scales:  [num_local_experts, max_slots, H / 128]
+expert-major scales:  [num_local_experts, max_slots, S]
 ```
+
+`S` is `H / 128` with FP32 values for `FP8_E4M3`; it is `H / 32` with
+`uint8` UE8M0 values for `MXFP8_E4M3`.
 
 ## MLP contract
 
@@ -687,6 +694,11 @@ dispatch_out, handle = moe_comm.dispatch(
 expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 output = moe_comm.combine(expert_output, handle)
 ```
+
+Use `DispatchDataType.MXFP8_E4M3` for E4M3 payloads with one linear UE8M0
+scale byte per 32 hidden elements. The returned scales are directly compatible
+with FlashInfer `cutlass_fused_moe(..., use_mxfp8_act_scaling=True,
+swizzled_input_sf=False)`.
 
 For overlap, expose two optional APIs rather than adding many flags to the
 default path:

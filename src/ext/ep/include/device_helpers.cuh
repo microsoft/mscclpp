@@ -74,6 +74,12 @@ __device__ __forceinline__ void fenceProxyAsyncSharedCta() {
   asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
 }
 
+__device__ __forceinline__ float reciprocalApproximateFtz(float value) {
+  float result;
+  asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(value));
+  return result;
+}
+
 __device__ __forceinline__ void initTmaLoadBarrier(uint64_t *sharedBarrier) {
   const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));
@@ -89,10 +95,20 @@ __device__ __forceinline__ void issueTmaLoad(const void *source, void *sharedTil
       "[%0], [%1], %2, [%3];" ::"r"(tileAddress),
       "l"(source), "r"(nBytes), "r"(barrierAddress)
       : "memory");
+}
+
+__device__ __forceinline__ void expectTmaLoad(uint64_t *sharedBarrier, uint32_t nBytes) {
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   [[maybe_unused]] uint64_t state;
   asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
                : "=l"(state)
                : "r"(barrierAddress), "r"(nBytes));
+}
+
+__device__ __forceinline__ void issueTmaLoadAndExpect(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                                      uint32_t nBytes) {
+  issueTmaLoad(source, sharedTile, sharedBarrier, nBytes);
+  expectTmaLoad(sharedBarrier, nBytes);
 }
 
 __device__ __forceinline__ void waitTmaLoad(uint64_t *sharedBarrier, uint32_t &phase) {
