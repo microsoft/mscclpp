@@ -8,11 +8,101 @@
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
+#include <mutex>
+#include <unordered_map>
 
 #include "logger.hpp"
 #include "unix_socket.hpp"
 
 namespace mscclpp {
+
+namespace {
+
+struct PosixFdEntry {
+  PosixFdEntry(int fd, CUmemGenericAllocationHandle allocHandle) : fd(fd), allocHandle(allocHandle) {}
+  PosixFdEntry(const PosixFdEntry&) = delete;
+  PosixFdEntry& operator=(const PosixFdEntry&) = delete;
+  PosixFdEntry(PosixFdEntry&& other) noexcept
+      : fd(other.fd), refCount(other.refCount), allocHandle(other.allocHandle), registered(other.registered) {
+    other.fd = -1;
+    other.allocHandle = 0;
+    other.registered = false;
+  }
+  PosixFdEntry& operator=(PosixFdEntry&&) = delete;
+
+  ~PosixFdEntry() {
+    if (registered) {
+      UnixSocketServer::instance().unregisterFd(fd);
+    }
+    if (fd >= 0) {
+      ::close(fd);
+    }
+    CUresult result = allocHandle == 0 ? CUDA_SUCCESS : cuMemRelease(allocHandle);
+    if (result != CUDA_SUCCESS) {
+      const char* errorString = nullptr;
+      (void)cuGetErrorString(result, &errorString);
+      WARN(GPU, "Failed to release retained CUDA allocation handle: ",
+           errorString == nullptr ? "unknown CUDA error" : errorString);
+    }
+  }
+
+  void registerFd() {
+    UnixSocketServer::instance().registerFd(fd);
+    registered = true;
+  }
+  void addRef() { ++refCount; }
+  bool release() { return --refCount == 0; }
+
+  int fd;
+  size_t refCount = 1;
+  CUmemGenericAllocationHandle allocHandle;
+  bool registered = false;
+};
+
+static std::unordered_map<CUmemGenericAllocationHandle, PosixFdEntry> posixFdMap;
+static std::mutex posixFdMapMutex;
+
+static int acquireFdFromHandle(CUdeviceptr basePtr, CUmemGenericAllocationHandle allocHandle) {
+  std::lock_guard<std::mutex> lock(posixFdMapMutex);
+  auto it = posixFdMap.find(allocHandle);
+  if (it != posixFdMap.end()) {
+    it->second.addRef();
+    return it->second.fd;
+  }
+
+  CUmemGenericAllocationHandle retainedAllocHandle;
+  CUresult result = cuMemRetainAllocationHandle(&retainedAllocHandle, reinterpret_cast<void*>(basePtr));
+  if (result != CUDA_SUCCESS) {
+    return -1;
+  }
+
+  PosixFdEntry entry(-1, retainedAllocHandle);
+  result = cuMemExportToShareableHandle(&entry.fd, allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0);
+  if (result != CUDA_SUCCESS) {
+    return -1;
+  }
+
+  entry.registerFd();
+  int fd = entry.fd;
+  posixFdMap.emplace(allocHandle, std::move(entry));
+  return fd;
+}
+
+static void releaseFd(int fd) {
+  std::lock_guard<std::mutex> lock(posixFdMapMutex);
+  for (auto it = posixFdMap.begin(); it != posixFdMap.end(); ++it) {
+    if (it->second.fd == fd) {
+      if (it->second.release()) {
+        posixFdMap.erase(it);
+      }
+      return;
+    }
+  }
+  UnixSocketServer::instance().unregisterFd(fd);
+  ::close(fd);
+}
+
+}  // namespace
 
 std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typeFlags) {
   bool first = true;
@@ -152,8 +242,7 @@ static inline cudaError_t cudaIpcOpenMemHandleWrapper(std::shared_ptr<void>& bas
 void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
   if (handle) {
     if (handle->typeFlags & GpuIpcMemHandle::Type::PosixFd) {
-      UnixSocketServer::instance().unregisterFd(handle->posixFd.fd);
-      ::close(handle->posixFd.fd);
+      releaseFd(handle->posixFd.fd);
     }
     if (handle->typeFlags & GpuIpcMemHandle::Type::Fabric) {
       if (handle->fabric.allocHandle != 0) {
@@ -202,10 +291,9 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   MSCCLPP_CUTHROW(res);
 
   // POSIX FD handle
-  int fileDesc;
-  if (cuMemExportToShareableHandle(&fileDesc, allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
-      CUDA_SUCCESS) {
-    handle->posixFd.fd = UnixSocketServer::instance().registerFd(fileDesc);
+  int fileDesc = acquireFdFromHandle(basePtr, allocHandle);
+  if (fileDesc >= 0) {
+    handle->posixFd.fd = fileDesc;
     handle->posixFd.pid = ::getpid();
     handle->typeFlags |= GpuIpcMemHandle::Type::PosixFd;
   }

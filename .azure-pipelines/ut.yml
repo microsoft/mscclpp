@@ -71,7 +71,7 @@ jobs:
       gpuArch:          '80'
 
 - job: UnitTestH100
-  timeoutInMinutes: 40
+  timeoutInMinutes: 60
   pool:
     name: msccl-ci-h100
   strategy:
