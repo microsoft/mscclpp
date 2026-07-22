@@ -21,6 +21,8 @@ using cudaIpcMemHandle_t = hipIpcMemHandle_t;
 
 using CUresult = hipError_t;
 using CUdeviceptr = hipDeviceptr_t;
+using CUcontext = hipCtx_t;
+using CUdevice = hipDevice_t;
 using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
 using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
@@ -114,6 +116,11 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define cudaIpcCloseMemHandle(...) hipIpcCloseMemHandle(__VA_ARGS__)
 
 #define cuGetErrorString(...) hipDrvGetErrorString(__VA_ARGS__)
+#define cuDeviceGet(...) hipDeviceGet(__VA_ARGS__)
+#define cuCtxCreate(...) hipCtxCreate(__VA_ARGS__)
+#define cuCtxDestroy(...) hipCtxDestroy(__VA_ARGS__)
+#define cuCtxPushCurrent(...) hipCtxPushCurrent(__VA_ARGS__)
+#define cuCtxPopCurrent(...) hipCtxPopCurrent(__VA_ARGS__)
 #define cuMemAddressReserve(...) hipMemAddressReserve(__VA_ARGS__)
 #define cuMemAddressFree(...) hipMemAddressFree(__VA_ARGS__)
 #define cuMemGetAddressRange(...) hipMemGetAddressRange(__VA_ARGS__)

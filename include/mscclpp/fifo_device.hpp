@@ -19,6 +19,7 @@ using TriggerType = uint64_t;
 constexpr TriggerType TriggerData = 0x1;  // Trigger a data transfer.
 constexpr TriggerType TriggerFlag = 0x2;  // Trigger a signaling.
 constexpr TriggerType TriggerSync = 0x4;  // Trigger a flush.
+// type == 0 is reserved for atomic add operations.
 
 constexpr unsigned int TriggerBitsSize = 32;
 constexpr unsigned int TriggerBitsOffset = 32;
