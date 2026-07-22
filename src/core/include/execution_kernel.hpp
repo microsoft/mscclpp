@@ -634,6 +634,19 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
     mscclpp::SwitchChannelDeviceHandle::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
   }
 }
+
+// Grid-wide switch-native barrier: converge all participating threadblocks on this
+// rank, let a single thread issue the one cross-rank NVLS multimem arrival, then
+// release. Collapses the per-instance blocks into one rank-level add so the shared
+// barrier counter advances by exactly nRanks per barrier.
+MSCCLPP_DEVICE_INLINE void handleMultiBarrier(const Operation& op) {
+  DeviceSyncer* syncer = &deviceSyncers[op.deviceSyncerIndex];
+  syncer->sync(op.nThreadBlocks);
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    nvlsChannels_[op.nvlsInputIndex].barrier();
+  }
+  syncer->sync(op.nThreadBlocks);
+}
 #endif
 
 template <typename T, typename PacketType, bool ReuseScratch>
@@ -771,6 +784,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleMultiStore<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   } else if (opType == OperationType::MULTI_STORE_PKT) {
     handleMultiStorePkt<T, PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::MULTI_BARRIER) {
+    handleMultiBarrier(op);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {

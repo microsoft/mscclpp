@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_SWITCH_CHANNEL_HPP_
 #define MSCCLPP_SWITCH_CHANNEL_HPP_
 
+#include <cstdint>
+#include <memory>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/switch_channel_device.hpp>
 
@@ -16,6 +18,12 @@ struct SwitchChannel {
   void* devicePtr_;
   std::shared_ptr<void> mcPtr_;
   size_t bufferSize_;
+  // Barrier state inherited from the owning NvlsConnection (see NvlsConnection::bindAllocatedMemory).
+  // All are null / zero if the connection was created without barrier support.
+  uint32_t* barrierLocalFlag_ = nullptr;
+  uint32_t* barrierMcFlag_ = nullptr;
+  uint32_t* barrierGen_ = nullptr;
+  int barrierNRanks_ = 0;
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
@@ -41,9 +49,30 @@ class NvlsConnection {
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
+  /// Attach a device-side barrier resource shared by all SwitchChannels created from this
+  /// connection. After this call, `SwitchChannel::deviceHandle().barrier()` can synchronize all
+  /// ranks in the multicast group without a separate mesh of memory-channel semaphores. This is set
+  /// up automatically by `connectNvlsCollective`; it is an internal setup hook and is not intended
+  /// to be called directly.
+  /// @param barrierConn Auxiliary NVLS connection backing the barrier flag (kept alive).
+  /// @param barrierBuffer Storage for the barrier flag (kept alive); element 0 is the shared arrival
+  /// counter, element 1 is this rank's generation counter.
+  /// @param barrierChannel The bound barrier channel (kept alive for its multicast pointer).
+  /// @param nRanks Number of ranks participating in the multicast group.
+  void attachBarrier(std::shared_ptr<NvlsConnection> barrierConn, std::shared_ptr<void> barrierBuffer,
+                     std::shared_ptr<SwitchChannel> barrierChannel, int nRanks);
+
  private:
   class Impl;
   std::shared_ptr<Impl> pimpl_;
+
+  // Barrier resources, owned by this connection and shared by every SwitchChannel it creates.
+  std::shared_ptr<NvlsConnection> barrierConn_;
+  std::shared_ptr<void> barrierBuffer_;
+  std::shared_ptr<SwitchChannel> barrierChannel_;
+  uint32_t* barrierLocalFlag_ = nullptr;
+  uint32_t* barrierMcFlag_ = nullptr;
+  int barrierNRanks_ = 0;
 };
 
 class Communicator;

@@ -93,6 +93,7 @@ class Instruction(Enum):
     group_store_packet = "gstorepkt"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
+    group_barrier = "gbarrier"
     pipeline = "pipeline"
 
     def __str__(self):

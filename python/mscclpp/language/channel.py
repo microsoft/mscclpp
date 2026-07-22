@@ -1007,6 +1007,36 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
+    def barrier(self, rank, tb_list):
+        """Perform a switch-native cross-rank barrier for this rank.
+
+        Replaces a MemoryChannel signal/wait mesh with a single NVLS switch barrier.
+        All threadblocks in ``tb_list`` (across instances) converge on this rank, one
+        thread issues the single multicast arrival, and all blocks are released once
+        every rank in the group has arrived.
+
+        Args:
+            rank (int): The rank that will execute this barrier operation.
+            tb_list (List[int]): Thread block IDs that participate in the barrier.
+                Must include thread block 0, which acts as the arrival leader.
+
+        Raises:
+            RuntimeError: If tb_list is empty or does not include thread block 0.
+
+        Example:
+            >>> channel.barrier(rank=0, tb_list=[0])
+        """
+        if len(tb_list) == 0:
+            raise RuntimeError("Switch barrier requires at least one thread block.")
+        if 0 not in tb_list:
+            raise RuntimeError("Switch barrier tb_list must include thread block 0 (the arrival leader).")
+
+        self.src_rank = rank
+        for tb in tb_list:
+            tb_channel_ids = get_program().setup_channel(tb, self)
+            op = GroupBarrier(rank, tb_list, tb_channel_ids[0])
+            get_program().add_operation(rank, tb, op)
+
     class SwitchChannelRankView:
         """A rank-specific view of a SwitchChannel for performing operations.
 
@@ -1070,6 +1100,24 @@ class SwitchChannel:
                 >>> rank_view.broadcast(src_chunk=chunk, buffer_offset=0, size=1, tb=0)
             """
             return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
+
+        def barrier(self, tb_list):
+            """Perform a switch-native barrier from this rank's perspective.
+
+            Convenience method that calls the underlying channel's barrier method
+            with this view's rank automatically provided.
+
+            Args:
+                tb_list (List[int]): Thread block IDs that participate in the barrier.
+                    Must include thread block 0, which acts as the arrival leader.
+
+            Returns:
+                The result of the underlying channel's barrier operation.
+
+            Example:
+                >>> rank_view.barrier(tb_list=[0])
+            """
+            return self._channel.barrier(self._rank, tb_list)
 
         def broadcast_packets(self, src_chunk: Chunk, buffer_offset, size, tb):
             """Perform a packet broadcast operation from this rank's perspective.

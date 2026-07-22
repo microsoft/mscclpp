@@ -220,7 +220,26 @@ std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
 SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t size) {
   auto mcPtr = pimpl_->bindMemory(devicePtr, size);
-  return SwitchChannel((void*)devicePtr, mcPtr, size);
+  SwitchChannel channel((void*)devicePtr, mcPtr, size);
+  // Stamp the shared barrier resource (if any) onto the channel so that
+  // SwitchChannelDeviceHandle::barrier() works without separate semaphores.
+  if (barrierLocalFlag_ != nullptr) {
+    channel.barrierLocalFlag_ = barrierLocalFlag_;
+    channel.barrierMcFlag_ = barrierMcFlag_;
+    channel.barrierGen_ = barrierLocalFlag_ + 1;  // element 1 of the barrier buffer
+    channel.barrierNRanks_ = barrierNRanks_;
+  }
+  return channel;
+}
+
+void NvlsConnection::attachBarrier(std::shared_ptr<NvlsConnection> barrierConn, std::shared_ptr<void> barrierBuffer,
+                                   std::shared_ptr<SwitchChannel> barrierChannel, int nRanks) {
+  barrierConn_ = std::move(barrierConn);
+  barrierBuffer_ = std::move(barrierBuffer);
+  barrierChannel_ = std::move(barrierChannel);
+  barrierLocalFlag_ = reinterpret_cast<uint32_t*>(barrierBuffer_.get());
+  barrierMcFlag_ = reinterpret_cast<uint32_t*>(barrierChannel_->deviceHandle().mcPtr);
+  barrierNRanks_ = nRanks;
 }
 
 SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
@@ -228,10 +247,37 @@ SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
   device.devicePtr = devicePtr_;
   device.mcPtr = mcPtr_.get();
   device.bufferSize = bufferSize_;
+  device.mcBarrierFlag = barrierMcFlag_;
+  device.localBarrierFlag = barrierLocalFlag_;
+  device.barrierGen = barrierGen_;
+  device.nRanks = barrierNRanks_;
   return device;
 };
 
 void* SwitchChannel::getDevicePtr() { return devicePtr_; };
+
+namespace {
+// Perform the collective NVLS handshake among allRanks and return the connection: the lowest rank
+// (root) creates the multicast, serializes it, and sends it to every peer over the bootstrap; peers
+// receive and import it. `tag` isolates this handshake's messages from any other on the bootstrap.
+std::shared_ptr<NvlsConnection> makeNvlsConnection(std::shared_ptr<Bootstrap> bootstrap,
+                                                   const std::vector<int>& allRanks, int rank, int rootRank,
+                                                   bool isRoot, size_t bufferSize, int tag) {
+  std::shared_ptr<NvlsConnection> conn;
+  if (isRoot) {
+    conn = std::make_shared<NvlsConnection>(bufferSize, allRanks.size());
+    auto serialized = conn->serialize();
+    for (auto nvlsRank : allRanks) {
+      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, tag);
+    }
+  } else {
+    std::vector<char> data;
+    bootstrap->recv(data, rootRank, tag);
+    conn = std::make_shared<NvlsConnection>(data);
+  }
+  return conn;
+}
+}  // namespace
 
 MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm,
                                                                       std::vector<int> allRanks, size_t bufferSize) {
@@ -249,18 +295,25 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   }
   if (rootRank == rank) isRoot = true;
 
-  std::shared_ptr<NvlsConnection> conn;
-  if (isRoot) {
-    conn = std::make_shared<NvlsConnection>(bufferSize, allRanks.size());
-    auto serialized = conn->serialize();
-    for (auto nvlsRank : allRanks) {
-      if (nvlsRank != rank) bootstrap->send(serialized, nvlsRank, 0);
-    }
-  } else {
-    std::vector<char> data;
-    bootstrap->recv(data, rootRank, 0);
-    conn = std::make_shared<NvlsConnection>(data);
-  }
+  auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize, 0);
+
+#if (CUDA_NVLS_API_AVAILABLE)
+  // Set up a small auxiliary multicast that backs a device-side barrier for this connection. Using a
+  // dedicated connection (rather than carving from the user buffer) keeps the user buffer's sizing
+  // untouched. Flag layout: element 0 is the shared arrival counter, element 1 is this rank's
+  // generation counter. GpuBuffer zero-initializes both, which is the clean starting state the
+  // barrier's monotonic (never-reset) scheme requires.
+  auto barrierBuffer = std::make_shared<GpuBuffer<uint32_t>>(2);
+  size_t barrierBytes = barrierBuffer->bytes();
+  auto barrierConn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, barrierBytes, 1);
+  auto barrierChannel = std::make_shared<SwitchChannel>(
+      barrierConn->bindAllocatedMemory(CUdeviceptr(barrierBuffer->data()), barrierBytes));
+  conn->attachBarrier(barrierConn, barrierBuffer->memory(), barrierChannel, static_cast<int>(allRanks.size()));
+  // One-time sync so every rank has bound its barrier flag into the multicast before any rank issues
+  // a multimem operation on it at kernel time. Synchronize only allRanks (not the whole bootstrap,
+  // which may include ranks outside this NVLS group).
+  bootstrap->groupBarrier(allRanks);
+#endif  // (CUDA_NVLS_API_AVAILABLE)
 
   return conn;
 }
