@@ -160,7 +160,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="mscclpp: capture dispatch and combine as CUDA graphs and replay them in the timed loop.",
+        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
+        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
     )
     p.add_argument(
         "--validate",
@@ -517,20 +518,63 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
     combine_config = nccl_ep.CombineConfig()
 
-    def dispatch_fn():
+    def _dispatch(stream):
+        # Pure on-stream kernel launch; routing is baked into ep_handle, all
+        # tensors are pre-allocated, so nothing runs host-side per call.
         ep_handle.dispatch(
             dispatch_inputs,
             dispatch_outputs,
             layout_info=dispatch_layout,
             config=dispatch_config,
-            stream=stream_ptr,
+            stream=stream,
         )
-        return None
 
-    def combine_fn(_dout):
-        ep_handle.combine(combine_inputs, combine_outputs, config=combine_config, stream=stream_ptr)
+    def _combine(stream):
+        ep_handle.combine(combine_inputs, combine_outputs, config=combine_config, stream=stream)
+
+    graphs = []
+
+    if args.cuda_graph:
+        if rank == 0:
+            print("[cfg] nccl cuda_graph=True (capturing dispatch/combine)", flush=True)
+        # NCCL-EP dispatch/combine are a PAIRED collective (combine consumes the
+        # peer data produced by the matching dispatch); main() forces the paired
+        # kineto pass (EP_KINETO_SEPARATE=0) so every captured combine follows a
+        # captured dispatch instead of spinning on a stale peer receive.
+        # Prime once so any lazy JIT / autotune settles before capture.
+        _dispatch(stream_ptr)
+        _combine(stream_ptr)
+        torch.cuda.synchronize()
+
+        # Capture on the graph's capture stream: NCCL-EP takes an explicit stream
+        # pointer, so it must be re-fetched inside the capture context (the default
+        # stream_ptr would launch off the capture stream and break capture).
+        g_dispatch = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_dispatch):
+            _dispatch(torch.cuda.current_stream().cuda_stream)
+        g_combine = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_combine):
+            _combine(torch.cuda.current_stream().cuda_stream)
+        graphs = [g_dispatch, g_combine]
+
+        def dispatch_fn():
+            g_dispatch.replay()
+            return None
+
+        def combine_fn(_dout):
+            g_combine.replay()
+
+    else:
+
+        def dispatch_fn():
+            _dispatch(stream_ptr)
+            return None
+
+        def combine_fn(_dout):
+            _combine(stream_ptr)
 
     def teardown():
+        graphs.clear()  # drop graph refs before the handle they captured is destroyed
         ep_handle.destroy()
         ep_group.destroy()
         ncomm.destroy()
@@ -996,14 +1040,65 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     def deepep_barrier():
         buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
 
-    def dispatch_fn():
-        buffer.dispatch(**dispatch_args)
-        return None
+    graphs = []
 
-    def combine_fn(_dout):
+    # DeepEP CUDA-graph capture only works on the intranode NVLink path. On the
+    # internode scale-out path DeepEP's symmetric-memory kernels crash under graph
+    # capture (CUDA 719 in symmetric.hpp), so restrict capture to a single node.
+    local_world = int(os.environ.get("MSCCLPP_EP_LOCAL_WORLD_SIZE", "0") or "0")
+    deepep_can_graph = args.cuda_graph and (local_world <= 0 or num_ranks <= local_world)
+
+    if args.cuda_graph and not deepep_can_graph and rank == 0:
+        print(
+            "[cfg] deepep cuda_graph requested but disabled: internode scale-out is "
+            "not graph-capturable (symmetric-memory); using eager dispatch/combine",
+            flush=True,
+        )
+
+    if deepep_can_graph:
+        if rank == 0:
+            print("[cfg] deepep cuda_graph=True (cached dispatch, do_cpu_sync=False)", flush=True)
+        # The non-cached dispatch above did a CPU sync to size the layout; that is
+        # illegal inside a CUDA graph. Replay the CACHED dispatch instead: pass the
+        # primed handle (topk_idx reused from it), which forces do_cpu_sync=False and
+        # skips the host-side count read, leaving a pure on-stream kernel launch.
+        cached_dispatch_args = dict(
+            x=x,
+            handle=handle,
+            num_experts=num_experts,
+            num_max_tokens_per_rank=num_tokens,
+        )
+        # Prime the cached path once so any lazy alloc/autotune settles before capture.
+        buffer.dispatch(**cached_dispatch_args)
         buffer.combine(**combine_args)
+        torch.cuda.synchronize()
+
+        g_dispatch = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_dispatch):
+            buffer.dispatch(**cached_dispatch_args)
+        g_combine = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_combine):
+            buffer.combine(**combine_args)
+        graphs = [g_dispatch, g_combine]
+
+        def dispatch_fn():
+            g_dispatch.replay()
+            return None
+
+        def combine_fn(_dout):
+            g_combine.replay()
+
+    else:
+
+        def dispatch_fn():
+            buffer.dispatch(**dispatch_args)
+            return None
+
+        def combine_fn(_dout):
+            buffer.combine(**combine_args)
 
     def teardown():
+        graphs.clear()  # drop graph refs before the buffer they captured is destroyed
         try:
             buffer.destroy()
         except Exception:
@@ -1082,16 +1177,76 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     # dispatch->combine pair in order (a lone combine would trip the phase assert).
     os.environ["EP_KINETO_SEPARATE"] = "0"
 
-    def dispatch_fn():
-        comm.Barrier()
-        moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
-        return None
+    graphs = []
 
-    def combine_fn(_dout):
-        comm.Barrier()
+    def _dispatch():
+        moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
+
+    def _combine():
         moe.combine(combine_payload, num_tokens)
 
+    captured = False
+    if args.cuda_graph:
+        # FlashInfer's dispatch/combine each begin with an MPI host barrier to align
+        # ranks -- but an MPI barrier cannot live inside a CUDA graph. So capture ONLY
+        # the moe kernels and keep the barrier OUTSIDE, replaying: barrier -> replay.
+        # Capture is best-effort: FlashInfer's stateful phase / in-kernel peer spin may
+        # not be graph-capturable on every build, so on failure we rebuild the (now
+        # possibly mid-phase) communicator and fall back to the direct barrier+launch.
+        try:
+            # Prime one full pair so phase returns to idle and lazy work settles.
+            _dispatch()
+            _combine()
+            torch.cuda.synchronize()
+            g_dispatch = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g_dispatch):
+                _dispatch()
+            g_combine = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g_combine):
+                _combine()
+            torch.cuda.synchronize()
+            graphs = [g_dispatch, g_combine]
+            captured = True
+            if rank == 0:
+                print("[cfg] flashinfer cuda_graph=True (kernels captured; MPI barrier kept outside)", flush=True)
+        except Exception as e:  # noqa: BLE001 - capturability is an external-library boundary
+            if rank == 0:
+                print(f"[cfg] flashinfer cuda_graph capture failed ({e}); falling back to eager", flush=True)
+            # Rebuild to clear any partially-advanced phase state.
+            moe = a2a.MoeAlltoAll(
+                mapping,
+                max_num_tokens=num_tokens,
+                top_k=num_topk,
+                num_experts=num_experts,
+                hidden_size=hidden,
+            )
+        comm.Barrier()
+
+    if captured:
+        g_dispatch, g_combine = graphs
+
+        def dispatch_fn():
+            comm.Barrier()
+            g_dispatch.replay()
+            return None
+
+        def combine_fn(_dout):
+            comm.Barrier()
+            g_combine.replay()
+
+    else:
+
+        def dispatch_fn():
+            comm.Barrier()
+            moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
+            return None
+
+        def combine_fn(_dout):
+            comm.Barrier()
+            moe.combine(combine_payload, num_tokens)
+
     def teardown():
+        graphs.clear()
         gc.collect()
         torch.cuda.synchronize()
 
@@ -1114,6 +1269,14 @@ def main() -> None:
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
+
+    # CUDA-graph replay requires the PAIRED kineto pass: the separate-pass mode
+    # replays combine alone (no matching dispatch), which for the paired-collective
+    # backends (nccl, flashinfer) spins on the peer receive and escalates to a hard
+    # launch failure under graph replay. Force paired mode process-wide before any
+    # backend setup or the timer reads EP_KINETO_SEPARATE.
+    if args.cuda_graph:
+        os.environ["EP_KINETO_SEPARATE"] = "0"
 
     nccl_barrier = None
     if (
