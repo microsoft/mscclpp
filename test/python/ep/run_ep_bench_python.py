@@ -1270,13 +1270,9 @@ def main() -> None:
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
 
-    # CUDA-graph replay requires the PAIRED kineto pass: the separate-pass mode
-    # replays combine alone (no matching dispatch), which for the paired-collective
-    # backends (nccl, flashinfer) spins on the peer receive and escalates to a hard
-    # launch failure under graph replay. Force paired mode process-wide before any
-    # backend setup or the timer reads EP_KINETO_SEPARATE.
-    if args.cuda_graph:
-        os.environ["EP_KINETO_SEPARATE"] = "0"
+    # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
+    # (cuda-graph capture toggles it for some backends only -- see the loop).
+    _user_kineto_separate = os.environ.get("EP_KINETO_SEPARATE")
 
     nccl_barrier = None
     if (
@@ -1315,6 +1311,22 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
+        # CUDA-graph replay needs the PAIRED kineto pass ONLY for the paired-collective
+        # backends whose combine consumes fresh dispatch output (nccl, flashinfer):
+        # the separate pass replays combine alone and dead-spins on the peer receive
+        # under graph replay. DeepEP replays a FIXED primed handle, so its separate
+        # pass is safe AND necessary -- separate-pass inserts a per-op GPU barrier that
+        # collapses DeepEP's combine recv-spin skew (the paired loop only barriers
+        # before dispatch, inflating the combine avg). So keep DeepEP (and mscclpp) on
+        # the user's default. Restore the snapshot each iteration so a prior backend's
+        # override does not leak in --backend all.
+        if _user_kineto_separate is None:
+            os.environ.pop("EP_KINETO_SEPARATE", None)
+        else:
+            os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
+        if args.cuda_graph and name in ("nccl", "flashinfer"):
+            os.environ["EP_KINETO_SEPARATE"] = "0"
+
         try:
             _setup_ret = _SETUP[name](args, comm, rank, num_ranks, inputs)
             if len(_setup_ret) == 4:
