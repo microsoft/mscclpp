@@ -164,6 +164,16 @@ def parse_args() -> argparse.Namespace:
         "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
     )
     p.add_argument(
+        "--ep-layout",
+        choices=["native", "rank_major", "expert_major"],
+        default="native",
+        help="received-token dispatch layout. 'native' keeps each backend's current default "
+        "(nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
+        "'rank_major'/'expert_major' override where supported: nccl (Layout.RANK_MAJOR/EXPERT_MAJOR) "
+        "and deepep (rank_major=plain, expert_major=do_expand). mscclpp LL is expert-major only and "
+        "flashinfer is rank-major only; an unsupported request is noted and the native layout is kept.",
+    )
+    p.add_argument(
         "--validate",
         action="store_true",
         help="mscclpp: run a one-time combine correctness check before timing.",
@@ -370,6 +380,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
             flush=True,
         )
+        if args.ep_layout == "rank_major":
+            print(
+                "[cfg] mscclpp ep_layout=rank_major requested but unsupported: LOW_LATENCY mode is "
+                "expert-major only ([num_local_experts, ...]); keeping expert_major "
+                "(rank/token-major is a HIGH_THROUGHPUT-mode feature)",
+                flush=True,
+            )
 
     # Hoist output tensors out of the timed loop (the communicator owns its
     # src_info/layout_range/count buffers internally).
@@ -489,19 +506,34 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
+    # Received-token layout: native/expert_major -> EXPERT_MAJOR (the historical default),
+    # rank_major -> RANK_MAJOR. NCCL-EP supports both natively via the handle Layout.
+    nccl_layout = nccl_ep.Layout.RANK_MAJOR if args.ep_layout == "rank_major" else nccl_ep.Layout.EXPERT_MAJOR
+    if rank == 0:
+        _lname = getattr(nccl_layout, "name", str(nccl_layout))
+        print(f"[cfg] nccl ep_layout={args.ep_layout} -> Layout.{_lname}", flush=True)
+
     # Routing is encoded in the handle at create time (topk_idx is fixed for the run).
     topk_idx_t = nccl_ep.Tensor(topk_idx)
     ep_handle = ep_group.create_handle(
-        nccl_ep.Layout.EXPERT_MAJOR,
+        nccl_layout,
         topk_idx_t,
         layout_info=None,
         config=nccl_ep.HandleConfig(),
         stream=stream_ptr,
     )
 
-    # Pre-allocated EP tensors (hoisted out of the timed loop).
-    recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
+    # Pre-allocated EP tensors (hoisted out of the timed loop). The recv-buffer shape
+    # and layout counters differ by layout: EXPERT_MAJOR groups received tokens per
+    # local expert ([num_local_experts, num_ranks*num_tokens, hidden] + per-expert
+    # counters); RANK_MAJOR groups them per source rank ([num_ranks, num_tokens, hidden]
+    # + per-source-rank counters, which the LL kernel asserts has leading dim == nRanks).
+    if nccl_layout == nccl_ep.Layout.RANK_MAJOR:
+        recv = torch.empty((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        recv_count = torch.empty((num_ranks,), dtype=torch.int32, device="cuda")
+    else:
+        recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     x_t = nccl_ep.Tensor(x)
@@ -510,9 +542,21 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     out_t = nccl_ep.Tensor(out)
     topk_weights_t = nccl_ep.Tensor(topk_weights)
 
-    dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
-    dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t)
-    dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
+    if nccl_layout == nccl_ep.Layout.RANK_MAJOR:
+        # RANK_MAJOR dispatch carries the per-token weights through as well (the LL
+        # kernel asserts topk_weights_in != NULL), and writes them into a matching
+        # per-source-rank recv buffer.
+        recv_weights = torch.empty((num_ranks, num_tokens, num_topk), dtype=torch.float32, device="cuda")
+        recv_weights_t = nccl_ep.Tensor(recv_weights)
+        recv_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=torch.int32, device="cuda")
+        recv_idx_t = nccl_ep.Tensor(recv_idx)
+        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
+        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
+        dispatch_layout = nccl_ep.LayoutInfo(src_rank_counters=recv_count_t)
+    else:
+        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
+        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t)
+        dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
     dispatch_config = nccl_ep.DispatchConfig()
     combine_inputs = nccl_ep.CombineInputs(tokens=recv_t)
     combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
@@ -1000,6 +1044,14 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         explicitly_destroy=True,
     )
 
+    # Received-token layout: rank_major (plain, do_expand=False -- the current default)
+    # or expert_major (do_expand=True -- the expanding layout, one slot per expert per
+    # token). 'native' keeps the plain rank-major layout.
+    do_expand = args.ep_layout == "expert_major"
+    if rank == 0:
+        _lay = "expert_major (do_expand)" if do_expand else "rank_major (plain)"
+        print(f"[cfg] deepep ep_layout={args.ep_layout} -> {_lay}", flush=True)
+
     # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
     dispatch_args = dict(
         x=x,
@@ -1008,6 +1060,8 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         num_experts=num_experts,
         num_max_tokens_per_rank=num_tokens,
         do_cpu_sync=True,
+        do_expand=do_expand,
+        do_zero_padding=do_expand,
     )
 
     # Prime once to obtain the handle (routing) and the received-token count so we
@@ -1015,18 +1069,19 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     # received layout (the role of `simulated_gemm_output`): random values only in
     # the valid received-token slots, matching test_ep.py's `input_for_combine`.
     #
-    # NOTE: we use the PLAIN combine (per-expert) here, not the reduced/expand
-    # combine. Measured on this uniform 128-tok/rank workload the reduced/expand
-    # combine is consistently MORE expensive (1n 74 vs 46, 4n 188 vs 136,
-    # 8n 199 vs 120 us avg) because the expanded layout processes more rows in the
-    # reduce epilogue; its intra-scaleup-first advantage does not pay off here.
+    # NOTE: the PLAIN (rank-major) path uses the per-expert combine; the expanded
+    # (expert-major) path runs DeepEP's reduce/expand combine, which processes more
+    # rows in the reduce epilogue (measured more expensive on this uniform workload:
+    # 1n 74 vs 46, 4n 188 vs 136, 8n 199 vs 120 us). Both are exercised via --ep-layout.
     recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(**dispatch_args)
     recv_x_bf16 = recv_x[0] if isinstance(recv_x, (tuple, list)) else recv_x
-    num_recv_tokens = int(handle.psum_num_recv_tokens_per_scaleup_rank[-1].item())
     input_for_combine = torch.empty_like(recv_x_bf16, dtype=torch.bfloat16)
     input_for_combine.normal_(0.0, 0.1)
-    if num_recv_tokens < input_for_combine.shape[0]:
-        input_for_combine[num_recv_tokens:] = 0
+    if not do_expand:
+        # Plain layout: zero the invalid received-token slots (rank-major padding).
+        num_recv_tokens = int(handle.psum_num_recv_tokens_per_scaleup_rank[-1].item())
+        if num_recv_tokens < input_for_combine.shape[0]:
+            input_for_combine[num_recv_tokens:] = 0
 
     combine_args = dict(
         x=input_for_combine,
@@ -1138,6 +1193,13 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
+        if args.ep_layout == "expert_major":
+            print(
+                "[cfg] flashinfer ep_layout=expert_major requested but unsupported: "
+                "MoeAlltoAll dispatch is fixed rank-major [ep_size, tokens, hidden]; "
+                "keeping rank_major (expert grouping is a downstream model op, not part of the A2A)",
+                flush=True,
+            )
 
     # EP is expressed as tp_size = world with moe_ep_size = world, moe_tp_size = 1
     # (Mapping requires world_size == tp*pp*cp).
