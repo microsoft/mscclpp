@@ -175,16 +175,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["native", "rank_major", "expert_major"],
-        default="native",
-        help="received-token dispatch layout. 'native' means no cross-backend normalization: each "
-        "backend keeps the layout its own default code path produces "
-        "(nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major), which is "
-        "the apples-to-apples default for comparing each backend's out-of-the-box behavior. "
-        "'rank_major'/'expert_major' force a specific layout where supported: nccl "
+        choices=["rank_major", "expert_major"],
+        default=None,
+        help="received-token dispatch layout. When omitted, each backend uses its own default "
+        "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
+        "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
         "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
         "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
-        "noted and the native layout is kept.",
+        "noted and the backend's default layout is kept.",
     )
     p.add_argument(
         "--validate",
@@ -198,20 +196,6 @@ def parse_args() -> argparse.Namespace:
         "for the kernel-only block. Only needed when EP_KERNEL_TIMER=cupti; the default "
         "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
         "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
-    )
-    # NCCL-EP JIT knobs: nccl.ep runtime-compiles (JITs) its device kernels on first use and
-    # must be told where the device sources (device/*.cuh) and NCCL public headers live. The
-    # defaults match the standard in-tree install, so these are normally unused; they are exposed
-    # only so a non-standard NCCL-EP install location can be overridden without editing the script.
-    p.add_argument(
-        "--nccl-jit-source-dir",
-        default=os.environ.get("NCCL_EP_JIT_SOURCE_DIR", "/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep"),
-        help="NCCL_EP_JIT_SOURCE_DIR (dir containing device/*.cuh for the runtime JIT)",
-    )
-    p.add_argument(
-        "--nccl-jit-include-dir",
-        default=os.environ.get("NCCL_EP_JIT_BUILD_INCLUDE_DIR", "/opt/microsoft/mrc/ep/nccl/build/include"),
-        help="NCCL_EP_JIT_BUILD_INCLUDE_DIR (NCCL public headers for the runtime JIT)",
     )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:

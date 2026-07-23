@@ -48,13 +48,13 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         explicitly_destroy=True,
     )
 
-    # Received-token layout: rank_major (plain, do_expand=False -- the current default)
+    # Received-token layout: rank_major (plain, do_expand=False -- the deepep default)
     # or expert_major (do_expand=True -- the expanding layout, one slot per expert per
-    # token). 'native' keeps the plain rank-major layout.
+    # token). When --ep-layout is omitted, the plain rank-major layout is kept.
     do_expand = args.ep_layout == "expert_major"
     if rank == 0:
         _lay = "expert_major (do_expand)" if do_expand else "rank_major (plain)"
-        print(f"[cfg] deepep ep_layout={args.ep_layout} -> {_lay}", flush=True)
+        print(f"[cfg] deepep ep_layout={args.ep_layout or 'default'} -> {_lay}", flush=True)
 
     # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
     dispatch_args = dict(

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import gc
-import os
 import torch
 
 
@@ -12,9 +11,6 @@ import torch
 # Backend: NVIDIA NCCL-EP (nccl.ep Group/Handle).
 # ============================================================================
 def setup_nccl(args, comm, rank, num_ranks, inputs):
-    os.environ.setdefault("NCCL_EP_JIT_SOURCE_DIR", args.nccl_jit_source_dir)
-    os.environ.setdefault("NCCL_EP_JIT_BUILD_INCLUDE_DIR", args.nccl_jit_include_dir)
-
     import nccl.core as nccl_core
     import nccl.ep as nccl_ep
 
@@ -48,12 +44,12 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
-    # Received-token layout: native/expert_major -> EXPERT_MAJOR (the historical default),
+    # Received-token layout: default/expert_major -> EXPERT_MAJOR (the nccl default),
     # rank_major -> RANK_MAJOR. NCCL-EP supports both natively via the handle Layout.
     nccl_layout = nccl_ep.Layout.RANK_MAJOR if args.ep_layout == "rank_major" else nccl_ep.Layout.EXPERT_MAJOR
     if rank == 0:
         _lname = getattr(nccl_layout, "name", str(nccl_layout))
-        print(f"[cfg] nccl ep_layout={args.ep_layout} -> Layout.{_lname}", flush=True)
+        print(f"[cfg] nccl ep_layout={args.ep_layout or 'default'} -> Layout.{_lname}", flush=True)
 
     # Routing is encoded in the handle at create time (topk_idx is fixed for the run).
     topk_idx_t = nccl_ep.Tensor(topk_idx)
