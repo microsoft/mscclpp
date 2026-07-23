@@ -46,7 +46,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
       .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
-      .value("TOKEN_MAJOR", mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
+      .value("TOKEN_MAJOR", mscclpp::ep::DispatchLayout::TOKEN_MAJOR)
+      .value("RANK_MAJOR", mscclpp::ep::DispatchLayout::RANK_MAJOR);
 
   nb::enum_<mscclpp::ep::low_latency::CombineMode>(m, "CombineMode")
       .value("RANK_LOCAL_REDUCE", mscclpp::ep::low_latency::CombineMode::RANK_LOCAL_REDUCE)
@@ -57,11 +58,24 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("MXFP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3);
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, int, int, int, int, bool>(), nb::arg("comm"),
-           nb::arg("max_tokens_per_rank"), nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"),
-           nb::arg("initialize_token_major_padding"))
+      .def(nb::init<mscclpp::Communicator&, int, int, int, int>(), nb::arg("comm"), nb::arg("max_tokens_per_rank"),
+           nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"))
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
+      .def("rank_major_topk_ids_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(self.rankMajorTopkIdsBuffer());
+           })
+      .def("rank_major_topk_weights_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(self.rankMajorTopkWeightsBuffer());
+           })
+      .def("rank_major_token_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.rankMajorTokenBuffer()); })
+      .def("rank_major_expert_output_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(self.rankMajorExpertOutputBuffer());
+           })
       .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,

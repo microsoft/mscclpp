@@ -138,20 +138,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--output-layout",
-        choices=("expert_major", "token_major"),
+        choices=("expert_major", "rank_major"),
         default="expert_major",
         help="low-latency dispatch output layout",
-    )
-    p.add_argument(
-        "--token-major-init-padding",
-        action="store_true",
-        help="initialize unused token-major top-k IDs and weights for fixed-capacity kernels",
     )
     p.add_argument(
         "--invalid-token-expert-id",
         type=int,
         default=None,
-        help="sentinel for token-major non-local and padding expert IDs (default: num_experts)",
+        help="sentinel for rank-major non-local and padding expert IDs (default: num_experts)",
     )
     p.add_argument("--num-blocks", type=int, default=130, help="total low-latency dispatch blocks")
     p.add_argument(
@@ -347,10 +342,10 @@ def main() -> None:
     }[args.combine_mode]
     output_layout = {
         "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
-        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+        "rank_major": ep.DispatchLayout.RANK_MAJOR,
     }[args.output_layout]
-    if output_layout == ep.DispatchLayout.TOKEN_MAJOR and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
-        raise ValueError("token-major output requires rank_local_reduce combine")
+    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise ValueError("rank-major output requires rank_local_reduce combine")
     dispatch_quant = (
         None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
     )
@@ -421,7 +416,6 @@ def main() -> None:
         low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
-        token_major_init_padding=args.token_major_init_padding,
         invalid_token_expert_id=invalid_token_expert_id,
         quant=dispatch_quant,
     )
@@ -439,12 +433,18 @@ def main() -> None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR
         else (num_ranks * num_tokens, hidden)
     )
-    output_buffer = torch.empty(output_shape, dtype=dispatch_dtype, device="cuda")
-    expert_output = (
+    output_buffer = (
         None
-        if dispatch_quant is None and output_layout == ep.DispatchLayout.EXPERT_MAJOR
-        else torch.zeros(output_shape, dtype=torch.bfloat16, device="cuda")
+        if output_layout == ep.DispatchLayout.RANK_MAJOR
+        else torch.empty(output_shape, dtype=dispatch_dtype, device="cuda")
     )
+    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+        expert_output = moe_comm.get_expert_output_buffer()
+        expert_output.zero_()
+    else:
+        expert_output = (
+            None if dispatch_quant is None else torch.zeros(output_shape, dtype=torch.bfloat16, device="cuda")
+        )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def dispatch_fn():

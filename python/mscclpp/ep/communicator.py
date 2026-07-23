@@ -26,8 +26,8 @@ from .types import (
     MoECommunicatorConfig,
     OperationOverlapConfig,
     QuantConfig,
-    TokenMajorDispatchHandle,
-    TokenMajorCombineContext,
+    RankMajorDispatchHandle,
+    RankMajorCombineContext,
 )
 
 __all__ = [
@@ -50,8 +50,8 @@ __all__ = [
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "TokenMajorDispatchHandle",
-    "TokenMajorCombineContext",
+    "RankMajorDispatchHandle",
+    "RankMajorCombineContext",
 ]
 
 
@@ -140,6 +140,13 @@ class MoECommunicator:
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
         return self._backend.combine(expert_output, handle, out=out, stream=stream)
+
+    def get_expert_output_buffer(self) -> torch.Tensor:
+        """Return the runtime-owned rank-major MoE output buffer."""
+        buffer = getattr(self._backend, "rank_major_expert_output_buffer", None)
+        if buffer is None:
+            raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
+        return buffer
 
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")

@@ -32,7 +32,9 @@ enum class DispatchLayout {
   /// Token-major rows. Low latency uses
   /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
   /// throughput uses [num_recv_tokens, hidden].
-  TOKEN_MAJOR
+  TOKEN_MAJOR,
+  /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
+  RANK_MAJOR
 };
 
 // ===========================================================================
@@ -115,8 +117,8 @@ struct Workload {
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
   DispatchLayout outputLayout_;
-  /// Whether token-major padding metadata is initialized to sentinel values.
-  bool initializeTokenMajorPadding_;
+  /// Whether rank-major dispatch overlaps the next token load with current remote stores.
+  bool enableRankMajorTmaPipeline_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
@@ -144,8 +146,10 @@ struct CommContext {
 /// Return the optimized low-latency workspace size.
 /// @param[in] numRanks Total number of ranks.
 /// @param[in] numExperts Total number of experts.
+/// @param[in] maxTokensPerRank Maximum local token capacity.
+/// @param[in] numTopk Number of routed experts per token.
 /// @return Required workspace bytes.
-size_t workspaceSize(int numRanks, int numExperts);
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major or token-major packed output selected by
