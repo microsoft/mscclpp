@@ -1,0 +1,951 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+"""Multi-rank low-latency functional test for mscclpp_ep.
+
+Launch with (intra-node, 8 GPUs):
+    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
+    # Token-major output:
+    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
+        --output-layout token_major
+    # Optional CUDA graph smoke/benchmark:
+    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
+        --cuda-graph --bench
+
+Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
+    # node 0:
+    MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=0 \
+        torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+    # node 1:
+    MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=1 \
+        torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+
+Exercises the optimized BF16 or FP8 E4M3 LL dispatch plus the default combine
+path on a single node. The experimental optimized combine performs rank-local
+partial reduction, TMA send, and source-rank reduction. The correctness check:
+  - dispatch: per-expert received token counts agree with an all-gathered
+    reference computed from topk_idx across all ranks, and FP8 data/scales
+    agree with a block-128 quantization reference;
+  - combine: the reconstructed x matches the analytical sum
+    ``x * sum(topk_weights, masked by topk_idx == -1)``.
+
+Adapted from DeepEP/tests/test_low_latency.py stripped to the bare checks
+we need for an LL port smoke test.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import random
+
+# Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
+# It runs in a background thread polling the TCPStore; under mpirun, rank 0
+# (the store server) can exit before non-zero ranks finish teardown, producing
+# noisy 'recvValue failed / Connection was likely closed' stack traces.
+os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
+
+import torch
+import torch.distributed as dist
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="MSCCL++ EP low-latency multi-rank correctness/benchmark test")
+    parser.add_argument("--num-tokens", type=int, default=128)
+    parser.add_argument(
+        "--hidden",
+        type=int,
+        default=7168,
+        choices=(4096, 6656, 7168, 8192, 9216),
+        help="BF16 hidden size compiled into the optimized low-latency kernels",
+    )
+    parser.add_argument("--num-topk", type=int, default=8)
+    parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument("--num-active-ranks", type=int, default=0, help="Limit routing to the first N ranks")
+    parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
+    parser.add_argument(
+        "--dispatch-dtype",
+        choices=("bf16", "fp8_e4m3", "mxfp8_e4m3"),
+        default="bf16",
+        help="Wire format for low-latency dispatch",
+    )
+    parser.add_argument("--num-blocks", type=int, default=130)
+    parser.add_argument(
+        "--combine-mode",
+        "--optimized-combine-mode",
+        choices=("rank_local_reduce", "direct_send"),
+        default="rank_local_reduce",
+    )
+    parser.add_argument(
+        "--output-layout",
+        choices=("expert_major", "token_major"),
+        default="expert_major",
+        help="Low-latency dispatch output layout",
+    )
+    parser.add_argument(
+        "--token-major-init-padding",
+        action="store_true",
+        help="Initialize unused token-major top-k IDs to num_experts and weights to zero",
+    )
+    parser.add_argument(
+        "--invalid-token-expert-id",
+        type=int,
+        default=None,
+        help="Sentinel for token-major non-local and padding expert IDs (default: num_experts)",
+    )
+    parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
+    parser.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="Capture dispatch/combine in CUDA graphs; correctness captures both in one graph",
+    )
+    parser.add_argument("--bench-warmup", type=int, default=5)
+    parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def init_dist():
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(
+        backend="nccl",
+        init_method=f"tcp://{os.environ.get('MASTER_ADDR','127.0.0.1')}:{os.environ.get('MASTER_PORT','29500')}",
+        world_size=world_size,
+        rank=rank,
+    )
+    return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
+
+
+def fp8_e4m3_scales(x, scale_block_size):
+    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // scale_block_size, scale_block_size)
+    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
+    return max_abs / 448.0
+
+
+def mxfp8_e4m3_scales(x):
+    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 32, 32)
+    normalized_max = blocks.abs().amax(dim=-1) / 448.0
+    encoded = (torch.ceil(torch.log2(normalized_max)).clamp(-127, 127) + 127).to(torch.uint8)
+    return torch.where(normalized_max > 0, encoded, torch.zeros_like(encoded))
+
+
+def decode_block_scales(scales):
+    if scales.dtype == torch.uint8:
+        bits = scales.to(torch.int32) << 23
+        bits = torch.where(scales == 0, torch.full_like(bits, 0x00400000), bits)
+        return bits.view(torch.float32)
+    return scales.float()
+
+
+def dequantized_dispatch_tokens(dispatch_out):
+    if dispatch_out.quant is None:
+        return dispatch_out.tokens
+    assert dispatch_out.tokens.dtype == torch.float8_e4m3fn
+    assert dispatch_out.quant.block_scales is not None
+    tokens = dispatch_out.tokens
+    decoded_scales = decode_block_scales(dispatch_out.quant.block_scales)
+    num_scales = decoded_scales.size(-1)
+    scale_block_size = tokens.size(-1) // num_scales
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], num_scales, scale_block_size)
+    return (token_blocks * decoded_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+
+
+def simulated_gemm_output(dispatch_out):
+    tokens = dequantized_dispatch_tokens(dispatch_out)
+    if dispatch_out.topk_ids is None:
+        return tokens
+    assert dispatch_out.weights is not None
+    output = torch.zeros_like(tokens, dtype=torch.float32)
+    tokens_f = tokens.float()
+    for topk_idx in range(dispatch_out.topk_ids.size(1)):
+        local_weight = dispatch_out.weights[:, topk_idx].masked_fill(dispatch_out.topk_ids[:, topk_idx] < 0, 0.0)
+        output = torch.addcmul(output, tokens_f, local_weight.view(-1, 1))
+    return output.to(torch.bfloat16)
+
+
+def validate_combine_output(actual, expected, *, exact, group):
+    local_diff = (actual.float() - expected.float()).abs().max()
+    global_diff = local_diff.clone()
+    dist.all_reduce(global_diff, op=dist.ReduceOp.MAX, group=group)
+    all_finite = torch.tensor(int(torch.isfinite(actual).all()), dtype=torch.int32, device=actual.device)
+    dist.all_reduce(all_finite, op=dist.ReduceOp.MIN, group=group)
+    assert all_finite.item() == 1, "LL combine output contains NaN or Inf"
+
+    if exact:
+        all_equal = torch.tensor(int(torch.equal(actual, expected)), dtype=torch.int32, device=actual.device)
+        dist.all_reduce(all_equal, op=dist.ReduceOp.MIN, group=group)
+        assert all_equal.item() == 1, f"LL direct-send combine is not bit-exact; max diff={global_diff.item()}"
+    else:
+        assert (
+            torch.isfinite(global_diff).item() and global_diff.item() <= 8.0
+        ), f"LL rank-local combine mismatch; max diff={global_diff.item()}"
+    return local_diff.item(), global_diff.item()
+
+
+def validate_expert_major_dispatch(
+    *,
+    rank,
+    num_ranks,
+    hidden,
+    num_local_experts,
+    dispatch_quant,
+    dispatch_out,
+    handle,
+    packed_recv_x,
+    packed_recv_count,
+    packed_recv_layout_range,
+    all_topk_idx,
+    all_x,
+    expected_scales,
+):
+    int_mask = (1 << 32) - 1
+    for local_expert_idx in range(num_local_experts):
+        expert_id = rank * num_local_experts + local_expert_idx
+        recv_count = int(packed_recv_count[local_expert_idx].item())
+        expected_count = int((all_topk_idx == expert_id).sum().item())
+        recv_layout_range = packed_recv_layout_range[local_expert_idx]
+        layout_sum = int((recv_layout_range & int_mask).sum().item())
+        assert (
+            recv_count == expected_count
+        ), f"rank{rank} expert{expert_id}: recv_count={recv_count} != expected={expected_count}"
+        assert (
+            layout_sum == recv_count
+        ), f"rank{rank} expert{expert_id}: layout range sum {layout_sum} != recv_count {recv_count}"
+
+        if recv_count == 0:
+            continue
+        recv_x = packed_recv_x[local_expert_idx, :recv_count]
+        if dispatch_quant is None:
+            recv_x_lo = recv_x[:, :-128]
+            assert torch.equal(
+                recv_x_lo.amin(dim=-1), recv_x_lo.amax(dim=-1)
+            ), f"rank{rank} expert{expert_id}: non-uniform recv block"
+            continue
+
+        assert all_x is not None
+        assert expected_scales is not None
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.block_scales is not None
+        scale_block_size = hidden // expected_scales.size(-1)
+        for source_rank in range(num_ranks):
+            packed_range = int(recv_layout_range[source_rank].item())
+            source_count = packed_range & int_mask
+            output_offset = packed_range >> 32
+            if source_count == 0:
+                continue
+            source_tokens = handle.combine_context.src_info[
+                local_expert_idx, output_offset : output_offset + source_count
+            ].long()
+            actual_tokens = recv_x[output_offset : output_offset + source_count]
+            actual_scales = dispatch_out.quant.block_scales[
+                local_expert_idx, output_offset : output_offset + source_count
+            ]
+            reference_scales = expected_scales[source_rank, source_tokens]
+            if actual_scales.dtype == torch.uint8:
+                assert torch.all((actual_scales.to(torch.int16) - reference_scales.to(torch.int16)).abs() <= 1)
+            else:
+                torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+            decoded_actual_scales = decode_block_scales(actual_scales)
+            decoded_reference_scales = decode_block_scales(reference_scales)
+            actual_blocks = actual_tokens.float().reshape(source_count, hidden // scale_block_size, scale_block_size)
+            reference_blocks = (
+                all_x[source_rank, source_tokens]
+                .float()
+                .reshape(source_count, hidden // scale_block_size, scale_block_size)
+            )
+            if actual_scales.dtype == torch.uint8:
+                tiny_nonzero_blocks = (reference_scales == 0) & (reference_blocks.abs().amax(dim=-1) > 0)
+                assert torch.all(actual_blocks.abs().amax(dim=-1)[tiny_nonzero_blocks] > 0)
+            actual_dequantized = actual_blocks * decoded_actual_scales.unsqueeze(-1)
+            quant_error = (actual_dequantized - reference_blocks).abs()
+            quant_error_bound = decoded_reference_scales.unsqueeze(-1) * 16.1 + 1e-6
+            max_scale_error = (quant_error / decoded_reference_scales.unsqueeze(-1)).max().item()
+            assert torch.all(quant_error <= quant_error_bound), (
+                f"rank{rank} expert{expert_id}: FP8 payload mismatch from rank {source_rank}, "
+                f"max scale error={max_scale_error}"
+            )
+
+
+def validate_token_major_dispatch(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_topk,
+    num_local_experts,
+    dispatch_quant,
+    dispatch_out,
+    handle,
+    packed_recv_x,
+    packed_recv_count,
+    all_topk_idx,
+    all_topk_weights,
+    all_x,
+    expected_scales,
+    initialize_padding,
+    invalid_token_expert_id,
+):
+    assert all_x is not None
+    assert dispatch_out.topk_ids is not None
+    assert dispatch_out.topk_ids.dtype == torch.int32
+    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
+    assert dispatch_out.weights is not None
+    assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
+    source_token_ids = handle.combine_context.source_token_ids
+    assert source_token_ids.shape == (num_ranks * num_tokens,)
+    rank_offsets = handle.combine_context.rank_offsets
+    assert rank_offsets.shape == (num_ranks + 1,)
+    assert dispatch_out.layout.offsets is rank_offsets
+    assert int(rank_offsets[0].item()) == 0
+    total_recv_tokens = int(rank_offsets[-1].item())
+    assert total_recv_tokens == int(packed_recv_count.sum().item())
+    if initialize_padding:
+        assert torch.all(dispatch_out.topk_ids[total_recv_tokens:] == invalid_token_expert_id)
+        assert torch.all(dispatch_out.weights[total_recv_tokens:] == 0)
+    local_expert_begin = rank * num_local_experts
+    local_expert_end = local_expert_begin + num_local_experts
+
+    for source_rank in range(num_ranks):
+        recv_count = int(packed_recv_count[source_rank].item())
+        row_begin = int(rank_offsets[source_rank].item())
+        row_end = int(rank_offsets[source_rank + 1].item())
+        assert row_end - row_begin == recv_count
+        source_routing = all_topk_idx[source_rank]
+        expected_source_tokens = (
+            ((source_routing >= local_expert_begin) & (source_routing < local_expert_end))
+            .any(dim=1)
+            .nonzero()
+            .flatten()
+        )
+        assert recv_count == expected_source_tokens.numel()
+        if recv_count == 0:
+            continue
+
+        source_tokens = source_token_ids[row_begin:row_end].long()
+        assert torch.equal(torch.sort(source_tokens).values, expected_source_tokens)
+
+        actual_tokens = packed_recv_x[row_begin:row_end]
+        actual_topk_ids = dispatch_out.topk_ids[row_begin:row_end]
+        actual_weights = dispatch_out.weights[row_begin:row_end]
+        expected_global_ids = all_topk_idx[source_rank, source_tokens]
+        local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
+        expected_output_ids = torch.where(
+            local_mask, expected_global_ids, torch.full_like(expected_global_ids, invalid_token_expert_id)
+        )
+        expected_weights = torch.where(
+            local_mask, all_topk_weights[source_rank, source_tokens], torch.zeros_like(actual_weights)
+        )
+        assert torch.equal(actual_topk_ids, expected_output_ids.to(torch.int32))
+        torch.testing.assert_close(actual_weights, expected_weights)
+
+        if dispatch_quant is None:
+            assert torch.equal(actual_tokens, all_x[source_rank, source_tokens])
+            continue
+
+        assert expected_scales is not None
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.block_scales is not None
+        scale_block_size = hidden // expected_scales.size(-1)
+        actual_scales = dispatch_out.quant.block_scales[row_begin:row_end]
+        reference_scales = expected_scales[source_rank, source_tokens]
+        if actual_scales.dtype == torch.uint8:
+            assert torch.all((actual_scales.to(torch.int16) - reference_scales.to(torch.int16)).abs() <= 1)
+        else:
+            torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+        decoded_actual_scales = decode_block_scales(actual_scales)
+        decoded_reference_scales = decode_block_scales(reference_scales)
+        actual_blocks = actual_tokens.float().reshape(recv_count, hidden // scale_block_size, scale_block_size)
+        reference_blocks = (
+            all_x[source_rank, source_tokens].float().reshape(recv_count, hidden // scale_block_size, scale_block_size)
+        )
+        if actual_scales.dtype == torch.uint8:
+            tiny_nonzero_blocks = (reference_scales == 0) & (reference_blocks.abs().amax(dim=-1) > 0)
+            assert torch.all(actual_blocks.abs().amax(dim=-1)[tiny_nonzero_blocks] > 0)
+        actual_dequantized = actual_blocks * decoded_actual_scales.unsqueeze(-1)
+        quant_error = (actual_dequantized - reference_blocks).abs()
+        quant_error_bound = decoded_reference_scales.unsqueeze(-1) * 16.1 + 1e-6
+        assert torch.all(quant_error <= quant_error_bound)
+
+
+def reconstruct_expert_major_reference(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_local_experts,
+    all_topk_idx,
+    packed_recv_layout_range,
+    handle,
+    dequantized_x,
+    group,
+):
+    int_mask = (1 << 32) - 1
+    first_expert = all_topk_idx.gather(-1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)).squeeze(-1)
+    first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
+    dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    for local_expert_idx in range(num_local_experts):
+        expert_id = rank * num_local_experts + local_expert_idx
+        recv_layout_range = packed_recv_layout_range[local_expert_idx]
+        for source_rank in range(num_ranks):
+            packed_range = int(recv_layout_range[source_rank].item())
+            source_count = packed_range & int_mask
+            output_offset = packed_range >> 32
+            if source_count == 0:
+                continue
+            source_tokens = handle.combine_context.src_info[
+                local_expert_idx, output_offset : output_offset + source_count
+            ].long()
+            selected = first_expert[source_rank, source_tokens] == expert_id
+            dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[
+                local_expert_idx, output_offset : output_offset + source_count
+            ][selected]
+    dist.all_reduce(dispatched_reference_x, group=group)
+    return dispatched_reference_x[rank]
+
+
+def reconstruct_token_major_reference(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_local_experts,
+    all_topk_idx,
+    packed_recv_count,
+    handle,
+    dequantized_x,
+    group,
+):
+    source_token_ids = handle.combine_context.source_token_ids
+    rank_offsets = handle.combine_context.rank_offsets
+    destination_ranks = torch.where(
+        all_topk_idx >= 0,
+        all_topk_idx // num_local_experts,
+        torch.full_like(all_topk_idx, num_ranks),
+    )
+    first_destination_rank = destination_ranks.amin(dim=-1)
+    dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    for source_rank in range(num_ranks):
+        source_count = int(packed_recv_count[source_rank].item())
+        if source_count == 0:
+            continue
+        row_begin = int(rank_offsets[source_rank].item())
+        row_end = int(rank_offsets[source_rank + 1].item())
+        assert row_end - row_begin == source_count
+        source_tokens = source_token_ids[row_begin:row_end].long()
+        selected = first_destination_rank[source_rank, source_tokens] == rank
+        dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[row_begin:row_end][selected]
+    dist.all_reduce(dispatched_reference_x, group=group)
+    return dispatched_reference_x[rank]
+
+
+def expected_expert_major_output(reference_x, topk_idx, topk_weights):
+    expected = torch.zeros_like(reference_x, dtype=torch.float32)
+    reference_x_f = reference_x.float()
+    for topk_slot in range(topk_idx.size(1)):
+        weight = (
+            (topk_idx[:, topk_slot] != -1).float()
+            if topk_weights is None
+            else topk_weights[:, topk_slot].masked_fill(topk_idx[:, topk_slot] == -1, 0.0)
+        ).view(-1, 1)
+        expected = torch.addcmul(expected, reference_x_f, weight)
+    return expected.to(torch.bfloat16)
+
+
+def expected_token_major_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts):
+    expected = torch.zeros_like(reference_x, dtype=torch.float32)
+    reference_x_f = reference_x.float()
+    for destination_rank in range(num_ranks):
+        rank_partial = torch.zeros_like(reference_x, dtype=torch.float32)
+        for topk_slot in range(topk_idx.size(1)):
+            selected = (topk_idx[:, topk_slot] >= 0) & (topk_idx[:, topk_slot] // num_local_experts == destination_rank)
+            weight = (
+                selected.float() if topk_weights is None else topk_weights[:, topk_slot].masked_fill(~selected, 0.0)
+            ).view(-1, 1)
+            rank_partial = torch.addcmul(rank_partial, reference_x_f, weight)
+        expected += rank_partial.to(torch.bfloat16).float()
+    return expected.to(torch.bfloat16)
+
+
+def main():
+    args = parse_args()
+    rank, num_ranks, _, group = init_dist()
+    from mscclpp import CommGroup
+    import mscclpp.ep as ep
+
+    ep_group = CommGroup(torch_group=group)
+
+    num_tokens = args.num_tokens
+    hidden = args.hidden
+    num_topk = args.num_topk
+    num_experts = args.num_experts
+    invalid_token_expert_id = num_experts if args.invalid_token_expert_id is None else args.invalid_token_expert_id
+    assert num_experts % num_ranks == 0
+    num_local_experts = num_experts // num_ranks
+    combine_mode = {
+        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.CombineMode.DIRECT_SEND,
+    }[args.combine_mode]
+    output_layout = {
+        "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+    }[args.output_layout]
+    if output_layout == ep.DispatchLayout.TOKEN_MAJOR:
+        assert combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE, "token-major output requires rank-local combine"
+    dispatch_data_type = {
+        "bf16": ep.DispatchDataType.BF16,
+        "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
+        "mxfp8_e4m3": ep.DispatchDataType.MXFP8_E4M3,
+    }[args.dispatch_dtype]
+    dispatch_quant = (
+        None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
+    )
+    dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
+    scale_block_size = 0
+    if dispatch_data_type == ep.DispatchDataType.FP8_E4M3:
+        scale_block_size = 128
+    elif dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
+        scale_block_size = 32
+    scale_element_size = 1 if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3 else 4
+
+    torch.manual_seed(0xB3C4 + rank)
+    random.seed(0xB3C4 + rank)
+
+    if dispatch_quant is None:
+        # Shrink the "bf16 precision" anchor to keep values small.
+        rank_offset = 128
+        assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
+        x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
+        # Encode the per-token index into the last 128 elements so the receiver
+        # can verify which source token it is looking at.
+        x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
+    else:
+        x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * 8
+        if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
+            x[0, :32] = torch.finfo(torch.bfloat16).tiny
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
+    if args.num_active_ranks:
+        assert num_topk <= args.num_active_ranks * num_local_experts
+        scores[:, args.num_active_ranks * num_local_experts :] = float("-inf")
+    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
+    topk_weights = (
+        None if args.no_weights else torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    )
+
+    # Randomly mask some positions
+    for _ in range(min(10, num_tokens)):
+        topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
+
+    moe_comm = ep.MoECommunicator(
+        comm=ep_group,
+        num_experts=num_experts,
+        num_local_experts=num_local_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode=ep.MoEMode.LOW_LATENCY,
+        low_latency_num_blocks=args.num_blocks,
+        low_latency_combine_mode=combine_mode,
+        output_layout=output_layout,
+        token_major_init_padding=args.token_major_init_padding,
+        invalid_token_expert_id=invalid_token_expert_id,
+        quant=dispatch_quant,
+    )
+    if rank == 0:
+        print(
+            f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} num_topk={num_topk} dispatch_dtype={args.dispatch_dtype} "
+            f"output_layout={args.output_layout}",
+            flush=True,
+        )
+    print(
+        f"[rank {rank}] MoECommunicator created is_available={moe_comm.is_available()} "
+        f"is_internode={moe_comm.is_internode_available()}",
+        flush=True,
+    )
+    assert moe_comm.is_available()
+
+    dist.barrier(group=group)
+    torch.cuda.synchronize()
+    print(f"[rank {rank}] pre-dispatch", flush=True)
+
+    # --- Dispatch ---
+    dispatch_output_shape = (
+        (num_local_experts, num_ranks * num_tokens, hidden)
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+        else (num_ranks * num_tokens, hidden)
+    )
+    dispatch_output_buffer = torch.empty(dispatch_output_shape, dtype=dispatch_dtype, device="cuda")
+    dispatch_out, handle = moe_comm.dispatch(
+        x,
+        topk_idx,
+        topk_weights,
+        output_buffer=dispatch_output_buffer,
+    )
+    packed_recv_x = dispatch_out.tokens
+    packed_recv_count = (
+        dispatch_out.layout.num_tokens_per_expert
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+        else dispatch_out.layout.num_tokens_per_rank
+    )
+    assert packed_recv_count is not None
+    packed_recv_layout_range = (
+        handle.combine_context.layout_range if output_layout == ep.DispatchLayout.EXPERT_MAJOR else None
+    )
+    torch.cuda.synchronize()
+    print(f"[rank {rank}] post-dispatch", flush=True)
+    # expert-major: packed_recv_x [num_local_experts, num_ranks * max_tokens, hidden]
+    # token-major: packed_recv_x has worst-case capacity, with valid rows compacted
+    # into [0 : layout.offsets[-1]).
+
+    # Reference: gather source tokens, routing IDs, and weights from all ranks.
+    all_topk_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=topk_idx.dtype, device="cuda")
+    dist.all_gather_into_tensor(all_topk_idx, topk_idx, group=group)
+    local_topk_weights = torch.ones_like(topk_idx, dtype=torch.float32) if topk_weights is None else topk_weights
+    all_topk_weights = torch.empty((num_ranks, num_tokens, num_topk), dtype=torch.float32, device="cuda")
+    dist.all_gather_into_tensor(all_topk_weights, local_topk_weights, group=group)
+    all_x = None
+    expected_scales = None
+    if dispatch_quant is not None or output_layout == ep.DispatchLayout.TOKEN_MAJOR:
+        all_x = torch.empty((num_ranks, num_tokens, hidden), dtype=x.dtype, device="cuda")
+        dist.all_gather_into_tensor(all_x, x, group=group)
+    if dispatch_quant is not None:
+        assert dispatch_out.quant is not None
+        assert dispatch_out.quant.format == dispatch_data_type
+        assert dispatch_out.quant.block_scales is not None
+        expected_scale_shape = (
+            (num_local_experts, num_ranks * num_tokens, hidden // scale_block_size)
+            if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+            else (num_ranks * num_tokens, hidden // scale_block_size)
+        )
+        assert dispatch_out.quant.block_scales.shape == expected_scale_shape
+        expected_scale_dtype = torch.uint8 if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3 else torch.float32
+        assert dispatch_out.quant.block_scales.dtype == expected_scale_dtype
+        assert all_x is not None
+        expected_scales = (
+            mxfp8_e4m3_scales(all_x)
+            if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3
+            else fp8_e4m3_scales(all_x, scale_block_size)
+        )
+
+    if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
+        assert packed_recv_layout_range is not None
+        validate_expert_major_dispatch(
+            rank=rank,
+            num_ranks=num_ranks,
+            hidden=hidden,
+            num_local_experts=num_local_experts,
+            dispatch_quant=dispatch_quant,
+            dispatch_out=dispatch_out,
+            handle=handle,
+            packed_recv_x=packed_recv_x,
+            packed_recv_count=packed_recv_count,
+            packed_recv_layout_range=packed_recv_layout_range,
+            all_topk_idx=all_topk_idx,
+            all_x=all_x,
+            expected_scales=expected_scales,
+        )
+    else:
+        validate_token_major_dispatch(
+            rank=rank,
+            num_ranks=num_ranks,
+            num_tokens=num_tokens,
+            hidden=hidden,
+            num_topk=num_topk,
+            num_local_experts=num_local_experts,
+            dispatch_quant=dispatch_quant,
+            dispatch_out=dispatch_out,
+            handle=handle,
+            packed_recv_x=packed_recv_x,
+            packed_recv_count=packed_recv_count,
+            all_topk_idx=all_topk_idx,
+            all_topk_weights=all_topk_weights,
+            all_x=all_x,
+            expected_scales=expected_scales,
+            initialize_padding=args.token_major_init_padding,
+            invalid_token_expert_id=invalid_token_expert_id,
+        )
+
+    if rank == 0:
+        print(f"[dispatch] OK (ranks={num_ranks})", flush=True)
+
+    # --- Combine ---
+    # Simulate the downstream GEMM output = identity (bf16 copy) so combine
+    # returns sum(x * weight) across experts.
+    dequantized_x = dequantized_dispatch_tokens(dispatch_out)
+    simulated_gemm_x = simulated_gemm_output(dispatch_out)
+    reference_x = x
+    if dispatch_quant is not None:
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
+            assert packed_recv_layout_range is not None
+            reference_x = reconstruct_expert_major_reference(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                hidden=hidden,
+                num_local_experts=num_local_experts,
+                all_topk_idx=all_topk_idx,
+                packed_recv_layout_range=packed_recv_layout_range,
+                handle=handle,
+                dequantized_x=dequantized_x,
+                group=group,
+            )
+        else:
+            reference_x = reconstruct_token_major_reference(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                hidden=hidden,
+                num_local_experts=num_local_experts,
+                all_topk_idx=all_topk_idx,
+                packed_recv_count=packed_recv_count,
+                handle=handle,
+                dequantized_x=dequantized_x,
+                group=group,
+            )
+    out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
+
+    # Analytical expected: each token i, weighted sum over topk entries that
+    # are not -1. Accumulate in the same top-k order as the kernel; multiplying
+    # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
+    if output_layout == ep.DispatchLayout.TOKEN_MAJOR:
+        expected = expected_token_major_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
+    else:
+        expected = expected_expert_major_output(reference_x, topk_idx, topk_weights)
+    local_diff, _ = validate_combine_output(
+        combined_x,
+        expected,
+        exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+        group=group,
+    )
+    max_exp = expected.float().abs().max().item()
+    print(
+        f"[combine r{rank}] max|got-expected|={local_diff:.4e} max|expected|={max_exp:.4e}",
+        flush=True,
+    )
+
+    if rank == 0:
+        print("PASS", flush=True)
+
+    def _graph_capture(dispatch_buffer, combine_out, expert_output=None):
+        graph = torch.cuda.CUDAGraph()
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
+        with torch.cuda.graph(graph):
+            graph_dout = moe_comm.dispatch(
+                x,
+                topk_idx,
+                topk_weights,
+                output_buffer=dispatch_buffer,
+            )
+            graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+            graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
+        return graph, graph_dout, graph_combined_x
+
+    def _run_cuda_graph_correctness():
+        graph_dispatch_output_buffer = torch.empty_like(dispatch_output_buffer)
+        graph_out = torch.empty_like(out)
+        graph, _, graph_combined_x = _graph_capture(graph_dispatch_output_buffer, graph_out)
+        graph.replay()
+        torch.cuda.synchronize()
+
+        _, graph_diff = validate_combine_output(
+            graph_combined_x,
+            expected,
+            exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+            group=group,
+        )
+        if rank == 0:
+            print(f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}", flush=True)
+
+    if args.cuda_graph:
+        _run_cuda_graph_correctness()
+
+    # ------------------------------------------------------------------
+    # Optional benchmark. In CUDA graph mode, captures dispatch+combine in one
+    # graph; otherwise times dispatch and combine separately. Reports per-iter
+    # latency (max across ranks) and aggregate effective bandwidth.
+    # ------------------------------------------------------------------
+    if not args.bench:
+        return
+
+    warmup = args.bench_warmup
+    iters = args.bench_iters
+    bench_dispatch_output_buffer = torch.empty_like(dispatch_output_buffer)
+
+    def _dispatch():
+        return moe_comm.dispatch(
+            x,
+            topk_idx,
+            topk_weights,
+            output_buffer=bench_dispatch_output_buffer,
+        )
+
+    # Hoist combine's output-tensor allocation out of the timed loop so the
+    # measurement reflects the kernel cost. (The original test also cloned the
+    # ~58 MB dispatch recv buffer on every iter, adding ~20 us of D2D memcpy
+    # to each combine sample and masking kernel-level changes.)
+    bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+
+    def _combine(expert_output, handle_, out_):
+        moe_comm.combine(expert_output, handle_, out=out_)
+
+    def _num_recv_rows(dispatch_output):
+        counts = (
+            dispatch_output.layout.num_tokens_per_expert
+            if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+            else dispatch_output.layout.num_tokens_per_rank
+        )
+        assert counts is not None
+        return int(counts.sum().item())
+
+    if args.cuda_graph:
+        bench_expert_output = None if dispatch_quant is None else simulated_gemm_x
+        e2e_graph, e2e_dout, _ = _graph_capture(bench_dispatch_output_buffer, bench_out, bench_expert_output)
+        for _ in range(warmup):
+            e2e_graph.replay()
+        torch.cuda.synchronize()
+        recv_tokens = _num_recv_rows(e2e_dout[0])
+
+        dist.barrier(group=group)
+        start_ev = torch.cuda.Event(enable_timing=True)
+        end_ev = torch.cuda.Event(enable_timing=True)
+        start_ev.record()
+        for _ in range(iters):
+            e2e_graph.replay()
+        end_ev.record()
+        torch.cuda.synchronize()
+        e2e_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+    else:
+        for _ in range(warmup):
+            warmup_dout = _dispatch()
+            _combine(simulated_gemm_output(warmup_dout[0]), warmup_dout[1], bench_out)
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
+
+        dispatch_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        dispatch_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        dout = None
+        for i in range(iters):
+            dispatch_start_events[i].record()
+            dout = _dispatch()
+            dispatch_end_events[i].record()
+            _combine(simulated_gemm_output(dout[0]), dout[1], bench_out)
+        torch.cuda.synchronize()
+        disp_us = sum(start.elapsed_time(end) for start, end in zip(dispatch_start_events, dispatch_end_events)) * 1e3
+        disp_us /= iters
+        recv_tokens = _num_recv_rows(dout[0])
+
+        dist.barrier(group=group)
+        combine_start_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        combine_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        for i in range(iters):
+            dout = _dispatch()
+            bench_expert_output = simulated_gemm_output(dout[0])
+            combine_start_events[i].record()
+            _combine(bench_expert_output, dout[1], bench_out)
+            combine_end_events[i].record()
+        torch.cuda.synchronize()
+        comb_us = sum(start.elapsed_time(end) for start, end in zip(combine_start_events, combine_end_events)) * 1e3
+        comb_us /= iters
+
+    # Dispatch payload: recv_tokens × hidden data plus optional FP8 scales.
+    # Combine payload: recv_tokens × hidden × bf16 as well -- each local expert
+    # sends one copy per dispatched token back to its owner, so the bytes on
+    # the wire match dispatch. Using num_tokens × hidden here would under-count
+    # the actual send payload by ~num_topk×.
+    dispatch_bytes_per_token = (
+        hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * scale_element_size
+    )
+    disp_bytes = recv_tokens * dispatch_bytes_per_token
+    comb_bytes = recv_tokens * hidden * 2
+
+    if args.cuda_graph:
+        e2e_min_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        e2e_avg_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        e2e_max_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        dist.all_reduce(e2e_min_t, op=dist.ReduceOp.MIN, group=group)
+        dist.all_reduce(e2e_avg_t, op=dist.ReduceOp.SUM, group=group)
+        dist.all_reduce(e2e_max_t, op=dist.ReduceOp.MAX, group=group)
+        e2e_avg_us = e2e_avg_t.item() / num_ranks
+        e2e_bw_per_rank = (disp_bytes + comb_bytes) / (e2e_avg_us * 1e-6) / 1e9
+        if rank == 0:
+            print(
+                f"[bench LL cuda_graph] num_ranks={num_ranks} tokens={num_tokens} hidden={hidden} "
+                f"num_experts={num_experts} num_topk={num_topk} warmup={warmup} iters={iters}",
+                flush=True,
+            )
+            print(
+                f"  dispatch+combine graph: avg={e2e_avg_us:.1f}us "
+                f"min={e2e_min_t.item():.1f}us max={e2e_max_t.item():.1f}us  "
+                f"per_rank_bw={e2e_bw_per_rank:.2f} GB/s  "
+                f"agg_bw={e2e_bw_per_rank * num_ranks:.2f} GB/s  (BW @ avg time)",
+                flush=True,
+            )
+        return
+
+    # Reduce timings: report min/avg/max and base BW on AVG to match NCCL-EP's
+    # `ep_bench.cu` convention.
+    disp_min_t = torch.tensor([disp_us], dtype=torch.float64, device="cuda")
+    disp_avg_t = torch.tensor([disp_us], dtype=torch.float64, device="cuda")
+    disp_max_t = torch.tensor([disp_us], dtype=torch.float64, device="cuda")
+    comb_min_t = torch.tensor([comb_us], dtype=torch.float64, device="cuda")
+    comb_avg_t = torch.tensor([comb_us], dtype=torch.float64, device="cuda")
+    comb_max_t = torch.tensor([comb_us], dtype=torch.float64, device="cuda")
+    dist.all_reduce(disp_min_t, op=dist.ReduceOp.MIN, group=group)
+    dist.all_reduce(disp_avg_t, op=dist.ReduceOp.SUM, group=group)
+    dist.all_reduce(disp_max_t, op=dist.ReduceOp.MAX, group=group)
+    dist.all_reduce(comb_min_t, op=dist.ReduceOp.MIN, group=group)
+    dist.all_reduce(comb_avg_t, op=dist.ReduceOp.SUM, group=group)
+    dist.all_reduce(comb_max_t, op=dist.ReduceOp.MAX, group=group)
+    disp_avg_us = disp_avg_t.item() / num_ranks
+    comb_avg_us = comb_avg_t.item() / num_ranks
+    disp_bw_per_rank = disp_bytes / (disp_avg_us * 1e-6) / 1e9
+    comb_bw_per_rank = comb_bytes / (comb_avg_us * 1e-6) / 1e9
+    if rank == 0:
+        print(
+            f"[bench LL] num_ranks={num_ranks} tokens={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} num_topk={num_topk} warmup={warmup} iters={iters}",
+            flush=True,
+        )
+        print(
+            f"  dispatch: avg={disp_avg_us:.1f}us min={disp_min_t.item():.1f}us max={disp_max_t.item():.1f}us  "
+            f"per_rank_bw={disp_bw_per_rank:.2f} GB/s  "
+            f"agg_bw={disp_bw_per_rank * num_ranks:.2f} GB/s  (BW @ avg time)",
+            flush=True,
+        )
+        print(
+            f"  combine : avg={comb_avg_us:.1f}us min={comb_min_t.item():.1f}us max={comb_max_t.item():.1f}us  "
+            f"per_rank_bw={comb_bw_per_rank:.2f} GB/s  "
+            f"agg_bw={comb_bw_per_rank * num_ranks:.2f} GB/s  (BW @ avg time)",
+            flush=True,
+        )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        # Ordered shutdown: barrier so every rank reaches teardown before the
+        # TCPStore server (rank 0) exits, then destroy the PG. Avoids noisy
+        # "recvValue failed / Connection was likely closed" stack traces from
+        # ProcessGroupNCCL's HeartbeatMonitor.
+        if dist.is_initialized():
+            try:
+                dist.barrier()
+            except Exception:
+                pass
+            try:
+                dist.destroy_process_group()
+            except Exception:
+                pass

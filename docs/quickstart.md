@@ -110,6 +110,8 @@ Python 3.10 or later is required.
 ```bash
 # For NVIDIA platforms (specify your CUDA version)
 $ python -m pip install ".[cuda12]"
+# For NVIDIA platforms with the Expert Parallel (MoE dispatch/combine) extension
+$ python -m pip install ".[cuda12,ep]"
 # For AMD platforms
 $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm7]"
 ```
@@ -127,8 +129,10 @@ Optional extras can be installed by specifying them in brackets. Available extra
 ```bash
 # Example: install with CUDA 12 and benchmark extras
 $ python -m pip install ".[cuda12,benchmark]"
+# Example: install with CUDA 12 and the EP extension
+$ python -m pip install ".[cuda12,ep]"
 # Example: install with all extras for testing on CUDA 12
-$ python -m pip install ".[cuda12,benchmark,test]"
+$ python -m pip install ".[cuda12,ep,benchmark,test]"
 ```
 
 (mrc-support)=
