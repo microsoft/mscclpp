@@ -46,6 +46,15 @@ std::string getIBDeviceName(Transport ibTransport);
 /// @return The InfiniBand transport associated with the specified device name.
 Transport getIBTransportByDeviceName(const std::string& ibDeviceName);
 
+/// Check whether this process can allocate/import CUDA memory with NVIDIA fabric handles
+/// (`CU_MEM_HANDLE_TYPE_FABRIC`). Fabric handles enable cross-node `Transport::CudaIpc` on
+/// MNNVL systems (e.g., GB200 NVL72) when the IMEX service is running. Returns `false` on
+/// hardware/software stacks without MNNVL+IMEX, in which case `Transport::CudaIpc` is
+/// restricted to ranks within the same node.
+///
+/// @return `true` if fabric handles are usable from this process, `false` otherwise.
+bool isFabricMemHandleAvailable();
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_UTILS_HPP_

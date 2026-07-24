@@ -29,6 +29,11 @@ class Fifo {
   /// Remove the head trigger.
   void pop();
 
+  /// Get the current tail position — the FIFO push-return value of the trigger about to be
+  /// (or currently being) processed by the proxy thread. Monotonically increasing.
+  /// @return The current tail position.
+  uint64_t tail() const;
+
   /// Get FIFO size.
   /// @return Number of entries in the FIFO.
   int size() const;

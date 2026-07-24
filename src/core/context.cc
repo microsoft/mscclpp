@@ -4,12 +4,11 @@
 #include "context.hpp"
 
 #include <mscclpp/env.hpp>
-#include <sstream>
 
 #include "api.h"
 #include "connection.hpp"
-#include "debug.h"
 #include "endpoint.hpp"
+#include "logger.hpp"
 #include "registered_memory.hpp"
 
 namespace mscclpp {
@@ -78,19 +77,17 @@ MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
 
 MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint) {
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for local endpoint", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "No GPU device ID provided for local endpoint");
   }
   if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "No GPU device ID provided for remote endpoint");
   }
   auto localTransport = localEndpoint.transport();
   auto remoteTransport = remoteEndpoint.transport();
   if (localTransport != remoteTransport &&
       !(AllIBTransports.has(localTransport) && AllIBTransports.has(remoteTransport))) {
-    std::stringstream ss;
-    ss << "Transport mismatch between local (" << localTransport << ") and remote (" << remoteEndpoint.transport()
-       << ") endpoints";
-    throw Error(ss.str(), ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "Transport mismatch between local (", localTransport, ") and remote (",
+          remoteTransport, ") endpoints");
   }
   std::shared_ptr<BaseConnection> conn;
   if (localTransport == Transport::CudaIpc) {
@@ -100,7 +97,9 @@ MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const
   } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {
-    throw Error("Unsupported transport", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "Unsupported transport: ", localTransport,
+          " (this usually means EndpointConfig.transport was left at Transport::Unknown — "
+          "set it explicitly to CudaIpc, an IB transport, or Ethernet)");
   }
   return Connection(conn);
 }

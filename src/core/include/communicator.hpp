@@ -62,7 +62,7 @@ struct Communicator::Impl {
   std::unordered_map<const BaseConnection*, ConnectionInfo> connectionInfos_;
 
   // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
-  // If the RecvItem gets ready, it will be removed at the next call to getLastRecvItem.
+  // The RecvItem is removed when it finishes or when getLastRecvItem observes that it is ready.
   std::unordered_map<std::pair<int, int>, std::shared_ptr<BaseRecvItem>, PairHash> lastRecvItems_;
 
   // RegisteredMemory items sent to the local rank of each tag. Sending memory to the local rank is
@@ -78,6 +78,9 @@ struct Communicator::Impl {
   // Return the last RecvItem that is not ready.
   // If the item is ready, it will be removed from the map and nullptr will be returned.
   std::shared_ptr<BaseRecvItem> getLastRecvItem(int remoteRank, int tag);
+
+  // Clear the last RecvItem only if it still matches the expected item.
+  void clearLastRecvItemIfMatches(int remoteRank, int tag, const std::shared_ptr<BaseRecvItem>& expectedItem);
 
   struct Connector;
 };

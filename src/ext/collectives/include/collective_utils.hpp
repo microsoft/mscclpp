@@ -32,6 +32,10 @@ constexpr int MAX_NRANKS_PER_NODE = 8;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 
+bool isFp8DataType(DataType dtype);
+bool isNativeFp8DataType(DataType dtype);
+bool isFp8NvlsSupported();
+
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
 

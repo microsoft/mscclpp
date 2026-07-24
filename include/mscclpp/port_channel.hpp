@@ -84,8 +84,12 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
+  // Latest pending TriggerSync FIFO position per connection. Proxy publishes pos+1 to the
+  // connection's gpuFlushDonePos_ when the CQ drains, then erases the entry.
+  std::unordered_map<std::shared_ptr<BaseConnection>, uint64_t> pendingFlushPos_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
+  void progressFlushes();
 };
 
 /// Port channel without specifying source/destination memory regions.

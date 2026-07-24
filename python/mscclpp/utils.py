@@ -99,7 +99,7 @@ class KernelBuilder:
         self._kernel = Kernel(cubin, kernel_name)
         self.kernel_map[kernel_key] = self._kernel
 
-    def _compile_cuda(self, source_file, output_file, std_version="c++17"):
+    def _compile_cuda(self, source_file, output_file, std_version="c++20"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
         if not cp.cuda.runtime.is_hip:

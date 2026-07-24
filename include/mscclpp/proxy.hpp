@@ -20,8 +20,9 @@ enum class ProxyHandlerResult {
 };
 
 class Proxy;
+class ProxyService;
 
-/// Handler function type for proxy.
+/// Handler function type for proxy. Called once per ready FIFO trigger.
 using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
 /// Host-side proxy for PortChannels.
@@ -54,6 +55,7 @@ class Proxy {
   std::shared_ptr<Fifo> fifo();
 
  private:
+  friend class ProxyService;
   struct Impl;
   std::unique_ptr<Impl> pimpl_;
 };

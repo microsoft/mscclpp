@@ -11,6 +11,7 @@
 #   --hostfile    Override hostfile path (default: test/deploy/hostfile_ci)
 #   --host        Run command on a single host (uses parallel-ssh -H)
 #   --user        SSH user when using --host or custom hostfile
+#   --container   Docker container name to exec into (default: mscclpp-test)
 
 set -e
 
@@ -23,9 +24,10 @@ USE_DOCKER=true
 USE_LOG=true
 TARGET_HOST=""
 REMOTE_USER=""
+CONTAINER_NAME="mscclpp-test"
 
 usage() {
-    echo "Usage: $0 [--no-docker] [--no-log] [--hostfile <path>] [--host <name>] [--user <name>] < <command_script>" >&2
+    echo "Usage: $0 [--no-docker] [--no-log] [--hostfile <path>] [--host <name>] [--user <name>] [--container <name>] < <command_script>" >&2
 }
 
 require_value() {
@@ -54,6 +56,11 @@ while [[ "$1" == --* ]]; do
         --user)
             require_value "--user" "${2-}"
             REMOTE_USER="$2"
+            shift 2
+            ;;
+        --container)
+            require_value "--container" "${2-}"
+            CONTAINER_NAME="$2"
             shift 2
             ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -103,7 +110,7 @@ if $USE_DOCKER; then
     INNER+=" rm -f \\\"\\\$TMP\\\""
 
     parallel-ssh -i "${PSSH_COMMON[@]}" \
-        "sudo docker exec mscclpp-test bash -c \"${INNER}\""
+        "sudo docker exec ${CONTAINER_NAME} bash -c \"${INNER}\""
 else
     parallel-ssh -i "${PSSH_COMMON[@]}" \
         "set -euxo pipefail; CMD_B64='${CMD_B64}'; TMP=\$(mktemp); printf '%s' \"\$CMD_B64\" | base64 -d > \"\$TMP\"; bash -euxo pipefail \"\$TMP\"; rm -f \"\$TMP\""

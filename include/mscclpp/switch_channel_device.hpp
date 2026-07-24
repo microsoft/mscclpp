@@ -37,7 +37,11 @@ struct SwitchChannelDeviceHandle {
     SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
   }
 
-  template <typename VectorType>
+  /// Vectorized multimem load+reduce. The optional `AccumT` template parameter selects the
+  /// accumulator: when `AccumT == __half` and `VectorType` is an FP8 vector type, the
+  /// `.acc::f16` variant of the instruction is used (faster but lower precision than the
+  /// default FP32 accumulator). For all other types `AccumT` is ignored.
+  template <typename VectorType, typename AccumT = void>
   MSCCLPP_DEVICE_INLINE static VectorType multimemLoadReduce(VectorType* ptr) {
     VectorType val;
     if constexpr (std::is_same_v<VectorType, i32x1>) {
@@ -81,29 +85,71 @@ struct SwitchChannelDeviceHandle {
           : "l"(ptr)
           : "memory");
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.e4m3x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.e4m3x4 %0, [%1];"
+            : "=r"(val.words[0])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.e4m3x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+      }
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e4m3x4 {%0,%1}, [%2];"
-          : "=r"(val.words[0]), "=r"(val.words[1])
-          : "l"(ptr)
-          : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.v2.e4m3x4 {%0,%1}, [%2];"
+            : "=r"(val.words[0]), "=r"(val.words[1])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e4m3x4 {%0,%1}, [%2];"
+            : "=r"(val.words[0]), "=r"(val.words[1])
+            : "l"(ptr)
+            : "memory");
+      }
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x16>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e4m3x4 {%0,%1,%2,%3}, [%4];"
-          : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
-          : "l"(ptr)
-          : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.v4.e4m3x4 {%0,%1,%2,%3}, [%4];"
+            : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e4m3x4 {%0,%1,%2,%3}, [%4];"
+            : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+            : "l"(ptr)
+            : "memory");
+      }
     } else if constexpr (std::is_same_v<VectorType, f8_e5m2x4>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.e5m2x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.e5m2x4 %0, [%1];"
+            : "=r"(val.words[0])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.e5m2x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+      }
     } else if constexpr (std::is_same_v<VectorType, f8_e5m2x8>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e5m2x4 {%0,%1}, [%2];"
-          : "=r"(val.words[0]), "=r"(val.words[1])
-          : "l"(ptr)
-          : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.v2.e5m2x4 {%0,%1}, [%2];"
+            : "=r"(val.words[0]), "=r"(val.words[1])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e5m2x4 {%0,%1}, [%2];"
+            : "=r"(val.words[0]), "=r"(val.words[1])
+            : "l"(ptr)
+            : "memory");
+      }
     } else if constexpr (std::is_same_v<VectorType, f8_e5m2x16>) {
-      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e5m2x4 {%0,%1,%2,%3}, [%4];"
-          : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
-          : "l"(ptr)
-          : "memory");
+      if constexpr (std::is_same_v<AccumT, __half>) {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.v4.e5m2x4 {%0,%1,%2,%3}, [%4];"
+            : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+            : "l"(ptr)
+            : "memory");
+      } else {
+        asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e5m2x4 {%0,%1,%2,%3}, [%4];"
+            : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+            : "l"(ptr)
+            : "memory");
+      }
     } else {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }

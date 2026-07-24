@@ -13,6 +13,7 @@ target_include_directories(mscclpp_nccl PRIVATE
     include 
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
+    ${PROJECT_SOURCE_DIR}/src/ext/collectives/include
     ${GPU_INCLUDE_DIRS}
 )
 target_link_libraries(mscclpp_nccl PUBLIC mscclpp mscclpp_collectives)

@@ -37,6 +37,7 @@ int64_t busIdToInt64(const std::string busId);
 uint64_t getHash(const char* string, int n);
 uint64_t getHostHash();
 uint64_t getPidHash();
+uint64_t getIpcDomainHash();
 void getRandomData(void* buffer, size_t bytes);
 
 struct netIf {

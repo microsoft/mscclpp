@@ -167,7 +167,7 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# FP8 E4M3B15 helpers (bias=15, encode saturates to ±1.75, no NaN)
+# FP8 E4M3B15 helpers (bias=15, float source saturates to ±1.875, no NaN)
 # Matches Triton's fp8e4b15: all 256 bit patterns are finite.
 # ---------------------------------------------------------------------------
 
@@ -193,7 +193,7 @@ def float_to_e4m3b15(f32_array, chunk_size=65536):
     """Encode a cupy float32 array to uint8 E4M3B15 bit patterns.
 
     Same lookup-table approach as float_to_e4m3fn.
-    Saturates to ±1.75 (0x7e/0xfe), matching Triton's fp8e4b15.
+    Saturates to ±1.875 (0x7f/0xff), matching the device float32 → e4m3b15 path.
     """
     # Build lookup table of all 128 positive E4M3B15 values (0x00..0x7F)
     all_bytes = cp.arange(128, dtype=cp.uint8)
@@ -203,7 +203,7 @@ def float_to_e4m3b15(f32_array, chunk_size=65536):
     values = f32_array.astype(cp.float32)
     signs = cp.signbit(values).astype(cp.uint8)
     absval = cp.abs(values)
-    absval = cp.clip(absval, cp.float32(0.0), cp.float32(1.75))
+    absval = cp.clip(absval, cp.float32(0.0), cp.float32(1.875))
 
     result = cp.zeros(absval.shape, dtype=cp.uint8)
     n = absval.size
@@ -442,8 +442,8 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             bits_r = cp.asarray(rng_r.randint(0, 256, (size,)).astype(np.uint8))
             ref_f32 += e4m3b15_to_float(bits_r)
 
-        # Clamp reference to e4m3b15 representable range
-        ref_f32 = cp.clip(ref_f32, -1.75, 1.75)
+        # Clamp reference to e4m3b15 representable range (float source saturates at ±1.875)
+        ref_f32 = cp.clip(ref_f32, -1.875, 1.875)
 
         # Compute errors
         abs_err = cp.abs(result_f32 - ref_f32)

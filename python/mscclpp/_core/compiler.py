@@ -198,7 +198,7 @@ class NativeCodeCompiler:
         self._is_hip = cp.cuda.runtime.is_hip
         self._device_arch = get_device_arch()
         self._compiler = self._get_compiler()
-        self._default_options = ["-std=c++17", "-O3", "--shared"]
+        self._default_options = ["-std=c++20", "-O3", "--shared"]
         python_include = sysconfig.get_path("include")
         pybind11_include = pybind11.get_include()
         self._default_options += [f"-I{python_include}", f"-I{pybind11_include}"]

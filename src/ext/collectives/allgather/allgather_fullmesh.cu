@@ -8,6 +8,11 @@
 namespace mscclpp {
 namespace collective {
 
+namespace {
+constexpr int kMaxBlocks = 56;
+constexpr int kMaxThreadsPerBlock = 1024;
+}  // namespace
+
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
@@ -116,12 +121,19 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
   int rank = ctx->rank;
   const size_t nElem = inputSize / sizeof(int);
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
-  if (numBlocksAndThreads.first > 56) {
-    WARN("AllgatherFullmesh: number of blocks exceeds maximum supported blocks, which is 56");
-    return mscclpp::CommResult::CommInvalidArgument;
-  }
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {56, 1024};
+    numBlocksAndThreads = {kMaxBlocks, kMaxThreadsPerBlock};
+  }
+  if (numBlocksAndThreads.first > kMaxBlocks || numBlocksAndThreads.second > kMaxThreadsPerBlock) {
+    WARN(
+        "AllgatherFullmesh: number of blocks must be no more than %d and threads per block must be no more than %d; "
+        "got nBlocks=%d, nThreadsPerBlock=%d",
+        kMaxBlocks, kMaxThreadsPerBlock, numBlocksAndThreads.first, numBlocksAndThreads.second);
+    return CommResult::CommInvalidArgument;
+  }
+  if (numBlocksAndThreads.second % WARP_SIZE != 0) {
+    WARN("AllgatherFullmesh: threads per block must be a multiple of warp size %d", WARP_SIZE);
+    return CommResult::CommInvalidArgument;
   }
   if ((char*)input == (char*)output + rank * inputSize) {
     allgatherFullmesh<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
@@ -142,15 +154,13 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
 
 std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm, const void* input,
                                                               void*, size_t inputSize, DataType) {
-  constexpr int nChannelsPerConnection = 56;
-
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
-  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
+  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, kMaxBlocks);
 
   // register the memory for the broadcast operation
   RegisteredMemory localMemory = comm->registerMemory((void*)input, inputSize, Transport::CudaIpc);
@@ -159,7 +169,7 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
 
   // setup channels
   ctx->memoryChannels =
-      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection);
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, kMaxBlocks);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference

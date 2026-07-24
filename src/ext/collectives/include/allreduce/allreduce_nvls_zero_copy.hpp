@@ -36,6 +36,7 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsOutConnections_;
   int computeCapabilityMajor_{0};
+  bool fp8NvlsSupported_{false};
 };
 
 }  // namespace collective

@@ -15,7 +15,7 @@ steps:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
     gpuArch:          ${{ parameters.gpuArch }}
-    deployArgs:       'single-node-test'
+    deployArgs:       'single-node-test true cuda'
 
 - template: run-remote-task.yml
   parameters:

@@ -13,7 +13,7 @@ steps:
     vmssName:         ${{ parameters.vmssName }}
     gpuArch:          ${{ parameters.gpuArch }}
     cmakeArgs:        '-DMSCCLPP_USE_IB=OFF'
-    deployArgs:       'single-node-test false'
+    deployArgs:       'single-node-test false cuda'
 
 - template: run-remote-task.yml
   parameters:

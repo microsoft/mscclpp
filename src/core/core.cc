@@ -75,7 +75,7 @@ MSCCLPP_API_CPP bool TransportFlags::operator==(TransportFlags other) const {
 }
 
 MSCCLPP_API_CPP bool TransportFlags::operator!=(TransportFlags other) const {
-  return detail::TransportFlagsBase::operator!=(other);
+  return !detail::TransportFlagsBase::operator==(other);
 }
 
 MSCCLPP_API_CPP detail::TransportFlagsBase TransportFlags::toBitset() const { return *this; }
