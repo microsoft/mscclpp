@@ -35,6 +35,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
+    # Received-token layout: expert-major (default) or rank-major. RANK_MAJOR LL
+    # requires RANK_LOCAL_REDUCE combine (each rank's tokens grouped contiguously,
+    # then reduced locally). Uses the merged binyli/ep rank-major LL kernels.
+    use_rank_major = args.ep_layout == "rank_major"
+    output_layout = ep.DispatchLayout.RANK_MAJOR if use_rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    if use_rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise SystemExit("mscclpp --ep-layout rank_major requires --combine-mode rank_local_reduce")
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
@@ -46,28 +53,31 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
         low_latency_combine_mode=combine_mode,
+        output_layout=output_layout,
         quant=dispatch_quant,
     )
     assert moe_comm.is_available()
     if rank == 0:
         print(
             f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
-            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} "
+            f"ep_layout={'rank_major' if use_rank_major else 'expert_major'} cuda_graph={args.cuda_graph}",
             flush=True,
         )
-        if args.ep_layout == "rank_major":
-            print(
-                "[cfg] mscclpp ep_layout=rank_major requested but unsupported: LOW_LATENCY mode is "
-                "expert-major only ([num_local_experts, ...]); keeping expert_major "
-                "(rank/token-major is a HIGH_THROUGHPUT-mode feature)",
-                flush=True,
-            )
 
     # Hoist output tensors out of the timed loop (the communicator owns its
-    # src_info/layout_range/count buffers internally).
-    output_buffer = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
-    )
+    # src_info/layout_range/count buffers internally). EXPERT_MAJOR supplies its
+    # dispatch output buffer; RANK_MAJOR uses the runtime-owned expert-output buffer
+    # (output_buffer=None) and feeds that buffer straight into combine.
+    if use_rank_major:
+        output_buffer = None
+        expert_output = moe_comm.get_expert_output_buffer()
+        expert_output.zero_()
+    else:
+        output_buffer = torch.empty(
+            (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
+        )
+        expert_output = None
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _dispatch():
@@ -75,14 +85,17 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
     def _combine(dispatch_out, handle):
-        # Feed BF16 expert output (identity for BF16, dequantized for FP8) into combine.
-        moe_comm.combine(simulated_gemm_output(dispatch_out), handle, out=out)
+        # RANK_MAJOR: feed the runtime rank-major expert-output buffer directly.
+        # EXPERT_MAJOR: feed BF16 expert output (identity for BF16, dequantized for FP8).
+        combine_in = expert_output if use_rank_major else simulated_gemm_output(dispatch_out)
+        moe_comm.combine(combine_in, handle, out=out)
 
     # Optional one-time correctness check (mirrors test_low_latency_multirank).
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
-        moe_comm.combine(simulated_gemm_output(v_dispatch_out), v_handle, out=v_out)
+        v_combine_in = expert_output if use_rank_major else simulated_gemm_output(v_dispatch_out)
+        moe_comm.combine(v_combine_in, v_handle, out=v_out)
         torch.cuda.synchronize()
         if dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
@@ -117,7 +130,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
         g_combine = torch.cuda.CUDAGraph()
         with torch.cuda.graph(g_combine):
-            moe_comm.combine(simulated_gemm_output(g_dispatch_out), g_handle, out=out)
+            g_combine_in = expert_output if use_rank_major else simulated_gemm_output(g_dispatch_out)
+            moe_comm.combine(g_combine_in, g_handle, out=out)
         state["graphs"] = (g_dispatch, g_combine)
 
         def dispatch_fn():
