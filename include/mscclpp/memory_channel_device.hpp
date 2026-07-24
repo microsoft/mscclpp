@@ -11,6 +11,77 @@
 
 namespace mscclpp {
 
+/// Opaque completion tracker for bulk loads through a MemoryChannel.
+///
+/// A bulk load stages a remote region into shared memory asynchronously; a BulkLoad records when the
+/// staged data has landed. The barrier word, expected-byte accounting, and completion phase are all
+/// internal state -- callers never touch mbarrier parity or transaction-byte totals. It must live in
+/// shared memory (static `__shared__` or dynamic `extern __shared__`) and is driven leader-only
+/// (from a single issuing thread). A BulkLoad may be reused across successive batches of loads:
+/// wait() leaves it ready for the next batch without a further reset(). Typical use:
+///
+///   __shared__ mscclpp::BulkScratch<TILE, N> s;              // N tiles + one BulkLoad
+///   if (threadIdx.x == 0) {
+///     s.load.reset();                                        // prepare once (reusable)
+///     for (c = 0; c < N; ++c) chan[c].getBulk(s.tile(c), s.load, off, bytes);
+///     s.load.wait();                                         // arm + wait + fence (leader)
+///   }
+///   __syncthreads();                                         // publish tiles to the block
+///   // read s.tile(c) ...
+struct BulkLoad {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  /// Prepare for a first batch of loads (leader-only). Call once before issuing getBulk() loads.
+  MSCCLPP_DEVICE_INLINE void reset() {
+    detail::mbarInit(&bar_, 1);
+    expectedBytes_ = 0;
+    phase_ = 0;
+  }
+
+  /// Wait until every getBulk() load tracked by this object has landed, then make the staged data
+  /// visible to the calling thread. Leader-only; follow with __syncthreads() before other threads
+  /// read the tiles. Leaves the object ready to track the next batch of getBulk() loads (no reset
+  /// needed). On architectures without bulk-load support this returns immediately.
+  MSCCLPP_DEVICE_INLINE void wait() {
+    detail::mbarExpectTx(&bar_, expectedBytes_);
+    detail::mbarWait(&bar_, phase_ & 1u);
+    detail::asyncProxyFence();
+    phase_ ^= 1u;
+    expectedBytes_ = 0;
+  }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
+
+ private:
+  friend struct MemoryChannelDeviceHandle;
+
+  alignas(8) uint64_t bar_;  ///< Completion barrier word.
+  uint32_t expectedBytes_;   ///< Bytes accumulated across getBulk() loads.
+  uint32_t phase_;           ///< Completion phase, flipped by wait() on reuse.
+
+#if defined(MSCCLPP_DEVICE_CUDA)
+  /// Accumulate expected transaction bytes for one issued load. Called by getBulk().
+  MSCCLPP_DEVICE_INLINE void addExpectedBytes(uint32_t bytes) { expectedBytes_ += bytes; }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
+};
+
+/// Caller-allocated shared-memory scratch for bulk loads through a MemoryChannel.
+///
+/// Bundles @p N staging tiles (each 128-byte aligned, as bulk loads require) and one BulkLoad that
+/// tracks their shared completion, so a multi-source gather into one barrier -- the primary use case
+/// -- can declare a single object instead of hand-rolling aligned tiles plus a barrier. It must live
+/// in shared memory (static `__shared__` or dynamic `extern __shared__`); when multiple blocks/warps
+/// issue bulk loads concurrently, each needs its own instance.
+///
+/// @tparam TILE Shared-memory tile size in bytes (staging granularity).
+/// @tparam N Number of tiles sharing the one completion object (one per gather source).
+template <uint32_t TILE = 16384, uint32_t N = 1>
+struct alignas(128) BulkScratch {
+  uint8_t tiles[N][TILE];
+  BulkLoad load;
+
+  /// Pointer to staging tile @p i (default 0).
+  MSCCLPP_HOST_DEVICE_INLINE void* tile(uint32_t i = 0) { return tiles[i]; }
+};
+
 /// Device-side handle of a MemoryChannel without specific source and destination.
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
@@ -220,6 +291,40 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
       uint32_t flag) {
     unpackPackets<PacketType>(targetOffset, originOffset, originBytes, threadId, numThreads, flag, 100000000);
   }
+
+#if defined(MSCCLPP_DEVICE_CUDA)
+  // ----------------------------------------------------------------------------------------------
+  // Bulk load through the channel (NVIDIA sm_90+; a no-op on unsupported architectures).
+  //
+  // The channel is the interface: getBulk() issues a bulk load from this channel's remote endpoint
+  // (dst_) into a caller-owned shared-memory tile, and a BulkLoad object drives its completion (see
+  // BulkLoad for the worked reset/getBulk/wait pattern). Names and behavior are architecture-neutral
+  // (the async-copy-engine implementation lives in detail). To gather from multiple sources, issue
+  // getBulk() from several channels (or several offsets of one channel) against ONE BulkLoad, then
+  // wait() once. Mirrors how SwitchChannel exposes a device engine through the channel handle.
+  //
+  // On architectures without bulk-load support (see bulkSupported()), getBulk() stages nothing and
+  // wait() returns immediately; guard use with bulkSupported() to avoid reading uninitialized
+  // tiles. Bulk loads are CUDA-only. Transaction sizes are 32-bit, so a single load is limited to
+  // 4 GiB (@p originBytes is uint32_t).
+  // ----------------------------------------------------------------------------------------------
+
+  /// True on device targets where channel bulk loads are supported. Architecture-neutral capability
+  /// query -- prefer this over inspecting compute capability directly.
+  MSCCLPP_DEVICE_INLINE static constexpr bool bulkSupported() { return detail::bulkLoadAvailable(); }
+
+  /// Issue a bulk load: remote memory (dst_) region -> local shared-memory tile. Asynchronous,
+  /// leader-only, shared-memory-staging counterpart of get(): issue-only, with the load accumulated
+  /// into @p load, whose wait() drives completion. A no-op where bulkSupported() is false.
+  /// @param targetTile Destination shared-memory tile (128-byte aligned; use BulkScratch::tile()).
+  /// @param load Completion tracker shared by the loads in this batch (see BulkLoad).
+  /// @param originOffset Byte offset into dst_. Should be 16-byte aligned.
+  /// @param originBytes Bytes to load. Should be a multiple of 16.
+  MSCCLPP_DEVICE_INLINE void getBulk(void* targetTile, BulkLoad& load, uint64_t originOffset, uint32_t originBytes) {
+    detail::tmaLoad(targetTile, reinterpret_cast<char*>(dst_) + originOffset, originBytes, &load.bar_);
+    load.addExpectedBytes(originBytes);
+  }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 

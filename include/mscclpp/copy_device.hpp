@@ -231,6 +231,106 @@ MSCCLPP_DEVICE_INLINE void copyFromPackets<LL8Packet>(void* originPtr, const voi
   }
 }
 
+// ------------------------------------------------------------------------------------------------
+// Internal TMA (Tensor Memory Accelerator) bulk-load helpers (NVIDIA sm_90+).
+//
+// These live in `detail` and are NOT user-facing: TMA is NVIDIA-specific, so the public API exposes
+// bulk loads only through channel methods with architecture-neutral names (e.g.
+// MemoryChannelDeviceHandle::getBulk plus the mscclpp::BulkLoad completion object). These
+// helpers offload contiguous global->shared loads to the async copy engine via `cp.async.bulk`,
+// with completion tracked by a caller-owned mbarrier, so they compose into multi-source gathers and
+// multi-stage pipelines.
+//
+// Availability: NVIDIA sm_90+ (Hopper and newer). On other targets the helpers are no-ops.
+// All are leader-only: call from a single thread (e.g. one lane per warp).
+// ------------------------------------------------------------------------------------------------
+
+// True on device compilation targets where `cp.async.bulk` is available (NVIDIA sm_90+). Internal
+// only: this token names a hardware feature, so it must never escape `detail` into user code. It is
+// #undef-ed at the end of the internal region below.
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+#define MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE 1
+#else
+#define MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE 0
+#endif
+
+namespace detail {
+
+#if defined(MSCCLPP_DEVICE_CUDA)
+
+/// Initialize a shared-memory mbarrier with the given arrival count.
+MSCCLPP_DEVICE_INLINE void mbarInit(uint64_t* mbar, uint32_t count) {
+#if MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+  uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar));
+  asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;" ::"r"(addr), "r"(count));
+#else
+  (void)mbar;
+  (void)count;
+#endif
+}
+
+/// Arm the mbarrier to expect @p bytes of asynchronous transaction bytes.
+MSCCLPP_DEVICE_INLINE void mbarExpectTx(uint64_t* mbar, uint32_t bytes) {
+#if MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+  uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar));
+  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" ::"r"(addr), "r"(bytes));
+#else
+  (void)mbar;
+  (void)bytes;
+#endif
+}
+
+/// Issue an async bulk load: global (@p gptr) -> shared (@p smem), completion tracked by @p mbar.
+MSCCLPP_DEVICE_INLINE void tmaLoad(void* smem, const void* gptr, uint32_t bytes, uint64_t* mbar) {
+#if MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+  uint32_t smemAddr = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+  uint32_t mbarAddr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar));
+  asm volatile(
+      "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(smemAddr),
+      "l"(gptr), "r"(bytes), "r"(mbarAddr)
+      : "memory");
+#else
+  (void)smem;
+  (void)gptr;
+  (void)bytes;
+  (void)mbar;
+#endif
+}
+
+/// Spin until the mbarrier reaches the given @p phase (0/1 parity).
+MSCCLPP_DEVICE_INLINE void mbarWait(uint64_t* mbar, uint32_t phase) {
+#if MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+  uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar));
+  uint32_t done = 0;
+  do {
+    asm volatile("{.reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2; selp.u32 %0, 1, 0, p;}"
+                 : "=r"(done)
+                 : "r"(addr), "r"(phase));
+  } while (!done);
+#else
+  (void)mbar;
+  (void)phase;
+#endif
+}
+
+/// Fence so that data delivered by an async (TMA) proxy into shared memory becomes visible to
+/// subsequent generic shared-memory reads by the calling thread.
+MSCCLPP_DEVICE_INLINE void asyncProxyFence() {
+#if MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+#endif
+}
+
+/// Single source of truth for bulk-load availability on the current device target. The channel
+/// handle's bulkSupported() forwards here so the sm_90 threshold lives in exactly one place.
+MSCCLPP_DEVICE_INLINE constexpr bool bulkLoadAvailable() { return MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE; }
+
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
+
+#undef MSCCLPP_DETAIL_BULK_LOAD_AVAILABLE
+
+}  // namespace detail
+
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 }  // namespace mscclpp
