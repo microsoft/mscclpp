@@ -3,7 +3,7 @@
 #
 # Standalone build for:
 #   - mscclpp_ep_bench: pure-C++/MPI low-latency EP benchmark.
-#   - cupti_kernel_timer: optional in-process timer used by ep_bench_ll.py.
+#   - cupti_kernel_timer: optional in-process timer used by the LL benchmarks.
 #
 # Example:
 #   cmake -S test/python/ep -B test/python/ep/build \
