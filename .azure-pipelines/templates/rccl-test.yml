@@ -32,30 +32,44 @@ steps:
     name: InstallRcclTests
     displayName: Install RCCL Tests
     remoteScript: |
+      LATEST_TAG=$(curl -fsSL https://api.github.com/repos/ROCm/rocm-systems/releases/latest | grep tag_name | cut -d\" -f4)
+      if [ -z "$LATEST_TAG" ]; then
+        echo "Failed to fetch latest ROCm Systems tag"
+        exit 1
+      fi
       cd
-      git clone --filter=blob:none --no-checkout https://github.com/ROCm/rocm-systems.git
+      git clone --filter=blob:none --no-checkout --branch $LATEST_TAG https://github.com/ROCm/rocm-systems.git
       cd rocm-systems
       git sparse-checkout init --cone
       git sparse-checkout set projects/rccl-tests
       git checkout
       cd projects/rccl-tests
-      MPI=1 MPI_HOME=/usr/local/mpi make -j
+      GPU_TARGETS=${{ parameters.gpuArch }} MPI=1 MPI_HOME=/usr/local/mpi make -j64
 
 - template: run-remote-task.yml
   parameters:
     name: RunRcclAllGatherTest
     displayName: Run RCCL AllGather Test with or without MSCCLPP Lib
     remoteScript: |
-      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
-      mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
 
 - template: run-remote-task.yml
   parameters:
     name: RunRcclAllReduceTest
     displayName: Run RCCL AllReduce Test with or without MSCCLPP Lib
     remoteScript: |
-      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
-      mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: run-remote-task.yml
+  parameters:
+    name: PyBench
+    displayName: Run Collective Benchmarks
+    remoteScript: |
+      mpirun --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float8_e4m3b15 --accum-type float32 --autotune
+      mpirun --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float8_e4m3fnuz --accum-type float32 --autotune
+      mpirun --allow-run-as-root -x HSA_NO_SCRATCH_RECLAIM=1 -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float8_e4m3b15 --autotune --buffer-mode out-of-place
 
 - template: stop.yml
   parameters:

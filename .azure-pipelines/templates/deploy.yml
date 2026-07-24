@@ -32,6 +32,12 @@ parameters:
 - name: deployArgs
   type: string
   default: ''
+- name: containerName
+  type: string
+  default: 'mscclpp-test'
+- name: sglangImage
+  type: string
+  default: ''
 
 steps:
 # 0. Ensure Azure CLI exists before running AzureCLI@2 tasks.
@@ -86,7 +92,7 @@ steps:
           ${GPU_ARCH_ARG} \
           ${CMAKE_EXTRA_ARGS} ..
       fi
-      make -j
+      make -j16
       cd ..
       pwd > build/BUILD_PREFIX
       echo "=== Build artifacts ==="
@@ -147,5 +153,5 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: ${{ parameters.deployArgs }}
+    arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }} ${{ parameters.sglangImage }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'

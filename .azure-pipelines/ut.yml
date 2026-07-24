@@ -34,10 +34,10 @@ jobs:
     name: msccl-ci
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -55,10 +55,10 @@ jobs:
     name: msccl-ci
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -71,13 +71,15 @@ jobs:
       gpuArch:          '80'
 
 - job: UnitTestH100
-  timeoutInMinutes: 40
+  timeoutInMinutes: 60
   pool:
     name: msccl-ci-h100
   strategy:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -97,6 +99,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -118,6 +122,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -137,6 +143,9 @@ jobs:
     matrix:
       rocm6_2:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+      # Disabled, waiting for the bug fix for ROCm 7.2.
+      # rocm7_2:
+      #   containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm7.2
 
   container:
     image: $(containerImage)
@@ -159,6 +168,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
