@@ -19,6 +19,12 @@
 #define GPU_PAGE_MASK (~(GPU_PAGE_SIZE - 1))
 #endif
 
+// mscclpp's GDRCopy path uses gdr_pin_buffer_v2, which was added to the gdrdrv kernel module
+// in 2.5. Older modules return ENOTTY for the v2 ioctl, surfacing as a confusing "ret=25"
+// failure deep inside GdrMap. Refuse early with a clear status when the loaded module is older.
+#define MSCCLPP_GDRDRV_MIN_MAJOR 2
+#define MSCCLPP_GDRDRV_MIN_MINOR 5
+
 namespace mscclpp {
 
 // GdrContext
@@ -33,10 +39,14 @@ class GdrContext {
 
   GdrStatus status() const { return status_; }
   gdr_t handle() const { return handle_; }
+  int driverMajor() const { return driverMajor_; }
+  int driverMinor() const { return driverMinor_; }
 
  private:
   GdrStatus status_;
   gdr_t handle_;
+  int driverMajor_;
+  int driverMinor_;
 };
 
 static std::shared_ptr<GdrContext> gdrContext() {
@@ -49,7 +59,8 @@ GdrStatus gdrStatus() { return gdrContext()->status(); }
 bool gdrEnabled() { return gdrStatus() == GdrStatus::Ok; }
 
 std::string gdrStatusMessage() {
-  switch (gdrStatus()) {
+  auto ctx = gdrContext();
+  switch (ctx->status()) {
     case GdrStatus::Ok:
       return "GDRCopy initialized successfully";
     case GdrStatus::NotBuilt:
@@ -60,12 +71,16 @@ std::string gdrStatusMessage() {
       return "GDRCopy kernel driver is not loaded (/dev/gdrdrv not found)";
     case GdrStatus::OpenFailed:
       return "gdr_open() failed; GDRCopy driver may be misconfigured";
+    case GdrStatus::KernelTooOld:
+      return "gdrdrv kernel module " + std::to_string(ctx->driverMajor()) + "." + std::to_string(ctx->driverMinor()) +
+             " is older than the required minimum (" + std::to_string(MSCCLPP_GDRDRV_MIN_MAJOR) + "." +
+             std::to_string(MSCCLPP_GDRDRV_MIN_MINOR) + "); reinstall gdrcopy (e.g. v2.5.2) on the host";
     default:
       return "unknown GDRCopy status";
   }
 }
 
-GdrContext::GdrContext() : status_(GdrStatus::Disabled), handle_(nullptr) {
+GdrContext::GdrContext() : status_(GdrStatus::Disabled), handle_(nullptr), driverMajor_(0), driverMinor_(0) {
   if (env()->forceDisableGdr) {
     INFO(GPU, "GDRCopy disabled via MSCCLPP_FORCE_DISABLE_GDR");
     status_ = GdrStatus::Disabled;
@@ -86,8 +101,29 @@ GdrContext::GdrContext() : status_(GdrStatus::Disabled), handle_(nullptr) {
     return;
   }
 
+  // Reject kernel modules older than the minimum required for gdr_pin_buffer_v2.
+  // Without this, GdrMap would later fail deep inside the v2 ioctl with ENOTTY (ret=25).
+  if (gdr_driver_get_version(handle_, &driverMajor_, &driverMinor_) != 0) {
+    INFO(GPU, "gdr_driver_get_version() failed; cannot verify kernel module version, disabling GDRCopy");
+    gdr_close(handle_);
+    handle_ = nullptr;
+    status_ = GdrStatus::KernelTooOld;
+    return;
+  }
+  if (driverMajor_ < MSCCLPP_GDRDRV_MIN_MAJOR ||
+      (driverMajor_ == MSCCLPP_GDRDRV_MIN_MAJOR && driverMinor_ < MSCCLPP_GDRDRV_MIN_MINOR)) {
+    WARN(GPU, "gdrdrv kernel module ", driverMajor_, ".", driverMinor_, " predates the v2 pin-buffer ioctl (need ",
+         MSCCLPP_GDRDRV_MIN_MAJOR, ".", MSCCLPP_GDRDRV_MIN_MINOR, "+); disabling GDRCopy");
+    gdr_close(handle_);
+    handle_ = nullptr;
+    status_ = GdrStatus::KernelTooOld;
+    return;
+  }
+
+  int libMajor = 0, libMinor = 0;
+  gdr_runtime_get_version(&libMajor, &libMinor);
   status_ = GdrStatus::Ok;
-  INFO(GPU, "GDRCopy initialized successfully");
+  INFO(GPU, "GDRCopy initialized: libgdrapi ", libMajor, ".", libMinor, ", gdrdrv ", driverMajor_, ".", driverMinor_);
 }
 
 GdrContext::~GdrContext() {
@@ -134,8 +170,13 @@ GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId) : pimpl_(std::make_un
   if (ret != 0) {
     ret = gdr_pin_buffer_v2(pimpl_->ctx->handle(), alignedAddr, pimpl_->mappedSize, 0, &pimpl_->mh);
     if (ret != 0) {
+      // ENOTTY (25) here means the loaded gdrdrv kernel module doesn't recognise the v2 ioctl
+      // — GdrContext's version gate normally catches that earlier, so reaching here implies
+      // a real allocator or driver problem.
       THROW(GPU, Error, ErrorCode::InternalError, "gdr_pin_buffer_v2 failed (ret=", ret, ") for addr ", (void*)gpuAddr,
-            ". Ensure the GPU memory is allocated with cudaMalloc (not cuMemCreate/cuMemMap).");
+            "; gdrdrv ", pimpl_->ctx->driverMajor(), ".", pimpl_->ctx->driverMinor(),
+            ". If ret==25 (ENOTTY), the kernel module is too old; otherwise ensure the GPU memory is "
+            "allocated with cudaMalloc (not cuMemCreate/cuMemMap).");
     }
   }
 

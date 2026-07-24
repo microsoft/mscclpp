@@ -17,7 +17,7 @@ TEST(GdrStatusTest, StatusIsValid) {
   auto status = mscclpp::gdrStatus();
   ASSERT_TRUE(status == mscclpp::GdrStatus::Ok || status == mscclpp::GdrStatus::NotBuilt ||
               status == mscclpp::GdrStatus::Disabled || status == mscclpp::GdrStatus::DriverMissing ||
-              status == mscclpp::GdrStatus::OpenFailed);
+              status == mscclpp::GdrStatus::OpenFailed || status == mscclpp::GdrStatus::KernelTooOld);
 }
 
 TEST(GdrStatusTest, EnabledConsistentWithStatus) {
