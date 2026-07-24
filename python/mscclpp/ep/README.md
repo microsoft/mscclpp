@@ -64,7 +64,6 @@ class MoECommunicatorConfig:
     # Runtime mode and output layout
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
-    token_major_init_padding: bool = False
     invalid_token_expert_id: Optional[int] = None  # defaults to num_experts
 
     # Quantization defaults
@@ -138,8 +137,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 |---|---|
 | `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
-| `token_major_init_padding` | Initialize token-major padding metadata for fixed-capacity Triton kernels |
-| `invalid_token_expert_id` | Sentinel for token-major non-local and padding entries; defaults to `num_experts` |
+| `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_sms` | backend launch/resource tuning |
@@ -153,7 +151,7 @@ specialized advanced path.
 
 The active implementation supports `mode=MoEMode.LOW_LATENCY` and
 `mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
-string. LL uses an expert-major output layout. HT uses a flat output layout and
+string. LL supports expert-major and rank-major output layouts. HT uses a flat output layout and
 supports 2, 4, 8, or 16 ranks within one detected GPU IPC/NVL fabric domain;
 that domain may span multiple hosts.
 
@@ -179,8 +177,9 @@ Use `DispatchLayout` instead of string literals for this field:
 
 | Layout enum | Tensor shape |
 |---|---|
-| `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]`; LL: `[world_size * max_tokens_per_rank, hidden]` |
+| `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
+| `DispatchLayout.RANK_MAJOR` | LL: `[world_size * max_tokens_per_rank, hidden]` |
 
 ## MoECommunicator methods
 
@@ -248,7 +247,7 @@ output = moe_comm.combine(expert_output, handle)
 `dispatch_out` is for the local MLP. `handle` is for `combine`. The MLP should
 not need to inspect the opaque handle.
 
-`DispatchOutput.layout` carries both the layout kind (`TOKEN_MAJOR` or `EXPERT_MAJOR`)
+`DispatchOutput.layout` carries the layout kind
 and layout-specific metadata.
 Expert-grouped layouts populate
 `num_tokens_per_expert`; future layouts that do not expose per-expert grouping
@@ -266,6 +265,7 @@ class QuantConfig:
 class DispatchLayout(str, Enum):
     EXPERT_MAJOR = "expert_major"
     TOKEN_MAJOR = "token_major"
+    RANK_MAJOR = "rank_major"
 
 
 @dataclass
@@ -300,19 +300,14 @@ class ExpertMajorCombineContext:
     hidden_size: int
     src_info: torch.Tensor
     layout_range: torch.Tensor
-    num_max_dispatch_tokens_per_rank: int
 
 
 @dataclass
-class TokenMajorCombineContext:
+class RankMajorCombineContext:
     topk_ids: torch.Tensor
     num_experts: int
     num_tokens: int
     hidden_size: int
-    source_token_ids: torch.Tensor
-    num_tokens_per_rank: torch.Tensor
-    rank_offsets: torch.Tensor
-    num_max_dispatch_tokens_per_rank: int
 
 
 @dataclass
@@ -320,7 +315,7 @@ class HighThroughputCombineContext:
     ...
 
 
-CombineContext = ExpertMajorCombineContext | TokenMajorCombineContext | HighThroughputCombineContext
+CombineContext = ExpertMajorCombineContext | RankMajorCombineContext | HighThroughputCombineContext
 
 
 class DispatchHandle:
@@ -333,8 +328,8 @@ class ExpertMajorDispatchHandle(DispatchHandle):
     combine_context: ExpertMajorCombineContext
 
 
-class TokenMajorDispatchHandle(DispatchHandle):
-    combine_context: TokenMajorCombineContext
+class RankMajorDispatchHandle(DispatchHandle):
+    combine_context: RankMajorCombineContext
 
 
 class HighThroughputDispatchHandle(DispatchHandle):
@@ -424,9 +419,8 @@ overlap is operation-level only.
 
 Each concrete `DispatchHandle` stores a layout-specific `combine_context` used
 to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
-`ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
-shape, and capacity). `TokenMajorDispatchHandle` records source-token IDs,
-per-source-rank counts, and the original routing needed for cross-rank combine.
+`ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, and layout ranges).
+`RankMajorDispatchHandle` records the original routing needed for direct remote combine.
 High-throughput handles use a direct combine context with receive-side weights
 and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
@@ -510,32 +504,17 @@ For padded expert-major LL layout:
 output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
 ```
 
-For token-major LL layout:
+For rank-major LL layout, do not pass `output_buffer`. The runtime returns a
+registered fixed-stride buffer:
 
 ```text
-output_buffer: [world_size * max_tokens_per_rank, hidden]
+dispatch_out.tokens:
+    [world_size, max_tokens_per_rank, hidden]
 ```
 
-The caller chooses `max_tokens_per_rank`, allocates that fixed capacity, and may
-pass the resulting row capacity directly to a Triton kernel. This avoids a CPU
-synchronization while keeping a static CUDA Graph shape. All valid rows are
-compacted into one contiguous prefix. For source rank `r`, its rows are:
-
-```python
-begin = dispatch_out.layout.offsets[r]
-end = dispatch_out.layout.offsets[r + 1]
-```
-
-`offsets[-1]` is the total number of valid rows.
-
-Rows after `offsets[-1]` are padding. Set
-`token_major_init_padding=True` when a fixed-capacity Triton kernel should
-process the entire allocation: padding `topk_ids` are then initialized to
-`invalid_token_expert_id` and weights to `0`, so the kernel can skip a row when
-all expert IDs equal the configured sentinel. The sentinel defaults to
-`num_experts`.
-The option defaults to `False` to avoid initialization overhead when the MLP
-uses the compact valid length.
+Flattening the first two dimensions is a view. Source rank `r` owns rows
+`r * max_tokens_per_rank : (r + 1) * max_tokens_per_rank`; only the first
+`dispatch_out.layout.num_tokens_per_rank[r]` rows are valid.
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
@@ -571,19 +550,33 @@ LL defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 ```
 
-LL can also return `DispatchLayout.TOKEN_MAJOR`:
+`DispatchLayout.RANK_MAJOR` uses the same fixed geometry as FlashInfer
+`MoeAlltoAll`:
 
 ```python
-dispatch_out.tokens            # [world_size * max_tokens_per_rank, H]
-dispatch_out.topk_ids          # [world_size * max_tokens_per_rank, K], int32 global expert IDs
-dispatch_out.weights           # [world_size * max_tokens_per_rank, K], float32
+dispatch_out.tokens     # [world_size * max_tokens_per_rank, H]
+dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
+dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
-Only the prefix ending at `dispatch_out.layout.offsets[-1]` contains valid
-tokens. Non-local entries use `invalid_token_expert_id` and weight `0`; padding
-uses the same sentinel when
-`token_major_init_padding=True`. Per-source-rank counts are returned in
-`dispatch_out.layout.num_tokens_per_rank`.
+Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
+final receive buffers and exposed as zero-copy Torch tensors.
+Unused rows in every source-rank block use `invalid_token_expert_id` and zero
+weights. BF16 is currently the only supported rank-major dispatch format.
+
+The MoE runner must write its rank-major output into the runtime-owned
+registered buffer:
+
+```python
+expert_output = communicator.get_expert_output_buffer()
+moe(..., output=expert_output)
+combined = communicator.combine(expert_output, handle)
+```
+
+Combine performs one signal/wait exchange per peer, reads the required rows
+directly from remote rank-major output buffers, and reduces them locally.
+Rank-major buffers are currently single-buffered, so `enable_overlap=True` is
+rejected.
 For expert-major output, only the first
 `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
@@ -605,7 +598,7 @@ Examples:
 
 ```text
 token-major tokens:   HT [total_recv_tokens, H]; LL [world_size * max_tokens_per_rank, H]
-token-major scales:   LL [world_size * max_tokens_per_rank, S]
+rank-major scales:    not yet supported
 
 expert-major tokens:  [num_local_experts, max_slots, H]
 expert-major scales:  [num_local_experts, max_slots, S]

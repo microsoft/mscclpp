@@ -9,15 +9,16 @@ selectable expert-parallel library, then prints one normalized summary.
 
 Backends (``--ep-lib``):
 
+* ``mscclpp``  -- this repo's :mod:`ep_bench_ll` (MoECommunicator LL) launched
+  with ``torchrun``.
 * ``mscclpp-cpp`` -- the pure-C++ ``MoERuntime`` benchmark launched with MPI.
 * ``nccl-ep``  -- NVIDIA NCCL-EP's ``contrib/nccl_ep/ep_bench`` binary launched
   with ``mpirun`` (HPCX).
-* ``both`` / ``all`` -- run mscclpp-cpp then nccl-ep, side by side.
-
-For the mscclpp-vs-nccl-ep *Python* API comparison, use ``run_ep_bench_python.py``.
+* ``both``     -- run mscclpp then nccl-ep and print them side by side.
 
 Both backends emit the identical ``=== Summary (Low Latency, across N ranks) ===``
-block, so a single parser reads either one.
+block (``ep_bench_ll.py`` was written to mirror ``ep_bench``), so a single parser
+reads either one.
 
 NCCL-EP dynamically links its shared libraries (``libnccl.so``, ``libnccl_ep.so``).
 Point the driver at the correct build with ``--nccl-lib-path`` (falls back to the
@@ -25,8 +26,9 @@ Point the driver at the correct build with ``--nccl-lib-path`` (falls back to th
 ``--nccl-ep-bench`` build tree); that directory is prepended to ``LD_LIBRARY_PATH``
 for the ``ep_bench`` process so the intended NCCL is loaded.
 
-Scope: single or multi-node; pass ``--nodes`` to launch the MPI backends across
-multiple hosts.
+Scope: single node (``--nproc-per-node`` GPUs). Multi-node runs use the existing
+per-backend launchers (mscclpp: run_ep_bench_ll_multinode.sh; nccl-ep: mpirun with
+a hostfile); this driver focuses on the common single-node comparison.
 
 Examples
 --------
@@ -35,9 +37,9 @@ Compare both libraries, 4 GPUs, e128::
     python run_ep_bench.py --ep-lib both -e 128 -t 128 -d 7168 -k 8 -w 10 -i 50 \
         --nccl-lib-path /opt/microsoft/mrc/ep/nccl/build/lib
 
-Just mscclpp-cpp with kernel-only timing::
+Just mscclpp with in-process CUPTI kernel timing::
 
-    python run_ep_bench.py --ep-lib mscclpp-cpp -e 128 --kernel-only
+    python run_ep_bench.py --ep-lib mscclpp -e 128 --cupti-inproc
 
 Print the commands without running them::
 
@@ -88,9 +90,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--ep-lib",
         required=True,
-        choices=["mscclpp-cpp", "nccl-ep", "both", "all"],
-        help="which expert-parallel library to benchmark. "
-        "mscclpp-cpp=MoERuntime (pure C++), nccl-ep=ep_bench. both/all=mscclpp-cpp+nccl-ep.",
+        choices=["mscclpp", "mscclpp-cpp", "nccl-ep", "both", "all"],
+        help="which expert-parallel library to benchmark. mscclpp=MoECommunicator (Python), "
+        "mscclpp-cpp=MoERuntime (pure C++), nccl-ep=ep_bench. both=mscclpp+nccl-ep; all=the three.",
     )
     p.add_argument(
         "-a",
@@ -128,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--output-layout",
-        choices=("expert_major", "token_major"),
+        choices=("expert_major", "rank_major"),
         default="expert_major",
         help="MSCCL++ Python low-latency output layout",
     )
@@ -139,18 +141,35 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--nodes",
         default="",
-        help="space-separated node IPs for a multi-node run (first = master). Empty = single " "local node.",
+        help="space-separated node IPs for a multi-node run (first = master). Empty = single "
+        "local node. Applies to the mpirun backends (nccl-ep, mscclpp-cpp); the Python "
+        "mscclpp backend is single-node only (torchrun --standalone).",
     )
     p.add_argument("--iface", default="", help="optional socket interface name (NCCL/GLOO/UCX)")
     p.add_argument("--hca", default="", help="optional comma-separated mscclpp HCA devices")
 
-    # Kernel-timing options.
-    p.add_argument("--cupti-inproc", action="store_true", help="alias for --kernel-only (kept for compatibility)")
+    # mscclpp backend.
+    p.add_argument("--mscclpp-bench", default=os.path.join(_HERE, "ep_bench_ll.py"), help="path to ep_bench_ll.py")
+    p.add_argument("--python", default=sys.executable, help="Python interpreter used for the MSCCL++ benchmark")
+    p.add_argument(
+        "--conda-prefix",
+        default="",
+        help="optional conda installation prefix; used only when --conda-env is set",
+    )
+    p.add_argument("--conda-env", default="", help="optional conda env name with torch + mscclpp")
+    p.add_argument(
+        "--cupti-inproc", action="store_true", help="mscclpp: also collect in-process CUPTI kernel-only timing"
+    )
+    p.add_argument(
+        "--torch-profiler",
+        action="store_true",
+        help="mscclpp: run the torch.profiler kernel pass (default: host-observed only)",
+    )
     p.add_argument(
         "--kernel-only",
         action="store_true",
-        help="compare KERNEL execution time only, stripping host launch overhead "
-        "(what ep_bench's CUPTI reports). mscclpp-cpp uses --kernel-timing; nccl-ep uses "
+        help="compare KERNEL execution time only, stripping host/Python launch overhead "
+        "(what ep_bench's CUPTI reports). mscclpp uses in-process CUPTI; nccl-ep uses "
         "ep_bench's built-in CUPTI KernelTimer. The unified table then leads with the "
         "kernel dispatch/combine times and a kernel D+C ratio.",
     )
@@ -194,6 +213,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--iface must be a valid network interface name")
     if args.hca and not re.fullmatch(r"[0-9A-Za-z._,-]+", args.hca):
         raise SystemExit("--hca must be comma-separated HCA device names")
+    if args.conda_env and not args.conda_prefix:
+        raise SystemExit("--conda-prefix is required when --conda-env is set")
     if args.dispatch_dtype != "bf16" and args.ep_lib in ("nccl-ep", "both", "all"):
         raise SystemExit("FP8 unified comparison is unsupported because the NCCL-EP command is configured for BF16")
     if args.num_tokens <= 0 or args.num_experts <= 0 or args.nproc_per_node <= 0:
@@ -206,13 +227,9 @@ def parse_args() -> argparse.Namespace:
     num_ranks = num_nodes * args.nproc_per_node
     if args.num_experts % num_ranks != 0:
         raise SystemExit("num-experts must be divisible by the total number of ranks")
-    if args.ep_lib in ("mscclpp-cpp", "both", "all"):
+    if args.ep_lib in ("mscclpp", "mscclpp-cpp", "both", "all"):
         if not num_ranks + 2 <= args.num_blocks <= 130:
             raise SystemExit("num-blocks must be in [total ranks + 2, 130]")
-
-    # --cupti-inproc is a true alias for --kernel-only (kept for compatibility).
-    if args.cupti_inproc:
-        args.kernel_only = True
 
     return args
 
@@ -296,6 +313,73 @@ def parse_ll_summary(text: str, ep_lib: str) -> LLResult:
 # ----------------------------------------------------------------------------
 # Backend command construction.
 # ----------------------------------------------------------------------------
+def build_mscclpp_cmd(args: argparse.Namespace) -> str:
+    env_vars = {}
+    if args.iface:
+        env_vars.update(
+            {
+                "NCCL_SOCKET_IFNAME": args.iface,
+                "GLOO_SOCKET_IFNAME": args.iface,
+                "MSCCLPP_SOCKET_IFNAME": args.iface,
+            }
+        )
+    if args.hca:
+        env_vars["MSCCLPP_HCA_DEVICES"] = args.hca
+
+    bench = args.mscclpp_bench
+    bench_flags = (
+        f"-a ll -t {args.num_tokens} -d {args.hidden} -k {args.num_topk} "
+        f"-e {args.num_experts} -w {args.num_warmup} -i {args.num_iters} "
+        f"--dispatch-dtype {args.dispatch_dtype} --combine-mode {args.combine_mode} "
+        f"--output-layout {args.output_layout} --num-blocks {args.num_blocks}"
+    )
+    cupti_build = ""
+    extra_exports = ""
+    if args.cupti_inproc or args.kernel_only:
+        # In-process CUPTI kernel-only timing (near-zero perturbation, matches
+        # ep_bench's KernelTimer). Build it under the benchmark build directory.
+        bench_flags += " --cupti-inproc"
+        cupti_include, cupti_lib = _find_cupti_paths()
+        build_dir = os.path.join(os.path.dirname(bench), "build")
+        so = os.path.join(build_dir, "libcupti_kernel_timer.so")
+        src = os.path.join(os.path.dirname(bench), "cupti_kernel_timer.cpp")
+        env_vars["MSCCLPP_EP_CUPTI_TIMER_LIB"] = so
+        cupti_build = (
+            f"mkdir -p {shlex.quote(build_dir)} && "
+            f"if [ ! -f {shlex.quote(so)} ] || [ {shlex.quote(src)} -nt {shlex.quote(so)} ]; then "
+            f"g++ -O2 -fPIC -shared {shlex.quote(src)} -o {shlex.quote(so)} "
+            f"-I{shlex.quote(cupti_include)} -L{shlex.quote(cupti_lib)} -lcupti; fi && "
+        )
+        extra_exports = f"export LD_LIBRARY_PATH={shlex.quote(cupti_lib)}:${{LD_LIBRARY_PATH:-}} && "
+    elif args.torch_profiler:
+        # Opt-in torch.profiler kernel pass (perturbs the LL recv-spin; the
+        # in-process CUPTI path is preferred for kernel numbers).
+        pass
+    else:
+        # Default: clean host-observed only (skip the torch.profiler pass, which
+        # is slow and inflates the LL dispatch recv-spin).
+        bench_flags += " --no-kernel-timing"
+
+    activation = ""
+    python = shlex.quote(args.python)
+    if args.conda_env:
+        activation = (
+            f"source {shlex.quote(args.conda_prefix)}/etc/profile.d/conda.sh && "
+            f"conda activate {shlex.quote(args.conda_env)} && "
+        )
+        python = "python"
+    exports = " ".join(f"{name}={shlex.quote(value)}" for name, value in env_vars.items())
+    env_export = f"export {exports} && " if exports else ""
+    return (
+        f"{activation}"
+        f"{cupti_build}"
+        f"{env_export}"
+        f"{extra_exports}"
+        f"{python} -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node={args.nproc_per_node} "
+        f"{shlex.quote(bench)} {bench_flags}"
+    )
+
+
 def _autodetect_hpcx() -> str:
     import glob
 
@@ -451,7 +535,7 @@ def print_unified(results: list, kernel_only: bool = False) -> None:
     elif kernel_only:
         print(
             "  NOTE: kernel-only requested but kernel timing missing for a backend "
-            "(mscclpp-cpp needs --kernel-only; nccl-ep needs CUPTI-enabled ep_bench)."
+            "(mscclpp needs --cupti-inproc / libcupti; nccl-ep needs CUPTI-enabled ep_bench)."
         )
     if len(results) == 2 and not kernel_only:
         a, b = results
@@ -461,15 +545,24 @@ def print_unified(results: list, kernel_only: bool = False) -> None:
 
 def main() -> None:
     args = parse_args()
-    if args.ep_lib in ("both", "all"):
-        libs = ["mscclpp-cpp", "nccl-ep"]
+    if args.ep_lib == "both":
+        libs = ["mscclpp", "nccl-ep"]
+    elif args.ep_lib == "all":
+        libs = ["mscclpp", "mscclpp-cpp", "nccl-ep"]
     else:
         libs = [args.ep_lib]
 
     builders = {
+        "mscclpp": build_mscclpp_cmd,
         "mscclpp-cpp": build_mscclpp_cpp_cmd,
         "nccl-ep": build_nccl_ep_cmd,
     }
+    if len(args.nodes.split()) > 1 and "mscclpp" in libs:
+        print(
+            "[warn] --nodes multi-node ignored for the Python 'mscclpp' backend "
+            "(torchrun --standalone is single-node); use mscclpp-cpp for multi-node.",
+            flush=True,
+        )
     results = []
     for lib in libs:
         cmd = builders[lib](args)

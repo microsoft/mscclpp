@@ -20,12 +20,15 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
-             bool initializeTokenMajorPadding);
+  MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts, int numTopk);
   ~MoERuntime() noexcept(false);
 
   bool isAvailable() const;
   bool isInternodeAvailable() const;
+  void* rankMajorTopkIdsBuffer() const;
+  void* rankMajorTopkWeightsBuffer() const;
+  void* rankMajorTokenBuffer() const;
+  void* rankMajorExpertOutputBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
@@ -44,8 +47,11 @@ class MoERuntime {
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
   int deviceId_;
+  int maxTokensPerRank_;
+  int hidden_;
+  int numExperts_;
+  int numTopk_;
   int64_t symmetricBufferBytes_;
-  bool initializeTokenMajorPadding_;
   bool available_ = false;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;

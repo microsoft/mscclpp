@@ -29,8 +29,8 @@ from .communicator import (  # noqa: F401
     MoEMode,
     OperationOverlapConfig,
     QuantConfig,
-    TokenMajorDispatchHandle,
-    TokenMajorCombineContext,
+    RankMajorDispatchHandle,
+    RankMajorCombineContext,
 )
 
 __all__ = [
@@ -53,6 +53,6 @@ __all__ = [
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "TokenMajorDispatchHandle",
-    "TokenMajorCombineContext",
+    "RankMajorDispatchHandle",
+    "RankMajorCombineContext",
 ]

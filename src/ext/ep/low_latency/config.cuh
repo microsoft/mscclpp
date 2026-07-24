@@ -120,7 +120,9 @@ struct WorkspaceView {
   RecvTask* dispatchRecvTasks_;
   uint32_t* dispatchTasksReadyEpoch_;
   int* dispatchNumRecvTasks_;
+  uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
+  int* rankMajorSendIndices_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
@@ -138,10 +140,13 @@ struct WorkspaceView {
     cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
     dispatchTasksReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchNumRecvTasks_ = cursor++;
+    combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
+    cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
+    rankMajorSendIndices_ = cursor;
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
     return sizeof(uint32_t) +                                // dispatchEpoch_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
@@ -150,7 +155,9 @@ struct WorkspaceView {
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
-           sizeof(mscclpp::DeviceSyncer);                                                // combineSyncer_
+           sizeof(uint32_t) +                                                            // combineReadyEpoch_
+           sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
+           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
 
@@ -179,8 +186,8 @@ inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedByte
   return cache.residentBlocks_;
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts) {
-  return WorkspaceView::numBytes(nRanks, nExperts);
+MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
+  return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {

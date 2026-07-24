@@ -17,12 +17,15 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk, bool initializeTokenMajorPadding)
+                       int numTopk)
     : rank_(communicator.bootstrap()->getRank()),
       numRanks_(communicator.bootstrap()->getNranks()),
+      maxTokensPerRank_(maxTokensPerRank),
+      hidden_(hidden),
+      numExperts_(numExperts),
+      numTopk_(numTopk),
       symmetricBufferBytes_(static_cast<int64_t>(
           low_latency::symmetricBufferSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk))),
-      initializeTokenMajorPadding_(initializeTokenMajorPadding),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % NUM_BUFFER_ALIGNMENT_BYTES == 0);
@@ -54,6 +57,22 @@ MoERuntime::~MoERuntime() noexcept(false) {
 
 bool MoERuntime::isAvailable() const { return available_; }
 bool MoERuntime::isInternodeAvailable() const { return isAvailable() && numRanks_ > numNvlRanks_; }
+void* MoERuntime::rankMajorTopkIdsBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
+      .rankMajorTopkIdsBuffer_;
+}
+void* MoERuntime::rankMajorTopkWeightsBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
+      .rankMajorTopkWeightsBuffer_;
+}
+void* MoERuntime::rankMajorTokenBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
+      .rankMajorTokenBuffer_;
+}
+void* MoERuntime::rankMajorExpertOutputBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
+      .rankMajorExpertOutputBuffer_;
+}
 
 void MoERuntime::setup() {
   EP_HOST_ASSERT(!available_);
@@ -130,6 +149,13 @@ void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, 
   low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* dispatchRecvBuffer = layout.dispatchRecvBuffer_;
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(output == layout.rankMajorTokenBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == layout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == layout.rankMajorTopkWeightsBuffer_);
+  }
+  cudaStreamCaptureStatus captureStatus;
+  CUDA_CHECK(cudaStreamIsCapturing(stream, &captureStatus));
 
   const low_latency::Workload workload{.numTokens_ = numTokens,
                                        .hidden_ = hidden,
@@ -138,9 +164,10 @@ void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, 
                                        .invalidTokenExpertId_ = invalidTokenExpertId,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .initializeTokenMajorPadding_ = initializeTokenMajorPadding_,
+                                       .enableRankMajorTmaPipeline_ = dispatchLayout == DispatchLayout::RANK_MAJOR &&
+                                                                      captureStatus == cudaStreamCaptureStatusActive,
                                        .dispatchDataType_ = dispatchDataType};
-  const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
+  const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
   low_latency::dispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, commContext_,
@@ -160,6 +187,9 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
   EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* combineRecvBuffer = layout.combineRecvBuffer_;
   void* dispatchRecvBuffer = layout.dispatchRecvBuffer_;
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(input == layout.rankMajorExpertOutputBuffer_);
+  }
 
   const low_latency::Workload workload{.numTokens_ = numTokens,
                                        .hidden_ = hidden,
@@ -168,7 +198,7 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .invalidTokenExpertId_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .initializeTokenMajorPadding_ = false,
+                                       .enableRankMajorTmaPipeline_ = false,
                                        .dispatchDataType_ = dispatchDataType};
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);

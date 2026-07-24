@@ -135,10 +135,32 @@ struct PayloadView {
   }
 };
 
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet), 128);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
+                                                             int numTopk) {
+  const size_t numEntries = static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk;
+  return configAlign<size_t>(rankMajorTopkIdsOffset(numRanks, numExperts) + numEntries * sizeof(int), 128);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExperts, int maxTokensPerRank,
+                                                       int numTopk) {
+  const size_t numEntries = static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk;
+  return configAlign<size_t>(
+      rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
+}
+
 struct Layout {
   size_t totalBytes_;
+  size_t recvBufferBytes_;
   void* dispatchRecvBuffer_;
   void* combineRecvBuffer_;
+  void* rankMajorTopkIdsBuffer_;
+  void* rankMajorTopkWeightsBuffer_;
+  void* rankMajorTokenBuffer_;
+  void* rankMajorExpertOutputBuffer_;
 
   Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
@@ -150,14 +172,22 @@ struct Layout {
         configAlign<size_t>(std::max({bf16Payload.numBytes_, fp8Payload128.numBytes_, mxFp8Payload32.numBytes_}), 128);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
+    const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+    const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t recvBufferBytes = configAlign<size_t>(std::max(dispatchBufferBytes, combineBufferBytes), 128);
-    totalBytes_ = 2 * recvBufferBytes;
+    recvBufferBytes_ =
+        configAlign<size_t>(std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes}), 128);
+    totalBytes_ = 2 * recvBufferBytes_;
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
-      combineRecvBuffer_ = base + recvBufferBytes;
+      combineRecvBuffer_ = base + recvBufferBytes_;
+      rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
+      rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+      rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
+      rankMajorExpertOutputBuffer_ = combineRecvBuffer_;
     }
   }
 };
