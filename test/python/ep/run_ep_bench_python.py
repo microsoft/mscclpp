@@ -647,14 +647,15 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
-        # CUDA-graph replay needs the PAIRED kineto pass ONLY for the paired-collective
-        # backends whose combine consumes fresh dispatch output (nccl, flashinfer):
-        # the separate pass replays combine alone and dead-spins on the peer receive
-        # under graph replay. DeepEP replays a FIXED primed handle, so its separate
-        # pass is safe AND necessary -- separate-pass inserts a per-op GPU barrier that
-        # collapses DeepEP's combine recv-spin skew (the paired loop only barriers
-        # before dispatch, inflating the combine avg). So keep DeepEP (and mscclpp) on
-        # the user's default. Restore the snapshot each iteration so a prior backend's
+        # Under --cuda-graph, nccl, flashinfer and deepep capture dispatch+combine in
+        # a SINGLE graph, so one replay runs both phases and the skew-free separate
+        # pass (which times combine alone) can no longer isolate combine. Force the
+        # PAIRED kineto pass for those backends so the collector still attributes
+        # per-phase kernel time by kernel name. mscclpp keeps its two separate graphs
+        # (and thus the separate skew-free pass) on the user's default. deepep only
+        # graphs intranode, so setup_deepep sets EP_KINETO_SEPARATE itself when it
+        # actually captures; the nccl/flashinfer force here is unconditional under
+        # --cuda-graph. Restore the snapshot each iteration so a prior backend's
         # override does not leak in --backend all.
         if _user_kineto_separate is None:
             os.environ.pop("EP_KINETO_SEPARATE", None)

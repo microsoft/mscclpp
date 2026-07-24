@@ -95,26 +95,27 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     if args.cuda_graph:
         # FlashInfer's dispatch/combine each begin with an MPI host barrier to align
         # ranks -- but an MPI barrier cannot live inside a CUDA graph. So capture ONLY
-        # the moe kernels and keep the barrier OUTSIDE, replaying: barrier -> replay.
-        # Capture is best-effort: FlashInfer's stateful phase / in-kernel peer spin may
-        # not be graph-capturable on every build, so on failure we rebuild the (now
-        # possibly mid-phase) communicator and fall back to the direct barrier+launch.
+        # the moe kernels (dispatch+combine in a SINGLE graph) and keep the barrier
+        # OUTSIDE, replaying: barrier -> replay. The kineto collector attributes
+        # per-phase kernel time by kernel name, so one replay per iteration keeps the
+        # dispatch/combine breakdown. Capture is best-effort: FlashInfer's stateful
+        # phase / in-kernel peer spin may not be graph-capturable on every build, so
+        # on failure we rebuild the (now possibly mid-phase) communicator and fall
+        # back to the direct barrier+launch.
         try:
             # Prime one full pair so phase returns to idle and lazy work settles.
             _dispatch()
             _combine()
             torch.cuda.synchronize()
-            g_dispatch = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g_dispatch):
+            g_all = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g_all):
                 _dispatch()
-            g_combine = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g_combine):
                 _combine()
             torch.cuda.synchronize()
-            graphs = [g_dispatch, g_combine]
+            graphs = [g_all]
             captured = True
             if rank == 0:
-                print("[cfg] flashinfer cuda_graph=True (kernels captured; MPI barrier kept outside)", flush=True)
+                print("[cfg] flashinfer cuda_graph=True (single graph; MPI barrier kept outside)", flush=True)
         except Exception as e:  # noqa: BLE001 - capturability is an external-library boundary
             if rank == 0:
                 print(f"[cfg] flashinfer cuda_graph capture failed ({e}); falling back to eager", flush=True)
@@ -129,16 +130,15 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         comm.Barrier()
 
     if captured:
-        g_dispatch, g_combine = graphs
+        g_all = graphs[0]
 
         def dispatch_fn():
             comm.Barrier()
-            g_dispatch.replay()
+            g_all.replay()
             return None
 
         def combine_fn(_dout):
-            comm.Barrier()
-            g_combine.replay()
+            pass  # both phases already ran inside the combined graph replay
 
     else:
 

@@ -115,8 +115,15 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         )
 
     if deepep_can_graph:
+        # Capturing dispatch+combine in a SINGLE graph replays both phases in one
+        # shot, so the skew-free separate kineto pass (which times combine alone)
+        # can no longer isolate combine. Force the PAIRED kineto pass so the
+        # collector still attributes per-phase kernel time by kernel name. (Intranode
+        # NVLink has negligible combine recv-spin skew, so the paired pass matches the
+        # separate pass here.)
+        os.environ["EP_KINETO_SEPARATE"] = "0"
         if rank == 0:
-            print("[cfg] deepep cuda_graph=True (cached dispatch, do_cpu_sync=False)", flush=True)
+            print("[cfg] deepep cuda_graph=True (single graph, cached dispatch, do_cpu_sync=False)", flush=True)
         # The non-cached dispatch above did a CPU sync to size the layout; that is
         # illegal inside a CUDA graph. Replay the CACHED dispatch instead: pass the
         # primed handle (topk_idx reused from it), which forces do_cpu_sync=False and
@@ -132,20 +139,18 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         buffer.combine(**combine_args)
         torch.cuda.synchronize()
 
-        g_dispatch = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_dispatch):
+        g_all = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_all):
             buffer.dispatch(**cached_dispatch_args)
-        g_combine = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_combine):
             buffer.combine(**combine_args)
-        graphs = [g_dispatch, g_combine]
+        graphs = [g_all]
 
         def dispatch_fn():
-            g_dispatch.replay()
+            g_all.replay()
             return None
 
         def combine_fn(_dout):
-            g_combine.replay()
+            pass  # both phases already ran inside the combined graph replay
 
     else:
 

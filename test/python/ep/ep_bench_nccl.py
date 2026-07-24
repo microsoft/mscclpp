@@ -117,12 +117,12 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     graphs = []
 
     if args.cuda_graph:
-        if rank == 0:
-            print("[cfg] nccl cuda_graph=True (capturing dispatch/combine)", flush=True)
         # NCCL-EP dispatch/combine are a PAIRED collective (combine consumes the
         # peer data produced by the matching dispatch); main() forces the paired
-        # kineto pass (EP_KINETO_SEPARATE=0) so every captured combine follows a
-        # captured dispatch instead of spinning on a stale peer receive.
+        # kineto pass (EP_KINETO_SEPARATE=0) so combine follows dispatch instead of
+        # spinning on a stale peer receive. Capture dispatch+combine in a SINGLE
+        # graph: the kineto collector still attributes per-phase kernel time by
+        # kernel name, so one replay per iteration keeps the breakdown.
         # Prime once so any lazy JIT / autotune settles before capture.
         _dispatch(stream_ptr)
         _combine(stream_ptr)
@@ -131,20 +131,19 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         # Capture on the graph's capture stream: NCCL-EP takes an explicit stream
         # pointer, so it must be re-fetched inside the capture context (the default
         # stream_ptr would launch off the capture stream and break capture).
-        g_dispatch = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_dispatch):
-            _dispatch(torch.cuda.current_stream().cuda_stream)
-        g_combine = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_combine):
-            _combine(torch.cuda.current_stream().cuda_stream)
-        graphs = [g_dispatch, g_combine]
+        g_all = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_all):
+            s = torch.cuda.current_stream().cuda_stream
+            _dispatch(s)
+            _combine(s)
+        graphs = [g_all]
 
         def dispatch_fn():
-            g_dispatch.replay()
+            g_all.replay()
             return None
 
         def combine_fn(_dout):
-            g_combine.replay()
+            pass  # both phases already ran inside the combined graph replay
 
     else:
 
