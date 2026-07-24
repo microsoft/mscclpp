@@ -36,7 +36,7 @@ __device__ mscclpp::DeviceSyncer globalSyncer;
 // This approach requires registering both input and output buffers as remote
 // memories (2 * nPeers handles), but avoids scratch buffer allocation and
 // the extra copy steps of the standard RSAG. The NRanks template
-// parameter enables compile-time unrolling of peer loops (supports 4 or 8).
+// parameter enables compile-time unrolling of peer loops (supports 4, 8, or 16).
 
 template <int NRanks, ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
@@ -135,8 +135,12 @@ struct AllreduceRsAgZeroCopyAdapter {
       allreduceRsAgZeroCopy<8, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
+    } else if (nRanksPerIpcDomain == 16) {
+      allreduceRsAgZeroCopy<16, OpType, T, AccumT>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
+                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4 or 8, got: ", nRanksPerIpcDomain);
+      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4, 8, or 16, got: ", nRanksPerIpcDomain);
       return cudaErrorInvalidValue;
     }
     return cudaGetLastError();
