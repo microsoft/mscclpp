@@ -20,6 +20,8 @@ from .types import (
     QuantConfig,
     RankMajorCombineContext,
     RankMajorDispatchHandle,
+    TokenMajorCombineContext,
+    TokenMajorDispatchHandle,
 )
 from .utils import cuda_stream_ptr, resolve_expert_placement
 
@@ -170,6 +172,7 @@ class LowLatencyBackend:
         if self.output_layout not in (
             DispatchLayout.EXPERT_MAJOR,
             DispatchLayout.RANK_MAJOR,
+            DispatchLayout.TOKEN_MAJOR,
         ):
             raise NotImplementedError("unsupported low-latency output layout")
         if self.num_experts % self.world_size != 0:
@@ -189,6 +192,11 @@ class LowLatencyBackend:
                 raise ValueError("RANK_MAJOR output requires RANK_LOCAL_REDUCE combine")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR output does not support overlapping calls yet")
+        if self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
+                raise ValueError("TOKEN_MAJOR output requires RANK_LOCAL_REDUCE combine")
+            if self.enable_overlap:
+                raise NotImplementedError("TOKEN_MAJOR output does not support overlapping calls yet")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -201,6 +209,8 @@ class LowLatencyBackend:
         self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
         if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
+        if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
+            raise NotImplementedError("TOKEN_MAJOR output currently supports BF16 dispatch only")
 
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -225,6 +235,9 @@ class LowLatencyBackend:
         self._output_topk_ids: Optional[torch.Tensor] = None
         self._output_topk_weights: Optional[torch.Tensor] = None
         self.expert_output_buffer: Optional[torch.Tensor] = None
+        self._token_major_token_owner: Optional[_CudaBufferView] = None
+        self._token_major_tokens: Optional[torch.Tensor] = None
+        self.token_major_expert_output_buffer: Optional[torch.Tensor] = None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
             metadata_shape = (self.world_size * self.max_tokens_per_rank, self.topk)
@@ -263,6 +276,41 @@ class LowLatencyBackend:
                 self.device,
                 self._runtime,
             )
+        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            # Token-major reuses the rank-major topk-id / topk-weight metadata
+            # regions (both sized [world * max_tokens * topk]); the token payload
+            # is one hidden row per (source rank, source token, topk slot).
+            metadata_shape = (self.world_size * self.max_tokens_per_rank * self.topk,)
+            token_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
+            (
+                self._output_topk_ids_owner,
+                self._output_topk_ids,
+            ) = _tensor_from_pointer(
+                self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
+                metadata_shape,
+                "<i4",
+                self.device,
+                self._runtime,
+            )
+            (
+                self._output_topk_weights_owner,
+                self._output_topk_weights,
+            ) = _tensor_from_pointer(
+                self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
+                metadata_shape,
+                "<f4",
+                self.device,
+                self._runtime,
+            )
+            self._token_major_token_owner, self._token_major_tokens = _bf16_tensor_from_pointer(
+                self._runtime.cpp_runtime.token_major_token_buffer_ptr(),
+                token_shape,
+                self.device,
+                self._runtime,
+            )
+            # Token-major combine reads per-slot expert outputs in-place from the
+            # token buffer (identity when no GEMM is applied before combine).
+            self.token_major_expert_output_buffer = self._token_major_tokens
 
     def is_available(self) -> bool:
         return self._runtime.is_available()
@@ -327,6 +375,11 @@ class LowLatencyBackend:
                 kind=self.output_layout,
                 num_tokens_per_rank=count,
             )
+        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            layout_info = DispatchLayoutInfo(
+                kind=self.output_layout,
+                num_tokens_per_rank=count,
+            )
         else:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
@@ -362,6 +415,17 @@ class LowLatencyBackend:
                     hidden_size=self.hidden_size,
                 ),
             )
+        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            handle = TokenMajorDispatchHandle(
+                output_info=output_info,
+                combine_context=TokenMajorCombineContext(
+                    topk_ids=topk_ids,
+                    weights=weights,
+                    num_experts=self.num_experts,
+                    num_tokens=input.size(0),
+                    hidden_size=self.hidden_size,
+                ),
+            )
         else:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         return dispatch_out, handle
@@ -383,6 +447,11 @@ class LowLatencyBackend:
         elif isinstance(handle, RankMajorDispatchHandle):
             context = handle.combine_context
             topk_weights = None
+            src_info = None
+            layout_range = None
+        elif isinstance(handle, TokenMajorDispatchHandle):
+            context = handle.combine_context
+            topk_weights = context.weights
             src_info = None
             layout_range = None
         else:
@@ -449,12 +518,23 @@ class LowLatencyBackend:
                 self._dispatch_weights = self._output_topk_weights
                 self._dispatch_layout_range = None
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
+            elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+                self._dispatch_src_info = None
+                assert self._output_topk_ids is not None
+                assert self._output_topk_weights is not None
+                self._dispatch_topk_ids = self._output_topk_ids
+                self._dispatch_weights = self._output_topk_weights
+                self._dispatch_layout_range = None
+                self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
             else:
                 raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         assert self._dispatch_count is not None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             assert self._output_tokens is not None
             output_buffer = self._output_tokens
+        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            assert self._token_major_tokens is not None
+            output_buffer = self._token_major_tokens
         return (
             output_buffer,
             self._dispatch_scales,
@@ -466,7 +546,10 @@ class LowLatencyBackend:
         )
 
     def _validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer) -> None:
-        if output_buffer is None and self.output_layout != DispatchLayout.RANK_MAJOR:
+        if output_buffer is None and self.output_layout not in (
+            DispatchLayout.RANK_MAJOR,
+            DispatchLayout.TOKEN_MAJOR,
+        ):
             raise ValueError("output_buffer is required for low-latency dispatch")
         if quant is not None:
             raise NotImplementedError(
@@ -505,6 +588,8 @@ class LowLatencyBackend:
                 self.world_size * self.max_tokens_per_rank,
                 self.hidden_size,
             )
+        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            expected_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
         else:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         if self.output_layout == DispatchLayout.RANK_MAJOR:
@@ -512,6 +597,12 @@ class LowLatencyBackend:
                 assert self._output_tokens is not None
                 if output_buffer.data_ptr() != self._output_tokens.data_ptr():
                     raise ValueError("RANK_MAJOR output uses the runtime-owned registered token buffer")
+            return
+        if self.output_layout == DispatchLayout.TOKEN_MAJOR:
+            if output_buffer is not None:
+                assert self._token_major_tokens is not None
+                if output_buffer.data_ptr() != self._token_major_tokens.data_ptr():
+                    raise ValueError("TOKEN_MAJOR output uses the runtime-owned registered token buffer")
             return
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
@@ -522,7 +613,7 @@ class LowLatencyBackend:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
     def _validate_combine_inputs(self, expert_output, handle, out) -> None:
-        if not isinstance(handle, (ExpertMajorDispatchHandle, RankMajorDispatchHandle)):
+        if not isinstance(handle, (ExpertMajorDispatchHandle, RankMajorDispatchHandle, TokenMajorDispatchHandle)):
             raise ValueError("DispatchHandle does not contain low-latency combine context")
         context = handle.combine_context
         if context.num_experts != self.num_experts or context.hidden_size != self.hidden_size:
@@ -545,6 +636,8 @@ class LowLatencyBackend:
                 self.world_size * self.max_tokens_per_rank,
                 self.hidden_size,
             )
+        elif handle.output_info.layout.kind == DispatchLayout.TOKEN_MAJOR:
+            expected_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
         else:
             raise ValueError(f"unsupported low-latency output layout: {handle.output_info.layout.kind}")
         if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():

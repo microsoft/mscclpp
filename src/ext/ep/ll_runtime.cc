@@ -66,6 +66,10 @@ void* MoELowLatencyRuntime::expertOutputBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorExpertOutputBuffer_;
 }
+void* MoELowLatencyRuntime::tokenMajorTokenBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
+      .tokenMajorTokenBuffer_;
+}
 
 void MoELowLatencyRuntime::setup() {
   EP_HOST_ASSERT(!available_);
@@ -149,6 +153,11 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
     EP_HOST_ASSERT(outputTopkIdx == layout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == layout.rankMajorTopkWeightsBuffer_);
   }
+  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(output == layout.tokenMajorTokenBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == layout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == layout.rankMajorTopkWeightsBuffer_);
+  }
 
   const low_latency::Workload workload{.numTokens_ = numTokens,
                                        .hidden_ = hidden,
@@ -180,6 +189,11 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
   void* dispatchRecvBuffer = layout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(input == layout.rankMajorExpertOutputBuffer_);
+  }
+  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    // Token-major combine reads per-slot expert outputs from the symmetric token
+    // buffer (in-place expert output; identity when no GEMM is applied).
+    EP_HOST_ASSERT(input == layout.tokenMajorTokenBuffer_);
   }
 
   const low_latency::Workload workload{.numTokens_ = numTokens,

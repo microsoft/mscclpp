@@ -183,14 +183,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["rank_major", "expert_major"],
+        choices=["rank_major", "expert_major", "token_major"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
         "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
         "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
         "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
-        "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
-        "noted and the backend's default layout is kept.",
+        "'token_major' ([tokens, topk, hidden], OpenAI-style) is mscclpp LL only. "
+        "mscclpp LL supports expert/rank/token-major and flashinfer is rank-major only; an unsupported "
+        "request is noted and the backend's default layout is kept.",
     )
     p.add_argument(
         "--validate",

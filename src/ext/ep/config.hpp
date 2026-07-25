@@ -154,6 +154,15 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
+// Token-major reuses the rank-major topk-id / topk-weight metadata regions (both
+// already sized [numRanks * maxTokensPerRank * numTopk]); it only needs a larger
+// token payload region: one hidden row per (source rank, source token, topk slot)
+// instead of the rank-deduplicated one row per (source rank, dispatch slot).
+MSCCLPP_HOST_DEVICE_INLINE size_t tokenMajorTokenOffset(int numRanks, int numExperts, int maxTokensPerRank,
+                                                        int numTopk) {
+  return rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+}
+
 struct Layout {
   size_t totalBytes_;
   size_t recvBufferBytes_;
@@ -163,6 +172,7 @@ struct Layout {
   void* rankMajorTopkWeightsBuffer_;
   void* rankMajorTokenBuffer_;
   void* rankMajorExpertOutputBuffer_;
+  void* tokenMajorTokenBuffer_;
 
   Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
@@ -176,9 +186,16 @@ struct Layout {
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
     const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
+    // Token-major: one hidden row per (source rank, source token, topk slot).
+    const size_t tokenMajorTokenOffsetBytes = tokenMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+    const size_t tokenMajorTokenBytes =
+        static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
+    const size_t tokenMajorDispatchBufferBytes = tokenMajorTokenOffsetBytes + tokenMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     recvBufferBytes_ = configAlign<size_t>(
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes}), BufferAlignmentBytes);
+        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
+                  combineBufferBytes}),
+        BufferAlignmentBytes);
     totalBytes_ = 2 * recvBufferBytes_;
 
     if (symmetricBuffer != nullptr) {
@@ -189,6 +206,7 @@ struct Layout {
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       rankMajorExpertOutputBuffer_ = combineRecvBuffer_;
+      tokenMajorTokenBuffer_ = base + tokenMajorTokenOffsetBytes;
     }
   }
 };

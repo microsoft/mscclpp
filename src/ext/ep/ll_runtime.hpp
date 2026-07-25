@@ -31,6 +31,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   void* outputTopkWeightsBuffer() const;
   void* outputTokensBuffer() const;
   void* expertOutputBuffer() const;
+  void* tokenMajorTokenBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,

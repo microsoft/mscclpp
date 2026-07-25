@@ -59,12 +59,19 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
     rank_major = args.ep_layout == "rank_major"
-    if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
-        raise ValueError("rank-major output requires rank_local_reduce combine")
-    output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    token_major = args.ep_layout == "token_major"
+    use_runtime_buffer = rank_major or token_major
+    if use_runtime_buffer and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise ValueError(f"mscclpp --ep-layout {args.ep_layout} requires --combine-mode rank_local_reduce")
+    if rank_major:
+        output_layout = ep.DispatchLayout.RANK_MAJOR
+    elif token_major:
+        output_layout = ep.DispatchLayout.TOKEN_MAJOR
+    else:
+        output_layout = ep.DispatchLayout.EXPERT_MAJOR
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if rank_major and dispatch_quant is not None:
-        raise ValueError("rank-major output supports BF16 dispatch only")
+    if use_runtime_buffer and dispatch_quant is not None:
+        raise ValueError(f"{args.ep_layout} output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
@@ -92,10 +99,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     # src_info/layout_range/count buffers internally).
     output_buffer = (
         None
-        if rank_major
+        if use_runtime_buffer
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
-    expert_output = moe_comm.get_expert_output_buffer() if rank_major else None
+    expert_output = moe_comm.get_expert_output_buffer() if use_runtime_buffer else None
     if expert_output is not None:
         expert_output.normal_()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
