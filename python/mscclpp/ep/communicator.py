@@ -145,7 +145,9 @@ class MoECommunicator:
         """Return the runtime-owned rank-major MoE output buffer."""
         buffer = getattr(self._backend, "rank_major_expert_output_buffer", None)
         if buffer is None:
-            raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
+            buffer = getattr(self._backend, "token_major_expert_output_buffer", None)
+        if buffer is None:
+            raise RuntimeError("expert output buffer is only available for RANK_MAJOR/TOKEN_MAJOR low-latency mode")
         return buffer
 
     def dispatch_async(self, *args, **kwargs):

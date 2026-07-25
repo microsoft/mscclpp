@@ -29,6 +29,7 @@ class MoERuntime {
   void* rankMajorTopkWeightsBuffer() const;
   void* rankMajorTokenBuffer() const;
   void* rankMajorExpertOutputBuffer() const;
+  void* tokenMajorTokenBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,

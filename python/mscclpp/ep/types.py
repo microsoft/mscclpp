@@ -126,6 +126,17 @@ class RankMajorCombineContext:
 
 
 @dataclass
+class TokenMajorCombineContext:
+    """Combine context for token-major [num_tokens, num_topk, hidden] output."""
+
+    topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+
+
+@dataclass
 class HighThroughputCombineContext:
     """Combine context for high-throughput dispatch output."""
 
@@ -136,6 +147,7 @@ class HighThroughputCombineContext:
 CombineContext = Union[
     ExpertMajorCombineContext,
     RankMajorCombineContext,
+    TokenMajorCombineContext,
     HighThroughputCombineContext,
 ]
 
@@ -158,6 +170,11 @@ class ExpertMajorDispatchHandle(DispatchHandle):
 @dataclass
 class RankMajorDispatchHandle(DispatchHandle):
     combine_context: RankMajorCombineContext
+
+
+@dataclass
+class TokenMajorDispatchHandle(DispatchHandle):
+    combine_context: TokenMajorCombineContext
 
 
 @dataclass

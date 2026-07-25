@@ -77,6 +77,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              return reinterpret_cast<uintptr_t>(self.rankMajorExpertOutputBuffer());
            })
       .def(
+          "token_major_token_buffer_ptr",
+          [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.tokenMajorTokenBuffer()); })
+      .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,
              uintptr_t outputPtr, uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputTopkIdxPtr,
