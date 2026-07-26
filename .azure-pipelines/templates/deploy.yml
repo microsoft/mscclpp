@@ -92,7 +92,7 @@ steps:
           ${GPU_ARCH_ARG} \
           ${CMAKE_EXTRA_ARGS} ..
       fi
-      make -j
+      make -j16
       cd ..
       pwd > build/BUILD_PREFIX
       echo "=== Build artifacts ==="

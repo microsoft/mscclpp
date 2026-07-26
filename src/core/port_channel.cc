@@ -90,8 +90,8 @@ MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blo
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() {
   proxy_->stop();
-  // Drain pending flushes. After a bounded loop, force-unblock any still-pending GPU
-  // waiters with a sentinel write (UINT64_MAX > any FIFO position).
+  // Drain pending TriggerSync flushes. After a bounded loop, force-unblock any still-pending
+  // GPU waiters with a sentinel write (UINT64_MAX > any FIFO position).
   for (int i = 0; i < 1000 && !pendingFlushPos_.empty(); ++i) {
     progressFlushes();
   }
@@ -102,6 +102,16 @@ MSCCLPP_API_CPP void ProxyService::stopProxy() {
     }
     pendingFlushPos_.clear();
   }
+  // Drain any remaining in-flight signaled posts that the proxy issued but never sync-flushed.
+  for (auto& [conn, count] : inflightRequests_) {
+    if (count <= 0) continue;
+    try {
+      conn->flush(/*timeoutUsec=*/5'000'000);
+    } catch (const std::exception& e) {
+      WARN(CONN, "stopProxy: flush failed for a connection (continuing): ", e.what());
+    }
+  }
+  inflightRequests_.clear();
 }
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {

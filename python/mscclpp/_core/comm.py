@@ -60,7 +60,7 @@ class CommGroup:
                     data_tensor = torch.frombuffer(bytearray(pickled_data), dtype=torch.uint8).clone()
                 else:
                     data_tensor = torch.zeros(256, dtype=torch.uint8)
-                dist.broadcast(data_tensor, src=0, group=torch_group)
+                dist.broadcast(data_tensor, group=torch_group, group_src=0)
                 uniq_id_global = pickle.loads(data_tensor.numpy().tobytes())
             self.bootstrap.initialize(uniq_id_global)
         elif not interfaceIpPortTrio == "":

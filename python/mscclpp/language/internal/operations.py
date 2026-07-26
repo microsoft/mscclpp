@@ -871,6 +871,7 @@ class GroupLoadReduce(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, GroupStore)
+            and other.name == Instruction.group_store
             and self.buffer_type == other.buffer_type
             and self.size == other.size
             and self.dst_chunk == other.src_chunk
@@ -911,8 +912,12 @@ class GroupStore(BaseOperation):
         size: int,
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
+        use_packet: bool = False,
     ):
-        super().__init__(Instruction.group_store)
+        if use_packet:
+            super().__init__(Instruction.group_store_packet)
+        else:
+            super().__init__(Instruction.group_store)
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
@@ -926,11 +931,10 @@ class GroupStore(BaseOperation):
 
     def to_dict(self):
         result = {"name": self.name.value}
-        result["src_chunk"] = self.src_chunk.to_dict()
-        result["buffer_type"] = self.buffer_type.value
-        result["buffer_offset"] = self.buffer_offset
-        result["size"] = self.size
-        result["channel_ids"] = self.channel_ids
+        result["src_buff"] = [self.src_chunk.to_dict()]
+        result["dst_buff"] = [
+            {"switch_channel_id": self.channel_ids[0], "index": self.buffer_offset, "size": self.size}
+        ]
         result["channel_type"] = self.channel_type.value
         return result
 

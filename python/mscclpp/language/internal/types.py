@@ -90,6 +90,7 @@ class Instruction(Enum):
     read_reduce = "rre"
     read_reduce_send = "rres"
     group_store = "gstore"
+    group_store_packet = "gstorepkt"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
     pipeline = "pipeline"

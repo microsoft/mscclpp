@@ -42,7 +42,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
 #if defined(__FP8_TYPES_EXIST__) && \
     (!(defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000))
   if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-    assert(false && "FP8 NVLS multimem requires sm_100a or newer");
+    MSCCLPP_ASSERT_DEVICE(false, "FP8 NVLS multimem reduction is not supported on this architecture");
     return;
   } else
 #endif
