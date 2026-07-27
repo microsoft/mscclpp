@@ -285,7 +285,13 @@ def _kineto_kernel_us(
         matched = False
         sub = substr.lower()
         for e in ka:
-            if sub in e.key.lower() and int(e.count) > 0:
+            # Match on the function name with C++ template arguments stripped, so a
+            # combine kernel templated on DispatchLayout (e.g. combineKernel<..,
+            # DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch'
+            # bucket (and vice-versa). The dispatch/combine word lives in the
+            # function name, which always precedes the first '<'.
+            name = e.key.split("<", 1)[0].lower()
+            if sub in name and int(e.count) > 0:
                 total_us += float(e.self_device_time_total) / int(e.count)
                 matched = True
         return total_us if matched else 0.0
