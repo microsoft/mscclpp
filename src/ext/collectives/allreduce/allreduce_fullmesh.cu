@@ -11,9 +11,10 @@ namespace collective {
 
 namespace {
 // Per-context cache of input-side MemoryChannels keyed by input pointer.
-// Lifetime is tied to AlgorithmCtx, so entries are released when the ctx is
-// evicted from the framework's context cache (avoids unbounded growth across
-// allreduce calls that pass different input buffers).
+// The cache is owned by AlgorithmCtx::extras, so every cached channel and device handle is
+// destroyed together with the context, i.e. when NativeAlgorithm::reset() drops its contexts.
+// Individual entries are never evicted, so the cache grows with the number of distinct input
+// buffers used with one context.
 using InputChannelsCache =
     std::unordered_map<const void*,
                        std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>;
