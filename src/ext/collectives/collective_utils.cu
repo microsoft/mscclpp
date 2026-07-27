@@ -19,7 +19,11 @@ namespace {
 __global__ void fp8NvlsSupportProbeKernel(int* supported) {
   // Report the compile-time FP8 multimem capability of the code that actually runs on this
   // device, so the host-side gate matches the instructions compiled into the binary.
-  *supported = MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED;
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
+  *supported = 1;
+#else
+  *supported = 0;
+#endif
 }
 
 bool detectFp8NvlsSupport() {

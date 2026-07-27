@@ -28,13 +28,4 @@
 
 #endif  // !(defined(__NVCC__) || defined(__HIP_PLATFORM_AMD__))
 
-// Whether the current device compilation target supports FP8 (`e4m3`/`e5m2`) multimem
-// instructions.
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000) && \
-    (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
-#define MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED 1
-#else
-#define MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED 0
-#endif
-
 #endif  // MSCCLPP_DEVICE_HPP_
