@@ -73,8 +73,14 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::MULTI_STORE;
   } else if (str == "gstorepkt") {
     return mscclpp::OperationType::MULTI_STORE_PKT;
-  } else if (str == "gbarrier") {
-    return mscclpp::OperationType::MULTI_BARRIER;
+  } else if (str == "gsignal") {
+    return mscclpp::OperationType::MULTI_SIGNAL;
+  } else if (str == "gwait") {
+    return mscclpp::OperationType::MULTI_WAIT;
+  } else if (str == "grlxsignal") {
+    return mscclpp::OperationType::MULTI_RELAXED_SIGNAL;
+  } else if (str == "grlxwait") {
+    return mscclpp::OperationType::MULTI_RELAXED_WAIT;
   } else if (str == "rlxsignal") {
     return mscclpp::OperationType::RELAXED_SIGNAL;
   } else if (str == "rlxwait") {

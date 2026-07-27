@@ -1007,34 +1007,60 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
-    def barrier(self, rank, tb_list):
-        """Perform a switch-native cross-rank barrier for this rank.
+    def signal(self, rank, tb_list, relaxed=False):
+        """Signal all ranks in the group from this rank.
 
-        Replaces a MemoryChannel signal/wait mesh with a single NVLS switch barrier.
-        All threadblocks in ``tb_list`` (across instances) converge on this rank, one
-        thread issues the single multicast arrival, and all blocks are released once
-        every rank in the group has arrived.
+        Sends a signal to all ranks in the rank group, notifying them that
+        an operation has completed or that data is ready.
 
         Args:
-            rank (int): The rank that will execute this barrier operation.
-            tb_list (List[int]): Thread block IDs that participate in the barrier.
-                Must include thread block 0, which acts as the arrival leader.
+            rank (int): The rank that will execute this signal operation.
+            tb_list (List[int]): Thread block IDs that participate in the signal.
+            relaxed (bool, optional): Whether to use relaxed signaling. Defaults to False.
 
         Raises:
-            RuntimeError: If tb_list is empty or does not include thread block 0.
+            RuntimeError: If tb_list is empty.
 
         Example:
-            >>> channel.barrier(rank=0, tb_list=[0])
+            >>> channel.signal(rank=0, tb_list=[0])
         """
         if len(tb_list) == 0:
-            raise RuntimeError("Switch barrier requires at least one thread block.")
+            raise RuntimeError("Group signal requires at least one thread block.")
         if 0 not in tb_list:
-            raise RuntimeError("Switch barrier tb_list must include thread block 0 (the arrival leader).")
+            raise RuntimeError("Group signal tb_list must include thread block 0 (the arrival leader).")
 
         self.src_rank = rank
         for tb in tb_list:
             tb_channel_ids = get_program().setup_channel(tb, self)
-            op = GroupBarrier(rank, tb_list, tb_channel_ids[0])
+            op = GroupSignal(rank, tb_list, tb_channel_ids[0], relaxed=relaxed)
+            get_program().add_operation(rank, tb, op)
+
+    def wait(self, rank, tb_list, relaxed=False):
+        """Wait for a signal from all ranks in the group.
+
+        Waits for a signal from all ranks in the rank group, ensuring that
+        operations are completed before proceeding.
+
+        Args:
+            rank (int): The rank that will execute this wait operation.
+            tb_list (List[int]): Thread block IDs that participate in the wait.
+            relaxed (bool, optional): Whether to use relaxed waiting. Defaults to False.
+
+        Raises:
+            RuntimeError: If tb_list is empty.
+
+        Example:
+            >>> channel.wait(rank=0, tb_list=[0])
+        """
+        if len(tb_list) == 0:
+            raise RuntimeError("Group wait requires at least one thread block.")
+        if 0 not in tb_list:
+            raise RuntimeError("Group wait tb_list must include thread block 0 (the arrival leader).")
+
+        self.src_rank = rank
+        for tb in tb_list:
+            tb_channel_ids = get_program().setup_channel(tb, self)
+            op = GroupWait(rank, tb_list, tb_channel_ids[0], relaxed=relaxed)
             get_program().add_operation(rank, tb, op)
 
     class SwitchChannelRankView:
@@ -1101,23 +1127,43 @@ class SwitchChannel:
             """
             return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
 
-        def barrier(self, tb_list):
-            """Perform a switch-native barrier from this rank's perspective.
+        def signal(self, tb_list, relaxed=False):
+            """Signal all ranks in the group from this rank's perspective.
 
-            Convenience method that calls the underlying channel's barrier method
+            Convenience method that calls the underlying channel's signal method
             with this view's rank automatically provided.
 
             Args:
-                tb_list (List[int]): Thread block IDs that participate in the barrier.
+                tb_list (List[int]): Thread block IDs that participate in the signal.
                     Must include thread block 0, which acts as the arrival leader.
+                relaxed (bool, optional): Whether to use relaxed signaling. Defaults to False.
 
             Returns:
-                The result of the underlying channel's barrier operation.
+                The result of the underlying channel's signal operation.
 
             Example:
-                >>> rank_view.barrier(tb_list=[0])
+                >>> rank_view.signal(tb_list=[0])
             """
-            return self._channel.barrier(self._rank, tb_list)
+            return self._channel.signal(self._rank, tb_list, relaxed)
+
+        def wait(self, tb_list, relaxed=False):
+            """Wait for a signal from all ranks in the group from this rank's perspective.
+
+            Convenience method that calls the underlying channel's wait method
+            with this view's rank automatically provided.
+
+            Args:
+                tb_list (List[int]): Thread block IDs that participate in the wait.
+                    Must include thread block 0, which acts as the arrival leader.
+                relaxed (bool, optional): Whether to use relaxed waiting. Defaults to False.
+
+            Returns:
+                The result of the underlying channel's wait operation.
+
+            Example:
+                >>> rank_view.wait(tb_list=[0])
+            """
+            return self._channel.wait(self._rank, tb_list, relaxed)
 
         def broadcast_packets(self, src_chunk: Chunk, buffer_offset, size, tb):
             """Perform a packet broadcast operation from this rank's perspective.

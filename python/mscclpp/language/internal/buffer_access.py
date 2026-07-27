@@ -22,7 +22,10 @@ class BuffersAccess:
             if (
                 operation.name == Instruction.nop
                 or operation.name == Instruction.barrier
-                or operation.name == Instruction.group_barrier
+                or operation.name == Instruction.group_signal
+                or operation.name == Instruction.group_wait
+                or operation.name == Instruction.group_relaxed_signal
+                or operation.name == Instruction.group_relaxed_wait
             ):
                 self.clear_data_access()
             else:
