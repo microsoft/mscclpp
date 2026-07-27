@@ -100,8 +100,9 @@ struct SwitchChannelDeviceHandle {
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::wait() called without barrier support");
     const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
     POLL_MAYBE_JAILBREAK(
-      (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::acquire) - target) < 0),
-      maxSpinCount);
+        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::acquire) -
+                              target) < 0),
+        maxSpinCount);
   }
 
   /// Wait until every rank has arrived, without any data-visibility ordering.
@@ -115,8 +116,9 @@ struct SwitchChannelDeviceHandle {
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::relaxedWait() called without barrier support");
     const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
     POLL_MAYBE_JAILBREAK(
-      (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::relaxed) - target) < 0),
-      maxSpinCount);
+        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::relaxed) -
+                              target) < 0),
+        maxSpinCount);
   }
 
   template <typename T>
