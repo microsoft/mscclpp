@@ -35,9 +35,9 @@ LL dispatch supports two user-visible layouts:
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
 - `RANK_MAJOR`: fixed-stride rows grouped by source rank. Tokens are written
   directly to registered destination buffers together with dense top-k IDs and
-  weights. All three are exposed as zero-copy Torch tensors. Combine reads
-  registered remote MoE output buffers and reduces the selected rank-local
-  partials.
+  weights. All three are exposed as zero-copy Torch tensors. Combine can pull
+  from registered remote MoE output or push completed rank partials into
+  source-local scratch and progressively reduce ready ranks.
 
 LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
 elements (`FP8_E4M3`) or UE8M0 scale bytes per 32 elements (`MXFP8_E4M3`).

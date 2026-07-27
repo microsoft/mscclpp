@@ -120,6 +120,7 @@ struct WorkspaceView {
   RecvTask* dispatchRecvTasks_;
   uint32_t* dispatchTasksReadyEpoch_;
   int* dispatchNumRecvTasks_;
+  uint32_t* combineRankReadyEpochs_;
   uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
@@ -140,6 +141,8 @@ struct WorkspaceView {
     cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
     dispatchTasksReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchNumRecvTasks_ = cursor++;
+    combineRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
+    cursor += nRanks;
     combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
@@ -155,6 +158,7 @@ struct WorkspaceView {
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
            sizeof(uint32_t) +                                                            // combineReadyEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_

@@ -38,7 +38,6 @@ MSCCLPP_DEVICE_INLINE RankMajorRoute prepareRankMajorRoute(WorkspaceView& worksp
   if (laneId < nTopk) {
     workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId] = dstRank >= 0 ? destinationSlot : -1;
   }
-  __syncwarp();
   return {dstRank, destinationSlot, firstLaneForRank};
 }
 
@@ -207,7 +206,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
     completeRankMajorTokenStore(workspaceView, completionRank);
-    __syncwarp();
+    if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
 }
 
@@ -869,6 +868,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                            workspace, dispatchEpoch, sharedMem);
     }
   }
+
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     *workspaceView.dispatchEpoch_ = dispatchEpoch;
   }
@@ -880,7 +880,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
                                const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
                                void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
                                cudaStream_t stream) {
-  static_assert(Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
+  static_assert(Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 8704 ||
+                Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
   constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, OutputType, DispatchMaxNRecvTmaWorkers>();
   static_assert(NRecvTmaWorkers > 0);
@@ -1004,6 +1005,10 @@ inline void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* 
                                   numBlocks, stream);
     case 8192:
       return dispatchLayout<8192>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
+                                  numBlocks, stream);
+    case 8704:
+      return dispatchLayout<8704>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                                   outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
                                   numBlocks, stream);
     case 9216:
