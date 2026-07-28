@@ -140,7 +140,7 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
       numBlocksAndThreads.first = 35;
     }
   }
-  const int nPeer = ctx->nRanksPerNode - 1;
+  const int nPeer = ctx->nRanksPerIpcDomain - 1;
   const int nWarp = numBlocksAndThreads.first * numBlocksAndThreads.second / WARP_SIZE;
   if (numBlocksAndThreads.first > nChannelsPerConnection_ || numBlocksAndThreads.first <= 0 ||
       numBlocksAndThreads.second <= 0) {

@@ -84,7 +84,7 @@ struct SwitchChannelDeviceHandle {
           : "l"(ptr)
           : "memory");
     }
-#if (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) && (__CUDA_ARCH__ >= 1000)
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
     else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
       if constexpr (std::is_same_v<AccumT, __half>) {
         asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.e4m3x4 %0, [%1];"
@@ -198,7 +198,7 @@ struct SwitchChannelDeviceHandle {
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
     }
-#if (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) && (__CUDA_ARCH__ >= 1000)
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
     else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
       asm volatile("multimem.st.relaxed.sys.global.e4m3x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
