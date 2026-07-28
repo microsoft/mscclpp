@@ -23,7 +23,8 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     from flashinfer.comm.mapping import Mapping
     import flashinfer.comm.trtllm_moe_alltoall as a2a
 
-    x, topk_idx, _topk_weights, _ = inputs
+    input_samples = inputs if isinstance(inputs, list) else [inputs]
+    x, topk_idx, _topk_weights, _ = input_samples[0]
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     gpus_per_node = int(os.environ.get("EP_FLASHINFER_GPUS_PER_NODE", "4"))
@@ -55,12 +56,18 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         moe_tp_size=1,
         moe_ep_size=num_ranks,
     )
+    mnnvl_config = None
+    if hasattr(comm, "torch_group"):
+        from flashinfer.comm.mnnvl import MnnvlConfig, TorchDistBackend
+
+        mnnvl_config = MnnvlConfig(comm_backend=TorchDistBackend(comm.torch_group))
     moe = a2a.MoeAlltoAll(
         mapping,
         max_num_tokens=num_tokens,
         top_k=num_topk,
         num_experts=num_experts,
         hidden_size=hidden,
+        mnnvl_config=mnnvl_config,
     )
 
     # Shared routing inputs: FlashInfer wants int32 expert ids [num_tokens, top_k]
@@ -68,6 +75,13 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     # workload matches the other backends.
     token_selected_experts = topk_idx[:, :num_topk].to(torch.int32).contiguous()
     hidden_payload = x.to(dtype).contiguous()
+    graph_samples = [
+        (
+            sample_x.to(dtype).contiguous(),
+            sample_topk_idx[:, :num_topk].to(torch.int32).contiguous(),
+        )
+        for sample_x, sample_topk_idx, _sample_weights, _ in input_samples
+    ]
     # Combine payload lives in the received layout [ep_size, max_tokens, hidden].
     combine_payload = torch.randn(num_ranks, num_tokens, hidden, generator=None, device=dev, dtype=dtype)
 
@@ -104,18 +118,34 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         # back to the direct barrier+launch.
         try:
             # Prime one full pair so phase returns to idle and lazy work settles.
+            comm.Barrier()
             _dispatch()
             _combine()
             torch.cuda.synchronize()
-            g_all = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g_all):
-                _dispatch()
-                _combine()
+            comm.Barrier()
+            if args.graph_group_size > 1:
+                grouped_graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(grouped_graph):
+                    for sample_hidden, sample_topk_idx in graph_samples:
+                        moe.dispatch(
+                            sample_topk_idx,
+                            [sample_hidden],
+                            num_tokens,
+                        )
+                        _combine()
+                graphs = [grouped_graph]
+            else:
+                g_dispatch = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(g_dispatch):
+                    _dispatch()
+                g_combine = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(g_combine):
+                    _combine()
+                graphs = [g_dispatch, g_combine]
             torch.cuda.synchronize()
-            graphs = [g_all]
             captured = True
             if rank == 0:
-                print("[cfg] flashinfer cuda_graph=True (single graph; MPI barrier kept outside)", flush=True)
+                print("[cfg] flashinfer cuda_graph=True (separate dispatch/combine graphs)", flush=True)
         except Exception as e:  # noqa: BLE001 - capturability is an external-library boundary
             if rank == 0:
                 print(f"[cfg] flashinfer cuda_graph capture failed ({e}); falling back to eager", flush=True)
@@ -126,19 +156,30 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
                 top_k=num_topk,
                 num_experts=num_experts,
                 hidden_size=hidden,
+                mnnvl_config=mnnvl_config,
             )
         comm.Barrier()
 
     if captured:
-        g_all = graphs[0]
+        if args.graph_group_size > 1:
+            grouped_graph = graphs[0]
 
-        def dispatch_fn():
-            comm.Barrier()
-            g_all.replay()
-            return None
+            def dispatch_fn():
+                grouped_graph.replay()
+                return None
 
-        def combine_fn(_dout):
-            pass  # both phases already ran inside the combined graph replay
+            def combine_fn(_dout):
+                pass
+
+        else:
+            g_dispatch, g_combine = graphs
+
+            def dispatch_fn():
+                g_dispatch.replay()
+                return None
+
+            def combine_fn(_dout):
+                g_combine.replay()
 
     else:
 
