@@ -52,6 +52,34 @@ os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
 import torch
 import torch.distributed as dist
 
+# BF16 has an 8-bit significand, so it represents integers exactly only up to
+# 256. Per-token indices are therefore encoded as two base-256 digits spread
+# across two halves of the trailing anchor columns, keeping every stored value
+# in [0, 255] and the decode exact for up to TOKEN_ID_RADIX**2 tokens.
+TOKEN_ID_ANCHOR_WIDTH = 128
+TOKEN_ID_RADIX = 256
+TOKEN_ID_MAX = TOKEN_ID_RADIX * TOKEN_ID_RADIX
+
+
+def encode_token_ids(x, num_tokens):
+    """Write the row index of ``x`` into its trailing anchor columns."""
+    assert num_tokens <= TOKEN_ID_MAX, "too many tokens for the bf16 token-id anchor"
+    assert x.size(-1) >= TOKEN_ID_ANCHOR_WIDTH
+    half = TOKEN_ID_ANCHOR_WIDTH // 2
+    token_ids = torch.arange(num_tokens, device=x.device)
+    x[:, -TOKEN_ID_ANCHOR_WIDTH:-half] = (
+        (token_ids // TOKEN_ID_RADIX).to(torch.bfloat16).view(-1, 1)
+    )
+    x[:, -half:] = (token_ids % TOKEN_ID_RADIX).to(torch.bfloat16).view(-1, 1)
+
+
+def decode_token_ids(tokens):
+    """Recover the source token indices encoded by :func:`encode_token_ids`."""
+    half = TOKEN_ID_ANCHOR_WIDTH // 2
+    high = tokens[:, -TOKEN_ID_ANCHOR_WIDTH:-half].float().mean(dim=-1)
+    low = tokens[:, -half:].float().mean(dim=-1)
+    return (high * TOKEN_ID_RADIX + low).long()
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -99,7 +127,7 @@ def parse_args():
         "--invalid-token-expert-id",
         type=int,
         default=None,
-        help="Sentinel for token-major non-local and padding expert IDs (default: num_experts)",
+        help="Sentinel expert ID for rank-major non-local and padding rows (default: num_experts)",
     )
     parser.add_argument(
         "--bench",
@@ -356,11 +384,8 @@ def validate_rank_major_dispatch(
         )
         assert recv_count == expected_source_tokens.numel()
         if recv_count:
-            actual_source_tokens = (
-                dispatch_out.tokens[row_begin:row_end, -128:]
-                .float()
-                .mean(dim=-1)
-                .long()
+            actual_source_tokens = decode_token_ids(
+                dispatch_out.tokens[row_begin:row_end]
             )
             assert torch.equal(
                 torch.sort(actual_source_tokens).values, expected_source_tokens
@@ -465,9 +490,7 @@ def reconstruct_rank_major_reference(
             continue
         row_begin = source_rank * num_tokens
         row_end = row_begin + source_count
-        source_tokens = (
-            dispatch_out.tokens[row_begin:row_end, -128:].float().mean(dim=-1).long()
-        )
+        source_tokens = decode_token_ids(dispatch_out.tokens[row_begin:row_end])
         selected = first_destination_rank[source_rank, source_tokens] == rank
         dispatched_reference_x[source_rank, source_tokens[selected]] = dequantized_x[
             row_begin:row_end
@@ -476,7 +499,8 @@ def reconstruct_rank_major_reference(
     return dispatched_reference_x[rank]
 
 
-def expected_expert_major_output(reference_x, topk_idx, topk_weights):
+def expected_direct_send_output(reference_x, topk_idx, topk_weights):
+    """Reference for DIRECT_SEND combine: a single accumulation over all top-k slots."""
     expected = torch.zeros_like(reference_x, dtype=torch.float32)
     reference_x_f = reference_x.float()
     for topk_slot in range(topk_idx.size(1)):
@@ -491,9 +515,13 @@ def expected_expert_major_output(reference_x, topk_idx, topk_weights):
     return expected.to(torch.bfloat16)
 
 
-def expected_rank_major_output(
+def expected_rank_local_reduce_output(
     reference_x, topk_idx, topk_weights, num_ranks, num_local_experts
 ):
+    """Reference for RANK_LOCAL_REDUCE combine, which rounds every destination
+    rank's partial sum to BF16 before the cross-rank accumulation. Applies to
+    both output layouts: the reduction model depends on the combine mode, not
+    on the dispatch layout."""
     expected = torch.zeros_like(reference_x, dtype=torch.float32)
     reference_x_f = reference_x.float()
     for destination_rank in range(num_ranks):
@@ -575,11 +603,9 @@ def main():
         x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (
             rank - rank_offset
         )
-        # Encode the per-token index into the last 128 elements so the receiver
-        # can verify which source token it is looking at.
-        x[:, -128:] = (
-            torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
-        )
+        # Encode the per-token index into the last anchor columns so the
+        # receiver can verify which source token it is looking at.
+        encode_token_ids(x, num_tokens)
     else:
         x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * 8
         if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
@@ -796,12 +822,12 @@ def main():
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
-    if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        expected = expected_rank_major_output(
+    if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+        expected = expected_rank_local_reduce_output(
             reference_x, topk_idx, topk_weights, num_ranks, num_local_experts
         )
     else:
-        expected = expected_expert_major_output(reference_x, topk_idx, topk_weights)
+        expected = expected_direct_send_output(reference_x, topk_idx, topk_weights)
     local_diff, _ = validate_combine_output(
         combined_x,
         expected,

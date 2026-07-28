@@ -154,8 +154,6 @@ void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, 
     EP_HOST_ASSERT(outputTopkIdx == layout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == layout.rankMajorTopkWeightsBuffer_);
   }
-  cudaStreamCaptureStatus captureStatus;
-  CUDA_CHECK(cudaStreamIsCapturing(stream, &captureStatus));
 
   const low_latency::Workload workload{.numTokens_ = numTokens,
                                        .hidden_ = hidden,
@@ -164,8 +162,6 @@ void MoERuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, 
                                        .invalidTokenExpertId_ = invalidTokenExpertId,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .enableRankMajorTmaPipeline_ = dispatchLayout == DispatchLayout::RANK_MAJOR &&
-                                                                      captureStatus == cudaStreamCaptureStatusActive,
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
@@ -198,7 +194,6 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .invalidTokenExpertId_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .enableRankMajorTmaPipeline_ = false,
                                        .dispatchDataType_ = dispatchDataType};
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);

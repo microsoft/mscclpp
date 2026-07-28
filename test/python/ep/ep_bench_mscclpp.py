@@ -98,15 +98,31 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
-        validation_input = expert_output if expert_output is not None else simulated_gemm_output(v_dispatch_out)
+        validation_input = simulated_gemm_output(v_dispatch_out)
+        if expert_output is not None:
+            # Rank-major combine reads the runtime-owned registered buffer, so the
+            # simulated expert output has to be staged into it first.
+            expert_output.copy_(validation_input)
+            validation_input = expert_output
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
-        if dispatch_quant is None and not rank_major:
+        if dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
             x_f = x.float()
-            for j in range(num_topk):
-                weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
-                expected_f = torch.addcmul(expected_f, x_f, weight_j)
+            if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+                # Rank-local reduce rounds each destination rank's partial sum to
+                # BF16 before the cross-rank accumulation.
+                for destination_rank in range(num_ranks):
+                    rank_partial = torch.zeros_like(x, dtype=torch.float32)
+                    for j in range(num_topk):
+                        selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] // num_local_experts == destination_rank)
+                        weight_j = topk_weights[:, j].masked_fill(~selected, 0.0).view(-1, 1)
+                        rank_partial = torch.addcmul(rank_partial, x_f, weight_j)
+                    expected_f += rank_partial.to(torch.bfloat16).float()
+            else:
+                for j in range(num_topk):
+                    weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
+                    expected_f = torch.addcmul(expected_f, x_f, weight_j)
             gdiff = validate_combine_output_mpi(
                 v_out, expected_f.to(torch.bfloat16), comm, exact=args.combine_mode == "direct_send"
             )

@@ -29,9 +29,7 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
   EXPERT_MAJOR,
-  /// Token-major rows. Low latency uses
-  /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
-  /// throughput uses [num_recv_tokens, hidden].
+  /// Token-major rows: [num_recv_tokens, hidden]. High throughput only.
   TOKEN_MAJOR,
   /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
   RANK_MAJOR
@@ -117,8 +115,6 @@ struct Workload {
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
   DispatchLayout outputLayout_;
-  /// Whether rank-major dispatch overlaps the next token load with current remote stores.
-  bool enableRankMajorTmaPipeline_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
