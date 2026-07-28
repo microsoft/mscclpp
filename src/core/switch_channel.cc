@@ -247,10 +247,10 @@ SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
   device.devicePtr = devicePtr_;
   device.mcPtr = mcPtr_.get();
   device.bufferSize = bufferSize_;
-  device.mcBarrierFlag = barrierMcFlag_;
-  device.localBarrierFlag = barrierLocalFlag_;
-  device.barrierGen = barrierGen_;
-  device.nRanks = barrierNRanks_;
+  device.barrier_.mcBarrierFlag = barrierMcFlag_;
+  device.barrier_.localBarrierFlag = barrierLocalFlag_;
+  device.barrier_.barrierGen = barrierGen_;
+  device.barrier_.nRanks = barrierNRanks_;
   return device;
 };
 

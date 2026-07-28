@@ -14,6 +14,7 @@
 #include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/poll_device.hpp>
+#include <mscclpp/semaphore_device.hpp>
 
 #include "device.hpp"
 
@@ -27,99 +28,30 @@ struct SwitchChannelDeviceHandle {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
-  /// Multicast pointer to the shared arrival counter used by barrier(). A single multimem add on
-  /// this pointer is reflected into every rank's copy of the counter by the switch. Null if the
-  /// owning connection was created without barrier support.
-  uint32_t* mcBarrierFlag;
-  /// Local (unicast) pointer to this rank's own copy of the arrival counter used by barrier().
-  /// This is the address barrier() spins on. Null if the connection has no barrier support.
-  uint32_t* localBarrierFlag;
-  /// Local pointer to this rank's persistent barrier generation counter. It advances by nRanks on
-  /// every barrier() call and provides the per-rank wait target (see barrier()). Persisting it in
-  /// GPU memory lets barrier() be called repeatedly within and across kernel launches without any
-  /// host-side reset. Null if the connection has no barrier support.
-  uint32_t* barrierGen;
-  /// Number of ranks (devices) participating in the multicast group.
-  int nRanks;
+  /// Backing group-barrier semaphore over the switch multimem. Its pointers are null if the owning
+  /// connection was created without barrier support (see NvlsConnection::attachBarrier).
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrier_;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
-  /// Cross-rank switch barrier, split into arrival (signal) and completion (wait) halves.
+  /// Issue an ordered cross-rank arrival, publishing this rank's prior writes; pair with wait().
   ///
-  /// These four methods implement a device-side cross-rank barrier over the switch's multimem
-  /// atomics, without any memory-channel semaphores or host-side barrier. A full barrier is a
-  /// `signal()`/`wait()` pair (or their relaxed variants): every rank issues one multimem add of 1
-  /// on the shared arrival counter -- which the switch applies to every rank's copy -- and then
-  /// spins on its own local copy until the counter reaches its private target. Splitting arrival
-  /// from completion lets a kernel overlap independent work between the two halves.
-  ///
-  /// The protocol is monotonic and never reset: `wait()`/`relaxedWait()` advance this rank's private
-  /// target by nRanks each call. Because every rank calls the pair the same number of times and
-  /// advances its target identically, the targets stay in lock-step with the shared counter.
-  ///
-  /// Ordering is selected by which pair is used. The relaxed pair (`relaxedSignal`/`relaxedWait`) is
-  /// a pure execution barrier: it synchronizes rank arrival but makes no cross-rank data-visibility
-  /// guarantee. The ordered pair (`signal`/`wait`) additionally publishes memory: the arrival is a
-  /// `.release` multimem add and the wait an `.acquire` load, so writes issued by any rank before its
-  /// `signal()` are visible to all ranks after their `wait()` returns. This ordering is carried by
-  /// scoped release/acquire on the counter itself (at `.sys` scope, on the counter only) rather than
-  /// by a pair of `__threadfence_system()` calls, which is much cheaper than a full system fence
-  /// (this matches NCCL's LSA switch barrier in `lsa_barrier__funcs.h`).
-  ///
-  /// @note Each method must be called by exactly one thread per rank (e.g. block 0, thread 0); the
-  /// barrier counts ranks, not threads. For a grid-wide cross-rank barrier, converge the grid (e.g.
-  /// via `mscclpp::DeviceSyncer::sync`) around the pair. Requires that the owning `NvlsConnection`
-  /// was created with barrier support, i.e. the barrier pointers are non-null.
+  /// Delegates to the backing group-barrier semaphore. See
+  /// SwitchDevice2DeviceSemaphoreDeviceHandle for the full barrier protocol and ordering semantics.
+  MSCCLPP_DEVICE_INLINE void signal() { barrier_.signal(); }
 
-  /// Issue an ordered cross-rank arrival, publishing this rank's prior writes.
-  ///
-  /// Performs one `multimem.red.release.sys.add` of 1 on the shared counter. The `.release` ordering
-  /// makes writes issued before this call visible to any peer that observes the arrival via an
-  /// acquiring `wait()`. Pair with `wait()`.
-  MSCCLPP_DEVICE_INLINE void signal() {
-    asm volatile("multimem.red.release.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
-  }
+  /// Issue a relaxed cross-rank arrival, without any data-visibility ordering; pair with relaxedWait().
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() { barrier_.relaxedSignal(); }
 
-  /// Issue a relaxed cross-rank arrival, without any data-visibility ordering.
-  ///
-  /// Relaxed variant of `signal()`: performs `multimem.red.relaxed.sys.add`, a pure execution arrival
-  /// that synchronizes rank progress but makes no cross-rank memory-visibility guarantee. Pair with
-  /// `relaxedWait()`.
-  MSCCLPP_DEVICE_INLINE void relaxedSignal() {
-    asm volatile("multimem.red.relaxed.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
-  }
-
-  /// Wait until every rank has arrived, acquiring peers' published writes.
-  ///
-  /// Advances this rank's private target by nRanks, then spins on its local copy of the counter with
-  /// an `.acquire` load until the counter reaches the target (the signed, wrap-safe compare means
-  /// "counter is behind target"). The acquire pairs with peers' `signal()` release so their
-  /// pre-arrival writes are visible after this returns. Pair with `signal()`.
+  /// Wait (acquire) until every rank has arrived; pair with signal().
   ///
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) {
-    MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::wait() called without barrier support");
-    const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
-    POLL_MAYBE_JAILBREAK(
-        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::acquire) -
-                              target) < 0),
-        maxSpinCount);
-  }
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { barrier_.wait(maxSpinCount); }
 
-  /// Wait until every rank has arrived, without any data-visibility ordering.
-  ///
-  /// Relaxed variant of `wait()`: advances this rank's private target by nRanks and spins on its local
-  /// copy of the counter with a relaxed load until the counter reaches the target. Provides rank
-  /// synchronization only (no cross-rank memory ordering). Pair with `relaxedSignal()`.
+  /// Relaxed wait until every rank has arrived, without any data-visibility ordering; pair with
+  /// relaxedSignal().
   ///
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) {
-    MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::relaxedWait() called without barrier support");
-    const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
-    POLL_MAYBE_JAILBREAK(
-        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, cuda::memory_order::relaxed) -
-                              target) < 0),
-        maxSpinCount);
-  }
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) { barrier_.relaxedWait(maxSpinCount); }
 
   template <typename T>
   MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
