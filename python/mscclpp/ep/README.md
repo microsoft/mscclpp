@@ -449,7 +449,7 @@ Requirements:
 | Shape | `[T, H]`, token-major |
 | Layout | contiguous row-major |
 | Device | CUDA tensor |
-| dtype | BF16, FP16, FP8, NVFP4, MXFP8, or another supported activation dtype |
+| dtype | BF16, FP16, FP8, NVFP4, or another supported activation dtype |
 | Ordering | original local token order; not expert sorted |
 
 The user should not expand `input` by top-k and should not convert it to
@@ -492,7 +492,6 @@ Examples:
 | BF16/FP16 | `[T, H]` | `None` |
 | FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
-| MXFP8 E4M3 | `[T, H]` FP8 | `[T, H / 32]` `uint8` UE8M0 scales |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -611,8 +610,7 @@ expert-major tokens:  [num_local_experts, max_slots, H]
 expert-major scales:  [num_local_experts, max_slots, S]
 ```
 
-`S` is `H / 128` with FP32 values for `FP8_E4M3`; it is `H / 32` with
-`uint8` UE8M0 values for `MXFP8_E4M3`.
+`S` is `H / 128` with FP32 values for `FP8_E4M3`.
 
 ## MLP contract
 
@@ -694,11 +692,6 @@ dispatch_out, handle = moe_comm.dispatch(
 expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 output = moe_comm.combine(expert_output, handle)
 ```
-
-Use `DispatchDataType.MXFP8_E4M3` for E4M3 payloads with one linear UE8M0
-scale byte per 32 hidden elements. The returned scales are directly compatible
-with FlashInfer `cutlass_fused_moe(..., use_mxfp8_act_scaling=True,
-swizzled_input_sf=False)`.
 
 For overlap, expose two optional APIs rather than adding many flags to the
 default path:

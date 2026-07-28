@@ -94,9 +94,7 @@ enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
-  FP8_E4M3,
-  /// FP8 E4M3 payload with one UE8M0 scale byte per 32 hidden elements.
-  MXFP8_E4M3
+  FP8_E4M3
 };
 
 /// Per-call low-latency workload dimensions.
@@ -150,7 +148,7 @@ size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int num
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major or token-major packed output selected by
 /// Workload::outputLayout_.
-/// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, UE8M0 bytes for MXFP8_E4M3, or nullptr for BF16.
+/// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, or nullptr for BF16.
 /// @param[out] outputSrcInfo Original source-token index for every output row.
 /// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// Non-local and padding entries use Workload::invalidTokenExpertId_.

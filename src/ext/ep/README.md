@@ -10,9 +10,10 @@ It exposes a single `MoERuntime` whose `MoEMode` selects one of two backends:
   CUDA sources under `high-throughput/`), reached through the `ht_*` methods.
   Defaults to 20 SMs so dispatch/combine can overlap with expert GEMMs.
 
-Both derive from `MoERuntimeBase` (`runtime_base.hpp`), which owns the shared
-rank-topology detection and availability reporting. `MoERuntime` itself only
-constructs and forwards; calling the other mode's methods raises.
+Both derive from the abstract `MoERuntime` (`runtime_base.hpp`), which owns the
+shared rank-topology detection and availability reporting.
+`createMoERuntime(...)` constructs the requested implementation and returns a
+`std::shared_ptr<MoERuntime>`; calling the other mode's methods raises.
 
 ## Status
 
@@ -46,9 +47,7 @@ LL dispatch supports two user-visible layouts:
   source-local scratch and progressively reduce ready ranks.
 
 LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
-elements (`FP8_E4M3`) or UE8M0 scale bytes per 32 elements (`MXFP8_E4M3`).
-MXFP8 scales use linear row-major layout and can be passed to FlashInfer
-`cutlass_fused_moe` with `swizzled_input_sf=False`.
+elements (`FP8_E4M3`).
 
 ### High throughput
 
@@ -111,9 +110,7 @@ cmake --build build -j 64
 The EP extension requires CUDA architecture 90 or newer. Without an explicit
 `MSCCLPP_GPU_ARCHS`, it builds for `90`, `100`, `100a`, `103`, and `103a` when
 the CUDA toolkit supports those targets. An explicit `MSCCLPP_GPU_ARCHS`
-overrides this list. Architecture-specific `100a`/`103a` builds use the native
-Blackwell UE8M0 conversion instruction; generic `100`/`103` builds use the
-portable conversion path.
+overrides this list.
 
 Available CMake options:
 

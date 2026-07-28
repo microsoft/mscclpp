@@ -688,11 +688,6 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                comm, workspace, numBlocks, stream);
-      case DispatchDataType::MXFP8_E4M3:
-        return combineHiddenMode<low_latency::CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::MXFP8_E4M3, 32,
-                                 DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
-                                                               comm, workspace, numBlocks, stream);
     }
   }
   switch (workload.dispatchDataType_) {
@@ -703,11 +698,6 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                                              comm, workspace, numBlocks, stream);
     case DispatchDataType::FP8_E4M3:
       return combineHiddenMode<low_latency::CombineMode::DIRECT_SEND, Hidden, DispatchDataType::FP8_E4M3, 128,
-                               DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                             layoutRange, workload, recvBuffer, dispatchRecvBuffer,
-                                                             comm, workspace, numBlocks, stream);
-    case DispatchDataType::MXFP8_E4M3:
-      return combineHiddenMode<low_latency::CombineMode::DIRECT_SEND, Hidden, DispatchDataType::MXFP8_E4M3, 32,
                                DispatchLayout::EXPERT_MAJOR>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                              layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                              comm, workspace, numBlocks, stream);

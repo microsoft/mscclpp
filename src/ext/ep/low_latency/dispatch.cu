@@ -256,7 +256,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
                                            const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                            int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                            void* workspace, int* sharedMem) {
-  static_assert(DataType == DispatchDataType::FP8_E4M3 || DataType == DispatchDataType::MXFP8_E4M3);
+  static_assert(DataType == DispatchDataType::FP8_E4M3);
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
@@ -294,13 +294,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
                                              laneId);
     }
     for (int inputIdx = groupThreadId; inputIdx < HiddenVectors; inputIdx += groupThreadCount) {
-      if constexpr (DataType == DispatchDataType::MXFP8_E4M3) {
-        outputData[inputIdx] = quantizeBf16x8ToMxFp8E4M3<ScaleBlockSize>(
-            inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
-      } else {
-        outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
-            inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
-      }
+      outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
+          inputData[inputIdx], outputScales + inputIdx * mscclpp::bf16x8::Size / ScaleBlockSize, laneId);
     }
     syncNamedBarrier(groupBarrierId, groupThreadCount);
 
@@ -855,10 +850,6 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
             topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
         return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout>(
-            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
-      case DispatchDataType::MXFP8_E4M3:
-        return dispatchHiddenMode<Hidden, DispatchDataType::MXFP8_E4M3, 32, Layout>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
     }

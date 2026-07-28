@@ -18,7 +18,7 @@ namespace ep {
 
 MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden,
                                            int numExperts, int numTopk)
-    : MoERuntimeBase(communicator),
+    : MoERuntime(communicator),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
@@ -50,19 +50,19 @@ MoELowLatencyRuntime::~MoELowLatencyRuntime() noexcept(false) {
   }
 }
 
-void* MoELowLatencyRuntime::rankMajorTopkIdsBuffer() const {
+void* MoELowLatencyRuntime::outputTopkIdsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorTopkIdsBuffer_;
 }
-void* MoELowLatencyRuntime::rankMajorTopkWeightsBuffer() const {
+void* MoELowLatencyRuntime::outputTopkWeightsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorTopkWeightsBuffer_;
 }
-void* MoELowLatencyRuntime::rankMajorTokenBuffer() const {
+void* MoELowLatencyRuntime::outputTokensBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorTokenBuffer_;
 }
-void* MoELowLatencyRuntime::rankMajorExpertOutputBuffer() const {
+void* MoELowLatencyRuntime::expertOutputBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorExpertOutputBuffer_;
 }

@@ -56,7 +56,7 @@ class HighThroughputRuntime:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
-        self.runtime = _cpp.MoERuntime(
+        self.runtime = _cpp.create_moe_runtime(
             comm.communicator,
             _cpp.MoEMode.HIGH_THROUGHPUT,
             max_hidden_bytes=max_hidden_bytes,
@@ -74,11 +74,15 @@ class HighThroughputRuntime:
         return self.runtime.is_internode_available()
 
     # ------------------------------------------------------------------
-    # Dispatch layout
+    # Dispatch routing metadata
     # ------------------------------------------------------------------
 
-    def get_dispatch_layout(self, topk_idx: torch.Tensor, num_experts: int):
-        """Return per-rank, per-expert, and token-membership routing metadata."""
+    def compute_dispatch_counts(self, topk_idx: torch.Tensor, num_experts: int):
+        """Return per-rank, per-expert, and token-membership routing metadata.
+
+        This is routing metadata consumed by dispatch; it is unrelated to
+        ``DispatchLayout`` (the memory layout of the dispatch output).
+        """
         assert topk_idx.dim() == 2 and topk_idx.is_contiguous()
         num_tokens, num_topk = int(topk_idx.size(0)), int(topk_idx.size(1))
 
@@ -86,7 +90,7 @@ class HighThroughputRuntime:
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, self.group_size), dtype=torch.bool, device="cuda")
 
-        self.runtime.ht_layout(
+        self.runtime.ht_compute_dispatch_counts(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -255,11 +259,6 @@ class HighThroughputBackend:
         comm = config.comm
         if comm is None:
             raise ValueError("mode=HIGH_THROUGHPUT requires an mscclpp.CommGroup via comm=")
-        if Config is None or not hasattr(_cpp, "MoERuntime"):
-            raise ImportError(
-                "mscclpp_ep_cpp was built without the high-throughput EP backend. "
-                "Rebuild with -DMSCCLPP_BUILD_EXT_EP=ON and ensure Config/MoERuntime are exported."
-            )
 
         self.comm = comm
         self.rank = comm.my_rank
@@ -352,7 +351,7 @@ class HighThroughputBackend:
                 num_tokens_per_rank,
                 num_tokens_per_expert,
                 is_token_in_rank,
-            ) = self._runtime.get_dispatch_layout(topk_ids, self.num_experts)
+            ) = self._runtime.compute_dispatch_counts(topk_ids, self.num_experts)
 
         if cache is not None:
             (

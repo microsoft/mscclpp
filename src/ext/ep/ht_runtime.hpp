@@ -19,14 +19,18 @@
 namespace mscclpp {
 namespace ep {
 
-class MoEHighThroughputRuntime : public MoERuntimeBase {
+class MoEHighThroughputRuntime : public MoERuntime {
  public:
   MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                            const high_throughput::Config& config);
   ~MoEHighThroughputRuntime() noexcept(false);
 
-  void layout(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
-              int numTokens, int numTopk, int numExperts, cudaStream_t stream);
+  MoEMode mode() const override { return MoEMode::HIGH_THROUGHPUT; }
+
+  /// Count tokens per rank and per expert, and record token-to-rank membership.
+  /// This is routing metadata for dispatch, unrelated to `DispatchLayout`.
+  void computeDispatchCounts(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                             const int64_t* topkIdx, int numTokens, int numTopk, int numExperts, cudaStream_t stream);
 
   int getDispatchNumChannels(int xElementSize) const;
 

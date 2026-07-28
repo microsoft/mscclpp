@@ -21,7 +21,7 @@ namespace ep {
 
 MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                                                    const high_throughput::Config& config)
-    : MoERuntimeBase(communicator), maxHiddenBytes_(maxHiddenBytes), config_(config) {
+    : MoERuntime(communicator), maxHiddenBytes_(maxHiddenBytes), config_(config) {
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
@@ -138,9 +138,9 @@ bool MoEHighThroughputRuntime::canUseDirectRecvPool(int numTokens, int numRecvTo
                                                high_throughput::Config::recvPoolHiddenBytes(numRanks_);
 }
 
-void MoEHighThroughputRuntime::layout(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                                      const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
-                                      cudaStream_t stream) {
+void MoEHighThroughputRuntime::computeDispatchCounts(int* numTokensPerRank, int* numTokensPerExpert,
+                                                     bool* isTokenInRank, const int64_t* topkIdx, int numTokens,
+                                                     int numTopk, int numExperts, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);

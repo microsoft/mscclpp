@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
     parser.add_argument(
         "--dispatch-dtype",
-        choices=("bf16", "fp8_e4m3", "mxfp8_e4m3"),
+        choices=("bf16", "fp8_e4m3"),
         default="bf16",
         help="Wire format for low-latency dispatch",
     )
@@ -159,18 +159,7 @@ def fp8_e4m3_scales(x, scale_block_size):
     return max_abs / 448.0
 
 
-def mxfp8_e4m3_scales(x):
-    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 32, 32)
-    normalized_max = blocks.abs().amax(dim=-1) / 448.0
-    encoded = (torch.ceil(torch.log2(normalized_max)).clamp(-127, 127) + 127).to(torch.uint8)
-    return torch.where(normalized_max > 0, encoded, torch.zeros_like(encoded))
-
-
 def decode_block_scales(scales):
-    if scales.dtype == torch.uint8:
-        bits = scales.to(torch.int32) << 23
-        bits = torch.where(scales == 0, torch.full_like(bits, 0x00400000), bits)
-        return bits.view(torch.float32)
     return scales.float()
 
 
@@ -278,10 +267,7 @@ def validate_expert_major_dispatch(
                 local_expert_idx, output_offset : output_offset + source_count
             ]
             reference_scales = expected_scales[source_rank, source_tokens]
-            if actual_scales.dtype == torch.uint8:
-                assert torch.all((actual_scales.to(torch.int16) - reference_scales.to(torch.int16)).abs() <= 1)
-            else:
-                torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+            torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
             decoded_actual_scales = decode_block_scales(actual_scales)
             decoded_reference_scales = decode_block_scales(reference_scales)
             actual_blocks = actual_tokens.float().reshape(source_count, hidden // scale_block_size, scale_block_size)
@@ -290,9 +276,6 @@ def validate_expert_major_dispatch(
                 .float()
                 .reshape(source_count, hidden // scale_block_size, scale_block_size)
             )
-            if actual_scales.dtype == torch.uint8:
-                tiny_nonzero_blocks = (reference_scales == 0) & (reference_blocks.abs().amax(dim=-1) > 0)
-                assert torch.all(actual_blocks.abs().amax(dim=-1)[tiny_nonzero_blocks] > 0)
             actual_dequantized = actual_blocks * decoded_actual_scales.unsqueeze(-1)
             quant_error = (actual_dequantized - reference_blocks).abs()
             quant_error_bound = decoded_reference_scales.unsqueeze(-1) * 16.1 + 1e-6
@@ -498,18 +481,13 @@ def main():
     dispatch_data_type = {
         "bf16": ep.DispatchDataType.BF16,
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
-        "mxfp8_e4m3": ep.DispatchDataType.MXFP8_E4M3,
     }[args.dispatch_dtype]
     dispatch_quant = (
         None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
     )
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
-    scale_block_size = 0
-    if dispatch_data_type == ep.DispatchDataType.FP8_E4M3:
-        scale_block_size = 128
-    elif dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
-        scale_block_size = 32
-    scale_element_size = 1 if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3 else 4
+    scale_block_size = 128 if dispatch_data_type == ep.DispatchDataType.FP8_E4M3 else 0
+    scale_element_size = 4
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -524,8 +502,6 @@ def main():
         encode_token_ids(x, num_tokens)
     else:
         x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * 8
-        if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3:
-            x[0, :32] = torch.finfo(torch.bfloat16).tiny
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
     if args.num_active_ranks:
         assert num_topk <= args.num_active_ranks * num_local_experts
@@ -624,14 +600,9 @@ def main():
             else (num_ranks * num_tokens, hidden // scale_block_size)
         )
         assert dispatch_out.quant.block_scales.shape == expected_scale_shape
-        expected_scale_dtype = torch.uint8 if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3 else torch.float32
-        assert dispatch_out.quant.block_scales.dtype == expected_scale_dtype
+        assert dispatch_out.quant.block_scales.dtype == torch.float32
         assert all_x is not None
-        expected_scales = (
-            mxfp8_e4m3_scales(all_x)
-            if dispatch_data_type == ep.DispatchDataType.MXFP8_E4M3
-            else fp8_e4m3_scales(all_x, scale_block_size)
-        )
+        expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
 
     if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
         assert packed_recv_layout_range is not None

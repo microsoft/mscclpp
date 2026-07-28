@@ -142,8 +142,13 @@ class MoECommunicator:
         return self._backend.combine(expert_output, handle, out=out, stream=stream)
 
     def get_expert_output_buffer(self) -> torch.Tensor:
-        """Return the runtime-owned rank-major MoE output buffer."""
-        buffer = getattr(self._backend, "rank_major_expert_output_buffer", None)
+        """Return the runtime-owned rank-major MoE output buffer.
+
+        This aliases runtime memory that every combine reuses; it is not a fresh
+        allocation per call. Fill it before each combine and copy out anything
+        that must outlive the next call.
+        """
+        buffer = getattr(self._backend, "expert_output_buffer", None)
         if buffer is None:
             raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
         return buffer

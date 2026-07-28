@@ -19,16 +19,18 @@
 namespace mscclpp {
 namespace ep {
 
-class MoELowLatencyRuntime : public MoERuntimeBase {
+class MoELowLatencyRuntime : public MoERuntime {
  public:
   MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
                        int numTopk);
   ~MoELowLatencyRuntime() noexcept(false);
 
-  void* rankMajorTopkIdsBuffer() const;
-  void* rankMajorTopkWeightsBuffer() const;
-  void* rankMajorTokenBuffer() const;
-  void* rankMajorExpertOutputBuffer() const;
+  MoEMode mode() const override { return MoEMode::LOW_LATENCY; }
+
+  void* outputTopkIdsBuffer() const;
+  void* outputTopkWeightsBuffer() const;
+  void* outputTokensBuffer() const;
+  void* expertOutputBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,

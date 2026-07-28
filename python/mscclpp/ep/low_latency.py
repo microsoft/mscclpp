@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, MoERuntime
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, create_moe_runtime
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -33,7 +33,7 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
         raise TypeError("quant.format must be a DispatchDataType")
     if quant_format is None:
         raise ValueError("quant.format is required")
-    if quant_format not in (DispatchDataType.FP8_E4M3, DispatchDataType.MXFP8_E4M3):
+    if quant_format != DispatchDataType.FP8_E4M3:
         raise ValueError("unsupported low-latency quantization format")
     if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
@@ -43,20 +43,28 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
 def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
     if data_type == DispatchDataType.FP8_E4M3:
         return 128
-    if data_type == DispatchDataType.MXFP8_E4M3:
-        return 32
     return 0
 
 
 def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float32
-    if data_type == DispatchDataType.MXFP8_E4M3:
-        return torch.uint8
     raise ValueError("BF16 dispatch does not have block scales")
 
 
 class _CudaBufferView:
+    """Zero-copy view over a runtime-owned CUDA buffer.
+
+    The pointer belongs to the runtime's registered symmetric buffer, not to
+    PyTorch. ``owner`` is retained only to keep the runtime alive for as long as
+    the view exists.
+
+    Every dispatch/combine writes into the same underlying allocation, so
+    tensors built from this view alias runtime state and are only valid until
+    the next call. Callers that need results to survive across iterations must
+    copy them out (e.g. ``tensor.clone()``).
+    """
+
     def __init__(self, pointer: int, shape: tuple[int, ...], typestr: str, owner: Any) -> None:
         self.pointer = pointer
         self.shape = shape
@@ -115,7 +123,7 @@ class LowLatencyRuntime:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
-        self.cpp_runtime = MoERuntime(
+        self.cpp_runtime = create_moe_runtime(
             comm.communicator,
             MoEMode.LOW_LATENCY,
             max_tokens_per_rank=max_tokens_per_rank,
@@ -209,48 +217,48 @@ class LowLatencyBackend:
             num_topk=self.topk,
         )
         self._is_internode = self._runtime.is_internode_available()
-        self._rank_major_token_owner: Optional[_CudaBufferView] = None
-        self._rank_major_expert_output_owner: Optional[_CudaBufferView] = None
-        self._rank_major_topk_ids_owner: Optional[_CudaBufferView] = None
-        self._rank_major_weights_owner: Optional[_CudaBufferView] = None
-        self._rank_major_tokens: Optional[torch.Tensor] = None
-        self._rank_major_topk_ids: Optional[torch.Tensor] = None
-        self._rank_major_weights: Optional[torch.Tensor] = None
-        self.rank_major_expert_output_buffer: Optional[torch.Tensor] = None
+        self._output_tokens_owner: Optional[_CudaBufferView] = None
+        self._expert_output_owner: Optional[_CudaBufferView] = None
+        self._output_topk_ids_owner: Optional[_CudaBufferView] = None
+        self._output_topk_weights_owner: Optional[_CudaBufferView] = None
+        self._output_tokens: Optional[torch.Tensor] = None
+        self._output_topk_ids: Optional[torch.Tensor] = None
+        self._output_topk_weights: Optional[torch.Tensor] = None
+        self.expert_output_buffer: Optional[torch.Tensor] = None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
             metadata_shape = (self.world_size * self.max_tokens_per_rank, self.topk)
             (
-                self._rank_major_topk_ids_owner,
-                self._rank_major_topk_ids,
+                self._output_topk_ids_owner,
+                self._output_topk_ids,
             ) = _tensor_from_pointer(
-                self._runtime.cpp_runtime.rank_major_topk_ids_buffer_ptr(),
+                self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
                 "<i4",
                 self.device,
                 self._runtime,
             )
             (
-                self._rank_major_weights_owner,
-                self._rank_major_weights,
+                self._output_topk_weights_owner,
+                self._output_topk_weights,
             ) = _tensor_from_pointer(
-                self._runtime.cpp_runtime.rank_major_topk_weights_buffer_ptr(),
+                self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
                 "<f4",
                 self.device,
                 self._runtime,
             )
-            self._rank_major_token_owner, self._rank_major_tokens = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.rank_major_token_buffer_ptr(),
+            self._output_tokens_owner, self._output_tokens = _bf16_tensor_from_pointer(
+                self._runtime.cpp_runtime.output_tokens_buffer_ptr(),
                 shape,
                 self.device,
                 self._runtime,
             )
             (
-                self._rank_major_expert_output_owner,
-                self.rank_major_expert_output_buffer,
+                self._expert_output_owner,
+                self.expert_output_buffer,
             ) = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.rank_major_expert_output_buffer_ptr(),
+                self._runtime.cpp_runtime.expert_output_buffer_ptr(),
                 shape,
                 self.device,
                 self._runtime,
@@ -435,18 +443,18 @@ class LowLatencyBackend:
                     self._dispatch_scales = scale_storage.transpose(1, 2)
             elif self.output_layout == DispatchLayout.RANK_MAJOR:
                 self._dispatch_src_info = None
-                assert self._rank_major_topk_ids is not None
-                assert self._rank_major_weights is not None
-                self._dispatch_topk_ids = self._rank_major_topk_ids
-                self._dispatch_weights = self._rank_major_weights
+                assert self._output_topk_ids is not None
+                assert self._output_topk_weights is not None
+                self._dispatch_topk_ids = self._output_topk_ids
+                self._dispatch_weights = self._output_topk_weights
                 self._dispatch_layout_range = None
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
             else:
                 raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         assert self._dispatch_count is not None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
-            assert self._rank_major_tokens is not None
-            output_buffer = self._rank_major_tokens
+            assert self._output_tokens is not None
+            output_buffer = self._output_tokens
         return (
             output_buffer,
             self._dispatch_scales,
@@ -501,8 +509,8 @@ class LowLatencyBackend:
             raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             if output_buffer is not None:
-                assert self._rank_major_tokens is not None
-                if output_buffer.data_ptr() != self._rank_major_tokens.data_ptr():
+                assert self._output_tokens is not None
+                if output_buffer.data_ptr() != self._output_tokens.data_ptr():
                     raise ValueError("RANK_MAJOR output uses the runtime-owned registered token buffer")
             return
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
@@ -546,8 +554,8 @@ class LowLatencyBackend:
         if expert_output.dtype != torch.bfloat16:
             raise ValueError("expert_output must be BF16")
         if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
-            assert self.rank_major_expert_output_buffer is not None
-            if expert_output.data_ptr() != self.rank_major_expert_output_buffer.data_ptr():
+            assert self.expert_output_buffer is not None
+            if expert_output.data_ptr() != self.expert_output_buffer.data_ptr():
                 raise ValueError("RANK_MAJOR combine requires the runtime-owned registered expert output buffer")
         if out is not None:
             expected_out_shape = (context.num_tokens, self.hidden_size)

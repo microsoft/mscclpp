@@ -11,18 +11,22 @@
 // construction:
 //   - MoEMode.LOW_LATENCY  -> `ll_*` methods (dispatch/combine).
 //   - MoEMode.HIGH_THROUGHPUT -> `ht_*` methods. Dynamic recv sizing uses an
-//     explicit multi-step API (ht_layout -> ht_notify_dispatch -> caller
-//     allocates -> ht_dispatch).
+//     explicit multi-step API (ht_compute_dispatch_counts -> ht_notify_dispatch
+//     -> caller allocates -> ht_dispatch).
 // The two backends keep separate method prefixes because their call protocols
 // genuinely differ; calling the other mode's methods raises.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/shared_ptr.h>
 
 #include <cstdint>
+#include <stdexcept>
 
 #include "api.cuh"
 #include "config.hpp"
 #include "high-throughput/config.cuh"
+#include "ht_runtime.hpp"
+#include "ll_runtime.hpp"
 #include "moe_runtime.hpp"
 
 namespace nb = nanobind;
@@ -32,6 +36,24 @@ namespace {
 void* ptr(uintptr_t address) { return reinterpret_cast<void*>(address); }
 
 cudaStream_t stream(uintptr_t address) { return reinterpret_cast<cudaStream_t>(address); }
+
+template <typename Runtime>
+Runtime& narrow(mscclpp::ep::MoERuntime& runtime, const char* expectedMode) {
+  auto* concrete = dynamic_cast<Runtime*>(&runtime);
+  if (concrete == nullptr) {
+    throw std::runtime_error(std::string("MoE runtime was not created with MoEMode::") + expectedMode);
+  }
+  return *concrete;
+}
+
+template <typename Runtime>
+const Runtime& narrow(const mscclpp::ep::MoERuntime& runtime, const char* expectedMode) {
+  auto* concrete = dynamic_cast<const Runtime*>(&runtime);
+  if (concrete == nullptr) {
+    throw std::runtime_error(std::string("MoE runtime was not created with MoEMode::") + expectedMode);
+  }
+  return *concrete;
+}
 
 }  // namespace
 
@@ -54,35 +76,40 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", mscclpp::ep::low_latency::CombineMode::DIRECT_SEND);
   nb::enum_<mscclpp::ep::low_latency::DispatchDataType>(m, "DispatchDataType")
       .value("BF16", mscclpp::ep::low_latency::DispatchDataType::BF16)
-      .value("FP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3)
-      .value("MXFP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3);
+      .value("FP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3);
 
   nb::class_<mscclpp::ep::high_throughput::Config>(m, "Config")
       .def(nb::init<int>(), nb::arg("num_sms") = 20)
       .def_ro("num_sms", &mscclpp::ep::high_throughput::Config::numSms_);
 
+  m.def("create_moe_runtime", &mscclpp::ep::createMoERuntime, nb::arg("comm"), nb::arg("mode"),
+        nb::arg("max_tokens_per_rank") = 0, nb::arg("hidden") = 0, nb::arg("num_experts") = 0, nb::arg("num_topk") = 0,
+        nb::arg("max_hidden_bytes") = 0, nb::arg("num_sms") = 20,
+        "Create the MoE backend selected by mode; returns a shared MoERuntime handle.");
+
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, mscclpp::ep::MoEMode, int, int, int, int, int64_t, int>(), nb::arg("comm"),
-           nb::arg("mode"), nb::arg("max_tokens_per_rank") = 0, nb::arg("hidden") = 0, nb::arg("num_experts") = 0,
-           nb::arg("num_topk") = 0, nb::arg("max_hidden_bytes") = 0, nb::arg("num_sms") = 20)
       .def_prop_ro("mode", &mscclpp::ep::MoERuntime::mode)
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
-      .def("rank_major_topk_ids_buffer_ptr",
+      .def("output_topk_ids_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) {
-             return reinterpret_cast<uintptr_t>(self.lowLatency().rankMajorTopkIdsBuffer());
+             return reinterpret_cast<uintptr_t>(
+                 narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTopkIdsBuffer());
            })
-      .def("rank_major_topk_weights_buffer_ptr",
+      .def("output_topk_weights_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) {
-             return reinterpret_cast<uintptr_t>(self.lowLatency().rankMajorTopkWeightsBuffer());
+             return reinterpret_cast<uintptr_t>(
+                 narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTopkWeightsBuffer());
            })
-      .def("rank_major_token_buffer_ptr",
+      .def("output_tokens_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) {
-             return reinterpret_cast<uintptr_t>(self.lowLatency().rankMajorTokenBuffer());
+             return reinterpret_cast<uintptr_t>(
+                 narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTokensBuffer());
            })
-      .def("rank_major_expert_output_buffer_ptr",
+      .def("expert_output_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) {
-             return reinterpret_cast<uintptr_t>(self.lowLatency().rankMajorExpertOutputBuffer());
+             return reinterpret_cast<uintptr_t>(
+                 narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").expertOutputBuffer());
            })
       .def(
           "ll_dispatch",
@@ -92,13 +119,14 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              int hidden, int numTopk, int maxTokensPerRank, int numExperts, int invalidTokenExpertId,
              mscclpp::ep::DispatchLayout dispatchLayout, mscclpp::ep::low_latency::DispatchDataType dispatchDataType,
              int numBlocks, uintptr_t streamPtr) {
-            self.lowLatency().dispatch(
-                ptr(outputPtr), ptr(outputScalesPtr), reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
-                reinterpret_cast<int*>(ptr(outputTopkIdxPtr)), reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
-                reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)), reinterpret_cast<int*>(ptr(outputCountPtr)),
-                ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
-                reinterpret_cast<float*>(ptr(topkWeightsPtr)), numTokens, hidden, numTopk, maxTokensPerRank, numExperts,
-                invalidTokenExpertId, dispatchLayout, dispatchDataType, numBlocks, stream(streamPtr));
+            narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
+                .dispatch(
+                    ptr(outputPtr), ptr(outputScalesPtr), reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
+                    reinterpret_cast<int*>(ptr(outputTopkIdxPtr)), reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
+                    reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)), reinterpret_cast<int*>(ptr(outputCountPtr)),
+                    ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
+                    reinterpret_cast<float*>(ptr(topkWeightsPtr)), numTokens, hidden, numTopk, maxTokensPerRank,
+                    numExperts, invalidTokenExpertId, dispatchLayout, dispatchDataType, numBlocks, stream(streamPtr));
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),
@@ -113,39 +141,42 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              int numTopk, int maxTokensPerRank, int numExperts, mscclpp::ep::DispatchLayout dispatchLayout,
              mscclpp::ep::low_latency::DispatchDataType dispatchDataType, mscclpp::ep::low_latency::CombineMode mode,
              int numBlocks, uintptr_t streamPtr) {
-            self.lowLatency().combine(
-                ptr(outputPtr), ptr(expertOutputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
-                reinterpret_cast<float*>(ptr(topkWeightsPtr)), reinterpret_cast<int*>(ptr(srcInfoPtr)),
-                reinterpret_cast<int64_t*>(ptr(layoutRangePtr)), numTokens, hidden, numTopk, maxTokensPerRank,
-                numExperts, dispatchLayout, dispatchDataType, mode, numBlocks, stream(streamPtr));
+            narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
+                .combine(ptr(outputPtr), ptr(expertOutputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
+                         reinterpret_cast<float*>(ptr(topkWeightsPtr)), reinterpret_cast<int*>(ptr(srcInfoPtr)),
+                         reinterpret_cast<int64_t*>(ptr(layoutRangePtr)), numTokens, hidden, numTopk, maxTokensPerRank,
+                         numExperts, dispatchLayout, dispatchDataType, mode, numBlocks, stream(streamPtr));
           },
           nb::arg("expert_output_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"),
           nb::arg("layout_range_ptr"), nb::arg("output_ptr"), nb::arg("num_tokens"), nb::arg("hidden"),
           nb::arg("num_topk"), nb::arg("max_tokens_per_rank"), nb::arg("num_experts"), nb::arg("dispatch_layout"),
           nb::arg("dispatch_data_type"), nb::arg("mode"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
       .def(
-          "ht_layout",
+          "ht_compute_dispatch_counts",
           [](mscclpp::ep::MoERuntime& self, uintptr_t num_tokens_per_rank_ptr, uintptr_t num_tokens_per_expert_ptr,
              uintptr_t is_token_in_rank_ptr, uintptr_t topk_idx_ptr, int num_tokens, int num_topk, int num_experts,
              uintptr_t stream_ptr) {
-            self.highThroughput().layout(reinterpret_cast<int*>(ptr(num_tokens_per_rank_ptr)),
-                                         reinterpret_cast<int*>(ptr(num_tokens_per_expert_ptr)),
-                                         reinterpret_cast<bool*>(ptr(is_token_in_rank_ptr)),
-                                         reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)), num_tokens, num_topk,
-                                         num_experts, stream(stream_ptr));
+            narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                .computeDispatchCounts(reinterpret_cast<int*>(ptr(num_tokens_per_rank_ptr)),
+                                       reinterpret_cast<int*>(ptr(num_tokens_per_expert_ptr)),
+                                       reinterpret_cast<bool*>(ptr(is_token_in_rank_ptr)),
+                                       reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)), num_tokens, num_topk,
+                                       num_experts, stream(stream_ptr));
           },
           nb::arg("num_tokens_per_rank_ptr"), nb::arg("num_tokens_per_expert_ptr"), nb::arg("is_token_in_rank_ptr"),
           nb::arg("topk_idx_ptr"), nb::arg("num_tokens"), nb::arg("num_topk"), nb::arg("num_experts"),
           nb::arg("stream_ptr"))
       .def("ht_get_dispatch_num_channels",
            [](const mscclpp::ep::MoERuntime& self, int x_element_size) {
-             return self.highThroughput().getDispatchNumChannels(x_element_size);
+             return narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                 .getDispatchNumChannels(x_element_size);
            })
       .def("ht_resolve_recv_x_buffer",
            [](const mscclpp::ep::MoERuntime& self, int num_tokens, int num_recv_tokens, int hidden,
               int x_element_size) -> uintptr_t {
              return reinterpret_cast<uintptr_t>(
-                 self.highThroughput().resolveRecvXBuffer(num_tokens, num_recv_tokens, hidden, x_element_size));
+                 narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                     .resolveRecvXBuffer(num_tokens, num_recv_tokens, hidden, x_element_size));
            })
       .def(
           "ht_notify_dispatch",
@@ -153,14 +184,14 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t num_recv_tokens_per_expert_ptr, uintptr_t num_tokens_per_rank_ptr,
              uintptr_t num_tokens_per_expert_ptr, uintptr_t is_token_in_rank_ptr, int num_tokens, int num_experts,
              int x_element_size, int expert_alignment, uintptr_t stream_ptr) {
-            return self.highThroughput().notifyDispatch(reinterpret_cast<int*>(ptr(rank_prefix_matrix_ptr)),
-                                                        reinterpret_cast<int*>(ptr(channel_prefix_matrix_ptr)),
-                                                        reinterpret_cast<int*>(ptr(num_recv_tokens_per_expert_ptr)),
-                                                        reinterpret_cast<const int*>(ptr(num_tokens_per_rank_ptr)),
-                                                        reinterpret_cast<const int*>(ptr(num_tokens_per_expert_ptr)),
-                                                        reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
-                                                        num_tokens, num_experts, x_element_size, expert_alignment,
-                                                        stream(stream_ptr));
+            return narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                .notifyDispatch(reinterpret_cast<int*>(ptr(rank_prefix_matrix_ptr)),
+                                reinterpret_cast<int*>(ptr(channel_prefix_matrix_ptr)),
+                                reinterpret_cast<int*>(ptr(num_recv_tokens_per_expert_ptr)),
+                                reinterpret_cast<const int*>(ptr(num_tokens_per_rank_ptr)),
+                                reinterpret_cast<const int*>(ptr(num_tokens_per_expert_ptr)),
+                                reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)), num_tokens, num_experts,
+                                x_element_size, expert_alignment, stream(stream_ptr));
           },
           nb::arg("rank_prefix_matrix_ptr"), nb::arg("channel_prefix_matrix_ptr"),
           nb::arg("num_recv_tokens_per_expert_ptr"), nb::arg("num_tokens_per_rank_ptr"),
@@ -174,17 +205,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t rank_prefix_matrix_ptr, uintptr_t channel_prefix_matrix_ptr, int num_tokens, int hidden,
              int num_topk, int num_scales, int num_experts, int x_element_size, int num_recv_tokens, bool cached_mode,
              uintptr_t stream_ptr) {
-            self.highThroughput().dispatch(
-                ptr(recv_x_ptr), reinterpret_cast<float*>(ptr(recv_x_scales_ptr)),
-                reinterpret_cast<int64_t*>(ptr(recv_topk_idx_ptr)),
-                reinterpret_cast<float*>(ptr(recv_topk_weights_ptr)), reinterpret_cast<int*>(ptr(send_head_ptr)),
-                ptr(x_ptr), reinterpret_cast<const float*>(ptr(x_scales_ptr)),
-                reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)),
-                reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
-                reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
-                reinterpret_cast<const int*>(ptr(rank_prefix_matrix_ptr)),
-                reinterpret_cast<const int*>(ptr(channel_prefix_matrix_ptr)), num_tokens, hidden, num_topk, num_scales,
-                num_experts, x_element_size, num_recv_tokens, cached_mode, stream(stream_ptr));
+            narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                .dispatch(ptr(recv_x_ptr), reinterpret_cast<float*>(ptr(recv_x_scales_ptr)),
+                          reinterpret_cast<int64_t*>(ptr(recv_topk_idx_ptr)),
+                          reinterpret_cast<float*>(ptr(recv_topk_weights_ptr)),
+                          reinterpret_cast<int*>(ptr(send_head_ptr)), ptr(x_ptr),
+                          reinterpret_cast<const float*>(ptr(x_scales_ptr)),
+                          reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)),
+                          reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
+                          reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
+                          reinterpret_cast<const int*>(ptr(rank_prefix_matrix_ptr)),
+                          reinterpret_cast<const int*>(ptr(channel_prefix_matrix_ptr)), num_tokens, hidden, num_topk,
+                          num_scales, num_experts, x_element_size, num_recv_tokens, cached_mode, stream(stream_ptr));
           },
           nb::arg("recv_x_ptr"), nb::arg("recv_x_scales_ptr"), nb::arg("recv_topk_idx_ptr"),
           nb::arg("recv_topk_weights_ptr"), nb::arg("send_head_ptr"), nb::arg("x_ptr"), nb::arg("x_scales_ptr"),
@@ -197,10 +229,11 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           [](mscclpp::ep::MoERuntime& self, uintptr_t combined_x_ptr, uintptr_t combined_topk_weights_ptr,
              uintptr_t x_ptr, uintptr_t topk_weights_ptr, uintptr_t send_head_ptr, int num_input_tokens,
              int num_output_tokens, int hidden, int num_topk, int x_element_size, uintptr_t stream_ptr) {
-            self.highThroughput().combine(ptr(combined_x_ptr), reinterpret_cast<float*>(ptr(combined_topk_weights_ptr)),
-                                          ptr(x_ptr), reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
-                                          reinterpret_cast<const int*>(ptr(send_head_ptr)), num_input_tokens,
-                                          num_output_tokens, hidden, num_topk, x_element_size, stream(stream_ptr));
+            narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
+                .combine(ptr(combined_x_ptr), reinterpret_cast<float*>(ptr(combined_topk_weights_ptr)), ptr(x_ptr),
+                         reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
+                         reinterpret_cast<const int*>(ptr(send_head_ptr)), num_input_tokens, num_output_tokens, hidden,
+                         num_topk, x_element_size, stream(stream_ptr));
           },
           nb::arg("combined_x_ptr"), nb::arg("combined_topk_weights_ptr"), nb::arg("x_ptr"),
           nb::arg("topk_weights_ptr"), nb::arg("send_head_ptr"), nb::arg("num_input_tokens"),

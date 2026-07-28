@@ -225,13 +225,11 @@ int main(int argc, char** argv) {
   auto dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::BF16;
   if (args.dispatch_dtype == "fp8_e4m3") {
     dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3;
-  } else if (args.dispatch_dtype == "mxfp8_e4m3") {
-    dispatchDataType = mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3;
   }
   const auto combineMode = args.combine_mode == "direct_send"
                                ? mscclpp::ep::low_latency::CombineMode::DIRECT_SEND
                                : mscclpp::ep::low_latency::CombineMode::RANK_LOCAL_REDUCE;
-  if (args.dispatch_dtype != "bf16" && args.dispatch_dtype != "fp8_e4m3" && args.dispatch_dtype != "mxfp8_e4m3") {
+  if (args.dispatch_dtype != "bf16" && args.dispatch_dtype != "fp8_e4m3") {
     if (rank == 0) fprintf(stderr, "unsupported --dispatch-dtype=%s\n", args.dispatch_dtype.c_str());
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
@@ -245,12 +243,9 @@ int main(int argc, char** argv) {
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   const bool fp8Dispatch = dispatchDataType != mscclpp::ep::low_latency::DispatchDataType::BF16;
-  const int scaleBlockSize = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3 ? 32 : 128;
-  const int scaleElementSize =
-      dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3 ? sizeof(uint8_t) : sizeof(float);
-  const char* dispatchLabel = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::MXFP8_E4M3
-                                  ? "MXFP8_E4M3"
-                                  : (fp8Dispatch ? "FP8_E4M3" : "BF16");
+  const int scaleBlockSize = 128;
+  const int scaleElementSize = sizeof(float);
+  const char* dispatchLabel = fp8Dispatch ? "FP8_E4M3" : "BF16";
 
   // --- Bootstrap mscclpp::Communicator (TcpBootstrap + MPI_Bcast of UniqueId). ---
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nRanks);

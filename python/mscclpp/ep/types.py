@@ -21,7 +21,7 @@ class QuantConfig:
 
     Low-latency FP8 dispatch returns ``block_scales`` with the activation's
     leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
-    uses FP32 scales per 128 elements; ``MXFP8_E4M3`` uses UE8M0 bytes per 32.
+    uses FP32 scales per 128 elements.
     """
 
     format: Optional[DispatchDataType] = None
@@ -90,7 +90,11 @@ class DispatchOutputInfo:
 
 @dataclass
 class DispatchOutput:
-    """Dispatch result consumed by the local MLP."""
+    """Dispatch result consumed by the local MLP.
+
+    ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
+    reused by every dispatch. Clone any result that must outlive the next call.
+    """
 
     tokens: torch.Tensor
     quant: Optional[QuantConfig]
