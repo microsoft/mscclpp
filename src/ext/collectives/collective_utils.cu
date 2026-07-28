@@ -17,8 +17,9 @@ namespace {
 
 #if !defined(MSCCLPP_DEVICE_HIP)
 __global__ void fp8NvlsSupportProbeKernel(int* supported) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1000 && \
-    (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
+  // Report the compile-time FP8 multimem capability of the code that actually runs on this
+  // device, so the host-side gate matches the instructions compiled into the binary.
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
   *supported = 1;
 #else
   *supported = 0;
@@ -175,7 +176,8 @@ std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::
   return nvlsConnections;
 }
 
-std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
+std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::shared_ptr<mscclpp::Communicator> comm,
+                                                      std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
                                                       void* buffer, size_t bufferSize, int nSwitchChannels) {
   std::vector<mscclpp::SwitchChannel> channels;
 
@@ -184,6 +186,8 @@ std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_pt
     mscclpp::SwitchChannel switchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
     channels.push_back(switchChannel);
   }
+  // Synchronize to make sure all ranks have their NVLS channels set up before any rank starts using them.
+  comm->bootstrap()->barrier();
   return channels;
 }
 

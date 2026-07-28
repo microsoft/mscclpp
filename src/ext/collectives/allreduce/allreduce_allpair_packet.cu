@@ -14,14 +14,11 @@ namespace collective {
 
 template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                                  size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
+                                  size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerIpcDomain,
                                   int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags,
                                   uint32_t flagSize) {
-  // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
-
   if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
-  const int nPeers = nRanksPerNode - 1;
+  const int nPeers = nRanksPerIpcDomain - 1;
 
   uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
   size_t scratchBaseOffset = (flag % numScratchBuff) ? (scratchBufferSize / numScratchBuff) : 0;
@@ -71,25 +68,25 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   }
 }
 
-inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int worldSize) {
-  if (inputSize < worldSize * sizeof(int)) {
-    return {worldSize - 1, (worldSize - 1) * WARP_SIZE};
+inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerIpcDomain) {
+  if (inputSize < nRanksPerIpcDomain * sizeof(int)) {
+    return {nRanksPerIpcDomain - 1, (nRanksPerIpcDomain - 1) * WARP_SIZE};
   }
-  return {(worldSize - 1) * 4, 512};
+  return {(nRanksPerIpcDomain - 1) * 4, 512};
 }
 
 template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
-                          size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
+                          size_t scratchBufferSize, int rank, int nRanksPerIpcDomain, int worldSize, size_t inputSize,
                           cudaStream_t stream, void* flags, uint32_t flagSize, uint32_t numScratchBuff, int nBlocks = 0,
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     allreduceAllPairs<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
+        nRanksPerIpcDomain, worldSize, nelems, numScratchBuff, flags, flagSize);
     return cudaGetLastError();
   }
 };
@@ -108,16 +105,22 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
                                                        const std::unordered_map<std::string, uintptr_t>&,
                                                        DataType accumDtype) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
+  if (algoCtx->worldSize != algoCtx->nRanksPerIpcDomain) {
+    WARN(ALGO,
+         "AllreduceAllpairPacket requires worldSize to match nRanksPerIpcDomain, got worldSize=", algoCtx->worldSize,
+         ", nRanksPerIpcDomain=", algoCtx->nRanksPerIpcDomain);
+    return CommResult::CommInvalidArgument;
+  }
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->nRanksPerIpcDomain);
   }
   if (blockAndThreadNum.first > maxBlockNum_) {
     WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
          maxBlockNum_, ".");
     return CommResult::CommInvalidArgument;
   }
-  const int nPeers = algoCtx->nRanksPerNode - 1;
+  const int nPeers = algoCtx->nRanksPerIpcDomain - 1;
   // The kernel maps peer sends by warpId, so every peer needs a full warp.
   if (blockAndThreadNum.second % WARP_SIZE != 0 || blockAndThreadNum.second / WARP_SIZE < nPeers) {
     WARN(ALGO,
@@ -138,8 +141,8 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, algoCtx->memoryChannelDeviceHandles.get(), nullptr, nullptr,
-                nullptr, channelInOffset, 0, this->scratchBufferSize_, algoCtx->rank, algoCtx->nRanksPerNode,
-                algoCtx->workSize, inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_,
+                nullptr, channelInOffset, 0, this->scratchBufferSize_, algoCtx->rank, algoCtx->nRanksPerIpcDomain,
+                algoCtx->worldSize, inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_,
                 this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN(ALGO, "AllreducePacket failed with error: ", cudaGetErrorString(error));
@@ -153,8 +156,8 @@ std::shared_ptr<void> AllreduceAllpairPacket::initAllreduceContext(std::shared_p
   auto ctx = std::make_shared<AlgorithmCtx>();
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->worldSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;
   ctx->registeredMemories.pop_back();  // remove the local memory from previous context
