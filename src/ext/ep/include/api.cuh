@@ -32,7 +32,9 @@ enum class DispatchLayout {
   /// Token-major rows. Low latency uses
   /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
   /// throughput uses [num_recv_tokens, hidden].
-  TOKEN_MAJOR
+  TOKEN_MAJOR,
+  /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
+  RANK_MAJOR
 };
 
 // ===========================================================================
@@ -58,7 +60,8 @@ void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const fl
               int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
               float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
               int numRanks, cudaStream_t stream, int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes,
-              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx);
+              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx,
+              DispatchLayout layout = DispatchLayout::TOKEN_MAJOR, int maxTokensPerRank = 0);
 
 void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
              int numRanks, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
