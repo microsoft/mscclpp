@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#if defined(USE_IBVERBS)
+
 #include "ibverbs_wrapper.hpp"
 
 #include <dlfcn.h>
@@ -104,3 +106,5 @@ struct ibv_mr* IBVerbs::ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, si
 }
 
 }  // namespace mscclpp
+
+#endif  // defined(USE_IBVERBS)

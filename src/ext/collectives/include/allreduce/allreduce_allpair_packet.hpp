@@ -4,6 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 #include "allreduce/common.hpp"
+#include "collective_utils.hpp"
 
 namespace mscclpp {
 namespace collective {

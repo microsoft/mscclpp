@@ -113,7 +113,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import gc
 import glob
 import os
 import subprocess
@@ -121,6 +120,18 @@ import time
 
 import torch
 from mpi4py import MPI
+
+from ep_bench_common import (
+    init_mpi,
+    make_inputs,
+    _init_torch_nccl,
+    _mpi_stats,
+)
+from ep_bench_mscclpp import setup_mscclpp
+from ep_bench_mscclpp_ht import setup_mscclpp_ht
+from ep_bench_nccl import setup_nccl
+from ep_bench_deepep import setup_deepep
+from ep_bench_flashinfer import setup_flashinfer
 
 
 # ----------------------------------------------------------------------------
@@ -160,7 +171,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="mscclpp: capture dispatch and combine as CUDA graphs and replay them in the timed loop.",
+        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
+        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
+    )
+    p.add_argument(
+        "--ep-layout",
+        choices=["rank_major", "expert_major"],
+        default=None,
+        help="received-token dispatch layout. When omitted, each backend uses its own default "
+        "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
+        "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
+        "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
+        "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
+        "noted and the backend's default layout is kept.",
     )
     p.add_argument(
         "--validate",
@@ -175,17 +198,6 @@ def parse_args() -> argparse.Namespace:
         "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
         "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
     )
-    # NCCL-EP JIT knobs (defaults match the in-tree build; used by nccl/all).
-    p.add_argument(
-        "--nccl-jit-source-dir",
-        default=os.environ.get("NCCL_EP_JIT_SOURCE_DIR", "/opt/microsoft/mrc/ep/nccl/contrib/nccl_ep"),
-        help="NCCL_EP_JIT_SOURCE_DIR (dir containing device/*.cuh for the runtime JIT)",
-    )
-    p.add_argument(
-        "--nccl-jit-include-dir",
-        default=os.environ.get("NCCL_EP_JIT_BUILD_INCLUDE_DIR", "/opt/microsoft/mrc/ep/nccl/build/include"),
-        help="NCCL_EP_JIT_BUILD_INCLUDE_DIR (NCCL public headers for the runtime JIT)",
-    )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
         raise SystemExit("--num-tokens and --num-experts must be positive")
@@ -198,411 +210,6 @@ def parse_args() -> argparse.Namespace:
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
         raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
     return args
-
-
-# ----------------------------------------------------------------------------
-# MPI bootstrap shared by both backends.
-# ----------------------------------------------------------------------------
-def init_mpi():
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", rank))
-    torch.cuda.set_device(local_rank)
-    return comm, rank, size, local_rank
-
-
-def _ensure_torch_dist(comm, rank, num_ranks):
-    """Lazily initialize the default torch.distributed NCCL group alongside MPI
-    (idempotent). MPI supplies the rendezvous (rank-0 IP + port broadcast). Both
-    the kineto GPU barrier and the DeepEP backend reuse this single group.
-    Returns the world ProcessGroup."""
-    import torch.distributed as dist
-
-    if not dist.is_initialized():
-        addr = None
-        if rank == 0:
-            addr = os.environ.get("MASTER_ADDR")
-            if not addr:
-                import socket
-
-                _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                try:
-                    _s.connect(("10.255.255.255", 1))  # no packets sent; picks outbound iface IP
-                    addr = _s.getsockname()[0]
-                finally:
-                    _s.close()
-        addr = comm.bcast(addr, root=0)
-        port = comm.bcast(int(os.environ.get("MASTER_PORT", "29700")), root=0)
-        os.environ["MASTER_ADDR"] = addr
-        os.environ["MASTER_PORT"] = str(port)
-        os.environ["WORLD_SIZE"] = str(num_ranks)
-        os.environ["RANK"] = str(rank)
-        import datetime as _dt
-
-        dist.init_process_group(
-            backend="nccl", init_method="env://", world_size=num_ranks, rank=rank, timeout=_dt.timedelta(seconds=120)
-        )
-    return dist.distributed_c10d._get_default_group()
-
-
-def _init_torch_nccl(comm, rank, num_ranks, local_rank):
-    """Return a zero-arg GPU-side barrier (torch NCCL all_reduce) for the kineto
-    timing loop -- aligns ranks on-device, much tighter than an MPI host barrier."""
-    import torch.distributed as dist
-
-    _ensure_torch_dist(comm, rank, num_ranks)
-    _sync = torch.ones(1, dtype=torch.float, device="cuda")
-
-    def _barrier():
-        dist.all_reduce(_sync)
-
-    _barrier()
-    torch.cuda.synchronize()
-    return _barrier
-
-
-def _mpi_stats(comm, avg: float, mn: float, mx: float, num_ranks: int):
-    """Cross-rank reduction mirroring printLowLatencyResults: avg=mean of per-rank
-    avgs, min=global MIN, max=global MAX."""
-    g_avg = comm.allreduce(avg, op=MPI.SUM) / num_ranks
-    g_min = comm.allreduce(mn, op=MPI.MIN)
-    g_max = comm.allreduce(mx, op=MPI.MAX)
-    return g_avg, g_min, g_max
-
-
-# ----------------------------------------------------------------------------
-# Routing inputs — shared by both backends so the comparison is apples-to-apples.
-# BF16 tokens + top-k routing setup.
-# ----------------------------------------------------------------------------
-def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
-    torch.manual_seed(seed + rank)
-    rank_offset = 128
-    x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
-    x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
-    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
-    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1].to(torch.int64)
-    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
-    # ep_bench byte accounting: num_valid_selections = count(topk_idx >= 0); every
-    # selection is valid here (a full LL load), so this equals num_tokens * top_k.
-    num_valid_selections = int((topk_idx >= 0).sum().item())
-    return x, topk_idx, topk_weights, num_valid_selections
-
-
-# ----------------------------------------------------------------------------
-# LL dtype / combine helpers (ported from test_low_latency_multirank.py).
-# ----------------------------------------------------------------------------
-def fp8_e4m3_block128_scales(x):
-    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)
-    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
-    return max_abs / 448.0
-
-
-def simulated_gemm_output(dispatch_out):
-    """Simulate the downstream expert GEMM so combine consumes BF16 expert output:
-    identity for BF16 dispatch; dequantize (tokens * block_scales) for FP8_E4M3."""
-    if dispatch_out.quant is None:
-        return dispatch_out.tokens
-    tokens = dispatch_out.tokens
-    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
-    return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
-
-
-def validate_combine_output_mpi(actual, expected, comm, *, exact):
-    """MPI analog of the test's validate_combine_output: global max abs diff plus a
-    cross-rank finiteness (and, for direct_send, bit-exactness) assertion."""
-    local_diff = float((actual.float() - expected.float()).abs().max().item())
-    global_diff = comm.allreduce(local_diff, op=MPI.MAX)
-    local_finite = int(torch.isfinite(actual).all().item())
-    assert comm.allreduce(local_finite, op=MPI.MIN) == 1, "LL combine output contains NaN or Inf"
-    if exact:
-        local_equal = int(torch.equal(actual, expected))
-        assert comm.allreduce(local_equal, op=MPI.MIN) == 1, f"LL direct-send combine not bit-exact; diff={global_diff}"
-    else:
-        assert global_diff <= 8.0, f"LL rank-local combine mismatch; max diff={global_diff}"
-    return global_diff
-
-
-# ============================================================================
-# Backend: mscclpp EP (MoECommunicator).
-# ============================================================================
-def setup_mscclpp(args, comm, rank, num_ranks, inputs):
-    from mscclpp import CommGroup
-    import mscclpp.ep as ep
-
-    x, topk_idx, topk_weights, _ = inputs
-    num_tokens, hidden = args.num_tokens, args.hidden
-    num_experts, num_topk = args.num_experts, args.num_topk
-    num_local_experts = num_experts // num_ranks
-
-    num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
-    if rank == 0:
-        print(
-            f"[cfg] backend=mscclpp algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
-            f"warmup={args.num_warmup} iters={args.num_iters} num_rdma_bytes={num_rdma_bytes}",
-            flush=True,
-        )
-
-    ep_group = CommGroup(mpi_comm=comm)
-    combine_mode = {
-        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
-        "direct_send": ep.CombineMode.DIRECT_SEND,
-    }[args.combine_mode]
-    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
-    moe_comm = ep.MoECommunicator(
-        comm=ep_group,
-        num_experts=num_experts,
-        num_local_experts=num_local_experts,
-        hidden_size=hidden,
-        topk=num_topk,
-        max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.LOW_LATENCY,
-        low_latency_combine_mode=combine_mode,
-        quant=dispatch_quant,
-    )
-    assert moe_comm.is_available()
-    if rank == 0:
-        print(
-            f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
-            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
-            flush=True,
-        )
-
-    # Hoist output tensors out of the timed loop (the communicator owns its
-    # src_info/layout_range/count buffers internally).
-    output_buffer = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda"
-    )
-    out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-
-    def _dispatch():
-        # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
-        return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
-
-    def _combine(dispatch_out, handle):
-        # Feed BF16 expert output (identity for BF16, dequantized for FP8) into combine.
-        moe_comm.combine(simulated_gemm_output(dispatch_out), handle, out=out)
-
-    # Optional one-time correctness check (mirrors test_low_latency_multirank).
-    if args.validate:
-        v_dispatch_out, v_handle = _dispatch()
-        v_out = torch.empty_like(out)
-        moe_comm.combine(simulated_gemm_output(v_dispatch_out), v_handle, out=v_out)
-        torch.cuda.synchronize()
-        if dispatch_quant is None:
-            expected_f = torch.zeros_like(x, dtype=torch.float32)
-            x_f = x.float()
-            for j in range(num_topk):
-                weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
-                expected_f = torch.addcmul(expected_f, x_f, weight_j)
-            gdiff = validate_combine_output_mpi(
-                v_out, expected_f.to(torch.bfloat16), comm, exact=args.combine_mode == "direct_send"
-            )
-            if rank == 0:
-                print(f"[validate] mscclpp combine OK max|got-expected|={gdiff:.4e}", flush=True)
-        else:
-            assert torch.isfinite(v_out).all().item(), "FP8 LL combine produced NaN/Inf"
-            if rank == 0:
-                print("[validate] mscclpp FP8 combine finite OK", flush=True)
-
-    state = {"moe": moe_comm, "obuf": output_buffer, "out": out, "grp": ep_group}
-
-    if args.cuda_graph:
-        # Prime once, then capture dispatch and combine as separate CUDA graphs so
-        # the shared timed loop keeps its per-phase dispatch/combine events.
-        prime_out, prime_handle = _dispatch()
-        _combine(prime_out, prime_handle)
-        torch.cuda.synchronize()
-
-        g_dispatch = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_dispatch):
-            g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
-        g_combine = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_combine):
-            moe_comm.combine(simulated_gemm_output(g_dispatch_out), g_handle, out=out)
-        state["graphs"] = (g_dispatch, g_combine)
-
-        def dispatch_fn():
-            g_dispatch.replay()
-            return (g_dispatch_out, g_handle)
-
-        def combine_fn(dout):
-            g_combine.replay()
-
-    else:
-
-        def dispatch_fn():
-            return _dispatch()
-
-        def combine_fn(dout):
-            dispatch_out, handle = dout
-            _combine(dispatch_out, handle)
-
-    def teardown():
-        state.clear()
-        gc.collect()
-        torch.cuda.synchronize()
-
-    return dispatch_fn, combine_fn, teardown
-
-
-# ============================================================================
-# Backend: mscclpp EP HIGH_THROUGHPUT (MoECommunicator HT / TOKEN_MAJOR).
-# ============================================================================
-def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
-    """mscclpp EP high-throughput dispatch/combine via `MoECommunicator` with
-    `mode=MoEMode.HIGH_THROUGHPUT` (GB200 TMA, TOKEN_MAJOR), wired like the other
-    backends: return (dispatch_fn, combine_fn, teardown). Follows the HT flow in
-    test_intranode_multirank.py: an initial uncached dispatch records the routing
-    layout on the handle, then the timed loop replays a cached dispatch
-    (previous_handle=) + combine to isolate the on-GPU kernel cost."""
-    from mscclpp import CommGroup
-    import mscclpp.ep as ep
-
-    x, topk_idx, topk_weights, _ = inputs
-    num_tokens, hidden = args.num_tokens, args.hidden
-    num_experts, num_topk = args.num_experts, args.num_topk
-    num_sms = int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20"))
-
-    if rank == 0:
-        print(
-            f"[cfg] backend=mscclpp-ht algorithm=HIGH_THROUGHPUT num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} num_sms={num_sms} "
-            f"warmup={args.num_warmup} iters={args.num_iters}",
-            flush=True,
-        )
-
-    ep_group = CommGroup(mpi_comm=comm)
-    moe_comm = ep.MoECommunicator(
-        comm=ep_group,
-        num_experts=num_experts,
-        hidden_size=hidden,
-        topk=num_topk,
-        max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
-        num_sms=num_sms,
-    )
-    assert moe_comm.is_available()
-    if rank == 0:
-        print(
-            f"[cfg] mscclpp-ht MoECommunicator is_internode={moe_comm.is_internode()}",
-            flush=True,
-        )
-
-    # One uncached dispatch to build the cached routing layout on the handle; the
-    # timed loop reuses it via previous_handle to skip notify_dispatch's host wait
-    # (isolates the on-GPU dispatch-kernel cost, NCCL-EP ep_bench convention).
-    handle0 = moe_comm.dispatch(x, topk_idx, topk_weights)[1]
-
-    def dispatch_fn():
-        return moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=handle0)
-
-    def combine_fn(dout):
-        dispatch_out, handle = dout
-        moe_comm.combine(dispatch_out.tokens, handle)
-
-    _state = {"moe": moe_comm, "grp": ep_group}
-
-    def teardown():
-        _state.clear()
-        gc.collect()
-        torch.cuda.synchronize()
-
-    return dispatch_fn, combine_fn, teardown
-
-
-# ============================================================================
-# Backend: NVIDIA NCCL-EP (nccl.ep Group/Handle).
-# ============================================================================
-def setup_nccl(args, comm, rank, num_ranks, inputs):
-    os.environ.setdefault("NCCL_EP_JIT_SOURCE_DIR", args.nccl_jit_source_dir)
-    os.environ.setdefault("NCCL_EP_JIT_BUILD_INCLUDE_DIR", args.nccl_jit_include_dir)
-
-    import nccl.core as nccl_core
-    import nccl.ep as nccl_ep
-
-    x, topk_idx, topk_weights, _ = inputs
-    num_tokens, hidden = args.num_tokens, args.hidden
-    num_experts, num_topk = args.num_experts, args.num_topk
-    num_local_experts = num_experts // num_ranks
-
-    if rank == 0:
-        print(
-            f"[cfg] backend=nccl algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
-            f"warmup={args.num_warmup} iters={args.num_iters}",
-            flush=True,
-        )
-
-    # NCCL communicator: rank 0 makes a unique id, broadcast over MPI.
-    uid = nccl_core.get_unique_id() if rank == 0 else None
-    uid = comm.bcast(uid, root=0)
-    ncomm = nccl_core.Communicator.init(nranks=num_ranks, rank=rank, unique_id=uid)
-
-    config = nccl_ep.GroupConfig(
-        algorithm=nccl_ep.Algorithm.LOW_LATENCY,
-        num_experts=num_experts,
-        max_dispatch_tokens_per_rank=num_tokens,
-        max_recv_tokens_per_rank=num_tokens * num_ranks,
-        max_token_bytes=hidden * 2,  # BF16
-        alloc=nccl_ep.AllocConfig(),  # default cudaMalloc/cudaFree
-    )
-    ep_group = nccl_ep.Group.create(ncomm, config)
-
-    stream_ptr = torch.cuda.current_stream().cuda_stream
-
-    # Routing is encoded in the handle at create time (topk_idx is fixed for the run).
-    topk_idx_t = nccl_ep.Tensor(topk_idx)
-    ep_handle = ep_group.create_handle(
-        nccl_ep.Layout.EXPERT_MAJOR,
-        topk_idx_t,
-        layout_info=None,
-        config=nccl_ep.HandleConfig(),
-        stream=stream_ptr,
-    )
-
-    # Pre-allocated EP tensors (hoisted out of the timed loop).
-    recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
-    out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-
-    x_t = nccl_ep.Tensor(x)
-    recv_t = nccl_ep.Tensor(recv)
-    recv_count_t = nccl_ep.Tensor(recv_count)
-    out_t = nccl_ep.Tensor(out)
-    topk_weights_t = nccl_ep.Tensor(topk_weights)
-
-    dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
-    dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t)
-    dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
-    dispatch_config = nccl_ep.DispatchConfig()
-    combine_inputs = nccl_ep.CombineInputs(tokens=recv_t)
-    combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
-    combine_config = nccl_ep.CombineConfig()
-
-    def dispatch_fn():
-        ep_handle.dispatch(
-            dispatch_inputs,
-            dispatch_outputs,
-            layout_info=dispatch_layout,
-            config=dispatch_config,
-            stream=stream_ptr,
-        )
-        return None
-
-    def combine_fn(_dout):
-        ep_handle.combine(combine_inputs, combine_outputs, config=combine_config, stream=stream_ptr)
-
-    def teardown():
-        ep_handle.destroy()
-        ep_group.destroy()
-        ncomm.destroy()
-        gc.collect()
-        torch.cuda.synchronize()
-
-    return dispatch_fn, combine_fn, teardown
 
 
 # ============================================================================
@@ -667,7 +274,13 @@ def _kineto_kernel_us(
         matched = False
         sub = substr.lower()
         for e in ka:
-            if sub in e.key.lower() and int(e.count) > 0:
+            # Match on the function name with C++ template arguments stripped, so a
+            # combine kernel templated on DispatchLayout (e.g. combineKernel<..,
+            # DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch'
+            # bucket (and vice-versa). The dispatch/combine word lives in the
+            # function name, which always precedes the first '<'.
+            name = e.key.split("<", 1)[0].lower()
+            if sub in name and int(e.count) > 0:
                 total_us += float(e.self_device_time_total) / int(e.count)
                 matched = True
         return total_us if matched else 0.0
@@ -983,186 +596,6 @@ class _InProcCupti:
         return int(self.lib.kt_get_count(substr.encode()))
 
 
-# ============================================================================
-# Backend: DeepEP V2 (deepseek-ai/DeepEP, ElasticBuffer low-latency).
-# ============================================================================
-def setup_deepep(args, comm, rank, num_ranks, inputs):
-    """DeepEP V2 low-latency dispatch/combine via `deep_ep.ElasticBuffer`, wired
-    the same way as the mscclpp / NCCL-EP backends: return (dispatch_fn,
-    combine_fn, teardown). DeepEP needs a torch.distributed NCCL group (reused
-    from `_ensure_torch_dist`) and, for a same-rack NVLink run, `EP_DISABLE_GIN=1`.
-    The dispatch handle (routing) is fixed for the run, so we dispatch once to
-    obtain the handle + combine input and then replay dispatch/combine in the
-    timed loop -- dispatch_impl(+copy) and combine_impl(+reduce) are what the
-    kineto timer buckets by the "dispatch"/"combine" substrings."""
-    import deep_ep
-
-    os.environ.setdefault("EP_DISABLE_GIN", "1")
-    group = _ensure_torch_dist(comm, rank, num_ranks)
-
-    x, topk_idx, topk_weights, _ = inputs
-    num_tokens, hidden = args.num_tokens, args.hidden
-    num_experts, num_topk = args.num_experts, args.num_topk
-
-    if rank == 0:
-        print(
-            f"[cfg] backend=deepep ElasticBuffer(LOW_LATENCY) num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
-            f"warmup={args.num_warmup} iters={args.num_iters}",
-            flush=True,
-        )
-
-    buffer = deep_ep.ElasticBuffer(
-        group,
-        num_max_tokens_per_rank=num_tokens,
-        hidden=hidden,
-        allow_hybrid_mode=1,
-        allow_multiple_reduction=1,
-        explicitly_destroy=True,
-    )
-
-    # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
-    dispatch_args = dict(
-        x=x,
-        topk_idx=topk_idx,
-        topk_weights=topk_weights,
-        num_experts=num_experts,
-        num_max_tokens_per_rank=num_tokens,
-        do_cpu_sync=True,
-    )
-
-    # Prime once to obtain the handle (routing) and the received-token count so we
-    # can size the combine input. Build a realistic BF16 combine input in the
-    # received layout (the role of `simulated_gemm_output`): random values only in
-    # the valid received-token slots, matching test_ep.py's `input_for_combine`.
-    #
-    # NOTE: we use the PLAIN combine (per-expert) here, not the reduced/expand
-    # combine. Measured on this uniform 128-tok/rank workload the reduced/expand
-    # combine is consistently MORE expensive (1n 74 vs 46, 4n 188 vs 136,
-    # 8n 199 vs 120 us avg) because the expanded layout processes more rows in the
-    # reduce epilogue; its intra-scaleup-first advantage does not pay off here.
-    recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(**dispatch_args)
-    recv_x_bf16 = recv_x[0] if isinstance(recv_x, (tuple, list)) else recv_x
-    num_recv_tokens = int(handle.psum_num_recv_tokens_per_scaleup_rank[-1].item())
-    input_for_combine = torch.empty_like(recv_x_bf16, dtype=torch.bfloat16)
-    input_for_combine.normal_(0.0, 0.1)
-    if num_recv_tokens < input_for_combine.shape[0]:
-        input_for_combine[num_recv_tokens:] = 0
-
-    combine_args = dict(
-        x=input_for_combine,
-        topk_weights=recv_topk_weights,
-        handle=handle,
-    )
-
-    # DeepEP native GPU barrier (comm-stream, sequential) -- aligns its dispatch/
-    # combine recv-spin far more tightly than a generic all_reduce; this is what
-    # DeepEP's own test_ep.py uses for kineto profiling.
-    def deepep_barrier():
-        buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
-
-    def dispatch_fn():
-        buffer.dispatch(**dispatch_args)
-        return None
-
-    def combine_fn(_dout):
-        buffer.combine(**combine_args)
-
-    def teardown():
-        try:
-            buffer.destroy()
-        except Exception:
-            pass
-        gc.collect()
-        torch.cuda.synchronize()
-
-    return dispatch_fn, combine_fn, teardown, deepep_barrier
-
-
-# ============================================================================
-# Backend: FlashInfer (flashinfer.comm.trtllm_moe_alltoall, MoeAlltoAll / MNNVL).
-# ============================================================================
-def setup_flashinfer(args, comm, rank, num_ranks, inputs):
-    """FlashInfer throughput MoE all-to-all via `flashinfer.comm.trtllm_moe_alltoall.
-    MoeAlltoAll` over the MNNVL fabric, wired like the other backends: return
-    (dispatch_fn, combine_fn, teardown). No native barrier, so the harness aligns
-    ranks with its GPU-side torch NCCL all_reduce (nccl_barrier). The kernels are
-    named ``moeA2ADispatchKernel`` / ``moeA2ACombineKernel`` (+ prepare kernels),
-    which the kineto timer buckets by the "dispatch"/"combine" substrings.
-
-    Env EP_FLASHINFER_GPUS_PER_NODE (default 4) sets the MNNVL Mapping layout."""
-    from flashinfer.comm.mapping import Mapping
-    import flashinfer.comm.trtllm_moe_alltoall as a2a
-
-    x, topk_idx, _topk_weights, _ = inputs
-    num_tokens, hidden = args.num_tokens, args.hidden
-    num_experts, num_topk = args.num_experts, args.num_topk
-    gpus_per_node = int(os.environ.get("EP_FLASHINFER_GPUS_PER_NODE", "4"))
-    dev = x.device
-    dtype = torch.bfloat16
-
-    if rank == 0:
-        print(
-            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
-            f"warmup={args.num_warmup} iters={args.num_iters}",
-            flush=True,
-        )
-
-    # EP is expressed as tp_size = world with moe_ep_size = world, moe_tp_size = 1
-    # (Mapping requires world_size == tp*pp*cp).
-    mapping = Mapping(
-        world_size=num_ranks,
-        rank=rank,
-        gpus_per_node=gpus_per_node,
-        tp_size=num_ranks,
-        moe_tp_size=1,
-        moe_ep_size=num_ranks,
-    )
-    moe = a2a.MoeAlltoAll(
-        mapping,
-        max_num_tokens=num_tokens,
-        top_k=num_topk,
-        num_experts=num_experts,
-        hidden_size=hidden,
-    )
-
-    # Shared routing inputs: FlashInfer wants int32 expert ids [num_tokens, top_k]
-    # and the hidden-state payload in BF16. Reuse the harness's topk_idx / x so the
-    # workload matches the other backends.
-    token_selected_experts = topk_idx[:, :num_topk].to(torch.int32).contiguous()
-    hidden_payload = x.to(dtype).contiguous()
-    # Combine payload lives in the received layout [ep_size, max_tokens, hidden].
-    combine_payload = torch.randn(num_ranks, num_tokens, hidden, generator=None, device=dev, dtype=dtype)
-
-    # FlashInfer's MoeAlltoAll is STATEFUL: dispatch() sets phase="dispatched" and
-    # combine() requires it then resets to "idle". The harness's paired loop calls
-    # dispatch_fn then combine_fn in order (phase satisfied). Each op begins with an
-    # MPI barrier so all ranks enter the kernel roughly aligned -- FlashInfer's
-    # in-kernel peer-readiness spin otherwise deadlocks multi-node when ranks drift
-    # (this is exactly how the standalone FlashInfer bench aligns ranks). The
-    # host barrier is safe here because FlashInfer dispatch/combine are independent
-    # (unlike DeepEP, whose paired ops share symmetric-memory state).
-    # EP_KINETO_SEPARATE is forced off for FlashInfer so the timer replays the
-    # dispatch->combine pair in order (a lone combine would trip the phase assert).
-    os.environ["EP_KINETO_SEPARATE"] = "0"
-
-    def dispatch_fn():
-        comm.Barrier()
-        moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
-        return None
-
-    def combine_fn(_dout):
-        comm.Barrier()
-        moe.combine(combine_payload, num_tokens)
-
-    def teardown():
-        gc.collect()
-        torch.cuda.synchronize()
-
-    return dispatch_fn, combine_fn, teardown
-
-
 _SETUP = {
     "mscclpp": setup_mscclpp,
     "mscclpp-ht": setup_mscclpp_ht,
@@ -1185,6 +618,10 @@ def main() -> None:
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
     inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
+
+    # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
+    # (cuda-graph capture toggles it for some backends only -- see the loop).
+    _user_kineto_separate = os.environ.get("EP_KINETO_SEPARATE")
 
     nccl_barrier = None
     if (
@@ -1223,6 +660,23 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
+        # Under --cuda-graph, nccl, flashinfer and deepep capture dispatch+combine in
+        # a SINGLE graph, so one replay runs both phases and the skew-free separate
+        # pass (which times combine alone) can no longer isolate combine. Force the
+        # PAIRED kineto pass for those backends so the collector still attributes
+        # per-phase kernel time by kernel name. mscclpp keeps its two separate graphs
+        # (and thus the separate skew-free pass) on the user's default. deepep only
+        # graphs intranode, so setup_deepep sets EP_KINETO_SEPARATE itself when it
+        # actually captures; the nccl/flashinfer force here is unconditional under
+        # --cuda-graph. Restore the snapshot each iteration so a prior backend's
+        # override does not leak in --backend all.
+        if _user_kineto_separate is None:
+            os.environ.pop("EP_KINETO_SEPARATE", None)
+        else:
+            os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
+        if args.cuda_graph and name in ("nccl", "flashinfer"):
+            os.environ["EP_KINETO_SEPARATE"] = "0"
+
         try:
             _setup_ret = _SETUP[name](args, comm, rank, num_ranks, inputs)
             if len(_setup_ret) == 4:
