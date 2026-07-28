@@ -21,7 +21,7 @@ class QuantConfig:
 
     Low-latency FP8 dispatch returns ``block_scales`` with the activation's
     leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
-    uses FP32 scales per 128 elements; ``MXFP8_E4M3`` uses UE8M0 bytes per 32.
+    uses FP32 scales per 128 elements.
     """
 
     format: Optional[DispatchDataType] = None
@@ -51,8 +51,7 @@ class MoECommunicatorConfig:
     # Runtime mode and output layout
     mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None
-    token_major_init_padding: bool = False
-    # LL token-major sentinel; None resolves to num_experts.
+    # LL rank-major sentinel; None resolves to num_experts.
     invalid_token_expert_id: Optional[int] = None
 
     # Quantization defaults
@@ -73,7 +72,7 @@ class MoECommunicatorConfig:
 
 @dataclass
 class DispatchLayoutInfo:
-    """Physical layout of dispatched tokens and optional expert-group metadata."""
+    """Physical layout of dispatched tokens and optional rank/expert metadata."""
 
     kind: DispatchLayout
     num_tokens_per_expert: Optional[Union[torch.Tensor, List[int]]] = None
@@ -91,7 +90,11 @@ class DispatchOutputInfo:
 
 @dataclass
 class DispatchOutput:
-    """Dispatch result consumed by the local MLP."""
+    """Dispatch result consumed by the local MLP.
+
+    ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
+    reused by every dispatch. Clone any result that must outlive the next call.
+    """
 
     tokens: torch.Tensor
     quant: Optional[QuantConfig]
@@ -114,21 +117,16 @@ class ExpertMajorCombineContext:
     hidden_size: int
     src_info: torch.Tensor
     layout_range: torch.Tensor
-    num_max_dispatch_tokens_per_rank: int
 
 
 @dataclass
-class TokenMajorCombineContext:
-    """Combine context for token-major, rank-local pre-reduced output."""
+class RankMajorCombineContext:
+    """Combine context for fixed-stride rank-major output."""
 
     topk_ids: torch.Tensor
     num_experts: int
     num_tokens: int
     hidden_size: int
-    source_token_ids: torch.Tensor
-    num_tokens_per_rank: torch.Tensor
-    rank_offsets: torch.Tensor
-    num_max_dispatch_tokens_per_rank: int
 
 
 @dataclass
@@ -139,7 +137,11 @@ class HighThroughputCombineContext:
     send_head: torch.Tensor
 
 
-CombineContext = Union[ExpertMajorCombineContext, TokenMajorCombineContext, HighThroughputCombineContext]
+CombineContext = Union[
+    ExpertMajorCombineContext,
+    RankMajorCombineContext,
+    HighThroughputCombineContext,
+]
 
 
 # Opaque dispatch handles returned by dispatch() and consumed by combine().
@@ -158,8 +160,8 @@ class ExpertMajorDispatchHandle(DispatchHandle):
 
 
 @dataclass
-class TokenMajorDispatchHandle(DispatchHandle):
-    combine_context: TokenMajorCombineContext
+class RankMajorDispatchHandle(DispatchHandle):
+    combine_context: RankMajorCombineContext
 
 
 @dataclass
