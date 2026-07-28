@@ -282,7 +282,7 @@ void gpuMemset(void* ptr, int value, size_t bytes) {
 class GpuBufferPoolStorage : public std::enable_shared_from_this<GpuBufferPoolStorage> {
  public:
   GpuBufferPoolStorage(size_t bytes, GpuBufferGranularity granularity);
-  std::shared_ptr<GpuBufferPool::Buffer> allocate(size_t bytes, size_t alignment);
+  std::shared_ptr<GpuBuffer<char>> allocate(size_t bytes, size_t alignment);
   void release(size_t offset) noexcept;
   size_t bytes() const;
   size_t freeBytes() const;
@@ -371,10 +371,17 @@ void GpuBufferPoolStorage::releaseBlock(size_t offset, size_t bytes) noexcept {
   freeBlocks_[offset] = bytes;
 }
 
-std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPoolStorage::allocate(size_t bytes, size_t alignment) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  Block block = reserveBlock(bytes, alignment);
-  return std::shared_ptr<GpuBufferPool::Buffer>(new GpuBufferPool::Buffer(shared_from_this(), block.offset, bytes));
+std::shared_ptr<GpuBuffer<char>> GpuBufferPoolStorage::allocate(size_t bytes, size_t alignment) {
+  auto storage = shared_from_this();
+  Block block;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    block = reserveBlock(bytes, alignment);
+  }
+
+  std::shared_ptr<char> memory(data() + block.offset,
+                               [storage, offset = block.offset](char*) noexcept { storage->release(offset); });
+  return std::shared_ptr<GpuBuffer<char>>(new GpuBuffer<char>(bytes, bytes, deviceId(), std::move(memory)));
 }
 
 void GpuBufferPoolStorage::release(size_t offset) noexcept {
@@ -414,23 +421,10 @@ int GpuBufferPoolStorage::deviceId() const { return buffer_.deviceId(); }
 
 }  // namespace detail
 
-GpuBufferPool::Buffer::Buffer(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset, size_t bytes)
-    : storage_(std::move(storage)), offset_(offset), bytes_(bytes) {}
-
-GpuBufferPool::Buffer::~Buffer() { storage_->release(offset_); }
-
-size_t GpuBufferPool::Buffer::bytes() const { return bytes_; }
-
-size_t GpuBufferPool::Buffer::offset() const { return offset_; }
-
-char* GpuBufferPool::Buffer::data() const { return storage_->data() + offset_; }
-
-int GpuBufferPool::Buffer::deviceId() const { return storage_->deviceId(); }
-
 GpuBufferPool::GpuBufferPool(size_t bytes, GpuBufferGranularity granularity)
     : storage_(std::make_shared<detail::GpuBufferPoolStorage>(bytes, granularity)) {}
 
-std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPool::allocate(size_t bytes, size_t alignment) {
+std::shared_ptr<GpuBuffer<char>> GpuBufferPool::allocate(size_t bytes, size_t alignment) {
   return storage_->allocate(bytes, alignment);
 }
 

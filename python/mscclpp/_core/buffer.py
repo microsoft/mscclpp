@@ -9,7 +9,6 @@ import numpy as np
 from mscclpp._mscclpp import (
     CppRawGpuBuffer,
     CppRawGpuBufferPool,
-    CppRawGpuBufferPoolBuffer,
     CppGpuBufferGranularity,
 )
 
@@ -46,6 +45,7 @@ class GpuBufferPool:
     """A GPU buffer pool that returns raw buffers backed by one communication-friendly allocation.
 
     All ranks should create the same-sized pool and call :meth:`allocate` in the same order to get matching offsets.
+    Keep each returned buffer alive until all GPU work using it has completed.
     """
 
     def __init__(
@@ -86,12 +86,14 @@ class GpuBufferPool:
         self,
         nbytes: int,
         alignment: int = 256,
-    ) -> CppRawGpuBufferPoolBuffer:
+    ) -> CppRawGpuBuffer:
         """Allocate a raw buffer from the pool.
 
         Args:
             nbytes: Number of bytes to allocate.
             alignment: Required byte alignment of the allocation offset from the pool base.
+
+        The returned memory has unspecified contents and may contain data from a previous allocation.
         """
         if nbytes <= 0:
             raise ValueError("Buffer size must be positive.")

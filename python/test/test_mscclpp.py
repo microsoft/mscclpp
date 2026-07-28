@@ -76,9 +76,9 @@ def test_gpu_buffer_pool(mpi_group: MpiGroup):
     padding_first = padding_pool.allocate(100, alignment=1)
     padding_second = padding_pool.allocate(100, alignment=256)
     padding_third = padding_pool.allocate(1, alignment=1)
-    assert padding_first.offset() == 0
-    assert padding_second.offset() == 256
-    assert padding_third.offset() == 356
+    assert padding_first.data() - padding_pool.data == 0
+    assert padding_second.data() - padding_pool.data == 256
+    assert padding_third.data() - padding_pool.data == 356
 
 
 @parametrize_mpi_groups(1)
@@ -103,13 +103,13 @@ def test_gpu_buffer_pool_symmetric_offsets(mpi_group: MpiGroup):
     offsets = []
 
     first = pool.allocate(64, alignment=256)
-    offsets.append(first.offset())
+    offsets.append(first.data() - pool.data)
     second = pool.allocate(128, alignment=512)
-    offsets.append(second.offset())
+    offsets.append(second.data() - pool.data)
     del first
 
     reused = pool.allocate(32, alignment=128)
-    offsets.append(reused.offset())
+    offsets.append(reused.data() - pool.data)
 
     gathered_offsets = mpi_group.comm.allgather(offsets)
     assert all(rank_offsets == gathered_offsets[0] for rank_offsets in gathered_offsets)

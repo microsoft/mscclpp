@@ -61,8 +61,6 @@ static DLDataType getDlType(std::string type) {
   }
 }
 
-static void dlpackDeleter(DLManagedTensor* self) { delete static_cast<DlpackContext*>(self->manager_ctx); }
-
 static void dlpackCapsuleDestructor(PyObject* capsule) {
   if (PyCapsule_IsValid(capsule, "used_dltensor")) {
     return;
@@ -108,7 +106,7 @@ static nb::capsule makeDlpack(void* data, size_t bytes, int deviceId, std::share
   dlManagedTensor->dl_tensor.byte_offset = 0;
   dlManagedTensor->dl_tensor.dtype = dtype;
   dlManagedTensor->manager_ctx = ctx.get();
-  dlManagedTensor->deleter = dlpackDeleter;
+  dlManagedTensor->deleter = [](DLManagedTensor* self) { delete static_cast<DlpackContext*>(self->manager_ctx); };
 
   PyObject* dlCapsule = PyCapsule_New(static_cast<void*>(dlManagedTensor), "dltensor", dlpackCapsuleDestructor);
   if (dlCapsule == nullptr) {
@@ -122,14 +120,6 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
                             std::vector<int64_t>& strides) {
   auto owner = std::make_shared<GpuBuffer<char>>(buffer);
   return makeDlpack(buffer.data(), buffer.nelems(), buffer.deviceId(), std::move(owner), dataType, shape, strides);
-}
-
-static nb::capsule toDlpack(std::shared_ptr<GpuBufferPool::Buffer> buffer, std::string dataType,
-                            std::vector<int64_t>& shape, std::vector<int64_t>& strides) {
-  void* data = buffer->data();
-  size_t bytes = buffer->bytes();
-  int deviceId = buffer->deviceId();
-  return makeDlpack(data, bytes, deviceId, std::move(buffer), dataType, shape, strides);
 }
 
 void register_gpu_utils(nb::module_& m) {
@@ -151,17 +141,6 @@ void register_gpu_utils(nb::module_& m) {
           [](GpuBuffer<char>& self, std::string dataType, std::vector<int64_t> shape, std::vector<int64_t> strides) {
             return toDlpack(self, dataType, shape, strides);
           },
-          nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
-
-  nb::class_<GpuBufferPool::Buffer>(m, "CppRawGpuBufferPoolBuffer")
-      .def("bytes", &GpuBufferPool::Buffer::bytes)
-      .def("offset", &GpuBufferPool::Buffer::offset)
-      .def("data", [](GpuBufferPool::Buffer& self) { return reinterpret_cast<uintptr_t>(self.data()); })
-      .def("device_id", &GpuBufferPool::Buffer::deviceId)
-      .def(
-          "to_dlpack",
-          [](std::shared_ptr<GpuBufferPool::Buffer> self, std::string dataType, std::vector<int64_t> shape,
-             std::vector<int64_t> strides) { return toDlpack(std::move(self), dataType, shape, strides); },
           nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
 
   nb::class_<GpuBufferPool>(m, "CppRawGpuBufferPool")

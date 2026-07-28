@@ -5,8 +5,8 @@
 #define MSCCLPP_GPU_UTILS_HPP_
 
 #include <memory>
-#include <optional>
 #include <unordered_map>
+#include <utility>
 
 #include "env.hpp"
 #include "errors.hpp"
@@ -143,6 +143,8 @@ class GpuStreamPool {
 std::shared_ptr<GpuStreamPool> gpuStreamPool();
 
 namespace detail {
+
+class GpuBufferPoolStorage;
 
 void setReadWriteMemoryAccess(void* base, size_t size);
 int gpuIdFromAddress(void* ptr);
@@ -328,7 +330,8 @@ enum class GpuBufferGranularity {
   MultiCastRecommended,
 };
 
-/// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
+/// Owns a GPU memory space specialized for communication. Memory allocated by the public constructor is zeroed.
+/// Memory returned by `GpuBufferPool::allocate()` may contain data from a previous use. Get the device pointer by
 /// `GpuBuffer::data()`.
 ///
 /// Use this function for communication buffers, i.e., only when other devices (CPU, GPU, NIC, etc.) may access this
@@ -398,17 +401,16 @@ class GpuBuffer {
   int deviceId() const { return deviceId_; }
 
  private:
+  friend class detail::GpuBufferPoolStorage;
+
+  GpuBuffer(size_t nelems, size_t bytes, int deviceId, std::shared_ptr<T> memory)
+      : nelems_(nelems), bytes_(bytes), deviceId_(deviceId), memory_(std::move(memory)) {}
+
   size_t nelems_;
   size_t bytes_;
   int deviceId_;
   std::shared_ptr<T> memory_;
 };
-
-namespace detail {
-
-class GpuBufferPoolStorage;
-
-}  // namespace detail
 
 /// A deterministic sub-allocation pool for GPU communication buffers.
 ///
@@ -416,59 +418,21 @@ class GpuBufferPoolStorage;
 /// If all ranks create pools with the same size and make the same allocation calls, returned buffers have identical
 /// offsets from the slab base pointer. Python bindings use this property to build symmetric memory buffers while
 /// relying on normal Python reference counting to return buffers to the local pool.
+/// Callers must keep each returned buffer alive until all GPU work using it has completed.
 ///
 class GpuBufferPool {
  public:
-  /// Represents one buffer returned by `GpuBufferPool`.
-  ///
-  /// This object owns a sub-range of a pool allocation. Destroying the last reference to this object returns the
-  /// sub-range to the pool. Destruction only updates local pool bookkeeping and does not perform any
-  /// cross-rank synchronization.
-  class Buffer {
-   public:
-    Buffer(const Buffer&) = delete;
-    Buffer& operator=(const Buffer&) = delete;
-    Buffer(Buffer&&) = delete;
-    Buffer& operator=(Buffer&&) = delete;
-
-    /// Destructor. Returns this buffer's sub-range to the owning pool when the last reference is destroyed.
-    ~Buffer();
-
-    /// Returns the number of bytes requested for this buffer.
-    /// @return Number of bytes in this buffer.
-    size_t bytes() const;
-
-    /// Returns this buffer's byte offset from the pool base pointer.
-    /// @return Byte offset from the pool base pointer.
-    size_t offset() const;
-
-    /// Returns the device pointer to this buffer.
-    /// @return Device pointer to this buffer.
-    char* data() const;
-
-    /// Returns the device id of the underlying pool allocation.
-    /// @return Device id of the underlying pool allocation.
-    int deviceId() const;
-
-   private:
-    friend class detail::GpuBufferPoolStorage;
-    Buffer(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset, size_t bytes);
-
-    std::shared_ptr<detail::GpuBufferPoolStorage> storage_;
-    size_t offset_;
-    size_t bytes_;
-  };
-
   /// Constructs a pool backed by a single `GpuBuffer<char>`.
   /// @param bytes Number of bytes to reserve in the pool.
   /// @param granularity Granularity used to size the underlying `GpuBuffer`.
   explicit GpuBufferPool(size_t bytes, GpuBufferGranularity granularity = GpuBufferGranularity::MultiCastMinimum);
 
   /// Allocates a sub-range from the pool.
+  /// The returned memory has unspecified contents and may contain data from a previous allocation.
   /// @param bytes Number of bytes to allocate.
   /// @param alignment Alignment in bytes for the returned offset.
-  /// @return A reference-counted pooled buffer.
-  std::shared_ptr<Buffer> allocate(size_t bytes, size_t alignment = 256);
+  /// @return A reference-counted `GpuBuffer<char>` backed by the pool.
+  std::shared_ptr<GpuBuffer<char>> allocate(size_t bytes, size_t alignment = 256);
 
   /// Returns the number of bytes in the underlying pool allocation.
   /// @return Number of bytes in the pool.

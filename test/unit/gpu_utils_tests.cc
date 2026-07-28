@@ -63,18 +63,17 @@ TEST(GpuUtilsTest, Memcpy) {
 
 TEST(GpuUtilsTest, BufferPoolBasic) {
   mscclpp::GpuBufferPool pool(4096);
-
   auto first = pool.allocate(64, 256);
   EXPECT_EQ(first->bytes(), size_t(64));
-  EXPECT_EQ(first->offset() % 256, size_t(0));
-  EXPECT_EQ(first->data(), pool.data() + first->offset());
+  size_t firstOffset = first->data() - pool.data();
+  EXPECT_EQ(firstOffset % 256, size_t(0));
   EXPECT_EQ(first->deviceId(), pool.deviceId());
   EXPECT_EQ(pool.activeBytes(), size_t(64));
 
   auto second = pool.allocate(128, 512);
   EXPECT_EQ(second->bytes(), size_t(128));
-  EXPECT_EQ(second->offset() % 512, size_t(0));
-  EXPECT_EQ(second->data(), pool.data() + second->offset());
+  size_t secondOffset = second->data() - pool.data();
+  EXPECT_EQ(secondOffset % 512, size_t(0));
   EXPECT_EQ(pool.activeBytes(), size_t(64 + 128));
 
   first.reset();
@@ -91,20 +90,20 @@ TEST(GpuUtilsTest, BufferPoolReservesAlignmentPadding) {
   auto second = pool.allocate(100, 256);
   auto third = pool.allocate(1, 1);
 
-  EXPECT_EQ(first->offset(), size_t(0));
-  EXPECT_EQ(second->offset(), size_t(256));
-  EXPECT_EQ(third->offset(), size_t(356));
+  EXPECT_EQ(first->data() - pool.data(), ptrdiff_t(0));
+  EXPECT_EQ(second->data() - pool.data(), ptrdiff_t(256));
+  EXPECT_EQ(third->data() - pool.data(), ptrdiff_t(356));
 }
 
 TEST(GpuUtilsTest, BufferPoolReuseAfterRelease) {
   mscclpp::GpuBufferPool pool(1024);
 
   auto first = pool.allocate(128, 1);
-  auto firstOffset = first->offset();
+  auto firstOffset = first->data() - pool.data();
   first.reset();
 
   auto second = pool.allocate(128, 1);
-  EXPECT_EQ(second->offset(), firstOffset);
+  EXPECT_EQ(second->data() - pool.data(), firstOffset);
   second.reset();
   EXPECT_EQ(pool.freeBytes(), pool.bytes());
 }
