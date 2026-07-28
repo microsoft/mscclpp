@@ -103,29 +103,27 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     state = {"moe": moe_comm, "obuf": output_buffer, "out": out, "grp": ep_group}
 
     if args.cuda_graph:
-        # Prime once, then capture dispatch and combine as two separate CUDA graphs (rather than a
-        # single graph wrapping a dispatch()+combine() loop). The shared timed loop replays and
-        # times each phase independently so the kineto collector can attribute per-phase
-        # dispatch-vs-combine kernel time; a single combined graph would fuse both phases into one
-        # replay and lose that per-phase breakdown, which is the primary output of this benchmark.
+        # Prime once, then capture dispatch+combine into ONE combined CUDA graph. dispatch_fn
+        # replays the whole pair and combine_fn is a no-op, matching the NCCL-EP / DeepEP
+        # single-graph path and how a real serving stack replays a fused MoE step. Per-kernel
+        # kineto times are unaffected by the single vs two-graph choice; only the host-level
+        # per-phase split changes (the combine host timer folds into dispatch under one graph).
         prime_out, prime_handle = _dispatch()
         _combine(prime_out, prime_handle)
         torch.cuda.synchronize()
 
-        g_dispatch = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_dispatch):
+        g_both = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g_both):
             g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
-        g_combine = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_combine):
             moe_comm.combine(simulated_gemm_output(g_dispatch_out), g_handle, out=out)
-        state["graphs"] = (g_dispatch, g_combine)
+        state["graphs"] = (g_both,)
 
         def dispatch_fn():
-            g_dispatch.replay()
+            g_both.replay()
             return (g_dispatch_out, g_handle)
 
         def combine_fn(dout):
-            g_combine.replay()
+            pass
 
     else:
 
