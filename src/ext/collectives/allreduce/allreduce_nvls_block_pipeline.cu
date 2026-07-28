@@ -20,15 +20,15 @@ __global__ void __launch_bounds__(1024, 1)
                                [[maybe_unused]] DeviceHandle<BaseMemoryChannel>* memoryChannels,
                                [[maybe_unused]] DeviceHandle<SwitchChannel>* switchChannels,
                                [[maybe_unused]] size_t size, [[maybe_unused]] size_t scratchBufferSize,
-                               [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
+                               [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerIpcDomain) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
-  int nPeers = nRanksPerNode - 1;
-  int nBlocksForCopy = nRanksPerNode * 2;
-  int nBlocksForReduce = nRanksPerNode;
+  int nPeers = nRanksPerIpcDomain - 1;
+  int nBlocksForCopy = nRanksPerIpcDomain * 2;
+  int nBlocksForReduce = nRanksPerIpcDomain;
   int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
-  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
-  size_t sizePerRank = size / nRanksPerNode;
+  size_t scratchSizePerRank = scratchBufferSize / nRanksPerIpcDomain;
+  size_t sizePerRank = size / nRanksPerIpcDomain;
   assert(sizePerRank % alignment == 0);
   uint32_t sizePerBlock =
       ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignment - 1) / alignment * alignment;
@@ -68,7 +68,7 @@ __global__ void __launch_bounds__(1024, 1)
         deviceSemaphore[bid + 2 * nBlocksForCopy].acquire();
       }
       __syncthreads();
-      for (int i = 0; i < nRanksPerNode; i++) {
+      for (int i = 0; i < nRanksPerIpcDomain; i++) {
         size_t blockOffset = it * unitSize + bid * sizePerBlock + i * sizePerRank;
         uint32_t scratchOffset = scratchIt * unitSize + bid * scratchSizePerBlock + i * scratchSizePerRank;
         char* srcData = (char*)src + blockOffset;
@@ -125,7 +125,7 @@ __global__ void __launch_bounds__(1024, 1)
         channels->wait();
       }
       __syncthreads();
-      for (int i = 0; i < nRanksPerNode; i++) {
+      for (int i = 0; i < nRanksPerIpcDomain; i++) {
         size_t blockOffset = it * unitSize + (bid - nBlocksForCopy - nBlocksForReduce) * sizePerBlock + i * sizePerRank;
         uint32_t scratchOffset = scratchIt * unitSize +
                                  (bid - nBlocksForCopy - nBlocksForReduce) * scratchSizePerBlock +
@@ -150,7 +150,7 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct NvlsBlockPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
+                          size_t scratchBufferSize, int rank, int nRanksPerIpcDomain, int, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
     if constexpr (std::is_same_v<T, uint8_t>) {
@@ -162,7 +162,7 @@ struct NvlsBlockPipelineAdapter {
       using ChannelType = DeviceHandle<BaseMemoryChannel>;
       allreduceNvlsBlockPipeline<T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels, nvlsChannels,
-                                                     inputSize, scratchBufferSize, rank, nRanksPerNode);
+                                                     inputSize, scratchBufferSize, rank, nRanksPerIpcDomain);
       return cudaGetLastError();
     }
   }
@@ -171,7 +171,9 @@ struct NvlsBlockPipelineAdapter {
 void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
   fp8NvlsSupported_ = isFp8NvlsSupported();
-  int nBaseChannels = 64;
+  int nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
+  // Per-peer channel allocation must hold up to 4 * nRanksPerIpcDomain entries (see kernel).
+  int nBaseChannels = std::max(64, 4 * nRanksPerIpcDomain);
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores =
@@ -198,11 +200,11 @@ CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = {ctx->nRanksPerNode * 5, 1024};
+    blockAndThreadNum = {ctx->nRanksPerIpcDomain * 5, 1024};
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0, 0,
+                                ctx->rank, ctx->nRanksPerIpcDomain, ctx->worldSize, inputSize, stream, nullptr, 0, 0,
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsBlockPipeline failed with error: %s", cudaGetErrorString(error));
@@ -219,12 +221,12 @@ std::shared_ptr<void> AllreduceNvlsBlockPipeline::initAllreduceContext(std::shar
                                                                        void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->worldSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup channels
   ctx->switchChannels =
-      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
+      setupNvlsChannels(comm, this->nvlsConnections_, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }

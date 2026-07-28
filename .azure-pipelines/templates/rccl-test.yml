@@ -32,14 +32,19 @@ steps:
     name: InstallRcclTests
     displayName: Install RCCL Tests
     remoteScript: |
+      LATEST_TAG=$(curl -fsSL https://api.github.com/repos/ROCm/rocm-systems/releases/latest | grep tag_name | cut -d\" -f4)
+      if [ -z "$LATEST_TAG" ]; then
+        echo "Failed to fetch latest ROCm Systems tag"
+        exit 1
+      fi
       cd
-      git clone --filter=blob:none --no-checkout https://github.com/ROCm/rocm-systems.git
+      git clone --filter=blob:none --no-checkout --branch $LATEST_TAG https://github.com/ROCm/rocm-systems.git
       cd rocm-systems
       git sparse-checkout init --cone
       git sparse-checkout set projects/rccl-tests
       git checkout
       cd projects/rccl-tests
-      MPI=1 MPI_HOME=/usr/local/mpi make -j
+      GPU_TARGETS=${{ parameters.gpuArch }} MPI=1 MPI_HOME=/usr/local/mpi make -j64
 
 - template: run-remote-task.yml
   parameters:

@@ -39,46 +39,42 @@ MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
 template <typename T, typename AccumT = T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
                                                       int tid, int nThreads) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1000 && \
-    (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
-  constexpr bool fp8NvlsArchSupported = true;
-#else
-  constexpr bool fp8NvlsArchSupported = false;
-#endif
-  constexpr bool nativeFp8Type = std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>;
-  if constexpr (nativeFp8Type && !fp8NvlsArchSupported) {
+#if defined(__FP8_TYPES_EXIST__) && !defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
+  if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
     MSCCLPP_ASSERT_DEVICE(false, "FP8 NVLS multimem reduction is not supported on this architecture");
     return;
-  }
-
-  // nvls can only handle 4 bytes alignment
-  MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
-  constexpr size_t nElem = calcVectorSize<T>();
-  // For integer types, use 1-element vectors since multimem doesn't support vectorized integer operations
-  constexpr size_t vecSize = (std::is_same_v<T, int> || std::is_same_v<T, int32_t> || std::is_same_v<T, unsigned int> ||
-                              std::is_same_v<T, uint32_t>)
-                                 ? 1
-                                 : nElem;
-  using vectorType = mscclpp::VectorType<T, vecSize>;
-  const size_t nVec = size / sizeof(vectorType);
-  const size_t srcOffset4 = srcOffset / sizeof(vectorType);
-  const size_t dstOffset4 = dstOffset / sizeof(vectorType);
-  vectorType* src4 = (vectorType*)src;
-  vectorType* dst4 = (vectorType*)dst;
-  for (size_t idx = tid; idx < nVec; idx += nThreads) {
-    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<vectorType, AccumT>(src4 + srcOffset4 + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
-  }
-  // handle rest of data
-  size_t processed = nVec * sizeof(vectorType);
-  constexpr size_t nRestElem = 4 / sizeof(T);
-  using restVectorType = mscclpp::VectorType<T, nRestElem>;
-  const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
-  const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
-  for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
-    auto val =
-        mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<restVectorType, AccumT>((restVectorType*)src + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
+  } else
+#endif
+  {
+    // nvls can only handle 4 bytes alignment
+    MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
+    constexpr size_t nElem = calcVectorSize<T>();
+    // For integer types, use 1-element vectors since multimem doesn't support vectorized integer operations
+    constexpr size_t vecSize = (std::is_same_v<T, int> || std::is_same_v<T, int32_t> ||
+                                std::is_same_v<T, unsigned int> || std::is_same_v<T, uint32_t>)
+                                   ? 1
+                                   : nElem;
+    using vectorType = mscclpp::VectorType<T, vecSize>;
+    const size_t nVec = size / sizeof(vectorType);
+    const size_t srcOffset4 = srcOffset / sizeof(vectorType);
+    const size_t dstOffset4 = dstOffset / sizeof(vectorType);
+    vectorType* src4 = (vectorType*)src;
+    vectorType* dst4 = (vectorType*)dst;
+    for (size_t idx = tid; idx < nVec; idx += nThreads) {
+      auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<vectorType, AccumT>(src4 + srcOffset4 + idx);
+      mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
+    }
+    // handle rest of data
+    size_t processed = nVec * sizeof(vectorType);
+    constexpr size_t nRestElem = 4 / sizeof(T);
+    using restVectorType = mscclpp::VectorType<T, nRestElem>;
+    const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
+    const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
+    for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
+      auto val =
+          mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<restVectorType, AccumT>((restVectorType*)src + idx);
+      mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
+    }
   }
 }
 #endif  // defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900

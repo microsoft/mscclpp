@@ -61,6 +61,8 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
       set.set(static_cast<size_t>(LogSubsys::EXEC));
     } else if (token == "NCCL") {
       set.set(static_cast<size_t>(LogSubsys::NCCL));
+    } else if (token == "ALGO") {
+      set.set(static_cast<size_t>(LogSubsys::ALGO));
     } else if (token == "ALL") {
       set.set();  // all bits
     }
