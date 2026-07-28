@@ -29,10 +29,10 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
   EXPERT_MAJOR,
-  /// Token-major rows. Low latency uses
-  /// [num_ranks * max_tokens_per_rank, hidden], grouped by source rank; high
-  /// throughput uses [num_recv_tokens, hidden].
-  TOKEN_MAJOR
+  /// Token-major rows: [num_recv_tokens, hidden]. High throughput only.
+  TOKEN_MAJOR,
+  /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
+  RANK_MAJOR
 };
 
 // ===========================================================================
@@ -94,9 +94,7 @@ enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
-  FP8_E4M3,
-  /// FP8 E4M3 payload with one UE8M0 scale byte per 32 hidden elements.
-  MXFP8_E4M3
+  FP8_E4M3
 };
 
 /// Per-call low-latency workload dimensions.
@@ -115,8 +113,6 @@ struct Workload {
   int maxTokensPerRank_;
   /// User-visible dispatch output layout.
   DispatchLayout outputLayout_;
-  /// Whether token-major padding metadata is initialized to sentinel values.
-  bool initializeTokenMajorPadding_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
@@ -144,13 +140,15 @@ struct CommContext {
 /// Return the optimized low-latency workspace size.
 /// @param[in] numRanks Total number of ranks.
 /// @param[in] numExperts Total number of experts.
+/// @param[in] maxTokensPerRank Maximum local token capacity.
+/// @param[in] numTopk Number of routed experts per token.
 /// @return Required workspace bytes.
-size_t workspaceSize(int numRanks, int numExperts);
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major or token-major packed output selected by
 /// Workload::outputLayout_.
-/// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, UE8M0 bytes for MXFP8_E4M3, or nullptr for BF16.
+/// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, or nullptr for BF16.
 /// @param[out] outputSrcInfo Original source-token index for every output row.
 /// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// Non-local and padding entries use Workload::invalidTokenExpertId_.

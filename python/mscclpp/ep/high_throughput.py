@@ -56,7 +56,12 @@ class HighThroughputRuntime:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
-        self.runtime = _cpp.ExpertParallelRuntime(comm.communicator, max_hidden_bytes, config)
+        self.runtime = _cpp.create_moe_runtime(
+            comm.communicator,
+            _cpp.MoEMode.HIGH_THROUGHPUT,
+            max_hidden_bytes=max_hidden_bytes,
+            num_sms=config.num_sms,
+        )
 
     # ------------------------------------------------------------------
     # Sanity helpers
@@ -69,11 +74,15 @@ class HighThroughputRuntime:
         return self.runtime.is_internode_available()
 
     # ------------------------------------------------------------------
-    # Dispatch layout
+    # Dispatch routing metadata
     # ------------------------------------------------------------------
 
-    def get_dispatch_layout(self, topk_idx: torch.Tensor, num_experts: int):
-        """Return per-rank, per-expert, and token-membership routing metadata."""
+    def compute_dispatch_counts(self, topk_idx: torch.Tensor, num_experts: int):
+        """Return per-rank, per-expert, and token-membership routing metadata.
+
+        This is routing metadata consumed by dispatch; it is unrelated to
+        ``DispatchLayout`` (the memory layout of the dispatch output).
+        """
         assert topk_idx.dim() == 2 and topk_idx.is_contiguous()
         num_tokens, num_topk = int(topk_idx.size(0)), int(topk_idx.size(1))
 
@@ -81,7 +90,7 @@ class HighThroughputRuntime:
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, self.group_size), dtype=torch.bool, device="cuda")
 
-        self.runtime.layout(
+        self.runtime.ht_compute_dispatch_counts(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -116,7 +125,7 @@ class HighThroughputRuntime:
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = self.runtime.get_dispatch_num_channels(x_element_size)
+        num_channels = self.runtime.ht_get_dispatch_num_channels(x_element_size)
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -137,7 +146,7 @@ class HighThroughputRuntime:
             rank_prefix_matrix = torch.empty((self.group_size, self.group_size), dtype=torch.int32, device="cuda")
             channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
             num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
-            num_recv_tokens = self.runtime.notify_dispatch(
+            num_recv_tokens = self.runtime.ht_notify_dispatch(
                 _ptr(rank_prefix_matrix),
                 _ptr(channel_prefix_matrix),
                 _ptr(num_recv_per_expert_host),
@@ -169,7 +178,7 @@ class HighThroughputRuntime:
             else None
         )
 
-        self.runtime.dispatch(
+        self.runtime.ht_dispatch(
             _ptr(recv_x),
             _ptr(recv_x_scales),
             _ptr(recv_topk_idx),
@@ -205,7 +214,7 @@ class HighThroughputRuntime:
 
     def _alloc_recv_x(self, num_tokens: int, num_recv_tokens: int, hidden: int, x_element_size: int) -> torch.Tensor:
         """Return this rank's direct receive-pool view."""
-        pool_ptr = self.runtime.resolve_recv_x_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
+        pool_ptr = self.runtime.ht_resolve_recv_x_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
         if pool_ptr == 0:
             raise RuntimeError("high-throughput direct receive-pool capacity exceeded")
         return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
@@ -227,7 +236,7 @@ class HighThroughputRuntime:
             if topk_weights is not None
             else None
         )
-        self.runtime.combine(
+        self.runtime.ht_combine(
             _ptr(combined_x),
             _ptr(combined_topk_weights),
             _ptr(x),
@@ -250,11 +259,6 @@ class HighThroughputBackend:
         comm = config.comm
         if comm is None:
             raise ValueError("mode=HIGH_THROUGHPUT requires an mscclpp.CommGroup via comm=")
-        if Config is None or not hasattr(_cpp, "ExpertParallelRuntime"):
-            raise ImportError(
-                "mscclpp_ep_cpp was built without the high-throughput EP backend. "
-                "Rebuild with -DMSCCLPP_BUILD_EXT_EP=ON and ensure Config/ExpertParallelRuntime are exported."
-            )
 
         self.comm = comm
         self.rank = comm.my_rank
@@ -347,7 +351,7 @@ class HighThroughputBackend:
                 num_tokens_per_rank,
                 num_tokens_per_expert,
                 is_token_in_rank,
-            ) = self._runtime.get_dispatch_layout(topk_ids, self.num_experts)
+            ) = self._runtime.compute_dispatch_counts(topk_ids, self.num_experts)
 
         if cache is not None:
             (

@@ -119,9 +119,9 @@ import subprocess
 import time
 
 import torch
-from mpi4py import MPI
 
 from ep_bench_common import (
+    MPI,
     init_mpi,
     make_inputs,
     _init_torch_nccl,
@@ -174,6 +174,12 @@ def parse_args() -> argparse.Namespace:
         "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
     )
     p.add_argument(
+        "--graph-group-size",
+        type=int,
+        default=1,
+        help="capture this many independently routed dispatch->combine pairs in one CUDA Graph",
+    )
+    p.add_argument(
         "--ep-layout",
         choices=["rank_major", "expert_major"],
         default=None,
@@ -206,6 +212,12 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
+    if args.graph_group_size <= 0:
+        raise SystemExit("--graph-group-size must be positive")
+    if args.graph_group_size > 1 and not args.cuda_graph:
+        raise SystemExit("--graph-group-size > 1 requires --cuda-graph")
+    if args.graph_group_size > 1 and args.backend not in ("mscclpp", "flashinfer"):
+        raise SystemExit("grouped CUDA Graph timing currently supports mscclpp or flashinfer")
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
         raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
     return args
@@ -349,7 +361,8 @@ def run_backend(
     nccl_barrier=None,
     bench_barrier=None,
 ):
-    _, _, _, num_valid_selections = inputs
+    base_inputs = inputs[0] if isinstance(inputs, list) else inputs
+    _, _, _, num_valid_selections = base_inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
     disp_elt = 1 if getattr(args, "dispatch_dtype", "bf16") == "fp8_e4m3" else 2
@@ -357,6 +370,36 @@ def run_backend(
     comb_bytes = num_valid_selections * hidden * 2  # BF16 combine output (per ep_bench)
 
     stream = torch.cuda.current_stream()
+
+    if args.graph_group_size > 1:
+        for _ in range(warmup):
+            dispatch_fn()
+        torch.cuda.synchronize()
+        comm.Barrier()
+
+        starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        ends = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+        for index in range(iters):
+            starts[index].record(stream)
+            dispatch_fn()
+            ends[index].record(stream)
+        torch.cuda.synchronize()
+
+        pair_us = [starts[index].elapsed_time(ends[index]) * 1e3 / args.graph_group_size for index in range(iters)]
+        avg_us, min_us, max_us = (
+            sum(pair_us) / len(pair_us),
+            min(pair_us),
+            max(pair_us),
+        )
+        global_avg, global_min, global_max = _mpi_stats(comm, avg_us, min_us, max_us, num_ranks)
+        if rank == 0:
+            print(f"\n=== Grouped CUDA Graph [{name}] across {num_ranks} ranks ===")
+            print(
+                f"D+C per pair: avg={global_avg:.2f} us, "
+                f"min={global_min:.2f} us, max={global_max:.2f} us "
+                f"(group_size={args.graph_group_size}, replays={iters})"
+            )
+        return
 
     # --- Warmup (paired). ---
     for _ in range(warmup):
@@ -610,7 +653,19 @@ def main() -> None:
 
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
-    inputs = make_inputs(args.num_tokens, args.hidden, args.num_topk, args.num_experts, rank, args.seed)
+    inputs = [
+        make_inputs(
+            args.num_tokens,
+            args.hidden,
+            args.num_topk,
+            args.num_experts,
+            rank,
+            args.seed + sample_index * 1_000_003,
+        )
+        for sample_index in range(args.graph_group_size)
+    ]
+    if args.graph_group_size == 1:
+        inputs = inputs[0]
 
     # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
     # (cuda-graph capture toggles it for some backends only -- see the loop).
@@ -667,7 +722,9 @@ def main() -> None:
             os.environ.pop("EP_KINETO_SEPARATE", None)
         else:
             os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
-        if args.cuda_graph and name in ("nccl", "flashinfer"):
+        if args.cuda_graph and (
+            name in ("nccl", "flashinfer") or (name == "mscclpp" and args.ep_layout == "rank_major")
+        ):
             os.environ["EP_KINETO_SEPARATE"] = "0"
 
         try:
@@ -700,6 +757,10 @@ def main() -> None:
             torch.cuda.synchronize()
             teardown()
             comm.Barrier()
+    if os.environ.get("EP_BOOTSTRAP") == "torch":
+        import torch.distributed as dist
+
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

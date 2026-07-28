@@ -1,12 +1,19 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
 The EP extension is a torch-free nanobind module for MoE dispatch and combine.
-It builds two backends:
+It exposes a single `MoERuntime` whose `MoEMode` selects one of two backends:
 
-- **Low latency (LL)**: `MoERuntime`, backed by
-  `low_latency/{dispatch,combine}.cu`.
-- **High throughput (HT)**: `ExpertParallelRuntime`, backed by
-  `ht_runtime.cc` and the CUDA sources under `high-throughput/`.
+- **Low latency (LL)**: `MoELowLatencyRuntime` (`ll_runtime.cc` plus
+  `low_latency/{dispatch,combine}.cu`), reached through the `ll_*` methods.
+  Uses ~128 SMs and expects to own the GPU while it runs.
+- **High throughput (HT)**: `MoEHighThroughputRuntime` (`ht_runtime.cc` plus the
+  CUDA sources under `high-throughput/`), reached through the `ht_*` methods.
+  Defaults to 20 SMs so dispatch/combine can overlap with expert GEMMs.
+
+Both derive from the abstract `MoERuntime` (`runtime_base.hpp`), which owns the
+shared rank-topology detection and availability reporting.
+`createMoERuntime(...)` constructs the requested implementation and returns a
+`std::shared_ptr<MoERuntime>`; calling the other mode's methods raises.
 
 ## Status
 
@@ -33,27 +40,21 @@ and the required fabric services are available.
 LL dispatch supports two user-visible layouts:
 
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
-- `TOKEN_MAJOR`: one row per `(token, destination rank)`, plus global top-k expert
-  IDs, routing weights, source-token IDs, per-source-rank counts, and exclusive
-  offsets. Valid rows occupy a compact prefix of the caller-provided capacity
-  buffer. Entries not owned by the destination rank use
-  `invalid_token_expert_id` and weight `0`; the sentinel defaults to
-  `num_experts`. With `token_major_init_padding=True`, padding rows use the same
-  sentinel, allowing fixed-capacity Triton kernels to skip them without a CPU
-  count synchronization. The option is disabled by default. The caller must
-  produce one pre-weighted local partial per valid row before combine.
+- `RANK_MAJOR`: fixed-stride rows grouped by source rank. Tokens are written
+  directly to registered destination buffers together with dense top-k IDs and
+  weights. All three are exposed as zero-copy Torch tensors. Combine can pull
+  from registered remote MoE output or push completed rank partials into
+  source-local scratch and progressively reduce ready ranks.
 
 LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
-elements (`FP8_E4M3`) or UE8M0 scale bytes per 32 elements (`MXFP8_E4M3`).
-MXFP8 scales use linear row-major layout and can be passed to FlashInfer
-`cutlass_fused_moe` with `swizzled_input_sf=False`.
+elements (`FP8_E4M3`).
 
 ### High throughput
 
 HT follows the same direct-mapping resource model:
 
 1. Python passes the existing `mscclpp::Communicator` into
-   `ExpertParallelRuntime`.
+   `MoERuntime` with `MoEMode::HIGH_THROUGHPUT`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
    internal receive pool. The pool provides stable peer mappings before the
    data-dependent receive count is known; Python later exposes its exact-size
@@ -109,9 +110,7 @@ cmake --build build -j 64
 The EP extension requires CUDA architecture 90 or newer. Without an explicit
 `MSCCLPP_GPU_ARCHS`, it builds for `90`, `100`, `100a`, `103`, and `103a` when
 the CUDA toolkit supports those targets. An explicit `MSCCLPP_GPU_ARCHS`
-overrides this list. Architecture-specific `100a`/`103a` builds use the native
-Blackwell UE8M0 conversion instruction; generic `100`/`103` builds use the
-portable conversion path.
+overrides this list.
 
 Available CMake options:
 

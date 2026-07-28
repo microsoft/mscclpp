@@ -4,12 +4,13 @@
 # Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
 # (Mixture-of-Experts dispatch/combine) runtime to Python.
 #
-# Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
-# nanobind API so the module never links libtorch:
-#  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
+# Two backends share one module behind a single `MoERuntime` class (`MoEMode`
+# selects the path), both with a torch-free, raw-pointer (uintptr_t) nanobind
+# API so the module never links libtorch:
+#  - Low-latency (LL): ll_runtime.cc + low_latency/{dispatch,combine}.cu.
 #  - High-throughput (HT): ht_runtime.cc + high-throughput/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
-#    recv sizing via the two-phase notify -> allocate -> dispatch API).
+#    recv sizing via the multi-step layout -> notify -> allocate -> dispatch API).
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
@@ -52,6 +53,7 @@ endif()
 
 set(EP_SOURCES
     moe_runtime.cc
+    ll_runtime.cc
     bindings.cpp
     low_latency/dispatch.cu
     low_latency/combine.cu
