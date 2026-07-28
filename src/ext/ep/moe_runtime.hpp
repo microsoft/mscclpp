@@ -2,70 +2,54 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include <cuda_runtime.h>
-
 #include <cstdint>
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/memory_channel.hpp>
-#include <string>
-#include <vector>
 
 #include "api.cuh"
-#include "config.hpp"
+#include "ht_runtime.hpp"
+#include "ll_runtime.hpp"
 
 namespace mscclpp {
 namespace ep {
 
+/// Single entry point for both MoE backends.
+///
+/// `MoEMode` selects which implementation is constructed; only that backend's
+/// methods are usable afterwards. The two backends expose genuinely different
+/// call protocols -- low latency is dispatch/combine, high throughput is
+/// layout -> notifyDispatch -> resolveRecvXBuffer -> dispatch -- so the
+/// forwarding methods stay prefixed by mode rather than pretending to share one
+/// signature. Calling a method belonging to the other mode throws.
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts, int numTopk);
-  ~MoERuntime() noexcept(false);
+  /// Construct the backend selected by @p mode.
+  /// Low-latency uses @p maxTokensPerRank, @p hidden, @p numExperts and @p numTopk;
+  /// high-throughput uses @p maxHiddenBytes and @p numSms.
+  MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
+             int numTopk, int64_t maxHiddenBytes, int numSms);
+  ~MoERuntime();
 
+  MoEMode mode() const { return mode_; }
   bool isAvailable() const;
   bool isInternodeAvailable() const;
-  void* rankMajorTopkIdsBuffer() const;
-  void* rankMajorTopkWeightsBuffer() const;
-  void* rankMajorTokenBuffer() const;
-  void* rankMajorExpertOutputBuffer() const;
 
-  void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
-                int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
-                const float* topkWeights, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-                int invalidTokenExpertId, DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-                int numBlocks, cudaStream_t stream);
+  /// @name Low-latency path
+  /// @{
+  MoELowLatencyRuntime& lowLatency();
+  const MoELowLatencyRuntime& lowLatency() const;
+  /// @}
 
-  void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-               const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-               DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-               low_latency::CombineMode mode, int numBlocks, cudaStream_t stream);
+  /// @name High-throughput path
+  /// @{
+  MoEHighThroughputRuntime& highThroughput();
+  const MoEHighThroughputRuntime& highThroughput() const;
+  /// @}
 
  private:
-  int rank_;
-  int numRanks_;
-  int numNvlRanks_;
-  int numRanksPerIpcDomain_;
-  int deviceId_;
-  int maxTokensPerRank_;
-  int hidden_;
-  int numExperts_;
-  int numTopk_;
-  int64_t symmetricBufferBytes_;
-  bool available_ = false;
-  void* symmetricBuffer_ = nullptr;
-  void* workspace_ = nullptr;
-  low_latency::CommContext commContext_{};
-
-  mscclpp::Communicator* communicator_ = nullptr;
-
-  std::vector<void*> peerMappedBufferBases_;
-  std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
-  void** peerMappedBufferBasesGpu_ = nullptr;
-  std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-
-  void setup();
+  MoEMode mode_;
+  std::unique_ptr<MoELowLatencyRuntime> lowLatency_;
+  std::unique_ptr<MoEHighThroughputRuntime> highThroughput_;
 };
 
 }  // namespace ep

@@ -21,15 +21,7 @@ namespace ep {
 
 MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                                                    const high_throughput::Config& config)
-    : bootstrap_(communicator.bootstrap()),
-      rank_(bootstrap_->getRank()),
-      numRanks_(bootstrap_->getNranks()),
-      numNvlRanks_(std::min(numRanks_, bootstrap_->getNranksPerNode())),
-      numRanksPerIpcDomain_(std::max(numNvlRanks_, std::min(numRanks_, bootstrap_->getNranksPerIpcDomain()))),
-      maxHiddenBytes_(maxHiddenBytes),
-      config_(config) {
-  EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
-  EP_HOST_ASSERT(numNvlRanks_ > 0);
+    : MoERuntimeBase(communicator), maxHiddenBytes_(maxHiddenBytes), config_(config) {
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
@@ -67,10 +59,6 @@ MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
   else
     CUDA_CHECK(cudaFree(symmetricBuffer_));
 }
-
-bool MoEHighThroughputRuntime::isAvailable() const { return available_; }
-
-bool MoEHighThroughputRuntime::isInternodeAvailable() const { return isAvailable() && numRanks_ > numNvlRanks_; }
 
 void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
   EP_HOST_ASSERT(!available_);

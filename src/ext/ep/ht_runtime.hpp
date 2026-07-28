@@ -14,18 +14,16 @@
 #include <vector>
 
 #include "high-throughput/config.cuh"
+#include "runtime_base.hpp"
 
 namespace mscclpp {
 namespace ep {
 
-class MoEHighThroughputRuntime {
+class MoEHighThroughputRuntime : public MoERuntimeBase {
  public:
   MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                            const high_throughput::Config& config);
   ~MoEHighThroughputRuntime() noexcept(false);
-
-  bool isAvailable() const;
-  bool isInternodeAvailable() const;
 
   void layout(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
               int numTokens, int numTopk, int numExperts, cudaStream_t stream);
@@ -54,18 +52,12 @@ class MoEHighThroughputRuntime {
   int dispatchBlockCount(int xElementSize) const;
   bool canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
-  int rank_;
-  int numRanks_;
-  int numNvlRanks_;
-  int numRanksPerIpcDomain_;
   int head_ = 0;
   int64_t maxHiddenBytes_;
   size_t controlBufferBytes_ = 0;
   size_t taskFifoOffset_ = 0;
   size_t symmetricBufferBytes_ = 0;
   size_t recvPoolBytes_ = 0;
-  bool available_ = false;
   bool physicalControlBuffer_ = false;
   bool dispatchReady_ = false;
   bool dispatchMetadataReady_ = false;

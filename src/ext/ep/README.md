@@ -1,12 +1,18 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
 The EP extension is a torch-free nanobind module for MoE dispatch and combine.
-It builds two backends:
+It exposes a single `MoERuntime` whose `MoEMode` selects one of two backends:
 
-- **Low latency (LL)**: `MoERuntime`, backed by
-  `low_latency/{dispatch,combine}.cu`.
-- **High throughput (HT)**: `ExpertParallelRuntime`, backed by
-  `ht_runtime.cc` and the CUDA sources under `high-throughput/`.
+- **Low latency (LL)**: `MoELowLatencyRuntime` (`ll_runtime.cc` plus
+  `low_latency/{dispatch,combine}.cu`), reached through the `ll_*` methods.
+  Uses ~128 SMs and expects to own the GPU while it runs.
+- **High throughput (HT)**: `MoEHighThroughputRuntime` (`ht_runtime.cc` plus the
+  CUDA sources under `high-throughput/`), reached through the `ht_*` methods.
+  Defaults to 20 SMs so dispatch/combine can overlap with expert GEMMs.
+
+Both derive from `MoERuntimeBase` (`runtime_base.hpp`), which owns the shared
+rank-topology detection and availability reporting. `MoERuntime` itself only
+constructs and forwards; calling the other mode's methods raises.
 
 ## Status
 
@@ -49,7 +55,7 @@ MXFP8 scales use linear row-major layout and can be passed to FlashInfer
 HT follows the same direct-mapping resource model:
 
 1. Python passes the existing `mscclpp::Communicator` into
-   `ExpertParallelRuntime`.
+   `MoERuntime` with `MoEMode::HIGH_THROUGHPUT`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
    internal receive pool. The pool provides stable peer mappings before the
    data-dependent receive count is known; Python later exposes its exact-size

@@ -121,10 +121,11 @@ class LowLatencyRuntime:
         self.comm = comm
         self.cpp_runtime = MoERuntime(
             comm.communicator,
-            max_tokens_per_rank,
-            hidden,
-            num_experts,
-            num_topk,
+            MoEMode.LOW_LATENCY,
+            max_tokens_per_rank=max_tokens_per_rank,
+            hidden=hidden,
+            num_experts=num_experts,
+            num_topk=num_topk,
         )
 
     def is_available(self) -> bool:
@@ -304,7 +305,7 @@ class LowLatencyBackend:
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = (
             self._get_dispatch_output_tensors(output_buffer)
         )
-        self._runtime.cpp_runtime.dispatch(
+        self._runtime.cpp_runtime.ll_dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
@@ -415,7 +416,7 @@ class LowLatencyBackend:
                 dtype=torch.bfloat16,
                 device=expert_output.device,
             )
-        self._runtime.cpp_runtime.combine(
+        self._runtime.cpp_runtime.ll_combine(
             expert_output.data_ptr(),
             context.topk_ids.data_ptr(),
             0 if topk_weights is None else topk_weights.data_ptr(),

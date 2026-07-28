@@ -163,6 +163,13 @@ This keeps `MoECommunicator` policy-free. Serving frameworks such as SGLang can
 choose a mode based on their own scheduling policy, batch shape, runner backend,
 and benchmarking data once multiple active backends are available.
 
+The mode also fixes the SM budget, which is the main scheduling consideration:
+
+| Mode | SMs used | Intended use |
+|---|---|---|
+| `MoEMode.LOW_LATENCY` | ~128 (`low_latency_num_blocks - 2`) | comms own the GPU |
+| `MoEMode.HIGH_THROUGHPUT` | 20 (`Config.num_sms`) | overlap comms with expert GEMMs |
+
 The selected mode determines the default dispatch output layout:
 
 | Mode | Default layout |
