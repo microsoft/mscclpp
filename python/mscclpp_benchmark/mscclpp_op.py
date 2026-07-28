@@ -208,7 +208,7 @@ class MscclppAllReduce3:
         self.set_params(nblocks, block_size)
 
     def __call__(self, stream):
-        self.kernel.launch_kernel(self.params, 24, 1024, 0, stream)
+        self.kernel.launch_kernel(self.params, self.nblocks, self.block_size, 0, stream)
         return self.memory
 
     def set_params(self, nblocks, block_size):
