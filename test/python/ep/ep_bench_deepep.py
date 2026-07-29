@@ -43,7 +43,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         group,
         num_max_tokens_per_rank=num_tokens,
         hidden=hidden,
-        allow_hybrid_mode=1,
+        allow_hybrid_mode=0,  # NVLink-only bench (same-rack MNNVL, EP_DISABLE_GIN=1); hybrid RDMA+NVLink tier unused
         allow_multiple_reduction=1,
         explicitly_destroy=True,
     )
