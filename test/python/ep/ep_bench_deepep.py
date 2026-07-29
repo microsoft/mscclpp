@@ -101,16 +101,20 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
 
     graphs = []
 
-    # DeepEP CUDA-graph capture only works on the intranode NVLink path. On the
-    # internode scale-out path DeepEP's symmetric-memory kernels crash under graph
-    # capture (CUDA 719 in symmetric.hpp), so restrict capture to a single node.
-    local_world = int(os.environ.get("MSCCLPP_EP_LOCAL_WORLD_SIZE", "0") or "0")
-    deepep_can_graph = args.cuda_graph and (local_world <= 0 or num_ranks <= local_world)
+    # DeepEP CUDA-graph capture is limited by TRANSPORT, not node count. On the
+    # all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain) the
+    # symmetric-memory kernels ARE graph-capturable at any node count -- verified
+    # capturing at 1/2/4 nodes on a GB200 NVL72. Only the RDMA/IB scale-out path
+    # (GIN enabled, multi-rack) crashes under graph capture (CUDA 719 in
+    # symmetric.hpp), so disable capture only when GIN is active.
+    gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
+    deepep_can_graph = args.cuda_graph and gin_disabled
 
     if args.cuda_graph and not deepep_can_graph and rank == 0:
         print(
-            "[cfg] deepep cuda_graph requested but disabled: internode scale-out is "
-            "not graph-capturable (symmetric-memory); using eager dispatch/combine",
+            "[cfg] deepep cuda_graph requested but disabled: RDMA/IB scale-out (GIN) is "
+            "not graph-capturable (symmetric-memory); set EP_DISABLE_GIN=1 for the "
+            "NVLink/MNNVL path, or run eager dispatch/combine",
             flush=True,
         )
 
