@@ -10,7 +10,6 @@
 #include <mscclpp/concurrency_device.hpp>
 
 #include "api.cuh"
-#include "constants.cuh"
 #include "exception.cuh"
 
 namespace mscclpp {
@@ -25,9 +24,10 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
       numTopk_(numTopk),
       symmetricBufferBytes_(static_cast<int64_t>(
           low_latency::symmetricBufferSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk))),
+      workspaceBytes_(low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
-  EP_HOST_ASSERT(symmetricBufferBytes_ % NUM_BUFFER_ALIGNMENT_BYTES == 0);
+  EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
@@ -36,8 +36,8 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
   EP_HOST_ASSERT(numRanks_ % numNvlRanks_ == 0);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
 
-  CUDA_CHECK(cudaMalloc(&workspace_, NUM_WORKSPACE_BYTES));
-  CUDA_CHECK(cudaMemset(workspace_, 0, NUM_WORKSPACE_BYTES));
+  CUDA_CHECK(cudaMalloc(&workspace_, workspaceBytes_));
+  CUDA_CHECK(cudaMemset(workspace_, 0, workspaceBytes_));
   setup();
 }
 
@@ -159,7 +159,7 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                                        .outputLayout_ = dispatchLayout,
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
-  EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
+  EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   low_latency::dispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, commContext_,
                         workspace_, numBlocks, stream);
@@ -190,6 +190,8 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
                                        .dispatchDataType_ = dispatchDataType};
+  const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
+  EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);
 }

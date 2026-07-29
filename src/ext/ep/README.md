@@ -110,13 +110,14 @@ cmake --build build -j 64
 The EP extension requires CUDA architecture 90 or newer. Without an explicit
 `MSCCLPP_GPU_ARCHS`, it builds for `90`, `100`, `100a`, `103`, and `103a` when
 the CUDA toolkit supports those targets. An explicit `MSCCLPP_GPU_ARCHS`
-overrides this list.
+overrides this list; when it contains no explicit architecture 90 or newer, the
+EP extension is skipped.
 
 Available CMake options:
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `MSCCLPP_BUILD_EXT_EP` | Python builds: `ON` | Build the EP extension |
+| `MSCCLPP_BUILD_EXT_EP` | `ON` | Build the EP extension |
 | `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT` | `OFF` | Use a shorter kernel spin timeout |
 
 ## Source layout
@@ -125,13 +126,14 @@ Available CMake options:
 src/ext/ep/
 ├── bindings.cpp
 ├── moe_runtime.{cc,hpp}
+├── ll_runtime.{cc,hpp}
 ├── ht_runtime.{cc,hpp}
+├── runtime_base.hpp
 ├── high-throughput/
 │   ├── config.cuh
-│   ├── layout.cu
+│   ├── counts.cu
 │   ├── dispatch.cu
-│   ├── combine.cu
-│   └── runtime.cu
+│   └── combine.cu
 ├── include/
 └── low_latency/
     ├── config.cuh
