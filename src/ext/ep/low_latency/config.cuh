@@ -54,7 +54,7 @@ struct TransportView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
-  return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), 128);
+  return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
 }
 
 template <DispatchDataType DataType>
@@ -87,7 +87,8 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDa
 
 template <DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk, int scaleBlockSize) {
-  return configAlign<size_t>(DispatchPayloadView<DataType>(hidden, nTopk, scaleBlockSize).numBytes_, 128);
+  return configAlign<size_t>(DispatchPayloadView<DataType>(hidden, nTopk, scaleBlockSize).numBytes_,
+                             BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
@@ -190,7 +191,7 @@ MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int m
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
   const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
-  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), 128);
+  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
