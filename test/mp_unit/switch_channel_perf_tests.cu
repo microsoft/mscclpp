@@ -34,6 +34,16 @@ __global__ void kernelSwitchBarrierLatency(int nIters) {
 #endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
+// Back-to-back relaxed barriers; one thread per rank drives the group barrier.
+__global__ void kernelSwitchRelaxedBarrierLatency(int nIters) {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  for (int i = 0; i < nIters; i++) {
+    gPerfSwitchChan.relaxedSignal();
+    gPerfSwitchChan.relaxedWait();
+  }
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
 PERF_TEST(SwitchChannelPerfTest, BarrierLatency) {
   if (gEnv->rank >= numRanksToUse) return;
 
@@ -62,6 +72,42 @@ PERF_TEST(SwitchChannelPerfTest, BarrierLatency) {
   // Timed run
   mscclpp::Timer timer;
   kernelSwitchBarrierLatency<<<1, 1>>>(nIters);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  if (gEnv->rank == 0) {
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nIters, "us/iter");
+  }
+}
+
+PERF_TEST(SwitchChannelPerfTest, RelaxedBarrierLatency) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  auto rankView = std::views::iota(0, numRanksToUse);
+  std::vector<int> ranks(rankView.begin(), rankView.end());
+
+  const size_t bufSize = 1024;
+  auto buffer = mscclpp::GpuBuffer<float>(bufSize / sizeof(float));
+
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, bufSize);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), bufSize);
+  auto deviceHandle = switchChannel.deviceHandle();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gPerfSwitchChan, &deviceHandle, sizeof(deviceHandle)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  const int nIters = 1000;
+
+  communicator->bootstrap()->barrier();
+
+  // Warmup run
+  kernelSwitchRelaxedBarrierLatency<<<1, 1>>>(nIters);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  // Timed run
+  mscclpp::Timer timer;
+  kernelSwitchRelaxedBarrierLatency<<<1, 1>>>(nIters);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
