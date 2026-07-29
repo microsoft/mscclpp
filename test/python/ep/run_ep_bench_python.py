@@ -112,11 +112,7 @@ launch command that sets all of this.
 from __future__ import annotations
 
 import argparse
-import ctypes
-import glob
 import os
-import subprocess
-import time
 
 import torch
 from mpi4py import MPI
@@ -188,14 +184,6 @@ def parse_args() -> argparse.Namespace:
         "--validate",
         action="store_true",
         help="mscclpp: run a one-time combine correctness check before timing.",
-    )
-    p.add_argument(
-        "--kernel-timing",
-        action="store_true",
-        help="build/use the in-process CUPTI Activity collector (libcupti_kernel_timer.so) "
-        "for the kernel-only block. Only needed when EP_KERNEL_TIMER=cupti; the default "
-        "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
-        "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
     )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
@@ -345,7 +333,6 @@ def run_backend(
     inputs,
     dispatch_fn,
     combine_fn,
-    cupti=None,
     nccl_barrier=None,
     bench_barrier=None,
 ):
@@ -366,18 +353,11 @@ def run_backend(
         stream.synchronize()
         comm.Barrier()
 
-    # Kernel-only timing. Default (EP_KERNEL_TIMER=kineto): DeepEP bench_kineto-style
+    # Kernel-only timing (EP_KERNEL_TIMER=kineto, the default): DeepEP bench_kineto-style
     # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
     # per iteration (EP_KINETO_BARRIER=nccl) to align ranks on-device -- skew-free avg.
-    # EP_KERNEL_TIMER=cupti falls back to the in-process CUPTI collector (start after
-    # warmup, stop after the timed loop -- same window as the host CUDA events).
     use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
-    have_kernel = (cupti is not None) or use_kineto
-    inproc_rc = -1
-    if cupti is not None and not use_kineto:
-        torch.cuda.synchronize()
-        comm.Barrier()
-        inproc_rc = cupti.start()
+    have_kernel = use_kineto
 
     d_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     d_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -402,12 +382,6 @@ def run_backend(
         ck_disp, ck_comb = _kineto_kernel_us(
             dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier
         )
-        inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
-    elif cupti is not None and inproc_rc == 0:
-        cupti.stop()
-        comm.Barrier()
-        ck_disp = cupti.avg_us("dispatch")
-        ck_comb = cupti.avg_us("combine")
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
@@ -437,7 +411,7 @@ def run_backend(
     c_tp_all = comm.gather(c_tp, root=0)
     t_tp_all = comm.gather(t_tp, root=0)
 
-    # --- Kernel-only (in-process CUPTI) cross-rank reduction. The LL dispatch
+    # --- Kernel-only (torch kineto) cross-rank reduction. The LL dispatch
     # kernel ends in a cross-rank recv spin-wait, so a lagging rank's device time
     # includes wait skew; the cross-rank MIN (the rank that did not wait) is the
     # representative kernel floor. Combine has little recv-spin and is stable. ---
@@ -482,7 +456,7 @@ def run_backend(
         )
 
         if have_kernel:
-            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)" if use_kineto else "in-process CUPTI Activity API"
+            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
             print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
             if kernel_ok:
                 # Report BOTH min and avg for dispatch and combine. The LL dispatch
@@ -504,7 +478,7 @@ def run_backend(
                     f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
                 )
             else:
-                print("  NOTE: in-process CUPTI captured 0 LL kernels (collector unavailable).")
+                print("  NOTE: kineto captured 0 LL kernels (collector unavailable).")
 
         print(
             f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
@@ -513,88 +487,9 @@ def run_backend(
 
 
 # ----------------------------------------------------------------------------
-# In-process CUPTI kernel timer (pure device time), shared by both backends.
 # ----------------------------------------------------------------------------
-def _cuda_inc_lib():
-    home = os.environ.get("CUDA_HOME", "/usr/local/cuda")
-    inc = os.path.join(home, "include")
-    cands = glob.glob(os.path.join(home, "targets", "*", "lib", "libcupti.so")) + [
-        os.path.join(home, "lib64", "libcupti.so"),
-        os.path.join(home, "lib", "libcupti.so"),
-    ]
-    lib = next((os.path.dirname(c) for c in cands if os.path.exists(c)), os.path.join(home, "lib64"))
-    return inc, lib
-
-
-def _ensure_cupti_lib(comm, local_rank):
-    """Build libcupti_kernel_timer.so next to this file if missing. Only one rank
-    per node attempts to compile, and an O_EXCL lock file guarantees that even
-    across nodes sharing the filesystem only a single compiler runs at a time
-    (the losers wait for the winner's build); everyone then barriers."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    so = os.path.join(here, "libcupti_kernel_timer.so")
-    src = os.path.join(here, "cupti_kernel_timer.cpp")
-    lock = so + ".lock"
-    if not os.path.exists(so) and local_rank == 0 and os.path.exists(src):
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            fd = None
-        if fd is not None:
-            try:
-                if not os.path.exists(so):
-                    inc, lib = _cuda_inc_lib()
-                    subprocess.run(
-                        ["g++", "-O2", "-fPIC", "-shared", src, "-o", so, f"-I{inc}", f"-L{lib}", "-lcupti"],
-                        check=True,
-                    )
-            finally:
-                os.close(fd)
-                try:
-                    os.unlink(lock)
-                except FileNotFoundError:
-                    pass
-        else:
-            # Another builder holds the lock; wait for the .so to appear.
-            for _ in range(600):
-                if os.path.exists(so):
-                    break
-                time.sleep(0.5)
-    comm.Barrier()
-    return so if os.path.exists(so) else None
-
-
-class _InProcCupti:
-    """ctypes wrapper over libcupti_kernel_timer.so -- a faithful analog of
-    ep_bench's CUPTI KernelTimer. start()/stop() bracket the timed loop; the
-    Activity API records per-kernel GPU time (CUPTI_ACTIVITY_KIND_KERNEL, which --
-    unlike CONCURRENT_KERNEL -- captures the cooperative-launch LL kernels), then
-    avg_us('dispatch'/'combine') buckets by mangled-name substring. Both backends'
-    LL kernels are named ``dispatch`` / ``combine``, so the same buckets serve both.
-    kt_start() clears prior stats, so one collector can be reused per backend."""
-
-    def __init__(self, so_path):
-        self.lib = ctypes.CDLL(so_path)
-        self.lib.kt_start.restype = ctypes.c_int
-        self.lib.kt_stop.restype = ctypes.c_int
-        self.lib.kt_get_avg_us.restype = ctypes.c_double
-        self.lib.kt_get_avg_us.argtypes = [ctypes.c_char_p]
-        self.lib.kt_get_count.restype = ctypes.c_long
-        self.lib.kt_get_count.argtypes = [ctypes.c_char_p]
-
-    def start(self):
-        return int(self.lib.kt_start())
-
-    def stop(self):
-        return int(self.lib.kt_stop())
-
-    def avg_us(self, substr):
-        return float(self.lib.kt_get_avg_us(substr.encode()))
-
-    def count(self, substr):
-        return int(self.lib.kt_get_count(substr.encode()))
-
-
+# Backend registry.
+# ----------------------------------------------------------------------------
 _SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
 
 
@@ -632,18 +527,6 @@ def main() -> None:
                     flush=True,
                 )
             nccl_barrier = None
-
-    cupti = None
-    if args.kernel_timing:
-        so_path = _ensure_cupti_lib(comm, local_rank)
-        if so_path is not None:
-            try:
-                cupti = _InProcCupti(so_path)
-            except OSError as exc:
-                if rank == 0:
-                    print(f"[warn] CUPTI collector unavailable ({exc}); host-observed only", flush=True)
-        elif rank == 0:
-            print("[warn] libcupti_kernel_timer.so missing/unbuilt; host-observed only", flush=True)
 
     # nccl is benchmarked before mscclpp (see module docstring: mscclpp LL init
     # perturbs CUDA state that breaks a later NCCL-EP cooperative launch).
@@ -692,7 +575,6 @@ def main() -> None:
                 inputs,
                 dispatch_fn,
                 combine_fn,
-                cupti=cupti,
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
             )
