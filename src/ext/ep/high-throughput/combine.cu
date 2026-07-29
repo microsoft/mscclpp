@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "api.cuh"
+#include "barrier.cuh"
 #include "config.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
@@ -38,8 +39,9 @@ namespace detail {
 template <int NumRanks, int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     combineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                  int numTopk, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
-                  int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes) {
+                  int numTopk, void** recvPoolPtrs, const int* combineRecvIdx,
+                  mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
+                  int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes) {
   static_assert(MaxContributors <= NumRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
   constexpr int NumStages = EP_HT_COMBINE_TMA_STAGES;
@@ -59,7 +61,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     return warpStages + (static_cast<size_t>(stageIdx) * MaxContributors + contributorIdx) * ChunkBytes;
   };
 
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(taskFifoPtrs, head, rank);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
   cooperative_groups::this_grid().sync();
 
   const int globalWarp = static_cast<int>(blockIdx.x) * NumWarps + warpId;
@@ -169,7 +171,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
                                recvPoolMetadataOffset +
                                static_cast<int64_t>(contributorSlots[contributor]) * metadataSlotBytes;
         const auto* weights = reinterpret_cast<const float*>(metadata + static_cast<size_t>(numTopk) * sizeof(int));
-        weight += ld_nc_global(weights + laneId);
+        weight += __ldg(weights + laneId);
       }
       st_na_global(outputTopkWeights + static_cast<int64_t>(token) * numTopk + laneId, weight);
     }
@@ -199,41 +201,33 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
 }
 
 void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
-             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks,
-             cudaStream_t stream) {
+             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
+             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
+             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(sendHead != nullptr);
   EP_HOST_ASSERT(recvPoolPtrs != nullptr);
   EP_HOST_ASSERT(combineRecvIdx != nullptr);
-  EP_HOST_ASSERT(taskFifoPtrs != nullptr);
+  EP_HOST_ASSERT(barrierChannels != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
 
   constexpr int NumStages = EP_HT_COMBINE_TMA_STAGES;
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
   const bool useWideKernel = numBlocks <= EP_HT_COMBINE_TMA_WIDE_MAX_BLOCKS;
 
-#define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                           \
-  {                                                                                                                \
-    auto kernel = combineKernel<ranks, maxContributors, numWarps>;                                                 \
-    const size_t sharedBytes =                                                                                     \
-        static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                   \
-        static_cast<size_t>(numWarps) * NumStages * sizeof(uint64_t);                                              \
-    CUDA_CHECK(                                                                                                    \
-        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes))); \
-    EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));            \
-    cudaLaunchAttribute attribute{};                                                                               \
-    attribute.id = cudaLaunchAttributeCooperative;                                                                 \
-    attribute.val.cooperative = 1;                                                                                 \
-    cudaLaunchConfig_t config = {static_cast<unsigned>(numBlocks),                                                 \
-                                 static_cast<unsigned>(numWarps * WARP_SIZE),                                      \
-                                 sharedBytes,                                                                      \
-                                 stream,                                                                           \
-                                 &attribute,                                                                       \
-                                 1};                                                                               \
-    LAUNCH_KERNEL(&config, kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens,  \
-                  hidden, numTopk, recvPoolPtrs, combineRecvIdx, taskFifoPtrs, head, rank, recvPoolHeaderBytes,    \
-                  recvPoolMetadataOffset, metadataSlotBytes);                                                      \
+#define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
+  {                                                                                                                    \
+    auto kernel = combineKernel<ranks, maxContributors, numWarps>;                                                     \
+    const size_t sharedBytes =                                                                                         \
+        static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
+        static_cast<size_t>(numWarps) * NumStages * sizeof(uint64_t);                                                  \
+    CUDA_CHECK(                                                                                                        \
+        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));     \
+    EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \
+    LaunchConfig config(numBlocks, numWarps * WARP_SIZE, sharedBytes, stream, true);                                   \
+    LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
+                  hidden, numTopk, recvPoolPtrs, combineRecvIdx, barrierChannels, rank, recvPoolHeaderBytes,           \
+                  recvPoolMetadataOffset, metadataSlotBytes);                                                          \
   }
 
   switch (numRanks) {
@@ -278,12 +272,12 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
 }  // namespace detail
 
 void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
-             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks,
-             cudaStream_t stream) {
+             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
+             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
+             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream) {
   detail::combine(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk, numRanks, recvPoolPtrs,
-                  combineRecvIdx, taskFifoPtrs, head, rank, recvPoolHeaderBytes, recvPoolMetadataOffset,
-                  metadataSlotBytes, numBlocks, stream);
+                  combineRecvIdx, barrierChannels, rank, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes,
+                  numBlocks, stream);
 }
 
 }  // namespace high_throughput

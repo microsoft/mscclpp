@@ -25,7 +25,11 @@ if(MSCCLPP_USE_CUDA)
     if(_mscclpp_requested_gpu_archs)
         foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
             if(_arch STREQUAL "native")
-                list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+                foreach(_native_arch IN LISTS NVIDIA_GPU_ARCHS)
+                    if(_native_arch GREATER_EQUAL 90)
+                        list(APPEND _mscclpp_ep_gpu_archs "${_native_arch}")
+                    endif()
+                endforeach()
             else()
                 string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
                 if(_arch_num AND _arch_num GREATER_EQUAL 90)
@@ -43,9 +47,10 @@ if(MSCCLPP_USE_CUDA)
         endif()
     endif()
     if(NOT _mscclpp_ep_gpu_archs)
-        message(FATAL_ERROR
-            "MSCCLPP_BUILD_EXT_EP=ON requires CUDA architecture 90 or newer. "
-            "Set MSCCLPP_GPU_ARCHS to include 90+ (for example, -DMSCCLPP_GPU_ARCHS=90).")
+        message(STATUS
+            "Skipping the EP extension because MSCCLPP_GPU_ARCHS contains no "
+            "explicit CUDA architecture 90 or newer.")
+        return()
     endif()
     list(REMOVE_DUPLICATES _mscclpp_ep_gpu_archs)
     message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
@@ -59,18 +64,10 @@ set(EP_SOURCES
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
-    high-throughput/layout.cu
+    high-throughput/counts.cu
     high-throughput/dispatch.cu
     high-throughput/combine.cu
-    high-throughput/runtime.cu
 )
-
-if(MSCCLPP_USE_ROCM)
-    # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
-    message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu high-throughput/*.cu)
-    set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
-endif()
 
 # Build as a Python extension module (shared object with Python ABI suffix).
 nanobind_add_module(mscclpp_ep_cpp ${EP_SOURCES})

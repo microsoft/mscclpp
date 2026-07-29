@@ -50,6 +50,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   int numExperts_;
   int numTopk_;
   int64_t symmetricBufferBytes_;
+  size_t workspaceBytes_;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   low_latency::CommContext commContext_{};

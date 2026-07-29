@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <vector>
 
 #include "high-throughput/config.cuh"
@@ -36,6 +37,8 @@ class MoEHighThroughputRuntime : public MoERuntime {
 
   void* resolveRecvXBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
+  /// Exchange dispatch counts and wait for mapped receive counters so the caller
+  /// can expose an exact-size receive view before launching payload dispatch.
   int notifyDispatch(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
                      const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
                      int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
@@ -52,14 +55,11 @@ class MoEHighThroughputRuntime : public MoERuntime {
 
  private:
   void setup(mscclpp::Communicator& communicator);
-  void moveFifoSlots(int numSlots = 1);
   int dispatchBlockCount(int xElementSize) const;
   bool canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
-  int head_ = 0;
   int64_t maxHiddenBytes_;
   size_t controlBufferBytes_ = 0;
-  size_t taskFifoOffset_ = 0;
   size_t symmetricBufferBytes_ = 0;
   size_t recvPoolBytes_ = 0;
   bool physicalControlBuffer_ = false;
@@ -71,13 +71,13 @@ class MoEHighThroughputRuntime : public MoERuntime {
   void* symmetricBuffer_ = nullptr;
   void* recvPool_ = nullptr;
   std::vector<void*> bufferPtrs_;
-  std::vector<int*> taskFifoPtrs_;
   std::vector<void*> recvPoolPtrs_;
+  std::vector<mscclpp::BaseMemoryChannel> barrierChannels_;
   std::vector<mscclpp::RegisteredMemory> peerMemories_;
   std::vector<mscclpp::RegisteredMemory> recvPoolMemories_;
   void** bufferPtrsGpu_ = nullptr;
-  int** taskFifoPtrsGpu_ = nullptr;
   void** recvPoolPtrsGpu_ = nullptr;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles_;
   int* combineRecvIdxGpu_ = nullptr;
   const float* recvTopkWeights_ = nullptr;
 

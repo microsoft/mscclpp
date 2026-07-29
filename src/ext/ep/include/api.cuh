@@ -40,30 +40,39 @@ enum class DispatchLayout {
 // ===========================================================================
 namespace high_throughput {
 
-void getDispatchLayout(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                       int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream);
+/// Compute per-rank/per-expert routing counts and token-to-rank membership.
+/// This is a sizing phase and is unrelated to the dispatch output layout.
+void computeDispatchCounts(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                           int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream);
 
-void barrier(int** taskFifoPtrs, int head, int rank, int numRanks, cudaStream_t stream);
+/// Exchange routing counts, build prefix matrices, and publish receive counts.
+/// The host consumes the mapped counters before allocating the dynamic receive view.
+void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
+                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
+                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                            int expertAlignment, void** bufferPtrs,
+                            mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
+                            int numChannels);
 
-void notifyDispatch(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks, const int* numTokensPerExpert,
-                    int* mappedRecvExpertCounters, int numExperts, int numTokens, const bool* isTokenInRank,
-                    int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
-                    int** taskFifoPtrs, int head, int rank, cudaStream_t stream, int numChannels);
+/// Re-publish a cached rank-prefix matrix and rendezvous before cached dispatch.
+void publishCachedRankPrefix(const int* rankPrefixMatrix, void** bufferPtrs,
+                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks,
+                             cudaStream_t stream);
 
-void cachedNotifyDispatch(const int* rankPrefixMatrix, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-                          int numRanks, cudaStream_t stream);
-
+/// Move token payload and routing metadata after the sizing phase completes.
 void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
               const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
               int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
-              float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-              int numRanks, cudaStream_t stream, int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes,
-              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx);
+              float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
+              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks, cudaStream_t stream,
+              int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+              int64_t metadataSlotBytes, int* combineRecvIdx);
 
+/// Return expert outputs to their source ranks and reduce routed contributions.
 void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx, int** taskFifoPtrs, int head, int rank,
-             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks,
-             cudaStream_t stream);
+             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
+             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
+             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream);
 
 }  // namespace high_throughput
 
