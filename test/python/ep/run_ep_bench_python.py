@@ -235,8 +235,11 @@ def _kineto_kernel_us(
     before it -- exactly like DeepEP's own bench_kineto (which is called once per
     op). This aligns BOTH kernels at entry without ever placing a barrier between
     a paired dispatch->combine (so it is safe for DeepEP multi-node), collapsing
-    the combine recv-spin skew. Set EP_KINETO_SEPARATE=0 for the legacy paired
-    loop."""
+    the combine recv-spin skew. It is the right mode for EAGER runs. Set
+    EP_KINETO_SEPARATE=0 for the paired single-pass loop, which is REQUIRED (not
+    legacy) whenever a backend captures dispatch+combine in ONE CUDA graph: a
+    single replay runs both phases, so the separate pass can no longer isolate
+    combine and the per-phase split must come from the paired pass instead."""
     import torch.profiler as _tp
 
     use_mid = os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
@@ -302,7 +305,10 @@ def _kineto_kernel_us(
         ka_c = _run_pass(lambda: combine_fn(dout))
         return _parse(ka_d, "dispatch"), _parse(ka_c, "combine")
 
-    # ---- Legacy paired loop (EP_KINETO_SEPARATE=0) ----
+    # ---- Paired single-pass loop (EP_KINETO_SEPARATE=0) ----
+    # Times dispatch and combine in ONE profiled pass over the paired
+    # dispatch->combine loop. REQUIRED for single-graph CUDA-graph backends (one
+    # replay runs both phases, so the separate pass cannot isolate combine).
     _d = dispatch_fn()
     combine_fn(_d)
     torch.cuda.synchronize()
@@ -536,15 +542,16 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
-        # Under --cuda-graph, nccl, flashinfer and deepep capture dispatch+combine in
-        # a SINGLE graph, so one replay runs both phases and the skew-free separate
+        # Under --cuda-graph, nccl and flashinfer capture dispatch+combine in a
+        # SINGLE graph, so one replay runs both phases and the skew-free separate
         # pass (which times combine alone) can no longer isolate combine. Force the
-        # PAIRED kineto pass for those backends so the collector still attributes
-        # per-phase kernel time by kernel name. mscclpp keeps its two separate graphs
-        # (and thus the separate skew-free pass) on the user's default. deepep only
-        # graphs intranode, so setup_deepep sets EP_KINETO_SEPARATE itself when it
-        # actually captures; the nccl/flashinfer force here is unconditional under
-        # --cuda-graph. Restore the snapshot each iteration so a prior backend's
+        # PAIRED single-pass here for those two so the collector still attributes
+        # per-phase kernel time by kernel name. deepep manages EP_KINETO_SEPARATE
+        # itself inside setup_deepep: it single-graph captures on the NVLink/MNNVL
+        # path at ANY node count (EP_DISABLE_GIN=1) and sets SEPARATE=0 only when it
+        # actually captures -- on the RDMA/GIN scale-out path it falls back to eager
+        # even under --cuda-graph and must keep the skew-free separate pass, so it is
+        # NOT forced here. Restore the snapshot each iteration so a prior backend's
         # override does not leak in --backend all.
         if _user_kineto_separate is None:
             os.environ.pop("EP_KINETO_SEPARATE", None)
