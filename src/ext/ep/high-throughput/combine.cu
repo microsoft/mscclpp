@@ -224,7 +224,7 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
     CUDA_CHECK(                                                                                                        \
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));     \
     EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \
-    LaunchConfig config(numBlocks, numWarps * WARP_SIZE, sharedBytes, stream, true);                                   \
+    LaunchConfig config(numBlocks, numWarps* WARP_SIZE, sharedBytes, stream, true);                                    \
     LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
                   hidden, numTopk, recvPoolPtrs, combineRecvIdx, barrierChannels, rank, recvPoolHeaderBytes,           \
                   recvPoolMetadataOffset, metadataSlotBytes);                                                          \
