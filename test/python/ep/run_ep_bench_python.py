@@ -372,14 +372,19 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
     path."""
     try:
         if prime:
+            if pre_replay is not None:
+                pre_replay()
             dispatch_op()
             combine_op()
             torch.cuda.synchronize()
+        if pre_replay is not None:
+            pre_replay()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             for _ in range(iters_per_graph):
                 dispatch_op()
                 combine_op()
+        torch.cuda.synchronize()
     except Exception:  # noqa: BLE001 - capturability is an external-library boundary
         if on_fail is not None:
             on_fail()
