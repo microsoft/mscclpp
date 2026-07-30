@@ -274,9 +274,15 @@ def _kineto_kernel_us(
 
     if separate:
         # ---- Two separate passes, each: [flush; barrier; single op] ----
-        # This mirrors DeepEP bench_kineto called once per op, aligning each
-        # kernel's entry across ranks. No barrier ever sits between a paired
-        # dispatch->combine, so it is safe for DeepEP multi-node.
+        # Generic two-pass timing method (adopted from DeepEP's bench_kineto,
+        # which profiles one op per call): dispatch and combine are each timed in
+        # their own profiled loop with the barrier immediately before the op, so
+        # both kernels enter GPU-aligned across ranks and the combine recv-spin
+        # skew collapses. It applies to every backend -- the dispatch_fn/combine_fn
+        # closures are backend-supplied and this loop has no per-library logic.
+        # Because no barrier is ever placed BETWEEN a paired dispatch->combine, it
+        # is also safe for DeepEP multi-node (a mid-pair collective would corrupt
+        # its symmetric-memory state; see the class docstring).
         def _run_pass(op_fn):
             op_fn()  # warm / auto-tune
             torch.cuda.synchronize()
@@ -295,8 +301,9 @@ def _kineto_kernel_us(
         # Dispatch pass.
         ka_d = _run_pass(dispatch_fn)
         # Combine pass: prime one dispatch to obtain a valid combine input, then
-        # replay combine alone (DeepEP uses its fixed primed handle; mscclpp /
-        # NCCL-EP consume this dout each iteration).
+        # replay combine alone. The primed dout carries whatever state the backend
+        # needs (DeepEP replays its fixed primed handle; mscclpp / NCCL-EP consume
+        # this dout each iteration) -- all via the backend-supplied combine_fn.
         dout = dispatch_fn()
         torch.cuda.synchronize()
         ka_c = _run_pass(lambda: combine_fn(dout))
