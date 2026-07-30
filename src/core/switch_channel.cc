@@ -232,13 +232,12 @@ SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t 
   return channel;
 }
 
-void NvlsConnection::attachBarrier(std::shared_ptr<NvlsConnection> barrierConn, std::shared_ptr<void> barrierBuffer,
+void NvlsConnection::attachBarrier(std::shared_ptr<void> barrierBuffer,
                                    std::shared_ptr<SwitchChannel> barrierChannel, int nRanks) {
-  barrierConn_ = std::move(barrierConn);
   barrierBuffer_ = std::move(barrierBuffer);
   barrierChannel_ = std::move(barrierChannel);
-  barrierLocalFlag_ = reinterpret_cast<uint32_t*>(barrierBuffer_.get());
-  barrierMcFlag_ = reinterpret_cast<uint32_t*>(barrierChannel_->deviceHandle().mcPtr);
+  barrierLocalFlag_ = reinterpret_cast<uint64_t*>(barrierBuffer_.get());
+  barrierMcFlag_ = reinterpret_cast<uint64_t*>(barrierChannel_->deviceHandle().mcPtr);
   barrierNRanks_ = nRanks;
 }
 
@@ -277,6 +276,25 @@ std::shared_ptr<NvlsConnection> makeNvlsConnection(std::shared_ptr<Bootstrap> bo
   }
   return conn;
 }
+
+#if (CUDA_NVLS_API_AVAILABLE)
+// Query the multicast granularity for `numDevices` without allocating, so the barrier reserve can be
+// sized before the connection's multicast object is created. Mirrors the min/max handling used when
+// the connection later computes its own granularity.
+size_t nvlsRecommendedGranularity(int numDevices) {
+  CUmulticastObjectProp prop = {};
+  prop.numDevices = numDevices;
+  prop.size = 0;
+  size_t granFd = 0, granFabric = 0;
+  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&granFd, &prop, CU_MULTICAST_GRANULARITY_RECOMMENDED));
+  prop.handleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+  if (cuMulticastGetGranularity(&granFabric, &prop, CU_MULTICAST_GRANULARITY_RECOMMENDED) != CUDA_SUCCESS) {
+    granFabric = 0;
+  }
+  return std::max(granFd, granFabric);
+}
+#endif  // (CUDA_NVLS_API_AVAILABLE)
 }  // namespace
 
 MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm,
@@ -295,20 +313,23 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   }
   if (rootRank == rank) isRoot = true;
 
-  auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize, 0);
-
 #if (CUDA_NVLS_API_AVAILABLE)
-  // Set up a small auxiliary multicast that backs a device-side barrier for this connection. Using a
-  // dedicated connection (rather than carving from the user buffer) keeps the user buffer's sizing
-  // untouched. Flag layout: element 0 is the shared arrival counter, element 1 is this rank's
-  // generation counter. GpuBuffer zero-initializes both, which is the clean starting state the
+  // Back the device-side barrier with a flag carved from this connection's own multicast region,
+  // rather than standing up a second multicast connection + bootstrap handshake. We append one
+  // granularity chunk to the requested size and bind the flag first, so it lands at a deterministic
+  // offset (0) on every rank while leaving the caller's full `bufferSize` available for later
+  // bindAllocatedMemory() calls. Flag layout: element 0 is the shared arrival counter, element 1 is
+  // this rank's generation counter. GpuBuffer zero-initializes both, the clean starting state the
   // barrier's monotonic (never-reset) scheme requires.
-  auto barrierBuffer = std::make_shared<GpuBuffer<uint32_t>>(2);
-  size_t barrierBytes = barrierBuffer->bytes();
-  auto barrierConn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, barrierBytes, 1);
+  size_t barrierReserve = nvlsRecommendedGranularity(static_cast<int>(allRanks.size()));
+  auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize + barrierReserve, 0);
+
+  auto barrierBuffer = std::make_shared<GpuBuffer<uint64_t>>(2);
   auto barrierChannel = std::make_shared<SwitchChannel>(
-      barrierConn->bindAllocatedMemory(CUdeviceptr(barrierBuffer->data()), barrierBytes));
-  conn->attachBarrier(barrierConn, barrierBuffer->memory(), barrierChannel, static_cast<int>(allRanks.size()));
+      conn->bindAllocatedMemory(CUdeviceptr(barrierBuffer->data()), barrierBuffer->bytes()));
+  conn->attachBarrier(barrierBuffer->memory(), barrierChannel, static_cast<int>(allRanks.size()));
+#else
+  auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize, 0);
 #endif  // (CUDA_NVLS_API_AVAILABLE)
 
   return conn;

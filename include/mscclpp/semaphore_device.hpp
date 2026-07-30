@@ -169,7 +169,7 @@ struct SwitchDevice2DeviceSemaphoreDeviceHandle {
   /// makes writes issued before this call visible to any peer that observes the arrival via an
   /// acquiring `wait()`. Pair with `wait()`.
   MSCCLPP_DEVICE_INLINE void signal() {
-    asm volatile("multimem.red.release.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    asm volatile("multimem.red.release.sys.add.u64 [%0], %1;" ::"l"(mcBarrierFlag), "l"((uint64_t)1) : "memory");
   }
 
   /// Issue a relaxed cross-rank arrival, without any data-visibility ordering.
@@ -178,7 +178,7 @@ struct SwitchDevice2DeviceSemaphoreDeviceHandle {
   /// that synchronizes rank progress but makes no cross-rank memory-visibility guarantee. Pair with
   /// `relaxedWait()`.
   MSCCLPP_DEVICE_INLINE void relaxedSignal() {
-    asm volatile("multimem.red.relaxed.sys.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    asm volatile("multimem.red.relaxed.sys.add.u64 [%0], %1;" ::"l"(mcBarrierFlag), "l"((uint64_t)1) : "memory");
   }
 
   /// Wait until every rank has arrived, acquiring peers' published writes.
@@ -191,9 +191,9 @@ struct SwitchDevice2DeviceSemaphoreDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) {
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchDevice2DeviceSemaphore::wait() called without barrier support");
-    const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
+    const uint64_t target = (*barrierGen += static_cast<uint64_t>(nRanks));
     POLL_MAYBE_JAILBREAK(
-        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, memoryOrderAcquire) - target) < 0),
+        (static_cast<int64_t>(atomicLoad<uint64_t, scopeSystem>(localBarrierFlag, memoryOrderAcquire) - target) < 0),
         maxSpinCount);
   }
 
@@ -207,9 +207,9 @@ struct SwitchDevice2DeviceSemaphoreDeviceHandle {
   MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) {
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr,
                           "SwitchDevice2DeviceSemaphore::relaxedWait() called without barrier support");
-    const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
+    const uint64_t target = (*barrierGen += static_cast<uint64_t>(nRanks));
     POLL_MAYBE_JAILBREAK(
-        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, memoryOrderRelaxed) - target) < 0),
+        (static_cast<int64_t>(atomicLoad<uint64_t, scopeSystem>(localBarrierFlag, memoryOrderRelaxed) - target) < 0),
         maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
@@ -217,17 +217,17 @@ struct SwitchDevice2DeviceSemaphoreDeviceHandle {
   /// Multicast pointer to the shared arrival counter. A single multimem add here is reflected into
   /// every rank's copy of the counter by the switch. Null if the owning connection has no barrier
   /// support.
-  uint32_t* mcBarrierFlag;
+  uint64_t* mcBarrierFlag;
 
   /// Local (unicast) pointer to this rank's own copy of the arrival counter; the address wait() spins
   /// on. Null if the owning connection has no barrier support.
-  uint32_t* localBarrierFlag;
+  uint64_t* localBarrierFlag;
 
   /// Local pointer to this rank's persistent generation counter. It advances by nRanks on every
   /// wait() and provides the per-rank wait target. Persisting it in GPU memory lets the barrier be
   /// called repeatedly within and across kernel launches without any host-side reset. Null if the
   /// owning connection has no barrier support.
-  uint32_t* barrierGen;
+  uint64_t* barrierGen;
 
   /// Number of ranks (devices) participating in the multicast group.
   int nRanks;
