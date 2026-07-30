@@ -175,11 +175,11 @@ def parse_args() -> argparse.Namespace:
         "--iters-per-graph",
         dest="graph_group_size",
         type=int,
-        default=1,
+        default=10,
         help="with --cuda-graph, number of dispatch->combine iterations captured INSIDE one CUDA "
-        "graph (replayed as a unit). >1 amortizes launch overhead and keeps the spin-waiting "
-        "dispatch/combine kernels from being inflated by per-replay launch skew; reported times "
-        "are per iteration. Ignored without --cuda-graph.",
+        "graph (replayed as a unit; default 10). >1 amortizes launch overhead and keeps the "
+        "spin-waiting dispatch/combine kernels from being inflated by per-replay launch skew; "
+        "reported times are per iteration. Automatically treated as 1 without --cuda-graph.",
     )
     p.add_argument(
         "--ep-layout",
@@ -208,8 +208,10 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
     if args.graph_group_size <= 0:
         raise SystemExit("--graph-group-size must be positive")
-    if args.graph_group_size > 1 and not args.cuda_graph:
-        raise SystemExit("--graph-group-size > 1 requires --cuda-graph")
+    if not args.cuda_graph:
+        # Grouping only applies to graph capture; treat as 1 for eager runs so the
+        # non-1 default does not error a plain (non-graph) benchmark.
+        args.graph_group_size = 1
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
         raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
     return args
