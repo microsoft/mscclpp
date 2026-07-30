@@ -312,9 +312,9 @@ def _kineto_kernel_us(
         ka_d = _run_pass(dispatch_fn)
         # Combine pass: prime one dispatch to obtain a valid combine input, then
         # replay combine alone (DeepEP uses its fixed primed handle; mscclpp /
-        # NCCL-EP consume this dout each iteration). _run_pass warms the op and
-        # syncs before profiling, so no explicit sync is needed here.
+        # NCCL-EP consume this dout each iteration).
         dout = dispatch_fn()
+        torch.cuda.synchronize()
         ka_c = _run_pass(lambda: combine_fn(dout))
         return _parse(ka_d, disp_subs), _parse(ka_c, comb_subs)
 
@@ -368,7 +368,6 @@ def run_backend(
     # --- Warmup (paired). ---
     for _ in range(warmup):
         dout = dispatch_fn()
-        stream.synchronize()
         combine_fn(dout)
         stream.synchronize()
         comm.Barrier()
