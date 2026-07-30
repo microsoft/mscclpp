@@ -7,14 +7,18 @@ import gc
 import os
 import torch
 
-# Kineto kernel-name buckets for this backend (owned here so the per-library
-# kernel naming lives with the backend). FlashInfer's MoeAlltoAll kernels are
-# named moeA2ADispatchKernel / moeA2ACombineKernel (plus prepare kernels); the
-# phase word ("dispatch"/"combine") is embedded in each capitalized name, so a
-# case-insensitive substring match buckets them. Values are substrings matched
-# against the kineto function name (with C++ template args stripped) -- see
-# _kineto_kernel_us._parse.
-KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+from ep_bench_common import sum_matching_kernel_us
+
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for
+    FlashInfer, whose MoeAlltoAll kernels are named moeA2ADispatchKernel /
+    moeA2ACombineKernel (plus prepare kernels); the phase word is embedded in
+    each capitalized name, so a case-insensitive substring match buckets them."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
 
 
 # ============================================================================

@@ -122,11 +122,12 @@ from ep_bench_common import (
     make_inputs,
     _init_torch_nccl,
     _mpi_stats,
+    sum_matching_kernel_us,
 )
-from ep_bench_mscclpp import setup_mscclpp, KINETO_KERNEL_MATCH as MSCCLPP_KERNEL_MATCH
-from ep_bench_nccl import setup_nccl, KINETO_KERNEL_MATCH as NCCL_KERNEL_MATCH
-from ep_bench_deepep import setup_deepep, KINETO_KERNEL_MATCH as DEEPEP_KERNEL_MATCH
-from ep_bench_flashinfer import setup_flashinfer, KINETO_KERNEL_MATCH as FLASHINFER_KERNEL_MATCH
+from ep_bench_mscclpp import setup_mscclpp, parse_kineto_kernels as mscclpp_parse_kineto
+from ep_bench_nccl import setup_nccl, parse_kineto_kernels as nccl_parse_kineto
+from ep_bench_deepep import setup_deepep, parse_kineto_kernels as deepep_parse_kineto
+from ep_bench_flashinfer import setup_flashinfer, parse_kineto_kernels as flashinfer_parse_kineto
 
 
 # ----------------------------------------------------------------------------
@@ -215,7 +216,7 @@ def _kineto_kernel_us(
     use_barrier=True,
     barrier=None,
     mid_barrier=None,
-    kernel_match=None,
+    parse_kernels=None,
 ):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
@@ -252,11 +253,15 @@ def _kineto_kernel_us(
 
     use_mid = os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
     separate = os.environ.get("EP_KINETO_SEPARATE", "1") == "1"
-    # Kernel-name substrings that bucket dispatch vs combine device time. Each
-    # backend owns its own matchers (KINETO_KERNEL_MATCH in ep_bench_<lib>.py);
-    # fall back to the generic phase words when none is supplied.
-    kernel_match = kernel_match or {"dispatch": ("dispatch",), "combine": ("combine",)}
-    disp_subs, comb_subs = kernel_match["dispatch"], kernel_match["combine"]
+    # Backend-specific kineto parse: maps a key_averages() table to
+    # (dispatch_us, combine_us) using that library's kernel names (see
+    # ep_bench_<lib>.parse_kineto_kernels). Fall back to the generic phase-word
+    # split when none is supplied.
+    if parse_kernels is None:
+        parse_kernels = lambda ka: (
+            sum_matching_kernel_us(ka, ("dispatch",)),
+            sum_matching_kernel_us(ka, ("combine",)),
+        )
 
     def _do_barrier():
         if not use_barrier:
@@ -266,27 +271,6 @@ def _kineto_kernel_us(
             barrier()  # GPU-side barrier (aligns ranks on-device)
         else:
             comm.Barrier()  # MPI host barrier (host-only alignment)
-
-    def _parse(ka, substrs):
-        # Sum each DISTINCT matching kernel's average-per-launch, so single-kernel
-        # backends yield that kernel's avg and multi-kernel backends yield their
-        # per-iteration SUM (scope-matched). ``substrs`` is the backend's own
-        # dispatch/combine matcher (see ep_bench_<lib>.KINETO_KERNEL_MATCH);
-        # matching is case-insensitive.
-        total_us = 0.0
-        matched = False
-        subs = tuple(s.lower() for s in substrs)
-        for e in ka:
-            # Match on the function name with C++ template arguments stripped, so a
-            # combine kernel templated on DispatchLayout (e.g. combineKernel<..,
-            # DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch'
-            # bucket (and vice-versa). The dispatch/combine word lives in the
-            # function name, which always precedes the first '<'.
-            name = e.key.split("<", 1)[0].lower()
-            if any(s in name for s in subs) and int(e.count) > 0:
-                total_us += float(e.self_device_time_total) / int(e.count)
-                matched = True
-        return total_us if matched else 0.0
 
     if separate:
         # ---- Two separate passes, each: [flush; barrier; single op] ----
@@ -316,7 +300,8 @@ def _kineto_kernel_us(
         dout = dispatch_fn()
         torch.cuda.synchronize()
         ka_c = _run_pass(lambda: combine_fn(dout))
-        return _parse(ka_d, disp_subs), _parse(ka_c, comb_subs)
+        # Dispatch time from the dispatch pass, combine time from the combine pass.
+        return parse_kernels(ka_d)[0], parse_kernels(ka_c)[1]
 
     # ---- Paired single-pass loop (EP_KINETO_SEPARATE=0) ----
     # Times dispatch and combine in ONE profiled pass over the paired
@@ -340,7 +325,7 @@ def _kineto_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
-    return _parse(ka, disp_subs), _parse(ka, comb_subs)
+    return parse_kernels(ka)
 
 
 def run_backend(
@@ -354,7 +339,7 @@ def run_backend(
     combine_fn,
     nccl_barrier=None,
     bench_barrier=None,
-    kernel_match=None,
+    parse_kernels=None,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -405,7 +390,7 @@ def run_backend(
             iters,
             barrier=(bench_barrier or nccl_barrier),
             mid_barrier=nccl_barrier,
-            kernel_match=kernel_match,
+            parse_kernels=parse_kernels,
         )
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
@@ -516,12 +501,12 @@ def run_backend(
 # Backend registry.
 # ----------------------------------------------------------------------------
 _SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
-# Per-backend kineto kernel-name matchers, owned by each backend module.
-_KERNEL_MATCH = {
-    "mscclpp": MSCCLPP_KERNEL_MATCH,
-    "nccl": NCCL_KERNEL_MATCH,
-    "deepep": DEEPEP_KERNEL_MATCH,
-    "flashinfer": FLASHINFER_KERNEL_MATCH,
+# Per-backend kineto kernel-name parse, owned by each backend module.
+_PARSE_KINETO = {
+    "mscclpp": mscclpp_parse_kineto,
+    "nccl": nccl_parse_kineto,
+    "deepep": deepep_parse_kineto,
+    "flashinfer": flashinfer_parse_kineto,
 }
 
 
@@ -610,7 +595,7 @@ def main() -> None:
                 combine_fn,
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
-                kernel_match=_KERNEL_MATCH[name],
+                parse_kernels=_PARSE_KINETO[name],
             )
         finally:
             torch.cuda.synchronize()

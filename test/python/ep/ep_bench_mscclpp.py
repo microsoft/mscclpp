@@ -6,16 +6,19 @@ from __future__ import annotations
 import gc
 import torch
 
-from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi
+from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi, sum_matching_kernel_us
 
-# Kineto kernel-name buckets for this backend (owned here so the per-library
-# kernel naming lives with the backend). mscclpp LL runs a single dispatch
-# kernel and a single combine kernel; the phase word ("dispatch"/"combine") is
-# in each function name. Values are substrings matched against the kineto
-# function name (with C++ template args stripped) -- see
-# _kineto_kernel_us._parse. Stripping template args matters here because the
-# combine kernel is templated on DispatchLayout (combineKernel<.., RANK_MAJOR>).
-KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for mscclpp
+    LL, which runs a single dispatch kernel and a single combine kernel with the
+    phase word in each function name. Template-arg stripping in the shared helper
+    matters here because the combine kernel is templated on DispatchLayout
+    (combineKernel<.., RANK_MAJOR>)."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
 
 
 # ============================================================================

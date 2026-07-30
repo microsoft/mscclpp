@@ -7,16 +7,18 @@ import gc
 import os
 import torch
 
-from ep_bench_common import _ensure_torch_dist
+from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
 
-# Kineto kernel-name buckets for this backend (owned here so the per-library
-# kernel naming lives with the backend). DeepEP V2 low-latency runs a
-# dispatch_impl kernel + a copy epilogue and a combine_impl kernel + a reduce
-# epilogue; every one of those carries the phase word ("dispatch"/"combine") in
-# its function name, so a case-insensitive substring match sums each phase's
-# kernels. Values are substrings matched against the kineto function name (with
-# C++ template args stripped) -- see _kineto_kernel_us._parse.
-KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for DeepEP
+    V2. Its low-latency path runs a dispatch_impl kernel + a copy epilogue and a
+    combine_impl kernel + a reduce epilogue; every one carries the phase word in
+    its function name, so a case-insensitive substring match sums each phase."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
 
 
 # ============================================================================
