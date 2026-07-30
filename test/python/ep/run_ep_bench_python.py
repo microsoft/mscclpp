@@ -171,6 +171,15 @@ def parse_args() -> argparse.Namespace:
         "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
     )
     p.add_argument(
+        "--iters-per-graph",
+        type=int,
+        default=1,
+        help="with --cuda-graph, number of dispatch->combine iterations captured INSIDE one CUDA "
+        "graph (replayed as a unit). >1 amortizes launch overhead and keeps the spin-waiting "
+        "dispatch/combine kernels from being inflated by per-replay launch skew; reported times "
+        "are per iteration. Ignored without --cuda-graph.",
+    )
+    p.add_argument(
         "--ep-layout",
         choices=["rank_major", "expert_major"],
         default=None,
@@ -340,13 +349,17 @@ def _kineto_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None):
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, iters_per_graph=1):
     """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
     (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
     replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
     ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
     given, runs before each replay (e.g. a host MPI barrier that cannot live inside
-    the graph). Capture is best-effort: on any exception on_fail() is invoked (to let
+    the graph). ``iters_per_graph`` dispatch->combine iterations are captured inside
+    the single graph so one replay runs them all -- this amortizes launch overhead
+    and keeps the spin-waiting dispatch/combine kernels from being inflated by
+    per-replay launch skew (reported times are divided back to per-iteration by the
+    caller). Capture is best-effort: on any exception on_fail() is invoked (to let
     the backend reset its state) and None is returned so the caller keeps the eager
     path."""
     try:
@@ -356,8 +369,9 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
             torch.cuda.synchronize()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            dispatch_op()
-            combine_op()
+            for _ in range(iters_per_graph):
+                dispatch_op()
+                combine_op()
     except Exception:  # noqa: BLE001 - capturability is an external-library boundary
         if on_fail is not None:
             on_fail()
@@ -387,6 +401,7 @@ def run_backend(
     nccl_barrier=None,
     bench_barrier=None,
     parse_kernels=None,
+    iters_per_graph=1,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -442,9 +457,14 @@ def run_backend(
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
-    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 for i in range(iters)]
-    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 for i in range(iters)]
+    # When the graph captured iters_per_graph iterations, one replay (one
+    # dispatch_fn() call) ran them all, so divide the per-replay time back to
+    # per-iteration. Kernel-only kineto is already per-iteration (its per-launch
+    # average divides by the kernel count, which scales with iters_per_graph).
+    ipg = max(1, iters_per_graph)
+    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / ipg for i in range(iters)]
+    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / ipg for i in range(iters)]
+    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / ipg for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
 
@@ -632,18 +652,25 @@ def main() -> None:
         # still attributed by kernel name. If capture fails, keep the eager ops.
         graph = None
         spec = ops.get("graph")
+        effective_ipg = 1
         if spec is not None:
             graphed = _capture_paired_graph(
                 spec["dispatch"],
                 spec["combine"],
                 pre_replay=spec.get("pre_replay"),
                 on_fail=spec.get("on_fail"),
+                iters_per_graph=max(1, args.iters_per_graph),
             )
             if graphed is not None:
                 dispatch_fn, combine_fn, graph = graphed
+                effective_ipg = max(1, args.iters_per_graph)
                 os.environ["EP_KINETO_SEPARATE"] = "0"
                 if rank == 0:
-                    print(f"[cfg] {name} cuda_graph captured (single graph; dispatch+combine)", flush=True)
+                    print(
+                        f"[cfg] {name} cuda_graph captured "
+                        f"(single graph; dispatch+combine; iters_per_graph={effective_ipg})",
+                        flush=True,
+                    )
 
         try:
             run_backend(
@@ -658,6 +685,7 @@ def main() -> None:
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
                 parse_kernels=_PARSE_KINETO[name],
+                iters_per_graph=effective_ipg,
             )
         finally:
             torch.cuda.synchronize()
