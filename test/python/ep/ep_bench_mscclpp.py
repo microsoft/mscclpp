@@ -8,6 +8,15 @@ import torch
 
 from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi
 
+# Kineto kernel-name buckets for this backend (owned here so the per-library
+# kernel naming lives with the backend). mscclpp LL runs a single dispatch
+# kernel and a single combine kernel; the phase word ("dispatch"/"combine") is
+# in each function name. Values are substrings matched against the kineto
+# function name (with C++ template args stripped) -- see
+# _kineto_kernel_us._parse. Stripping template args matters here because the
+# combine kernel is templated on DispatchLayout (combineKernel<.., RANK_MAJOR>).
+KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+
 
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
