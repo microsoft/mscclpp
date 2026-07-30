@@ -636,8 +636,8 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
                               const low_latency::Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const low_latency::CommContext& comm, void* workspace, int numBlocks,
                               cudaStream_t stream) {
-  static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 8704 ||
-                Hidden == 9216);
+  static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 ||
+                Hidden == 8704 || Hidden == 9216);
   const int nExperts = workload.numExperts_;
   const int nRanks = comm.numRanks_;
   const int nLocalExperts = nExperts / nRanks;
