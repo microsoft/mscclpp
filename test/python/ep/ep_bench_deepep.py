@@ -7,7 +7,7 @@ import gc
 import os
 import torch
 
-from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
+from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us, capture_dispatch_combine_graph
 
 
 def parse_kineto_kernels(key_averages):
@@ -149,15 +149,17 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
             num_experts=num_experts,
             num_max_tokens_per_rank=num_tokens,
         )
-        # Prime the cached path once so any lazy alloc/autotune settles before capture.
-        buffer.dispatch(**cached_dispatch_args)
-        buffer.combine(**combine_args)
-        torch.cuda.synchronize()
 
-        g_all = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_all):
+        # Generic prime+capture lives in capture_dispatch_combine_graph; the op
+        # closures below carry DeepEP's cached (do_cpu_sync=False) dispatch and its
+        # combine.
+        def _graph_dispatch():
             buffer.dispatch(**cached_dispatch_args)
+
+        def _graph_combine():
             buffer.combine(**combine_args)
+
+        g_all = capture_dispatch_combine_graph(_graph_dispatch, _graph_combine)
         graphs = [g_all]
 
         def dispatch_fn():

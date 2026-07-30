@@ -106,6 +106,34 @@ def sum_matching_kernel_us(key_averages, substrs):
 
 
 # ----------------------------------------------------------------------------
+# CUDA-graph capture shared by all backends. Every EP backend replays
+# dispatch+combine as ONE combined graph (a single replay runs both phases, so
+# the caller's combine_fn becomes a no-op). This centralizes the capture
+# boilerplate; the backend keeps only its own op closures, where the
+# library-specific bits live (e.g. DeepEP's cached do_cpu_sync=False dispatch
+# args, NCCL-EP's capture-stream refetch). Lives here (not run_ep_bench_python)
+# because the backend modules import from this module, so a helper they call
+# cannot live in the importer without a circular import.
+# ----------------------------------------------------------------------------
+def capture_dispatch_combine_graph(dispatch_op, combine_op, prime=True):
+    """Capture a paired dispatch->combine into a single torch.cuda.CUDAGraph and
+    return it. ``dispatch_op``/``combine_op`` are zero-arg callables that launch
+    the backend's real dispatch and combine on the current stream (combine may
+    depend on state dispatch just produced -- share it via a closure/holder).
+    When ``prime`` is True the pair is run once and synchronized first so any
+    lazy alloc / autotune settles before capture."""
+    if prime:
+        dispatch_op()
+        combine_op()
+        torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        dispatch_op()
+        combine_op()
+    return graph
+
+
+# ----------------------------------------------------------------------------
 # Routing inputs — shared by both backends so the comparison is apples-to-apples.
 # BF16 tokens + top-k routing setup.
 # ----------------------------------------------------------------------------

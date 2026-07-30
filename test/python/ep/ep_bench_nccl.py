@@ -6,7 +6,7 @@ from __future__ import annotations
 import gc
 import torch
 
-from ep_bench_common import sum_matching_kernel_us
+from ep_bench_common import sum_matching_kernel_us, capture_dispatch_combine_graph
 
 
 def parse_kineto_kernels(key_averages):
@@ -133,21 +133,19 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         # peer data produced by the matching dispatch); main() forces the paired
         # kineto pass (EP_KINETO_SEPARATE=0) so combine follows dispatch instead of
         # spinning on a stale peer receive. Capture dispatch+combine in a SINGLE
-        # graph: the kineto collector still attributes per-phase kernel time by
-        # kernel name, so one replay per iteration keeps the breakdown.
-        # Prime once so any lazy JIT / autotune settles before capture.
-        _dispatch(stream_ptr)
-        _combine(stream_ptr)
-        torch.cuda.synchronize()
+        # graph (generic prime+capture in capture_dispatch_combine_graph): the
+        # kineto collector still attributes per-phase kernel time by kernel name,
+        # so one replay per iteration keeps the breakdown. NCCL-EP takes an explicit
+        # stream pointer, so the op closures re-fetch the current stream -- during
+        # priming that is the default stream, during capture it is the graph's
+        # capture stream (the cached stream_ptr would launch off-capture and break it).
+        def _graph_dispatch():
+            _dispatch(torch.cuda.current_stream().cuda_stream)
 
-        # Capture on the graph's capture stream: NCCL-EP takes an explicit stream
-        # pointer, so it must be re-fetched inside the capture context (the default
-        # stream_ptr would launch off the capture stream and break capture).
-        g_all = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_all):
-            s = torch.cuda.current_stream().cuda_stream
-            _dispatch(s)
-            _combine(s)
+        def _graph_combine():
+            _combine(torch.cuda.current_stream().cuda_stream)
+
+        g_all = capture_dispatch_combine_graph(_graph_dispatch, _graph_combine)
         graphs = [g_all]
 
         def dispatch_fn():

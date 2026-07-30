@@ -7,7 +7,7 @@ import gc
 import os
 import torch
 
-from ep_bench_common import sum_matching_kernel_us
+from ep_bench_common import sum_matching_kernel_us, capture_dispatch_combine_graph
 
 
 def parse_kineto_kernels(key_averages):
@@ -116,15 +116,10 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         # on failure we rebuild the (now possibly mid-phase) communicator and fall
         # back to the direct barrier+launch.
         try:
-            # Prime one full pair so phase returns to idle and lazy work settles.
-            _dispatch()
-            _combine()
-            torch.cuda.synchronize()
-            g_all = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g_all):
-                _dispatch()
-                _combine()
-            torch.cuda.synchronize()
+            # Single-graph capture via the shared helper (prime + capture the
+            # dispatch->combine pair). FlashInfer's stateful phase / in-kernel peer
+            # spin may not be graph-capturable on every build, hence best-effort.
+            g_all = capture_dispatch_combine_graph(_dispatch, _combine)
             graphs = [g_all]
             captured = True
             if rank == 0:
