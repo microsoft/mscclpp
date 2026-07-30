@@ -7,7 +7,7 @@ import gc
 import os
 import torch
 
-from ep_bench_common import sum_matching_kernel_us, capture_dispatch_combine_graph
+from ep_bench_common import sum_matching_kernel_us
 
 
 def parse_kineto_kernels(key_averages):
@@ -94,9 +94,8 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     # (unlike DeepEP, whose paired ops share symmetric-memory state).
     # EP_KINETO_SEPARATE is forced off for FlashInfer so the timer replays the
     # dispatch->combine pair in order (a lone combine would trip the phase assert).
+    # This is a stateful-API requirement, independent of cuda-graph.
     os.environ["EP_KINETO_SEPARATE"] = "0"
-
-    graphs = []
 
     def _dispatch():
         moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
@@ -104,30 +103,31 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     def _combine():
         moe.combine(combine_payload, num_tokens)
 
-    captured = False
+    # Eager ops (also the fallback if the harness graph capture fails): each begins
+    # with the host MPI barrier so ranks enter the kernel aligned.
+    def dispatch_fn():
+        comm.Barrier()
+        moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
+        return None
+
+    def combine_fn(_dout):
+        comm.Barrier()
+        moe.combine(combine_payload, num_tokens)
+
+    # Capture-safe ops for the harness's single-graph capture. FlashInfer's
+    # dispatch/combine each need an MPI host barrier to align ranks, but an MPI
+    # barrier cannot live inside a CUDA graph -- so the captured ops are barrier-free
+    # and the harness runs the barrier BEFORE each replay (pre_replay). Capture is
+    # best-effort: FlashInfer's stateful phase / in-kernel peer spin may not be
+    # graph-capturable on every build, so on_fail rebuilds the (possibly mid-phase)
+    # communicator and the harness keeps the eager barrier+launch path.
+    graph_spec = None
     if args.cuda_graph:
-        # FlashInfer's dispatch/combine each begin with an MPI host barrier to align
-        # ranks -- but an MPI barrier cannot live inside a CUDA graph. So capture ONLY
-        # the moe kernels (dispatch+combine in a SINGLE graph) and keep the barrier
-        # OUTSIDE, replaying: barrier -> replay. The kineto collector attributes
-        # per-phase kernel time by kernel name, so one replay per iteration keeps the
-        # dispatch/combine breakdown. Capture is best-effort: FlashInfer's stateful
-        # phase / in-kernel peer spin may not be graph-capturable on every build, so
-        # on failure we rebuild the (now possibly mid-phase) communicator and fall
-        # back to the direct barrier+launch.
-        try:
-            # Single-graph capture via the shared helper (prime + capture the
-            # dispatch->combine pair). FlashInfer's stateful phase / in-kernel peer
-            # spin may not be graph-capturable on every build, hence best-effort.
-            g_all = capture_dispatch_combine_graph(_dispatch, _combine)
-            graphs = [g_all]
-            captured = True
+
+        def _rebuild():
+            nonlocal moe
             if rank == 0:
-                print("[cfg] flashinfer cuda_graph=True (single graph; MPI barrier kept outside)", flush=True)
-        except Exception as e:  # noqa: BLE001 - capturability is an external-library boundary
-            if rank == 0:
-                print(f"[cfg] flashinfer cuda_graph capture failed ({e}); falling back to eager", flush=True)
-            # Rebuild to clear any partially-advanced phase state.
+                print("[cfg] flashinfer cuda_graph capture failed; falling back to eager", flush=True)
             moe = a2a.MoeAlltoAll(
                 mapping,
                 max_num_tokens=num_tokens,
@@ -135,33 +135,23 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
                 num_experts=num_experts,
                 hidden_size=hidden,
             )
-        comm.Barrier()
-
-    if captured:
-        g_all = graphs[0]
-
-        def dispatch_fn():
             comm.Barrier()
-            g_all.replay()
-            return None
 
-        def combine_fn(_dout):
-            pass  # both phases already ran inside the combined graph replay
-
-    else:
-
-        def dispatch_fn():
-            comm.Barrier()
-            moe.dispatch(token_selected_experts, [hidden_payload], num_tokens)
-            return None
-
-        def combine_fn(_dout):
-            comm.Barrier()
-            moe.combine(combine_payload, num_tokens)
+        graph_spec = {
+            "dispatch": _dispatch,
+            "combine": _combine,
+            "pre_replay": comm.Barrier,
+            "on_fail": _rebuild,
+        }
 
     def teardown():
-        graphs.clear()
         gc.collect()
         torch.cuda.synchronize()
 
-    return dispatch_fn, combine_fn, teardown
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": None,
+        "graph": graph_spec,
+    }

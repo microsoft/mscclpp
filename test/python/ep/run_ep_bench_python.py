@@ -335,6 +335,46 @@ def _kineto_kernel_us(
     return parse_kernels(ka)
 
 
+# ============================================================================
+# CUDA-graph capture (owned by the harness, not the backends). Every EP backend
+# replays dispatch+combine as ONE combined graph, so this single helper captures
+# the paired op from any backend; the backend only supplies its capture-safe ops.
+# ============================================================================
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None):
+    """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
+    (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
+    replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
+    ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
+    given, runs before each replay (e.g. a host MPI barrier that cannot live inside
+    the graph). Capture is best-effort: on any exception on_fail() is invoked (to let
+    the backend reset its state) and None is returned so the caller keeps the eager
+    path."""
+    try:
+        if prime:
+            dispatch_op()
+            combine_op()
+            torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            dispatch_op()
+            combine_op()
+    except Exception:  # noqa: BLE001 - capturability is an external-library boundary
+        if on_fail is not None:
+            on_fail()
+        return None
+
+    def replay_dispatch():
+        if pre_replay is not None:
+            pre_replay()
+        graph.replay()
+        return None
+
+    def replay_combine(_dout):
+        pass  # both phases already ran inside the single-graph replay
+
+    return replay_dispatch, replay_combine, graph
+
+
 def run_backend(
     name,
     args,
@@ -560,37 +600,51 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
-        # Under --cuda-graph, nccl, flashinfer and mscclpp capture dispatch+combine
-        # in a SINGLE graph, so one replay runs both phases and the skew-free
-        # separate pass (which times combine alone, via a no-op combine_fn) can no
-        # longer isolate combine. Force the PAIRED single-pass here for those three
-        # so the collector still attributes per-phase kernel time by kernel name.
-        # deepep manages EP_KINETO_SEPARATE itself inside setup_deepep: it
-        # single-graph captures on the NVLink/MNNVL path at ANY node count
-        # (EP_DISABLE_GIN=1) and sets SEPARATE=0 only when it actually captures --
-        # on the RDMA/GIN scale-out path it falls back to eager even under
-        # --cuda-graph and must keep the skew-free separate pass, so it is NOT
-        # forced here. Restore the snapshot each iteration so a prior backend's
-        # override does not leak in --backend all.
+        # Restore the user's EP_KINETO_SEPARATE each iteration so a prior backend's
+        # override (its own, or the single-graph force below) does not leak across
+        # --backend all. A backend whose kineto pass has a hard requirement (e.g.
+        # FlashInfer's stateful API cannot time combine alone) sets it inside its
+        # own setup; the graph force below is layered on top.
         if _user_kineto_separate is None:
             os.environ.pop("EP_KINETO_SEPARATE", None)
         else:
             os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
-        if args.cuda_graph and name in ("nccl", "flashinfer", "mscclpp"):
-            os.environ["EP_KINETO_SEPARATE"] = "0"
 
         try:
-            _setup_ret = _SETUP[name](args, comm, rank, num_ranks, inputs)
-            if len(_setup_ret) == 4:
-                dispatch_fn, combine_fn, teardown, backend_barrier = _setup_ret
-            else:
-                dispatch_fn, combine_fn, teardown = _setup_ret
-                backend_barrier = None
+            ops = _SETUP[name](args, comm, rank, num_ranks, inputs)
         except Exception as exc:
             if rank == 0:
                 print(f"\n[skip] backend '{name}' setup failed: {type(exc).__name__}: {exc}", flush=True)
             comm.Barrier()
             continue
+
+        dispatch_fn = ops["dispatch"]
+        combine_fn = ops["combine"]
+        teardown = ops["teardown"]
+        backend_barrier = ops.get("barrier")
+
+        # CUDA-graph capture is owned HERE, not in the backends: a backend that
+        # supports it hands back a capture spec (capture-safe dispatch/combine ops,
+        # an optional pre-replay barrier, and an on-capture-failure reset). Capturing
+        # dispatch+combine as ONE graph means a single replay runs both phases, so
+        # the skew-free separate kineto pass can no longer isolate combine -- force
+        # the PAIRED single pass (EP_KINETO_SEPARATE=0) so per-phase kernel time is
+        # still attributed by kernel name. If capture fails, keep the eager ops.
+        graph = None
+        spec = ops.get("graph")
+        if spec is not None:
+            graphed = _capture_paired_graph(
+                spec["dispatch"],
+                spec["combine"],
+                pre_replay=spec.get("pre_replay"),
+                on_fail=spec.get("on_fail"),
+            )
+            if graphed is not None:
+                dispatch_fn, combine_fn, graph = graphed
+                os.environ["EP_KINETO_SEPARATE"] = "0"
+                if rank == 0:
+                    print(f"[cfg] {name} cuda_graph captured (single graph; dispatch+combine)", flush=True)
+
         try:
             run_backend(
                 name,
@@ -607,6 +661,10 @@ def main() -> None:
             )
         finally:
             torch.cuda.synchronize()
+            # Drop the replay closures and the captured graph BEFORE teardown frees
+            # the buffers/handles the graph captured.
+            dispatch_fn = combine_fn = None
+            graph = None
             teardown()
             comm.Barrier()
 

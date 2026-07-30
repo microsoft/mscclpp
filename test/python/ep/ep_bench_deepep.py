@@ -7,7 +7,7 @@ import gc
 import os
 import torch
 
-from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us, capture_dispatch_combine_graph
+from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
 
 
 def parse_kineto_kernels(key_averages):
@@ -110,8 +110,6 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     def deepep_barrier():
         buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
 
-    graphs = []
-
     # DeepEP CUDA-graph capture is limited by TRANSPORT, not node count. On the
     # all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain) the
     # symmetric-memory kernels ARE graph-capturable at any node count -- verified
@@ -129,20 +127,18 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
             flush=True,
         )
 
+    def combine_fn(_dout):
+        buffer.combine(**combine_args)
+
+    graph_spec = None
     if deepep_can_graph:
-        # Capturing dispatch+combine in a SINGLE graph replays both phases in one
-        # shot, so the skew-free separate kineto pass (which times combine alone)
-        # can no longer isolate combine. Force the PAIRED kineto pass so the
-        # collector still attributes per-phase kernel time by kernel name. (Intranode
-        # NVLink has negligible combine recv-spin skew, so the paired pass matches the
-        # separate pass here.)
-        os.environ["EP_KINETO_SEPARATE"] = "0"
         if rank == 0:
             print("[cfg] deepep cuda_graph=True (single graph, cached dispatch, do_cpu_sync=False)", flush=True)
         # The non-cached dispatch above did a CPU sync to size the layout; that is
-        # illegal inside a CUDA graph. Replay the CACHED dispatch instead: pass the
-        # primed handle (topk_idx reused from it), which forces do_cpu_sync=False and
-        # skips the host-side count read, leaving a pure on-stream kernel launch.
+        # illegal inside a CUDA graph. Use the CACHED dispatch instead: pass the
+        # primed handle (topk_idx reused from it), which forces do_cpu_sync=False
+        # and skips the host-side count read, leaving a pure on-stream kernel launch
+        # -- capture-safe, and also runnable eagerly if the harness capture fails.
         cached_dispatch_args = dict(
             x=x,
             handle=handle,
@@ -150,36 +146,24 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
             num_max_tokens_per_rank=num_tokens,
         )
 
-        # Generic prime+capture lives in capture_dispatch_combine_graph; the op
-        # closures below carry DeepEP's cached (do_cpu_sync=False) dispatch and its
-        # combine.
-        def _graph_dispatch():
-            buffer.dispatch(**cached_dispatch_args)
-
-        def _graph_combine():
-            buffer.combine(**combine_args)
-
-        g_all = capture_dispatch_combine_graph(_graph_dispatch, _graph_combine)
-        graphs = [g_all]
-
         def dispatch_fn():
-            g_all.replay()
+            buffer.dispatch(**cached_dispatch_args)
             return None
 
-        def combine_fn(_dout):
-            pass  # both phases already ran inside the combined graph replay
-
+        # Capture-safe ops handed to the harness (it owns the graph capture).
+        graph_spec = {
+            "dispatch": lambda: buffer.dispatch(**cached_dispatch_args),
+            "combine": lambda: buffer.combine(**combine_args),
+            "pre_replay": None,
+            "on_fail": None,
+        }
     else:
 
         def dispatch_fn():
             buffer.dispatch(**dispatch_args)
             return None
 
-        def combine_fn(_dout):
-            buffer.combine(**combine_args)
-
     def teardown():
-        graphs.clear()  # drop graph refs before the buffer they captured is destroyed
         try:
             buffer.destroy()
         except Exception:
@@ -187,4 +171,10 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         gc.collect()
         torch.cuda.synchronize()
 
-    return dispatch_fn, combine_fn, teardown, deepep_barrier
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": deepep_barrier,
+        "graph": graph_spec,
+    }
