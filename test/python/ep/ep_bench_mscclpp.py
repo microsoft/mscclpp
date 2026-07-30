@@ -6,7 +6,12 @@ from __future__ import annotations
 import gc
 import torch
 
-from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi, sum_matching_kernel_us
+from ep_bench_common import (
+    simulated_gemm_output,
+    validate_combine_output_mpi,
+    sum_matching_kernel_us,
+    capture_dispatch_combine_graph,
+)
 
 
 def parse_kineto_kernels(key_averages):
@@ -120,19 +125,23 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         # single-graph path and how a real serving stack replays a fused MoE step. Per-kernel
         # kineto times are unaffected by the single vs two-graph choice; only the host-level
         # per-phase split changes (the combine host timer folds into dispatch under one graph).
-        prime_out, prime_handle = _dispatch()
-        _combine(prime_out, prime_handle)
-        torch.cuda.synchronize()
+        # The generic prime+capture boilerplate lives in capture_dispatch_combine_graph; the
+        # two op closures below carry the mscclpp-specific dispatch/combine calls (combine
+        # consumes the dispatch output produced in the same capture, shared via _cap).
+        _cap = {}
 
-        g_both = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_both):
-            g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
-            moe_comm.combine(simulated_gemm_output(g_dispatch_out), g_handle, out=out)
+        def _graph_dispatch():
+            _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
+
+        def _graph_combine():
+            moe_comm.combine(simulated_gemm_output(_cap["out"]), _cap["handle"], out=out)
+
+        g_both = capture_dispatch_combine_graph(_graph_dispatch, _graph_combine)
         state["graphs"] = (g_both,)
 
         def dispatch_fn():
             g_both.replay()
-            return (g_dispatch_out, g_handle)
+            return None
 
         def combine_fn(dout):
             pass
