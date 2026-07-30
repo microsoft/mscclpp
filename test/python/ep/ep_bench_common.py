@@ -6,13 +6,85 @@ from __future__ import annotations
 
 import os
 import torch
-from mpi4py import MPI
+
+try:
+    from mpi4py import MPI
+except ImportError:
+
+    class _FallbackMPI:
+        SUM = object()
+        MIN = object()
+        MAX = object()
+
+    MPI = _FallbackMPI()
+
+
+class TorchComm:
+    def __init__(self, group):
+        self.torch_group = group
+
+    def Get_rank(self):
+        import torch.distributed as dist
+
+        return dist.get_rank(self.torch_group)
+
+    def Get_size(self):
+        import torch.distributed as dist
+
+        return dist.get_world_size(self.torch_group)
+
+    def Barrier(self):
+        import torch.distributed as dist
+
+        dist.barrier(group=self.torch_group)
+
+    def bcast(self, value, root=0):
+        import torch.distributed as dist
+
+        values = [value]
+        dist.broadcast_object_list(values, src=root, group=self.torch_group)
+        return values[0]
+
+    def allreduce(self, value, op=MPI.SUM):
+        import torch.distributed as dist
+
+        if op is MPI.SUM:
+            reduce_op = dist.ReduceOp.SUM
+        elif op is MPI.MIN:
+            reduce_op = dist.ReduceOp.MIN
+        elif op is MPI.MAX:
+            reduce_op = dist.ReduceOp.MAX
+        else:
+            raise ValueError(f"unsupported reduction op: {op}")
+        tensor = torch.tensor(value, dtype=torch.float64)
+        dist.all_reduce(tensor, op=reduce_op, group=self.torch_group)
+        result = tensor.item()
+        return type(value)(result)
+
+    def gather(self, value, root=0):
+        import torch.distributed as dist
+
+        output = [None] * self.Get_size() if self.Get_rank() == root else None
+        dist.gather_object(value, output, dst=root, group=self.torch_group)
+        return output
 
 
 # ----------------------------------------------------------------------------
 # MPI bootstrap shared by both backends.
 # ----------------------------------------------------------------------------
 def init_mpi():
+    if os.environ.get("EP_BOOTSTRAP") == "torch":
+        import torch.distributed as dist
+
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="gloo")
+        group = dist.distributed_c10d._get_default_group()
+        comm = TorchComm(group)
+        return comm, comm.Get_rank(), comm.Get_size(), local_rank
+
+    if not hasattr(MPI, "COMM_WORLD"):
+        raise RuntimeError("mpi4py is required unless EP_BOOTSTRAP=torch")
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -61,10 +133,16 @@ def _init_torch_nccl(comm, rank, num_ranks, local_rank):
     import torch.distributed as dist
 
     _ensure_torch_dist(comm, rank, num_ranks)
+    default_group = dist.distributed_c10d._get_default_group()
+    group = (
+        default_group
+        if str(dist.get_backend(default_group)).lower() == "nccl"
+        else dist.new_group(ranks=list(range(num_ranks)), backend="nccl")
+    )
     _sync = torch.ones(1, dtype=torch.float, device="cuda")
 
     def _barrier():
-        dist.all_reduce(_sync)
+        dist.all_reduce(_sync, group=group)
 
     _barrier()
     torch.cuda.synchronize()
