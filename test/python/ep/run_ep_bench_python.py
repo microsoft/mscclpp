@@ -553,22 +553,23 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
-        # Under --cuda-graph, nccl and flashinfer capture dispatch+combine in a
-        # SINGLE graph, so one replay runs both phases and the skew-free separate
-        # pass (which times combine alone) can no longer isolate combine. Force the
-        # PAIRED single-pass here for those two so the collector still attributes
-        # per-phase kernel time by kernel name. deepep manages EP_KINETO_SEPARATE
-        # itself inside setup_deepep: it single-graph captures on the NVLink/MNNVL
-        # path at ANY node count (EP_DISABLE_GIN=1) and sets SEPARATE=0 only when it
-        # actually captures -- on the RDMA/GIN scale-out path it falls back to eager
-        # even under --cuda-graph and must keep the skew-free separate pass, so it is
-        # NOT forced here. Restore the snapshot each iteration so a prior backend's
+        # Under --cuda-graph, nccl, flashinfer and mscclpp capture dispatch+combine
+        # in a SINGLE graph, so one replay runs both phases and the skew-free
+        # separate pass (which times combine alone, via a no-op combine_fn) can no
+        # longer isolate combine. Force the PAIRED single-pass here for those three
+        # so the collector still attributes per-phase kernel time by kernel name.
+        # deepep manages EP_KINETO_SEPARATE itself inside setup_deepep: it
+        # single-graph captures on the NVLink/MNNVL path at ANY node count
+        # (EP_DISABLE_GIN=1) and sets SEPARATE=0 only when it actually captures --
+        # on the RDMA/GIN scale-out path it falls back to eager even under
+        # --cuda-graph and must keep the skew-free separate pass, so it is NOT
+        # forced here. Restore the snapshot each iteration so a prior backend's
         # override does not leak in --backend all.
         if _user_kineto_separate is None:
             os.environ.pop("EP_KINETO_SEPARATE", None)
         else:
             os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
-        if args.cuda_graph and name in ("nccl", "flashinfer"):
+        if args.cuda_graph and name in ("nccl", "flashinfer", "mscclpp"):
             os.environ["EP_KINETO_SEPARATE"] = "0"
 
         try:
