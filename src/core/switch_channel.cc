@@ -309,10 +309,6 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   auto barrierChannel = std::make_shared<SwitchChannel>(
       barrierConn->bindAllocatedMemory(CUdeviceptr(barrierBuffer->data()), barrierBytes));
   conn->attachBarrier(barrierConn, barrierBuffer->memory(), barrierChannel, static_cast<int>(allRanks.size()));
-  // One-time sync so every rank has bound its barrier flag into the multicast before any rank issues
-  // a multimem operation on it at kernel time. Synchronize only allRanks (not the whole bootstrap,
-  // which may include ranks outside this NVLS group).
-  bootstrap->groupBarrier(allRanks);
 #endif  // (CUDA_NVLS_API_AVAILABLE)
 
   return conn;
