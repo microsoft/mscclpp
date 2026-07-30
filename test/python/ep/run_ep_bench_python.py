@@ -123,10 +123,10 @@ from ep_bench_common import (
     _init_torch_nccl,
     _mpi_stats,
 )
-from ep_bench_mscclpp import setup_mscclpp
-from ep_bench_nccl import setup_nccl
-from ep_bench_deepep import setup_deepep
-from ep_bench_flashinfer import setup_flashinfer
+from ep_bench_mscclpp import setup_mscclpp, KINETO_KERNEL_MATCH as MSCCLPP_KERNEL_MATCH
+from ep_bench_nccl import setup_nccl, KINETO_KERNEL_MATCH as NCCL_KERNEL_MATCH
+from ep_bench_deepep import setup_deepep, KINETO_KERNEL_MATCH as DEEPEP_KERNEL_MATCH
+from ep_bench_flashinfer import setup_flashinfer, KINETO_KERNEL_MATCH as FLASHINFER_KERNEL_MATCH
 
 
 # ----------------------------------------------------------------------------
@@ -207,7 +207,15 @@ def _flush_l2_cache():
 
 
 def _kineto_kernel_us(
-    dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None, mid_barrier=None
+    dispatch_fn,
+    combine_fn,
+    comm,
+    num_tests,
+    flush_l2=True,
+    use_barrier=True,
+    barrier=None,
+    mid_barrier=None,
+    kernel_match=None,
 ):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
@@ -244,6 +252,11 @@ def _kineto_kernel_us(
 
     use_mid = os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
     separate = os.environ.get("EP_KINETO_SEPARATE", "1") == "1"
+    # Kernel-name substrings that bucket dispatch vs combine device time. Each
+    # backend owns its own matchers (KINETO_KERNEL_MATCH in ep_bench_<lib>.py);
+    # fall back to the generic phase words when none is supplied.
+    kernel_match = kernel_match or {"dispatch": ("dispatch",), "combine": ("combine",)}
+    disp_subs, comb_subs = kernel_match["dispatch"], kernel_match["combine"]
 
     def _do_barrier():
         if not use_barrier:
@@ -254,15 +267,15 @@ def _kineto_kernel_us(
         else:
             comm.Barrier()  # MPI host barrier (host-only alignment)
 
-    def _parse(ka, substr):
-        # Sum each DISTINCT matching kernel's average-per-launch. Single-kernel
-        # backends (mscclpp, NCCL-EP) yield that kernel's avg; two-kernel DeepEP
-        # (*_impl + *_epilogue) yields their per-iteration SUM (scope-matched).
-        # Case-insensitive so FlashInfer's moeA2ADispatchKernel / moeA2ACombineKernel
-        # (capitalized) match the "dispatch"/"combine" buckets too.
+    def _parse(ka, substrs):
+        # Sum each DISTINCT matching kernel's average-per-launch, so single-kernel
+        # backends yield that kernel's avg and multi-kernel backends yield their
+        # per-iteration SUM (scope-matched). ``substrs`` is the backend's own
+        # dispatch/combine matcher (see ep_bench_<lib>.KINETO_KERNEL_MATCH);
+        # matching is case-insensitive.
         total_us = 0.0
         matched = False
-        sub = substr.lower()
+        subs = tuple(s.lower() for s in substrs)
         for e in ka:
             # Match on the function name with C++ template arguments stripped, so a
             # combine kernel templated on DispatchLayout (e.g. combineKernel<..,
@@ -270,7 +283,7 @@ def _kineto_kernel_us(
             # bucket (and vice-versa). The dispatch/combine word lives in the
             # function name, which always precedes the first '<'.
             name = e.key.split("<", 1)[0].lower()
-            if sub in name and int(e.count) > 0:
+            if any(s in name for s in subs) and int(e.count) > 0:
                 total_us += float(e.self_device_time_total) / int(e.count)
                 matched = True
         return total_us if matched else 0.0
@@ -303,7 +316,7 @@ def _kineto_kernel_us(
         dout = dispatch_fn()
         torch.cuda.synchronize()
         ka_c = _run_pass(lambda: combine_fn(dout))
-        return _parse(ka_d, "dispatch"), _parse(ka_c, "combine")
+        return _parse(ka_d, disp_subs), _parse(ka_c, comb_subs)
 
     # ---- Paired single-pass loop (EP_KINETO_SEPARATE=0) ----
     # Times dispatch and combine in ONE profiled pass over the paired
@@ -327,7 +340,7 @@ def _kineto_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
-    return _parse(ka, "dispatch"), _parse(ka, "combine")
+    return _parse(ka, disp_subs), _parse(ka, comb_subs)
 
 
 def run_backend(
@@ -341,6 +354,7 @@ def run_backend(
     combine_fn,
     nccl_barrier=None,
     bench_barrier=None,
+    kernel_match=None,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -386,7 +400,13 @@ def run_backend(
     if use_kineto:
         comm.Barrier()
         ck_disp, ck_comb = _kineto_kernel_us(
-            dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier
+            dispatch_fn,
+            combine_fn,
+            comm,
+            iters,
+            barrier=(bench_barrier or nccl_barrier),
+            mid_barrier=nccl_barrier,
+            kernel_match=kernel_match,
         )
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
@@ -497,6 +517,13 @@ def run_backend(
 # Backend registry.
 # ----------------------------------------------------------------------------
 _SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
+# Per-backend kineto kernel-name matchers, owned by each backend module.
+_KERNEL_MATCH = {
+    "mscclpp": MSCCLPP_KERNEL_MATCH,
+    "nccl": NCCL_KERNEL_MATCH,
+    "deepep": DEEPEP_KERNEL_MATCH,
+    "flashinfer": FLASHINFER_KERNEL_MATCH,
+}
 
 
 def main() -> None:
@@ -584,6 +611,7 @@ def main() -> None:
                 combine_fn,
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
+                kernel_match=_KERNEL_MATCH[name],
             )
         finally:
             torch.cuda.synchronize()

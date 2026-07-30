@@ -9,6 +9,15 @@ import torch
 
 from ep_bench_common import _ensure_torch_dist
 
+# Kineto kernel-name buckets for this backend (owned here so the per-library
+# kernel naming lives with the backend). DeepEP V2 low-latency runs a
+# dispatch_impl kernel + a copy epilogue and a combine_impl kernel + a reduce
+# epilogue; every one of those carries the phase word ("dispatch"/"combine") in
+# its function name, so a case-insensitive substring match sums each phase's
+# kernels. Values are substrings matched against the kineto function name (with
+# C++ template args stripped) -- see _kineto_kernel_us._parse.
+KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+
 
 # ============================================================================
 # Backend: DeepEP V2 (deepseek-ai/DeepEP, ElasticBuffer low-latency).

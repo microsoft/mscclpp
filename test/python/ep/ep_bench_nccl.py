@@ -6,6 +6,13 @@ from __future__ import annotations
 import gc
 import torch
 
+# Kineto kernel-name buckets for this backend (owned here so the per-library
+# kernel naming lives with the backend). NCCL-EP runs a single dispatch kernel
+# and a single combine kernel; the phase word ("dispatch"/"combine") is in each
+# function name. Values are substrings matched against the kineto function name
+# (with C++ template args stripped) -- see _kineto_kernel_us._parse.
+KINETO_KERNEL_MATCH = {"dispatch": ("dispatch",), "combine": ("combine",)}
+
 
 # ============================================================================
 # Backend: NVIDIA NCCL-EP (nccl.ep Group/Handle).
