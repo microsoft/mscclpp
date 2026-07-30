@@ -680,6 +680,11 @@ def main() -> None:
                 on_fail=spec.get("on_fail"),
                 iters_per_graph=max(1, args.graph_group_size),
             )
+            local_ok = graphed is not None
+            all_ok = comm.allreduce(1 if local_ok else 0, op=MPI.MIN)
+            if not all_ok:
+                graphed = None  # keep every rank on the eager path
+            comm.Barrier()
             if graphed is not None:
                 dispatch_fn, combine_fn, graph = graphed
                 effective_ipg = max(1, args.graph_group_size)
@@ -690,7 +695,6 @@ def main() -> None:
                         f"(single graph; dispatch+combine; iters_per_graph={effective_ipg})",
                         flush=True,
                     )
-
         try:
             run_backend(
                 name,
