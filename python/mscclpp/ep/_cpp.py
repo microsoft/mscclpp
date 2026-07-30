@@ -17,4 +17,5 @@ MoEMode = _cpp.MoEMode
 CombineMode = _cpp.CombineMode
 DispatchDataType = _cpp.DispatchDataType
 MoERuntime = _cpp.MoERuntime
+create_moe_runtime = _cpp.create_moe_runtime
 Config = getattr(_cpp, "Config", None)

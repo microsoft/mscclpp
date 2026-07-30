@@ -3,9 +3,9 @@
 #pragma once
 
 #include <exception>
+#include <mscclpp/assert_device.hpp>
+#include <mscclpp/gpu.hpp>
 #include <string>
-
-#include "constants.cuh"
 
 #ifndef EP_STATIC_ASSERT
 #define EP_STATIC_ASSERT(cond, reason) static_assert(cond, reason)
@@ -43,7 +43,9 @@ class EPException : public std::exception {
 #endif
 
 #ifndef EP_DEVICE_ASSERT
-// #define EP_DEVICE_ASSERT(cond) do { if (not (cond)) { printf("Assertion failed: %s:%d, condition: %s\n", __FILE__,
-// __LINE__, #cond); asm("trap;"); } } while (0)
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#define EP_DEVICE_ASSERT(cond) MSCCLPP_ASSERT_DEVICE(cond, #cond)
+#else
 #define EP_DEVICE_ASSERT(cond)
+#endif
 #endif

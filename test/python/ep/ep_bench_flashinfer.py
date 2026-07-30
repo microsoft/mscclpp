@@ -36,7 +36,8 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
     from flashinfer.comm.mapping import Mapping
     import flashinfer.comm.trtllm_moe_alltoall as a2a
 
-    x, topk_idx, _topk_weights, _ = inputs
+    input_samples = inputs if isinstance(inputs, list) else [inputs]
+    x, topk_idx, _topk_weights, _ = input_samples[0]
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     gpus_per_node = int(os.environ.get("EP_FLASHINFER_GPUS_PER_NODE", "4"))
@@ -68,12 +69,18 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         moe_tp_size=1,
         moe_ep_size=num_ranks,
     )
+    mnnvl_config = None
+    if hasattr(comm, "torch_group"):
+        from flashinfer.comm.mnnvl import MnnvlConfig, TorchDistBackend
+
+        mnnvl_config = MnnvlConfig(comm_backend=TorchDistBackend(comm.torch_group))
     moe = a2a.MoeAlltoAll(
         mapping,
         max_num_tokens=num_tokens,
         top_k=num_topk,
         num_experts=num_experts,
         hidden_size=hidden,
+        mnnvl_config=mnnvl_config,
     )
 
     # Shared routing inputs: FlashInfer wants int32 expert ids [num_tokens, top_k]
@@ -134,6 +141,7 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
                 top_k=num_topk,
                 num_experts=num_experts,
                 hidden_size=hidden,
+                mnnvl_config=mnnvl_config,
             )
             comm.Barrier()
 

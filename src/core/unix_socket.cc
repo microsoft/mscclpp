@@ -140,13 +140,9 @@ void UnixSocketServer::start() {
 }
 
 void UnixSocketServer::stop() {
-  if (mainThread_.joinable()) INFO(MSCCLPP_INIT, "Stopping unix socket server");
-  shutdown();
-}
-
-void UnixSocketServer::shutdown() {
   *abortFlag_ = 1;
   if (mainThread_.joinable()) {
+    INFO(MSCCLPP_INIT, "Stopping unix socket server");
     mainThread_.join();
   }
   ::close(listenUnixSockFd_);
@@ -255,8 +251,6 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
 }
 
 UnixSocketServer::UnixSocketServer() : abortFlagStorage_(new uint32_t(0)), abortFlag_(abortFlagStorage_.get()) {}
-
-UnixSocketServer::~UnixSocketServer() { shutdown(); }
 
 std::string UnixSocketServer::getSocketPath() const { return listenUnixSockPath_; }
 
