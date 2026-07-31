@@ -17,12 +17,14 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: mscclpp-h100-multinode-ci
+  default: mscclpp-h100-multinode-ci 
 - name: hostEntries
   type: string
   default: |
-    10.0.0.5 mscclpp-h100-multinode-ci000000
-    10.0.0.4 mscclpp-h100-multinode-ci000001
+    10.0.5.145 DSM121082302011
+    10.0.5.150 DSM121082302014
+    10.0.5.177 DSM121082301013
+    10.0.5.225 DSM121082301032
 
 jobs:
 - job: MultiNodesTest
@@ -82,8 +84,9 @@ jobs:
     parameters:
       subscription: mscclpp-ci-h100
       vmssName: ${{ parameters.vmssName }}
+      pilot: true
       resourceGroup: mscclpp
-      gpuArch: '90'
+      gpuArch: '100a'
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -117,9 +120,3 @@ jobs:
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
-
-  - template: templates/stop.yml
-    parameters:
-      subscription: mscclpp-ci-h100
-      vmssName: ${{ parameters.vmssName }}
-      resourceGroup: mscclpp
