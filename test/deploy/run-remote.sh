@@ -20,6 +20,17 @@ HOSTFILE="${SCRIPT_DIR}/hostfile_ci"
 SSH_OPTION="StrictHostKeyChecking=no"
 KeyFilePath="${SSHKEYFILE_SECUREFILEPATH}"
 
+# CI-agent -> node SSH args. Optionally route through a jumpbox via ProxyCommand
+# (opt-in through SSH_PROXY_JUMP; SSH_PROXY_KEY selects a separate jump key).
+# When the vars are unset there is no proxy, so pipelines that don't set them
+# keep using direct SSH unchanged.
+SSH_EXTRA_ARGS="-i ${KeyFilePath}"
+if [ -n "${SSH_PROXY_JUMP:-}" ]; then
+    PROXY_KEY_OPT=""
+    [ -n "${SSH_PROXY_KEY:-}" ] && PROXY_KEY_OPT="-i ${SSH_PROXY_KEY} "
+    SSH_EXTRA_ARGS="${SSH_EXTRA_ARGS} -o ProxyCommand=\"ssh ${PROXY_KEY_OPT}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p ${SSH_PROXY_JUMP}\""
+fi
+
 USE_DOCKER=true
 USE_LOG=true
 TARGET_HOST=""
@@ -95,7 +106,7 @@ PSSH_COMMON=(
     -t 0
     "${PSSH_TARGET_ARGS[@]}"
     "${PSSH_USER_ARGS[@]}"
-    -x "-i ${KeyFilePath}"
+    -x "${SSH_EXTRA_ARGS}"
     -O "$SSH_OPTION"
 )
 
