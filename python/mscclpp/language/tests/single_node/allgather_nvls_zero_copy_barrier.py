@@ -29,10 +29,13 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
         # rank stores its own chunk to all ranks' output buffers via the switch.
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.output)
 
-        # Synchronization to ensure all the GPUs are ready. A single switch-native
-        # barrier over the NVLS channel replaces the O(n^2) MemoryChannel signal/wait mesh.
+        # Synchronization to ensure all the GPUs are ready. A switch-native signal/wait
+        # over the NVLS channel replaces the O(n^2) MemoryChannel signal/wait mesh: every
+        # rank arrives (signal) then blocks until all ranks have arrived (wait).
         for gpu in range(gpu_size):
-            nvls_chan.at_rank(gpu).barrier(tb_list=[0])
+            nvls_chan.at_rank(gpu).signal(tb_list=[0], relaxed=True)
+        for gpu in range(gpu_size):
+            nvls_chan.at_rank(gpu).wait(tb_list=[0], relaxed=True)
 
         # Broadcasting each rank's chunk to every rank via NVLS multimem store.
         # Rank `gpu` owns output chunk `gpu` (its input under in-place AllGather) and
@@ -42,9 +45,11 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
             output_buffer = rank.get_output_buffer()
             nvls_chan.at_rank(gpu).broadcast(src_chunk=output_buffer[gpu : gpu + 1], buffer_offset=gpu, size=1, tb=0)
 
-        # Synchronization to ensure the GPUs finished
+        # Synchronization to ensure the GPUs finished the broadcast stores.
         for gpu in range(gpu_size):
-            nvls_chan.at_rank(gpu).barrier(tb_list=[0])
+            nvls_chan.at_rank(gpu).signal(tb_list=[0], relaxed=True)
+        for gpu in range(gpu_size):
+            nvls_chan.at_rank(gpu).wait(tb_list=[0], relaxed=True)
 
         print(JSON())
 
