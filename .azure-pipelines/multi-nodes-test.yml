@@ -17,7 +17,7 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: mscclpp-h100-multinode-ci 
+  default: ''   # unused on pilot (StartVMSS is gated off); kept only to satisfy deploy.yml # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
 - name: hostEntries
   type: string
   default: |
@@ -62,10 +62,11 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
-        VMSS="${{ parameters.vmssName }}"
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
-        NODE0="${VMSS}000000"
-        NODE1="${VMSS}000001"
+        # First NVLink pair (2 nodes) from hostEntries; use $2 (the DSM hostname).
+        # Bump to more nodes later by parsing further lines the same way.
+        NODE0=$(awk 'NF>=2{print $2; exit}'           <<< "${{ parameters.hostEntries }}")
+        NODE1=$(awk 'NF>=2{c++} c==2{print $2; exit}' <<< "${{ parameters.hostEntries }}")
 
         echo "Host ${NODE0}
           Port 22345
@@ -80,6 +81,9 @@ jobs:
 
         printf '%s\n%s\n' "${NODE0}" "${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
 
+        # Publish the head node so the run steps can target it without hardcoding.
+        echo "##vso[task.setvariable variable=headNode]${NODE0}"
+
   - template: templates/deploy.yml
     parameters:
       subscription: mscclpp-ci-h100
@@ -93,7 +97,7 @@ jobs:
       name: RunMscclppTest
       displayName: Run multi-nodes mscclpp-test
       continueOnError: true
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
@@ -101,7 +105,7 @@ jobs:
     parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
@@ -109,7 +113,7 @@ jobs:
     parameters:
       name: RunMultiNodePythonTests
       displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
@@ -117,6 +121,6 @@ jobs:
     parameters:
       name: RunMultiNodePythonBenchmark
       displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark

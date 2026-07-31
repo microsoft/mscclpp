@@ -17,7 +17,7 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: mscclpp-h100-multinode-ci # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+  default: ''   # unused on pilot (StartVMSS is gated off); kept only to satisfy deploy.yml # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
 - name: hostEntries
   type: string
   default: |
