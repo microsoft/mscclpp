@@ -31,9 +31,10 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
     the shared harness. Follows the HT flow in test_intranode_multirank.py: an
     initial uncached dispatch records the routing layout on the handle, then the
     timed loop replays a cached dispatch (previous_handle=) + combine to isolate
-    the on-GPU kernel cost. Graph capture is not offered here (graph=None): the HT
-    recv-pool path is not validated under CUDA-graph capture, so --cuda-graph runs
-    the eager ops via the harness fallback."""
+    the on-GPU kernel cost. Under --cuda-graph the harness captures the cached
+    dispatch + combine as ONE graph; the cached path (previous_handle=) skips
+    notify_dispatch's host wait, so it is capture-safe. Verified capturing at 1/2
+    nodes on GB200 (TOKEN_MAJOR and RANK_MAJOR)."""
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
@@ -121,10 +122,31 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
         gc.collect()
         torch.cuda.synchronize()
 
+    # Capture-safe ops for the harness's single-graph capture: replay the CACHED
+    # dispatch (previous_handle=handle0 -> no host-side notify_dispatch wait) then
+    # combine, as ONE graph. combine consumes the dispatch output produced in the
+    # same capture, shared via the _cap holder (like the mscclpp LL backend).
+    graph_spec = None
+    if getattr(args, "cuda_graph", False):
+        _cap = {}
+
+        def _graph_dispatch():
+            _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=handle0)
+
+        def _graph_combine():
+            moe_comm.combine(_cap["out"].tokens, _cap["handle"])
+
+        graph_spec = {
+            "dispatch": _graph_dispatch,
+            "combine": _graph_combine,
+            "pre_replay": None,
+            "on_fail": None,
+        }
+
     return {
         "dispatch": dispatch_fn,
         "combine": combine_fn,
         "teardown": teardown,
         "barrier": None,
-        "graph": None,
+        "graph": graph_spec,
     }
