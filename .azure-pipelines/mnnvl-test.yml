@@ -17,7 +17,7 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: ''   # unused on pilot (StartVMSS is gated off); kept only to satisfy deploy.yml # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+  default: ''   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
 - name: hostEntries
   type: string
   default: |
@@ -25,6 +25,13 @@ parameters:
     10.0.5.150 DSM121082302014
     10.0.5.177 DSM121082301013
     10.0.5.225 DSM121082301032
+
+variables:
+  - group: mscclpp
+  - name: SSH_PROXY_JUMP
+    value: $(GB200-JUMPBOX-USER)@$(GB200-JUMPBOX-IP)
+  - name: SSH_PROXY_KEY
+    value: $(SshKeyFile.secureFilePath)   # same mscclpp.pem key downloaded by deploy.yml
 
 jobs:
 - job: MultiNodesTest
