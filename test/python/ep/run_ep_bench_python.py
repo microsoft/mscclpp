@@ -124,8 +124,7 @@ from ep_bench_common import (
     _mpi_stats,
     sum_matching_kernel_us,
 )
-from ep_bench_mscclpp import setup_mscclpp, parse_kineto_kernels as mscclpp_parse_kineto
-from ep_bench_mscclpp_ht import setup_mscclpp_ht, parse_kineto_kernels as mscclpp_ht_parse_kineto
+from ep_bench_mscclpp import setup_mscclpp, setup_mscclpp_ht, parse_kineto_kernels as mscclpp_parse_kineto
 from ep_bench_nccl import setup_nccl, parse_kineto_kernels as nccl_parse_kineto
 from ep_bench_deepep import setup_deepep, parse_kineto_kernels as deepep_parse_kineto
 from ep_bench_flashinfer import setup_flashinfer, parse_kineto_kernels as flashinfer_parse_kineto
@@ -592,7 +591,7 @@ _SETUP = {
 # Per-backend kineto kernel-name parse, owned by each backend module.
 _PARSE_KINETO = {
     "mscclpp": mscclpp_parse_kineto,
-    "mscclpp-ht": mscclpp_ht_parse_kineto,
+    "mscclpp-ht": mscclpp_parse_kineto,
     "nccl": nccl_parse_kineto,
     "deepep": deepep_parse_kineto,
     "flashinfer": flashinfer_parse_kineto,
