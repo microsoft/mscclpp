@@ -49,6 +49,17 @@ jobs:
 
   steps:
   - task: Bash@3
+    displayName: Jumpbox connectivity check
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -x
+        JB="$(GB200-JUMPBOX-IP)"
+        echo "Agent egress IP:"; curl -s -m 5 ifconfig.me; echo
+        timeout 10 bash -c "cat < /dev/null > /dev/tcp/${JB}/22" \
+          && echo "port 22 OPEN" || echo "port 22 UNREACHABLE"
+
+  - task: Bash@3
     displayName: Add HostEntry
     inputs:
       targetType: 'inline'
