@@ -4,12 +4,13 @@
 # Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
 # (Mixture-of-Experts dispatch/combine) runtime to Python.
 #
-# Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
-# nanobind API so the module never links libtorch:
-#  - Low-latency (LL): moe_runtime.cc + low_latency/{dispatch,combine}.cu.
+# Two backends share one module behind a single `MoERuntime` class (`MoEMode`
+# selects the path), both with a torch-free, raw-pointer (uintptr_t) nanobind
+# API so the module never links libtorch:
+#  - Low-latency (LL): ll_runtime.cc + low_latency/{dispatch,combine}.cu.
 #  - High-throughput (HT): ht_runtime.cc + high-throughput/*.cu, a DeepEP-style
 #    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
-#    recv sizing via the two-phase notify -> allocate -> dispatch API).
+#    recv sizing via the multi-step layout -> notify -> allocate -> dispatch API).
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
@@ -24,7 +25,11 @@ if(MSCCLPP_USE_CUDA)
     if(_mscclpp_requested_gpu_archs)
         foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
             if(_arch STREQUAL "native")
-                list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+                foreach(_native_arch IN LISTS NVIDIA_GPU_ARCHS)
+                    if(_native_arch GREATER_EQUAL 90)
+                        list(APPEND _mscclpp_ep_gpu_archs "${_native_arch}")
+                    endif()
+                endforeach()
             else()
                 string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
                 if(_arch_num AND _arch_num GREATER_EQUAL 90)
@@ -42,9 +47,10 @@ if(MSCCLPP_USE_CUDA)
         endif()
     endif()
     if(NOT _mscclpp_ep_gpu_archs)
-        message(FATAL_ERROR
-            "MSCCLPP_BUILD_EXT_EP=ON requires CUDA architecture 90 or newer. "
-            "Set MSCCLPP_GPU_ARCHS to include 90+ (for example, -DMSCCLPP_GPU_ARCHS=90).")
+        message(STATUS
+            "Skipping the EP extension because MSCCLPP_GPU_ARCHS contains no "
+            "explicit CUDA architecture 90 or newer.")
+        return()
     endif()
     list(REMOVE_DUPLICATES _mscclpp_ep_gpu_archs)
     message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
@@ -52,23 +58,16 @@ endif()
 
 set(EP_SOURCES
     moe_runtime.cc
+    ll_runtime.cc
     bindings.cpp
     low_latency/dispatch.cu
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
-    high-throughput/layout.cu
+    high-throughput/counts.cu
     high-throughput/dispatch.cu
     high-throughput/combine.cu
-    high-throughput/runtime.cu
 )
-
-if(MSCCLPP_USE_ROCM)
-    # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
-    message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu high-throughput/*.cu)
-    set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
-endif()
 
 # Build as a Python extension module (shared object with Python ABI suffix).
 nanobind_add_module(mscclpp_ep_cpp ${EP_SOURCES})

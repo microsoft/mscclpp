@@ -6,7 +6,6 @@
 #include <cstdint>
 
 #include "../config.hpp"
-#include "constants.cuh"
 #include "exception.cuh"
 
 namespace mscclpp {
@@ -16,14 +15,15 @@ namespace high_throughput {
 struct Config {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;
+  static constexpr int MaxLocalExperts = 1024;
   // Dispatch receive sizes are data-dependent, so peers write into this fixed,
   // setup-time mapped internal pool before Python can expose the exact-size view.
   static constexpr int RecvPoolMaxTokens = 65536;
   static constexpr int64_t RecvPoolMaxHiddenBytes = 16384;
   static constexpr int64_t RecvPoolMetaBytes =
-      ((MaxTopk * (sizeof(int) + sizeof(float)) + MaxScales * sizeof(float) + NUM_BUFFER_ALIGNMENT_BYTES - 1) /
-       NUM_BUFFER_ALIGNMENT_BYTES) *
-      NUM_BUFFER_ALIGNMENT_BYTES;
+      ((MaxTopk * (sizeof(int) + sizeof(float)) + MaxScales * sizeof(float) + BufferAlignmentBytes - 1) /
+       BufferAlignmentBytes) *
+      BufferAlignmentBytes;
 
   int numSms_;
 
@@ -34,17 +34,17 @@ struct Config {
 
     const size_t ranks = static_cast<size_t>(numRanks);
     const size_t prefixBytes = ranks * ranks * sizeof(int);
-    const size_t expertScratchBytes = ranks * NUM_MAX_LOCAL_EXPERTS * sizeof(int);
-    return configAlign<size_t>(prefixBytes + expertScratchBytes, NUM_BUFFER_ALIGNMENT_BYTES);
+    const size_t expertScratchBytes = ranks * MaxLocalExperts * sizeof(int);
+    return configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
   }
 
   static size_t recvPoolHeaderBytes(int numRanks) {
-    return configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(int), NUM_BUFFER_ALIGNMENT_BYTES);
+    return configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(int), BufferAlignmentBytes);
   }
 
   static size_t recvPoolMetadataOffset(int numRanks) {
     const size_t hiddenBytes = static_cast<size_t>(RecvPoolMaxTokens) * static_cast<size_t>(RecvPoolMaxHiddenBytes);
-    return configAlign<size_t>(recvPoolHeaderBytes(numRanks) + hiddenBytes, NUM_BUFFER_ALIGNMENT_BYTES);
+    return configAlign<size_t>(recvPoolHeaderBytes(numRanks) + hiddenBytes, BufferAlignmentBytes);
   }
 
   static size_t recvPoolHiddenBytes(int numRanks) {
@@ -53,7 +53,7 @@ struct Config {
 
   static size_t recvPoolBytes(int numRanks) {
     const size_t bytes = recvPoolMetadataOffset(numRanks) + static_cast<size_t>(RecvPoolMaxTokens) * RecvPoolMetaBytes;
-    return configAlign<size_t>(bytes, NUM_BUFFER_ALIGNMENT_BYTES);
+    return configAlign<size_t>(bytes, BufferAlignmentBytes);
   }
 };
 

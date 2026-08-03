@@ -8,7 +8,17 @@ import os
 
 import torch
 
-from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi
+from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi, sum_matching_kernel_us
+
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for the
+    mscclpp high-throughput backend, whose dispatch and combine kernels carry the
+    phase word in their function name (same convention as the LL backend)."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
 
 
 # ============================================================================
@@ -16,11 +26,14 @@ from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi
 # ============================================================================
 def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
     """mscclpp EP high-throughput dispatch/combine via `MoECommunicator` with
-    `mode=MoEMode.HIGH_THROUGHPUT` (GB200 TMA, TOKEN_MAJOR), wired like the other
-    backends: return (dispatch_fn, combine_fn, teardown). Follows the HT flow in
-    test_intranode_multirank.py: an initial uncached dispatch records the routing
-    layout on the handle, then the timed loop replays a cached dispatch
-    (previous_handle=) + combine to isolate the on-GPU kernel cost."""
+    `mode=MoEMode.HIGH_THROUGHPUT` (GB200 TMA, TOKEN_MAJOR or RANK_MAJOR). Returns
+    the uniform backend dict {dispatch, combine, teardown, barrier, graph} used by
+    the shared harness. Follows the HT flow in test_intranode_multirank.py: an
+    initial uncached dispatch records the routing layout on the handle, then the
+    timed loop replays a cached dispatch (previous_handle=) + combine to isolate
+    the on-GPU kernel cost. Graph capture is not offered here (graph=None): the HT
+    recv-pool path is not validated under CUDA-graph capture, so --cuda-graph runs
+    the eager ops via the harness fallback."""
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
@@ -108,4 +121,10 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
         gc.collect()
         torch.cuda.synchronize()
 
-    return dispatch_fn, combine_fn, teardown
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": None,
+        "graph": None,
+    }

@@ -13,32 +13,26 @@
 #include <stdexcept>
 
 #include "api.cuh"
-#include "constants.cuh"
 #include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {
+namespace {
+
+constexpr int CpuTimeoutSeconds = 100;
+
+}  // namespace
 
 MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                                                    const high_throughput::Config& config)
-    : bootstrap_(communicator.bootstrap()),
-      rank_(bootstrap_->getRank()),
-      numRanks_(bootstrap_->getNranks()),
-      numNvlRanks_(std::min(numRanks_, bootstrap_->getNranksPerNode())),
-      numRanksPerIpcDomain_(std::max(numNvlRanks_, std::min(numRanks_, bootstrap_->getNranksPerIpcDomain()))),
-      maxHiddenBytes_(maxHiddenBytes),
-      config_(config) {
-  EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
-  EP_HOST_ASSERT(numNvlRanks_ > 0);
+    : MoERuntime(communicator), maxHiddenBytes_(maxHiddenBytes), config_(config) {
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
     return;
 
   controlBufferBytes_ = config_.controlBufferBytes(numRanks_);
-  taskFifoOffset_ = controlBufferBytes_;
-  symmetricBufferBytes_ =
-      configAlign<size_t>(taskFifoOffset_ + sizeof(int) * NUM_MAX_FIFO_SLOTS, NUM_BUFFER_ALIGNMENT_BYTES);
+  symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
   physicalControlBuffer_ = numRanks_ > numNvlRanks_;
   recvPoolBytes_ = high_throughput::Config::recvPoolBytes(numRanks_);
   setup(communicator);
@@ -48,13 +42,10 @@ MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
   if (!available_) return;
 
   CUDA_CHECK(cudaDeviceSynchronize());
-  high_throughput::barrier(taskFifoPtrsGpu_, head_, rank_, numRanks_, nullptr);
-  moveFifoSlots();
-  CUDA_CHECK(cudaDeviceSynchronize());
+  bootstrap_->barrier();
 
   CUDA_CHECK(cudaFree(combineRecvIdxGpu_));
   CUDA_CHECK(cudaFree(recvPoolPtrsGpu_));
-  CUDA_CHECK(cudaFree(taskFifoPtrsGpu_));
   CUDA_CHECK(cudaFree(bufferPtrsGpu_));
   CUDA_CHECK(cudaFreeHost(const_cast<int*>(moeRecvExpertCounter_)));
   CUDA_CHECK(cudaFreeHost(const_cast<int*>(moeRecvCounter_)));
@@ -68,10 +59,6 @@ MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
     CUDA_CHECK(cudaFree(symmetricBuffer_));
 }
 
-bool MoEHighThroughputRuntime::isAvailable() const { return available_; }
-
-bool MoEHighThroughputRuntime::isInternodeAvailable() const { return isAvailable() && numRanks_ > numNvlRanks_; }
-
 void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
   EP_HOST_ASSERT(!available_);
   if (physicalControlBuffer_) {
@@ -84,24 +71,29 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
 
   constexpr int ControlBufferTag = 17;
   constexpr int RecvPoolTag = 18;
+  constexpr int BarrierConnectionTag = 19;
   const auto transport = mscclpp::Transport::CudaIpc;
+  const mscclpp::EndpointConfig ipcConfig(transport);
   peerMemories_.resize(numRanks_);
   peerMemories_[rank_] = communicator.registerMemory(symmetricBuffer_, symmetricBufferBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories(numRanks_);
   recvPoolMemories_.resize(numRanks_);
   recvPoolMemories_[rank_] = communicator.registerMemory(recvPool_, recvPoolBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRecvPools(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> barrierConnections(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer == rank_) continue;
     communicator.sendMemory(peerMemories_[rank_], peer, ControlBufferTag);
     remoteMemories[peer] = communicator.recvMemory(peer, ControlBufferTag);
     communicator.sendMemory(recvPoolMemories_[rank_], peer, RecvPoolTag);
     remoteRecvPools[peer] = communicator.recvMemory(peer, RecvPoolTag);
+    barrierConnections[peer] = communicator.connect(ipcConfig, peer, BarrierConnectionTag);
   }
 
   bufferPtrs_.resize(numRanks_);
-  taskFifoPtrs_.resize(numRanks_);
   recvPoolPtrs_.resize(numRanks_);
+  barrierChannels_.reserve(numRanks_ - 1);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer != rank_) {
       peerMemories_[peer] = remoteMemories[peer].get();
@@ -109,29 +101,32 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
     }
     void* base = peer == rank_ ? symmetricBuffer_ : peerMemories_[peer].data();
     bufferPtrs_[peer] = base;
-    taskFifoPtrs_[peer] = reinterpret_cast<int*>(static_cast<uint8_t*>(base) + taskFifoOffset_);
     recvPoolPtrs_[peer] = peer == rank_ ? recvPool_ : recvPoolMemories_[peer].data();
+    if (peer != rank_) {
+      auto semaphore =
+          std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator, barrierConnections[peer].get());
+      barrierChannels_.emplace_back(semaphore);
+      barrierChannelHandles[peer] = barrierChannels_.back().deviceHandle();
+    }
   }
 
   CUDA_CHECK(cudaMalloc(&bufferPtrsGpu_, sizeof(void*) * numRanks_));
-  CUDA_CHECK(cudaMalloc(&taskFifoPtrsGpu_, sizeof(int*) * numRanks_));
   CUDA_CHECK(cudaMemcpy(bufferPtrsGpu_, bufferPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(taskFifoPtrsGpu_, taskFifoPtrs_.data(), sizeof(int*) * numRanks_, cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMalloc(&recvPoolPtrsGpu_, sizeof(void*) * numRanks_));
   CUDA_CHECK(cudaMemcpy(recvPoolPtrsGpu_, recvPoolPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
+  barrierChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(barrierChannelHandles_.get(), barrierChannelHandles.data(),
+                                                             numRanks_, cudaMemcpyHostToDevice);
   CUDA_CHECK(cudaMalloc(&combineRecvIdxGpu_,
                         sizeof(int) * static_cast<size_t>(high_throughput::Config::RecvPoolMaxTokens) * numRanks_));
   CUDA_CHECK(cudaMallocHost(&moeRecvCounter_, sizeof(int), cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvCounterMapped_, const_cast<int*>(moeRecvCounter_), 0));
-  CUDA_CHECK(cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * NUM_MAX_LOCAL_EXPERTS, cudaHostAllocMapped));
+  CUDA_CHECK(cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * high_throughput::Config::MaxLocalExperts,
+                            cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvExpertCounterMapped_, const_cast<int*>(moeRecvExpertCounter_), 0));
   *moeRecvCounter_ = -1;
-  for (int i = 0; i < NUM_MAX_LOCAL_EXPERTS; ++i) moeRecvExpertCounter_[i] = -1;
+  for (int i = 0; i < high_throughput::Config::MaxLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
   available_ = true;
-}
-
-void MoEHighThroughputRuntime::moveFifoSlots(int numSlots) {
-  head_ = (head_ + numRanks_ * numSlots) % NUM_MAX_FIFO_SLOTS;
 }
 
 int MoEHighThroughputRuntime::dispatchBlockCount(int xElementSize) const {
@@ -150,14 +145,14 @@ bool MoEHighThroughputRuntime::canUseDirectRecvPool(int numTokens, int numRecvTo
                                                high_throughput::Config::recvPoolHiddenBytes(numRanks_);
 }
 
-void MoEHighThroughputRuntime::layout(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                                      const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
-                                      cudaStream_t stream) {
+void MoEHighThroughputRuntime::computeDispatchCounts(int* numTokensPerRank, int* numTokensPerExpert,
+                                                     bool* isTokenInRank, const int64_t* topkIdx, int numTokens,
+                                                     int numTopk, int numExperts, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  high_throughput::getDispatchLayout(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk,
-                                     numRanks_, numExperts, stream);
+  high_throughput::computeDispatchCounts(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens,
+                                         numTopk, numRanks_, numExperts, stream);
 }
 
 int MoEHighThroughputRuntime::getDispatchNumChannels(int xElementSize) const {
@@ -178,17 +173,16 @@ int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channel
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   const int numLocalExperts = numExperts / numRanks_;
-  EP_HOST_ASSERT(numLocalExperts <= NUM_MAX_LOCAL_EXPERTS);
+  EP_HOST_ASSERT(numLocalExperts <= high_throughput::Config::MaxLocalExperts);
 
   const int numChannels = dispatchBlockCount(xElementSize);
 
   *moeRecvCounter_ = -1;
   for (int i = 0; i < numLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
-  high_throughput::notifyDispatch(numTokensPerRank, moeRecvCounterMapped_, numRanks_, numTokensPerExpert,
-                                  moeRecvExpertCounterMapped_, numExperts, numTokens, isTokenInRank,
-                                  channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrsGpu_,
-                                  taskFifoPtrsGpu_, head_, rank_, stream, numChannels);
-  moveFifoSlots(3);
+  high_throughput::exchangeDispatchCounts(numTokensPerRank, moeRecvCounterMapped_, numRanks_, numTokensPerExpert,
+                                          moeRecvExpertCounterMapped_, numExperts, numTokens, isTokenInRank,
+                                          channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrsGpu_,
+                                          barrierChannelHandles_.get(), rank_, stream, numChannels);
 
   int numRecvTokens = -1;
   const auto start = std::chrono::high_resolution_clock::now();
@@ -198,7 +192,7 @@ int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channel
     for (int i = 0; i < numLocalExperts && ready; ++i) ready &= moeRecvExpertCounter_[i] >= 0;
     if (ready) break;
     if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::high_resolution_clock::now() - start).count() >
-        NUM_CPU_TIMEOUT_SECS)
+        CpuTimeoutSeconds)
       throw std::runtime_error("DeepEP error: CPU recv timeout");
   }
   for (int i = 0; i < numLocalExperts; ++i) numRecvTokensPerExpert[i] = moeRecvExpertCounter_[i];
@@ -220,8 +214,7 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
                                         const float* topkWeights, const bool* isTokenInRank,
                                         const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
                                         int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
-                                        int numRecvTokens, bool cachedMode, DispatchLayout layout, int maxTokensPerRank,
-                                        cudaStream_t stream) {
+                                        int numRecvTokens, bool cachedMode, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(hidden > 0 && xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= maxHiddenBytes_);
@@ -232,9 +225,8 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   const int numChannels = dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
   if (cachedMode) {
-    high_throughput::cachedNotifyDispatch(rankPrefixMatrix, bufferPtrsGpu_, taskFifoPtrsGpu_, head_, rank_, numRanks_,
-                                          stream);
-    moveFifoSlots(2);
+    high_throughput::publishCachedRankPrefix(rankPrefixMatrix, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
+                                             numRanks_, stream);
   }
 
   dispatchReady_ = canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize);
@@ -247,11 +239,10 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   if (recvTopkWeights != nullptr) recvTopkWeights_ = recvTopkWeights;
   high_throughput::dispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
                             numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx,
-                            recvTopkWeights, recvXScales, bufferPtrsGpu_, taskFifoPtrsGpu_, head_, rank_, numRanks_,
-                            stream, numChannels, recvPoolPtrsGpu_, static_cast<int64_t>(poolHeaderBytes),
+                            recvTopkWeights, recvXScales, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
+                            numRanks_, stream, numChannels, recvPoolPtrsGpu_, static_cast<int64_t>(poolHeaderBytes),
                             static_cast<int64_t>(high_throughput::Config::recvPoolMetadataOffset(numRanks_)),
-                            high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_, layout, maxTokensPerRank);
-  moveFifoSlots();
+                            high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_);
 }
 
 void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeights, const void* x,
@@ -285,10 +276,9 @@ void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeigh
 
   const int numBlocks = config_.numSms_;
   high_throughput::combine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk, numRanks_,
-                           recvPoolPtrsGpu_, combineRecvIdxGpu_, taskFifoPtrsGpu_, head_, rank_,
+                           recvPoolPtrsGpu_, combineRecvIdxGpu_, barrierChannelHandles_.get(), rank_,
                            static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
                            high_throughput::Config::RecvPoolMetaBytes, numBlocks, stream);
-  moveFifoSlots();
 }
 
 }  // namespace ep

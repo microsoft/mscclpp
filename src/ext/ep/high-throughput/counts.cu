@@ -4,7 +4,7 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// High-throughput routing layout construction.
+// High-throughput routing-count construction.
 
 #include "api.cuh"
 #include "exception.cuh"
@@ -17,8 +17,8 @@ namespace detail {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
 __global__ void __launch_bounds__(NumThreads, 1)
-    getDispatchLayoutKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                            int numTokens, int numTopk, int numRanks, int numExperts) {
+    computeDispatchCountsKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert,
+                                bool* isTokenInRank, int numTokens, int numTopk, int numRanks, int numExperts) {
   const int blockId = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
 
@@ -53,8 +53,8 @@ __global__ void __launch_bounds__(NumThreads, 1)
     return;
   }
 
-  const int rankBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock;
-  const int rankBegin = (blockId - rankBlocks) * NumRanksPerBlock;
+  const int expertBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock;
+  const int rankBegin = (blockId - expertBlocks) * NumRanksPerBlock;
   const int rankEnd = min(rankBegin + NumRanksPerBlock, numRanks);
   if (rankBegin >= rankEnd) return;
 
@@ -93,17 +93,17 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
 }  // namespace detail
 
-void getDispatchLayout(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                       int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream) {
+void computeDispatchCounts(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                           int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;
   const int numBlocks =
       (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock + (numRanks + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
-  SETUP_LAUNCH_CONFIG(numBlocks, NumThreads, stream);
-  LAUNCH_KERNEL(&cfg, (detail::getDispatchLayoutKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,
-                numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numRanks, numExperts);
+  LaunchConfig config(numBlocks, NumThreads, 0, stream);
+  LAUNCH_KERNEL(config.get(), (detail::computeDispatchCountsKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>),
+                topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numRanks, numExperts);
 }
 
 }  // namespace high_throughput

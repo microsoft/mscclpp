@@ -11,30 +11,34 @@
 #include <cstdint>
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/memory_channel.hpp>
 #include <vector>
 
-#include "api.cuh"
 #include "high-throughput/config.cuh"
+#include "runtime_base.hpp"
 
 namespace mscclpp {
 namespace ep {
 
-class MoEHighThroughputRuntime {
+class MoEHighThroughputRuntime : public MoERuntime {
  public:
   MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
                            const high_throughput::Config& config);
   ~MoEHighThroughputRuntime() noexcept(false);
 
-  bool isAvailable() const;
-  bool isInternodeAvailable() const;
+  MoEMode mode() const override { return MoEMode::HIGH_THROUGHPUT; }
 
-  void layout(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
-              int numTokens, int numTopk, int numExperts, cudaStream_t stream);
+  /// Count tokens per rank and per expert, and record token-to-rank membership.
+  /// This is routing metadata for dispatch, unrelated to `DispatchLayout`.
+  void computeDispatchCounts(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                             const int64_t* topkIdx, int numTokens, int numTopk, int numExperts, cudaStream_t stream);
 
   int getDispatchNumChannels(int xElementSize) const;
 
   void* resolveRecvXBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
+  /// Exchange dispatch counts and wait for mapped receive counters so the caller
+  /// can expose an exact-size receive view before launching payload dispatch.
   int notifyDispatch(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
                      const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
                      int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
@@ -43,7 +47,7 @@ class MoEHighThroughputRuntime {
                 const void* x, const float* xScales, const int64_t* topkIdx, const float* topkWeights,
                 const bool* isTokenInRank, const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
                 int hidden, int numTopk, int numScales, int numExperts, int xElementSize, int numRecvTokens,
-                bool cachedMode, DispatchLayout layout, int maxTokensPerRank, cudaStream_t stream);
+                bool cachedMode, cudaStream_t stream);
 
   void combine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
                const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk, int xElementSize,
@@ -51,22 +55,13 @@ class MoEHighThroughputRuntime {
 
  private:
   void setup(mscclpp::Communicator& communicator);
-  void moveFifoSlots(int numSlots = 1);
   int dispatchBlockCount(int xElementSize) const;
   bool canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
-  int rank_;
-  int numRanks_;
-  int numNvlRanks_;
-  int numRanksPerIpcDomain_;
-  int head_ = 0;
   int64_t maxHiddenBytes_;
   size_t controlBufferBytes_ = 0;
-  size_t taskFifoOffset_ = 0;
   size_t symmetricBufferBytes_ = 0;
   size_t recvPoolBytes_ = 0;
-  bool available_ = false;
   bool physicalControlBuffer_ = false;
   bool dispatchReady_ = false;
   bool dispatchMetadataReady_ = false;
@@ -76,13 +71,13 @@ class MoEHighThroughputRuntime {
   void* symmetricBuffer_ = nullptr;
   void* recvPool_ = nullptr;
   std::vector<void*> bufferPtrs_;
-  std::vector<int*> taskFifoPtrs_;
   std::vector<void*> recvPoolPtrs_;
+  std::vector<mscclpp::BaseMemoryChannel> barrierChannels_;
   std::vector<mscclpp::RegisteredMemory> peerMemories_;
   std::vector<mscclpp::RegisteredMemory> recvPoolMemories_;
   void** bufferPtrsGpu_ = nullptr;
-  int** taskFifoPtrsGpu_ = nullptr;
   void** recvPoolPtrsGpu_ = nullptr;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles_;
   int* combineRecvIdxGpu_ = nullptr;
   const float* recvTopkWeights_ = nullptr;
 

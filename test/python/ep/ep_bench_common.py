@@ -6,13 +6,85 @@ from __future__ import annotations
 
 import os
 import torch
-from mpi4py import MPI
+
+try:
+    from mpi4py import MPI
+except ImportError:
+
+    class _FallbackMPI:
+        SUM = object()
+        MIN = object()
+        MAX = object()
+
+    MPI = _FallbackMPI()
+
+
+class TorchComm:
+    def __init__(self, group):
+        self.torch_group = group
+
+    def Get_rank(self):
+        import torch.distributed as dist
+
+        return dist.get_rank(self.torch_group)
+
+    def Get_size(self):
+        import torch.distributed as dist
+
+        return dist.get_world_size(self.torch_group)
+
+    def Barrier(self):
+        import torch.distributed as dist
+
+        dist.barrier(group=self.torch_group)
+
+    def bcast(self, value, root=0):
+        import torch.distributed as dist
+
+        values = [value]
+        dist.broadcast_object_list(values, src=root, group=self.torch_group)
+        return values[0]
+
+    def allreduce(self, value, op=MPI.SUM):
+        import torch.distributed as dist
+
+        if op is MPI.SUM:
+            reduce_op = dist.ReduceOp.SUM
+        elif op is MPI.MIN:
+            reduce_op = dist.ReduceOp.MIN
+        elif op is MPI.MAX:
+            reduce_op = dist.ReduceOp.MAX
+        else:
+            raise ValueError(f"unsupported reduction op: {op}")
+        tensor = torch.tensor(value, dtype=torch.float64)
+        dist.all_reduce(tensor, op=reduce_op, group=self.torch_group)
+        result = tensor.item()
+        return type(value)(result)
+
+    def gather(self, value, root=0):
+        import torch.distributed as dist
+
+        output = [None] * self.Get_size() if self.Get_rank() == root else None
+        dist.gather_object(value, output, dst=root, group=self.torch_group)
+        return output
 
 
 # ----------------------------------------------------------------------------
 # MPI bootstrap shared by both backends.
 # ----------------------------------------------------------------------------
 def init_mpi():
+    if os.environ.get("EP_BOOTSTRAP") == "torch":
+        import torch.distributed as dist
+
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="gloo")
+        group = dist.distributed_c10d._get_default_group()
+        comm = TorchComm(group)
+        return comm, comm.Get_rank(), comm.Get_size(), local_rank
+
+    if not hasattr(MPI, "COMM_WORLD"):
+        raise RuntimeError("mpi4py is required unless EP_BOOTSTRAP=torch")
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -61,10 +133,16 @@ def _init_torch_nccl(comm, rank, num_ranks, local_rank):
     import torch.distributed as dist
 
     _ensure_torch_dist(comm, rank, num_ranks)
+    default_group = dist.distributed_c10d._get_default_group()
+    group = (
+        default_group
+        if str(dist.get_backend(default_group)).lower() == "nccl"
+        else dist.new_group(ranks=list(range(num_ranks)), backend="nccl")
+    )
     _sync = torch.ones(1, dtype=torch.float, device="cuda")
 
     def _barrier():
-        dist.all_reduce(_sync)
+        dist.all_reduce(_sync, group=group)
 
     _barrier()
     torch.cuda.synchronize()
@@ -78,6 +156,31 @@ def _mpi_stats(comm, avg: float, mn: float, mx: float, num_ranks: int):
     g_min = comm.allreduce(mn, op=MPI.MIN)
     g_max = comm.allreduce(mx, op=MPI.MAX)
     return g_avg, g_min, g_max
+
+
+# ----------------------------------------------------------------------------
+# Kineto kernel-name parsing. Each backend module owns a `parse_kineto_kernels`
+# that maps a torch.profiler key_averages() table to (dispatch_us, combine_us)
+# using that library's own kernel names; they delegate the summation here so the
+# only per-library knowledge in each backend is the kernel-name substrings.
+# ----------------------------------------------------------------------------
+def sum_matching_kernel_us(key_averages, substrs):
+    """Sum each DISTINCT matching kernel's average-per-launch, so single-kernel
+    backends yield that kernel's avg and multi-kernel backends yield their
+    per-iteration SUM (scope-matched). ``substrs`` is an iterable of lowercase-
+    insensitive name substrings; matching strips C++ template arguments so a
+    combine kernel templated on DispatchLayout (e.g. combineKernel<..,
+    DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch' bucket
+    (and vice-versa) -- the dispatch/combine word always precedes the first '<'."""
+    total_us = 0.0
+    matched = False
+    subs = tuple(s.lower() for s in substrs)
+    for e in key_averages:
+        name = e.key.split("<", 1)[0].lower()
+        if any(s in name for s in subs) and int(e.count) > 0:
+            total_us += float(e.self_device_time_total) / int(e.count)
+            matched = True
+    return total_us if matched else 0.0
 
 
 # ----------------------------------------------------------------------------

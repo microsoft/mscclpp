@@ -7,7 +7,7 @@
 #include <cooperative_groups.h>
 
 #include "api.cuh"
-#include "constants.cuh"
+#include "barrier.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 #include "launch.cuh"
@@ -18,10 +18,12 @@ namespace high_throughput {
 namespace detail {
 
 template <int NumRanks>
-__global__ void notifyDispatchKernel(const int* numTokensPerRank, int* mappedRecvCounter, const int* numTokensPerExpert,
-                                     int* mappedRecvExpertCounters, int numExperts, int numTokens, int numChannels,
-                                     const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                                     int expertAlignment, void** bufferPtrs, int** taskFifoPtrs, int head, int rank) {
+__global__ void exchangeDispatchCountsKernel(const int* numTokensPerRank, int* mappedRecvCounter,
+                                             const int* numTokensPerExpert, int* mappedRecvExpertCounters,
+                                             int numExperts, int numTokens, int numChannels, const bool* isTokenInRank,
+                                             int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment,
+                                             void** bufferPtrs, mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels,
+                                             int rank) {
   const int blockId = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
   const int numThreads = static_cast<int>(blockDim.x);
@@ -30,8 +32,8 @@ __global__ void notifyDispatchKernel(const int* numTokensPerRank, int* mappedRec
   const int numWarps = numThreads / WARP_SIZE;
 
   if (blockId == 0) {
-    barrier_device<NumRanks>(taskFifoPtrs, head, rank);
-    move_fifo_slots<NumRanks>(head);
+    if (threadId < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
+    __syncthreads();
 
     const int numExpertsPerRank = numExperts / NumRanks;
     if (threadId < NumRanks) {
@@ -49,8 +51,8 @@ __global__ void notifyDispatchKernel(const int* numTokensPerRank, int* mappedRec
     }
     __syncthreads();
 
-    barrier_device<NumRanks>(taskFifoPtrs, head, rank);
-    move_fifo_slots<NumRanks>(head);
+    if (threadId < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
+    __syncthreads();
 
     auto* localRankCounts = reinterpret_cast<int*>(bufferPtrs[rank]);
     if (threadId < NumRanks) {
@@ -77,7 +79,8 @@ __global__ void notifyDispatchKernel(const int* numTokensPerRank, int* mappedRec
       rankPrefixMatrix[index] = localRankCounts[index];
     }
     memory_fence();
-    barrier_device<NumRanks>(taskFifoPtrs, head, rank);
+    if (threadId < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
+    __syncthreads();
     return;
   }
 
@@ -104,14 +107,16 @@ __global__ void notifyDispatchKernel(const int* numTokensPerRank, int* mappedRec
   }
 }
 
-void notifyDispatch(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks, const int* numTokensPerExpert,
-                    int* mappedRecvExpertCounters, int numExperts, int numTokens, const bool* isTokenInRank,
-                    int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
-                    int** taskFifoPtrs, int head, int rank, cudaStream_t stream, int numChannels) {
-#define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                        \
-  LAUNCH_KERNEL(&cfg, notifyDispatchKernel<ranks>, numTokensPerRank, mappedRecvCounter, numTokensPerExpert,       \
-                mappedRecvExpertCounters, numExperts, numTokens, numChannels, isTokenInRank, channelPrefixMatrix, \
-                rankPrefixMatrix, expertAlignment, bufferPtrs, taskFifoPtrs, head, rank);                         \
+void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
+                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
+                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                            int expertAlignment, void** bufferPtrs,
+                            mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
+                            int numChannels) {
+#define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                       \
+  LAUNCH_KERNEL(config.get(), exchangeDispatchCountsKernel<ranks>, numTokensPerRank, mappedRecvCounter,          \
+                numTokensPerExpert, mappedRecvExpertCounters, numExperts, numTokens, numChannels, isTokenInRank, \
+                channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrs, barrierChannels, rank);      \
   break
 
   constexpr int NumThreads = 128;
@@ -119,16 +124,16 @@ void notifyDispatch(const int* numTokensPerRank, int* mappedRecvCounter, int num
   EP_HOST_ASSERT(numExperts / numRanks <= NumThreads && numRanks <= NumThreads);
   EP_HOST_ASSERT(numChannels > 0);
 
-  SETUP_LAUNCH_CONFIG(1 + numRanks, NumThreads, stream);
+  LaunchConfig config(1 + numRanks, NumThreads, 0, stream);
   SWITCH_RANKS(numRanks, NOTIFY_DISPATCH_LAUNCH_CASE);
 #undef NOTIFY_DISPATCH_LAUNCH_CASE
 }
 
 template <int NumRanks>
-__global__ void cachedNotifyDispatchKernel(const int* rankPrefixMatrix, void** bufferPtrs, int** taskFifoPtrs, int head,
-                                           int rank) {
-  barrier_device<NumRanks>(taskFifoPtrs, head, rank);
-  move_fifo_slots<NumRanks>(head);
+__global__ void publishCachedRankPrefixKernel(const int* rankPrefixMatrix, void** bufferPtrs,
+                                              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank) {
+  if (threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
+  __syncthreads();
 
   const int threadId = static_cast<int>(threadIdx.x);
   const int numThreads = static_cast<int>(blockDim.x);
@@ -139,28 +144,31 @@ __global__ void cachedNotifyDispatchKernel(const int* rankPrefixMatrix, void** b
   }
   memory_fence();
   __syncthreads();
-  barrier_device<NumRanks>(taskFifoPtrs, head, rank);
+  if (threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
 }
 
-void cachedNotifyDispatch(const int* rankPrefixMatrix, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-                          int numRanks, cudaStream_t stream) {
-#define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                 \
-  LAUNCH_KERNEL(&cfg, cachedNotifyDispatchKernel<ranks>, rankPrefixMatrix, bufferPtrs, taskFifoPtrs, head, rank); \
+void publishCachedRankPrefix(const int* rankPrefixMatrix, void** bufferPtrs,
+                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks,
+                             cudaStream_t stream) {
+#define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                  \
+  LAUNCH_KERNEL(config.get(), publishCachedRankPrefixKernel<ranks>, rankPrefixMatrix, bufferPtrs, barrierChannels, \
+                rank);                                                                                             \
   break
 
-  SETUP_LAUNCH_CONFIG(1, 128, stream);
+  LaunchConfig config(1, 128, 0, stream);
   SWITCH_RANKS(numRanks, CACHED_NOTIFY_DISPATCH_LAUNCH_CASE);
 #undef CACHED_NOTIFY_DISPATCH_LAUNCH_CASE
 }
 
-template <int NumRanks, int NumThreads, DispatchLayout Layout>
+template <int NumRanks, int NumThreads>
 __global__ void __launch_bounds__(NumThreads, 1)
     dispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
                    const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
                    int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
-                   float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head,
-                   int rank, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                   int64_t metadataSlotBytes, int* combineRecvIdx, int maxTokensPerRank) {
+                   float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
+                   mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, void** recvPoolPtrs,
+                   int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                   int* combineRecvIdx) {
   const int numChannels = static_cast<int>(gridDim.x);
   const int channel = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
@@ -175,12 +183,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int* dstRankPrefix = reinterpret_cast<const int*>(bufferPtrs[dstRank]);
   const int rankOffset = rank > 0 ? dstRankPrefix[(rank - 1) * NumRanks + dstRank] : 0;
   const int channelOffset = channel > 0 ? channelPrefixMatrix[dstRank * numChannels + channel - 1] : 0;
-  // RANK_MAJOR: fixed [source_rank, max_tokens_per_rank] stride into the destination pool so every
-  // source rank owns a contiguous, padded region (grouped by source rank). TOKEN_MAJOR keeps the
-  // compacted DeepEP prefix offset. channelOffset gives this token's index within the source rank.
-  const int64_t rankBaseSlot = Layout == DispatchLayout::RANK_MAJOR ? static_cast<int64_t>(rank) * maxTokensPerRank
-                                                                    : static_cast<int64_t>(rankOffset);
-  const int64_t outputBase = rankBaseSlot + channelOffset;
+  const int64_t outputBase = static_cast<int64_t>(rankOffset + channelOffset);
   auto* dstPool = reinterpret_cast<uint8_t*>(recvPoolPtrs[dstRank]);
   auto* dstTokens = reinterpret_cast<int4*>(dstPool + recvPoolHeaderBytes);
   auto* dstMetadata = dstPool + recvPoolMetadataOffset;
@@ -229,7 +232,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
   memory_fence();
   cooperative_groups::this_grid().sync();
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(taskFifoPtrs, head, rank);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
   cooperative_groups::this_grid().sync();
 
   const auto* localPool = reinterpret_cast<const uint8_t*>(recvPoolPtrs[rank]);
@@ -256,7 +259,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
   }
 }
 
-template <int NumRanks, int NumThreads, DispatchLayout Layout>
+template <int NumRanks, int NumThreads>
 int maxCooperativeDispatchBlocks() {
   static int cachedDevice = -1;
   static int cachedMaxBlocks = 0;
@@ -266,7 +269,7 @@ int maxCooperativeDispatchBlocks() {
   if (device != cachedDevice) {
     int blocksPerSm;
     int numSms;
-    auto kernel = dispatchKernel<NumRanks, NumThreads, Layout>;
+    auto kernel = dispatchKernel<NumRanks, NumThreads>;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumThreads, 0));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
     cachedDevice = device;
@@ -278,10 +281,10 @@ int maxCooperativeDispatchBlocks() {
 void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
               const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
               int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
-              float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-              int numRanks, cudaStream_t stream, int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes,
-              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx, DispatchLayout layout,
-              int maxTokensPerRank) {
+              float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
+              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks, cudaStream_t stream,
+              int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+              int64_t metadataSlotBytes, int* combineRecvIdx) {
   constexpr int NumThreads = 512;
   EP_HOST_ASSERT(recvPoolPtrs != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
@@ -289,55 +292,51 @@ void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const fl
                      static_cast<int64_t>(numScales) * static_cast<int64_t>(sizeof(float)) <=
                  metadataSlotBytes);
 
-#define DISPATCH_LAUNCH_CASE_LAYOUT(ranks, LayoutTag)                                                                 \
-  EP_HOST_ASSERT((numBlocks <= maxCooperativeDispatchBlocks<ranks, NumThreads, LayoutTag>()));                        \
-  LAUNCH_KERNEL(&cfg, (dispatchKernel<ranks, NumThreads, LayoutTag>), sendHead, reinterpret_cast<const int4*>(input), \
-                topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix, numTokens, numRecvTokens,      \
-                hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx, recvTopkWeights, recvXScales, bufferPtrs,    \
-                taskFifoPtrs, head, rank, recvPoolPtrs, recvPoolHeaderBytes, recvPoolMetadataOffset,                  \
-                metadataSlotBytes, combineRecvIdx, maxTokensPerRank);                                                 \
+#define DISPATCH_LAUNCH_CASE(ranks)                                                                                  \
+  EP_HOST_ASSERT((numBlocks <= maxCooperativeDispatchBlocks<ranks, NumThreads>()));                                  \
+  LAUNCH_KERNEL(config.get(), (dispatchKernel<ranks, NumThreads>), sendHead, reinterpret_cast<const int4*>(input),   \
+                topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix, numTokens, numRecvTokens,     \
+                hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx, recvTopkWeights, recvXScales, bufferPtrs,   \
+                barrierChannels, rank, recvPoolPtrs, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, \
+                combineRecvIdx);                                                                                     \
   break
 
-#define DISPATCH_LAUNCH_CASE(ranks)                                  \
-  if (layout == DispatchLayout::RANK_MAJOR) {                        \
-    DISPATCH_LAUNCH_CASE_LAYOUT(ranks, DispatchLayout::RANK_MAJOR);  \
-  } else {                                                           \
-    DISPATCH_LAUNCH_CASE_LAYOUT(ranks, DispatchLayout::TOKEN_MAJOR); \
-  }
-
-  SETUP_LAUNCH_CONFIG(numBlocks, NumThreads, stream);
+  LaunchConfig config(numBlocks, NumThreads, 0, stream, true);
   SWITCH_RANKS(numRanks, DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
-#undef DISPATCH_LAUNCH_CASE_LAYOUT
 }
 
 }  // namespace detail
 
-void notifyDispatch(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks, const int* numTokensPerExpert,
-                    int* mappedRecvExpertCounters, int numExperts, int numTokens, const bool* isTokenInRank,
-                    int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
-                    int** taskFifoPtrs, int head, int rank, cudaStream_t stream, int numChannels) {
-  detail::notifyDispatch(numTokensPerRank, mappedRecvCounter, numRanks, numTokensPerExpert, mappedRecvExpertCounters,
-                         numExperts, numTokens, isTokenInRank, channelPrefixMatrix, rankPrefixMatrix, expertAlignment,
-                         bufferPtrs, taskFifoPtrs, head, rank, stream, numChannels);
+void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
+                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
+                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                            int expertAlignment, void** bufferPtrs,
+                            mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
+                            int numChannels) {
+  detail::exchangeDispatchCounts(numTokensPerRank, mappedRecvCounter, numRanks, numTokensPerExpert,
+                                 mappedRecvExpertCounters, numExperts, numTokens, isTokenInRank, channelPrefixMatrix,
+                                 rankPrefixMatrix, expertAlignment, bufferPtrs, barrierChannels, rank, stream,
+                                 numChannels);
 }
 
-void cachedNotifyDispatch(const int* rankPrefixMatrix, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-                          int numRanks, cudaStream_t stream) {
-  detail::cachedNotifyDispatch(rankPrefixMatrix, bufferPtrs, taskFifoPtrs, head, rank, numRanks, stream);
+void publishCachedRankPrefix(const int* rankPrefixMatrix, void** bufferPtrs,
+                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks,
+                             cudaStream_t stream) {
+  detail::publishCachedRankPrefix(rankPrefixMatrix, bufferPtrs, barrierChannels, rank, numRanks, stream);
 }
 
 void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
               const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
               int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
-              float* recvTopkWeights, float* recvXScales, void** bufferPtrs, int** taskFifoPtrs, int head, int rank,
-              int numRanks, cudaStream_t stream, int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes,
-              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int* combineRecvIdx, DispatchLayout layout,
-              int maxTokensPerRank) {
+              float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
+              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks, cudaStream_t stream,
+              int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+              int64_t metadataSlotBytes, int* combineRecvIdx) {
   detail::dispatch(sendHead, input, topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix, numTokens,
                    numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx, recvTopkWeights, recvXScales,
-                   bufferPtrs, taskFifoPtrs, head, rank, numRanks, stream, numBlocks, recvPoolPtrs, recvPoolHeaderBytes,
-                   recvPoolMetadataOffset, metadataSlotBytes, combineRecvIdx, layout, maxTokensPerRank);
+                   bufferPtrs, barrierChannels, rank, numRanks, stream, numBlocks, recvPoolPtrs, recvPoolHeaderBytes,
+                   recvPoolMetadataOffset, metadataSlotBytes, combineRecvIdx);
 }
 
 }  // namespace high_throughput
