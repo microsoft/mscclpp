@@ -223,11 +223,8 @@ SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t 
   SwitchChannel channel((void*)devicePtr, mcPtr, size);
   // Stamp the shared barrier resource (if any) onto the channel so that
   // SwitchChannelDeviceHandle::barrier() works without separate semaphores.
-  if (barrierLocalFlag_ != nullptr) {
-    channel.barrierLocalFlag_ = barrierLocalFlag_;
-    channel.barrierMcFlag_ = barrierMcFlag_;
-    channel.barrierGen_ = barrierLocalFlag_ + 1;  // element 1 of the barrier buffer
-    channel.barrierNRanks_ = barrierNRanks_;
+  if (barrierSem_.localBarrierFlag != nullptr) {
+    channel.barrier_ = barrierSem_;
   }
   return channel;
 }
@@ -236,9 +233,11 @@ void NvlsConnection::attachBarrier(std::shared_ptr<void> barrierBuffer,
                                    std::shared_ptr<SwitchChannel> barrierChannel, int nRanks) {
   barrierBuffer_ = std::move(barrierBuffer);
   barrierChannel_ = std::move(barrierChannel);
-  barrierLocalFlag_ = reinterpret_cast<uint64_t*>(barrierBuffer_.get());
-  barrierMcFlag_ = reinterpret_cast<uint64_t*>(barrierChannel_->deviceHandle().mcPtr);
-  barrierNRanks_ = nRanks;
+  auto* localFlag = reinterpret_cast<uint64_t*>(barrierBuffer_.get());
+  barrierSem_.mcBarrierFlag = reinterpret_cast<uint64_t*>(barrierChannel_->deviceHandle().mcPtr);
+  barrierSem_.localBarrierFlag = localFlag;
+  barrierSem_.barrierGen = localFlag + 1;  // element 1 of the barrier buffer
+  barrierSem_.nRanks = nRanks;
 }
 
 SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
@@ -246,10 +245,7 @@ SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
   device.devicePtr = devicePtr_;
   device.mcPtr = mcPtr_.get();
   device.bufferSize = bufferSize_;
-  device.barrier_.mcBarrierFlag = barrierMcFlag_;
-  device.barrier_.localBarrierFlag = barrierLocalFlag_;
-  device.barrier_.barrierGen = barrierGen_;
-  device.barrier_.nRanks = barrierNRanks_;
+  device.barrier_ = barrier_;
   return device;
 };
 

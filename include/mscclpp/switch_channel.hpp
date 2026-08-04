@@ -18,12 +18,9 @@ struct SwitchChannel {
   void* devicePtr_;
   std::shared_ptr<void> mcPtr_;
   size_t bufferSize_;
-  // Barrier state inherited from the owning NvlsConnection (see NvlsConnection::bindAllocatedMemory).
-  // All are null / zero if the connection was created without barrier support.
-  uint64_t* barrierLocalFlag_ = nullptr;
-  uint64_t* barrierMcFlag_ = nullptr;
-  uint64_t* barrierGen_ = nullptr;
-  int barrierNRanks_ = 0;
+  // Barrier semaphore inherited from the owning NvlsConnection (see NvlsConnection::bindAllocatedMemory).
+  // Its pointers are null if the connection was created without barrier support.
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrier_ = {};
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
@@ -68,9 +65,7 @@ class NvlsConnection {
   // flag is carved from this connection's own multicast region, so no auxiliary connection is kept.
   std::shared_ptr<void> barrierBuffer_;
   std::shared_ptr<SwitchChannel> barrierChannel_;
-  uint64_t* barrierLocalFlag_ = nullptr;
-  uint64_t* barrierMcFlag_ = nullptr;
-  int barrierNRanks_ = 0;
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrierSem_ = {};
 };
 
 class Communicator;
