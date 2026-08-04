@@ -299,6 +299,23 @@ bool isNvlsSupported() {
   return false;
 }
 
+bool isBulkSupported() {
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if !defined(MSCCLPP_USE_ROCM)
+  if (!isChecked) {
+    int deviceId;
+    int major;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, deviceId));
+    result = (major >= 9);
+    isChecked = true;
+  }
+  return result;
+#endif
+  return false;
+}
+
 bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
 #if defined(MSCCLPP_USE_ROCM)
   return false;
