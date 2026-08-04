@@ -292,7 +292,10 @@ size_t nvlsMinimumGranularity(int numDevices) {
   if (cuMulticastGetGranularity(&granFabric, &prop, CU_MULTICAST_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
     granFabric = 0;
   }
-  return std::max(granFd, granFabric);
+  size_t gran = std::max(granFd, granFabric);
+  INFO(CONN, "NVLS minimum granularity for ", numDevices, " devices: granFd ", granFd, ", granFabric ", granFabric,
+       ", selected ", gran);
+  return gran;
 }
 #endif  // (CUDA_NVLS_API_AVAILABLE)
 }  // namespace
