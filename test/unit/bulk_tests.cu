@@ -14,7 +14,7 @@ constexpr uint32_t kTile = 4096;
 constexpr uint32_t kElems = kTile / sizeof(int);
 
 // Load one tile into shared memory, then copy it out.
-__global__ void kernelBulkLoad([[maybe_unused]] const int* src, [[maybe_unused]] int* dst) {
+__global__ void kernelBulkLoad(const int* src, int* dst) {
 #if MSCCLPP_BULK_AVAILABLE
   __shared__ alignas(128) int tile[kElems];
   __shared__ mscclpp::BulkBarrier barrier;
@@ -33,12 +33,15 @@ __global__ void kernelBulkLoad([[maybe_unused]] const int* src, [[maybe_unused]]
 
   __syncthreads();
   if (threadIdx.x == 0) barrier.invalidate();
+#else
+  (void)src;
+  (void)dst;
 #endif
 }
 
 // Gather NumSrc tiles into one barrier, then reduce them.
 template <int NumSrc>
-__global__ void kernelBulkGather([[maybe_unused]] const int* src, [[maybe_unused]] int* dst) {
+__global__ void kernelBulkGather(const int* src, int* dst) {
 #if MSCCLPP_BULK_AVAILABLE
   __shared__ alignas(128) int tiles[NumSrc][kElems];
   __shared__ mscclpp::BulkBarrier barrier;
@@ -61,12 +64,15 @@ __global__ void kernelBulkGather([[maybe_unused]] const int* src, [[maybe_unused
 
   __syncthreads();
   if (threadIdx.x == 0) barrier.invalidate();
+#else
+  (void)src;
+  (void)dst;
 #endif
 }
 
 // Reuse one barrier across NumChunks phases, staging each chunk in and storing it back out.
 template <int NumChunks>
-__global__ void kernelBulkRoundTrip([[maybe_unused]] const int* src, [[maybe_unused]] int* dst) {
+__global__ void kernelBulkRoundTrip(const int* src, int* dst) {
 #if MSCCLPP_BULK_AVAILABLE
   __shared__ alignas(128) int tile[kElems];
   __shared__ mscclpp::BulkBarrier barrier;
@@ -100,12 +106,15 @@ __global__ void kernelBulkRoundTrip([[maybe_unused]] const int* src, [[maybe_unu
     mscclpp::bulkStoreWait();  // every store has landed
     barrier.invalidate();
   }
+#else
+  (void)src;
+  (void)dst;
 #endif
 }
 
 // Accumulate a staged tile into a seeded destination with the copy engine.
 template <typename T>
-__global__ void kernelBulkReduce([[maybe_unused]] T* dst, [[maybe_unused]] T addend, [[maybe_unused]] uint32_t count) {
+__global__ void kernelBulkReduce(T* dst, T addend, uint32_t count) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t raw[];
   T* tile = reinterpret_cast<T*>(raw);
@@ -117,7 +126,19 @@ __global__ void kernelBulkReduce([[maybe_unused]] T* dst, [[maybe_unused]] T add
     mscclpp::bulkStoreCommit();
     mscclpp::bulkStoreWait();
   }
+#else
+  (void)dst;
+  (void)addend;
+  (void)count;
 #endif
+}
+
+static bool bulkAvailable() {
+  int device = 0;
+  if (cudaGetDevice(&device) != cudaSuccess) return false;
+  int major = 0;
+  if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) != cudaSuccess) return false;
+  return major >= 9;
 }
 
 class BulkTestData {
@@ -149,7 +170,7 @@ class BulkTestData {
 };
 
 TEST(BulkTest, Load) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -160,7 +181,7 @@ TEST(BulkTest, Load) {
 }
 
 TEST(BulkTest, Gather) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -176,7 +197,7 @@ TEST(BulkTest, Gather) {
 }
 
 TEST(BulkTest, RoundTrip) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -207,7 +228,7 @@ static void reduceStoreTest(float base, float addend) {
 }
 
 TEST(BulkTest, ReduceStoreFloat) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -215,7 +236,7 @@ TEST(BulkTest, ReduceStoreFloat) {
 }
 
 TEST(BulkTest, ReduceStoreBf16) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -223,7 +244,7 @@ TEST(BulkTest, ReduceStoreBf16) {
 }
 
 TEST(BulkTest, ReduceStoreUint32) {
-  if (!mscclpp::isBulkSupported()) {
+  if (!bulkAvailable()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
