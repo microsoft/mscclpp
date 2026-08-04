@@ -19,9 +19,11 @@
 #define MSCCLPP_BULK_AVAILABLE 0
 #endif
 
-#if MSCCLPP_BULK_AVAILABLE
+// Included whenever the CUDA toolkit is present, not only where bulk copy is available, so that the
+// element types accepted by bulkReduceStore() can be named from host code too.
+#if defined(MSCCLPP_DEVICE_CUDA)
 #include <cuda_bf16.h>
-#endif  // MSCCLPP_BULK_AVAILABLE
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 namespace mscclpp {
 
