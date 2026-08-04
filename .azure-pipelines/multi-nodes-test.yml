@@ -43,7 +43,7 @@ jobs:
       cuda13:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
-    name: mscclpp-multi-node
+    name: msccl-ci-gb200
   container:
     image: $[ variables['containerImage'] ]
 
