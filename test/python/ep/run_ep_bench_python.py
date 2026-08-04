@@ -224,7 +224,7 @@ def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
 
 
-def _kineto_kernel_us(
+def torch_profiler_kernel_us(
     dispatch_fn,
     combine_fn,
     comm,
@@ -459,7 +459,7 @@ def run_backend(
     inproc_ok = False
     if use_kineto:
         comm.Barrier()
-        ck_disp, ck_comb = _kineto_kernel_us(
+        ck_disp, ck_comb = torch_profiler_kernel_us(
             dispatch_fn,
             combine_fn,
             comm,
