@@ -229,8 +229,8 @@ SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t 
   return channel;
 }
 
-void NvlsConnection::attachBarrier(std::shared_ptr<void> barrierBuffer,
-                                   std::shared_ptr<SwitchChannel> barrierChannel, int nRanks) {
+void NvlsConnection::attachBarrier(std::shared_ptr<void> barrierBuffer, std::shared_ptr<SwitchChannel> barrierChannel,
+                                   int nRanks) {
   barrierBuffer_ = std::move(barrierBuffer);
   barrierChannel_ = std::move(barrierChannel);
   auto* localFlag = reinterpret_cast<uint64_t*>(barrierBuffer_.get());
