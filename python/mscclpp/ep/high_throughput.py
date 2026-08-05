@@ -119,6 +119,8 @@ class HighThroughputRuntime:
         cached_rank_prefix_matrix: Optional[torch.Tensor],
         cached_channel_prefix_matrix: Optional[torch.Tensor],
         expert_alignment: int,
+        dispatch_layout: DispatchLayout = DispatchLayout.TOKEN_MAJOR,
+        max_tokens_per_rank: int = 0,
     ):
         """Run high-throughput dispatch and return outputs plus combine metadata."""
         assert x.dim() == 2 and x.is_contiguous()
@@ -161,6 +163,12 @@ class HighThroughputRuntime:
             )
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
 
+        # RANK_MAJOR uses a fixed, padded [num_ranks, max_tokens_per_rank] slot grid so every
+        # source rank owns a contiguous region; the recv view therefore spans all padded slots.
+        if dispatch_layout == DispatchLayout.RANK_MAJOR:
+            assert max_tokens_per_rank > 0, "RANK_MAJOR requires max_tokens_per_rank > 0"
+            num_recv_tokens = self.group_size * max_tokens_per_rank
+
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
         recv_x = self._alloc_recv_x(num_tokens, num_recv_tokens, hidden, x_element_size)
         send_head = torch.empty((num_tokens, self.group_size), dtype=torch.int32, device="cuda")
@@ -199,6 +207,8 @@ class HighThroughputRuntime:
             x_element_size,
             num_recv_tokens,
             cached_mode,
+            dispatch_layout,
+            max_tokens_per_rank,
             _stream_ptr(),
         )
         return (
@@ -275,8 +285,8 @@ class HighThroughputBackend:
         self.num_sms = config.num_sms
         self.enable_overlap = config.enable_overlap
 
-        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
-            raise NotImplementedError("HT mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if self.output_layout not in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR):
+            raise NotImplementedError("HT mode supports DispatchLayout.TOKEN_MAJOR or RANK_MAJOR")
         if config.invalid_token_expert_id is not None:
             raise ValueError("invalid_token_expert_id is only supported in low-latency mode")
 
@@ -375,6 +385,8 @@ class HighThroughputBackend:
                 cache["rank_prefix_matrix"],
                 cache["channel_prefix_matrix"],
                 self.expert_alignment,
+                dispatch_layout=self.output_layout,
+                max_tokens_per_rank=self.max_tokens_per_rank,
             )
             del _runtime_recv_topk_idx, _runtime_recv_topk_weights, _runtime_num_recv_tokens_per_expert_list
             recv_topk_idx = cache["recv_topk_idx"]
@@ -407,6 +419,8 @@ class HighThroughputBackend:
                 None,
                 None,
                 self.expert_alignment,
+                dispatch_layout=self.output_layout,
+                max_tokens_per_rank=self.max_tokens_per_rank,
             )
             combine_context = HighThroughputCombineContext(
                 recv_topk_weights=recv_topk_weights,

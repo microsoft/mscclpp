@@ -214,7 +214,8 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
                                         const float* topkWeights, const bool* isTokenInRank,
                                         const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
                                         int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
-                                        int numRecvTokens, bool cachedMode, cudaStream_t stream) {
+                                        int numRecvTokens, bool cachedMode, DispatchLayout layout, int maxTokensPerRank,
+                                        cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(hidden > 0 && xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= maxHiddenBytes_);
@@ -242,7 +243,7 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
                             recvTopkWeights, recvXScales, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
                             numRanks_, stream, numChannels, recvPoolPtrsGpu_, static_cast<int64_t>(poolHeaderBytes),
                             static_cast<int64_t>(high_throughput::Config::recvPoolMetadataOffset(numRanks_)),
-                            high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_);
+                            high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_, layout, maxTokensPerRank);
 }
 
 void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeights, const void* x,

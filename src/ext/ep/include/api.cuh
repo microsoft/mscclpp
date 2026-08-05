@@ -66,7 +66,8 @@ void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const fl
               float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
               mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks, cudaStream_t stream,
               int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-              int64_t metadataSlotBytes, int* combineRecvIdx);
+              int64_t metadataSlotBytes, int* combineRecvIdx, DispatchLayout layout = DispatchLayout::TOKEN_MAJOR,
+              int maxTokensPerRank = 0);
 
 /// Return expert outputs to their source ranks and reduce routed contributions.
 void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,

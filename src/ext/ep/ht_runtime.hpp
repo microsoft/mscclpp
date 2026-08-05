@@ -14,6 +14,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <vector>
 
+#include "api.cuh"
 #include "high-throughput/config.cuh"
 #include "runtime_base.hpp"
 
@@ -47,7 +48,7 @@ class MoEHighThroughputRuntime : public MoERuntime {
                 const void* x, const float* xScales, const int64_t* topkIdx, const float* topkWeights,
                 const bool* isTokenInRank, const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
                 int hidden, int numTopk, int numScales, int numExperts, int xElementSize, int numRecvTokens,
-                bool cachedMode, cudaStream_t stream);
+                bool cachedMode, DispatchLayout layout, int maxTokensPerRank, cudaStream_t stream);
 
   void combine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
                const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk, int xElementSize,

@@ -204,7 +204,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t x_scales_ptr, uintptr_t topk_idx_ptr, uintptr_t topk_weights_ptr, uintptr_t is_token_in_rank_ptr,
              uintptr_t rank_prefix_matrix_ptr, uintptr_t channel_prefix_matrix_ptr, int num_tokens, int hidden,
              int num_topk, int num_scales, int num_experts, int x_element_size, int num_recv_tokens, bool cached_mode,
-             uintptr_t stream_ptr) {
+             mscclpp::ep::DispatchLayout dispatch_layout, int max_tokens_per_rank, uintptr_t stream_ptr) {
             narrow<mscclpp::ep::MoEHighThroughputRuntime>(self, "HIGH_THROUGHPUT")
                 .dispatch(ptr(recv_x_ptr), reinterpret_cast<float*>(ptr(recv_x_scales_ptr)),
                           reinterpret_cast<int64_t*>(ptr(recv_topk_idx_ptr)),
@@ -216,14 +216,17 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                           reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
                           reinterpret_cast<const int*>(ptr(rank_prefix_matrix_ptr)),
                           reinterpret_cast<const int*>(ptr(channel_prefix_matrix_ptr)), num_tokens, hidden, num_topk,
-                          num_scales, num_experts, x_element_size, num_recv_tokens, cached_mode, stream(stream_ptr));
+                          num_scales, num_experts, x_element_size, num_recv_tokens, cached_mode, dispatch_layout,
+                          max_tokens_per_rank, stream(stream_ptr));
           },
           nb::arg("recv_x_ptr"), nb::arg("recv_x_scales_ptr"), nb::arg("recv_topk_idx_ptr"),
           nb::arg("recv_topk_weights_ptr"), nb::arg("send_head_ptr"), nb::arg("x_ptr"), nb::arg("x_scales_ptr"),
           nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("is_token_in_rank_ptr"),
           nb::arg("rank_prefix_matrix_ptr"), nb::arg("channel_prefix_matrix_ptr"), nb::arg("num_tokens"),
           nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_scales"), nb::arg("num_experts"),
-          nb::arg("x_element_size"), nb::arg("num_recv_tokens"), nb::arg("cached_mode"), nb::arg("stream_ptr"))
+          nb::arg("x_element_size"), nb::arg("num_recv_tokens"), nb::arg("cached_mode"),
+          nb::arg("dispatch_layout") = mscclpp::ep::DispatchLayout::TOKEN_MAJOR, nb::arg("max_tokens_per_rank") = 0,
+          nb::arg("stream_ptr"))
       .def(
           "ht_combine",
           [](mscclpp::ep::MoERuntime& self, uintptr_t combined_x_ptr, uintptr_t combined_topk_weights_ptr,
