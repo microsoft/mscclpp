@@ -155,7 +155,8 @@ def parse_args() -> argparse.Namespace:
         "--dispatch-dtype",
         choices=("bf16", "fp8_e4m3"),
         default="bf16",
-        help="mscclpp LL dispatch wire format. NCCL-EP path is bf16 only.",
+        help="mscclpp LL dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
+        "benchmark is wired BF16-only (the harness does not plumb NCCL-EP's dispatch scales yet).",
     )
     p.add_argument(
         "--combine-mode",
@@ -175,9 +176,9 @@ def parse_args() -> argparse.Namespace:
         "--iters-per-graph",
         dest="graph_group_size",
         type=int,
-        default=10,
+        default=50,
         help="with --cuda-graph, number of dispatch->combine iterations captured INSIDE one CUDA "
-        "graph (replayed as a unit; default 10). >1 amortizes launch overhead and keeps the "
+        "graph (replayed as a unit; default 50). >1 amortizes launch overhead and keeps the "
         "spin-waiting dispatch/combine kernels from being inflated by per-replay launch skew; "
         "reported times are per iteration. Automatically treated as 1 without --cuda-graph.",
     )
@@ -213,7 +214,10 @@ def parse_args() -> argparse.Namespace:
         # non-1 default does not error a plain (non-graph) benchmark.
         args.graph_group_size = 1
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
-        raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
+        raise SystemExit(
+            "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
+            "(NCCL-EP supports FP8 but its path here is BF16-only); use --backend mscclpp"
+        )
     return args
 
 
@@ -357,13 +361,13 @@ def torch_profiler_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, iters_per_graph=1):
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, graph_group_size=1):
     """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
     (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
     replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
     ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
     given, runs before each replay (e.g. a host MPI barrier that cannot live inside
-    the graph). ``iters_per_graph`` dispatch->combine iterations are captured inside
+    the graph). ``graph_group_size`` dispatch->combine iterations are captured inside
     the single graph so one replay runs them all -- this amortizes launch overhead
     and keeps the spin-waiting dispatch/combine kernels from being inflated by
     per-replay launch skew (reported times are divided back to per-iteration by the
@@ -381,7 +385,7 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
             pre_replay()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
-            for _ in range(iters_per_graph):
+            for _ in range(graph_group_size):
                 dispatch_op()
                 combine_op()
         torch.cuda.synchronize()
@@ -414,7 +418,7 @@ def run_backend(
     nccl_barrier=None,
     bench_barrier=None,
     parse_kernels=None,
-    iters_per_graph=1,
+    graph_group_size=1,
 ):
     base_inputs = inputs[0] if isinstance(inputs, list) else inputs
     _, _, _, num_valid_selections = base_inputs
@@ -471,14 +475,15 @@ def run_backend(
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
-    # When the graph captured iters_per_graph iterations, one replay (one
-    # dispatch_fn() call) ran them all, so divide the per-replay time back to
-    # per-iteration. Kernel-only kineto is already per-iteration (its per-launch
-    # average divides by the kernel count, which scales with iters_per_graph).
-    ipg = max(1, iters_per_graph)
-    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / ipg for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / ipg for i in range(iters)]
-    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / ipg for i in range(iters)]
+    # graph_group_size is the number of dispatch->combine iterations captured in one
+    # graph (the --graph-group-size arg; 1 when this backend is not graph-captured).
+    # One replay (one dispatch_fn() call) ran them all, so divide the per-replay time
+    # back to per-iteration. Kernel-only kineto is already per-iteration (its
+    # per-launch average divides by the kernel count, which scales with the group).
+    group = max(1, graph_group_size)
+    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
+    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
+    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
 
@@ -676,14 +681,14 @@ def main() -> None:
         # still attributed by kernel name. If capture fails, keep the eager ops.
         graph = None
         spec = ops.get("graph")
-        effective_ipg = 1
+        effective_group_size = 1
         if spec is not None:
             graphed = _capture_paired_graph(
                 spec["dispatch"],
                 spec["combine"],
                 pre_replay=spec.get("pre_replay"),
                 on_fail=spec.get("on_fail"),
-                iters_per_graph=max(1, args.graph_group_size),
+                graph_group_size=max(1, args.graph_group_size),
             )
             local_ok = graphed is not None
             all_ok = comm.allreduce(1 if local_ok else 0, op=MPI.MIN)
@@ -692,12 +697,12 @@ def main() -> None:
             comm.Barrier()
             if graphed is not None:
                 dispatch_fn, combine_fn, graph = graphed
-                effective_ipg = max(1, args.graph_group_size)
+                effective_group_size = max(1, args.graph_group_size)
                 os.environ["EP_KINETO_SEPARATE"] = "0"
                 if rank == 0:
                     print(
                         f"[cfg] {name} cuda_graph captured "
-                        f"(single graph; dispatch+combine; iters_per_graph={effective_ipg})",
+                        f"(single graph; dispatch+combine; graph_group_size={effective_group_size})",
                         flush=True,
                     )
         try:
@@ -713,7 +718,7 @@ def main() -> None:
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
                 parse_kernels=_PARSE_KINETO[name],
-                iters_per_graph=effective_ipg,
+                graph_group_size=effective_group_size,
             )
         finally:
             torch.cuda.synchronize()
