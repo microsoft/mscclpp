@@ -674,10 +674,12 @@ void Socket::pollConnect() {
   if (ret == -1) throw SysError("poll failed", errno);
   if (ret == 0) return;
 
-  /* check socket status */
-  if ((ret == 1 && (pfd.revents & POLLOUT)) == 0) {
+  if (pfd.revents & POLLNVAL) {
     throw Error("poll failed", ErrorCode::InternalError);
   }
+  if ((pfd.revents & (POLLOUT | POLLERR | POLLHUP)) == 0) return;
+
+  /* Check SO_ERROR for both successful and failed nonblocking connects. */
   if (getsockopt(fd_, SOL_SOCKET, SO_ERROR, (void*)&ret, &rlen) == -1) {
     throw SysError("getsockopt failed", errno);
   }
