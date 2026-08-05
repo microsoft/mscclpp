@@ -10,10 +10,7 @@ from mscclpp.language.rank import Buffer, Rank
 from mscclpp.language.utils import AlgoSpec
 
 
-def allgather_multi_nodes(
-    spec: AlgoSpec,
-    thread_block_group_size: int,
-) -> CollectiveProgram:
+def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
     """Build a hierarchical AllGather across nodes and local GPUs."""
     if not isinstance(spec.collective, AllGather):
         raise ValueError("allgather_multi_nodes requires an AllGather collective")
@@ -24,14 +21,7 @@ def allgather_multi_nodes(
     if spec.collective.chunk_factor != 1:
         raise ValueError("allgather_multi_nodes requires chunk_factor=1")
     if spec.in_place != spec.collective.inplace:
-        raise ValueError(
-            "spec.in_place must match spec.collective.inplace"
-        )
-    if thread_block_group_size != 1:
-        raise ValueError(
-            "allgather_multi_nodes currently requires thread_block_group_size=1"
-        )
-
+        raise ValueError("spec.in_place must match spec.collective.inplace")
     num_nodes = spec.world_size // spec.nranks_per_node
     gpus_per_node = spec.nranks_per_node
     total_gpus = spec.world_size
@@ -269,7 +259,6 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--num_gpus", type=int, required=True)
     parser.add_argument("--gpus_per_node", type=int, required=True)
-    parser.add_argument("--tbg", type=int, default=1)
     parser.add_argument("--num_threads_per_block", type=int, default=1024)
     parser.add_argument("--min_message_size", type=int, default=1 << 10)
     parser.add_argument("--max_message_size", type=int, default=8 << 20)
@@ -296,5 +285,5 @@ if __name__ == "__main__":
         max_message_size=args.max_message_size,
         tags={"default": 1},
     )
-    program = allgather_multi_nodes(algo_spec, args.tbg)
+    program = allgather_multi_nodes(algo_spec)
     print(program.to_json())
