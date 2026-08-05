@@ -27,11 +27,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
     total_gpus = spec.world_size
 
     with CollectiveProgram.from_spec(spec) as prog:
-        scratch_slots = (
-            (gpus_per_node - 1)
-            + 2 * (num_nodes - 1)
-            + (gpus_per_node - 1) * (num_nodes - 1)
-        )
+        scratch_slots = (gpus_per_node - 1) + 2 * (num_nodes - 1) + (gpus_per_node - 1) * (num_nodes - 1)
         scratch_buffers = [Buffer(rank, scratch_slots) for rank in range(total_gpus)]
 
         intra_node_channels: dict[tuple[int, int], MemoryChannel] = {}
@@ -81,16 +77,8 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         continue
                     src_rank = src_local_rank + node_id * gpus_per_node
                     dst_rank = dst_local_rank + node_id * gpus_per_node
-                    scratch_slot = (
-                        src_local_rank
-                        if src_local_rank < dst_local_rank
-                        else src_local_rank - 1
-                    )
-                    thread_block = (
-                        dst_local_rank - 1
-                        if src_local_rank < dst_local_rank
-                        else dst_local_rank
-                    )
+                    scratch_slot = src_local_rank if src_local_rank < dst_local_rank else src_local_rank - 1
+                    thread_block = dst_local_rank - 1 if src_local_rank < dst_local_rank else dst_local_rank
                     intra_node_channels[(dst_rank, src_rank)].put_packets(
                         scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
                         local_sources[src_rank],
@@ -106,11 +94,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     if src_local_rank == dst_local_rank:
                         continue
                     src_rank = src_local_rank + node_id * gpus_per_node
-                    scratch_slot = (
-                        src_local_rank - 1
-                        if dst_local_rank < src_local_rank
-                        else src_local_rank
-                    )
+                    scratch_slot = src_local_rank - 1 if dst_local_rank < src_local_rank else src_local_rank
                     rank.unpack_packets(
                         rank.get_output_buffer()[src_rank : src_rank + 1],
                         scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
@@ -128,14 +112,10 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                 for dst_node_id in range(num_nodes):
                     if src_node_id == dst_node_id:
                         continue
-                    thread_block = (
-                        dst_node_id - 1 if src_node_id < dst_node_id else dst_node_id
-                    )
+                    thread_block = dst_node_id - 1 if src_node_id < dst_node_id else dst_node_id
                     local_packet_slot = local_packet_offset + thread_block
                     rank.copy_packets(
-                        scratch_buffers[src_rank][
-                            local_packet_slot : local_packet_slot + 1
-                        ],
+                        scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
                         local_sources[src_rank],
                         tb=phase_1_send_offset + thread_block,
                     )
@@ -145,12 +125,8 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         src_node_id if src_node_id < dst_node_id else src_node_id - 1
                     )
                     inter_node_channels[(dst_rank, src_rank)].read_put_packets(
-                        scratch_buffers[dst_rank][
-                            remote_scratch_slot : remote_scratch_slot + 1
-                        ],
-                        scratch_buffers[src_rank][
-                            local_packet_slot : local_packet_slot + 1
-                        ],
+                        scratch_buffers[dst_rank][remote_scratch_slot : remote_scratch_slot + 1],
+                        scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
                         tb=phase_1_send_offset + thread_block,
                     )
 
@@ -163,9 +139,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     if src_node_id == dst_node_id:
                         continue
                     src_rank = local_rank + src_node_id * gpus_per_node
-                    remote_node_slot = (
-                        src_node_id - 1 if dst_node_id < src_node_id else src_node_id
-                    )
+                    remote_node_slot = src_node_id - 1 if dst_node_id < src_node_id else src_node_id
                     scratch_slot = remote_receive_offset + remote_node_slot
                     rank.unpack_packets(
                         rank.get_output_buffer()[src_rank : src_rank + 1],
@@ -180,9 +154,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
             for src_node_id in range(num_nodes):
                 if src_node_id == dst_node_id:
                     continue
-                remote_node_slot = (
-                    src_node_id - 1 if dst_node_id < src_node_id else src_node_id
-                )
+                remote_node_slot = src_node_id - 1 if dst_node_id < src_node_id else src_node_id
                 for src_local_rank in range(gpus_per_node):
                     src_rank = src_local_rank + dst_node_id * gpus_per_node
                     remote_scratch_slot = remote_receive_offset + remote_node_slot
@@ -190,39 +162,23 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         if src_local_rank == dst_local_rank:
                             continue
                         dst_rank = dst_local_rank + dst_node_id * gpus_per_node
-                        local_peer_slot = (
-                            src_local_rank
-                            if src_local_rank < dst_local_rank
-                            else src_local_rank - 1
-                        )
-                        fanout_slot = (
-                            local_fanout_offset
-                            + local_peer_slot
-                            + (gpus_per_node - 1) * remote_node_slot
-                        )
-                        thread_block = (
-                            dst_local_rank - 1
-                            if src_local_rank < dst_local_rank
-                            else dst_local_rank
-                        ) + (gpus_per_node - 1) * remote_node_slot
+                        local_peer_slot = src_local_rank if src_local_rank < dst_local_rank else src_local_rank - 1
+                        fanout_slot = local_fanout_offset + local_peer_slot + (gpus_per_node - 1) * remote_node_slot
+                        thread_block = (dst_local_rank - 1 if src_local_rank < dst_local_rank else dst_local_rank) + (
+                            gpus_per_node - 1
+                        ) * remote_node_slot
                         intra_node_channels[(dst_rank, src_rank)].read_put_packets(
                             scratch_buffers[dst_rank][fanout_slot : fanout_slot + 1],
-                            scratch_buffers[src_rank][
-                                remote_scratch_slot : remote_scratch_slot + 1
-                            ],
+                            scratch_buffers[src_rank][remote_scratch_slot : remote_scratch_slot + 1],
                             tb=phase_2_send_offset + thread_block,
                         )
 
-        phase_2_unpack_offset = phase_2_send_offset + (num_nodes - 1) * (
-            gpus_per_node - 1
-        )
+        phase_2_unpack_offset = phase_2_send_offset + (num_nodes - 1) * (gpus_per_node - 1)
         for dst_node_id in range(num_nodes):
             for src_node_id in range(num_nodes):
                 if src_node_id == dst_node_id:
                     continue
-                remote_node_slot = (
-                    src_node_id - 1 if dst_node_id < src_node_id else src_node_id
-                )
+                remote_node_slot = src_node_id - 1 if dst_node_id < src_node_id else src_node_id
                 for dst_local_rank in range(gpus_per_node):
                     dst_rank = dst_local_rank + dst_node_id * gpus_per_node
                     rank = Rank(dst_rank)
@@ -230,19 +186,9 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         if src_local_rank == dst_local_rank:
                             continue
                         src_rank = src_local_rank + src_node_id * gpus_per_node
-                        local_peer_slot = (
-                            src_local_rank - 1
-                            if dst_local_rank < src_local_rank
-                            else src_local_rank
-                        )
-                        fanout_slot = (
-                            local_fanout_offset
-                            + local_peer_slot
-                            + (gpus_per_node - 1) * remote_node_slot
-                        )
-                        thread_block = (
-                            local_peer_slot + (gpus_per_node - 1) * remote_node_slot
-                        )
+                        local_peer_slot = src_local_rank - 1 if dst_local_rank < src_local_rank else src_local_rank
+                        fanout_slot = local_fanout_offset + local_peer_slot + (gpus_per_node - 1) * remote_node_slot
+                        thread_block = local_peer_slot + (gpus_per_node - 1) * remote_node_slot
                         rank.unpack_packets(
                             rank.get_output_buffer()[src_rank : src_rank + 1],
                             scratch_buffers[dst_rank][fanout_slot : fanout_slot + 1],
