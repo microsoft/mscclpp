@@ -28,10 +28,6 @@ parameters:
 
 variables:
   - group: mscclpp
-  - name: SSH_PROXY_JUMP
-    value: $(GB200-JUMPBOX-USER)@$(GB200-JUMPBOX-IP)
-  - name: SSH_PROXY_KEY
-    value: $(SshKeyFile.secureFilePath)   # same mscclpp.pem key downloaded by deploy.yml
 
 jobs:
 - job: MultiNodesTest
@@ -49,15 +45,18 @@ jobs:
 
   steps:
   - task: Bash@3
-    displayName: Jumpbox connectivity check
+    displayName: Node connectivity check
     inputs:
       targetType: 'inline'
       script: |
         set -x
-        JB="$(GB200-JUMPBOX-IP)"
         echo "Agent egress IP:"; curl -s -m 5 ifconfig.me; echo
-        timeout 10 bash -c "cat < /dev/null > /dev/tcp/${JB}/22" \
-          && echo "port 22 OPEN" || echo "port 22 UNREACHABLE"
+        while IFS= read -r line; do
+          ip=$(awk 'NF>=1{print $1}' <<< "$line")
+          [ -z "$ip" ] && continue
+          timeout 10 bash -c "cat < /dev/null > /dev/tcp/${ip}/22" \
+            && echo "${ip}:22 OPEN" || echo "${ip}:22 UNREACHABLE"
+        done <<< "${{ parameters.hostEntries }}"
 
   - task: Bash@3
     displayName: Add HostEntry
