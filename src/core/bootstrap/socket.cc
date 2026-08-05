@@ -688,7 +688,7 @@ void Socket::pollConnect() {
     state_ = SocketStateConnected;
   } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
     if (++connectRetries_ % 1000 == 0) {
-      INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
+      INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(ret));
     }
     usleep(SLEEP_INT);
 

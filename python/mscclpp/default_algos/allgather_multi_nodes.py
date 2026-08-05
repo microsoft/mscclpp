@@ -56,7 +56,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         src_rank,
                     )
 
-        thread_block_offset = 1
+        thread_block_offset = 0
         local_sources = []
         for rank_id in range(total_gpus):
             rank = Rank(rank_id)
