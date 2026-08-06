@@ -65,7 +65,7 @@ steps:
       LCOV_MAJOR_VERSION=$(echo "${LCOV_VERSION}" | sed -n 's/.*LCOV version \([0-9][0-9]*\).*/\1/p')
       LCOV_CAPTURE_ARGS=""
       if [ "${LCOV_MAJOR_VERSION:-0}" -ge 2 ]; then
-        LCOV_CAPTURE_ARGS="--ignore-errors inconsistent"
+        LCOV_CAPTURE_ARGS="--ignore-errors inconsistent,source"
       fi
 
       lcov ${GCOV_TOOL_ARG} --directory . --capture --output-file coverage.info ${LCOV_CAPTURE_ARGS}
