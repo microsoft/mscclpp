@@ -30,24 +30,23 @@ fi
 
 make -C /root/mscclpp/tools/peer-access-test
 set +e
-/root/mscclpp/tools/peer-access-test/peer_access_test
+# Newer host drivers break with the container's host-injected CUDA compat libs (803);
+# probe without them first, fall back to compat only if the native driver fails.
+NATIVE_LD_PATH=$(echo "${LD_LIBRARY_PATH}" | tr ':' '\n' | grep -v '/compat' | paste -sd ':' -)
+LD_LIBRARY_PATH="${NATIVE_LD_PATH}" /root/mscclpp/tools/peer-access-test/peer_access_test
 PEER_ACCESS_EXIT_CODE=$?
 set -e
-if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ] && [ "${PLATFORM}" == "cuda" ]; then
-    # Exit code 2 = CUDA init failure (e.g., driver/toolkit version mismatch).
-    # Add CUDA compat libs for forward compatibility and retry.
-    CUDA_COMPAT_PATH="/usr/local/cuda/compat"
-    if [ -d "${CUDA_COMPAT_PATH}" ]; then
-        echo "Adding ${CUDA_COMPAT_PATH} to LD_LIBRARY_PATH for forward compatibility"
-        export LD_LIBRARY_PATH="${CUDA_COMPAT_PATH}:${LD_LIBRARY_PATH}"
-        /root/mscclpp/tools/peer-access-test/peer_access_test
-    else
-        echo "CUDA compat libs not found at ${CUDA_COMPAT_PATH}"
-        exit 1
-    fi
+RESOLVED_LD_PATH="${NATIVE_LD_PATH}"
+if [ ${PEER_ACCESS_EXIT_CODE} -ne 0 ] && [ "${PLATFORM}" == "cuda" ] && [ -d "/usr/local/cuda/compat" ]; then
+    echo "Native driver failed (exit ${PEER_ACCESS_EXIT_CODE}); retrying with CUDA compat libs"
+    RESOLVED_LD_PATH="/usr/local/cuda/compat:${NATIVE_LD_PATH}"
+    LD_LIBRARY_PATH="${RESOLVED_LD_PATH}" /root/mscclpp/tools/peer-access-test/peer_access_test
 elif [ ${PEER_ACCESS_EXIT_CODE} -ne 0 ]; then
     exit ${PEER_ACCESS_EXIT_CODE}
 fi
+# Persist the resolved LD_LIBRARY_PATH so later docker exec sessions (run-remote.sh)
+# reuse it and are not affected by the host runtime's compat-first injection.
+echo "export LD_LIBRARY_PATH=\"${RESOLVED_LD_PATH}\"" > /root/mscclpp/.ldpath
 make -C /root/mscclpp/tools/peer-access-test clean
 
 if [ "${PLATFORM}" == "rocm" ]; then
