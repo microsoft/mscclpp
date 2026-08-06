@@ -60,9 +60,11 @@ steps:
         GCOV_TOOL_ARG="--gcov-tool ${GCOV_WRAPPER}"
       fi
 
-      lcov --version
+      LCOV_VERSION=$(lcov --version 2>&1)
+      echo "${LCOV_VERSION}"
+      LCOV_MAJOR_VERSION=$(echo "${LCOV_VERSION}" | sed -n 's/.*LCOV version \([0-9][0-9]*\).*/\1/p')
       LCOV_CAPTURE_ARGS=""
-      if lcov --help 2>&1 | grep -q "inconsistent"; then
+      if [ "${LCOV_MAJOR_VERSION:-0}" -ge 2 ]; then
         LCOV_CAPTURE_ARGS="--ignore-errors inconsistent"
       fi
 
