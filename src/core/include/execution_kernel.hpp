@@ -641,6 +641,28 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
     mscclpp::SwitchChannelDeviceHandle::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
   }
 }
+
+template <bool Relaxed = false>
+MSCCLPP_DEVICE_INLINE void handleMultiSignal(const Operation& op) {
+  if (threadIdx.x == 0) {
+    if constexpr (Relaxed) {
+      nvlsChannels_[op.nvlsInputIndex].relaxedSignal();
+    } else {
+      nvlsChannels_[op.nvlsInputIndex].signal();
+    }
+  }
+}
+
+template <bool Relaxed = false>
+MSCCLPP_DEVICE_INLINE void handleMultiWait(const Operation& op) {
+  if (threadIdx.x == 0) {
+    if constexpr (Relaxed) {
+      nvlsChannels_[op.nvlsInputIndex].relaxedWait();
+    } else {
+      nvlsChannels_[op.nvlsInputIndex].wait();
+    }
+  }
+}
 #endif
 
 template <typename T, typename PacketType, bool ReuseScratch>
@@ -778,6 +800,14 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleMultiStore<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   } else if (opType == OperationType::MULTI_STORE_PKT) {
     handleMultiStorePkt<T, PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::MULTI_SIGNAL) {
+    handleMultiSignal(op);
+  } else if (opType == OperationType::MULTI_WAIT) {
+    handleMultiWait(op);
+  } else if (opType == OperationType::MULTI_RELAXED_SIGNAL) {
+    handleMultiSignal<true>(op);
+  } else if (opType == OperationType::MULTI_RELAXED_WAIT) {
+    handleMultiWait<true>(op);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {

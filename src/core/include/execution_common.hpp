@@ -68,6 +68,10 @@ enum class OperationType : uint8_t {
   SEM_ACQUIRE,
   MULTI_STORE,
   MULTI_STORE_PKT,
+  MULTI_SIGNAL,
+  MULTI_WAIT,
+  MULTI_RELAXED_SIGNAL,
+  MULTI_RELAXED_WAIT,
 };
 
 struct Channels {

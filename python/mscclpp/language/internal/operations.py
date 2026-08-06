@@ -362,18 +362,29 @@ class BarrierOperation(BaseOperation):
     __current_barriers = []
 
     def __init__(self, rank: int, tb_list: List[int]):
-        for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
-            BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
-
-        if barrier_info not in BarrierOperation.__current_barriers[rank]:
-            self.barrier_id = len(BarrierOperation.__current_barriers[rank])
-            BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id
-        else:
-            self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
+        self.barrier_id = BarrierOperation.reserve_barrier_id(rank, barrier_info)
 
         super().__init__(Instruction.barrier)
         self.barrier_info = barrier_info
+
+    @classmethod
+    def reserve_barrier_id(cls, rank: int, barrier_info):
+        """Allocate a per-rank DeviceSyncer id, shared across all barrier kinds.
+
+        Both intra-block barriers and switch (NVLS) barriers draw from this single
+        per-rank sequence. Because ``BarrierInfo`` includes a ``kind`` discriminator,
+        different barrier kinds with the same ``tb_list`` receive distinct ids and
+        therefore never alias to the same ``deviceSyncers[]`` slot after instancing.
+        """
+        for _ in range(len(cls.__current_barriers), rank + 1):
+            cls.__current_barriers.append({})
+        if barrier_info not in cls.__current_barriers[rank]:
+            barrier_id = len(cls.__current_barriers[rank])
+            cls.__current_barriers[rank][barrier_info] = barrier_id
+        else:
+            barrier_id = cls.__current_barriers[rank][barrier_info]
+        return barrier_id
 
     def shift_ids(self, instance, num_instances, replication_function):
         self.barrier_id = replication_function(self.barrier_id, instance, num_instances)
@@ -395,14 +406,59 @@ class BarrierOperation(BaseOperation):
         return result
 
     class BarrierInfo:
-        def __init__(self, tb_list):
+        def __init__(self, tb_list, kind="sync"):
             self.tb_list = tb_list
+            self.kind = kind
 
         def __eq__(self, other):
-            return self.tb_list == other.tb_list
+            return self.tb_list == other.tb_list and self.kind == other.kind
 
         def __hash__(self):
-            return hash(tuple(self.tb_list))
+            return hash((tuple(self.tb_list), self.kind))
+
+
+class GroupSignal(BaseOperation):
+    """Cross-rank arrival over an NVLS SwitchChannel.
+
+    Emits a switch-native ``multimem`` arrival that replaces one direction of the O(n^2)
+    MemoryChannel signal mesh. One thread per participating thread block (``threadIdx.x == 0``)
+    issues the arrival, mirroring the MemoryChannel signal handler; the backing barrier counter
+    is advanced atomically, so multiple thread blocks (e.g. replicated instances) may each
+    contribute an arrival safely.
+
+    Intra-block thread ordering (so all threads' prior stores are visible before the arrival) is
+    the caller's responsibility via ``data_sync`` on the DSL signal/wait call.
+    """
+
+    def __init__(self, switch_channel_id: int, relaxed: bool = False, data_sync: SyncType = SyncType.both):
+        super().__init__(Instruction.group_relaxed_signal if relaxed else Instruction.group_signal)
+        self.switch_channel_id = switch_channel_id
+        self.data_sync = data_sync
+
+    def to_dict(self):
+        return {"name": self.name.value, "switch_channel_id": self.switch_channel_id}
+
+
+class GroupWait(BaseOperation):
+    """Cross-rank wait over an NVLS SwitchChannel.
+
+    Spins until every arrival for this barrier generation has landed on the shared multimem
+    counter. Pairs with ``GroupSignal`` to replace the O(n^2) MemoryChannel wait mesh. One
+    thread per participating thread block (``threadIdx.x == 0``) performs the wait, mirroring the
+    MemoryChannel wait handler; the per-rank generation target is advanced atomically, so multiple
+    thread blocks (e.g. replicated instances) may each wait safely.
+
+    Intra-block thread ordering is the caller's responsibility via ``data_sync`` on the DSL
+    signal/wait call.
+    """
+
+    def __init__(self, switch_channel_id: int, relaxed: bool = False, data_sync: SyncType = SyncType.both):
+        super().__init__(Instruction.group_relaxed_wait if relaxed else Instruction.group_wait)
+        self.switch_channel_id = switch_channel_id
+        self.data_sync = data_sync
+
+    def to_dict(self):
+        return {"name": self.name.value, "switch_channel_id": self.switch_channel_id}
 
 
 class FlushOperation(BaseOperation):
@@ -1053,6 +1109,8 @@ def check_data_sync_op(operation):
         or isinstance(operation, SignalOperation)
         or isinstance(operation, WaitOperation)
         or isinstance(operation, FlushOperation)
+        or isinstance(operation, GroupSignal)
+        or isinstance(operation, GroupWait)
     )
 
 
@@ -1066,6 +1124,10 @@ def add_data_sync(operations):
         Instruction.relaxed_signal,
         Instruction.relaxed_wait,
         Instruction.flush,
+        Instruction.group_signal,
+        Instruction.group_wait,
+        Instruction.group_relaxed_signal,
+        Instruction.group_relaxed_wait,
     }
 
     for operation in operations:

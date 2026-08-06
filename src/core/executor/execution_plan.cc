@@ -73,6 +73,14 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::MULTI_STORE;
   } else if (str == "gstorepkt") {
     return mscclpp::OperationType::MULTI_STORE_PKT;
+  } else if (str == "gsignal") {
+    return mscclpp::OperationType::MULTI_SIGNAL;
+  } else if (str == "gwait") {
+    return mscclpp::OperationType::MULTI_WAIT;
+  } else if (str == "grlxsignal") {
+    return mscclpp::OperationType::MULTI_RELAXED_SIGNAL;
+  } else if (str == "grlxwait") {
+    return mscclpp::OperationType::MULTI_RELAXED_WAIT;
   } else if (str == "rlxsignal") {
     return mscclpp::OperationType::RELAXED_SIGNAL;
   } else if (str == "rlxwait") {
@@ -579,6 +587,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
   }
   if (op.contains("barrier_id")) {
     operation.deviceSyncerIndex = op["barrier_id"];
+  }
+  if (op.contains("switch_channel_id")) {
+    operation.nvlsInputIndex = op["switch_channel_id"];
   }
   if (op.contains("num_threadblocks")) {
     operation.nThreadBlocks = op["num_threadblocks"];

@@ -1007,6 +1007,48 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
+    def signal(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
+        """Send a group signal through the switch channel.
+
+        Notifies every rank in the group that an operation has completed or that
+        data is ready. The executing rank is taken implicitly from the channel
+        (bound via ``at_rank``), mirroring the MemoryChannel signal API.
+
+        Args:
+            tb (int): The thread block ID that will execute this signal operation.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the signal operation.
+                Defaults to SyncType.both.
+            relaxed (bool, optional): Whether to use relaxed memory ordering. Defaults to False.
+
+        Example:
+            >>> channel.at_rank(0).signal(tb=0)
+        """
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = GroupSignal(tb_channel_ids[0], relaxed=relaxed, data_sync=data_sync)
+        get_program().add_operation(self.src_rank, tb, op)
+
+    def wait(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
+        """Wait for a group signal through the switch channel.
+
+        Waits until every rank in the group has arrived, ensuring operations are
+        completed before proceeding. The executing rank is taken implicitly from the
+        channel (bound via ``at_rank``), mirroring the MemoryChannel wait API.
+
+        Args:
+            tb (int): The thread block ID that will execute this wait operation.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the wait operation.
+                Defaults to SyncType.both.
+            relaxed (bool, optional): Whether to use relaxed memory ordering. Defaults to False.
+
+        Example:
+            >>> channel.at_rank(0).wait(tb=0)
+        """
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = GroupWait(tb_channel_ids[0], relaxed=relaxed, data_sync=data_sync)
+        get_program().add_operation(self.src_rank, tb, op)
+
     class SwitchChannelRankView:
         """A rank-specific view of a SwitchChannel for performing operations.
 
@@ -1070,6 +1112,48 @@ class SwitchChannel:
                 >>> rank_view.broadcast(src_chunk=chunk, buffer_offset=0, size=1, tb=0)
             """
             return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
+
+        def signal(self, tb, data_sync=SyncType.both, relaxed=False):
+            """Signal all ranks in the group from this rank's perspective.
+
+            Convenience method that binds this view's rank to the channel and calls
+            the underlying channel's signal method.
+
+            Args:
+                tb (int): The thread block ID that will execute this signal operation.
+                data_sync (SyncType, optional): __syncthreads() placement relative to the
+                    signal. Defaults to SyncType.both.
+                relaxed (bool, optional): Whether to use relaxed signaling. Defaults to False.
+
+            Returns:
+                The result of the underlying channel's signal operation.
+
+            Example:
+                >>> rank_view.signal(tb=0)
+            """
+            self._channel.src_rank = self._rank
+            return self._channel.signal(tb, data_sync=data_sync, relaxed=relaxed)
+
+        def wait(self, tb, data_sync=SyncType.both, relaxed=False):
+            """Wait for a signal from all ranks in the group from this rank's perspective.
+
+            Convenience method that binds this view's rank to the channel and calls
+            the underlying channel's wait method.
+
+            Args:
+                tb (int): The thread block ID that will execute this wait operation.
+                data_sync (SyncType, optional): __syncthreads() placement relative to the
+                    wait. Defaults to SyncType.both.
+                relaxed (bool, optional): Whether to use relaxed waiting. Defaults to False.
+
+            Returns:
+                The result of the underlying channel's wait operation.
+
+            Example:
+                >>> rank_view.wait(tb=0)
+            """
+            self._channel.src_rank = self._rank
+            return self._channel.wait(tb, data_sync=data_sync, relaxed=relaxed)
 
         def broadcast_packets(self, src_chunk: Chunk, buffer_offset, size, tb):
             """Perform a packet broadcast operation from this rank's perspective.

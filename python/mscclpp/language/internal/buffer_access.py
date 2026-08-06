@@ -19,7 +19,14 @@ class BuffersAccess:
     def process_operations(self, operations):
         result_operations = []
         for operation in operations:
-            if operation.name == Instruction.nop or operation.name == Instruction.barrier:
+            if (
+                operation.name == Instruction.nop
+                or operation.name == Instruction.barrier
+                or operation.name == Instruction.group_signal
+                or operation.name == Instruction.group_wait
+                or operation.name == Instruction.group_relaxed_signal
+                or operation.name == Instruction.group_relaxed_wait
+            ):
                 self.clear_data_access()
             else:
                 if operation.name == Instruction.pipeline:
