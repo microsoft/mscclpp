@@ -297,13 +297,13 @@ void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const fl
                      static_cast<int64_t>(numScales) * static_cast<int64_t>(sizeof(float)) <=
                  metadataSlotBytes);
 
-#define DISPATCH_LAUNCH_CASE_LAYOUT(ranks, LayoutTag)                                                                \
-  EP_HOST_ASSERT((numBlocks <= maxCooperativeDispatchBlocks<ranks, NumThreads, LayoutTag>()));                        \
-  LAUNCH_KERNEL(config.get(), (dispatchKernel<ranks, NumThreads, LayoutTag>), sendHead,                               \
-                reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,               \
-                channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales,            \
-                recvTopkIdx, recvTopkWeights, recvXScales, bufferPtrs, barrierChannels, rank, recvPoolPtrs,           \
-                recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, combineRecvIdx, maxTokensPerRank);    \
+#define DISPATCH_LAUNCH_CASE_LAYOUT(ranks, LayoutTag)                                                              \
+  EP_HOST_ASSERT((numBlocks <= maxCooperativeDispatchBlocks<ranks, NumThreads, LayoutTag>()));                     \
+  LAUNCH_KERNEL(config.get(), (dispatchKernel<ranks, NumThreads, LayoutTag>), sendHead,                            \
+                reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,            \
+                channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales,         \
+                recvTopkIdx, recvTopkWeights, recvXScales, bufferPtrs, barrierChannels, rank, recvPoolPtrs,        \
+                recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, combineRecvIdx, maxTokensPerRank); \
   break
 
 #define DISPATCH_LAUNCH_CASE(ranks)                                  \
