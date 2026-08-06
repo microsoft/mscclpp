@@ -1007,61 +1007,47 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
-    def signal(self, rank, tb_list, relaxed=False):
-        """Signal all ranks in the group from this rank.
+    def signal(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
+        """Send a group signal through the switch channel.
 
-        Sends a signal to all ranks in the rank group, notifying them that
-        an operation has completed or that data is ready.
-
-        Args:
-            rank (int): The rank that will execute this signal operation.
-            tb_list (List[int]): Thread block IDs that participate in the signal.
-            relaxed (bool, optional): Whether to use relaxed signaling. Defaults to False.
-
-        Raises:
-            RuntimeError: If tb_list is empty.
-
-        Example:
-            >>> channel.signal(rank=0, tb_list=[0])
-        """
-        if len(tb_list) == 0:
-            raise RuntimeError("Group signal requires at least one thread block.")
-        if 0 not in tb_list:
-            raise RuntimeError("Group signal tb_list must include thread block 0 (the arrival leader).")
-
-        self.src_rank = rank
-        for tb in tb_list:
-            tb_channel_ids = get_program().setup_channel(tb, self)
-            op = GroupSignal(rank, tb_list, tb_channel_ids[0], relaxed=relaxed)
-            get_program().add_operation(rank, tb, op)
-
-    def wait(self, rank, tb_list, relaxed=False):
-        """Wait for a signal from all ranks in the group.
-
-        Waits for a signal from all ranks in the rank group, ensuring that
-        operations are completed before proceeding.
+        Notifies every rank in the group that an operation has completed or that
+        data is ready. The executing rank is taken implicitly from the channel
+        (bound via ``at_rank``), mirroring the MemoryChannel signal API.
 
         Args:
-            rank (int): The rank that will execute this wait operation.
-            tb_list (List[int]): Thread block IDs that participate in the wait.
-            relaxed (bool, optional): Whether to use relaxed waiting. Defaults to False.
-
-        Raises:
-            RuntimeError: If tb_list is empty.
+            tb (int): The thread block ID that will execute this signal operation.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the signal operation.
+                Defaults to SyncType.both.
+            relaxed (bool, optional): Whether to use relaxed memory ordering. Defaults to False.
 
         Example:
-            >>> channel.wait(rank=0, tb_list=[0])
+            >>> channel.at_rank(0).signal(tb=0)
         """
-        if len(tb_list) == 0:
-            raise RuntimeError("Group wait requires at least one thread block.")
-        if 0 not in tb_list:
-            raise RuntimeError("Group wait tb_list must include thread block 0 (the arrival leader).")
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = GroupSignal(tb_channel_ids[0], relaxed=relaxed, data_sync=data_sync)
+        get_program().add_operation(self.src_rank, tb, op)
 
-        self.src_rank = rank
-        for tb in tb_list:
-            tb_channel_ids = get_program().setup_channel(tb, self)
-            op = GroupWait(rank, tb_list, tb_channel_ids[0], relaxed=relaxed)
-            get_program().add_operation(rank, tb, op)
+    def wait(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
+        """Wait for a group signal through the switch channel.
+
+        Waits until every rank in the group has arrived, ensuring operations are
+        completed before proceeding. The executing rank is taken implicitly from the
+        channel (bound via ``at_rank``), mirroring the MemoryChannel wait API.
+
+        Args:
+            tb (int): The thread block ID that will execute this wait operation.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the wait operation.
+                Defaults to SyncType.both.
+            relaxed (bool, optional): Whether to use relaxed memory ordering. Defaults to False.
+
+        Example:
+            >>> channel.at_rank(0).wait(tb=0)
+        """
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = GroupWait(tb_channel_ids[0], relaxed=relaxed, data_sync=data_sync)
+        get_program().add_operation(self.src_rank, tb, op)
 
     class SwitchChannelRankView:
         """A rank-specific view of a SwitchChannel for performing operations.
@@ -1127,43 +1113,47 @@ class SwitchChannel:
             """
             return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
 
-        def signal(self, tb_list, relaxed=False):
+        def signal(self, tb, data_sync=SyncType.both, relaxed=False):
             """Signal all ranks in the group from this rank's perspective.
 
-            Convenience method that calls the underlying channel's signal method
-            with this view's rank automatically provided.
+            Convenience method that binds this view's rank to the channel and calls
+            the underlying channel's signal method.
 
             Args:
-                tb_list (List[int]): Thread block IDs that participate in the signal.
-                    Must include thread block 0, which acts as the arrival leader.
+                tb (int): The thread block ID that will execute this signal operation.
+                data_sync (SyncType, optional): __syncthreads() placement relative to the
+                    signal. Defaults to SyncType.both.
                 relaxed (bool, optional): Whether to use relaxed signaling. Defaults to False.
 
             Returns:
                 The result of the underlying channel's signal operation.
 
             Example:
-                >>> rank_view.signal(tb_list=[0])
+                >>> rank_view.signal(tb=0)
             """
-            return self._channel.signal(self._rank, tb_list, relaxed)
+            self._channel.src_rank = self._rank
+            return self._channel.signal(tb, data_sync=data_sync, relaxed=relaxed)
 
-        def wait(self, tb_list, relaxed=False):
+        def wait(self, tb, data_sync=SyncType.both, relaxed=False):
             """Wait for a signal from all ranks in the group from this rank's perspective.
 
-            Convenience method that calls the underlying channel's wait method
-            with this view's rank automatically provided.
+            Convenience method that binds this view's rank to the channel and calls
+            the underlying channel's wait method.
 
             Args:
-                tb_list (List[int]): Thread block IDs that participate in the wait.
-                    Must include thread block 0, which acts as the arrival leader.
+                tb (int): The thread block ID that will execute this wait operation.
+                data_sync (SyncType, optional): __syncthreads() placement relative to the
+                    wait. Defaults to SyncType.both.
                 relaxed (bool, optional): Whether to use relaxed waiting. Defaults to False.
 
             Returns:
                 The result of the underlying channel's wait operation.
 
             Example:
-                >>> rank_view.wait(tb_list=[0])
+                >>> rank_view.wait(tb=0)
             """
-            return self._channel.wait(self._rank, tb_list, relaxed)
+            self._channel.src_rank = self._rank
+            return self._channel.wait(tb, data_sync=data_sync, relaxed=relaxed)
 
         def broadcast_packets(self, src_chunk: Chunk, buffer_offset, size, tb):
             """Perform a packet broadcast operation from this rank's perspective.

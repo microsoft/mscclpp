@@ -637,7 +637,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
 
 template <bool Relaxed = false>
 MSCCLPP_DEVICE_INLINE void handleMultiSignal(const Operation& op) {
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
+  if (threadIdx.x == 0) {
     if constexpr (Relaxed) {
       nvlsChannels_[op.nvlsInputIndex].relaxedSignal();
     } else {
@@ -648,7 +648,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiSignal(const Operation& op) {
 
 template <bool Relaxed = false>
 MSCCLPP_DEVICE_INLINE void handleMultiWait(const Operation& op) {
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
+  if (threadIdx.x == 0) {
     if constexpr (Relaxed) {
       nvlsChannels_[op.nvlsInputIndex].relaxedWait();
     } else {
