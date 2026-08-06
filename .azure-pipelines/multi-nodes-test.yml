@@ -35,7 +35,7 @@ jobs:
   strategy:
     matrix:
       cuda13:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0-aarch64
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
     name: msccl-ci-gb200
   container:
@@ -106,6 +106,7 @@ jobs:
       pilot: true
       resourceGroup: mscclpp
       gpuArch: '100a'
+      containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0-aarch64
 
   - template: templates/run-remote-task.yml
     parameters:

@@ -41,6 +41,9 @@ parameters:
 - name: sglangImage
   type: string
   default: ''
+- name: containerImage
+  type: string
+  default: ''
 
 steps:
 # 0. Ensure Azure CLI exists before running AzureCLI@2 tasks.
@@ -159,3 +162,6 @@ steps:
     filePath: test/deploy/deploy.sh
     arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }} ${{ parameters.sglangImage }} ${{ parameters.pilot }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
+  ${{ if ne(parameters.containerImage, '') }}:
+    env:
+      CONTAINERIMAGE: ${{ parameters.containerImage }}
