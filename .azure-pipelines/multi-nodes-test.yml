@@ -35,7 +35,7 @@ jobs:
   strategy:
     matrix:
       cuda13:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0-aarm64
   pool:
     name: msccl-ci-gb200
   container:
