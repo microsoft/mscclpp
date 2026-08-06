@@ -482,7 +482,11 @@ def run_backend(
     # per-launch average divides by the kernel count, which scales with the group).
     group = max(1, graph_group_size)
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
+    # In single-graph CUDA-graph mode both phases replay inside dispatch_fn() and
+    # combine_fn is a no-op, so the host-observed combine span is ~0. Clamp to a tiny
+    # epsilon so the downstream throughput division (comb_bytes / c_avg) cannot hit a
+    # ZeroDivisionError; kernel-only kineto reports the real per-phase combine time.
+    comb_us = [max(c_start[i].elapsed_time(c_end[i]) * 1e3 / group, 1e-3) for i in range(iters)]
     tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
