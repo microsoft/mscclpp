@@ -897,7 +897,7 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 
 // Same-channel concurrent-flush kernel: N GPU threads on the same PortChannel each call
 // putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
-// each caller waits on its own TriggerSync rather than on a globally-incrementing counter
+// each caller waits on its own TriggerFlush rather than on a globally-incrementing counter
 // that could be assigned out-of-order relative to the FIFO push order.
 __constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
 
@@ -936,7 +936,7 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   communicator->bootstrap()->barrier();
 
   // Measure: a successful completion (no deadlock, no CQ error) validates that each
-  // concurrent-flush caller waited on its own TriggerSync (not someone else's earlier one).
+  // concurrent-flush caller waited on its own TriggerFlush (not someone else's earlier one).
   const int nIters = 500;
   mscclpp::Timer timer;
   kernelSameChanConcurrentFlush<<<1, nThreads>>>(nIters);

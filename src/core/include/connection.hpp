@@ -94,7 +94,7 @@ class BaseConnection {
   int maxWriteQueueSize_;
 
   // GPU-visible flush-done position (host-pinned memory). ProxyService writes one past the
-  // highest FIFO position whose TriggerSync request has fully completed on this connection
+  // highest FIFO position whose TriggerFlush request has fully completed on this connection
   // (CQ drained for IB, synchronous flush() returned for non-IB).
   std::shared_ptr<uint64_t> gpuFlushDonePos_;
 };
