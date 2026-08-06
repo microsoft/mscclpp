@@ -96,7 +96,7 @@ steps:
       fi
 
       lcov ${GCOV_TOOL_ARG} --extract coverage.info "${BUILD_PREFIX}/src/*" "${BUILD_PREFIX}/include/mscclpp/*" --output-file coverage.info ${LCOV_COMMON_ARGS}
-      lcov --list coverage.info ${LCOV_COMMON_ARGS}
+      lcov --summary coverage.info ${LCOV_COMMON_ARGS}
       ls -la coverage.info
 
 - task: Bash@3
