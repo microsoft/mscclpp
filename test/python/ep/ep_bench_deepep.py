@@ -113,9 +113,12 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     # DeepEP CUDA-graph capture is limited by TRANSPORT, not node count. On the
     # all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain) the
     # symmetric-memory kernels ARE graph-capturable at any node count -- verified
-    # capturing at 1/2/4 nodes on a GB200 NVL72. Only the RDMA/IB scale-out path
-    # (GIN enabled, multi-rack) crashes under graph capture (CUDA 719 in
-    # symmetric.hpp), so disable capture only when GIN is active.
+    # capturing at 1/2/4 nodes on a GB200 NVL72. The RDMA/IB scale-out path (GIN /
+    # IBGDA enabled, multi-rack) is not graph-capturable by design: DeepEP's
+    # internode transport drives NVSHMEM/IBGDA put-signal operations that are not
+    # legal inside a CUDA graph (capture aborts with CUDA 719 in symmetric.hpp).
+    # This is a documented DeepEP internode limitation, not a bug in this harness,
+    # so we simply disable capture when GIN is active and run that path eagerly.
     gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
     deepep_can_graph = args.cuda_graph and gin_disabled
 
