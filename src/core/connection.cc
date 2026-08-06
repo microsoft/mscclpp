@@ -9,6 +9,7 @@
 
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -66,6 +67,10 @@ MSCCLPP_API_CPP void Connection::write(RegisteredMemory dst, uint64_t dstOffset,
 MSCCLPP_API_CPP void Connection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src,
                                                uint64_t newValue) {
   impl_->updateAndSync(dst, dstOffset, src, newValue);
+}
+
+MSCCLPP_API_CPP void Connection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  impl_->accumulate(dst, dstOffset, value);
 }
 
 MSCCLPP_API_CPP void Connection::flush(int64_t timeoutUsec) { impl_->flush(timeoutUsec); }
@@ -192,6 +197,31 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+}
+
+void CudaIpcConnection::accumulate([[maybe_unused]] RegisteredMemory dst, [[maybe_unused]] uint64_t dstOffset,
+                                   [[maybe_unused]] int64_t value) {
+#if defined(MSCCLPP_USE_ROCM)
+  validateTransport(dst, remoteTransport());
+  // A kernel on this connection's stream performs the addition, a real read-modify-write, so
+  // writers in any number of processes may target one address. The host cannot do it instead:
+  // GPU memory is host-accessible only to the process that allocated it, and the proxy holds an
+  // IPC-imported mapping, which is device-only.
+  int64_t* dstPtr = reinterpret_cast<int64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
+  stream_->accumulate(dstPtr, value);
+  INFO(CONN, "CudaIpcConnection accumulate: dst ", dstPtr, ", value ", value);
+#else
+  // The host reaches device memory only through the copy engines, which move a value but cannot
+  // add to one, and a host-side read-modify-write is not atomic. A kernel is atomic but unusable:
+  // in the caller's context it does not start until the caller's kernel finishes, deadlocking any
+  // caller that spins on the result; in a separate context it costs 2391 us per operation against
+  // 19 us for a plain remote store. ROCm has neither limit.
+  THROW(CONN, Error, ErrorCode::InvalidUsage,
+        "accumulate is not supported over CudaIpc on CUDA: the host cannot atomically "
+        "read-modify-write device memory, and a proxy-launched kernel cannot run while the "
+        "caller's kernel waits. Use a device-side atomic on peer memory reached through a "
+        "MemoryChannel instead");
+#endif  // defined(MSCCLPP_USE_ROCM)
 }
 
 // IBConnection
@@ -492,6 +522,24 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #endif
 }
 
+void IBConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  validateTransport(dst, remoteTransport());
+  auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
+  }
+  auto dstMrInfo = dstTransportInfo.ibMrInfo;
+
+  if (ibNoAtomic_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "accumulate is not supported in IB no-atomic mode");
+  }
+
+  qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset,
+                                 static_cast<uint64_t>(value), /*signaled=*/true);
+  qp_.lock()->postSend();
+  INFO(CONN, "IBConnection accumulate: dst ", (uint8_t*)dstMrInfo.addr + dstOffset, ", value ", value);
+}
+
 void IBConnection::requestFlush() {
   // No-op: IB sends were already posted by prior conn.write() calls in handleTrigger.
   // progressFlush() drives completion by polling the send CQ.
@@ -666,13 +714,48 @@ void EthernetConnection::flush(int64_t) {
 #endif
 }
 
+// Serializes the receive-side read-modify-write of accumulate() across this process's Ethernet
+// connections. Ethernet costs ~136 us per operation, so the contention is irrelevant.
+static std::mutex& accumulateMutex() {
+  static std::mutex mtx;
+  return mtx;
+}
+
+void EthernetConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  validateTransport(dst, remoteTransport());
+
+  // Wire format matches write(): [dstPtr(8B)] [size(8B)] [data(size B)]. The MSB of size marks
+  // the message as an accumulate.
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+  constexpr uint64_t accumulateFlag = uint64_t{1} << uint64_t{63};
+  uint64_t dataSize = sizeof(uint64_t) | accumulateFlag;
+  uint64_t messageSize = 0;
+
+  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(dstPtr);
+
+  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(dataSize);
+
+  char* valueBytes = reinterpret_cast<char*>(&value);
+  std::copy(valueBytes, valueBytes + sizeof(value), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(value);
+
+  sendSocket_->send(sendBuffer_.data(), messageSize);
+
+  INFO(CONN, "EthernetConnection accumulate: dst ", dstPtr, ", value ", value);
+}
+
 void EthernetConnection::recvMessages() {
-  // Declarating Variables
+  // Declaring Variables
   char* ptr;
   uint64_t size;
   uint64_t recvSize;
   int closed = 0;
   bool received = true;
+  constexpr uint64_t accumulateFlag = uint64_t{1} << uint64_t{63};
 
   // Receiving Messages Until Connection is Closed
   while (recvSocket_->getState() != SocketStateClosed) {
@@ -684,9 +767,14 @@ void EthernetConnection::recvMessages() {
     if (closed == 0) recvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
     received &= !closed;
 
-    // Receiving data size
+    // Receiving data size (MSB may indicate accumulate)
     if (closed == 0) recvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
     received &= !closed;
+
+    bool isAccumulate = (size & accumulateFlag) != 0;
+    if (isAccumulate) {
+      size &= ~accumulateFlag;  // Strip the flag to get the data size.
+    }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_META_EXIT)
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_META_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
@@ -696,16 +784,33 @@ void EthernetConnection::recvMessages() {
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_DATA_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
-    // Receiving Data and Copying Data yo GPU
-    recvSize = 0;
-    while (recvSize < size && closed == 0) {
-      uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
-      recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
+    if (isAccumulate && received && size == sizeof(int64_t)) {
+      // Accumulate: receive the operand, then read, add, and write back.
+      int64_t addValue;
+      recvSocket_->recvUntilEnd(&addValue, sizeof(int64_t), &closed);
       received &= !closed;
+      if (received) {
+        // Every peer terminates its socket in this process, so several recv threads can be here
+        // at once for one address. The read-modify-write below is not atomic, so serialize it
+        // against the other recv threads.
+        const std::lock_guard<std::mutex> lock(accumulateMutex());
+        int64_t current;
+        mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(int64_t), cudaMemcpyDeviceToHost);
+        current += addValue;
+        mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(int64_t), cudaMemcpyHostToDevice);
+      }
+    } else {
+      // Regular write: receive data and copy to GPU
+      recvSize = 0;
+      while (recvSize < size && closed == 0) {
+        uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
+        recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
+        received &= !closed;
 
-      if (received)
-        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
-      recvSize += messageSize;
+        if (received)
+          mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
+        recvSize += messageSize;
+      }
     }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_DATA_EXIT)

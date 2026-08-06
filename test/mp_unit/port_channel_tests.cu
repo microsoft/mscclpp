@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <chrono>
 #include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
+#include <thread>
 
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
@@ -626,6 +628,315 @@ PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
 
+// Larger than 32 bits, so a truncated operand shows up as a wrong sum. The operand spans the
+// size and srcOffset fields of ProxyTrigger::fst.
+static constexpr int64_t kAccumulateValue = (int64_t{1} << 32) + 1;
+
+// Every block accumulates kAccumulateValue into the remote buffer, then block 0 signals, flushes,
+// and waits. Both ranks do this at once, so each iteration carries numBlocks accumulates in each
+// direction.
+//
+// After wait(), the local buffer must hold every add the remote issued before its signal. That is
+// the ordering check: the proxy must finish an accumulate before the signal that follows it on the
+// same connection. A fire-and-forget accumulate fails it.
+//
+// The check is a range, not an equality. The remote resumes on our signal, which we send before
+// waiting, so it may already have issued one more iteration of adds — and no more than one,
+// because its next wait() needs a signal we have not sent.
+__global__ void kernelPortChannelAccumulateConcurrent(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer,
+                                                      int* ret) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  const int numBlocks = gridDim.x;
+
+  for (int iter = 0; iter < nTries; iter++) {
+    // Step 1: every block accumulates into the remote buffer.
+    portChan.accumulate(0, kAccumulateValue);
+
+    // Step 2: grid barrier, so every block has pushed its accumulate.
+    syncer->sync(numBlocks);
+
+    // Step 3: block 0 signals that this rank's adds are done, then waits for the remote.
+    if (blockIdx.x == 0) {
+      portChan.signal();
+      portChan.flush();
+      portChan.wait();
+
+      // Step 4: the remote's adds for this iteration have all landed.
+      const int64_t perIter = (int64_t)numBlocks * kAccumulateValue;
+      int64_t lowerBound = (int64_t)(iter + 1) * perIter;
+      int64_t observed = *(volatile int64_t*)localBuff;
+      if (observed < lowerBound || observed > lowerBound + perIter) {
+        printf("iter %d: buff = %lld, expected %lld..%lld\n", iter, (long long)observed, (long long)lowerBound,
+               (long long)(lowerBound + perIter));
+        *ret = 1;
+      }
+    }
+
+    // Step 5: grid barrier, so signal and wait finish before the next iteration.
+    syncer->sync(numBlocks);
+  }
+}
+
+// Negative operands. Rank 0 adds +kAccumulateValue nTries times and rank 1 adds -kAccumulateValue
+// nTries times, each into the peer's buffer, which starts at 0. Each rank ends holding the peer's
+// signed sum.
+__global__ void kernelPortChannelAccumulateSigned(int64_t* localBuff, int nTries, int rank, int* ret) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+  const int64_t value = (rank == 0) ? kAccumulateValue : -kAccumulateValue;
+  for (int iter = 0; iter < nTries; iter++) {
+    portChan.accumulate(0, value);
+  }
+  portChan.signal();
+  portChan.flush();
+  portChan.wait();
+
+  int64_t expected = (int64_t)nTries * ((rank == 0) ? -kAccumulateValue : kAccumulateValue);
+  int64_t observed = *(volatile int64_t*)localBuff;
+  if (observed != expected) {
+    printf("buff = %lld, expected = %lld\n", (long long)observed, (long long)expected);
+    *ret = 1;
+  }
+}
+
+void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 1;
+  const int numBlocks = 64;
+  const int nTries = 50;
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  auto buff = mscclpp::GpuBuffer<int64_t>(nElem);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, nElem * sizeof(int64_t)));
+
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t), nullptr,
+                       0, ibMode);
+
+  ASSERT_EQ(portChannels.size(), 1);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  // Grid barrier, zero-initialized in device memory.
+  auto syncer = mscclpp::detail::gpuCallocShared<mscclpp::DeviceSyncer>();
+
+  proxyService->startProxy();
+
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+
+  kernelPortChannelAccumulateConcurrent<<<numBlocks, 1>>>(buff.memory().get(), nTries, syncer.get(), ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+// Zero and non-zero operands interleave. This verifies that a zero-valued trigger traverses the
+// FIFO, where readiness is independent of payload, without changing the accumulated total.
+__global__ void kernelPortChannelAccumulateZero(int64_t* localBuff, int nTries, int* ret) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+  for (int iter = 0; iter < nTries; iter++) {
+    portChan.accumulate(0, 0);
+    portChan.accumulate(0, kAccumulateValue);
+    portChan.accumulate(0, 0);
+  }
+  portChan.signal();
+  portChan.flush();
+  portChan.wait();
+
+  int64_t expected = (int64_t)nTries * kAccumulateValue;
+  int64_t observed = *(volatile int64_t*)localBuff;
+  if (observed != expected) {
+    printf("buff = %lld, expected = %lld\n", (long long)observed, (long long)expected);
+    *ret = 1;
+  }
+}
+
+void PortChannelOneToOneTest::testAccumulateZero(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nTries = 50;
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  auto buff = mscclpp::GpuBuffer<int64_t>(1);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, sizeof(int64_t)));
+
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), sizeof(int64_t), nullptr, 0,
+                       ibMode);
+  ASSERT_EQ(portChannels.size(), 1);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  proxyService->startProxy();
+
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+
+  kernelPortChannelAccumulateZero<<<1, 1>>>(buff.memory().get(), nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+void PortChannelOneToOneTest::testAccumulateSigned(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nTries = 100;
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  auto buff = mscclpp::GpuBuffer<int64_t>(1);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, sizeof(int64_t)));
+
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), sizeof(int64_t), nullptr, 0,
+                       ibMode);
+
+  ASSERT_EQ(portChannels.size(), 1);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  proxyService->startProxy();
+
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+
+  kernelPortChannelAccumulateSigned<<<1, 1>>>(buff.memory().get(), nTries, gEnv->rank, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+// CudaIpc accumulate needs an atomic read-modify-write of peer memory. On ROCm the proxy runs a
+// kernel, which the caller's kernel does not block. On CUDA it can do neither, so the call throws.
+#if defined(__HIP_PLATFORM_AMD__)
+
+TEST(PortChannelOneToOneTest, Accumulate) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testAccumulate(true, false, false);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateSigned) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testAccumulateSigned(true, false, false);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateZero) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testAccumulateZero(true, false, false);
+}
+
+#else  // !defined(__HIP_PLATFORM_AMD__)
+
+TEST(PortChannelOneToOneTest, AccumulateCudaIpcRejected) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int peer = 1 - gEnv->rank;
+  auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+  mscclpp::RegisteredMemory localMem;
+  mscclpp::RegisteredMemory remoteMem;
+
+  mscclpp::EndpointConfig cfg;
+  cfg.transport = mscclpp::Transport::CudaIpc;
+
+  auto connFuture = communicator->connect(cfg, peer);
+  localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), mscclpp::Transport::CudaIpc);
+  communicator->sendMemory(localMem, peer, /*tag=*/78);
+  auto remoteFuture = communicator->recvMemory(peer, /*tag=*/78);
+
+  auto conn = connFuture.get();
+  remoteMem = remoteFuture.get();
+  registeredMemories.push_back(localMem);
+
+  try {
+    conn.accumulate(remoteMem, 0, 1);
+    FAIL() << "Expected accumulate over CudaIpc to throw InvalidUsage on CUDA";
+  } catch (const mscclpp::Error& e) {
+    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+  }
+
+  communicator->bootstrap()->barrier();
+}
+
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+
+TEST(PortChannelOneToOneTest, AccumulateIb) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testAccumulate(false, true, false, IbMode::Host);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateEthernet) { testAccumulate(false, false, true); }
+
+TEST(PortChannelOneToOneTest, AccumulateSignedIb) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testAccumulateSigned(false, true, false, IbMode::Host);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateSignedEthernet) { testAccumulateSigned(false, false, true); }
+
+TEST(PortChannelOneToOneTest, AccumulateZeroIb) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testAccumulateZero(false, true, false, IbMode::Host);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateZeroEthernet) { testAccumulateZero(false, false, true); }
+
+TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int peer = 1 - gEnv->rank;
+  auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+  mscclpp::RegisteredMemory localMem;
+  mscclpp::RegisteredMemory remoteMem;
+
+  mscclpp::EndpointConfig cfg;
+  cfg.transport = ibTransport;
+  cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+  cfg.ib.mode = IbMode::HostNoAtomic;
+
+  auto connFuture = communicator->connect(cfg, peer);
+  localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+  communicator->sendMemory(localMem, peer, /*tag=*/77);
+  auto remoteFuture = communicator->recvMemory(peer, /*tag=*/77);
+
+  auto conn = connFuture.get();
+  remoteMem = remoteFuture.get();
+  registeredMemories.push_back(localMem);
+
+  try {
+    conn.accumulate(remoteMem, 0, 1);
+    FAIL() << "Expected accumulate in IB HostNoAtomic mode to throw InvalidUsage";
+  } catch (const mscclpp::Error& e) {
+    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+  }
+
+  communicator->bootstrap()->barrier();
+}
+
 static constexpr int kMaxQps = 4;
 __constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
 
@@ -959,3 +1270,141 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbHostMode) {
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testSameChanConcurrentFlush(IbMode::Host);
 }
+
+void PortChannelFanInTest::SetUp() {
+  CommunicatorTestBase::SetUp();
+  proxyService = std::make_shared<mscclpp::ProxyService>();
+}
+
+void PortChannelFanInTest::TearDown() { CommunicatorTestBase::TearDown(); }
+
+// Each rank other than 0 pushes nTries accumulates at rank 0's single counter.
+__global__ void kernelFanInAccumulate(int nTries) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  for (int i = 0; i < nTries; i++) {
+    portChan.accumulate(0, kAccumulateValue);
+  }
+  portChan.flush();
+}
+
+void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize < 3) {
+    SKIP_TEST() << "Fan-in test needs at least 3 ranks to have more than one writer.";
+    return;
+  }
+  const int nTries = 200;
+
+  auto buff = mscclpp::GpuBuffer<int64_t>(1);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, sizeof(int64_t)));
+
+  // Rank 0 is the target; every other rank connects to it.
+  mscclpp::TransportFlags transport;
+  if (useIPC) transport |= mscclpp::Transport::CudaIpc;
+  if (useIb) transport |= ibTransport;
+  if (useEthernet) transport |= mscclpp::Transport::Ethernet;
+
+  mscclpp::EndpointConfig cfg;
+  if (useIPC) {
+    cfg.transport = mscclpp::Transport::CudaIpc;
+  } else if (useIb) {
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = ibMode;
+  } else {
+    cfg.transport = mscclpp::Transport::Ethernet;
+  }
+
+  mscclpp::RegisteredMemory localMem = communicator->registerMemory(buff.memory().get(), sizeof(int64_t), transport);
+  registeredMemories.push_back(localMem);
+
+  std::vector<std::shared_future<mscclpp::Connection>> connFutures(worldSize);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
+  if (rank == 0) {
+    for (int r = 1; r < worldSize; r++) {
+      connFutures[r] = communicator->connect(cfg, r);
+      communicator->sendMemory(localMem, r);
+      remoteMemFutures[r] = communicator->recvMemory(r);
+    }
+  } else {
+    connFutures[0] = communicator->connect(cfg, 0);
+    communicator->sendMemory(localMem, 0);
+    remoteMemFutures[0] = communicator->recvMemory(0);
+  }
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  if (rank == 0) {
+    for (int r = 1; r < worldSize; r++) {
+      auto sema = communicator->buildSemaphore(connFutures[r].get(), r).get();
+      mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+      portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+                                                          proxyService->addMemory(localMem)));
+      registeredMemories.push_back(remoteMemFutures[r].get());
+    }
+  } else {
+    auto sema = communicator->buildSemaphore(connFutures[0].get(), 0).get();
+    mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[0].get()),
+                                                        proxyService->addMemory(localMem)));
+    registeredMemories.push_back(remoteMemFutures[0].get());
+  }
+
+  proxyService->startProxy();
+
+  if (rank != 0) {
+    std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
+    handles.push_back(portChannels[0].deviceHandle());
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, handles.data(),
+                                         sizeof(DeviceHandle<mscclpp::PortChannel>)));
+    kernelFanInAccumulate<<<1, 1>>>(nTries);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  }
+
+  communicator->bootstrap()->barrier();
+
+  if (rank == 0) {
+    // Poll until the total stops changing rather than sleeping a fixed time, so slow arrival is
+    // not mistaken for a lost update. EthernetConnection::flush() is a no-op, so a sender cannot
+    // tell when the receiver applied its updates.
+    const int64_t expected = (int64_t)(worldSize - 1) * nTries * kAccumulateValue;
+    int64_t observed = 0;
+    int64_t previous = -1;
+    int stableRounds = 0;
+    for (int i = 0; i < 600 && observed != expected; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      mscclpp::gpuMemcpy(reinterpret_cast<char*>(&observed), reinterpret_cast<char*>(buff.memory().get()),
+                         sizeof(int64_t), cudaMemcpyDeviceToHost);
+      stableRounds = (observed == previous) ? stableRounds + 1 : 0;
+      previous = observed;
+      if (stableRounds >= 50) break;  // 5 s with no progress: treat as final
+    }
+    if (observed != expected) {
+      std::cout << "fan-in lost " << (expected - observed) / kAccumulateValue << " of "
+                << (int64_t)(worldSize - 1) * nTries << " accumulates" << std::endl;
+    }
+    EXPECT_EQ(observed, expected);
+  }
+
+  communicator->bootstrap()->barrier();
+  proxyService->stopProxy();
+  communicator->bootstrap()->barrier();
+}
+
+#if defined(__HIP_PLATFORM_AMD__)
+// CudaIpc supports many writers on ROCm: the kernel is a real read-modify-write, so writers in
+// separate processes do not lose updates.
+TEST(PortChannelFanInTest, Accumulate) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testFanIn(true, false, false);
+}
+#endif  // defined(__HIP_PLATFORM_AMD__)
+
+TEST(PortChannelFanInTest, AccumulateIb) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testFanIn(false, true, false, IbMode::Host);
+}
+
+TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }

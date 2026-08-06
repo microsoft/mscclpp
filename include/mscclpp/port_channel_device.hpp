@@ -125,6 +125,24 @@ struct BasePortChannelDeviceHandle {
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to remote memory.
+  /// Connection::accumulate() documents how many concurrent writers each transport allows.
+  /// @param dstId The ID of destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    ProxyTrigger trigger;
+    // The operand occupies fst, spanning the size and srcOffset fields.
+    trigger.fst = static_cast<uint64_t>(value);
+    // snd carries dstOffset, dstMemoryId, the opcode, and semaphoreId.
+    trigger.snd = 0;
+    trigger.fields.dstOffset = dstOffset;
+    trigger.fields.dstMemoryId = dstId;
+    trigger.fields.type = TriggerAccumulate;
+    trigger.fields.semaphoreId = semaphoreId_;
+    fifo_.push(trigger);
+  }
+
   /// Check if the port channel has been signaled.
   /// @return true if the port channel has been signaled.
   MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
@@ -189,6 +207,13 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
+  }
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to the destination memory.
+  /// See Connection::accumulate() for transport support.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
+    BasePortChannelDeviceHandle::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };

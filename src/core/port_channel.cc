@@ -136,6 +136,12 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
     semaphore->signal();
     numRequests++;
   };
+  auto accumulate = [&]() {
+    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    // The operand is the full fst word, spanning the size and srcOffset fields.
+    conn.accumulate(dst, trigger.fields.dstOffset, static_cast<int64_t>(trigger.fst));
+    numRequests++;
+  };
 
   bool flushRequested = false;
   switch (trigger.fields.type) {
@@ -156,6 +162,9 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
       put();
       signal();
       flushRequested = true;
+      break;
+    case TriggerAccumulate:
+      accumulate();
       break;
     default:
       WARN(CONN, "unknown trigger opcode ", uint64_t(trigger.fields.type), ", ignoring the trigger");

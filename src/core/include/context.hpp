@@ -28,6 +28,12 @@ class CudaIpcStream {
 
   void memcpyH2D(void* dst, const void* src, size_t nbytes);
 
+#if defined(MSCCLPP_USE_ROCM)
+  /// Add a value to a 64-bit integer in peer memory, with a kernel on this stream. ROCm only:
+  /// on CUDA such a kernel cannot be scheduled while the caller's kernel spins.
+  void accumulate(int64_t* dst, int64_t value);
+#endif  // defined(MSCCLPP_USE_ROCM)
+
   void sync();
 
   operator cudaStream_t() const { return *stream_; }

@@ -22,13 +22,14 @@ namespace mscclpp {
 /// combination nothing emits cannot be expressed, and a trigger whose type field is unset is not
 /// a valid operation.
 using TriggerType = uint64_t;
-constexpr TriggerType TriggerNone = 0;                   // Not an operation. Unwritten or malformed.
+constexpr TriggerType TriggerNone = 0;                   // Not an operation; invalid for ProxyService.
 constexpr TriggerType TriggerPut = 1;                    // Transfer data.
 constexpr TriggerType TriggerSignal = 2;                 // Signal the remote semaphore.
 constexpr TriggerType TriggerFlush = 3;                  // Flush the connection.
 constexpr TriggerType TriggerPutWithSignal = 4;          // Transfer data, then signal.
 constexpr TriggerType TriggerPutWithSignalAndFlush = 5;  // Transfer data, signal, then flush.
-// 6 and 7 are unassigned.
+constexpr TriggerType TriggerAccumulate = 6;             // Add a value to remote memory.
+// 7 is unassigned.
 
 constexpr unsigned int TriggerBitsSize = 32;
 constexpr unsigned int TriggerBitsOffset = 32;
@@ -39,7 +40,7 @@ constexpr unsigned int TriggerBitsSemaphoreId = 10;
 // there. See FifoDeviceHandle::push().
 constexpr unsigned int TriggerBitsFifoReserved = 1;
 
-static_assert(TriggerPutWithSignalAndFlush < (1ULL << TriggerBitsType), "trigger opcodes must fit in the type field");
+static_assert(TriggerAccumulate < (1ULL << TriggerBitsType), "trigger opcodes must fit in the type field");
 
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 /// Used as a work element in the concurrent FIFO.
