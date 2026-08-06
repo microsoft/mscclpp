@@ -50,6 +50,27 @@ steps:
     displayName: Capture coverage data with lcov
     remoteScript: |
       BUILD_PREFIX=$(cat build/BUILD_PREFIX)
+      CURRENT_PREFIX=$(pwd -P)
+
+      # Coverage metadata embeds the Azure build path, so restore that path
+      # after the source tree and build artifacts are copied to the remote VM.
+      if [ "${BUILD_PREFIX}" != "${CURRENT_PREFIX}" ]; then
+        mkdir -p "$(dirname "${BUILD_PREFIX}")"
+        if [ -L "${BUILD_PREFIX}" ]; then
+          rm "${BUILD_PREFIX}"
+          ln -s "${CURRENT_PREFIX}" "${BUILD_PREFIX}"
+        elif [ -e "${BUILD_PREFIX}" ]; then
+          echo "ERROR: ${BUILD_PREFIX} exists and cannot be mapped to ${CURRENT_PREFIX}."
+          exit 1
+        else
+          ln -s "${CURRENT_PREFIX}" "${BUILD_PREFIX}"
+        fi
+      fi
+
+      if [ ! -r "${BUILD_PREFIX}/CMakeLists.txt" ]; then
+        echo "ERROR: coverage source root ${BUILD_PREFIX} is not readable."
+        exit 1
+      fi
 
       GCOV_TOOL_ARG=""
       if [ "${{ parameters.platform }}" = "rocm" ]; then
@@ -65,7 +86,7 @@ steps:
       LCOV_MAJOR_VERSION=$(echo "${LCOV_VERSION}" | sed -n 's/.*LCOV version \([0-9][0-9]*\).*/\1/p')
       LCOV_CAPTURE_ARGS=""
       if [ "${LCOV_MAJOR_VERSION:-0}" -ge 2 ]; then
-        LCOV_CAPTURE_ARGS="--ignore-errors inconsistent,source"
+        LCOV_CAPTURE_ARGS="--ignore-errors inconsistent"
       fi
 
       lcov ${GCOV_TOOL_ARG} --directory . --capture --output-file coverage.info ${LCOV_CAPTURE_ARGS}
