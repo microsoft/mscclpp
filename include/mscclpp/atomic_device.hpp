@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_ATOMIC_DEVICE_HPP_
 #define MSCCLPP_ATOMIC_DEVICE_HPP_
@@ -11,6 +11,27 @@
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 namespace mscclpp {
+
+namespace detail {
+
+template <typename T>
+MSCCLPP_HOST_DEVICE_INLINE void atomicStoreBuiltin(T* ptr, const T& val, int memoryOrder) {
+  // Keep the order compile-time constant: a runtime order becomes a locked
+  // xchg in unoptimized host builds, which is prohibitively slow on BAR mappings.
+  switch (memoryOrder) {
+    case __ATOMIC_RELAXED:
+      __atomic_store(ptr, &val, __ATOMIC_RELAXED);
+      break;
+    case __ATOMIC_RELEASE:
+      __atomic_store(ptr, &val, __ATOMIC_RELEASE);
+      break;
+    default:
+      __atomic_store(ptr, &val, __ATOMIC_SEQ_CST);
+      break;
+  }
+}
+
+}  // namespace detail
 
 #if defined(MSCCLPP_DEVICE_CUDA)
 
@@ -30,7 +51,11 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicLoad(T* ptr, cuda::memory_order memoryOrder) 
 
 template <typename T, cuda::thread_scope Scope = cuda::thread_scope_system>
 MSCCLPP_HOST_DEVICE_INLINE void atomicStore(T* ptr, const T& val, cuda::memory_order memoryOrder) {
+#if defined(__CUDA_ARCH__)
   cuda::atomic_ref<T, Scope>{*ptr}.store(val, memoryOrder);
+#else   // !defined(__CUDA_ARCH__)
+  detail::atomicStoreBuiltin(ptr, val, static_cast<int>(memoryOrder));
+#endif  // !defined(__CUDA_ARCH__)
 }
 
 template <typename T, cuda::thread_scope Scope = cuda::thread_scope_system>
@@ -56,7 +81,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicLoad(const T* ptr, int memoryOrder) {
 
 template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE void atomicStore(T* ptr, const T& val, int memoryOrder) {
-  __atomic_store_n(ptr, val, memoryOrder);
+  detail::atomicStoreBuiltin(ptr, val, memoryOrder);
 }
 
 template <typename T, int scope = scopeSystem>
