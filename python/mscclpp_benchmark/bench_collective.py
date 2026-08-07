@@ -199,7 +199,7 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
             "default_allreduce_nvls_packet",
             max_message_size=512 * 1024,
             max_nblocks=16,
-            supported_skus=("H100", "GB300"),
+            supported_skus=("H100", "GB300", "GB200"),
             requires_nvls=True,
         ),
         CandidateSpec(
@@ -228,7 +228,7 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
             CandidateSpec(
                 "default_allreduce_nvls_zero_copy",
                 max_nblocks=32,
-                supported_skus=("H100", "GB300"),
+                supported_skus=("H100", "GB300", "GB200"),
                 requires_nvls=True,
                 requires_symmetric_memory=True,
             ),
