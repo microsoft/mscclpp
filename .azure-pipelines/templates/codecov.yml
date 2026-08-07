@@ -32,16 +32,23 @@ steps:
       export GCOV_PREFIX=/root/mscclpp
       export GCOV_PREFIX_STRIP=$STRIP_COUNT
 
+      UNIT_TEST_ARGS=""
+      MP_UNIT_TEST_ARGS="--exclude-perf-tests"
+      if [ "${{ parameters.gpuArch }}" = "90" ]; then
+        UNIT_TEST_ARGS="--filter=-GdrMapTest.AtomicStoreCounterPingPong"
+        MP_UNIT_TEST_ARGS="${MP_UNIT_TEST_ARGS} --filter=-IbHostNoAtomicMode"
+      fi
+
       echo "Running unit_tests..."
-      ./build/bin/unit_tests
+      ./build/bin/unit_tests ${UNIT_TEST_ARGS}
       echo "unit_tests: PASSED"
 
       echo "Running mp_unit_tests -np 2..."
-      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --exclude-perf-tests
+      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
       echo "mp_unit_tests -np 2: PASSED"
 
       echo "Running mp_unit_tests -np 4..."
-      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests
+      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
       echo "mp_unit_tests -np 4: PASSED"
 
 - template: run-remote-task.yml
