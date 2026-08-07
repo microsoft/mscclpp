@@ -27,7 +27,13 @@ set(GPUNETIO_SOURCES
     ${GPUNETIO_HOME}/src/doca_gpunetio_gdrcopy.cpp
 )
 
-add_library(mscclpp_gpunetio_obj OBJECT ${GPUNETIO_SOURCES})
+# MSCCL++ host service that drives the vendored DOCA host API to bring up the
+# GPU-initiated PortChannel backend (QP create/connect, MR registration).
+set(GPUNETIO_HOST_SOURCES
+    ${GPUNETIO_HOME}/host/gpu_net_io_service.cpp
+)
+
+add_library(mscclpp_gpunetio_obj OBJECT ${GPUNETIO_SOURCES} ${GPUNETIO_HOST_SOURCES})
 
 target_include_directories(mscclpp_gpunetio_obj
     SYSTEM PRIVATE
@@ -41,7 +47,11 @@ target_include_directories(mscclpp_gpunetio_obj PUBLIC
     ${GPUNETIO_HOME}/include/host)
 
 target_include_directories(mscclpp_gpunetio_obj PRIVATE
-    ${GPUNETIO_HOME}/src)
+    ${GPUNETIO_HOME}/src
+    ${GPUNETIO_HOME}
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src/core/include)
 
 # Third-party code: do not enforce mscclpp's -Wall -Wextra -Werror.
 target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
@@ -49,6 +59,16 @@ target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
 # DOCA_VERBS_USE_NET_WRAPPER selects the dlopen-based ibverbs/mlx5dv wrappers, so
 # the vendored code adds no new NEEDED shared libraries (mirrors NCCL's build).
 target_compile_definitions(mscclpp_gpunetio_obj PRIVATE DOCA_VERBS_USE_NET_WRAPPER)
+
+# The host service uses mscclpp core's IbCtx/IbMr (real interface guarded by
+# USE_IBVERBS) for the ibverbs context / pd / MR registration.
+if(MSCCLPP_USE_IB)
+    target_compile_definitions(mscclpp_gpunetio_obj PRIVATE USE_IBVERBS)
+    target_include_directories(mscclpp_gpunetio_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
+endif()
+if(MSCCLPP_USE_CUDA)
+    target_compile_definitions(mscclpp_gpunetio_obj PRIVATE MSCCLPP_USE_CUDA)
+endif()
 
 set_target_properties(mscclpp_gpunetio_obj PROPERTIES
     LINKER_LANGUAGE CXX
