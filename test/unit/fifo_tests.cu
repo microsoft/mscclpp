@@ -46,18 +46,17 @@ TEST(FifoTest, Fifo) {
   MSCCLPP_CUDATHROW(cudaGetLastError());
 
   mscclpp::ProxyTrigger trigger;
-  uint64_t spin = 0;
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
+    mscclpp::Timer pollTimer;
     while (!hostFifo.poll(trigger)) {
-      if (spin++ > 1000000) {
-        FAIL() << "Polling is stuck at trigger " << i;
+      if (pollTimer.elapsed() > 5'000'000) {
+        FAIL() << "Polling timed out at trigger " << i;
       }
     }
     ASSERT_TRUE(trigger.fst == i);
     ASSERT_TRUE(trigger.snd == i);
     hostFifo.pop();
-    spin = 0;
   }
 
   std::stringstream ss;
@@ -90,6 +89,8 @@ TEST(FifoTest, ZeroTrigger) {
 
   kernelFifoZeroTrigger<<<1, 1>>>(count);
   MSCCLPP_CUDATHROW(cudaGetLastError());
+  // count is below the FIFO capacity, so the producer cannot wait for the consumer here.
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   mscclpp::ProxyTrigger trigger;
   for (int i = 0; i < count; ++i) {

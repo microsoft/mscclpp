@@ -49,8 +49,8 @@ union alignas(16) ProxyTrigger {
     uint64_t dstMemoryId : TriggerBitsMemoryId;
     uint64_t type : TriggerBitsType;
     uint64_t semaphoreId : TriggerBitsSemaphoreId;
-    uint64_t : (64 - TriggerBitsOffset - TriggerBitsMemoryId - TriggerBitsMemoryId - TriggerBitsType -
-                TriggerBitsSemaphoreId - TriggerBitsFifoReserved);  // ensure 64-bit alignment
+    // The fields above use 63 bits; the commit bit occupies bit 63. Do not insert a zero-width
+    // bitfield here: C++ uses it to start a new allocation unit, moving reserved out of snd.
     uint64_t reserved : TriggerBitsFifoReserved;
   } fields;
 
@@ -93,6 +93,8 @@ union alignas(16) ProxyTrigger {
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
+
+static_assert(sizeof(ProxyTrigger) == 16, "ProxyTrigger must be exactly two 64-bit words");
 
 /// Concurrent FIFO where multiple device threads (the number of threads should not exceed the FIFO size) to push
 /// Head pointer is on device, tail pointer is on host (readable by device).
