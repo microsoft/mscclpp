@@ -133,14 +133,6 @@ __global__ void kernelBulkReduce(T* dst, T addend, uint32_t count) {
 #endif
 }
 
-static bool bulkAvailable() {
-  int device = 0;
-  if (cudaGetDevice(&device) != cudaSuccess) return false;
-  int major = 0;
-  if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) != cudaSuccess) return false;
-  return major >= 9;
-}
-
 class BulkTestData {
  public:
   BulkTestData(int numElems)
@@ -170,7 +162,7 @@ class BulkTestData {
 };
 
 TEST(BulkTest, Load) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -181,7 +173,7 @@ TEST(BulkTest, Load) {
 }
 
 TEST(BulkTest, Gather) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -197,7 +189,7 @@ TEST(BulkTest, Gather) {
 }
 
 TEST(BulkTest, RoundTrip) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -228,7 +220,7 @@ static void reduceStoreTest(float base, float addend) {
 }
 
 TEST(BulkTest, ReduceStoreFloat) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -236,7 +228,7 @@ TEST(BulkTest, ReduceStoreFloat) {
 }
 
 TEST(BulkTest, ReduceStoreBf16) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
@@ -244,7 +236,7 @@ TEST(BulkTest, ReduceStoreBf16) {
 }
 
 TEST(BulkTest, ReduceStoreUint32) {
-  if (!bulkAvailable()) {
+  if (!mscclpp::isBulkSupported()) {
     SKIP_TEST() << "Bulk asynchronous copy requires compute capability 9.0 or higher.";
     return;
   }
