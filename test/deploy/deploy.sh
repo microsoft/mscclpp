@@ -86,6 +86,10 @@ if [ "${PLATFORM}" == "cuda" ]; then
     fi"
 fi
 
+# Remove any leftover container from a previous (possibly failed) run
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
+
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   # force to pull the latest image
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
