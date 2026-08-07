@@ -1,2 +1,5 @@
+if(MSCCLPP_USE_GPUNETIO)
+    add_subdirectory(gpunetio)
+endif()
 add_subdirectory(core)
 add_subdirectory(ext)
