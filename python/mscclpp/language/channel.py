@@ -737,7 +737,13 @@ class PortChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def read_put_packets(
+        self,
+        dst_chunk: Chunk,
+        src_chunk: Chunk,
+        tb: int = None,
+        tb_group: ThreadBlockGroup = None,
+    ):
         """Transfer data in packet format from local to remote scratch buffer.
 
         Performs a specialized put operation that transfers data in packet format
@@ -747,7 +753,9 @@ class PortChannel:
         Args:
             dst_chunk (Chunk): The destination scratch chunk on the destination rank.
             src_chunk (Chunk): The source scratch chunk on the source rank.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation.
+            tb_group (ThreadBlockGroup, optional): The thread block group that will
+                partition and execute this operation.
 
         Raises:
             RuntimeError: If chunk ranks don't match channel configuration, if chunks
@@ -773,20 +781,59 @@ class PortChannel:
                 f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}."
             )
 
-        remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
-        tb_channel_ids = get_program().setup_channel(tb, self)
+        if tb is not None:
+            tb_list = [tb]
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
+        else:
+            raise ValueError(
+                "Either 'tb' (thread block ID) or 'tb_group' " "(ThreadBlockGroup) must be provided, but both are None."
+            )
 
-        op = PutOperation(
-            src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-            from_packet=True,
-            to_packet=True,
+        remote_chunk = RemoteBuffer(
+            src_chunk.rank,
+            dst_chunk.rank,
+            dst_chunk.buffer,
+            self.channel_type,
         )
-
-        get_program().add_operation(self.src_rank, tb, op)
+        for tb_id in tb_list:
+            tb_chunk_id = get_program().setup_remote_chunk(
+                self.src_rank,
+                tb_id,
+                remote_chunk,
+                self.channel_type,
+            )
+            tb_channel_ids = get_program().setup_channel(tb_id, self)
+            op = PutOperation(
+                src_buff=[
+                    LocalChunk(
+                        src_chunk.buffer,
+                        src_chunk.index,
+                        src_chunk.size,
+                    )
+                ],
+                dst_buff=[
+                    RemoteChunk(
+                        dst_chunk.buffer,
+                        dst_chunk.index,
+                        dst_chunk.size,
+                        tb_chunk_id,
+                    )
+                ],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+                tbg_info=(
+                    ThreadBlockGroupInfo(
+                        tb_group.get_internal_id(tb_id),
+                        tb_group.numtb(),
+                    )
+                    if tb_group is not None
+                    else None
+                ),
+                from_packet=True,
+                to_packet=True,
+            )
+            get_program().add_operation(self.src_rank, tb_id, op)
 
 
 @dataclass

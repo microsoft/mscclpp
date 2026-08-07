@@ -155,10 +155,10 @@ struct Executor::Impl {
   }
   ~Impl() = default;
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
-                                         size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
-                                         size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
-                                         std::shared_ptr<ProxyService> proxyService) {
+  const ExecutionContext& setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
+                                                size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
+                                                size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
+                                                std::shared_ptr<ProxyService> proxyService) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
 
@@ -166,24 +166,25 @@ struct Executor::Impl {
     if (plan.impl_->reuseResources) {
       key = {nullptr, nullptr, 0, 0, plan.impl_->name};
     }
-    if (this->contexts.find(key) != this->contexts.end()) {
-      auto& devicePlans = this->contexts[key].deviceExecutionPlans;
-      if (this->contexts[key].currentDevicePlan == devicePlanKey) {
-        return this->contexts[key];
+    auto contextIt = this->contexts.find(key);
+    if (contextIt != this->contexts.end()) {
+      auto& context = contextIt->second;
+      auto& devicePlans = context.deviceExecutionPlans;
+      if (context.currentDevicePlan == devicePlanKey) {
+        return context;
       } else if (devicePlans.find(devicePlanKey) != devicePlans.end()) {
-        this->contexts[key].currentDevicePlan = devicePlanKey;
-        return this->contexts[key];
+        context.currentDevicePlan = devicePlanKey;
+        return context;
       }
       plan.impl_->operationsReset();
       plan.impl_->lightLoadExecutionPlan(inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset);
-      this->setupDeviceExecutionPlan(this->contexts[key], devicePlanKey, plan);
-      this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey] =
+      this->setupDeviceExecutionPlan(context, devicePlanKey, plan);
+      context.deviceExecutionPlansBuffers[devicePlanKey] =
           GpuBuffer(devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan)).memory();
-      gpuMemcpy(this->contexts[key].deviceExecutionPlansBuffers[devicePlanKey].get(),
-                (char*)devicePlans[devicePlanKey].data(),
+      gpuMemcpy(context.deviceExecutionPlansBuffers[devicePlanKey].get(), (char*)devicePlans[devicePlanKey].data(),
                 devicePlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
-      this->contexts[key].currentDevicePlan = devicePlanKey;
-      return this->contexts[key];
+      context.currentDevicePlan = devicePlanKey;
+      return context;
     }
 
     plan.impl_->reset();
@@ -208,8 +209,11 @@ struct Executor::Impl {
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
-    this->contexts.insert({key, context});
-    return context;
+    auto [insertedIt, inserted] = this->contexts.emplace(key, std::move(context));
+    if (!inserted) {
+      throw Error("Execution context insertion failed", ErrorCode::ExecutorError);
+    }
+    return insertedIt->second;
   }
 
   TransportFlags getTransportFlags(const BufferInfo& info, int rank) {
@@ -226,6 +230,24 @@ struct Executor::Impl {
     }
     return flags;
   };
+
+  bool usesIbTransport(int rank, const ExecutionPlan& plan) {
+    auto hasIbPeer = [&](const std::vector<ChannelInfo>& channelInfos) {
+      for (const auto& info : channelInfos) {
+        for (int peer : info.connectedPeers) {
+          if (useIB(rank, peer, this->nranksPerIpcDomain)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    if (hasIbPeer(plan.impl_->getChannelInfos(ChannelType::PORT))) {
+      return true;
+    }
+    return hasIbPeer(plan.impl_->getUnpairedChannelInfos(this->nranks, ChannelType::PORT));
+  }
 
   void setupScratchBuffer(ExecutionContext& context, size_t sendBuffSize, size_t recvBuffSize,
                           const ExecutionPlan& plan) {
@@ -309,9 +331,10 @@ struct Executor::Impl {
                                size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
     // Add local src,dst and scratch to registeredMemoryIds
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
+    bool registerIb = this->usesIbTransport(rank, plan);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
+      if (registerIb) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
@@ -469,10 +492,10 @@ struct Executor::Impl {
   }
 
   template <typename PacketType>
-  void launchKernelHelper(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
+  void launchKernelHelper(const ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
                           cudaStream_t stream, uint32_t sharedMemSize, const uint32_t& flag) {
     DeviceExecutionPlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans[key].size();
+    int nthreadblocks = context.deviceExecutionPlans.at(key).size();
     void* scratchBuffer = context.scratchBuffer.get();
     size_t scratchOffset = 0;
     if (context.doubleScratchBuff && (flag & 0x1) == 0) {
@@ -481,23 +504,23 @@ struct Executor::Impl {
     if (context.reuseResources) {
       ExecutionKernel::launchKernel<PacketType, true>(
           rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
-          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers.at(key).get(),
           (DeviceSemaphore*)context.smemaphores.get(), context.localMemoryIdBegin, sharedMemSize, stream, flag);
     } else {
       ExecutionKernel::launchKernel<PacketType, false>(
           rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
-          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers.at(key).get(),
           (DeviceSemaphore*)context.smemaphores.get(), context.localMemoryIdBegin, sharedMemSize, stream, flag);
     }
   }
 
-  void launchKernel(ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
+  void launchKernel(const ExecutionContext& context, int rank, void* sendbuff, void* recvbuff, DataType dataType,
                     cudaStream_t stream, PacketType packetType) {
     static uint32_t flag = 0;
 #if defined(ENABLE_NPKIT)
 #if defined(MSCCLPP_USE_ROCM)
     DeviceExecutionPlanKey key = context.currentDevicePlan;
-    int nthreadblocks = context.deviceExecutionPlans[key].size();
+    int nthreadblocks = context.deviceExecutionPlans.at(key).size();
     if (nthreadblocks > NPKIT_MAX_NUM_GPU_THREADBLOCKS) {
       throw Error("Executor plan launching " + std::to_string(nthreadblocks) +
                       " thread blocks, exceeding NPKit support (" + std::to_string(NPKIT_MAX_NUM_GPU_THREADBLOCKS) +
@@ -536,7 +559,7 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  ExecutionContext context = this->impl_->setupExecutionContext(
+  const ExecutionContext& context = this->impl_->setupExecutionContext(
       rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize, offsetIn, offsetOut, sendMemRange,
       recvMemRange, plan, this->impl_->proxyService);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
