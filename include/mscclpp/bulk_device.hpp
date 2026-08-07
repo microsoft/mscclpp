@@ -194,6 +194,12 @@ enum class BulkRedOp { Add };
 /// Measured on H200 at roughly 90% of the bulkStore() rate for the same payload, from a single
 /// issuing thread, so the accumulate is close to free relative to the transfer.
 ///
+/// @warning When several devices accumulate into the same destination address concurrently, the
+/// result depends on the per-element reduction being atomic across peers. That holds in every
+/// measurement taken here (exact results on H200 across 8 six-rank runs and on GB200 across 50
+/// four-GPU runs), but it is an empirical result, not a guarantee found in the PTX documentation.
+/// Confirm it on the target hardware before relying on it for a collective.
+///
 /// @tparam T Element type. Currently `float`, `__nv_bfloat16`, and `uint32_t`. Other types are
 /// rejected at compile time rather than silently mapped, because the underlying instruction accepts
 /// only certain operation and type combinations.
