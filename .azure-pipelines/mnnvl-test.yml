@@ -115,5 +115,5 @@ jobs:
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
         mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
-          -x MSCCLPP_DEBUG=WARN -x PYTHONPATH=/root/mscclpp/python -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
-          python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --autotune
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --autotune
