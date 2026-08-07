@@ -80,8 +80,8 @@ jobs:
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
         # First NVLink pair (2 nodes) from hostEntries; use $2 (the DSM hostname).
         # Bump to more nodes later by parsing further lines the same way.
-        NODE0=$(awk 'NF>=2{print $2; exit}'           <<< "${{ parameters.hostEntries }}")
-        NODE1=$(awk 'NF>=2{c++} c==2{print $2; exit}' <<< "${{ parameters.hostEntries }}")
+        NODE0=$(awk 'NF>=2{print $1; exit}'           <<< "${{ parameters.hostEntries }}")
+        NODE1=$(awk 'NF>=2{c++} c==2{print $1; exit}' <<< "${{ parameters.hostEntries }}")
 
         echo "Host ${NODE0}
           Port 22345
