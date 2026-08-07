@@ -78,8 +78,9 @@ jobs:
       script: |
         set -e
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
-        # First NVLink pair (2 nodes) from hostEntries; use $2 (the DSM hostname).
-        # Bump to more nodes later by parsing further lines the same way.
+        # First NVLink pair (2 nodes) from hostEntries; use $1 (the IP) so the
+        # names resolve inside the container too (the DSM hostnames are only in
+        # the agent's /etc/hosts). Bump to more nodes by parsing further lines.
         NODE0=$(awk 'NF>=2{print $1; exit}'           <<< "${{ parameters.hostEntries }}")
         NODE1=$(awk 'NF>=2{c++} c==2{print $1; exit}' <<< "${{ parameters.hostEntries }}")
 
@@ -113,6 +114,6 @@ jobs:
       displayName: Run Collective Benchmarks
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include eth0 -np 8 -npernode 4 \
-          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
+          -x MSCCLPP_DEBUG=WARN -x PYTHONPATH=/root/mscclpp/python -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --autotune
