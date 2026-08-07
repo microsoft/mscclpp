@@ -110,12 +110,17 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     def deepep_barrier():
         buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
 
-    # DeepEP CUDA-graph capture is limited by TRANSPORT, not node count. On the
-    # all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain) the
-    # symmetric-memory kernels ARE graph-capturable at any node count -- verified
-    # capturing at 1/2/4 nodes on a GB200 NVL72. Only the RDMA/IB scale-out path
-    # (GIN enabled, multi-rack) crashes under graph capture (CUDA 719 in
-    # symmetric.hpp), so disable capture only when GIN is active.
+    # DeepEP V2 (ElasticBuffer) CUDA-graph capture is limited by TRANSPORT, not node
+    # count. On the all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain)
+    # the dispatch/combine kernels stay on-stream and ARE graph-capturable at any node
+    # count -- verified capturing at 1/2/4 nodes on a GB200 NVL72. The RDMA/IB
+    # scale-out path uses NCCL GIN (GPU-Initiated Networking; on this stack backed by
+    # GDAKI / DOCA GPUNetIO -- not the legacy NVSHMEM/IBGDA Buffer path), and in our
+    # testing that path is not graph-capturable, so we gate capture on EP_DISABLE_GIN
+    # and run the GIN scale-out path eagerly. The on-stream blocker is the dispatch
+    # CPU sync that reads exact received-token counts (elastic.py do_cpu_sync=True); the
+    # cached dispatch below forces do_cpu_sync=False, which is why the NVLink path is
+    # capture-safe.
     gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
     deepep_can_graph = args.cuda_graph and gin_disabled
 
