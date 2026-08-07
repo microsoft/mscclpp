@@ -5,9 +5,20 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
+#include "port_channel_gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
+
+/// Backend that services a PortChannel's device-side operations.
+/// Mirrors NCCL GIN's backend selection: the same device API (`put`, `signal`,
+/// `putWithSignal`, `flush`, `atomicAdd`) is serviced either by the CPU proxy
+/// (FIFO + ProxyService thread) or by GPU-initiated networking (GPUNetIO/GDAKI,
+/// kernel-issued RDMA). The backend is chosen at channel creation.
+enum class PortChannelBackend : uint8_t {
+  Proxy = 0,     ///< CPU proxy: device pushes ProxyTrigger to the host FIFO.
+  GpuNetIo = 1,  ///< GPU-initiated: device issues RDMA WQEs directly (DOCA GDAKI).
+};
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
 /// actual semaphores.
@@ -43,6 +54,13 @@ struct BasePortChannelDeviceHandle {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
+  // Backend that services this channel's device operations. Defaults to the CPU
+  // proxy so existing (FIFO-based) construction paths are unchanged.
+  PortChannelBackend backend_ = PortChannelBackend::Proxy;
+
+  // GPU-initiated networking context; only used when backend_ == GpuNetIo.
+  GpuNetIoDeviceContext* gin_ = nullptr;
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
@@ -59,6 +77,11 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      // Peer to reach is encoded by the destination MemoryId in the symmetric model.
+      gin_->put(static_cast<int>(dstId), dstOffset, srcOffset, size);
+      return;
+    }
     fifo_.push({TriggerData, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -82,6 +105,12 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      // Signal target offset/value are supplied by the higher-level channel; the
+      // base handle fuses payload+signal on the same peer (dstId).
+      gin_->putWithSignal(static_cast<int>(dstId), dstOffset, srcOffset, size, /*signalOffset=*/0, /*signalValue=*/1);
+      return;
+    }
     fifo_.push({TriggerData | TriggerFlag, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -122,6 +151,10 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerSync to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gin_->flush(static_cast<int>(semaphoreId_));
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -132,6 +165,10 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to atomically add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gin_->atomicAdd(static_cast<int>(dstId), dstOffset, value);
+      return;
+    }
     ProxyTrigger trigger;
     // Encode the full 64-bit add value in fst (size + srcOffset fields).
     trigger.fst = static_cast<uint64_t>(value);
