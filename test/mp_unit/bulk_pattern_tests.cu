@@ -137,7 +137,8 @@ DeviceState uploadPeerState(const std::vector<DeviceHandle<mscclpp::BaseMemoryCh
 // out. bulkStoreWaitSource() lets the next load start while the store is still travelling, which is
 // the reason that entry point exists separately from bulkStoreWait().
 // ------------------------------------------------------------------------------------------------
-__global__ void kernelDispatch(const float* localTokens, void** peerPools, int rank, int worldSize) {
+__global__ void kernelDispatch([[maybe_unused]] const float* localTokens, [[maybe_unused]] void** peerPools,
+                               [[maybe_unused]] int rank, [[maybe_unused]] int worldSize) {
 #if MSCCLPP_BULK_AVAILABLE
   __shared__ alignas(128) uint8_t tile[kChunkBytes];
   __shared__ mscclpp::BulkBarrier barrier;
@@ -188,11 +189,6 @@ __global__ void kernelDispatch(const float* localTokens, void** peerPools, int r
     mscclpp::bulkStoreWait<0>();
     barrier.invalidate();
   }
-#else
-  (void)localTokens;
-  (void)peerPools;
-  (void)rank;
-  (void)worldSize;
 #endif
 }
 
@@ -244,7 +240,8 @@ TEST(BulkPatternTest, Dispatch) {
 // current one is reduced. The two barriers are set up with relaxedInit() under a single bulkFence()
 // rather than paying a fence each.
 // ------------------------------------------------------------------------------------------------
-__global__ void kernelCombine(float* output, void** peerPools, int rank, int worldSize) {
+__global__ void kernelCombine([[maybe_unused]] float* output, [[maybe_unused]] void** peerPools,
+                              [[maybe_unused]] int rank, [[maybe_unused]] int worldSize) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t shared[];
   // Layout: [stage][contributor][chunk] tiles, then the per-stage barriers.
@@ -294,11 +291,6 @@ __global__ void kernelCombine(float* output, void** peerPools, int rank, int wor
   if (threadIdx.x == 0) {
     for (int s = 0; s < kStages; ++s) barriers[s].invalidate();
   }
-#else
-  (void)output;
-  (void)peerPools;
-  (void)rank;
-  (void)worldSize;
 #endif
 }
 
@@ -350,7 +342,8 @@ TEST(BulkPatternTest, Combine) {
 // destination, so the accumulator is never read back across the link and no rank stages anyone
 // else's data. The reverse link direction stays idle.
 // ------------------------------------------------------------------------------------------------
-__global__ void kernelCombineReduce(const float* contribution, void** peerPools, int rank, int worldSize) {
+__global__ void kernelCombineReduce([[maybe_unused]] const float* contribution, [[maybe_unused]] void** peerPools,
+                                    [[maybe_unused]] int rank, [[maybe_unused]] int worldSize) {
 #if MSCCLPP_BULK_AVAILABLE
   __shared__ alignas(128) uint8_t tile[kChunkBytes];
   __shared__ mscclpp::BulkBarrier barrier;
@@ -383,11 +376,6 @@ __global__ void kernelCombineReduce(const float* contribution, void** peerPools,
   }
 
   if (threadIdx.x == 0) barrier.invalidate();
-#else
-  (void)contribution;
-  (void)peerPools;
-  (void)rank;
-  (void)worldSize;
 #endif
 }
 
