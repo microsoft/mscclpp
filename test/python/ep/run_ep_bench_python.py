@@ -172,9 +172,8 @@ def parse_args() -> argparse.Namespace:
         "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
     )
     p.add_argument(
-        "--graph-group-size",
         "--iters-per-graph",
-        dest="graph_group_size",
+        dest="iters_per_graph",
         type=int,
         default=50,
         help="with --cuda-graph, number of dispatch->combine iterations captured INSIDE one CUDA "
@@ -207,12 +206,12 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
-    if args.graph_group_size <= 0:
-        raise SystemExit("--graph-group-size must be positive")
+    if args.iters_per_graph <= 0:
+        raise SystemExit("--iters-per-graph must be positive")
     if not args.cuda_graph:
         # Grouping only applies to graph capture; treat as 1 for eager runs so the
         # non-1 default does not error a plain (non-graph) benchmark.
-        args.graph_group_size = 1
+        args.iters_per_graph = 1
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
         raise SystemExit(
             "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
@@ -476,7 +475,7 @@ def run_backend(
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
     # graph_group_size is the number of dispatch->combine iterations captured in one
-    # graph (the --graph-group-size arg; 1 when this backend is not graph-captured).
+    # graph (the --iters-per-graph arg; 1 when this backend is not graph-captured).
     # One replay (one dispatch_fn() call) ran them all, so divide the per-replay time
     # back to per-iteration. Kernel-only kineto is already per-iteration (its
     # per-launch average divides by the kernel count, which scales with the group).
@@ -608,7 +607,7 @@ def main() -> None:
 
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
-    # Single routing input reused for every captured iteration. --graph-group-size
+    # Single routing input reused for every captured iteration. --iters-per-graph
     # replays the SAME paired dispatch->combine N times inside one graph to amortize
     # launch overhead; it does not need N distinct routings.
     inputs = make_inputs(
@@ -688,7 +687,7 @@ def main() -> None:
                 spec["combine"],
                 pre_replay=spec.get("pre_replay"),
                 on_fail=spec.get("on_fail"),
-                graph_group_size=max(1, args.graph_group_size),
+                graph_group_size=max(1, args.iters_per_graph),
             )
             local_ok = graphed is not None
             all_ok = comm.allreduce(1 if local_ok else 0, op=MPI.MIN)
@@ -697,12 +696,12 @@ def main() -> None:
             comm.Barrier()
             if graphed is not None:
                 dispatch_fn, combine_fn, graph = graphed
-                effective_group_size = max(1, args.graph_group_size)
+                effective_group_size = max(1, args.iters_per_graph)
                 os.environ["EP_KINETO_SEPARATE"] = "0"
                 if rank == 0:
                     print(
                         f"[cfg] {name} cuda_graph captured "
-                        f"(single graph; dispatch+combine; graph_group_size={effective_group_size})",
+                        f"(single graph; dispatch+combine; iters_per_graph={effective_group_size})",
                         flush=True,
                     )
         try:
