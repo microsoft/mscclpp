@@ -199,6 +199,12 @@ class SwitchChannelTest : public CommunicatorTestBase {
   void TearDown() override;
 };
 
+class SwitchChannelPerfTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override;
+  void TearDown() override;
+};
+
 class ExecutorTest : public MultiProcessTest {
  protected:
   void SetUp() override;
