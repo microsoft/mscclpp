@@ -136,7 +136,9 @@ struct BulkBarrier {
 #endif  // MSCCLPP_BULK_AVAILABLE
 
  private:
-  alignas(8) uint64_t mbar_;
+  // Marked maybe_unused because the operations that read it exist only where MSCCLPP_BULK_AVAILABLE
+  // is 1, while the storage is declared everywhere so host code can size shared memory.
+  [[maybe_unused]] alignas(8) uint64_t mbar_;
 };
 
 #if MSCCLPP_BULK_AVAILABLE
