@@ -16,21 +16,15 @@ constexpr size_t DEFAULT_FIFO_SIZE = 512;
 class Fifo {
  public:
   /// Constructor.
-  /// @param size Number of entries. Must be a power of two (default: DEFAULT_FIFO_SIZE).
-  /// @throws Error with ErrorCode::InvalidUsage if size is not a positive power of two.
+  /// @param size Number of entries (default: DEFAULT_FIFO_SIZE).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
   /// Destructor.
   ~Fifo();
 
-  /// Poll for the trigger at the head.
-  ///
-  /// A trigger carries no reserved payload value, so readiness is reported separately rather than
-  /// encoded in the trigger itself.
-  ///
-  /// @param trigger Set to the trigger at the head if one is ready. Untouched otherwise.
-  /// @return True if a trigger was ready and written to @p trigger.
-  bool poll(ProxyTrigger& trigger);
+  /// Poll and get the trigger at the head.
+  /// @return ProxyTrigger at the head of the FIFO.
+  ProxyTrigger poll();
 
   /// Remove the head trigger.
   void pop();

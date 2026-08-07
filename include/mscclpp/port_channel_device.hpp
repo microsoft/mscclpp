@@ -72,7 +72,7 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a TriggerFlag to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerFlag, 0, 0, 0, 0, 0, semaphoreId_}); }
+  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_}); }
 
   /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
   /// @param dstId The ID of destination memory region.
@@ -122,7 +122,7 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerSync to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
-    uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 0, semaphoreId_});
+    uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 

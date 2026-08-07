@@ -25,8 +25,6 @@ constexpr unsigned int TriggerBitsOffset = 32;
 constexpr unsigned int TriggerBitsMemoryId = 9;
 constexpr unsigned int TriggerBitsType = 3;
 constexpr unsigned int TriggerBitsSemaphoreId = 10;
-// The FIFO uses the reserved bit to mark a slot as written, so a trigger must not carry data
-// there. See FifoDeviceHandle::push().
 constexpr unsigned int TriggerBitsFifoReserved = 1;
 
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
@@ -73,6 +71,7 @@ union alignas(16) ProxyTrigger {
     MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << TriggerBitsOffset), "dstOffset is too large");
     MSCCLPP_ASSERT_DEVICE(srcId < (1ULL << TriggerBitsMemoryId), "srcId is too large");
     MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << TriggerBitsOffset), "srcOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(bytes != 0, "bytes must not be zero");
     MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << TriggerBitsSize), "bytes is too large");
     MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << TriggerBitsSemaphoreId), "semaphoreId is too large");
     constexpr uint64_t maskSize = (1ULL << TriggerBitsSize) - 1;
@@ -107,32 +106,29 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
     uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
 
-    // Wait until the slot's previous occupant has been consumed. Lap parity identifies a stale
-    // trigger but does not prevent overwriting a live one; this does.
+    // Flip the last bit for safe polling; host will revert.
+    constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
+    trigger.snd ^= flipMask;
+
+    // Wait until the trigger is freed by the host.
     if (prevHead >= size + *tailCache) {
       sync(prevHead - size, maxSpinCount);
     }
 
-    // Commit bit: the parity of the lap this slot is on, so that the value left by the previous
-    // lap reads as stale. Lap 0 writes 1, which makes a zero-initialized buffer read as empty.
-    trigger.fields.reserved = ((prevHead >> sizeShift) & 1ULL) ^ 1ULL;
+    ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
 
-    ProxyTrigger* triggerPtr = &(triggers[prevHead & sizeMask]);
-
-    // snd is the commit word: a consumer that observes this lap's parity must also observe the
-    // payload that goes with it.
 #if defined(MSCCLPP_DEVICE_CUDA)
-    // One 128-bit store publishes both words together, so no ordering is needed between them.
-    // The proxy already relies on this: a torn store would let it read a new fst against the
-    // previous lap's snd, and dispatch on a stale semaphoreId.
-    //
-    // sm_80 used __threadfence_system() plus a relaxed store here, which was once faster. On
-    // A100 with CUDA 12.9 it is no longer, according to `FifoTest.Fifo`.
+#if __CUDA_ARCH__ == 800
+    // This is faster than release for A100.
+    __threadfence_system();
+    asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+#else
     asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
+#endif
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
-    // No vector store here, so order the payload ahead of the commit explicitly.
-    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelaxed);
-    atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelease);
+    // Store snd no later than fst.
+    atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelaxed);
+    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
     return prevHead;
@@ -172,12 +168,8 @@ struct FifoDeviceHandle {
   uint64_t* tail;
   /// Cached tail value.
   uint64_t* tailCache;
-  /// FIFO size. Always a power of two.
+  /// FIFO size.
   int size;
-  /// size - 1, for mapping a position to a slot.
-  uint64_t sizeMask;
-  /// log2(size), for extracting the lap from a position.
-  uint64_t sizeShift;
 };
 
 }  // namespace mscclpp
