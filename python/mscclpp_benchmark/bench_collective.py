@@ -69,6 +69,7 @@ class DTypeSpec:
     cupy_dtype: Any
     mscclpp_dtype: Any
     accum_dtype: Any | None = None
+    accum_name: str | None = None
     fp8_format: str | None = None
 
 
@@ -111,6 +112,8 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     normalized = dtype_name.strip().lower().replace("-", "_")
     if normalized in {"float16", "fp16", "half"}:
         return DTypeSpec("float16", cp.float16, mscclpp.DataType.float16)
+    if normalized in {"bfloat16", "bf16"}:
+        return DTypeSpec("bfloat16", cp.uint16, mscclpp.DataType.bfloat16)
     if normalized in {"float32", "fp32", "float"}:
         return DTypeSpec("float32", cp.float32, mscclpp.DataType.float32)
     if normalized in {"int32", "i32"}:
@@ -123,6 +126,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
             cp.uint8,
             mscclpp.DataType.float8_e4m3fn,
             accum_dtype=mscclpp.DataType.float16,
+            accum_name="float16",
             fp8_format="e4m3fn",
         )
     if normalized in {"float8_e4m3fnuz", "fp8_e4m3fnuz"}:
@@ -131,6 +135,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
             cp.uint8,
             mscclpp.DataType.float8_e4m3fnuz,
             accum_dtype=mscclpp.DataType.float16,
+            accum_name="float16",
             fp8_format="e4m3fnuz",
         )
     if normalized in {"float8_e4m3b15", "fp8_e4m3b15"}:
@@ -139,10 +144,11 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
             cp.uint8,
             mscclpp.DataType.float8_e4m3b15,
             accum_dtype=mscclpp.DataType.float32,
+            accum_name="float32",
             fp8_format="e4m3b15",
         )
     raise ValueError(
-        f"Unsupported dtype {dtype_name!r}; use float16, float32, int32, uint8, "
+        f"Unsupported dtype {dtype_name!r}; use float16, bfloat16, float32, int32, uint8, "
         "float8_e4m3fn, float8_e4m3fnuz, or float8_e4m3b15"
     )
 
@@ -155,10 +161,13 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
     normalized = accum_type.strip().lower().replace("-", "_")
     if normalized in {"native", "same", "auto"}:
         accum_dtype = dtype_spec.mscclpp_dtype
+        accum_name = dtype_spec.name
     elif normalized in {"float16", "fp16", "half"}:
         accum_dtype = mscclpp.DataType.float16
+        accum_name = "float16"
     elif normalized in {"float32", "fp32", "float"}:
         accum_dtype = mscclpp.DataType.float32
+        accum_name = "float32"
     else:
         raise ValueError(f"Unsupported accum type {accum_type!r}; use native, float16, or float32")
 
@@ -167,6 +176,7 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
         cupy_dtype=dtype_spec.cupy_dtype,
         mscclpp_dtype=dtype_spec.mscclpp_dtype,
         accum_dtype=accum_dtype,
+        accum_name=accum_name,
         fp8_format=dtype_spec.fp8_format,
     )
 
@@ -563,7 +573,16 @@ def main(argv: list[str] | None = None) -> None:
             if config is None:
                 continue
             if args.autotune:
-                config_store.upsert(hardware_profile, args.collective, case.message_size, config)
+                dtype = dtype_spec.name if args.collective == _ALLREDUCE else None
+                accum = (dtype_spec.accum_name or dtype_spec.name) if dtype is not None else None
+                config_store.upsert(
+                    hardware_profile,
+                    args.collective,
+                    case.message_size,
+                    config,
+                    dtype=dtype,
+                    accum=accum,
+                )
 
             correctness = "SKIP"
             correctness_stats: CorrectnessStats | None = None
