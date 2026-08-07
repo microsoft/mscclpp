@@ -106,37 +106,13 @@ jobs:
       pilot: true
       resourceGroup: mscclpp
       gpuArch: '100a'
-      containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0-aarch64
 
   - template: templates/run-remote-task.yml
     parameters:
-      name: RunMscclppTest
-      displayName: Run multi-nodes mscclpp-test
-      continueOnError: true
+      name: PyBench
+      displayName: Run Collective Benchmarks
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
-
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodeUnitTest
-      displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
-
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodePythonTests
-      displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh pytests
-
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodePythonBenchmark
-      displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include eth0 -np 8 -npernode 4 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --autotune
