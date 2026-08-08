@@ -8,6 +8,12 @@
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/utils.hpp>
+
+#include "host/gpu_net_io_service.hpp"
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 // Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
 // On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
 // IbMode::Default is used and the IB device does not support RDMA atomics, the endpoint falls
@@ -1083,4 +1089,88 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbHostMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testSameChanConcurrentFlush(IbMode::Host);
+}
+
+// ===========================================================================
+// GPU-initiated networking (GPUNetIO / GDAKI) point-to-point smoke test.
+//
+// Exercises the PortChannel GpuNetIo backend's device context end to end:
+// rank 0 writes a payload into rank 1's symmetric buffer and sets a remote
+// signal (fused RDMA write + atomic) straight from the kernel -- no CPU proxy --
+// and rank 1 spins on the signal, then verifies the payload. The test is gated
+// behind MSCCLPP_USE_GPUNETIO at compile time and skips at runtime whenever the
+// GDAKI resources cannot be brought up (no IB / no GPUNetIO-capable NIC).
+// ===========================================================================
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoP2P(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer, int* buff,
+                                  uint64_t signalOffset, int* ret) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  if (rank == 0) {
+    buff[0] = 42;
+    __threadfence_system();
+    // RDMA-write the 4-byte payload to the peer's symmetric buffer and fuse a
+    // remote atomic-add signal that becomes visible only after the payload.
+    ctx->putWithSignal(peer, /*dstOffset=*/0, /*srcOffset=*/0, sizeof(int), signalOffset, /*signalValue=*/1);
+    ctx->flush(peer);
+  } else {
+    volatile int* sig = reinterpret_cast<volatile int*>(reinterpret_cast<char*>(buff) + signalOffset);
+    while (*sig == 0) {
+    }
+    *ret = (buff[0] == 42) ? 0 : 1;
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo P2P test requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const size_t bytes = 4096;
+  const uint64_t signalOffset = 64;  // keep payload (offset 0) and signal distinct
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, bytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, bytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, bytes);
+  } catch (const mscclpp::Error& e) {
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  communicator->bootstrap()->barrier();
+
+  const int peer = (rank == 0) ? 1 : 0;
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, sizeof(int)));
+
+  kernelGpuNetIoP2P<<<1, 1>>>(svc->deviceContext(), rank, peer, reinterpret_cast<int*>(symBuf), signalOffset, retDev);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  if (rank == 1) {
+    int ret = 1;
+    MSCCLPP_CUDATHROW(cudaMemcpy(&ret, retDev, sizeof(int), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(ret, 0);
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 }
