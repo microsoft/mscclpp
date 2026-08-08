@@ -75,7 +75,7 @@ jobs:
       gpuArch:          '90'
 
 - job: CodeCoverageMI300X
-  timeoutInMinutes: 40
+  timeoutInMinutes: 60
   pool:
     name: msccl-ci-mi300x
   variables:
