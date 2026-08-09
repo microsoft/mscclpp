@@ -34,9 +34,10 @@ steps:
 
       UNIT_TEST_ARGS=""
       MP_UNIT_TEST_ARGS="--exclude-perf-tests"
-      # Debug coverage makes the host-side atomic signaling tests prohibitively
-      # slow on SM90 and ROCm. A100 coverage continues to exercise these paths.
-      if [ "${{ parameters.gpuArch }}" = "90" ] || [ "${{ parameters.platform }}" = "rocm" ]; then
+      # Debug coverage makes the GDRCopy host-side atomic signaling tests
+      # prohibitively slow on SM90. A100 coverage continues to exercise them;
+      # ROCm runs its separate HostNoAtomic implementation with the longer timeout.
+      if [ "${{ parameters.gpuArch }}" = "90" ]; then
         UNIT_TEST_ARGS="--filter=-GdrMapTest.AtomicStoreCounterPingPong"
         MP_UNIT_TEST_ARGS="${MP_UNIT_TEST_ARGS} --filter=-IbHostNoAtomicMode"
       fi
