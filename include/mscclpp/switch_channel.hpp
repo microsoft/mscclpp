@@ -47,15 +47,13 @@ class NvlsConnection {
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
   /// Attach a device-side barrier resource shared by all SwitchChannels created from this
-  /// connection. After this call, `SwitchChannel::deviceHandle().barrier()` can synchronize all
-  /// ranks in the multicast group without a separate mesh of memory-channel semaphores. This is set
-  /// up automatically by `connectNvlsCollective`; it is an internal setup hook and is not intended
-  /// to be called directly.
-  /// @param barrierBuffer Storage for the barrier flag (kept alive); element 0 is the shared arrival
-  /// counter, element 1 is this rank's generation counter.
-  /// @param barrierChannel The bound barrier channel (kept alive for its multicast pointer).
+  /// connection. Allocates the barrier flag buffer, binds it to this connection's multicast region,
+  /// and keeps both alive for the connection's lifetime. After this call,
+  /// `SwitchChannel::deviceHandle().barrier()` can synchronize all ranks in the multicast group
+  /// without a separate mesh of memory-channel semaphores. This is set up automatically by
+  /// `connectNvlsCollective`; it is an internal setup hook and is not intended to be called directly.
   /// @param nRanks Number of ranks participating in the multicast group.
-  void attachBarrier(std::shared_ptr<void> barrierBuffer, std::shared_ptr<SwitchChannel> barrierChannel, int nRanks);
+  void attachBarrier(int nRanks);
 
  private:
   class Impl;
