@@ -103,7 +103,7 @@ else
     "sudo docker pull ${CONTAINERIMAGE}"
 
   # Set GPU passthrough flags based on platform
-  LAUNCH_OPTION="--gpus=all"
+  LAUNCH_OPTION="--gpus=all --device /dev/nvidia-caps-imex-channels/channel0"
   if [ "${PLATFORM}" == "rocm" ]; then
     LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
   fi
