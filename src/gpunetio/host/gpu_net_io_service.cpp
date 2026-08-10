@@ -4,6 +4,7 @@
 #include "host/gpu_net_io_service.hpp"
 
 #include <cuda_runtime.h>
+#include <endian.h>
 #include <infiniband/verbs.h>
 
 #include <cstring>
@@ -49,6 +50,10 @@ struct QpExchangeInfo {
   uint16_t lid;
   uint16_t gidIndex;
   uint8_t gid[16];
+  uint8_t linkLayer;
+  uint8_t grhRequired;
+  uint8_t activeMtu;
+  uint8_t pad;
 };
 
 // Per-rank memory info exchanged via the bootstrap all-gather.
@@ -77,6 +82,7 @@ struct GpuNetIoService::Impl {
 
   // One high-level QP per remote rank (self entry is null).
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
+  doca_gpu_verbs_service_t cpuProxyService = nullptr;
   struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;  // GPU array from flat_list
 
   // Device-side arrays referenced by GpuNetIoDeviceContext.
@@ -85,6 +91,7 @@ struct GpuNetIoService::Impl {
   GpuNetIoDeviceContext* ctxGpu = nullptr;
 
   ~Impl() {
+    if (cpuProxyService) (void)doca_gpu_verbs_destroy_service(cpuProxyService);
     if (ctxGpu) (void)cudaFree(ctxGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
     if (peerBaseGpu) (void)cudaFree(peerBaseGpu);
@@ -95,13 +102,16 @@ struct GpuNetIoService::Impl {
     if (gpuDev) (void)doca_gpu_destroy(gpuDev);
   }
 
-  void queryLocalPort(uint16_t& outLid) {
+  void queryLocalPort(QpExchangeInfo& info) {
     struct ibv_port_attr portAttr;
     std::memset(&portAttr, 0, sizeof(portAttr));
     if (ibv_query_port(ibCtx->getContext(), portNum, &portAttr) != 0) {
       throw Error("ibv_query_port failed for GPUNetIO service", ErrorCode::SystemError);
     }
-    outLid = portAttr.lid;
+    info.lid = portAttr.lid;
+    info.linkLayer = portAttr.link_layer;
+    info.grhRequired = (portAttr.flags & IBV_QPF_GRH_REQUIRED) ? 1 : 0;
+    info.activeMtu = portAttr.active_mtu;
   }
 
   void queryLocalGid(uint8_t outGid[16]) {
@@ -111,6 +121,27 @@ struct GpuNetIoService::Impl {
       throw Error("ibv_query_gid failed for GPUNetIO service", ErrorCode::SystemError);
     }
     std::memcpy(outGid, gid.raw, 16);
+  }
+
+  doca_verbs_mtu_size pathMtu(const QpExchangeInfo& remote) const {
+    uint8_t mtu = remote.activeMtu;
+    if (mtu == 0) {
+      mtu = IBV_MTU_1024;
+    }
+    switch (mtu) {
+      case IBV_MTU_256:
+        return DOCA_VERBS_MTU_SIZE_256_BYTES;
+      case IBV_MTU_512:
+        return DOCA_VERBS_MTU_SIZE_512_BYTES;
+      case IBV_MTU_1024:
+        return DOCA_VERBS_MTU_SIZE_1K_BYTES;
+      case IBV_MTU_2048:
+        return DOCA_VERBS_MTU_SIZE_2K_BYTES;
+      case IBV_MTU_4096:
+        return DOCA_VERBS_MTU_SIZE_4K_BYTES;
+      default:
+        return DOCA_VERBS_MTU_SIZE_1K_BYTES;
+    }
   }
 
   // INIT -> RTR -> RTS for one QP, targeting the given remote info.
@@ -123,6 +154,14 @@ struct GpuNetIoService::Impl {
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_dlid(ah, remote.lid));
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_sl(ah, 0));
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_sgid_index(ah, gidIndex));
+    MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_hop_limit(ah, 255));
+    if (remote.linkLayer == IBV_LINK_LAYER_INFINIBAND && !remote.grhRequired) {
+      MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_addr_type(ah, DOCA_VERBS_ADDR_TYPE_IB_NO_GRH));
+    } else if (remote.linkLayer == IBV_LINK_LAYER_INFINIBAND) {
+      MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_addr_type(ah, DOCA_VERBS_ADDR_TYPE_IB_GRH));
+    } else {
+      MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_addr_type(ah, DOCA_VERBS_ADDR_TYPE_IPv6));
+    }
 
     struct doca_verbs_qp_attr* attr = nullptr;
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_create(&attr));
@@ -142,7 +181,7 @@ struct GpuNetIoService::Impl {
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_next_state(attr, DOCA_VERBS_QP_STATE_RTR));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_rq_psn(attr, 0));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_dest_qp_num(attr, remote.qpn));
-    MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, DOCA_VERBS_MTU_SIZE_1K_BYTES));
+    MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, pathMtu(remote)));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ah_attr(attr, ah));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_min_rnr_timer(attr, 12));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, 1));
@@ -213,20 +252,15 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   }
 
   // 4. Exchange QP info (all-gather) and connect INIT -> RTR -> RTS.
-  uint16_t localLid = 0;
-  uint8_t localGid[16] = {0};
-  s.queryLocalPort(localLid);
-  s.queryLocalGid(localGid);
-
   std::vector<QpExchangeInfo> qpInfo(s.worldSize);
   std::memset(qpInfo.data(), 0, qpInfo.size() * sizeof(QpExchangeInfo));
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
     QpExchangeInfo& info = qpInfo[r];
     info.qpn = doca_verbs_qp_get_qpn(s.qpHl[r]->qp);
-    info.lid = localLid;
     info.gidIndex = static_cast<uint16_t>(s.gidIndex);
-    std::memcpy(info.gid, localGid, 16);
+    s.queryLocalPort(info);
+    s.queryLocalGid(info.gid);
   }
   // Each rank publishes, for every peer, the QP that targets that peer. The
   // all-gather delivers a [worldSize][worldSize] table; entry [src][dst] is the
@@ -243,6 +277,22 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
     s.connectQp(s.qpHl[r], remote);
   }
 
+  bool needsCpuProxy = false;
+  for (auto* q : s.qpHl) {
+    if (q && q->qp_gverbs && q->qp_gverbs->cpu_proxy) {
+      needsCpuProxy = true;
+      break;
+    }
+  }
+  if (needsCpuProxy) {
+    MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_service(&s.cpuProxyService));
+    for (auto* q : s.qpHl) {
+      if (q && q->qp_gverbs && q->qp_gverbs->cpu_proxy) {
+        MSCCLPP_DOCA_THROW(doca_gpu_verbs_service_monitor_qp(s.cpuProxyService, q->qp_gverbs));
+      }
+    }
+  }
+
   // 5. Flatten the per-peer device QPs into a GPU array.
   MSCCLPP_DOCA_THROW(
       doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(s.worldSize), &s.qpFlatGpu));
@@ -257,7 +307,7 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   std::vector<uint32_t> rkeysHost(s.worldSize);
   std::vector<uintptr_t> baseHost(s.worldSize);
   for (int r = 0; r < s.worldSize; ++r) {
-    rkeysHost[r] = memAll[r].rkey;
+    rkeysHost[r] = htobe32(memAll[r].rkey);
     baseHost[r] = static_cast<uintptr_t>(memAll[r].base);
   }
 
