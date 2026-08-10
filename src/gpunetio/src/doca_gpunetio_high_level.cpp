@@ -965,6 +965,12 @@ doca_error_t doca_gpu_verbs_qp_flat_list_create_hl(struct doca_gpu_verbs_qp_hl *
     if (error != cudaSuccess) return DOCA_ERROR_NO_MEMORY;
 
     for (uint32_t i = 0; i < num_elems; i++) {
+        if (qp_list[i] == nullptr) {
+            error = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(
+                cudaMemset(qp_gpu_ + i, 0, sizeof(struct doca_gpu_dev_verbs_qp)));
+            if (error != cudaSuccess) goto exit_error;
+            continue;
+        }
         error = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(
             cudaMemcpy(qp_gpu_ + i, qp_list[i]->qp_gverbs->qp_cpu,
                        sizeof(struct doca_gpu_dev_verbs_qp), cudaMemcpyDefault));
@@ -976,8 +982,8 @@ doca_error_t doca_gpu_verbs_qp_flat_list_create_hl(struct doca_gpu_verbs_qp_hl *
     return status;
 
 exit_error:
-    DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaFree(qp_gpu));
-    return status;
+    DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaFree(qp_gpu_));
+    return DOCA_ERROR_DRIVER;
 }
 
 doca_error_t doca_gpu_verbs_qp_flat_list_destroy_hl(struct doca_gpu_dev_verbs_qp *qp_gpu) {

@@ -71,6 +71,21 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer) {
   doca_gpu_dev_verbs_wait(detail::ginQp(qps, peer));
 }
 
+MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount) {
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+  uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      &qp->sq_rsvd_index);
+  if (ticket == 0) return 0;
+  --ticket;
+
+  doca_gpu_dev_verbs_cq* cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
+  for (uint64_t spin = 0; spin < maxSpinCount; ++spin) {
+    int status = doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(cq, ticket);
+    if (status != EBUSY) return status;
+  }
+  return EBUSY;
+}
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_INTERNAL_PORT_CHANNEL_GPUNETIO_DEVICE_IMPL_HPP_

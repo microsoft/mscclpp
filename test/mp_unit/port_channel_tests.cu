@@ -126,10 +126,17 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
   registeredMemories.push_back(recvBufRegMem);
 }
 
-__constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
+using PortChannelHandle = DeviceHandle<mscclpp::PortChannel>;
+
+__constant__ __align__(alignof(PortChannelHandle)) unsigned char
+    gChannelOneToOneTestConstPortChans[sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& channelOneToOneTestPortChan() {
+  return *reinterpret_cast<PortChannelHandle*>(gChannelOneToOneTestConstPortChans);
+}
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -345,7 +352,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -550,7 +557,7 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
 // Bandwidth test: bidirectional bulk transfer matching the tutorial pattern.
 // Both ranks do signal+wait+putWithSignal+wait per iteration.
 __global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   if (threadIdx.x != 0) return;
   const uint64_t srcOffset = rank * nElem * sizeof(int);
   const uint64_t dstOffset = srcOffset;
@@ -639,7 +646,7 @@ PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
 // both ranks simultaneously send numBlocks atomic adds per iteration.
 __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer,
                                                      int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   const int numBlocks = gridDim.x;
 
   for (int iter = 0; iter < nTries; iter++) {
@@ -671,7 +678,12 @@ __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTr
 }
 
 static constexpr int kMaxQps = 4;
-__constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
+__constant__ __align__(alignof(PortChannelHandle)) unsigned char
+    gMultiQpPortChans[kMaxQps * sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& multiQpPortChan(int q) {
+  return reinterpret_cast<PortChannelHandle*>(gMultiQpPortChans)[q];
+}
 
 // Multi-QP bandwidth kernel: one thread per QP, putWithSignal per QP, parallel waits.
 __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps) {
@@ -679,12 +691,12 @@ __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps)
   if (q >= numQps) return;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      multiQpPortChan(0).signal();
+      multiQpPortChan(0).wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignal(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    multiQpPortChan(q).putWithSignal(0, nElemPerChan * sizeof(int));
+    multiQpPortChan(q).wait();
     __syncthreads();
   }
 }
@@ -926,12 +938,12 @@ __global__ void kernelMultiQpFlushStress(int nElemPerChan, int nIters, int numQp
   if (q >= numQps) return;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      multiQpPortChan(0).signal();
+      multiQpPortChan(0).wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    multiQpPortChan(q).putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
+    multiQpPortChan(q).wait();
     __syncthreads();
   }
 }
@@ -1030,10 +1042,15 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
 // each caller waits on its own TriggerSync rather than on a globally-incrementing counter
 // that could be assigned out-of-order relative to the FIFO push order.
-__constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
+__constant__ __align__(alignof(PortChannelHandle)) unsigned char
+    gSingleChanForConcurrentFlush[sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& singleChanForConcurrentFlush() {
+  return *reinterpret_cast<PortChannelHandle*>(gSingleChanForConcurrentFlush);
+}
 
 __global__ void kernelSameChanConcurrentFlush(int nIters) {
-  auto& chan = gSingleChanForConcurrentFlush;
+  auto& chan = singleChanForConcurrentFlush();
   int tid = threadIdx.x;
   for (int i = 0; i < nIters; i++) {
     // Each thread writes to a distinct slot (so puts don't overlap on remote side),
@@ -1105,18 +1122,24 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbHostMode) {
 __global__ void kernelGpuNetIoP2P(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer, int* buff,
                                   uint64_t signalOffset, int* ret) {
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  constexpr uint64_t kMaxSpins = 100000000ULL;
   if (rank == 0) {
+    ret[0] = 10;
     buff[0] = 42;
     __threadfence_system();
     // RDMA-write the 4-byte payload to the peer's symmetric buffer and fuse a
     // remote atomic-add signal that becomes visible only after the payload.
     ctx->putWithSignal(peer, /*dstOffset=*/0, /*srcOffset=*/0, sizeof(int), signalOffset, /*signalValue=*/1);
-    ctx->flush(peer);
+    ret[0] = 20;
+    ret[1] = ctx->tryFlush(peer, kMaxSpins);
+    ret[0] = (ret[1] == 0) ? 30 : 31;
   } else {
     volatile int* sig = reinterpret_cast<volatile int*>(reinterpret_cast<char*>(buff) + signalOffset);
-    while (*sig == 0) {
+    uint64_t spin = 0;
+    while (*sig == 0 && spin++ < kMaxSpins) {
     }
-    *ret = (buff[0] == 42) ? 0 : 1;
+    ret[0] = (*sig != 0) ? 50 : 40;
+    ret[1] = (*sig != 0) ? buff[0] : *sig;
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
@@ -1155,17 +1178,21 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
 
   const int peer = (rank == 0) ? 1 : 0;
   int* retDev = nullptr;
-  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, sizeof(int)));
-  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, 2 * sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, 2 * sizeof(int)));
 
   kernelGpuNetIoP2P<<<1, 1>>>(svc->deviceContext(), rank, peer, reinterpret_cast<int*>(symBuf), signalOffset, retDev);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
-  if (rank == 1) {
-    int ret = 1;
-    MSCCLPP_CUDATHROW(cudaMemcpy(&ret, retDev, sizeof(int), cudaMemcpyDeviceToHost));
-    EXPECT_EQ(ret, 0);
+  int ret[2] = {-1, -1};
+  MSCCLPP_CUDATHROW(cudaMemcpy(ret, retDev, sizeof(ret), cudaMemcpyDeviceToHost));
+  if (rank == 0) {
+    EXPECT_EQ(ret[0], 30);
+    EXPECT_EQ(ret[1], 0);
+  } else {
+    EXPECT_EQ(ret[0], 50);
+    EXPECT_EQ(ret[1], 42);
   }
 
   MSCCLPP_CUDATHROW(cudaFree(retDev));

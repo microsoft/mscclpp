@@ -51,6 +51,10 @@ struct GpuNetIoDeviceContext {
 
   /// Wait for locally-issued RDMA to this peer to complete (device CQ poll).
   MSCCLPP_DEVICE_INLINE void flush(int peer);
+
+  /// Bounded version of `flush` for tests/diagnostics. Returns 0 on completion,
+  /// EBUSY on timeout, or a negative CQ error status.
+  MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t maxSpinCount);
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
@@ -86,6 +90,12 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
+}
+MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+  return -1;
 }
 }  // namespace mscclpp
 #endif  // defined(MSCCLPP_USE_GPUNETIO)

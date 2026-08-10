@@ -79,10 +79,16 @@ endif()
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_link_libraries(mscclpp PUBLIC mscclpp_gpunetio_obj)
+endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
 target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_link_libraries(mscclpp_static PUBLIC mscclpp_gpunetio_obj)
+endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp
