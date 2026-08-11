@@ -108,16 +108,26 @@ else
     LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
   fi
 
+  # The docker-default AppArmor profile triggers a kernel NULL-deref oops in
+  # aa_inet_bind_perm() on the 6.17 azure-nvidia aarch64 kernel used by GB200
+  # nodes. Open MPI's TCP BTL hits it on every bind() during connection setup,
+  # which kills the rank mid-syscall; it is left as a <defunct> zombie and
+  # mpirun then blocks forever on the first cross-node collective. Running the
+  # container unconfined avoids the faulty AppArmor path. This is implied by
+  # --privileged, but is stated explicitly in both branches so the workaround
+  # survives any future change to the privilege flags.
+  SECURITY_OPTION="--security-opt apparmor=unconfined"
+
   if [ "${IB_ENVIRONMENT}" == "true" ]; then
     # InfiniBand: use --privileged for RDMA device access
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
-      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
+      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   else
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
-      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   fi
