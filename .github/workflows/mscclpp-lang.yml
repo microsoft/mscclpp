@@ -21,7 +21,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set environment variable
-      run: echo "LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64" >> $GITHUB_ENV
+      run: echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64" >> $GITHUB_ENV
 
     - name: Install mscclpp
       run: |
