@@ -234,7 +234,7 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   const size_t poolHeaderBytes = high_throughput::Config::recvPoolHeaderBytes(numRanks_);
   EP_HOST_ASSERT(recvX == static_cast<uint8_t*>(recvPoolPtrs_[rank_]) + poolHeaderBytes);
 
-  const int hiddenInt4 = hidden * xElementSize / sizeof(int4);
+  const int hiddenInt4 = static_cast<int>(static_cast<int64_t>(hidden) * xElementSize / sizeof(int4));
   dispatchMetadataReady_ = true;
   if (recvTopkWeights != nullptr) recvTopkWeights_ = recvTopkWeights;
   high_throughput::dispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
