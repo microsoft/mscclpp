@@ -278,25 +278,6 @@ std::shared_ptr<NvlsConnection> makeNvlsConnection(std::shared_ptr<Bootstrap> bo
   return conn;
 }
 
-// Query the multicast granularity for `numDevices` without allocating, so the barrier reserve can be
-// sized before the connection's multicast object is created. Mirrors the min/max handling used when
-// the connection later computes its own granularity.
-size_t nvlsMinimumGranularity(int numDevices) {
-  CUmulticastObjectProp prop = {};
-  prop.numDevices = numDevices;
-  prop.size = 0;
-  size_t granFd = 0, granFabric = 0;
-  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&granFd, &prop, CU_MULTICAST_GRANULARITY_MINIMUM));
-  prop.handleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-  if (cuMulticastGetGranularity(&granFabric, &prop, CU_MULTICAST_GRANULARITY_MINIMUM) != CUDA_SUCCESS) {
-    granFabric = 0;
-  }
-  size_t gran = std::max(granFd, granFabric);
-  INFO(CONN, "NVLS minimum granularity for ", numDevices, " devices: granFd ", granFd, ", granFabric ", granFabric,
-       ", selected ", gran);
-  return gran;
-}
 #endif  // (CUDA_NVLS_API_AVAILABLE)
 }  // namespace
 
@@ -324,7 +305,7 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   // bindAllocatedMemory() calls. Flag layout: element 0 is the shared arrival counter, element 1 is
   // this rank's generation counter. GpuBuffer zero-initializes both, the clean starting state the
   // barrier's monotonic (never-reset) scheme requires.
-  size_t barrierReserve = nvlsMinimumGranularity(static_cast<int>(allRanks.size()));
+  size_t barrierReserve = detail::getMulticastGranularity(0, CU_MULTICAST_GRANULARITY_MINIMUM);
   auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize + barrierReserve, 0);
 
   conn->attachBarrier(static_cast<int>(allRanks.size()));
