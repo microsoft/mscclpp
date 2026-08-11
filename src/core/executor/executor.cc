@@ -209,10 +209,7 @@ struct Executor::Impl {
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
-    auto [insertedIt, inserted] = this->contexts.emplace(key, std::move(context));
-    if (!inserted) {
-      throw Error("Execution context insertion failed", ErrorCode::ExecutorError);
-    }
+    auto insertedIt = this->contexts.insert_or_assign(key, std::move(context)).first;
     return insertedIt->second;
   }
 
