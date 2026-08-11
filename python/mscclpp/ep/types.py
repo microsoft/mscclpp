@@ -46,6 +46,7 @@ class MoECommunicatorConfig:
     # Model shape and capacity
     hidden_size: int = 0
     topk: int = 0
+    # Allocation capacity. Rank-major calls may select a smaller active capacity.
     max_tokens_per_rank: int = 0
 
     # Runtime mode and output layout
@@ -121,12 +122,13 @@ class ExpertMajorCombineContext:
 
 @dataclass
 class RankMajorCombineContext:
-    """Combine context for fixed-stride rank-major output."""
+    """Combine context for rank-major output at the dispatch call's active capacity."""
 
     topk_ids: torch.Tensor
     num_experts: int
     num_tokens: int
     hidden_size: int
+    max_tokens_per_rank: int
 
 
 @dataclass

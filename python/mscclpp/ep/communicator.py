@@ -120,6 +120,7 @@ class MoECommunicator:
         output_buffer: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
         previous_handle: Optional[DispatchHandle] = None,
+        runtime_max_tokens_per_rank: Optional[int] = None,
     ) -> Tuple[DispatchOutput, DispatchHandle]:
         return self._backend.dispatch(
             input,
@@ -129,6 +130,7 @@ class MoECommunicator:
             output_buffer=output_buffer,
             stream=stream,
             previous_handle=previous_handle,
+            runtime_max_tokens_per_rank=runtime_max_tokens_per_rank,
         )
 
     def combine(
@@ -141,14 +143,19 @@ class MoECommunicator:
     ) -> torch.Tensor:
         return self._backend.combine(expert_output, handle, out=out, stream=stream)
 
-    def get_expert_output_buffer(self) -> torch.Tensor:
+    def get_expert_output_buffer(self, runtime_max_tokens_per_rank: Optional[int] = None) -> torch.Tensor:
         """Return the runtime-owned rank-major MoE output buffer.
+
+        ``runtime_max_tokens_per_rank`` selects a compact view within the
+        communicator's max-capacity allocation. CUDA graph buckets may use
+        different views while sharing the same physical allocation.
 
         This aliases runtime memory that every combine reuses; it is not a fresh
         allocation per call. Fill it before each combine and copy out anything
         that must outlive the next call.
         """
-        buffer = getattr(self._backend, "expert_output_buffer", None)
+        getter = getattr(self._backend, "get_expert_output_buffer", None)
+        buffer = getter(runtime_max_tokens_per_rank) if getter is not None else None
         if buffer is None:
             raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
         return buffer

@@ -22,15 +22,15 @@ namespace ep {
 class MoELowLatencyRuntime : public MoERuntime {
  public:
   MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk);
+                       int numTopk, DispatchLayout outputLayout);
   ~MoELowLatencyRuntime() noexcept(false);
 
   MoEMode mode() const override { return MoEMode::LOW_LATENCY; }
 
-  void* outputTopkIdsBuffer() const;
-  void* outputTopkWeightsBuffer() const;
-  void* outputTokensBuffer() const;
-  void* expertOutputBuffer() const;
+  void* outputTopkIdsBuffer(int maxTokensPerRank = 0) const;
+  void* outputTopkWeightsBuffer(int maxTokensPerRank = 0) const;
+  void* outputTokensBuffer(int maxTokensPerRank = 0) const;
+  void* expertOutputBuffer(int maxTokensPerRank = 0) const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
@@ -49,6 +49,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   int hidden_;
   int numExperts_;
   int numTopk_;
+  DispatchLayout outputLayout_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   void* symmetricBuffer_ = nullptr;
@@ -63,6 +64,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
 
+  int resolveMaxTokensPerRank(int maxTokensPerRank) const;
   void setup();
 };
 
