@@ -10,5 +10,6 @@ target_sources(mp_unit_tests PRIVATE
     memory_channel_tests.cu
     semaphore_perf_tests.cu
     switch_channel_tests.cu
+    switch_channel_perf_tests.cu
     executor_tests.cc
 )
