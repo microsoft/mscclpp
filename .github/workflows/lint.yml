@@ -7,7 +7,7 @@ on:
 
 jobs:
   cpplint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Check out Git repository
@@ -22,7 +22,7 @@ jobs:
       run: bash ./tools/lint.sh cpp dry
 
   pylint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Check out Git repository
@@ -40,7 +40,7 @@ jobs:
       run: bash ./tools/lint.sh py dry
 
   spelling:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Check out Git repository

@@ -475,7 +475,7 @@ All examples are in [`examples/torch-integration/`](../../examples/torch-integra
 
 The default algorithms use a fixed heuristic to select algorithms based on message size. For production workloads, you can achieve significantly better performance by **auto-tuning** — benchmarking every candidate algorithm, block count, and thread count for each message size at startup, then using the fastest configuration at runtime.
 
-**Full example:** [customized_comm_with_tuning.py](../../examples/torch-integration/customized_comm_with_tuning.py)
+**Reference implementation:** MSCCL++ ships a ready-to-use autotuner in [`python/mscclpp_benchmark/bench_collective.py`](../../python/mscclpp_benchmark/bench_collective.py). It benchmarks every candidate algorithm, block count, and thread count per message size, writes the winning configuration to a JSON file, and can replay that file at runtime. The sections below explain the underlying mechanism; see that benchmark for the complete, maintained implementation.
 
 ### How It Works
 
@@ -656,9 +656,20 @@ def benchmark(self, n_warmup=10, n_graph_launches=10, n_iter_per_graph=100):
                 self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM)
 ```
 
-### Running the Tuning Example
+### Running the Autotuner
+
+MSCCL++'s built-in autotuner benchmarks every candidate configuration and saves the best one to JSON. Run it across the ranks of your job, then reuse the generated config:
 
 ```bash
-MSCCLPP_MASTER_ADDR=<ip> MSCCLPP_MASTER_PORT=<port> \
-  torchrun --nnodes=1 --nproc_per_node=8 customized_comm_with_tuning.py
+# Autotune and save the tuned config
+mpirun -np 8 --allow-run-as-root \
+  python3 -m mscclpp_benchmark.bench_collective \
+  --collective allreduce --dtype float16 --autotune \
+  --write-config /tmp/mscclpp_tuned_configs.json
+
+# Replay the tuned config in a benchmark
+mpirun -np 8 --allow-run-as-root \
+  python3 -m mscclpp_benchmark.bench_collective \
+  --collective allreduce --dtype float16 \
+  --config-path /tmp/mscclpp_tuned_configs.json
 ```

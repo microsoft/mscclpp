@@ -16,8 +16,8 @@ constexpr int kMaxThreadsPerBlock = 1024;
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                      int rank, int nRanksPerNode, [[maybe_unused]] int worldSize, size_t nelems) {
-  const int nPeer = nRanksPerNode - 1;
+                      int rank, int nRanksPerIpcDomain, [[maybe_unused]] int worldSize, size_t nelems) {
+  const int nPeer = nRanksPerIpcDomain - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by 16
   const size_t nInt4 = nelems * sizeof(int) / sizeof(int4);
@@ -33,10 +33,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t restNInt4 = nInt4 % nInt4PerChunk;
   const size_t scratchChunkRankOffset = nInt4PerChunk * rank;
 
-  __shared__ DeviceHandle<MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
+  __shared__ DeviceHandle<MemoryChannel> channels[MAX_IPC_DOMAIN_NRANKS - 1];
   const int lid = threadIdx.x % WARP_SIZE;
-  if (lid < nPeer) {
-    channels[lid] = memoryChans[lid];
+  // Peer count may exceed WARP_SIZE on MNNVL.
+  for (int i = lid; i < nPeer; i += WARP_SIZE) {
+    channels[i] = memoryChans[i];
   }
   __syncwarp();
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -138,11 +139,11 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
   if ((char*)input == (char*)output + rank * inputSize) {
     allgatherFullmesh<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->nRanksPerNode, ctx->workSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem);
   } else {
     allgatherFullmesh<true><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->nRanksPerNode, ctx->workSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem);
   }
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -156,8 +157,8 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
                                                               void*, size_t inputSize, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->worldSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup semaphores
   ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, kMaxBlocks);

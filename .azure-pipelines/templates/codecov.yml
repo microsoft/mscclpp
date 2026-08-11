@@ -32,16 +32,26 @@ steps:
       export GCOV_PREFIX=/root/mscclpp
       export GCOV_PREFIX_STRIP=$STRIP_COUNT
 
+      UNIT_TEST_ARGS=""
+      MP_UNIT_TEST_ARGS="--exclude-perf-tests"
+      # Debug coverage makes the GDRCopy host-side atomic signaling tests
+      # prohibitively slow on SM90. A100 coverage continues to exercise them;
+      # ROCm runs its separate HostNoAtomic implementation with the longer timeout.
+      if [ "${{ parameters.gpuArch }}" = "90" ]; then
+        UNIT_TEST_ARGS="--filter=-GdrMapTest.AtomicStoreCounterPingPong"
+        MP_UNIT_TEST_ARGS="${MP_UNIT_TEST_ARGS} --filter=-IbHostNoAtomicMode"
+      fi
+
       echo "Running unit_tests..."
-      ./build/bin/unit_tests
+      ./build/bin/unit_tests ${UNIT_TEST_ARGS}
       echo "unit_tests: PASSED"
 
       echo "Running mp_unit_tests -np 2..."
-      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --exclude-perf-tests
+      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
       echo "mp_unit_tests -np 2: PASSED"
 
       echo "Running mp_unit_tests -np 4..."
-      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests
+      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
       echo "mp_unit_tests -np 4: PASSED"
 
 - template: run-remote-task.yml
@@ -50,6 +60,27 @@ steps:
     displayName: Capture coverage data with lcov
     remoteScript: |
       BUILD_PREFIX=$(cat build/BUILD_PREFIX)
+      CURRENT_PREFIX=$(pwd -P)
+
+      # Coverage metadata embeds the Azure build path, so restore that path
+      # after the source tree and build artifacts are copied to the remote VM.
+      if [ "${BUILD_PREFIX}" != "${CURRENT_PREFIX}" ]; then
+        mkdir -p "$(dirname "${BUILD_PREFIX}")"
+        if [ -L "${BUILD_PREFIX}" ]; then
+          rm "${BUILD_PREFIX}"
+          ln -s "${CURRENT_PREFIX}" "${BUILD_PREFIX}"
+        elif [ -e "${BUILD_PREFIX}" ]; then
+          echo "ERROR: ${BUILD_PREFIX} exists and cannot be mapped to ${CURRENT_PREFIX}."
+          exit 1
+        else
+          ln -s "${CURRENT_PREFIX}" "${BUILD_PREFIX}"
+        fi
+      fi
+
+      if [ ! -r "${BUILD_PREFIX}/CMakeLists.txt" ]; then
+        echo "ERROR: coverage source root ${BUILD_PREFIX} is not readable."
+        exit 1
+      fi
 
       GCOV_TOOL_ARG=""
       if [ "${{ parameters.platform }}" = "rocm" ]; then
@@ -60,20 +91,22 @@ steps:
         GCOV_TOOL_ARG="--gcov-tool ${GCOV_WRAPPER}"
       fi
 
-      lcov --version
-      LCOV_CAPTURE_ARGS=""
-      if lcov --help 2>&1 | grep -q "inconsistent"; then
-        LCOV_CAPTURE_ARGS="--ignore-errors inconsistent"
+      LCOV_VERSION=$(lcov --version 2>&1)
+      echo "${LCOV_VERSION}"
+      LCOV_MAJOR_VERSION=$(echo "${LCOV_VERSION}" | sed -n 's/.*LCOV version \([0-9][0-9]*\).*/\1/p')
+      LCOV_COMMON_ARGS=""
+      if [ "${LCOV_MAJOR_VERSION:-0}" -ge 2 ]; then
+        LCOV_COMMON_ARGS="--ignore-errors inconsistent"
       fi
 
-      lcov ${GCOV_TOOL_ARG} --directory . --capture --output-file coverage.info ${LCOV_CAPTURE_ARGS}
+      lcov ${GCOV_TOOL_ARG} --directory . --capture --output-file coverage.info ${LCOV_COMMON_ARGS}
       if [ ! -s coverage.info ]; then
         echo "ERROR: coverage.info was not generated."
         exit 1
       fi
 
-      lcov ${GCOV_TOOL_ARG} --extract coverage.info "${BUILD_PREFIX}/src/*" "${BUILD_PREFIX}/include/mscclpp/*" --output-file coverage.info
-      lcov --list coverage.info
+      lcov ${GCOV_TOOL_ARG} --extract coverage.info "${BUILD_PREFIX}/src/*" "${BUILD_PREFIX}/include/mscclpp/*" --output-file coverage.info ${LCOV_COMMON_ARGS}
+      lcov --summary coverage.info ${LCOV_COMMON_ARGS}
       ls -la coverage.info
 
 - task: Bash@3

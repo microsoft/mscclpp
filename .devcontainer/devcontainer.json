@@ -3,7 +3,7 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9",
+            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0",
             "USERNAME": "devuser",
             "SSH_PORT": "22345"
         }
