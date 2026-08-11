@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <mscclpp/switch_channel.hpp>
 #include <mscclpp/switch_channel_device.hpp>
+#include <ranges>
 
 #include "mp_unit_tests.hpp"
 
@@ -42,12 +43,48 @@ __global__ void kernelSwitchReduceTwo() {
 #endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
+__global__ void kernelSwitchBarrierAllGather(int rank) {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  mscclpp::f32x1 v(static_cast<float>(rank + 1));
+  gConstSwitchChan.broadcast(rank, v);
+  gConstSwitchChan.signal();
+  gConstSwitchChan.wait();
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
+__global__ void kernelSwitchBarrierRelaxedAllGather(int rank) {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  mscclpp::f32x1 v(static_cast<float>(rank + 1));
+  gConstSwitchChan.broadcast(rank, v);
+  gConstSwitchChan.relaxedSignal();
+  gConstSwitchChan.relaxedWait();
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
+__global__ void kernelSwitchBarrierRepeated(int rank, int nRanks, int iters, int* errorCount) {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  float* local = reinterpret_cast<float*>(gConstSwitchChan.devicePtr);
+  for (int k = 0; k < iters; ++k) {
+    mscclpp::f32x1 v(static_cast<float>((rank + 1) * 10 + k));
+    gConstSwitchChan.broadcast(rank, v);
+    gConstSwitchChan.signal();
+    gConstSwitchChan.wait();
+    for (int j = 0; j < nRanks; ++j) {
+      float expected = static_cast<float>((j + 1) * 10 + k);
+      if (local[j] != expected) atomicAdd(errorCount, 1);
+    }
+    gConstSwitchChan.signal();
+    gConstSwitchChan.wait();
+  }
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
 TEST(SwitchChannelTest, SimpleAllReduce) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  std::vector<int> ranks;
+  std::vector<int> ranks(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
-    ranks.push_back(i);
+    ranks[i] = i;
   }
 
   auto buffer = mscclpp::GpuBuffer<float>(1024);
@@ -86,9 +123,9 @@ TEST(SwitchChannelTest, SimpleAllReduce) {
 TEST(SwitchChannelTest, TwoChannelsSameConnection) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  std::vector<int> ranks;
+  std::vector<int> ranks(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
-    ranks.push_back(i);
+    ranks[i] = i;
   }
 
   const size_t bufSize = 1024;
@@ -133,4 +170,96 @@ TEST(SwitchChannelTest, TwoChannelsSameConnection) {
   }
   ASSERT_EQ(result1, expected1);
   ASSERT_EQ(result2, expected2);
+}
+
+TEST(SwitchChannelTest, Barrier) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  auto rankView = std::views::iota(0, numRanksToUse);
+  std::vector<int> ranks(rankView.begin(), rankView.end());
+
+  const size_t bufSize = 1024;
+  auto buffer = mscclpp::GpuBuffer<float>(bufSize / sizeof(float));
+
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, bufSize);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), bufSize);
+  auto deviceHandle = switchChannel.deviceHandle();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  // Every rank participates: the barrier counts ranks, so all ranks must signal.
+  kernelSwitchBarrierAllGather<<<1, 1>>>(gEnv->rank);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  std::vector<float> result(numRanksToUse);
+  MSCCLPP_CUDATHROW(cudaMemcpy(result.data(), buffer.data(), numRanksToUse * sizeof(float), cudaMemcpyDeviceToHost));
+  for (int j = 0; j < numRanksToUse; j++) {
+    ASSERT_EQ(result[j], static_cast<float>(j + 1));
+  }
+}
+
+TEST(SwitchChannelTest, RelaxedBarrier) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  auto rankView = std::views::iota(0, numRanksToUse);
+  std::vector<int> ranks(rankView.begin(), rankView.end());
+
+  const size_t bufSize = 1024;
+  auto buffer = mscclpp::GpuBuffer<float>(bufSize / sizeof(float));
+
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, bufSize);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), bufSize);
+  auto deviceHandle = switchChannel.deviceHandle();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  kernelSwitchBarrierRelaxedAllGather<<<1, 1>>>(gEnv->rank);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  std::vector<float> result(numRanksToUse);
+  MSCCLPP_CUDATHROW(cudaMemcpy(result.data(), buffer.data(), numRanksToUse * sizeof(float), cudaMemcpyDeviceToHost));
+  for (int j = 0; j < numRanksToUse; j++) {
+    ASSERT_EQ(result[j], static_cast<float>(j + 1));
+  }
+}
+
+TEST(SwitchChannelTest, RepeatedBarrier) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  auto rankView = std::views::iota(0, numRanksToUse);
+  std::vector<int> ranks(rankView.begin(), rankView.end());
+
+  const size_t bufSize = 1024;
+  const int iters = 16;
+  auto buffer = mscclpp::GpuBuffer<float>(bufSize / sizeof(float));
+  auto errorCount = mscclpp::GpuBuffer<int>(1);
+  MSCCLPP_CUDATHROW(cudaMemset(errorCount.data(), 0, sizeof(int)));
+
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, bufSize);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), bufSize);
+  auto deviceHandle = switchChannel.deviceHandle();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  kernelSwitchBarrierRepeated<<<1, 1>>>(gEnv->rank, numRanksToUse, iters, errorCount.data());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  int errors = -1;
+  MSCCLPP_CUDATHROW(cudaMemcpy(&errors, errorCount.data(), sizeof(int), cudaMemcpyDeviceToHost));
+  ASSERT_EQ(errors, 0);
 }
