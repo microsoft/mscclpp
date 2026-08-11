@@ -107,6 +107,15 @@ jobs:
       pilot: true
       resourceGroup: mscclpp
       gpuArch: '100a'
+  
+  - template: run-remote-task.yml
+    parameters:
+    name: MpUnitTests
+    displayName: Run mscclpp multi-process unit tests
+    remoteScript: |
+      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests
+      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
+      mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
 
   - template: templates/run-remote-task.yml
     parameters:
