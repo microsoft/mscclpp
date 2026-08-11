@@ -15,6 +15,14 @@
 #include <vector>
 
 namespace mscclpp {
+
+// Forward declaration: the GPU-initiated networking (GPUNetIO / GDAKI) device
+// context used to reach peers outside this rank's NVLink/IPC domain. Kept as a
+// forward declaration so this widely-included header does not pull in the DOCA
+// device headers; low-latency device code that dereferences it includes the
+// full definition (mscclpp/port_channel_gpunetio_device.hpp) itself.
+struct GpuNetIoDeviceContext;
+
 namespace ep {
 
 /// Expert-parallel backend mode.
@@ -144,6 +152,10 @@ struct CommContext {
   int rank_;
   /// Total number of ranks.
   int numRanks_;
+  /// GPU-initiated networking (GPUNetIO/GDAKI) device context for peers outside
+  /// this rank's NVLink/IPC domain, or nullptr when every peer is NVLink-mapped
+  /// (single-domain) or the GPUNetIO backend is disabled. Indexed by peer rank.
+  mscclpp::GpuNetIoDeviceContext* gpuNetIo_ = nullptr;
 };
 
 /// Return the optimized low-latency workspace size.

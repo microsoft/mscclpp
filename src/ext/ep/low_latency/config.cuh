@@ -37,14 +37,33 @@ struct TransportView {
   void* const* peerMappedBufferBases_;
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
+  // GPU-initiated networking context for peers outside this NVLink/IPC domain
+  // (nullptr when single-domain or the GPUNetIO backend is disabled).
+  mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
       : symmetricBufferBase_(comm.symmetricBufferBase_),
         peerMappedBufferBases_(comm.peerMappedBufferBases_),
         baseMemoryChannels_(comm.baseMemoryChannels_),
-        rank_(comm.rank_) {}
+        rank_(comm.rank_),
+        gpuNetIo_(comm.gpuNetIo_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  /// True when the peer shares this rank's NVLink/IPC domain and is therefore
+  /// directly addressable via mappedBuffer(). Cross-domain peers (reached only
+  /// through GPUNetIO) have a null mapped base. `self` counts as NVLink-local.
+  MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
+    return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
+  }
+
+  /// Byte offset of a symmetric-buffer pointer from the local base. This offset
+  /// is identical on every rank (symmetric layout), so it doubles as the remote
+  /// destination offset for a GPUNetIO put.
+  MSCCLPP_HOST_DEVICE_INLINE uint64_t symmetricOffset(const void* localBuffer) const {
+    return static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(localBuffer) -
+                                 reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
     if (isSelf(peerRank)) return localBuffer;
