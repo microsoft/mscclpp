@@ -12,6 +12,13 @@
 #include "api.cuh"
 #include "exception.cuh"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <cstdlib>
+#include <mscclpp/utils.hpp>
+
+#include "host/gpu_net_io_service.hpp"
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 namespace mscclpp {
 namespace ep {
 
@@ -125,6 +132,30 @@ void MoELowLatencyRuntime::setup() {
                   .rank_ = rank_,
                   .numRanks_ = numRanks_};
   available_ = ipcDomainSize >= numRanks_;
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  // Bring up the GPU-initiated networking service for peers outside this rank's
+  // NVLink/IPC domain. This is a collective (bootstrap all-gather), so every
+  // rank agrees on whether it runs: they share ipcDomainSize and numRanks_.
+  // Gated by an explicit opt-in env var; until the inter-domain dispatch/combine
+  // passes are wired and `available_` is relaxed, this only publishes the device
+  // context and changes no data path.
+  const bool crossDomain = ipcDomainSize < numRanks_;
+  const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
+  if (crossDomain && enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
+    // HCA selection: explicit override via env, else the IB0 transport's device.
+    std::string hca;
+    if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+      hca = h;
+    } else {
+      hca = mscclpp::getIBDeviceName(mscclpp::Transport::IB0);
+    }
+    auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
+    svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
+    gpuNetIoService_ = svc;
+    commContext_.gpuNetIo_ = svc->deviceContext();
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 }
 
 void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,

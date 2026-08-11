@@ -17,6 +17,11 @@
 #include "runtime_base.hpp"
 
 namespace mscclpp {
+// GPU-initiated networking host service (defined in the vendored GPUNetIO
+// module). Forward-declared so this header stays free of the DOCA dependency;
+// the LL runtime only holds a unique_ptr whose destructor is out-of-line.
+class GpuNetIoService;
+
 namespace ep {
 
 class MoELowLatencyRuntime : public MoERuntime {
@@ -62,6 +67,12 @@ class MoELowLatencyRuntime : public MoERuntime {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+
+  // GPU-initiated networking service for reaching peers outside this rank's
+  // NVLink/IPC domain. Non-null only when the GPUNetIO backend is compiled in
+  // and deliberately enabled; its device context is published in commContext_.
+  // shared_ptr so this header need not see the complete type for destruction.
+  std::shared_ptr<mscclpp::GpuNetIoService> gpuNetIoService_;
 
   void setup();
 };
