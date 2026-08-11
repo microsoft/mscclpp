@@ -163,6 +163,12 @@ size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
   return gran;
 }
 
+// Query the multicast allocation granularity for the given handle types and device count.
+// Note on `size`: it only influences the CU_MULTICAST_GRANULARITY_RECOMMENDED result (which grows
+// with the requested size for better performance). For CU_MULTICAST_GRANULARITY_MINIMUM the returned
+// value is a fixed device/platform quantum, independent of `size` -- passing 0 or any small value
+// yields the same minimum granularity. (Verified on GB200/CUDA 13: MINIMUM is a flat 2 MiB from
+// size 0 up to 1 GiB, while RECOMMENDED steps up past ~16 MiB.)
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;

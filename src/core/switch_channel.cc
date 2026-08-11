@@ -305,7 +305,7 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   // bindAllocatedMemory() calls. Flag layout: element 0 is the shared arrival counter, element 1 is
   // this rank's generation counter. GpuBuffer zero-initializes both, the clean starting state the
   // barrier's monotonic (never-reset) scheme requires.
-  size_t barrierReserve = detail::getMulticastGranularity(0, CU_MULTICAST_GRANULARITY_MINIMUM);
+  size_t barrierReserve = detail::getMulticastGranularity(sizeof(uint64_t), CU_MULTICAST_GRANULARITY_MINIMUM);
   auto conn = makeNvlsConnection(bootstrap, allRanks, rank, rootRank, isRoot, bufferSize + barrierReserve, 0);
 
   conn->attachBarrier(static_cast<int>(allRanks.size()));
