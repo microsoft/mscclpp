@@ -760,6 +760,7 @@ class PortChannel:
         Raises:
             RuntimeError: If chunk ranks don't match channel configuration, if chunks
                 are not scratch buffers, or if chunk sizes don't match.
+            ValueError: If neither a thread block ID nor a thread block group is provided.
 
         Example:
             >>> channel.read_put_packet(dst_chunk, src_chunk, tb=0)

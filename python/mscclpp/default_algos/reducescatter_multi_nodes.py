@@ -124,12 +124,13 @@ def reducescatter_multi_nodes(
                         local_packets.append(scratch_buffers[src_rank][scratch_slot : scratch_slot + 1])
 
                     local_reduced_chunk = input_buffer[chunk_index : chunk_index + 1]
-                    rank.reduce(
-                        local_reduced_chunk,
-                        local_packets,
-                        tb_group=thread_block_group,
-                        packet=True,
-                    )
+                    if local_packets:
+                        rank.reduce(
+                            local_reduced_chunk,
+                            local_packets,
+                            tb_group=thread_block_group,
+                            packet=True,
+                        )
 
                     if src_node_id == owner_node_id:
                         if src_rank != owner_rank:
@@ -159,7 +160,7 @@ def reducescatter_multi_nodes(
             return prog
 
         # Every rank receives one standard shard. The owner-node handoff and
-        # seven direct IB transfers can progress concurrently before this reduce.
+        # direct IB transfers from the other nodes can progress concurrently.
         for owner_rank in range(total_gpus):
             owner = Rank(owner_rank)
             owner_input = owner.get_input_buffer()
