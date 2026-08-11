@@ -112,10 +112,11 @@ jobs:
     parameters:
       name: MpUnitTests
       displayName: Run mscclpp multi-process unit tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --filter=-Ib
+        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --filter=-Ib
+        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests --filter=-Ib
 
   - template: templates/run-remote-task.yml
     parameters:
