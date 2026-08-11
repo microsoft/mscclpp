@@ -135,3 +135,14 @@ if(MSCCLPP_USE_CUDA)
 elseif(MSCCLPP_USE_ROCM)
     target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_USE_ROCM)
 endif()
+
+# GPU-initiated networking (GPUNetIO / GDAKI) backend for cross-NVLink-domain LL.
+# The GpuNetIoService host code is compiled into libmscclpp (mscclpp_gpunetio_obj),
+# so the EP module only needs the header include path and the compile define.
+# Scope both to the host runtime translation unit (ll_runtime.cc) so the EP CUDA
+# device TUs are unaffected (they only forward-declare GpuNetIoDeviceContext).
+if(MSCCLPP_USE_GPUNETIO)
+    set_source_files_properties(ll_runtime.cc PROPERTIES
+        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
+        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+endif()
