@@ -231,14 +231,20 @@ class LowLatencyBackend:
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
             metadata_shape = (self.world_size * self.max_tokens_per_rank, self.topk)
-            self._output_topk_ids_owner, self._output_topk_ids = _tensor_from_pointer(
+            (
+                self._output_topk_ids_owner,
+                self._output_topk_ids,
+            ) = _tensor_from_pointer(
                 self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
                 "<i4",
                 self.device,
                 self._runtime,
             )
-            self._output_topk_weights_owner, self._output_topk_weights = _tensor_from_pointer(
+            (
+                self._output_topk_weights_owner,
+                self._output_topk_weights,
+            ) = _tensor_from_pointer(
                 self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
                 "<f4",
@@ -251,7 +257,10 @@ class LowLatencyBackend:
                 self.device,
                 self._runtime,
             )
-            self._expert_output_owner, self.expert_output_buffer = _bf16_tensor_from_pointer(
+            (
+                self._expert_output_owner,
+                self.expert_output_buffer,
+            ) = _bf16_tensor_from_pointer(
                 self._runtime.cpp_runtime.expert_output_buffer_ptr(),
                 shape,
                 self.device,
@@ -451,6 +460,10 @@ class LowLatencyBackend:
                     self._dispatch_scales = scale_storage.transpose(1, 2)
             elif self.output_layout == DispatchLayout.RANK_MAJOR:
                 self._dispatch_src_info = None
+                assert self._output_topk_ids is not None
+                assert self._output_topk_weights is not None
+                self._dispatch_topk_ids = self._output_topk_ids
+                self._dispatch_weights = self._output_topk_weights
                 self._dispatch_layout_range = None
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
             else:
@@ -458,10 +471,6 @@ class LowLatencyBackend:
         assert self._dispatch_count is not None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             assert self._output_tokens is not None
-            assert self._output_topk_ids is not None
-            assert self._output_topk_weights is not None
-            self._dispatch_topk_ids = self._output_topk_ids
-            self._dispatch_weights = self._output_topk_weights
             output_buffer = self._output_tokens
         return (
             output_buffer,

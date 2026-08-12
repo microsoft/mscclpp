@@ -22,8 +22,8 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
       hidden_(hidden),
       numExperts_(numExperts),
       numTopk_(numTopk),
-      outputLayout_(outputLayout),
-      symmetricBufferBytes_(static_cast<int64_t>(low_latency::symmetricBufferSize(
+        outputLayout_(outputLayout),
+        symmetricBufferBytes_(static_cast<int64_t>(low_latency::symmetricBufferSize(
           maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout == DispatchLayout::RANK_MAJOR))),
       workspaceBytes_(low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
@@ -78,9 +78,9 @@ void MoELowLatencyRuntime::setup() {
   EP_HOST_ASSERT(communicator_ != nullptr);
 
   const auto ipcTransport = mscclpp::Transport::CudaIpc;
-  const size_t allocationGranularity =
+    const size_t allocationGranularity =
       mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-  symmetricBuffer_ =
+    symmetricBuffer_ =
       mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
 
   const mscclpp::EndpointConfig ipcConfig(ipcTransport);

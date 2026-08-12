@@ -164,8 +164,8 @@ struct Layout {
   void* rankMajorTokenBuffer_;
   void* rankMajorExpertOutputBuffer_;
 
-  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-         bool rankMajor = false) {
+    Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+      bool rankMajor = false) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -179,10 +179,10 @@ struct Layout {
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t recvBufferBytes = rankMajor
-                                       ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes,
-                                                   rankMajorTokenBytes})
-                                       : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes,
-                                                   combineBufferBytes});
+                       ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes,
+                             rankMajorTokenBytes})
+                       : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes,
+                             combineBufferBytes});
     recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = 2 * recvBufferBytes_;
 
