@@ -156,6 +156,13 @@ struct CommContext {
   /// this rank's NVLink/IPC domain, or nullptr when every peer is NVLink-mapped
   /// (single-domain) or the GPUNetIO backend is disabled. Indexed by peer rank.
   mscclpp::GpuNetIoDeviceContext* gpuNetIo_ = nullptr;
+  /// Symmetric inter-domain send-staging ring base (GpuNetIoStagingSlots slots),
+  /// null unless the GPUNetIO backend is active. Used by the cross-domain send.
+  void* gpuNetIoStagingBuffer_ = nullptr;
+  /// Symmetric per-source-rank completion flag array base, null unless active.
+  void* gpuNetIoFlagsBuffer_ = nullptr;
+  /// Byte stride of one staging-ring slot (token + top-k metadata).
+  size_t gpuNetIoSlotStride_ = 0;
 };
 
 /// Return the optimized low-latency workspace size.

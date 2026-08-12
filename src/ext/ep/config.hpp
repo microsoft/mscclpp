@@ -182,6 +182,12 @@ struct Layout {
   //     polls, replacing the NVLink memory-channel signal for cross-domain peers.
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
+  // Byte stride of one staging-ring slot: one hidden BF16 token row followed by
+  // the rank-major top-k id/weight metadata for that token (numTopk each). The
+  // inter-domain send stages token+metadata contiguously, RDMA-writes the token
+  // to the peer rank-major token buffer and the metadata to the peer id/weight
+  // buffers, then bumps the peer completion flag.
+  size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
                                     int numExperts, int numTopk) {
@@ -202,8 +208,11 @@ struct Layout {
 
     // GPUNetIO region sizing (small, always reserved so the layout is uniform
     // regardless of whether the backend is compiled in / enabled).
-    const size_t gpuNetIoStagingBytes = configAlign<size_t>(
-        static_cast<size_t>(GpuNetIoStagingSlots) * hidden * sizeof(Bf16), BufferAlignmentBytes);
+    gpuNetIoSlotStride_ = configAlign<size_t>(
+        static_cast<size_t>(hidden) * sizeof(Bf16) + static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
+        BufferAlignmentBytes);
+    const size_t gpuNetIoStagingBytes =
+        configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
     const size_t gpuNetIoFlagsBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
