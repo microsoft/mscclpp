@@ -183,7 +183,8 @@ struct Layout {
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
 
-  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+  MSCCLPP_HOST_DEVICE_INLINE Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
+                                    int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =

@@ -8,6 +8,13 @@
 #include "exception.cuh"
 #include "quantization.cuh"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+// Pull in the full GPUNetIO device context so the inter-domain send path can
+// issue kernel-initiated RDMA. Only compiled into this TU when the backend is
+// enabled; otherwise TransportView::gpuNetIo_ stays a forward-declared nullptr.
+#include <mscclpp/port_channel_gpunetio_device.hpp>
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 namespace mscclpp {
 namespace ep {
 namespace low_latency {
@@ -90,6 +97,46 @@ MSCCLPP_DEVICE_INLINE void completeRankMajorTokenStore(WorkspaceView& workspaceV
       workspaceView.dispatchRankPayloadCompletions_ + destinationRank, 1, mscclpp::memoryOrderRelease);
 }
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+// Inter-domain rank-major token store over GPUNetIO (approach 2). Runs only for
+// peers outside this rank's NVLink/IPC domain, where transport.mappedBuffer()
+// cannot be used. A GPUNetIO put must source from registered symmetric memory,
+// so the (shared-memory) token is first copied into the symmetric staging ring,
+// then RDMA-written to the peer's rank-major token slot at the peer-invariant
+// symmetric offset. Serialized per warp (flush before slot reuse) per Option 1.
+//
+// Called by lane 0 of the leader warp for the destination rank; `stagedToken`
+// points at the shared-memory staged BF16 token row.
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void issueRankMajorTokenStoreGpuNetIo(const TransportView& transport, int destinationRank,
+                                                            int destinationSlot, int maxTokensPerRank, int nRanks,
+                                                            int nExperts, int nTopk, void* stagedToken, int ringSlot) {
+  if (destinationSlot < 0) return;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  auto* gin = transport.gpuNetIo_;
+
+  // Local staging ring slot (registered symmetric memory) and remote token slot.
+  Layout layout(transport.symmetricBufferBase_, maxTokensPerRank, Hidden, nRanks, nExperts, nTopk);
+  auto* ringSlotPtr = reinterpret_cast<uint8_t*>(layout.gpuNetIoStagingBuffer_) + static_cast<size_t>(ringSlot) * HiddenBytes;
+  auto* remoteTokenRow = reinterpret_cast<uint8_t*>(layout.rankMajorTokenBuffer_) +
+                         (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
+
+  // Copy the shared-memory staged token into the symmetric ring slot.
+  const auto* src = reinterpret_cast<const uint4*>(stagedToken);
+  auto* dst = reinterpret_cast<uint4*>(ringSlotPtr);
+  constexpr int NumVec = static_cast<int>(HiddenBytes / sizeof(uint4));
+  for (int i = 0; i < NumVec; ++i) dst[i] = src[i];
+  __threadfence();
+
+  // RDMA-write the ring slot into the peer's rank-major token slot, then wait so
+  // the ring slot is free to reuse (serialized ring).
+  const uint64_t dstOffset = transport.symmetricOffset(remoteTokenRow);
+  const uint64_t srcOffset = transport.symmetricOffset(ringSlotPtr);
+  gin->put(destinationRank, dstOffset, srcOffset, HiddenBytes);
+  gin->flush(destinationRank);
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                                      const void* inputTokens, int nExperts, int nRanks,
@@ -137,8 +184,24 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     fenceProxyAsyncSharedCta();
     const int completionRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
     if (completionRank >= 0) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+      // Approach 2: NVLink-domain peers use the direct TMA store; peers outside
+      // this rank's NVLink/IPC domain go over GPUNetIO (kernel-initiated RDMA).
+      if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(completionRank)) {
+        // Distinct staging-ring slot per leader lane; flush-per-put frees it.
+        const int ringSlot =
+            (static_cast<int>(blockIdx.x) * DispatchMaxNWarpGroups * WARP_SIZE + warpGroupId * WARP_SIZE + laneId) %
+            GpuNetIoStagingSlots;
+        issueRankMajorTokenStoreGpuNetIo<Hidden>(transport, completionRank, route.destinationSlot, maxTokensPerRank,
+                                                 nRanks, nExperts, nTopk, stagedToken, ringSlot);
+      } else {
+        issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
+                                         route.dstRank);
+      }
+#else
       issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
                                        route.dstRank);
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
     }
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
