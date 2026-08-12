@@ -85,7 +85,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   m.def("create_moe_runtime", &mscclpp::ep::createMoERuntime, nb::arg("comm"), nb::arg("mode"),
         nb::arg("max_tokens_per_rank") = 0, nb::arg("hidden") = 0, nb::arg("num_experts") = 0, nb::arg("num_topk") = 0,
         nb::arg("max_hidden_bytes") = 0, nb::arg("num_sms") = 20,
-      nb::arg("output_layout") = mscclpp::ep::DispatchLayout::EXPERT_MAJOR,
+        nb::arg("output_layout") = mscclpp::ep::DispatchLayout::EXPERT_MAJOR,
         "Create the MoE backend selected by mode; returns a shared MoERuntime handle.");
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
