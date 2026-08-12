@@ -15,6 +15,13 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 
+// Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
+// A GPUNetIO put must source from registered symmetric memory, so cross-domain
+// tokens are copied into this ring before being RDMA-written to the peer. The
+// ring is intentionally small (a few MB): the inter-domain send pass serializes
+// token puts through it, trading a little latency for a bounded footprint.
+inline constexpr int GpuNetIoStagingSlots = 256;
+
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
@@ -163,6 +170,18 @@ struct Layout {
   void* rankMajorTopkWeightsBuffer_;
   void* rankMajorTokenBuffer_;
   void* rankMajorExpertOutputBuffer_;
+  // GPU-initiated networking (GPUNetIO) inter-domain staging (approach 2).
+  // Both regions live in registered symmetric memory (a GPUNetIO put can only
+  // source from / target registered memory, not shared memory), appended after
+  // the two ping-pong recv buffers so the existing layout offsets are unchanged.
+  //   - gpuNetIoStagingBuffer_: a small serialized ring of GpuNetIoStagingSlots
+  //     hidden-sized rows. The inter-domain send pass copies a token row here
+  //     (from shared/global) before issuing the RDMA put to the peer.
+  //   - gpuNetIoFlagsBuffer_: per-source-rank 64-bit completion flags the remote
+  //     sender atomic-adds (fused with the payload put) and the local receiver
+  //     polls, replacing the NVLink memory-channel signal for cross-domain peers.
+  void* gpuNetIoStagingBuffer_;
+  void* gpuNetIoFlagsBuffer_;
 
   Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
@@ -179,7 +198,16 @@ struct Layout {
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     recvBufferBytes_ = configAlign<size_t>(
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes}), BufferAlignmentBytes);
-    totalBytes_ = 2 * recvBufferBytes_;
+
+    // GPUNetIO region sizing (small, always reserved so the layout is uniform
+    // regardless of whether the backend is compiled in / enabled).
+    const size_t gpuNetIoStagingBytes = configAlign<size_t>(
+        static_cast<size_t>(GpuNetIoStagingSlots) * hidden * sizeof(Bf16), BufferAlignmentBytes);
+    const size_t gpuNetIoFlagsBytes =
+        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
+
+    totalBytes_ = 2 * recvBufferBytes_ + gpuNetIoRegionBytes;
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -189,6 +217,9 @@ struct Layout {
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       rankMajorExpertOutputBuffer_ = combineRecvBuffer_;
+      auto* gpuNetIoBase = base + 2 * recvBufferBytes_;
+      gpuNetIoStagingBuffer_ = gpuNetIoBase;
+      gpuNetIoFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes;
     }
   }
 };
