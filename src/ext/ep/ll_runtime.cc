@@ -154,6 +154,12 @@ void MoELowLatencyRuntime::setup() {
     svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
     gpuNetIoService_ = svc;
     commContext_.gpuNetIo_ = svc->deviceContext();
+    // Publish the symmetric staging/flags region pointers + slot stride so the
+    // device inter-domain path can address them without reconstructing Layout.
+    low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_);
+    commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
+    commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
+    commContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 }

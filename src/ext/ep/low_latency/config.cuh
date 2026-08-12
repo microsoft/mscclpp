@@ -40,13 +40,19 @@ struct TransportView {
   // GPU-initiated networking context for peers outside this NVLink/IPC domain
   // (nullptr when single-domain or the GPUNetIO backend is disabled).
   mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
+  void* gpuNetIoStagingBuffer_;
+  void* gpuNetIoFlagsBuffer_;
+  size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
       : symmetricBufferBase_(comm.symmetricBufferBase_),
         peerMappedBufferBases_(comm.peerMappedBufferBases_),
         baseMemoryChannels_(comm.baseMemoryChannels_),
         rank_(comm.rank_),
-        gpuNetIo_(comm.gpuNetIo_) {}
+        gpuNetIo_(comm.gpuNetIo_),
+        gpuNetIoStagingBuffer_(comm.gpuNetIoStagingBuffer_),
+        gpuNetIoFlagsBuffer_(comm.gpuNetIoFlagsBuffer_),
+        gpuNetIoSlotStride_(comm.gpuNetIoSlotStride_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 
