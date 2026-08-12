@@ -694,6 +694,25 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     )
     stream.synchronize()
     assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
+
+    mscclpp_group.barrier()
+    executor.reset()
+    mscclpp_group.barrier()
+    for i in range(nelems_per_rank):
+        sendbuf[i] = sub_arrays[mpi_group.comm.rank][i]
+    executor.execute(
+        mpi_group.comm.rank,
+        sendbuf.data.ptr,
+        sendbuf.data.ptr,
+        sendbuf.nbytes,
+        sendbuf.nbytes,
+        DataType.float16,
+        execution_plan,
+        stream.ptr,
+    )
+    stream.synchronize()
+    assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
+
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()

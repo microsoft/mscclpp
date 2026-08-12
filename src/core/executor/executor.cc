@@ -562,6 +562,13 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
 }
 
+void Executor::reset() {
+  this->impl_->proxyService->stopProxy();
+  this->impl_->contexts.clear();
+  this->impl_->proxyService = std::make_shared<ProxyService>();
+  this->impl_->proxyService->startProxy(true);
+}
+
 Executor::~Executor() = default;
 
 }  // namespace mscclpp
