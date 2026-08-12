@@ -527,7 +527,7 @@ def test_fifo(
     poll_for = 100
     for _ in range(poll_for):
         trigger = fifo.poll()
-        if trigger.fst == 123:
+        if trigger is not None and trigger.fst == 123:
             return
         time.sleep(0.1)
     assert False
