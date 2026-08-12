@@ -107,6 +107,7 @@ jobs:
       pilot: true
       resourceGroup: mscclpp
       gpuArch: '100a'
+      cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -114,9 +115,13 @@ jobs:
       displayName: Run mscclpp multi-process unit tests
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --filter=-Ib
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --filter=-Ib
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests --filter=-Ib
+        for np in 2 4 8; do
+          mpirun --allow-run-as-root -tag-output --bind-to numa \
+            -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 \
+            -np $np -npernode 4 \
+            -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+            ./build/bin/mp_unit_tests --filter=-Ib
+        done
 
   - template: templates/run-remote-task.yml
     parameters:
