@@ -127,6 +127,7 @@ class RankMajorCombineContext:
     num_experts: int
     num_tokens: int
     hidden_size: int
+    max_tokens_per_rank: int
 
 
 @dataclass

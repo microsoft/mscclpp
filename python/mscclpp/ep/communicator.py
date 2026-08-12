@@ -120,6 +120,7 @@ class MoECommunicator:
         output_buffer: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
         previous_handle: Optional[DispatchHandle] = None,
+        runtime_max_tokens_per_rank: Optional[int] = None,
     ) -> Tuple[DispatchOutput, DispatchHandle]:
         return self._backend.dispatch(
             input,
@@ -129,6 +130,7 @@ class MoECommunicator:
             output_buffer=output_buffer,
             stream=stream,
             previous_handle=previous_handle,
+            runtime_max_tokens_per_rank=runtime_max_tokens_per_rank,
         )
 
     def combine(

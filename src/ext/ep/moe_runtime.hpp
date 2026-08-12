@@ -27,7 +27,7 @@ namespace ep {
 /// @return The constructed backend.
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numSms);
+                                             int numSms, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
 
 }  // namespace ep
 }  // namespace mscclpp
