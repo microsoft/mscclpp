@@ -49,6 +49,11 @@ struct GpuNetIoDeviceContext {
   /// Kernel-initiated remote 64-bit atomic add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value);
 
+  /// Kernel-initiated blocking RDMA read of [remoteOffset, remoteOffset+size)
+  /// from peer `peer`'s symmetric buffer into this rank's symmetric buffer at
+  /// localOffset. Returns after the read has completed (device CQ poll).
+  MSCCLPP_DEVICE_INLINE void get(int peer, uint64_t remoteOffset, uint64_t localOffset, uint64_t size);
+
   /// Wait for locally-issued RDMA to this peer to complete (device CQ poll).
   MSCCLPP_DEVICE_INLINE void flush(int peer);
 
@@ -82,6 +87,11 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int, uint64_t, u
 #endif
 }
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int, uint64_t, int64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int, uint64_t, uint64_t, uint64_t) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
