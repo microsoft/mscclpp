@@ -49,6 +49,13 @@ parameters:
 - name: filter
   type: string
   default: '-Ib'
+# TcpBootstrap rendezvous port. The bootstrap root address is set to
+# <headNode>:<bootstrapPort> so ranks on other nodes reach rank 0 over the
+# routable subnet. The mp_unit_tests default (127.0.0.1) only works
+# single-node and makes BootstrapTest.*IpPortPair time out across nodes.
+- name: bootstrapPort
+  type: number
+  default: 50053
 # Whether to also run the single-process unit_tests binary.
 - name: runUnitTests
   type: boolean
@@ -93,4 +100,4 @@ steps:
         -hostfile ${{ parameters.hostfileMpi }} -mca btl_tcp_if_include ${{ parameters.tcpIfInclude }} \
         -np ${{ parameters.npProcs }} -npernode ${{ parameters.npPerNode }} \
         -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
-        ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
+        ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.filter }}
