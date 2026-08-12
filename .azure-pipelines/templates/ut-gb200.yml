@@ -1,0 +1,96 @@
+# Unit-test steps for the GB200 / MNNVL (MRC, no-IB) pilot environment.
+#
+# Unlike ut-no-ib-env.yml, this template does NOT deploy or manage a VMSS:
+# mnnvl-test.yml already generates the deploy files, runs deploy.yml with
+# pilot: true, and publishes the head node as $(headNode). This template only
+# runs the unit-test portion on the already-provisioned pilot nodes.
+#
+# Why a dedicated GB200 template is needed: deploy.yml builds mscclpp on the CI
+# agent and deploy.sh ships that build/ tree to the compute nodes. The pilot
+# agent is x86-64 while the GB200 nodes are aarch64, so the shipped
+# ./build/bin/mp_unit_tests (and unit_tests) fail to exec on the nodes with
+# "Exec format error". This template rebuilds the C++ tests natively on every
+# node before running them, so the binaries match the node architecture.
+
+parameters:
+- name: user
+  type: string
+  default: 'azhpcuser'
+# Head node used to launch mpirun (mnnvl-test.yml publishes this as $(headNode)).
+- name: headNode
+  type: string
+# Agent-side hostfile listing every node (user@ip per line). run-remote.sh uses
+# it to build the tests on all nodes in parallel.
+- name: hostfile
+  type: string
+  default: '$(System.DefaultWorkingDirectory)/test/deploy/hostfile'
+# Container-side hostfile passed to mpirun (one ip per line).
+- name: hostfileMpi
+  type: string
+  default: '/root/mscclpp/test/deploy/hostfile_mpi'
+- name: gpuArch
+  type: string
+  default: '100a'
+- name: cmakeArgs
+  type: string
+  default: '-DMSCCLPP_USE_IB=OFF'
+# Total MPI ranks for mp_unit_tests. Must be >= 2 (the Prelim test asserts
+# worldSize >= 2). Default: 4 ranks/node x 2 nodes.
+- name: npProcs
+  type: number
+  default: 8
+- name: npPerNode
+  type: number
+  default: 4
+- name: tcpIfInclude
+  type: string
+  default: '10.0.5.0/24'
+# Negative substring filter for mp_unit_tests (-Ib skips InfiniBand tests).
+- name: filter
+  type: string
+  default: '-Ib'
+# Whether to also run the single-process unit_tests binary.
+- name: runUnitTests
+  type: boolean
+  default: true
+
+steps:
+# Rebuild the C++ tests natively on every node so the binaries are aarch64.
+# The x86-64 CMakeCache.txt shipped from the agent is discarded (rm -rf build).
+- template: run-remote-task.yml
+  parameters:
+    name: BuildGb200Tests
+    displayName: Build unit tests on GB200 nodes
+    runRemoteArgs: '--hostfile ${{ parameters.hostfile }} --user ${{ parameters.user }}'
+    remoteScript: |
+      rm -rf build
+      mkdir -p build && cd build
+      cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+        -DMSCCLPP_USE_CUDA=ON \
+        -DMSCCLPP_BUILD_TESTS=ON \
+        -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} \
+        ${{ parameters.cmakeArgs }} ..
+      make -j unit_tests mp_unit_tests
+
+- ${{ if parameters.runUnitTests }}:
+  - template: run-remote-task.yml
+    parameters:
+      name: Gb200UnitTests
+      displayName: Run mscclpp unit tests
+      runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+      remoteScript: |
+        ./build/bin/unit_tests
+
+- template: run-remote-task.yml
+  parameters:
+    name: Gb200MpUnitTests
+    displayName: Run mscclpp multi-process unit tests
+    runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+    remoteScript: |
+      mpirun --allow-run-as-root -tag-output --bind-to numa \
+        -hostfile ${{ parameters.hostfileMpi }} -mca btl_tcp_if_include ${{ parameters.tcpIfInclude }} \
+        -np ${{ parameters.npProcs }} -npernode ${{ parameters.npPerNode }} \
+        -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+        ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
