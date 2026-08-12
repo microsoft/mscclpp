@@ -8,6 +8,10 @@
 #include "device_helpers.cuh"
 #include "exception.cuh"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/port_channel_gpunetio_device.hpp>
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 namespace mscclpp {
 namespace ep {
 namespace low_latency {
@@ -283,7 +287,11 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
-    if (!transport.isSelf(peerRank)) {
+    if (!transport.isSelf(peerRank)
+#if defined(MSCCLPP_USE_GPUNETIO)
+        && transport.isNvlinkPeer(peerRank)
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+    ) {
       transport.baseMemoryChannels_[peerRank].relaxedSignal();
       transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
     }
@@ -453,6 +461,83 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   }
 }
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+// Cross-domain rank-major combine (approach 2). The reduce is a remote *read*
+// (pull) over peers outside this rank's NVLink/IPC domain, which one-sided put
+// cannot express, so each needed remote expert-output row is first RDMA-read
+// (gin->get) into the symmetric staging ring, then reduced from there. One token
+// per iteration; the leader lane for each valid top-k slot issues the get.
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, const void* expertOutput,
+                                                              const int64_t* __restrict__ topkIndices, int nTokens,
+                                                              int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
+                                                              const TransportView& transport,
+                                                              WorkspaceView& workspaceView) {
+  constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
+  constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
+  const int threadId = static_cast<int>(threadIdx.x);
+  const int laneId = get_lane_id();
+  const int warpId = threadId / WARP_SIZE;
+  const int nLocalExperts = nExperts / nRanks;
+  auto* gin = transport.gpuNetIo_;
+  auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
+
+  for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
+    const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
+    const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
+    const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
+    const int partialRank = destinationRank >= 0 && firstLaneForRank ? destinationRank : -1;
+    const int partialSlot = partialRank >= 0 ? workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId] : -1;
+
+    // RDMA-read each valid top-k slot's remote expert-output row into its own
+    // staging slot (keyed by warp*nTopk + topkLane), then reduce from staging.
+    for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
+      const int slotRank = warpBroadcast(partialRank, topkLane);
+      const int slotSlot = warpBroadcast(partialSlot, topkLane);
+      if (slotRank < 0) continue;
+      if (laneId == topkLane) {
+        auto* slot = stagingBase + static_cast<size_t>((warpId * nTopk + topkLane) % GpuNetIoStagingSlots) *
+                                       transport.gpuNetIoSlotStride_;
+        const uint64_t remoteRowOffset =
+            transport.symmetricOffset(const_cast<void*>(expertOutput)) +
+            (static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotSlot) * HiddenBytes;
+        gin->get(slotRank, remoteRowOffset, transport.symmetricOffset(slot), HiddenBytes);
+      }
+    }
+    __syncwarp();
+
+    for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
+      float2 reduced[Bf16PairsPerInt4] = {};
+      for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
+        const int slotRank = warpBroadcast(partialRank, topkLane);
+        if (slotRank < 0) continue;
+        auto* slot = stagingBase + static_cast<size_t>((warpId * nTopk + topkLane) % GpuNetIoStagingSlots) *
+                                       transport.gpuNetIoSlotStride_;
+        const int4 packed = reinterpret_cast<const int4*>(slot)[hiddenIdx];
+        const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+#pragma unroll
+        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+          const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
+          reduced[pairIdx].x += value.data[0];
+          reduced[pairIdx].y += value.data[1];
+        }
+      }
+      int4 packedOutput;
+      auto* outputValues = reinterpret_cast<mscclpp::bf16x2*>(&packedOutput);
+#pragma unroll
+      for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+        outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(reduced[pairIdx]));
+      }
+      auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * HiddenInt4;
+      outputRow[hiddenIdx] = packedOutput;
+    }
+    __syncwarp();
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartials(void* output, const void* expertOutput,
                                                        const int64_t* __restrict__ topkIndices, int nTokens, int nTopk,
@@ -594,6 +679,18 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
     static_assert(DispatchType == DispatchDataType::BF16);
+#if defined(MSCCLPP_USE_GPUNETIO)
+    // Cross-domain rank-major combine: reduce remote expert outputs by RDMA-read
+    // (gin->get) rather than the NVLink pull. The NVLink barrier still orders
+    // intra-domain producers; cross-domain ordering relies on the dispatch-epoch
+    // handshake and is pending hardware validation.
+    if (transport.gpuNetIo_ != nullptr) {
+      synchronizeRankMajorCombine(transport, nRanks, workspaceView);
+      recvRankMajorRemotePartialsGpuNetIo<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
+                                                  maxTokensPerRank, transport, workspaceView);
+      return;
+    }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
     if (nTopk <= RankMajorTmaMaxNTopk) {
       const uint32_t combineEpoch = *workspaceView.dispatchEpoch_;
       if (blockIdx.x == 0) {

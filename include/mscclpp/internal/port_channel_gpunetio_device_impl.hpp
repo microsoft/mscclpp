@@ -71,6 +71,16 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer) {
   doca_gpu_dev_verbs_wait(detail::ginQp(qps, peer));
 }
 
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int peer, uint64_t remoteOffset, uint64_t localOffset,
+                                                     uint64_t size) {
+  doca_gpu_dev_verbs_addr raddr{peerBase[peer] + remoteOffset, rkeys[peer]};
+  doca_gpu_dev_verbs_addr laddr{localBase + localOffset, detail::ginHtobe32(lkey)};
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+  doca_gpu_dev_verbs_ticket_t ticket;
+  doca_gpu_dev_verbs_get_thread<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, raddr, laddr, size, laddr, &ticket);
+  doca_gpu_dev_verbs_wait(qp);
+}
+
 MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount) {
   doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
   uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
