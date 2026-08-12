@@ -94,32 +94,28 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
       .def(
           "output_topk_ids_buffer_ptr",
-          [](const mscclpp::ep::MoERuntime& self, int maxTokensPerRank) {
-            return reinterpret_cast<uintptr_t>(narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
-                                                   .outputTopkIdsBuffer(maxTokensPerRank));
-          },
-          nb::arg("max_tokens_per_rank") = 0)
+          [](const mscclpp::ep::MoERuntime& self) {
+            return reinterpret_cast<uintptr_t>(
+                narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTopkIdsBuffer());
+          })
       .def(
           "output_topk_weights_buffer_ptr",
-          [](const mscclpp::ep::MoERuntime& self, int maxTokensPerRank) {
-            return reinterpret_cast<uintptr_t>(narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
-                                                   .outputTopkWeightsBuffer(maxTokensPerRank));
-          },
-          nb::arg("max_tokens_per_rank") = 0)
+          [](const mscclpp::ep::MoERuntime& self) {
+            return reinterpret_cast<uintptr_t>(
+                narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTopkWeightsBuffer());
+          })
       .def(
           "output_tokens_buffer_ptr",
-          [](const mscclpp::ep::MoERuntime& self, int maxTokensPerRank) {
-            return reinterpret_cast<uintptr_t>(narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
-                                                   .outputTokensBuffer(maxTokensPerRank));
-          },
-          nb::arg("max_tokens_per_rank") = 0)
+          [](const mscclpp::ep::MoERuntime& self) {
+            return reinterpret_cast<uintptr_t>(
+                narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").outputTokensBuffer());
+          })
       .def(
           "expert_output_buffer_ptr",
-          [](const mscclpp::ep::MoERuntime& self, int maxTokensPerRank) {
-            return reinterpret_cast<uintptr_t>(narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
-                                                   .expertOutputBuffer(maxTokensPerRank));
-          },
-          nb::arg("max_tokens_per_rank") = 0)
+          [](const mscclpp::ep::MoERuntime& self) {
+            return reinterpret_cast<uintptr_t>(
+                narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").expertOutputBuffer());
+          })
       .def(
           "ll_dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,

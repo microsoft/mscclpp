@@ -52,33 +52,23 @@ MoELowLatencyRuntime::~MoELowLatencyRuntime() noexcept(false) {
   }
 }
 
-int MoELowLatencyRuntime::resolveMaxTokensPerRank(int maxTokensPerRank) const {
-  const int resolved = maxTokensPerRank == 0 ? maxTokensPerRank_ : maxTokensPerRank;
-  EP_HOST_ASSERT(resolved > 0 && resolved <= maxTokensPerRank_);
-  return resolved;
-}
-
-void* MoELowLatencyRuntime::outputTopkIdsBuffer(int maxTokensPerRank) const {
-  return low_latency::Layout(symmetricBuffer_, resolveMaxTokensPerRank(maxTokensPerRank), hidden_, numRanks_,
-                             numExperts_, numTopk_,
+void* MoELowLatencyRuntime::outputTopkIdsBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ == DispatchLayout::RANK_MAJOR)
       .rankMajorTopkIdsBuffer_;
 }
-void* MoELowLatencyRuntime::outputTopkWeightsBuffer(int maxTokensPerRank) const {
-  return low_latency::Layout(symmetricBuffer_, resolveMaxTokensPerRank(maxTokensPerRank), hidden_, numRanks_,
-                             numExperts_, numTopk_,
+void* MoELowLatencyRuntime::outputTopkWeightsBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ == DispatchLayout::RANK_MAJOR)
       .rankMajorTopkWeightsBuffer_;
 }
-void* MoELowLatencyRuntime::outputTokensBuffer(int maxTokensPerRank) const {
-  return low_latency::Layout(symmetricBuffer_, resolveMaxTokensPerRank(maxTokensPerRank), hidden_, numRanks_,
-                             numExperts_, numTopk_,
+void* MoELowLatencyRuntime::outputTokensBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ == DispatchLayout::RANK_MAJOR)
       .rankMajorTokenBuffer_;
 }
-void* MoELowLatencyRuntime::expertOutputBuffer(int maxTokensPerRank) const {
-  return low_latency::Layout(symmetricBuffer_, resolveMaxTokensPerRank(maxTokensPerRank), hidden_, numRanks_,
-                             numExperts_, numTopk_,
+void* MoELowLatencyRuntime::expertOutputBuffer() const {
+  return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ == DispatchLayout::RANK_MAJOR)
       .rankMajorExpertOutputBuffer_;
 }
@@ -162,14 +152,14 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                  numBlocks <= low_latency::MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
-  low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR);
-  EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
-  void* dispatchRecvBuffer = layout.dispatchRecvBuffer_;
+  low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
+                                       outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
+  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(output == layout.rankMajorTokenBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == layout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == layout.rankMajorTopkWeightsBuffer_);
+    EP_HOST_ASSERT(output == allocationLayout.rankMajorTokenBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
   const low_latency::Workload workload{.numTokens_ = numTokens,
@@ -198,13 +188,13 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= low_latency::MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
-  low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR);
-  EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
-  void* combineRecvBuffer = layout.combineRecvBuffer_;
-  void* dispatchRecvBuffer = layout.dispatchRecvBuffer_;
+  low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
+                                       outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
+  void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
+  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(input == layout.rankMajorExpertOutputBuffer_);
+    EP_HOST_ASSERT(input == allocationLayout.rankMajorExpertOutputBuffer_);
   }
 
   const low_latency::Workload workload{.numTokens_ = numTokens,

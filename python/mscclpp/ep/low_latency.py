@@ -228,51 +228,35 @@ class LowLatencyBackend:
         self._output_topk_ids: Optional[torch.Tensor] = None
         self._output_topk_weights: Optional[torch.Tensor] = None
         self.expert_output_buffer: Optional[torch.Tensor] = None
-        self._rank_major_buffer_views: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         if self.output_layout == DispatchLayout.RANK_MAJOR:
-            self._set_rank_major_buffer_views(self.max_tokens_per_rank)
-
-    def _set_rank_major_buffer_views(self, max_tokens_per_rank: int) -> None:
-        cached = self._rank_major_buffer_views.get(max_tokens_per_rank)
-        if cached is None:
-            shape = (self.world_size * max_tokens_per_rank, self.hidden_size)
-            metadata_shape = (self.world_size * max_tokens_per_rank, self.topk)
-            self._output_topk_ids_owner, output_topk_ids = _tensor_from_pointer(
-                self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(max_tokens_per_rank),
+            shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
+            metadata_shape = (self.world_size * self.max_tokens_per_rank, self.topk)
+            self._output_topk_ids_owner, self._output_topk_ids = _tensor_from_pointer(
+                self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
                 "<i4",
                 self.device,
                 self._runtime,
             )
-            self._output_topk_weights_owner, output_topk_weights = _tensor_from_pointer(
-                self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(max_tokens_per_rank),
+            self._output_topk_weights_owner, self._output_topk_weights = _tensor_from_pointer(
+                self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
                 "<f4",
                 self.device,
                 self._runtime,
             )
-            self._output_tokens_owner, output_tokens = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.output_tokens_buffer_ptr(max_tokens_per_rank),
+            self._output_tokens_owner, self._output_tokens = _bf16_tensor_from_pointer(
+                self._runtime.cpp_runtime.output_tokens_buffer_ptr(),
                 shape,
                 self.device,
                 self._runtime,
             )
-            self._expert_output_owner, expert_output = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.expert_output_buffer_ptr(max_tokens_per_rank),
+            self._expert_output_owner, self.expert_output_buffer = _bf16_tensor_from_pointer(
+                self._runtime.cpp_runtime.expert_output_buffer_ptr(),
                 shape,
                 self.device,
                 self._runtime,
             )
-            cached = (output_topk_ids, output_topk_weights, output_tokens, expert_output)
-            self._rank_major_buffer_views[max_tokens_per_rank] = cached
-        self._output_topk_ids, self._output_topk_weights, self._output_tokens, self.expert_output_buffer = cached
-
-    def get_expert_output_buffer(self, runtime_max_tokens_per_rank: Optional[int] = None) -> Optional[torch.Tensor]:
-        if self.output_layout != DispatchLayout.RANK_MAJOR:
-            return None
-        max_tokens_per_rank = self._resolve_runtime_max_tokens_per_rank(runtime_max_tokens_per_rank)
-        self._set_rank_major_buffer_views(max_tokens_per_rank)
-        return self.expert_output_buffer
 
     def _resolve_runtime_max_tokens_per_rank(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
         resolved = self.max_tokens_per_rank if runtime_max_tokens_per_rank is None else runtime_max_tokens_per_rank
@@ -305,8 +289,6 @@ class LowLatencyBackend:
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del previous_handle
         active_capacity = self._resolve_runtime_max_tokens_per_rank(runtime_max_tokens_per_rank)
-        if self.output_layout == DispatchLayout.RANK_MAJOR:
-            self._set_rank_major_buffer_views(active_capacity)
         self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer, active_capacity)
 
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
@@ -406,7 +388,6 @@ class LowLatencyBackend:
         elif isinstance(handle, RankMajorDispatchHandle):
             context = handle.combine_context
             active_capacity = context.max_tokens_per_rank
-            self._set_rank_major_buffer_views(active_capacity)
             topk_weights = None
             src_info = None
             layout_range = None
@@ -520,7 +501,7 @@ class LowLatencyBackend:
                 raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
-        slots_per_expert = self.world_size * active_capacity
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             expected_shape = (
                 self.num_local_experts,
@@ -529,7 +510,7 @@ class LowLatencyBackend:
             )
         elif self.output_layout == DispatchLayout.RANK_MAJOR:
             expected_shape = (
-                self.world_size * active_capacity,
+                self.world_size * self.max_tokens_per_rank,
                 self.hidden_size,
             )
         else:

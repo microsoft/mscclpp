@@ -27,10 +27,10 @@ class MoELowLatencyRuntime : public MoERuntime {
 
   MoEMode mode() const override { return MoEMode::LOW_LATENCY; }
 
-  void* outputTopkIdsBuffer(int maxTokensPerRank = 0) const;
-  void* outputTopkWeightsBuffer(int maxTokensPerRank = 0) const;
-  void* outputTokensBuffer(int maxTokensPerRank = 0) const;
-  void* expertOutputBuffer(int maxTokensPerRank = 0) const;
+  void* outputTopkIdsBuffer() const;
+  void* outputTopkWeightsBuffer() const;
+  void* outputTokensBuffer() const;
+  void* expertOutputBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
@@ -64,7 +64,6 @@ class MoELowLatencyRuntime : public MoERuntime {
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
 
-  int resolveMaxTokensPerRank(int maxTokensPerRank) const;
   void setup();
 };
 
