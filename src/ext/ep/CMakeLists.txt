@@ -145,4 +145,9 @@ if(MSCCLPP_USE_GPUNETIO)
     set_source_files_properties(ll_runtime.cc PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+    # The low-latency dispatch kernel issues the inter-domain GPUNetIO sends, so it
+    # needs the device context definition + the vendored DOCA device headers.
+    set_source_files_properties(low_latency/dispatch.cu PROPERTIES
+        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
+        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
 endif()
