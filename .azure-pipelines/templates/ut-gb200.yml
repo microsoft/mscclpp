@@ -1,17 +1,3 @@
-# Unit-test steps for the GB200 / MNNVL (MRC, no-IB) pilot environment.
-#
-# Unlike ut-no-ib-env.yml, this template does NOT deploy or manage a VMSS:
-# mnnvl-test.yml already generates the deploy files, runs deploy.yml with
-# pilot: true, and publishes the head node as $(headNode). This template only
-# runs the unit-test portion on the already-provisioned pilot nodes.
-#
-# Why a dedicated GB200 template is needed: deploy.yml builds mscclpp on the CI
-# agent and deploy.sh ships that build/ tree to the compute nodes. The pilot
-# agent is x86-64 while the GB200 nodes are aarch64, so the shipped
-# ./build/bin/mp_unit_tests (and unit_tests) fail to exec on the nodes with
-# "Exec format error". This template rebuilds the C++ tests natively on every
-# node before running them, so the binaries match the node architecture.
-
 parameters:
 - name: user
   type: string
@@ -25,30 +11,37 @@ parameters:
   type: string
   default: '$(System.DefaultWorkingDirectory)/test/deploy/hostfile'
 # Container-side hostfile passed to mpirun (one ip per line).
-- name: hostfileMpi
-  type: string
-  default: '/root/mscclpp/test/deploy/hostfile_mpi'
 - name: gpuArch
   type: string
   default: '100a'
-- name: cmakeArgs
+# Single-node rank ladder for mp_unit_tests. Space-separated; each value is one
+# mpirun -np run on the head node. GB200 nodes have 4 GPUs, so 2 and 4 exercise
+# the intra-node paths (IPC / NVLink). Every value must be >= 2 (the Prelim test
+# asserts worldSize >= 2). The communicator/channel/executor tests only have a
+# working transport intra-node in a no-IB build, so they must run single-node.
+- name: singleNodeNps
   type: string
-  default: '-DMSCCLPP_USE_IB=OFF'
-# Total MPI ranks for mp_unit_tests. Must be >= 2 (the Prelim test asserts
-# worldSize >= 2). Default: 4 ranks/node x 2 nodes.
-- name: npProcs
-  type: number
-  default: 8
-- name: npPerNode
-  type: number
-  default: 4
-- name: tcpIfInclude
-  type: string
-  default: '10.0.5.0/24'
-# Negative substring filter for mp_unit_tests (-Ib skips InfiniBand tests).
+  default: '2 4'
+# Negative substring filter for the single-node runs. Comma-separated patterns
+# are all excluded. -Ib skips the InfiniBand tests (no IB on MNNVL).
 - name: filter
   type: string
   default: '-Ib'
+# Whether to also run a cross-node mp_unit_tests pass. It validates the
+# multi-node TcpBootstrap rendezvous over the routable subnet -- the path unique
+# to the MNNVL topology -- using only the tests that work cross-node without IB.
+- name: runCrossNodeBootstrap
+  type: boolean
+  default: true
+# Negative filter for the cross-node pass. Excludes every fixture that needs a
+# cross-node data transport (Communicator / Executor / *Channel / Semaphore /
+# Ib), which a no-IB build lacks between nodes and which otherwise deadlocks on
+# the mesh barrier. Also excludes TimeoutWithId, whose 100ms window on a 1s
+# timeout is too tight for remote ranks over TCP. What remains: BootstrapTest.*
+# and MultiProcessTest.* (Prelim / HostName / HostHash).
+- name: crossNodeFilter
+  type: string
+  default: '-Communicator,Executor,Ib,MemoryChannel,PortChannel,SemaphorePerf,SwitchChannel,TimeoutWithId'
 # TcpBootstrap rendezvous port. The bootstrap root address is set to
 # <headNode>:<bootstrapPort> so ranks on other nodes reach rank 0 over the
 # routable subnet. The mp_unit_tests default (127.0.0.1) only works
@@ -78,7 +71,7 @@ steps:
         -DMSCCLPP_USE_CUDA=ON \
         -DMSCCLPP_BUILD_TESTS=ON \
         -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} \
-        ${{ parameters.cmakeArgs }} ..
+        -DMSCCLPP_USE_IB=OFF ..
       make -j unit_tests mp_unit_tests
 
 - ${{ if parameters.runUnitTests }}:
@@ -90,14 +83,34 @@ steps:
       remoteScript: |
         ./build/bin/unit_tests
 
+# Run mp_unit_tests single-node on the head node across the rank ladder. No
+# hostfile / ip_port needed: all ranks are local, so loopback bootstrap works and
+# every fixture has a working intra-node transport (IPC / NVLink).
 - template: run-remote-task.yml
   parameters:
     name: Gb200MpUnitTests
-    displayName: Run mscclpp multi-process unit tests
+    displayName: Run mscclpp multi-process unit tests (single-node)
     runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
     remoteScript: |
-      mpirun --allow-run-as-root -tag-output --bind-to numa \
-        -hostfile ${{ parameters.hostfileMpi }} -mca btl_tcp_if_include ${{ parameters.tcpIfInclude }} \
-        -np ${{ parameters.npProcs }} -npernode ${{ parameters.npPerNode }} \
-        -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
-        ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.filter }}
+      for np in ${{ parameters.singleNodeNps }}; do
+        echo "=== mp_unit_tests -np ${np} (single-node) ==="
+        mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
+      done
+
+# Cross-node pass: validate the multi-node TcpBootstrap rendezvous. mpirun spans
+# both nodes via the container hostfile; --ip_port points every rank at rank 0 on
+# the head node (the mp_unit_tests default of 127.0.0.1 only works single-node
+# and makes the *IpPortPair tests time out across nodes). crossNodeFilter keeps
+# this to the fixtures that work without cross-node IB.
+- ${{ if parameters.runCrossNodeBootstrap }}:
+  - template: run-remote-task.yml
+    parameters:
+      name: Gb200MpBootstrapMultiNode
+      displayName: Run mscclpp multi-process bootstrap tests (cross-node)
+      runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+      remoteScript: |
+        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
