@@ -14,7 +14,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace low_latency {
 namespace detail {
 
 constexpr int DispatchNWarps = 16;
@@ -39,11 +38,11 @@ struct TransportView {
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
 
-  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
-      : symmetricBufferBase_(comm.symmetricBufferBase_),
-        peerMappedBufferBases_(comm.peerMappedBufferBases_),
-        baseMemoryChannels_(comm.baseMemoryChannels_),
-        rank_(comm.rank_) {}
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
+      : symmetricBufferBase_(context->localBufferBase_),
+        peerMappedBufferBases_(context->peerBufferBases_),
+        baseMemoryChannels_(context->channels_),
+        rank_(context->rank_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 
@@ -133,7 +132,7 @@ struct WorkspaceView {
     dispatchRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
     dispatchRecvTasks_ = reinterpret_cast<RecvTask*>(cursor);
-    cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
+    cursor += static_cast<size_t>(FixedBufferMaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
     dispatchTasksReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchNumRecvTasks_ = cursor++;
     combineRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
@@ -151,12 +150,13 @@ struct WorkspaceView {
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
            static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
-           static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
-           sizeof(int) +                                                                 // dispatchNumRecvTasks_
-           static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
-           sizeof(uint32_t) +                                                            // combineReadyEpoch_
-           sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
-           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
+           static_cast<size_t>(FixedBufferMaxWorkerBlocks) * sizeof(RecvTask) +
+           sizeof(uint32_t) +                                            // dispatchTasksReadyEpoch_
+           sizeof(int) +                                                 // dispatchNumRecvTasks_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +              // combineRankReadyEpochs_
+           sizeof(uint32_t) +                                            // combineReadyEpoch_
+           sizeof(mscclpp::DeviceSyncer) +                               // combineSyncer_
+           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);  // rankMajorSendIndices_
   }
 };
 
@@ -167,20 +167,20 @@ struct KernelConfigCache {
 };
 
 template <typename Kernel>
-inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const CommContext& comm,
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
                            KernelConfigCache& cache) {
-  if (cache.deviceId_ != comm.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
+  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
     cudaFuncAttributes attributes;
     CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
     EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
-                   static_cast<size_t>(comm.maxSharedMemoryPerBlock_));
+                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
     CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
                                     static_cast<int>(dynamicSharedBytes)));
     int blocksPerSm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
-    cache.deviceId_ = comm.deviceId_;
+    cache.deviceId_ = context.deviceId_;
     cache.dynamicSharedBytes_ = dynamicSharedBytes;
-    cache.residentBlocks_ = blocksPerSm * comm.numSms_;
+    cache.residentBlocks_ = blocksPerSm * context.numSms_;
   }
   return cache.residentBlocks_;
 }
@@ -228,6 +228,5 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, 
 }
 
 }  // namespace detail
-}  // namespace low_latency
 }  // namespace ep
 }  // namespace mscclpp

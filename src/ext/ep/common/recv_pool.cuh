@@ -10,9 +10,8 @@
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
 
-struct Config {
+struct RecvPoolConfig {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;
   static constexpr int MaxLocalExperts = 1024;
@@ -27,7 +26,7 @@ struct Config {
 
   int numSms_;
 
-  explicit Config(int numSms) : numSms_(numSms) { EP_HOST_ASSERT(numSms > 0); }
+  explicit RecvPoolConfig(int numSms) : numSms_(numSms) { EP_HOST_ASSERT(numSms > 0); }
 
   size_t controlBufferBytes(int numRanks) const {
     EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
@@ -57,6 +56,5 @@ struct Config {
   }
 };
 
-}  // namespace high_throughput
 }  // namespace ep
 }  // namespace mscclpp

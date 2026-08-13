@@ -4,13 +4,9 @@
 # Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
 # (Mixture-of-Experts dispatch/combine) runtime to Python.
 #
-# Two backends share one module behind a single `MoERuntime` class (`MoEMode`
-# selects the path), both with a torch-free, raw-pointer (uintptr_t) nanobind
-# API so the module never links libtorch:
-#  - Low-latency (LL): ll_runtime.cc + low_latency/{dispatch,combine}.cu.
-#  - High-throughput (HT): ht_runtime.cc + high-throughput/*.cu, a DeepEP-style
-#    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
-#    recv sizing via the multi-step layout -> notify -> allocate -> dispatch API).
+# One `MoERuntime` conditionally owns the resources required by the selected
+# latency or overlap algorithms. All kernels consume the same persistent
+# `DeviceContext*` through a torch-free raw-pointer nanobind API.
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
@@ -58,15 +54,16 @@ endif()
 
 set(EP_SOURCES
     moe_runtime.cc
-    ll_runtime.cc
+    runtime/fixed_buffer.cc
+    runtime/recv_pool.cc
     bindings.cpp
-    low_latency/dispatch.cu
-    low_latency/combine.cu
-    # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
-    ht_runtime.cc
-    high-throughput/counts.cu
-    high-throughput/dispatch.cu
-    high-throughput/combine.cu
+    dispatch/latency/expert_major.cu
+    dispatch/latency/rank_major.cu
+    combine/latency/rank_local_reduce.cu
+    combine/latency/direct_send.cu
+    dispatch/overlap/token_major_prepare.cu
+    dispatch/overlap/token_major.cu
+    combine/overlap/token_major_reduce.cu
 )
 
 # Build as a Python extension module (shared object with Python ABI suffix).
@@ -78,7 +75,6 @@ endif()
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/high-throughput
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${PROJECT_SOURCE_DIR}/src/ext/include

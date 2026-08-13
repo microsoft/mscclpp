@@ -33,7 +33,7 @@ class LaunchConfig {
 
 #define LAUNCH_KERNEL(config, kernel, ...) CUDA_CHECK(cudaLaunchKernelEx(config, kernel, ##__VA_ARGS__))
 
-// HT kernels are specialized for the rank counts supported by the runtime and
+// Overlap kernels are specialized for the rank counts supported by the runtime and
 // control-buffer layout.
 #define SWITCH_RANKS(num_ranks, case_macro)           \
   do {                                                \

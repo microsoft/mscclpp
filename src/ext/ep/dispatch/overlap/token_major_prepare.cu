@@ -4,7 +4,7 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// High-throughput routing-count construction.
+// Token-major overlap routing-count construction.
 
 #include "api.cuh"
 #include "exception.cuh"
@@ -12,13 +12,13 @@
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
+namespace dispatch {
 namespace detail {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
 __global__ void __launch_bounds__(NumThreads, 1)
-    computeDispatchCountsKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert,
-                                bool* isTokenInRank, int numTokens, int numTopk, int numRanks, int numExperts) {
+    prepareTokenMajorKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                            int numTokens, int numTopk, int numExperts, const DeviceContext* context) {
   const int blockId = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
 
@@ -55,10 +55,10 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
   const int expertBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock;
   const int rankBegin = (blockId - expertBlocks) * NumRanksPerBlock;
-  const int rankEnd = min(rankBegin + NumRanksPerBlock, numRanks);
+  const int rankEnd = min(rankBegin + NumRanksPerBlock, context->numRanks_);
   if (rankBegin >= rankEnd) return;
 
-  const int expertsPerRank = numExperts / numRanks;
+  const int expertsPerRank = numExperts / context->numRanks_;
   const int rankExpertBegin = rankBegin * expertsPerRank;
   const int rankExpertEnd = rankEnd * expertsPerRank;
 #pragma unroll
@@ -73,7 +73,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
       if (rankExpertBegin <= expert && expert < rankExpertEnd) ++isInRank[expert / expertsPerRank - rankBegin];
     }
 
-    bool* tokenInRank = isTokenInRank + token * numRanks;
+    bool* tokenInRank = isTokenInRank + token * context->numRanks_;
 #pragma unroll
     for (int i = 0; rankBegin + i < rankEnd; ++i) {
       tokenInRank[rankBegin + i] = isInRank[i] > 0;
@@ -93,19 +93,21 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
 }  // namespace detail
 
-void computeDispatchCounts(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                           int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream) {
+void prepareTokenMajorOverlap(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert,
+                              bool* isTokenInRank, int numTokens, int numTopk, int numExperts,
+                              const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;
-  const int numBlocks =
-      (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock + (numRanks + NumRanksPerBlock - 1) / NumRanksPerBlock;
+  const int numBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock +
+                        (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream);
-  LAUNCH_KERNEL(config.get(), (detail::computeDispatchCountsKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>),
-                topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numRanks, numExperts);
+  LAUNCH_KERNEL(config.get(), (detail::prepareTokenMajorKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>),
+                topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
+                deviceContext);
 }
 
-}  // namespace high_throughput
+}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp

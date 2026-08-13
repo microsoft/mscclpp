@@ -7,15 +7,15 @@
 #include <mscclpp/bulk_device.hpp>
 
 #include "api.cuh"
-#include "barrier.cuh"
-#include "config.cuh"
+#include "common/overlap_barrier.cuh"
+#include "common/recv_pool.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 #include "launch.cuh"
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
+namespace combine {
 namespace detail {
 
 #ifndef EP_HT_COMBINE_TMA_CHUNK_INT4
@@ -39,10 +39,9 @@ namespace detail {
 
 template <int NumRanks, int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    combineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                  int numTopk, void** recvPoolPtrs, const int* combineRecvIdx,
-                  mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
-                  int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes) {
+    combineTokenMajorOverlapKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                                   int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                                   int64_t metadataSlotBytes, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   static_assert(MaxContributors <= NumRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
@@ -65,7 +64,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   };
   uint32_t barrierPhases[NumStages] = {};
 
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
   cooperative_groups::this_grid().sync();
   if (laneId == 0) {
 #pragma unroll
@@ -85,7 +84,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     for (int rankBase = 0; rankBase < NumRanks; rankBase += WARP_SIZE) {
       const int peerRank = rankBase + laneId;
       const bool contributes = peerRank < NumRanks && sendHead[static_cast<int64_t>(token) * NumRanks + peerRank] >= 0;
-      const int slot = contributes ? combineRecvIdx[static_cast<int64_t>(token) * NumRanks + peerRank] : 0;
+      const int slot = contributes ? context->combineRecvIdx_[static_cast<int64_t>(token) * NumRanks + peerRank] : 0;
       unsigned contributors = __ballot_sync(0xffffffffu, contributes);
       while (contributors != 0u) {
         const int sourceLane = __ffs(static_cast<int>(contributors)) - 1;
@@ -106,7 +105,8 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
       barriers[stageIdx].arriveAndExpect(chunkBytes * numContributors);
       for (int contributor = 0; contributor < numContributors; ++contributor) {
         const auto* source =
-            reinterpret_cast<const uint8_t*>(recvPoolPtrs[contributorRanks[contributor]]) + recvPoolHeaderBytes +
+            reinterpret_cast<const uint8_t*>(context->peerPayloadBases_[contributorRanks[contributor]]) +
+            recvPoolHeaderBytes +
             static_cast<int64_t>(contributorSlots[contributor]) * hiddenInt4 * static_cast<int64_t>(sizeof(int4)) +
             static_cast<int64_t>(chunkOffset) * sizeof(int4);
         mscclpp::bulkLoad(stage(stageIdx, contributor), source, chunkBytes, barriers[stageIdx]);
@@ -173,9 +173,9 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
 #pragma unroll
       for (int contributor = 0; contributor < MaxContributors; ++contributor) {
         if (contributor >= numContributors) break;
-        const auto* metadata = reinterpret_cast<const uint8_t*>(recvPoolPtrs[contributorRanks[contributor]]) +
-                               recvPoolMetadataOffset +
-                               static_cast<int64_t>(contributorSlots[contributor]) * metadataSlotBytes;
+        const auto* metadata =
+            reinterpret_cast<const uint8_t*>(context->peerPayloadBases_[contributorRanks[contributor]]) +
+            recvPoolMetadataOffset + static_cast<int64_t>(contributorSlots[contributor]) * metadataSlotBytes;
         const auto* weights = reinterpret_cast<const float*>(metadata + static_cast<size_t>(numTopk) * sizeof(int));
         weight += __ldg(weights + laneId);
       }
@@ -196,7 +196,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   if (device != cachedDevice || dynamicSharedBytes != cachedSharedBytes) {
     int blocksPerSm;
     int numSms;
-    auto kernel = combineKernel<NumRanks, MaxContributors, NumWarps>;
+    auto kernel = combineTokenMajorOverlapKernel<NumRanks, MaxContributors, NumWarps>;
     CUDA_CHECK(
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumWarps * WARP_SIZE, dynamicSharedBytes));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
@@ -207,15 +207,15 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   return cachedMaxBlocks;
 }
 
-void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
-             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
-             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream) {
+void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             const DeviceContext* deviceContext, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(sendHead != nullptr);
-  EP_HOST_ASSERT(recvPoolPtrs != nullptr);
-  EP_HOST_ASSERT(combineRecvIdx != nullptr);
-  EP_HOST_ASSERT(barrierChannels != nullptr);
+  EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
+  EP_HOST_ASSERT(context.combineRecvIdx_ != nullptr);
+  EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
 
   constexpr int NumStages = EP_HT_COMBINE_TMA_STAGES;
@@ -224,7 +224,7 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
 
 #define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
   {                                                                                                                    \
-    auto kernel = combineKernel<ranks, maxContributors, numWarps>;                                                     \
+    auto kernel = combineTokenMajorOverlapKernel<ranks, maxContributors, numWarps>;                                    \
     const size_t sharedBytes =                                                                                         \
         static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
         static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
@@ -233,11 +233,10 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
     EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \
     LaunchConfig config(numBlocks, numWarps* WARP_SIZE, sharedBytes, stream, true);                                    \
     LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
-                  hidden, numTopk, recvPoolPtrs, combineRecvIdx, barrierChannels, rank, recvPoolHeaderBytes,           \
-                  recvPoolMetadataOffset, metadataSlotBytes);                                                          \
+                  hidden, numTopk, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, deviceContext);     \
   }
 
-  switch (numRanks) {
+  switch (context.numRanks_) {
     case 2:
       COMBINE_LAUNCH(2, 2, EP_HT_COMBINE_TMA_WARPS);
       break;
@@ -278,15 +277,15 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
 
 }  // namespace detail
 
-void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
-             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
-             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream) {
-  detail::combine(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk, numRanks, recvPoolPtrs,
-                  combineRecvIdx, barrierChannels, rank, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes,
-                  numBlocks, stream);
+void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             const DeviceContext* deviceContext, cudaStream_t stream) {
+  detail::tokenMajorReduceOverlap(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                                  recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context,
+                                  deviceContext, stream);
 }
 
-}  // namespace high_throughput
+}  // namespace combine
 }  // namespace ep
 }  // namespace mscclpp

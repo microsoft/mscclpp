@@ -1,43 +1,43 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
 The EP extension is a torch-free nanobind module for MoE dispatch and combine.
-It exposes a single `MoERuntime` whose `MoEMode` selects one of two backends:
+It exposes one concrete `MoERuntime` and one persistent `DeviceContext*` shared
+by dispatch and combine kernels.
 
-- **Low latency (LL)**: `MoELowLatencyRuntime` (`ll_runtime.cc` plus
-  `low_latency/{dispatch,combine}.cu`), reached through the `ll_*` methods.
-  Uses ~128 SMs and expects to own the GPU while it runs.
-- **High throughput (HT)**: `MoEHighThroughputRuntime` (`ht_runtime.cc` plus the
-  CUDA sources under `high-throughput/`), reached through the `ht_*` methods.
-  Defaults to 20 SMs so dispatch/combine can overlap with expert GEMMs.
+`MoEMode` selects a resource and algorithm family:
 
-Both derive from the abstract `MoERuntime` (`runtime_base.hpp`), which owns the
-shared rank-topology detection and availability reporting.
-`createMoERuntime(...)` constructs the requested implementation and returns a
-`std::shared_ptr<MoERuntime>`; calling the other mode's methods raises.
+- **`LATENCY`** algorithms use broad GPU resources to minimize standalone
+  dispatch/combine latency.
+- **`OVERLAP`** algorithms use a bounded SM budget so communication can run
+  concurrently with expert compute.
+
+`LOW_LATENCY` and `HIGH_THROUGHPUT` remain compatibility aliases.
+Mode-specific buffers are allocated conditionally; selecting one family does
+not allocate the other family's resources.
 
 ## Status
 
 | Feature | Status |
 |---|---|
-| LL dispatch/combine | Validated on Hopper and newer GPUs |
-| HT dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
-| HT RDMA/IB fallback | Not supported |
-| Python frontend | `mscclpp.ep.MoECommunicator` selects LL or HT with `MoEMode` |
+| Latency dispatch/combine | Validated on Hopper and newer GPUs |
+| Overlap dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
+| Overlap RDMA/IB fallback | Not supported |
+| Python frontend | `mscclpp.ep.MoECommunicator` selects latency or overlap algorithms with `MoEMode` |
 | ROCm | Not supported |
 
 ## Runtime architecture
 
-### Low latency
+### Latency algorithms
 
-LL allocates CUDA physical symmetric memory and maps peer buffers through the
+The latency resource plan allocates CUDA physical symmetric memory and maps peer buffers through the
 existing `mscclpp::Communicator`. Payloads use direct peer mappings;
 `BaseMemoryChannel` handles are used only for synchronization.
 
-The optimized LL backend is available when all participating ranks belong to
+The latency algorithms are available when all participating ranks belong to
 one detected GPU IPC domain. That domain may span hosts when CUDA fabric handles
 and the required fabric services are available.
 
-LL dispatch supports two user-visible layouts:
+Latency dispatch supports two user-visible layouts:
 
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
 - `RANK_MAJOR`: fixed-stride rows grouped by source rank. Tokens are written
@@ -46,15 +46,15 @@ LL dispatch supports two user-visible layouts:
   from registered remote MoE output or push completed rank partials into
   source-local scratch and progressively reduce ready ranks.
 
-LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
+Quantized latency dispatch supports E4M3 payloads with FP32 scales per 128 hidden
 elements (`FP8_E4M3`).
 
-### High throughput
+### Overlap algorithms
 
-HT follows the same direct-mapping resource model:
+The overlap resource plan follows the same direct-mapping model:
 
 1. Python passes the existing `mscclpp::Communicator` into
-   `MoERuntime` with `MoEMode::HIGH_THROUGHPUT`.
+   `MoERuntime` with `MoEMode::OVERLAP`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
    internal receive pool. The pool provides stable peer mappings before the
    data-dependent receive count is known; Python later exposes its exact-size
@@ -64,11 +64,11 @@ HT follows the same direct-mapping resource model:
 4. Dispatch and combine launch directly on the caller's CUDA stream.
 
 The detected GPU IPC domain may span multiple hosts, such as an NVL fabric
-domain with CUDA fabric handles. HT does not create a private bootstrap, proxy
+domain with CUDA fabric handles. The overlap path does not create a private bootstrap, proxy
 service, RDMA channel, NVLS multicast object, or private communication stream,
 and it has no RDMA/IB fallback outside that domain.
 
-The HT dispatch API remains two-phase because the receive token count is data
+The overlap dispatch API remains two-phase because the receive token count is data
 dependent:
 
 1. The notify phase exchanges counts and produces prefix matrices.
@@ -77,20 +77,20 @@ dependent:
 
 Cached dispatch reuses the previous receive count and prefix matrices.
 
-## HT data path
+## Overlap data path
 
-HT has one direct path. Every dispatch block writes hidden rows and routing
+The overlap family has one direct path. Every dispatch block writes hidden rows and routing
 metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
 There is no ring algorithm or runtime fallback. Set the communication block
 budget through the `num_sms` API configuration.
 
-The persistent HT configuration contains only:
+The persistent overlap configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_sms` | Maximum HT communication block budget |
+| `num_sms` | Maximum overlap communication block budget |
 
 ## Build
 
@@ -126,24 +126,38 @@ Available CMake options:
 src/ext/ep/
 ├── bindings.cpp
 ├── moe_runtime.{cc,hpp}
-├── ll_runtime.{cc,hpp}
-├── ht_runtime.{cc,hpp}
-├── runtime_base.hpp
-├── high-throughput/
-│   ├── config.cuh
-│   ├── counts.cu
-│   ├── dispatch.cu
-│   └── combine.cu
+├── runtime/
+│   ├── resources.hpp
+│   ├── fixed_buffer.cc
+│   └── recv_pool.cc
+├── common/
+│   ├── fixed_buffer.cuh
+│   ├── recv_pool.cuh
+│   └── overlap_barrier.cuh
+├── dispatch/
+│   ├── latency/
+│   │   ├── common.cuh
+│   │   ├── expert_major.cu
+│   │   └── rank_major.cu
+│   └── overlap/
+│       ├── token_major_prepare.cu
+│       └── token_major.cu
+├── combine/
+│   ├── latency/
+│   │   ├── common.cuh
+│   │   ├── rank_local_reduce.cu
+│   │   └── direct_send.cu
+│   └── overlap/
+│       └── token_major_reduce.cu
 ├── include/
-└── low_latency/
-    ├── config.cuh
-    ├── dispatch.cu
-    └── combine.cu
+│   ├── api.cuh
+│   └── device_context.cuh
+└── config.hpp
 ```
 
 ## Validation
 
-Build the extension, then run the single-node HT test:
+Build the extension, then run the single-node overlap test:
 
 ```bash
 HWLOC_COMPONENTS=-gl \
@@ -152,7 +166,7 @@ torchrun --standalone --nproc_per_node=8 \
     test/python/ep/test_intranode_multirank.py
 ```
 
-The LL validation remains:
+The latency validation remains:
 
 ```bash
 HWLOC_COMPONENTS=-gl \

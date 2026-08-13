@@ -14,15 +14,21 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <vector>
 
+#include "device_context.cuh"
+
 namespace mscclpp {
 namespace ep {
 
 /// Expert-parallel backend mode.
 enum class MoEMode {
-  /// Low-latency dispatch/combine backend.
-  LOW_LATENCY,
-  /// Direct high-throughput dispatch/combine backend.
-  HIGH_THROUGHPUT
+  /// Algorithms optimized for minimum standalone latency.
+  LATENCY,
+  /// Resource-bounded algorithms optimized for compute/communication overlap.
+  OVERLAP,
+  /// Compatibility alias for `LATENCY`.
+  LOW_LATENCY = LATENCY,
+  /// Compatibility alias for `OVERLAP`.
+  HIGH_THROUGHPUT = OVERLAP
 };
 
 /// Logical dispatch output layout.
@@ -35,62 +41,53 @@ enum class DispatchLayout {
   RANK_MAJOR
 };
 
-// ===========================================================================
-// High-throughput kernels.
-// ===========================================================================
-namespace high_throughput {
+namespace dispatch {
 
 /// Compute per-rank/per-expert routing counts and token-to-rank membership.
 /// This is a sizing phase and is unrelated to the dispatch output layout.
-void computeDispatchCounts(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                           int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream);
+void prepareTokenMajorOverlap(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert,
+                              bool* isTokenInRank, int numTokens, int numTopk, int numExperts,
+                              const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream);
 
 /// Exchange routing counts, build prefix matrices, and publish receive counts.
 /// The host consumes the mapped counters before allocating the dynamic receive view.
-void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
-                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
-                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                            int expertAlignment, void** bufferPtrs,
-                            mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
-                            int numChannels);
+void exchangeTokenMajorCountsOverlap(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts,
+                                     int numTokens, const bool* isTokenInRank, int* channelPrefixMatrix,
+                                     int* rankPrefixMatrix, int expertAlignment, const DeviceContext& context,
+                                     const DeviceContext* deviceContext, cudaStream_t stream, int numChannels);
 
 /// Re-publish a cached rank-prefix matrix and rendezvous before cached dispatch.
-void publishCachedRankPrefix(const int* rankPrefixMatrix, void** bufferPtrs,
-                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks,
-                             cudaStream_t stream);
+void publishCachedTokenMajorPrefixOverlap(const int* rankPrefixMatrix, const DeviceContext& context,
+                                          const DeviceContext* deviceContext, cudaStream_t stream);
 
 /// Move token payload and routing metadata after the sizing phase completes.
-void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-              const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix, int numTokens,
-              int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales, int64_t* recvTopkIdx,
-              float* recvTopkWeights, float* recvXScales, void** bufferPtrs,
-              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int numRanks, cudaStream_t stream,
-              int numBlocks, void** recvPoolPtrs, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-              int64_t metadataSlotBytes, int* combineRecvIdx);
+void tokenMajorOverlap(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                       const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                       int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
+                       int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
+                       int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                       const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream);
+
+}  // namespace dispatch
+
+namespace combine {
 
 /// Return expert outputs to their source ranks and reduce routed contributions.
-void combine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden, int numTopk,
-             int numRanks, void** recvPoolPtrs, const int* combineRecvIdx,
-             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
-             int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream);
+void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             const DeviceContext* deviceContext, cudaStream_t stream);
 
-}  // namespace high_throughput
-
-// ===========================================================================
-// Low-latency kernels for RDMA and IPC paths. Ported from DeepEP
-// `csrc/kernels/internode_ll.cu` with NVSHMEM/IBGDA device ops replaced by
-// MSCCL++ channel primitives (`put`, `atomicAdd`, direct IPC stores, barriers).
-// ===========================================================================
-namespace low_latency {
+}  // namespace combine
 
 /// Number of non-worker blocks in the dispatch grid.
-inline constexpr int DispatchControlBlocks = 2;
+inline constexpr int FixedBufferDispatchControlBlocks = 2;
 /// Maximum worker blocks used by dispatch or combine.
-inline constexpr int MaxWorkerBlocks = 128;
+inline constexpr int FixedBufferMaxWorkerBlocks = 128;
 /// Maximum total dispatch grid size.
-inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+inline constexpr int FixedBufferMaxDispatchBlocks = FixedBufferMaxWorkerBlocks + FixedBufferDispatchControlBlocks;
 
-/// Low-latency combine algorithm.
+/// Fixed-buffer combine algorithm.
 enum class CombineMode {
   /// Reduce expert rows on each destination rank before sending one partial per rank and token.
   RANK_LOCAL_REDUCE,
@@ -106,7 +103,7 @@ enum class DispatchDataType {
   FP8_E4M3
 };
 
-/// Per-call low-latency workload dimensions.
+/// Per-call dispatch or combine workload dimensions.
 struct Workload {
   /// Number of local input or output tokens.
   int numTokens_;
@@ -126,35 +123,11 @@ struct Workload {
   DispatchDataType dispatchDataType_;
 };
 
-/// Persistent communication resources shared by low-latency operations.
-struct CommContext {
-  /// Base address of the local symmetric communication buffer.
-  void* symmetricBufferBase_;
-  /// Base memory channel handles used only for signal/wait synchronization.
-  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
-  /// Directly mapped symmetric-buffer bases for all participating peers.
-  void* const* peerMappedBufferBases_;
-  /// Maximum shared memory available to one block after opt-in.
-  int maxSharedMemoryPerBlock_;
-  /// Number of streaming multiprocessors on the device.
-  int numSms_;
-  /// CUDA device ID associated with this communicator.
-  int deviceId_;
-  /// Current rank ID.
-  int rank_;
-  /// Total number of ranks.
-  int numRanks_;
-};
+size_t fixedBufferWorkspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
-/// Return the optimized low-latency workspace size.
-/// @param[in] numRanks Total number of ranks.
-/// @param[in] numExperts Total number of experts.
-/// @param[in] maxTokensPerRank Maximum local token capacity.
-/// @param[in] numTopk Number of routed experts per token.
-/// @return Required workspace bytes.
-size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+namespace dispatch {
 
-/// Low-latency dispatch that distributes tokens to experts across ranks.
+/// Latency-optimized dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major or token-major packed output selected by
 /// Workload::outputLayout_.
 /// @param[out] outputScales Layout-matched FP32 scales for FP8_E4M3, or nullptr for BF16.
@@ -175,12 +148,23 @@ size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int num
 /// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
 /// @param[in] stream CUDA stream.
-void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
-              int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
-              const float* topkWeights, const Workload& workload, void* recvBuffer, const CommContext& comm,
-              void* workspace, int numBlocks, cudaStream_t stream);
+void expertMajorLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                        const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
+                        cudaStream_t stream);
 
-/// Low-latency combine that aggregates expert outputs back to tokens.
+void rankMajorLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                      float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                      const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                      const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
+                      cudaStream_t stream);
+
+}  // namespace dispatch
+
+namespace combine {
+
+/// Latency-optimized combine that aggregates expert outputs back to tokens.
 /// @param[out] output Combined local tokens [num_tokens, hidden].
 /// @param[in] input Expert-major expert outputs or token-major pre-weighted
 /// rank-local partials, matching Workload::outputLayout_.
@@ -197,11 +181,17 @@ void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputT
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] mode Combine algorithm.
 /// @param[in] stream CUDA stream.
-void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-             const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-             const CommContext& comm, void* workspace, int numBlocks, CombineMode mode, cudaStream_t stream);
+void rankLocalReduceLatency(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                            const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                            void* dispatchRecvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
+                            int numBlocks, cudaStream_t stream);
 
-}  // namespace low_latency
+void directSendLatency(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                       const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                       void* dispatchRecvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
+                       int numBlocks, cudaStream_t stream);
+
+}  // namespace combine
 
 }  // namespace ep
 }  // namespace mscclpp

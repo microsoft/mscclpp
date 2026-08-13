@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Low-latency backend for the high-level MoE communicator."""
+"""Latency-optimized backend for the high-level MoE communicator."""
 
 from __future__ import annotations
 
@@ -8,18 +8,16 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, create_moe_runtime
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
     DispatchOutputInfo,
-    ExpertMajorDispatchHandle,
-    ExpertMajorCombineContext,
     MoECommunicatorConfig,
     QuantConfig,
-    RankMajorCombineContext,
-    RankMajorDispatchHandle,
+    _ExpertMajorCombineContext,
+    _RankMajorCombineContext,
 )
 from .utils import cuda_stream_ptr, resolve_expert_placement
 
@@ -34,7 +32,7 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
     if quant_format is None:
         raise ValueError("quant.format is required")
     if quant_format != DispatchDataType.FP8_E4M3:
-        raise ValueError("unsupported low-latency quantization format")
+        raise ValueError("unsupported latency dispatch quantization format")
     if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
     return quant_format
@@ -107,54 +105,20 @@ def _tensor_from_pointer(
     return buffer_view, tensor
 
 
-class LowLatencyRuntime:
-    """Private low-level low-latency runtime wrapper (wraps ``_cpp.MoERuntime``)."""
+class _LatencyMethods:
+    """Provide latency-mode methods to the unified backend."""
 
-    num_sms: int = 128
-
-    def __init__(
-        self,
-        comm: Any,
-        max_tokens_per_rank: int,
-        hidden: int,
-        num_experts: int,
-        num_topk: int,
-        output_layout: DispatchLayout,
-    ) -> None:
-        self.rank: int = comm.my_rank
-        self.group_size: int = comm.nranks
-        self.comm = comm
-        self.cpp_runtime = create_moe_runtime(
-            comm.communicator,
-            MoEMode.LOW_LATENCY,
-            max_tokens_per_rank=max_tokens_per_rank,
-            hidden=hidden,
-            num_experts=num_experts,
-            num_topk=num_topk,
-            output_layout=output_layout,
-        )
-
-    def is_available(self) -> bool:
-        return self.cpp_runtime.is_available()
-
-    def is_internode_available(self) -> bool:
-        return self.cpp_runtime.is_internode_available()
-
-
-class LowLatencyBackend:
-    """Backend implementation for ``MoEMode.LOW_LATENCY``."""
-
-    def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
+    def _init_latency(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
         comm = config.comm
         if comm is None:
-            raise ValueError("mode=LOW_LATENCY requires an mscclpp.CommGroup via comm=")
+            raise ValueError("mode=LATENCY requires an mscclpp.CommGroup via comm=")
 
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.local_rank = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
-        self.mode = MoEMode.LOW_LATENCY
+        self.mode = MoEMode.LATENCY
         self.output_layout = output_layout
 
         self.num_experts = config.num_experts
@@ -173,9 +137,9 @@ class LowLatencyBackend:
             DispatchLayout.EXPERT_MAJOR,
             DispatchLayout.RANK_MAJOR,
         ):
-            raise NotImplementedError("unsupported low-latency output layout")
+            raise NotImplementedError("unsupported latency output layout")
         if self.num_experts % self.world_size != 0:
-            raise ValueError("low-latency mode requires num_experts divisible by world_size")
+            raise ValueError("latency mode requires num_experts divisible by world_size")
         if not self.world_size + 2 <= self.num_blocks <= 130:
             raise ValueError("low_latency_num_blocks must be between world_size + 2 and 130")
         if not isinstance(self.combine_mode, CombineMode):
@@ -211,15 +175,7 @@ class LowLatencyBackend:
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
 
-        self._runtime = LowLatencyRuntime(
-            comm,
-            max_tokens_per_rank=self.max_tokens_per_rank,
-            hidden=self.hidden_size,
-            num_experts=self.num_experts,
-            num_topk=self.topk,
-            output_layout=self.output_layout,
-        )
-        self._is_internode = self._runtime.is_internode_available()
+        self._is_internode = self.runtime.is_internode_available()
         self._output_tokens_owner: Optional[_CudaBufferView] = None
         self._expert_output_owner: Optional[_CudaBufferView] = None
         self._output_topk_ids_owner: Optional[_CudaBufferView] = None
@@ -235,36 +191,36 @@ class LowLatencyBackend:
                 self._output_topk_ids_owner,
                 self._output_topk_ids,
             ) = _tensor_from_pointer(
-                self._runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
+                self.runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
                 "<i4",
                 self.device,
-                self._runtime,
+                self.runtime,
             )
             (
                 self._output_topk_weights_owner,
                 self._output_topk_weights,
             ) = _tensor_from_pointer(
-                self._runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
+                self.runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
                 "<f4",
                 self.device,
-                self._runtime,
+                self.runtime,
             )
             self._output_tokens_owner, self._output_tokens = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.output_tokens_buffer_ptr(),
+                self.runtime.cpp_runtime.dispatch_output_buffer_ptr(),
                 shape,
                 self.device,
-                self._runtime,
+                self.runtime,
             )
             (
                 self._expert_output_owner,
                 self.expert_output_buffer,
             ) = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.expert_output_buffer_ptr(),
+                self.runtime.cpp_runtime.expert_output_buffer_ptr(),
                 shape,
                 self.device,
-                self._runtime,
+                self.runtime,
             )
 
     def _resolve_runtime_max_tokens_per_rank(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
@@ -275,16 +231,7 @@ class LowLatencyBackend:
             raise ValueError("runtime_max_tokens_per_rank is only supported by rank-major dispatch")
         return resolved
 
-    def is_available(self) -> bool:
-        return self._runtime.is_available()
-
-    def is_internode_available(self) -> bool:
-        return self._runtime.is_internode_available()
-
-    def is_internode(self) -> bool:
-        return self._is_internode
-
-    def dispatch(
+    def _dispatch_latency(
         self,
         input: torch.Tensor,
         topk_ids: torch.Tensor,
@@ -298,12 +245,12 @@ class LowLatencyBackend:
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del previous_handle
         active_capacity = self._resolve_runtime_max_tokens_per_rank(runtime_max_tokens_per_rank)
-        self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer, active_capacity)
+        self._validate_latency_dispatch_inputs(input, topk_ids, weights, quant, output_buffer, active_capacity)
 
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
         )
-        self._runtime.cpp_runtime.ll_dispatch(
+        self.runtime.cpp_runtime.dispatch_latency(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
@@ -341,7 +288,7 @@ class LowLatencyBackend:
                 num_tokens_per_rank=count,
             )
         else:
-            raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
+            raise ValueError(f"unsupported latency output layout: {self.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
         dispatch_out = DispatchOutput(
             tokens=out_buf,
@@ -353,9 +300,9 @@ class LowLatencyBackend:
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             assert layout_range is not None
             assert src_info is not None
-            handle: DispatchHandle = ExpertMajorDispatchHandle(
+            handle = DispatchHandle(
                 output_info=output_info,
-                combine_context=ExpertMajorCombineContext(
+                _context=_ExpertMajorCombineContext(
                     topk_ids=topk_ids,
                     weights=weights,
                     num_experts=self.num_experts,
@@ -366,9 +313,9 @@ class LowLatencyBackend:
                 ),
             )
         elif self.output_layout == DispatchLayout.RANK_MAJOR:
-            handle = RankMajorDispatchHandle(
+            handle = DispatchHandle(
                 output_info=output_info,
-                combine_context=RankMajorCombineContext(
+                _context=_RankMajorCombineContext(
                     topk_ids=topk_ids,
                     num_experts=self.num_experts,
                     num_tokens=input.size(0),
@@ -377,10 +324,10 @@ class LowLatencyBackend:
                 ),
             )
         else:
-            raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
+            raise ValueError(f"unsupported latency output layout: {self.output_layout}")
         return dispatch_out, handle
 
-    def combine(
+    def _combine_latency(
         self,
         expert_output: torch.Tensor,
         handle: DispatchHandle,
@@ -388,29 +335,27 @@ class LowLatencyBackend:
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
-        self._validate_combine_inputs(expert_output, handle, out)
-        if isinstance(handle, ExpertMajorDispatchHandle):
-            context = handle.combine_context
+        self._validate_latency_combine_inputs(expert_output, handle, out)
+        context = handle._context
+        if isinstance(context, _ExpertMajorCombineContext):
             topk_weights = context.weights
             src_info = context.src_info
             layout_range = context.layout_range
-        elif isinstance(handle, RankMajorDispatchHandle):
-            context = handle.combine_context
+            active_capacity = self.max_tokens_per_rank
+        elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
             topk_weights = None
             src_info = None
             layout_range = None
         else:
-            raise ValueError("DispatchHandle does not contain low-latency combine context")
-        if isinstance(handle, ExpertMajorDispatchHandle):
-            active_capacity = self.max_tokens_per_rank
+            raise ValueError("DispatchHandle does not contain latency combine context")
         if out is None:
             out = torch.empty(
                 (context.num_tokens, self.hidden_size),
                 dtype=torch.bfloat16,
                 device=expert_output.device,
             )
-        self._runtime.cpp_runtime.ll_combine(
+        self.runtime.cpp_runtime.combine_latency(
             expert_output.data_ptr(),
             context.topk_ids.data_ptr(),
             0 if topk_weights is None else topk_weights.data_ptr(),
@@ -467,7 +412,7 @@ class LowLatencyBackend:
                 self._dispatch_layout_range = None
                 self._dispatch_count = torch.empty((self.world_size,), dtype=torch.int32, device=device)
             else:
-                raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
+                raise ValueError(f"unsupported latency output layout: {self.output_layout}")
         assert self._dispatch_count is not None
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             assert self._output_tokens is not None
@@ -482,9 +427,11 @@ class LowLatencyBackend:
             self._dispatch_count,
         )
 
-    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer, active_capacity: int) -> None:
+    def _validate_latency_dispatch_inputs(
+        self, input, topk_ids, weights, quant, output_buffer, active_capacity: int
+    ) -> None:
         if output_buffer is None and self.output_layout != DispatchLayout.RANK_MAJOR:
-            raise ValueError("output_buffer is required for low-latency dispatch")
+            raise ValueError("output_buffer is required for latency dispatch")
         if quant is not None:
             raise NotImplementedError(
                 "per-call input quant metadata is not supported; configure dispatch output quantization on the communicator"
@@ -492,7 +439,7 @@ class LowLatencyBackend:
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
         if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
+            raise ValueError("latency dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
         if input.size(0) > active_capacity:
@@ -523,7 +470,7 @@ class LowLatencyBackend:
                 self.hidden_size,
             )
         else:
-            raise ValueError(f"unsupported low-latency output layout: {self.output_layout}")
+            raise ValueError(f"unsupported latency output layout: {self.output_layout}")
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             if output_buffer is not None:
                 assert self._output_tokens is not None
@@ -538,10 +485,12 @@ class LowLatencyBackend:
         if tuple(output_buffer.shape) != expected_shape:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
-    def _validate_combine_inputs(self, expert_output, handle, out) -> None:
-        if not isinstance(handle, (ExpertMajorDispatchHandle, RankMajorDispatchHandle)):
-            raise ValueError("DispatchHandle does not contain low-latency combine context")
-        context = handle.combine_context
+    def _validate_latency_combine_inputs(self, expert_output, handle, out) -> None:
+        if not isinstance(handle, DispatchHandle) or not isinstance(
+            handle._context, (_ExpertMajorCombineContext, _RankMajorCombineContext)
+        ):
+            raise ValueError("DispatchHandle does not contain latency combine context")
+        context = handle._context
         if context.num_experts != self.num_experts or context.hidden_size != self.hidden_size:
             raise ValueError("DispatchHandle does not belong to this MoECommunicator configuration")
         if handle.output_info.layout.kind != self.output_layout:
@@ -551,9 +500,7 @@ class LowLatencyBackend:
         if handle_data_type != self.dispatch_data_type:
             raise ValueError("DispatchHandle quantization does not match this MoECommunicator configuration")
         active_capacity = (
-            handle.combine_context.max_tokens_per_rank
-            if isinstance(handle, RankMajorDispatchHandle)
-            else self.max_tokens_per_rank
+            context.max_tokens_per_rank if isinstance(context, _RankMajorCombineContext) else self.max_tokens_per_rank
         )
         slots_per_expert = self.world_size * active_capacity
         if handle.output_info.layout.kind == DispatchLayout.EXPERT_MAJOR:
@@ -568,7 +515,7 @@ class LowLatencyBackend:
                 self.hidden_size,
             )
         else:
-            raise ValueError(f"unsupported low-latency output layout: {handle.output_info.layout.kind}")
+            raise ValueError(f"unsupported latency output layout: {handle.output_info.layout.kind}")
         if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:

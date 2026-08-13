@@ -62,7 +62,7 @@ class MoECommunicatorConfig:
     max_tokens_per_rank: int = 0
 
     # Runtime mode and output layout
-    mode: MoEMode = MoEMode.LOW_LATENCY
+    mode: MoEMode = MoEMode.LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
     invalid_token_expert_id: Optional[int] = None  # defaults to num_experts
 
@@ -86,7 +86,7 @@ moe_comm = MoECommunicator(
     hidden_size=hidden_size,
     topk=topk,
     max_tokens_per_rank=max_tokens,
-    mode=MoEMode.HIGH_THROUGHPUT,
+    mode=MoEMode.OVERLAP,
 )
 ```
 
@@ -135,7 +135,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 
 | Field | Purpose |
 |---|---|
-| `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
+| `mode` | Algorithm family (`MoEMode.LATENCY` or `MoEMode.OVERLAP`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
@@ -149,14 +149,14 @@ specialized advanced path.
 
 ### Mode selection
 
-The active implementation supports `mode=MoEMode.LOW_LATENCY` and
-`mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
-string. LL supports expert-major and rank-major output layouts. HT uses a flat output layout and
-supports 2, 4, 8, or 16 ranks within one detected GPU IPC/NVL fabric domain;
-that domain may span multiple hosts.
+The active implementation supports `mode=MoEMode.LATENCY` and
+`mode=MoEMode.OVERLAP`. `mode` must be a `MoEMode` enum value, not a string.
+Latency algorithms support expert-major and rank-major output layouts. Overlap
+algorithms use a flat token-major layout and support 2, 4, 8, or 16 ranks
+within one detected GPU IPC/NVL fabric domain; that domain may span hosts.
 
 ```python
-moe_comm = MoECommunicator(..., mode=MoEMode.LOW_LATENCY)
+moe_comm = MoECommunicator(..., mode=MoEMode.LATENCY)
 ```
 
 This keeps `MoECommunicator` policy-free. Serving frameworks such as SGLang can
@@ -167,15 +167,15 @@ The mode also fixes the SM budget, which is the main scheduling consideration:
 
 | Mode | SMs used | Intended use |
 |---|---|---|
-| `MoEMode.LOW_LATENCY` | ~128 (`low_latency_num_blocks - 2`) | comms own the GPU |
-| `MoEMode.HIGH_THROUGHPUT` | 20 (`Config.num_sms`) | overlap comms with expert GEMMs |
+| `MoEMode.LATENCY` | ~128 (`low_latency_num_blocks - 2`) | minimize standalone latency |
+| `MoEMode.OVERLAP` | 20 (`Config.num_sms`) | overlap communication with expert GEMMs |
 
 The selected mode determines the default dispatch output layout:
 
 | Mode | Default layout |
 |---|---|
-| `ht` | `DispatchLayout.TOKEN_MAJOR` |
-| `ll` | `DispatchLayout.EXPERT_MAJOR` |
+| `OVERLAP` | `DispatchLayout.TOKEN_MAJOR` |
+| `LATENCY` | `DispatchLayout.EXPERT_MAJOR` |
 
 `output_layout` may still be kept as an advanced override if a backend supports
 multiple layouts within the same mode.
@@ -184,9 +184,9 @@ Use `DispatchLayout` instead of string literals for this field:
 
 | Layout enum | Tensor shape |
 |---|---|
-| `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]` |
+| `DispatchLayout.TOKEN_MAJOR` | Overlap: `[total_recv_tokens, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
-| `DispatchLayout.RANK_MAJOR` | LL: `[world_size * max_tokens_per_rank, hidden]` |
+| `DispatchLayout.RANK_MAJOR` | Latency: `[world_size * max_tokens_per_rank, hidden]` |
 
 ## MoECommunicator methods
 
@@ -428,7 +428,7 @@ Each concrete `DispatchHandle` stores a layout-specific `combine_context` used
 to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
 `ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, and layout ranges).
 `RankMajorDispatchHandle` records the original routing needed for direct remote combine.
-High-throughput handles use a direct combine context with receive-side weights
+Token-major overlap handles use a direct combine context with receive-side weights
 and send-head tensors.
 The MLP should treat the handle as opaque and pass it back to `combine`.
 
@@ -456,7 +456,7 @@ The user should not expand `input` by top-k and should not convert it to
 expert-major before calling `dispatch`.
 
 `dispatch` includes any metadata exchange needed before moving token payloads.
-For normal/high-throughput modes this typically means computing send counts from
+For overlap mode this typically means computing send counts from
 `topk_ids`, exchanging counts or layout information across ranks, choosing recv
 slots, and then dispatching the activation payload. Users should not call a
 separate metadata-exchange API in the simple path.
@@ -498,19 +498,19 @@ DeepEP/SGLang, scales are usually per token and per hidden block.
 
 ### `output_buffer`
 
-Low-latency dispatch requires the caller to provide the receive token buffer:
+Expert-major latency dispatch requires the caller to provide the receive token buffer:
 
 ```python
 output_buffer: torch.Tensor
 ```
 
-For padded expert-major LL layout:
+For padded expert-major latency layout:
 
 ```text
 output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
 ```
 
-For rank-major LL layout, do not pass `output_buffer`. The runtime returns a
+For rank-major latency layout, do not pass `output_buffer`. The runtime returns a
 registered fixed-stride buffer:
 
 ```text
@@ -526,7 +526,7 @@ The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
 matching format and scale tensor.
 
-`output_buffer` is required for LL because the MLP runner often owns or reuses
+`output_buffer` is required for expert-major latency dispatch because the MLP runner often owns or reuses
 workspace memory. `MoECommunicator` writes dispatch output into the provided
 buffer instead of allocating it internally.
 
@@ -535,9 +535,9 @@ buffer instead of allocating it internally.
 `dispatch` should return MLP-ready tokens. The MLP should not run another
 token-major to expert-major permutation unless it uses a custom adapter.
 
-### Normal / high-throughput token-major layout
+### Overlap token-major layout
 
-HT uses `DispatchLayout.TOKEN_MAJOR`:
+Overlap algorithms use `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
 dispatch_out.tokens  # [total_recv_tokens, H]
@@ -548,9 +548,9 @@ Each row represents one `(source token, destination rank)` and is accompanied by
 token routed to multiple experts on the same destination rank is transferred
 only once.
 
-### Low-latency output layouts
+### Latency output layouts
 
-LL defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
+Latency mode defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 
 ```python
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
@@ -603,7 +603,7 @@ dimension replaced by the scale dimension.
 Examples:
 
 ```text
-token-major tokens:   HT [total_recv_tokens, H]; LL [world_size * max_tokens_per_rank, H]
+token-major tokens:   overlap [total_recv_tokens, H]; latency rank-major [world_size * max_tokens_per_rank, H]
 rank-major scales:    not yet supported
 
 expert-major tokens:  [num_local_experts, max_slots, H]
@@ -802,7 +802,7 @@ the MLP backend, not as a guaranteed feature of every `combine_async` call.
 
 ## Internal metadata exchange
 
-Normal/high-throughput dispatch usually needs a metadata phase before payload
+Overlap dispatch needs a metadata phase before payload
 movement:
 
 ```text
@@ -813,9 +813,8 @@ topk_ids
   -> dispatch token payload
 ```
 
-Low-latency modes may use fixed-capacity buffers and device-side counters, but
-they still generate metadata such as source info, layout ranges, and valid
-counts.
+Latency algorithms use fixed-capacity buffers and device-side counters, but
+still generate source info, layout ranges, and valid counts.
 
 These details should remain internal. The user-facing API should only expose
 MLP-relevant layout information through `DispatchOutput` and combine-relevant

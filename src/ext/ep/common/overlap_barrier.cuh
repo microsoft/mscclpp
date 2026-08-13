@@ -9,10 +9,10 @@
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
+namespace common {
 
 template <int NumRanks>
-__forceinline__ __device__ void barrier_device(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
+__forceinline__ __device__ void overlapBarrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
 #ifdef MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT
   constexpr int64_t MaxSpinCount = 10000000;
 #else
@@ -31,6 +31,6 @@ __forceinline__ __device__ void barrier_device(mscclpp::BaseMemoryChannelDeviceH
   __syncwarp();
 }
 
-}  // namespace high_throughput
+}  // namespace common
 }  // namespace ep
 }  // namespace mscclpp

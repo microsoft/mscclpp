@@ -161,8 +161,8 @@ def main():
     # Use a distinct expert-output allocation so the direct TMA path cannot
     # accidentally read stale dispatch payloads from its receive pool.
     expert_out = recv_x + torch.ones_like(recv_x)
-    context = handle.combine_context
-    combined_x, combined_weights = moe._backend._runtime.combine(
+    context = handle._context
+    combined_x, combined_weights = moe._backend._combine_token_major(
         expert_out,
         context.recv_topk_weights,
         context.send_head,

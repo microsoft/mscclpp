@@ -3,9 +3,9 @@
 #
 # Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
 # branch ``chhwang/dev-atomic-add-cleanup``. Licensed under the MIT License.
-"""Fabric-domain high-throughput backend for the high-level MoE communicator.
+"""Resource-bounded overlap backend for the high-level MoE communicator.
 
-The C++ runtime follows the low-latency resource model: it reuses the existing
+The unified C++ runtime reuses the existing
 MSCCL++ communicator and writes directly into peer receive pools through a
 torch-free raw-pointer boundary. Dynamic receive sizing uses a two-phase
 ``notify_dispatch`` then ``dispatch`` protocol. Cached dispatches reuse the
@@ -14,20 +14,19 @@ previous routing matrices and receive count.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import torch
 
-from ._cpp import Config, DispatchLayout, MoEMode, _cpp
+from ._cpp import DispatchLayout, MoEMode
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
     DispatchOutputInfo,
-    HighThroughputCombineContext,
-    HighThroughputDispatchHandle,
     MoECommunicatorConfig,
     QuantConfig,
+    _TokenMajorOverlapCombineContext,
 )
 from .utils import (
     bf16_view as _bf16_view,
@@ -37,47 +36,57 @@ from .utils import (
 )
 
 
-class HighThroughputRuntime:
-    """Core high-throughput expert-parallel (EP) communication runtime.
-
-    ``comm`` provides the initialized MSCCL++ communicator used to exchange and
-    map the intranode physical symmetric buffers.
-    """
+class _OverlapMethods:
+    """Provide overlap-mode methods to the unified backend."""
 
     #: Default number of SMs reserved for comms kernels. Matches DeepEP.
     num_sms: int = 20
 
-    def __init__(
+    def _init_overlap(
         self,
-        comm: Any,
-        max_hidden_bytes: int,
-        config: Config,
+        config: MoECommunicatorConfig,
+        output_layout: DispatchLayout,
     ) -> None:
+        comm = config.comm
+        if comm is None:
+            raise ValueError("mode=OVERLAP requires an mscclpp.CommGroup via comm=")
+
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
+        self.world_size = comm.nranks
         self.comm = comm
-        self.runtime = _cpp.create_moe_runtime(
-            comm.communicator,
-            _cpp.MoEMode.HIGH_THROUGHPUT,
-            max_hidden_bytes=max_hidden_bytes,
-            num_sms=config.num_sms,
+        self.local_rank = torch.cuda.current_device()
+        self.device = torch.device("cuda", self.local_rank)
+        self.mode = MoEMode.OVERLAP
+        self.output_layout = output_layout
+        self.num_experts = config.num_experts
+        self.hidden_size = config.hidden_size
+        self.topk = config.topk
+        self.max_tokens_per_rank = config.max_tokens_per_rank
+        self.num_sms = config.num_sms
+        self.enable_overlap = config.enable_overlap
+
+        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
+            raise NotImplementedError("OVERLAP mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if config.invalid_token_expert_id is not None:
+            raise ValueError("invalid_token_expert_id is only supported in latency mode")
+        self.num_local_experts, self.local_expert_start = resolve_expert_placement(
+            num_experts=self.num_experts,
+            world_size=self.world_size,
+            rank=self.rank,
+            num_local_experts=config.num_local_experts,
+            local_expert_start=config.local_expert_start,
         )
+        if config.quant is not None:
+            raise NotImplementedError("overlap quantized dispatch (scales) is not implemented yet")
 
-    # ------------------------------------------------------------------
-    # Sanity helpers
-    # ------------------------------------------------------------------
-
-    def is_available(self) -> bool:
-        return self.runtime.is_available()
-
-    def is_internode_available(self) -> bool:
-        return self.runtime.is_internode_available()
+        self.expert_alignment = config.expert_alignment
 
     # ------------------------------------------------------------------
     # Dispatch routing metadata
     # ------------------------------------------------------------------
 
-    def compute_dispatch_counts(self, topk_idx: torch.Tensor, num_experts: int):
+    def _compute_dispatch_counts(self, topk_idx: torch.Tensor, num_experts: int):
         """Return per-rank, per-expert, and token-membership routing metadata.
 
         This is routing metadata consumed by dispatch; it is unrelated to
@@ -90,7 +99,7 @@ class HighThroughputRuntime:
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, self.group_size), dtype=torch.bool, device="cuda")
 
-        self.runtime.ht_compute_dispatch_counts(
+        self.runtime.cpp_runtime.prepare_token_major_overlap(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -106,7 +115,7 @@ class HighThroughputRuntime:
     # Dispatch (two-phase) + combine
     # ------------------------------------------------------------------
 
-    def dispatch(
+    def _dispatch_token_major(
         self,
         x: torch.Tensor,
         x_scales: Optional[torch.Tensor],
@@ -120,12 +129,12 @@ class HighThroughputRuntime:
         cached_channel_prefix_matrix: Optional[torch.Tensor],
         expert_alignment: int,
     ):
-        """Run high-throughput dispatch and return outputs plus combine metadata."""
+        """Run token-major overlap dispatch and return combine metadata."""
         assert x.dim() == 2 and x.is_contiguous()
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = self.runtime.ht_get_dispatch_num_channels(x_element_size)
+        num_channels = self.runtime.cpp_runtime.get_token_major_overlap_num_channels(x_element_size)
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -146,7 +155,7 @@ class HighThroughputRuntime:
             rank_prefix_matrix = torch.empty((self.group_size, self.group_size), dtype=torch.int32, device="cuda")
             channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
             num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
-            num_recv_tokens = self.runtime.ht_notify_dispatch(
+            num_recv_tokens = self.runtime.cpp_runtime.notify_token_major_overlap(
                 _ptr(rank_prefix_matrix),
                 _ptr(channel_prefix_matrix),
                 _ptr(num_recv_per_expert_host),
@@ -178,7 +187,7 @@ class HighThroughputRuntime:
             else None
         )
 
-        self.runtime.ht_dispatch(
+        self.runtime.cpp_runtime.dispatch_token_major_overlap(
             _ptr(recv_x),
             _ptr(recv_x_scales),
             _ptr(recv_topk_idx),
@@ -214,12 +223,14 @@ class HighThroughputRuntime:
 
     def _alloc_recv_x(self, num_tokens: int, num_recv_tokens: int, hidden: int, x_element_size: int) -> torch.Tensor:
         """Return this rank's direct receive-pool view."""
-        pool_ptr = self.runtime.ht_resolve_recv_x_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
+        pool_ptr = self.runtime.cpp_runtime.resolve_token_major_overlap_recv_buffer(
+            num_tokens, num_recv_tokens, hidden, x_element_size
+        )
         if pool_ptr == 0:
-            raise RuntimeError("high-throughput direct receive-pool capacity exceeded")
+            raise RuntimeError("token-major overlap receive-pool capacity exceeded")
         return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
 
-    def combine(
+    def _combine_token_major(
         self,
         x: torch.Tensor,
         topk_weights: Optional[torch.Tensor],
@@ -236,7 +247,7 @@ class HighThroughputRuntime:
             if topk_weights is not None
             else None
         )
-        self.runtime.ht_combine(
+        self.runtime.cpp_runtime.combine_token_major_overlap(
             _ptr(combined_x),
             _ptr(combined_topk_weights),
             _ptr(x),
@@ -251,65 +262,7 @@ class HighThroughputRuntime:
         )
         return combined_x, combined_topk_weights
 
-
-class HighThroughputBackend:
-    """Backend implementation for ``MoEMode.HIGH_THROUGHPUT``."""
-
-    def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
-        comm = config.comm
-        if comm is None:
-            raise ValueError("mode=HIGH_THROUGHPUT requires an mscclpp.CommGroup via comm=")
-
-        self.comm = comm
-        self.rank = comm.my_rank
-        self.world_size = comm.nranks
-        self.local_rank = torch.cuda.current_device()
-        self.device = torch.device("cuda", self.local_rank)
-        self.mode = MoEMode.HIGH_THROUGHPUT
-        self.output_layout = output_layout
-
-        self.num_experts = config.num_experts
-        self.hidden_size = config.hidden_size
-        self.topk = config.topk
-        self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_sms = config.num_sms
-        self.enable_overlap = config.enable_overlap
-
-        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
-            raise NotImplementedError("HT mode currently supports only DispatchLayout.TOKEN_MAJOR")
-        if config.invalid_token_expert_id is not None:
-            raise ValueError("invalid_token_expert_id is only supported in low-latency mode")
-
-        self.num_local_experts, self.local_expert_start = resolve_expert_placement(
-            num_experts=self.num_experts,
-            world_size=self.world_size,
-            rank=self.rank,
-            num_local_experts=config.num_local_experts,
-            local_expert_start=config.local_expert_start,
-        )
-
-        if config.quant is not None:
-            raise NotImplementedError("HT quantized dispatch (scales) is not implemented yet")
-
-        self.expert_alignment = config.expert_alignment
-        self._cfg = Config(self.num_sms)
-        hidden_bytes = self.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
-        self._runtime = HighThroughputRuntime(
-            comm,
-            max_hidden_bytes=hidden_bytes,
-            config=self._cfg,
-        )
-
-    def is_available(self) -> bool:
-        return self._runtime.is_available()
-
-    def is_internode_available(self) -> bool:
-        return self._runtime.is_internode_available()
-
-    def is_internode(self) -> bool:
-        return self._runtime.is_internode_available()
-
-    def dispatch(
+    def _dispatch_overlap(
         self,
         input: torch.Tensor,
         topk_ids: torch.Tensor,
@@ -323,13 +276,13 @@ class HighThroughputBackend:
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del output_buffer
         if runtime_max_tokens_per_rank is not None:
-            raise ValueError("runtime_max_tokens_per_rank is only supported by low-latency rank-major dispatch")
+            raise ValueError("runtime_max_tokens_per_rank is only supported by latency rank-major dispatch")
         if stream is not None:
             with torch.cuda.stream(stream):
-                return self._dispatch(input, topk_ids, weights, quant, previous_handle)
-        return self._dispatch(input, topk_ids, weights, quant, previous_handle)
+                return self._dispatch_overlap_impl(input, topk_ids, weights, quant, previous_handle)
+        return self._dispatch_overlap_impl(input, topk_ids, weights, quant, previous_handle)
 
-    def _dispatch(
+    def _dispatch_overlap_impl(
         self,
         input: torch.Tensor,
         topk_ids: torch.Tensor,
@@ -337,7 +290,7 @@ class HighThroughputBackend:
         quant: Optional[QuantConfig],
         previous_handle: Optional[DispatchHandle],
     ) -> tuple[DispatchOutput, DispatchHandle]:
-        self._validate_dispatch_inputs(input, topk_ids, weights, quant)
+        self._validate_overlap_dispatch_inputs(input, topk_ids, weights, quant)
         implicit_weights = weights is None
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
@@ -354,7 +307,7 @@ class HighThroughputBackend:
                 num_tokens_per_rank,
                 num_tokens_per_expert,
                 is_token_in_rank,
-            ) = self._runtime.compute_dispatch_counts(topk_ids, self.num_experts)
+            ) = self._compute_dispatch_counts(topk_ids, self.num_experts)
 
         if cache is not None:
             (
@@ -366,7 +319,7 @@ class HighThroughputBackend:
                 rank_prefix_matrix,
                 _channel_prefix_matrix,
                 send_head,
-            ) = self._runtime.dispatch(
+            ) = self._dispatch_token_major(
                 input,
                 None,
                 None,
@@ -379,11 +332,15 @@ class HighThroughputBackend:
                 cache["channel_prefix_matrix"],
                 self.expert_alignment,
             )
-            del _runtime_recv_topk_idx, _runtime_recv_topk_weights, _runtime_num_recv_tokens_per_expert_list
+            del (
+                _runtime_recv_topk_idx,
+                _runtime_recv_topk_weights,
+                _runtime_num_recv_tokens_per_expert_list,
+            )
             recv_topk_idx = cache["recv_topk_idx"]
             recv_topk_weights = cache["recv_topk_weights"]
             num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
-            combine_context = HighThroughputCombineContext(
+            combine_context = _TokenMajorOverlapCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 send_head=send_head,
             )
@@ -398,7 +355,7 @@ class HighThroughputBackend:
                 rank_prefix_matrix,
                 channel_prefix_matrix,
                 send_head,
-            ) = self._runtime.dispatch(
+            ) = self._dispatch_token_major(
                 input,
                 None,
                 topk_ids,
@@ -411,7 +368,7 @@ class HighThroughputBackend:
                 None,
                 self.expert_alignment,
             )
-            combine_context = HighThroughputCombineContext(
+            combine_context = _TokenMajorOverlapCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 send_head=send_head,
             )
@@ -449,8 +406,8 @@ class HighThroughputBackend:
             topk_ids=recv_topk_idx,
             weights=recv_topk_weights,
         )
-        handle = HighThroughputDispatchHandle(output_info=output_info, combine_context=combine_context)
-        # The torch-free HT runtime orders its work on the caller's CUDA stream
+        handle = DispatchHandle(output_info=output_info, _context=combine_context)
+        # The unified runtime orders overlap work on the caller's CUDA stream
         # (no separate event handle), so there is nothing to attach here.
         handle._event = None  # type: ignore[attr-defined]
         handle._dispatch_cache = dispatch_cache  # type: ignore[attr-defined]
@@ -468,7 +425,7 @@ class HighThroughputBackend:
             and (implicit_weights or cache.get("weights_version") == weights._version)
         )
 
-    def combine(
+    def _combine_overlap(
         self,
         expert_output: torch.Tensor,
         handle: DispatchHandle,
@@ -478,15 +435,18 @@ class HighThroughputBackend:
     ) -> torch.Tensor:
         if stream is not None:
             with torch.cuda.stream(stream):
-                return self._combine(expert_output, handle, out)
-        return self._combine(expert_output, handle, out)
+                return self._combine_overlap_impl(expert_output, handle, out)
+        return self._combine_overlap_impl(expert_output, handle, out)
 
-    def _combine(
-        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
+    def _combine_overlap_impl(
+        self,
+        expert_output: torch.Tensor,
+        handle: DispatchHandle,
+        out: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        self._validate_combine_inputs(expert_output, handle)
-        context = handle.combine_context
-        combined_x, _combined_w = self._runtime.combine(
+        self._validate_overlap_combine_inputs(expert_output, handle)
+        context = handle._context
+        combined_x, _combined_w = self._combine_token_major(
             expert_output,
             context.recv_topk_weights,
             context.send_head,
@@ -496,13 +456,13 @@ class HighThroughputBackend:
             return out
         return combined_x
 
-    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant) -> None:
+    def _validate_overlap_dispatch_inputs(self, input, topk_ids, weights, quant) -> None:
         if quant is not None:
-            raise NotImplementedError("HT dispatch does not support quantized input scales yet")
+            raise NotImplementedError("overlap dispatch does not support quantized input scales yet")
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden] tensor")
         if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("HT dispatch input must be a CUDA BF16 tensor")
+            raise ValueError("overlap dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} != configured {self.hidden_size}")
         if input.size(0) > self.max_tokens_per_rank:
@@ -521,8 +481,8 @@ class HighThroughputBackend:
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
 
-    def _validate_combine_inputs(self, expert_output, handle) -> None:
-        if not isinstance(handle, HighThroughputDispatchHandle):
+    def _validate_overlap_combine_inputs(self, expert_output, handle) -> None:
+        if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _TokenMajorOverlapCombineContext):
             raise TypeError("handle must be a DispatchHandle returned by dispatch")
         if expert_output.dim() != 2 or not expert_output.is_contiguous():
             raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")

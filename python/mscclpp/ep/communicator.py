@@ -9,31 +9,22 @@ from typing import Optional, Tuple
 import torch
 
 from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
-from .high_throughput import HighThroughputBackend
-from .low_latency import LowLatencyBackend
+from .backend import Backend
 from .types import (
     BlockOverlapConfig,
     CommOverlapConfig,
-    CombineContext,
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
     DispatchOutputInfo,
-    ExpertMajorDispatchHandle,
-    ExpertMajorCombineContext,
-    HighThroughputDispatchHandle,
-    HighThroughputCombineContext,
     MoECommunicatorConfig,
     OperationOverlapConfig,
     QuantConfig,
-    RankMajorDispatchHandle,
-    RankMajorCombineContext,
 )
 
 __all__ = [
     "CommOverlapConfig",
     "BlockOverlapConfig",
-    "CombineContext",
     "CombineMode",
     "DispatchHandle",
     "DispatchDataType",
@@ -41,25 +32,20 @@ __all__ = [
     "DispatchLayoutInfo",
     "DispatchOutput",
     "DispatchOutputInfo",
-    "ExpertMajorDispatchHandle",
-    "ExpertMajorCombineContext",
-    "HighThroughputDispatchHandle",
-    "HighThroughputCombineContext",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "RankMajorDispatchHandle",
-    "RankMajorCombineContext",
 ]
 
 
 class MoECommunicator:
     """High-level MoE communicator for dispatch/combine.
 
-    ``mode=MoEMode.LOW_LATENCY`` selects the LL backend (EXPERT_MAJOR by default);
-    ``mode=MoEMode.HIGH_THROUGHPUT`` selects the HT backend (TOKEN_MAJOR).
+    `mode=MoEMode.LATENCY` selects the latency algorithms (EXPERT_MAJOR by
+    default); `mode=MoEMode.OVERLAP` selects bounded-resource overlap
+    algorithms (TOKEN_MAJOR).
     """
 
     def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
@@ -77,10 +63,7 @@ class MoECommunicator:
         _validate_common_config(config)
         self.mode = config.mode
         self.output_layout = _resolve_output_layout(config.output_layout, self.mode)
-        if self.mode == MoEMode.LOW_LATENCY:
-            self._backend = LowLatencyBackend(config, self.output_layout)
-        else:
-            self._backend = HighThroughputBackend(config, self.output_layout)
+        self._backend = Backend(config, self.output_layout)
         self._publish_backend_state()
 
     def _publish_backend_state(self) -> None:
@@ -152,7 +135,7 @@ class MoECommunicator:
         """
         buffer = getattr(self._backend, "expert_output_buffer", None)
         if buffer is None:
-            raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
+            raise RuntimeError("expert output buffer is only available for RANK_MAJOR latency mode")
         return buffer
 
     def dispatch_async(self, *args, **kwargs):
@@ -180,7 +163,7 @@ def _validate_common_config(config: MoECommunicatorConfig) -> None:
 
 def _resolve_output_layout(layout: Optional[DispatchLayout], mode: MoEMode) -> DispatchLayout:
     if layout is None:
-        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LOW_LATENCY else DispatchLayout.TOKEN_MAJOR
+        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LATENCY else DispatchLayout.TOKEN_MAJOR
     if not isinstance(layout, DispatchLayout):
         raise TypeError("MoECommunicatorConfig.output_layout must be a DispatchLayout")
     return layout

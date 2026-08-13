@@ -25,8 +25,6 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
 
-namespace low_latency {
-
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 
@@ -154,18 +152,19 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
-struct Layout {
+struct FixedBufferLayout {
   size_t totalBytes_;
   size_t recvBufferBytes_;
+  size_t dispatchOutputBytes_;
   void* dispatchRecvBuffer_;
   void* combineRecvBuffer_;
   void* rankMajorTopkIdsBuffer_;
   void* rankMajorTopkWeightsBuffer_;
-  void* rankMajorTokenBuffer_;
-  void* rankMajorExpertOutputBuffer_;
+  void* dispatchOutputBuffer_;
 
-  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-         bool rankMajor = false) {
+  FixedBufferLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+                    DispatchLayout outputLayout) {
+    const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -175,12 +174,13 @@ struct Layout {
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-    const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
-    const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t recvBufferBytes =
-        rankMajor ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, rankMajorTokenBytes})
-                  : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes});
+    const size_t rankMajorDispatchOutputBytes =
+        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t expertMajorDispatchOutputBytes =
+        static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
+    dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
+    const size_t recvBufferBytes = std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
     recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = 2 * recvBufferBytes_;
 
@@ -190,19 +190,17 @@ struct Layout {
       combineRecvBuffer_ = base + recvBufferBytes_;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
-      rankMajorExpertOutputBuffer_ = combineRecvBuffer_;
+      dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes : combineRecvBuffer_;
     }
   }
 };
 
-inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                  bool rankMajor = false) {
-  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, rankMajor).totalBytes_;
+inline size_t fixedBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+                              DispatchLayout outputLayout) {
+  const auto numBytes =
+      FixedBufferLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout).totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
-
-}  // namespace low_latency
 
 }  // namespace ep
 }  // namespace mscclpp

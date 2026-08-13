@@ -2,29 +2,95 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cuda_runtime.h>
+
 #include <cstdint>
 #include <memory>
 #include <mscclpp/core.hpp>
 
-#include "runtime_base.hpp"
+#include "api.cuh"
 
 namespace mscclpp {
 namespace ep {
+namespace detail {
+struct FixedBufferResources;
+struct RecvPoolResources;
+}  // namespace detail
 
-/// Create the MoE backend selected by @p mode.
+/// Unified host runtime for all expert-parallel dispatch and combine algorithms.
 ///
-/// The result is a `MoERuntime`, so callers hold one handle regardless of
-/// backend and query `mode()` to tell them apart.
-///
-/// @param communicator Communicator shared with the rest of MSCCL++.
-/// @param mode Backend to construct.
-/// @param maxTokensPerRank Low-latency token capacity per rank.
-/// @param hidden Low-latency hidden size.
-/// @param numExperts Low-latency total expert count.
-/// @param numTopk Low-latency routed experts per token.
-/// @param maxHiddenBytes High-throughput maximum hidden-size bytes.
-/// @param numSms High-throughput SM budget for the comms kernels.
-/// @return The constructed backend.
+/// `MoEMode` remains a compatibility selector for the Python API. The selected
+/// mode allocates only its required fixed-buffer or receive-pool resources.
+class MoERuntime {
+ public:
+  MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
+             int numTopk, int64_t maxHiddenBytes, int numSms,
+             DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
+  ~MoERuntime() noexcept(false);
+
+  MoERuntime(const MoERuntime&) = delete;
+  MoERuntime& operator=(const MoERuntime&) = delete;
+
+  MoEMode mode() const { return mode_; }
+  bool isAvailable() const { return available_; }
+  bool isInternodeAvailable() const { return available_ && numRanks_ > numNvlRanks_; }
+
+  int rank() const { return rank_; }
+  int numRanks() const { return numRanks_; }
+  int numNvlRanks() const { return numNvlRanks_; }
+  int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
+
+  void* outputTopkIdsBuffer() const;
+  void* outputTopkWeightsBuffer() const;
+  void* dispatchOutputBuffer() const;
+  void* expertOutputBuffer() const;
+
+  void dispatchLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                       const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
+                       int maxTokensPerRank, int numExperts, int invalidTokenExpertId, DispatchLayout dispatchLayout,
+                       DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream);
+
+  void combineLatency(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                      const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
+                      int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
+                      DispatchDataType dispatchDataType, CombineMode mode, int numBlocks, cudaStream_t stream);
+
+  void prepareTokenMajorOverlap(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                                const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
+                                cudaStream_t stream);
+  int getTokenMajorOverlapNumChannels(int xElementSize) const;
+  void* resolveTokenMajorOverlapRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
+  int notifyTokenMajorOverlap(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
+                              const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
+                              int numTokens, int numExperts, int xElementSize, int expertAlignment,
+                              cudaStream_t stream);
+  void dispatchTokenMajorOverlap(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
+                                 int* sendHead, const void* x, const float* xScales, const int64_t* topkIdx,
+                                 const float* topkWeights, const bool* isTokenInRank, const int* rankPrefixMatrix,
+                                 const int* channelPrefixMatrix, int numTokens, int hidden, int numTopk, int numScales,
+                                 int numExperts, int xElementSize, int numRecvTokens, bool cachedMode,
+                                 cudaStream_t stream);
+  void combineTokenMajorOverlap(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
+                                const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk,
+                                int xElementSize, cudaStream_t stream);
+
+ private:
+  void requireMode(MoEMode expected) const;
+
+  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
+  MoEMode mode_;
+  int rank_;
+  int numRanks_;
+  int numNvlRanks_;
+  int numRanksPerIpcDomain_;
+  bool available_ = false;
+
+  std::unique_ptr<detail::FixedBufferResources> fixedBuffer_;
+  std::unique_ptr<detail::RecvPoolResources> recvPool_;
+};
+
+/// Create the unified MoE runtime selected by @p mode.
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
                                              int numSms, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);

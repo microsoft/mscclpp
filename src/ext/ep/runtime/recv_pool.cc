@@ -4,8 +4,6 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 
-#include "ht_runtime.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <future>
@@ -14,18 +12,26 @@
 
 #include "api.cuh"
 #include "exception.cuh"
+#include "runtime/resources.hpp"
 
 namespace mscclpp {
 namespace ep {
+namespace detail {
 namespace {
 
 constexpr int CpuTimeoutSeconds = 100;
 
 }  // namespace
 
-MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& communicator, int64_t maxHiddenBytes,
-                                                   const high_throughput::Config& config)
-    : MoERuntime(communicator), maxHiddenBytes_(maxHiddenBytes), config_(config) {
+RecvPoolResources::RecvPoolResources(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
+                                     int numRanksPerIpcDomain, int64_t maxHiddenBytes, const RecvPoolConfig& config)
+    : rank_(rank),
+      numRanks_(numRanks),
+      numNvlRanks_(numNvlRanks),
+      numRanksPerIpcDomain_(numRanksPerIpcDomain),
+      bootstrap_(communicator.bootstrap()),
+      maxHiddenBytes_(maxHiddenBytes),
+      config_(config) {
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
@@ -34,16 +40,17 @@ MoEHighThroughputRuntime::MoEHighThroughputRuntime(mscclpp::Communicator& commun
   controlBufferBytes_ = config_.controlBufferBytes(numRanks_);
   symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
   physicalControlBuffer_ = numRanks_ > numNvlRanks_;
-  recvPoolBytes_ = high_throughput::Config::recvPoolBytes(numRanks_);
+  recvPoolBytes_ = RecvPoolConfig::recvPoolBytes(numRanks_);
   setup(communicator);
 }
 
-MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
+RecvPoolResources::~RecvPoolResources() noexcept(false) {
   if (!available_) return;
 
   CUDA_CHECK(cudaDeviceSynchronize());
   bootstrap_->barrier();
 
+  CUDA_CHECK(cudaFree(contextDevice_));
   CUDA_CHECK(cudaFree(combineRecvIdxGpu_));
   CUDA_CHECK(cudaFree(recvPoolPtrsGpu_));
   CUDA_CHECK(cudaFree(bufferPtrsGpu_));
@@ -59,7 +66,7 @@ MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
     CUDA_CHECK(cudaFree(symmetricBuffer_));
 }
 
-void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
+void RecvPoolResources::setup(mscclpp::Communicator& communicator) {
   EP_HOST_ASSERT(!available_);
   if (physicalControlBuffer_) {
     symmetricBuffer_ = mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_);
@@ -118,71 +125,86 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
   mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(barrierChannelHandles_.get(), barrierChannelHandles.data(),
                                                              numRanks_, cudaMemcpyHostToDevice);
   CUDA_CHECK(cudaMalloc(&combineRecvIdxGpu_,
-                        sizeof(int) * static_cast<size_t>(high_throughput::Config::RecvPoolMaxTokens) * numRanks_));
+                        sizeof(int) * static_cast<size_t>(RecvPoolConfig::RecvPoolMaxTokens) * numRanks_));
   CUDA_CHECK(cudaMallocHost(&moeRecvCounter_, sizeof(int), cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvCounterMapped_, const_cast<int*>(moeRecvCounter_), 0));
-  CUDA_CHECK(cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * high_throughput::Config::MaxLocalExperts,
-                            cudaHostAllocMapped));
+  CUDA_CHECK(
+      cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * RecvPoolConfig::MaxLocalExperts, cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvExpertCounterMapped_, const_cast<int*>(moeRecvExpertCounter_), 0));
   *moeRecvCounter_ = -1;
-  for (int i = 0; i < high_throughput::Config::MaxLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
+  for (int i = 0; i < RecvPoolConfig::MaxLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
+
+  int deviceId;
+  int maxSharedMemoryPerBlock;
+  int numSms;
+  CUDA_CHECK(cudaGetDevice(&deviceId));
+  CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId));
+  CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId));
+  contextHost_ = {.localBufferBase_ = symmetricBuffer_,
+                  .peerBufferBases_ = bufferPtrsGpu_,
+                  .peerPayloadBases_ = recvPoolPtrsGpu_,
+                  .channels_ = barrierChannelHandles_.get(),
+                  .workspace_ = nullptr,
+                  .combineRecvIdx_ = combineRecvIdxGpu_,
+                  .mappedRecvCounter_ = moeRecvCounterMapped_,
+                  .mappedRecvExpertCounters_ = moeRecvExpertCounterMapped_,
+                  .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
+                  .numSms_ = numSms,
+                  .deviceId_ = deviceId,
+                  .rank_ = rank_,
+                  .numRanks_ = numRanks_};
+  CUDA_CHECK(cudaMalloc(&contextDevice_, sizeof(DeviceContext)));
+  CUDA_CHECK(cudaMemcpy(contextDevice_, &contextHost_, sizeof(DeviceContext), cudaMemcpyHostToDevice));
   available_ = true;
 }
 
-int MoEHighThroughputRuntime::dispatchBlockCount(int xElementSize) const {
+int RecvPoolResources::dispatchBlockCount(int xElementSize) const {
   EP_HOST_ASSERT(xElementSize == 2);
   return config_.numSms_;
 }
 
-bool MoEHighThroughputRuntime::canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden,
-                                                    int xElementSize) const {
+bool RecvPoolResources::canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const {
   if (!collectiveDirectReady_ || numTokens < 0 || numRecvTokens < 0 || hidden <= 0 || xElementSize != 2 ||
-      numTokens > high_throughput::Config::RecvPoolMaxTokens ||
-      numRecvTokens > high_throughput::Config::RecvPoolMaxTokens)
+      numTokens > RecvPoolConfig::RecvPoolMaxTokens || numRecvTokens > RecvPoolConfig::RecvPoolMaxTokens)
     return false;
   const int64_t hiddenBytes = static_cast<int64_t>(hidden) * xElementSize;
   return hiddenBytes <= maxHiddenBytes_ && static_cast<size_t>(numRecvTokens) * static_cast<size_t>(hiddenBytes) <=
-                                               high_throughput::Config::recvPoolHiddenBytes(numRanks_);
+                                               RecvPoolConfig::recvPoolHiddenBytes(numRanks_);
 }
 
-void MoEHighThroughputRuntime::computeDispatchCounts(int* numTokensPerRank, int* numTokensPerExpert,
-                                                     bool* isTokenInRank, const int64_t* topkIdx, int numTokens,
-                                                     int numTopk, int numExperts, cudaStream_t stream) {
+void RecvPoolResources::prepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                                const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
+                                cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  high_throughput::computeDispatchCounts(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens,
-                                         numTopk, numRanks_, numExperts, stream);
+  dispatch::prepareTokenMajorOverlap(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk,
+                                     numExperts, contextHost_, contextDevice_, stream);
 }
 
-int MoEHighThroughputRuntime::getDispatchNumChannels(int xElementSize) const {
-  return dispatchBlockCount(xElementSize);
-}
+int RecvPoolResources::numChannels(int xElementSize) const { return dispatchBlockCount(xElementSize); }
 
-void* MoEHighThroughputRuntime::resolveRecvXBuffer(int numTokens, int numRecvTokens, int hidden,
-                                                   int xElementSize) const {
+void* RecvPoolResources::resolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const {
   if (!available_ || !canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize)) return nullptr;
-  return static_cast<uint8_t*>(recvPoolPtrs_[rank_]) + high_throughput::Config::recvPoolHeaderBytes(numRanks_);
+  return static_cast<uint8_t*>(recvPoolPtrs_[rank_]) + RecvPoolConfig::recvPoolHeaderBytes(numRanks_);
 }
 
-int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channelPrefixMatrix,
-                                             int* numRecvTokensPerExpert, const int* numTokensPerRank,
-                                             const int* numTokensPerExpert, const bool* isTokenInRank, int numTokens,
-                                             int numExperts, int xElementSize, int expertAlignment,
-                                             cudaStream_t stream) {
+int RecvPoolResources::notify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
+                              const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
+                              int numTokens, int numExperts, int xElementSize, int expertAlignment,
+                              cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   const int numLocalExperts = numExperts / numRanks_;
-  EP_HOST_ASSERT(numLocalExperts <= high_throughput::Config::MaxLocalExperts);
+  EP_HOST_ASSERT(numLocalExperts <= RecvPoolConfig::MaxLocalExperts);
 
   const int numChannels = dispatchBlockCount(xElementSize);
 
   *moeRecvCounter_ = -1;
   for (int i = 0; i < numLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
-  high_throughput::exchangeDispatchCounts(numTokensPerRank, moeRecvCounterMapped_, numRanks_, numTokensPerExpert,
-                                          moeRecvExpertCounterMapped_, numExperts, numTokens, isTokenInRank,
-                                          channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrsGpu_,
-                                          barrierChannelHandles_.get(), rank_, stream, numChannels);
+  dispatch::exchangeTokenMajorCountsOverlap(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
+                                            channelPrefixMatrix, rankPrefixMatrix, expertAlignment, contextHost_,
+                                            contextDevice_, stream, numChannels);
 
   int numRecvTokens = -1;
   const auto start = std::chrono::high_resolution_clock::now();
@@ -197,10 +219,10 @@ int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channel
   }
   for (int i = 0; i < numLocalExperts; ++i) numRecvTokensPerExpert[i] = moeRecvExpertCounter_[i];
 
-  const bool localDirectReady = numTokens >= 0 && numTokens <= high_throughput::Config::RecvPoolMaxTokens &&
-                                numRecvTokens >= 0 && numRecvTokens <= high_throughput::Config::RecvPoolMaxTokens &&
+  const bool localDirectReady = numTokens >= 0 && numTokens <= RecvPoolConfig::RecvPoolMaxTokens &&
+                                numRecvTokens >= 0 && numRecvTokens <= RecvPoolConfig::RecvPoolMaxTokens &&
                                 static_cast<size_t>(numRecvTokens) * static_cast<size_t>(maxHiddenBytes_) <=
-                                    high_throughput::Config::recvPoolHiddenBytes(numRanks_);
+                                    RecvPoolConfig::recvPoolHiddenBytes(numRanks_);
   std::vector<int> directReadyByRank(numRanks_, 0);
   directReadyByRank[rank_] = localDirectReady ? 1 : 0;
   bootstrap_->allGather(directReadyByRank.data(), sizeof(int));
@@ -209,57 +231,54 @@ int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channel
   return numRecvTokens;
 }
 
-void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
-                                        int* sendHead, const void* x, const float* xScales, const int64_t* topkIdx,
-                                        const float* topkWeights, const bool* isTokenInRank,
-                                        const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
-                                        int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
-                                        int numRecvTokens, bool cachedMode, cudaStream_t stream) {
+void RecvPoolResources::dispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
+                                 int* sendHead, const void* x, const float* xScales, const int64_t* topkIdx,
+                                 const float* topkWeights, const bool* isTokenInRank, const int* rankPrefixMatrix,
+                                 const int* channelPrefixMatrix, int numTokens, int hidden, int numTopk, int numScales,
+                                 int numExperts, int xElementSize, int numRecvTokens, bool cachedMode,
+                                 cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(hidden > 0 && xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= maxHiddenBytes_);
   EP_HOST_ASSERT((hidden * xElementSize) % sizeof(int4) == 0);
-  EP_HOST_ASSERT(numTopk >= 0 && numTopk <= high_throughput::Config::MaxTopk);
-  EP_HOST_ASSERT(numScales >= 0 && numScales <= high_throughput::Config::MaxScales);
+  EP_HOST_ASSERT(numTopk >= 0 && numTopk <= RecvPoolConfig::MaxTopk);
+  EP_HOST_ASSERT(numScales >= 0 && numScales <= RecvPoolConfig::MaxScales);
 
   const int numChannels = dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
   if (cachedMode) {
-    high_throughput::publishCachedRankPrefix(rankPrefixMatrix, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
-                                             numRanks_, stream);
+    dispatch::publishCachedTokenMajorPrefixOverlap(rankPrefixMatrix, contextHost_, contextDevice_, stream);
   }
 
   dispatchReady_ = canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize);
-  EP_HOST_ASSERT(dispatchReady_ && "high-throughput direct dispatch capacity exceeded");
-  const size_t poolHeaderBytes = high_throughput::Config::recvPoolHeaderBytes(numRanks_);
+  EP_HOST_ASSERT(dispatchReady_ && "token-major overlap dispatch capacity exceeded");
+  const size_t poolHeaderBytes = RecvPoolConfig::recvPoolHeaderBytes(numRanks_);
   EP_HOST_ASSERT(recvX == static_cast<uint8_t*>(recvPoolPtrs_[rank_]) + poolHeaderBytes);
 
   const int hiddenInt4 = static_cast<int>(static_cast<int64_t>(hidden) * xElementSize / sizeof(int4));
   dispatchMetadataReady_ = true;
   if (recvTopkWeights != nullptr) recvTopkWeights_ = recvTopkWeights;
-  high_throughput::dispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
-                            numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx,
-                            recvTopkWeights, recvXScales, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
-                            numRanks_, stream, numChannels, recvPoolPtrsGpu_, static_cast<int64_t>(poolHeaderBytes),
-                            static_cast<int64_t>(high_throughput::Config::recvPoolMetadataOffset(numRanks_)),
-                            high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_);
+  dispatch::tokenMajorOverlap(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
+                              numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx,
+                              recvTopkWeights, recvXScales, numChannels, static_cast<int64_t>(poolHeaderBytes),
+                              static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(numRanks_)),
+                              RecvPoolConfig::RecvPoolMetaBytes, contextHost_, contextDevice_, stream);
 }
 
-void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeights, const void* x,
-                                       const float* topkWeights, const int* sendHead, int numInputTokens,
-                                       int numOutputTokens, int hidden, int numTopk, int xElementSize,
-                                       cudaStream_t stream) {
+void RecvPoolResources::combine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
+                                const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk,
+                                int xElementSize, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(dispatchReady_);
   EP_HOST_ASSERT(xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= maxHiddenBytes_);
   EP_HOST_ASSERT((hidden * xElementSize) % sizeof(int4) == 0);
-  EP_HOST_ASSERT(numTopk >= 0 && numTopk <= high_throughput::Config::MaxTopk);
+  EP_HOST_ASSERT(numTopk >= 0 && numTopk <= RecvPoolConfig::MaxTopk);
   EP_HOST_ASSERT((combinedTopkWeights == nullptr) == (topkWeights == nullptr));
 
-  EP_HOST_ASSERT(numInputTokens <= high_throughput::Config::RecvPoolMaxTokens);
-  const size_t recvPoolHeaderBytes = high_throughput::Config::recvPoolHeaderBytes(numRanks_);
-  const size_t recvPoolMetadataOffset = high_throughput::Config::recvPoolMetadataOffset(numRanks_);
+  EP_HOST_ASSERT(numInputTokens <= RecvPoolConfig::RecvPoolMaxTokens);
+  const size_t recvPoolHeaderBytes = RecvPoolConfig::recvPoolHeaderBytes(numRanks_);
+  const size_t recvPoolMetadataOffset = RecvPoolConfig::recvPoolMetadataOffset(numRanks_);
   auto* localRecvPool = static_cast<uint8_t*>(recvPoolPtrs_[rank_]);
   void* localRecvPoolX = localRecvPool + recvPoolHeaderBytes;
   if (numInputTokens > 0 && x != localRecvPoolX) {
@@ -270,16 +289,17 @@ void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeigh
   if (numInputTokens > 0 && numTopk > 0 && topkWeights != nullptr && !weightsAlreadyStaged) {
     const size_t weightBytes = static_cast<size_t>(numTopk) * sizeof(float);
     void* localMetadataWeights = localRecvPool + recvPoolMetadataOffset + static_cast<size_t>(numTopk) * sizeof(int);
-    CUDA_CHECK(cudaMemcpy2DAsync(localMetadataWeights, high_throughput::Config::RecvPoolMetaBytes, topkWeights,
-                                 weightBytes, weightBytes, numInputTokens, cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaMemcpy2DAsync(localMetadataWeights, RecvPoolConfig::RecvPoolMetaBytes, topkWeights, weightBytes,
+                                 weightBytes, numInputTokens, cudaMemcpyDeviceToDevice, stream));
   }
 
   const int numBlocks = config_.numSms_;
-  high_throughput::combine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk, numRanks_,
-                           recvPoolPtrsGpu_, combineRecvIdxGpu_, barrierChannelHandles_.get(), rank_,
-                           static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
-                           high_throughput::Config::RecvPoolMetaBytes, numBlocks, stream);
+  combine::tokenMajorReduceOverlap(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                                   static_cast<int64_t>(recvPoolHeaderBytes),
+                                   static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
+                                   numBlocks, contextHost_, contextDevice_, stream);
 }
 
+}  // namespace detail
 }  // namespace ep
 }  // namespace mscclpp

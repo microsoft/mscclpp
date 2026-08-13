@@ -1,18 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#pragma once
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "api.cuh"
-#include "config.cuh"
+#include "common/fixed_buffer.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 #include "quantization.cuh"
 
 namespace mscclpp {
 namespace ep {
-namespace low_latency {
+namespace dispatch {
 namespace detail {
+using namespace ::mscclpp::ep::detail;
 
 #if MSCCLPP_BULK_AVAILABLE
 
@@ -206,7 +208,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, int nExpert
                                             const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                             int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                             void* workspace, int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -266,7 +268,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
                                            int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                            void* workspace, int* sharedMem) {
   static_assert(DataType == DispatchDataType::FP8_E4M3);
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -438,7 +440,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, const Transport
                                         const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                         int maxTokensPerRank, void* recvBuffer, void* workspace, uint32_t dispatchEpoch,
                                         int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     if constexpr (DataType == DispatchDataType::BF16) {
       dispatchSendBf16<Hidden>(inputTokens, nExperts, transport.rank_, nRanks, topkIndices, topkWeights, nTokens, nTopk,
@@ -461,7 +463,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajor(void* output, int* outputTopkId
                                                  const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                                  int invalidTokenExpertId, int maxTokensPerRank, void* recvBuffer,
                                                  void* workspace, uint32_t dispatchEpoch, int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     dispatchSendRankMajorBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks,
                                       topkIndices, topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank,
@@ -483,7 +485,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
   const int laneId = get_lane_id();
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - low_latency::DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
   const int nLocalExperts = nExperts / nRanks;
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
@@ -767,50 +769,49 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
-__global__ __launch_bounds__(DispatchNThreads,
-                             1) void dispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
-                                                    int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
-                                                    int* outputCount, const int64_t* __restrict__ topkIndices,
-                                                    const float* __restrict__ topkWeights, const void* inputTokens,
-                                                    Workload workload, void* recvBuffer, CommContext comm,
-                                                    void* workspace) {
+MSCCLPP_DEVICE_INLINE void dispatchLatencyBody(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                                               float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
+                                               const int64_t* __restrict__ topkIndices,
+                                               const float* __restrict__ topkWeights, const void* inputTokens,
+                                               Workload workload, void* recvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
   const int nExperts = workload.numExperts_;
-  const int nRanks = comm.numRanks_;
+  const int nRanks = context->numRanks_;
   const int nTokens = workload.numTokens_;
   const int nTopk = workload.numTopk_;
   const int invalidTokenExpertId = workload.invalidTokenExpertId_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
-  const TransportView transport(comm);
-  WorkspaceView workspaceView(workspace, nRanks, nExperts);
+  const TransportView transport(context);
+  WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
   const uint32_t dispatchEpoch = *workspaceView.dispatchEpoch_ + 1;
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     static_assert(DataType == DispatchDataType::BF16);
     dispatchSendRankMajor<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks,
                                   topkIndices, topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank,
-                                  recvBuffer, workspace, dispatchEpoch, sharedMem);
+                                  recvBuffer, context->workspace_, dispatchEpoch, sharedMem);
   } else {
     dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
-                                                   nTokens, nTopk, maxTokensPerRank, recvBuffer, workspace,
+                                                   nTokens, nTopk, maxTokensPerRank, recvBuffer, context->workspace_,
                                                    dispatchEpoch, sharedMem);
   }
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     if (static_cast<int>(blockIdx.x) < nRanks) {
       dispatchRecvRankMajor(outputTopkIdx, outputTopkWeights, outputCount, transport, nExperts, nRanks, nTopk,
-                            maxTokensPerRank, invalidTokenExpertId, recvBuffer, workspace, dispatchEpoch, sharedMem);
+                            maxTokensPerRank, invalidTokenExpertId, recvBuffer, context->workspace_, dispatchEpoch,
+                            sharedMem);
     }
   } else {
     if (static_cast<int>(blockIdx.x) == 0) {
-      dispatchRecvScheduler(outputLayout, outputCount, transport, nExperts, nRanks, recvBuffer, workspace,
+      dispatchRecvScheduler(outputLayout, outputCount, transport, nExperts, nRanks, recvBuffer, context->workspace_,
                             dispatchEpoch, sharedMem);
     } else if (static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
       dispatchRecvWorker<Hidden, DataType, ScaleBlockSize>(output, outputScales, outputSrcInfo, outputLayout, nExperts,
-                                                           comm.rank_, nRanks, nTopk, maxTokensPerRank, recvBuffer,
-                                                           workspace, dispatchEpoch, sharedMem);
+                                                           context->rank_, nRanks, nTopk, maxTokensPerRank, recvBuffer,
+                                                           context->workspace_, dispatchEpoch, sharedMem);
     }
   }
 
@@ -820,54 +821,53 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout, typename KernelSelector>
 inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                               const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
-                               void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
-                               cudaStream_t stream) {
+                               const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                               void* recvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
+                               int numBlocks, cudaStream_t stream) {
   static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 || Hidden == 7168 ||
                 Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
   constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, OutputType, DispatchMaxNRecvTmaWorkers>();
   static_assert(NRecvTmaWorkers > 0);
   const int nExperts = workload.numExperts_;
-  const int nRanks = comm.numRanks_;
+  const int nRanks = context.numRanks_;
   const int nTopk = workload.numTopk_;
 
   const size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize>(nRanks, nExperts, nTopk);
   static thread_local KernelConfigCache kernelConfig;
-  const int residentBlocks = configureKernel(dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout>, DispatchNThreads,
-                                             dynamicSharedBytes, comm, kernelConfig);
+  auto kernel = KernelSelector::template get<Hidden, DataType, ScaleBlockSize>();
+  const int residentBlocks = configureKernel(kernel, DispatchNThreads, dynamicSharedBytes, context, kernelConfig);
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
-  dispatchKernel<Hidden, DataType, ScaleBlockSize, Layout>
-      <<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
-          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIdx,
-          topkWeights, input, workload, recvBuffer, comm, workspace);
+  kernel<<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
+      output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIdx,
+      topkWeights, input, workload, recvBuffer, deviceContext);
   CUDA_CHECK(cudaGetLastError());
 }
 
-template <int Hidden, DispatchLayout Layout>
+template <int Hidden, DispatchLayout Layout, typename KernelSelector>
 inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                           const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
-                           void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
+                           const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                           const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
                            cudaStream_t stream) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
-    return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout>(
+    return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
   } else {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
-        return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout>(
+        return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+            topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
-        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout>(
+        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout, KernelSelector>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+            topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     }
     EP_HOST_ASSERT(false && "unsupported dispatch data type");
   }
@@ -876,114 +876,104 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
 template <int Hidden>
 inline void dispatchLayout(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                           const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
-                           void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
+                           const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                           const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
                            cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
     return dispatchHidden<Hidden, DispatchLayout::EXPERT_MAJOR>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
   }
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
     return dispatchHidden<Hidden, DispatchLayout::RANK_MAJOR>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
   }
   EP_HOST_ASSERT(false && "unsupported dispatch layout");
 }
 
-inline void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
-                     int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
-                     const float* topkWeights, const low_latency::Workload& workload, void* recvBuffer,
-                     const low_latency::CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream) {
+template <DispatchLayout Layout, typename KernelSelector>
+inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                              float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                              const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                              void* recvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
+                              int numBlocks, cudaStream_t stream) {
   const int nExperts = workload.numExperts_;
-  const int rank = comm.rank_;
-  const int nRanks = comm.numRanks_;
-  const int numWorkerBlocks = numBlocks - DispatchControlBlocks;
+  const int rank = context.rank_;
+  const int nRanks = context.numRanks_;
+  const int numWorkerBlocks = numBlocks - FixedBufferDispatchControlBlocks;
 
   EP_HOST_ASSERT(nRanks > 0);
   EP_HOST_ASSERT(nExperts > 0);
   EP_HOST_ASSERT(nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
-  EP_HOST_ASSERT(comm.baseMemoryChannels_ != nullptr);
+  EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= WARP_SIZE);
   EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
-  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
+  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= FixedBufferMaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
-  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
-                 workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 || outputScales != nullptr);
   EP_HOST_ASSERT(outputSrcInfo != nullptr || workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(outputCount != nullptr);
   EP_HOST_ASSERT(outputLayout != nullptr || workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
+  if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(outputTopkIdx != nullptr);
     EP_HOST_ASSERT(outputTopkWeights != nullptr);
   }
-  if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
+  if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
   }
   EP_HOST_ASSERT(workload.numTokens_ == 0 || input != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ == 0 || topkIdx != nullptr);
   EP_HOST_ASSERT(recvBuffer != nullptr);
-  EP_HOST_ASSERT(comm.symmetricBufferBase_ != nullptr);
-  EP_HOST_ASSERT(comm.peerMappedBufferBases_ != nullptr);
-  EP_HOST_ASSERT(workspace != nullptr);
+  EP_HOST_ASSERT(context.localBufferBase_ != nullptr);
+  EP_HOST_ASSERT(context.peerBufferBases_ != nullptr);
+  EP_HOST_ASSERT(context.workspace_ != nullptr);
+  EP_HOST_ASSERT(deviceContext != nullptr);
 
   switch (workload.hidden_) {
     case 2048:
-      return dispatchLayout<2048>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<2048, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 4096:
-      return dispatchLayout<4096>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<4096, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 4352:
-      return dispatchLayout<4352>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<4352, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 6656:
-      return dispatchLayout<6656>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<6656, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 7168:
-      return dispatchLayout<7168>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<7168, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 8192:
-      return dispatchLayout<8192>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<8192, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 8704:
-      return dispatchLayout<8704>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<8704, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     case 9216:
-      return dispatchLayout<9216>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
-                                  numBlocks, stream);
+      return dispatchHidden<9216, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
     default:
-      EP_HOST_ASSERT(false && "unsupported optimized low-latency hidden size");
+      EP_HOST_ASSERT(false && "unsupported latency dispatch hidden size");
   }
 }
 
 }  // namespace detail
 
-size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk) {
-  return detail::workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk);
-}
-
-void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
-              int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
-              const float* topkWeights, const Workload& workload, void* recvBuffer, const CommContext& comm,
-              void* workspace, int numBlocks, cudaStream_t stream) {
-  detail::dispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
-                   input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace, numBlocks, stream);
-}
-
-}  // namespace low_latency
+}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp

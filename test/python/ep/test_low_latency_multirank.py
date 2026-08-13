@@ -259,7 +259,7 @@ def validate_expert_major_dispatch(
             output_offset = packed_range >> 32
             if source_count == 0:
                 continue
-            source_tokens = handle.combine_context.src_info[
+            source_tokens = handle._context.src_info[
                 local_expert_idx, output_offset : output_offset + source_count
             ].long()
             actual_tokens = recv_x[output_offset : output_offset + source_count]
@@ -376,7 +376,7 @@ def reconstruct_expert_major_reference(
             output_offset = packed_range >> 32
             if source_count == 0:
                 continue
-            source_tokens = handle.combine_context.src_info[
+            source_tokens = handle._context.src_info[
                 local_expert_idx, output_offset : output_offset + source_count
             ].long()
             selected = first_expert[source_rank, source_tokens] == expert_id
@@ -571,9 +571,7 @@ def main():
         else dispatch_out.layout.num_tokens_per_rank
     )
     assert packed_recv_count is not None
-    packed_recv_layout_range = (
-        handle.combine_context.layout_range if output_layout == ep.DispatchLayout.EXPERT_MAJOR else None
-    )
+    packed_recv_layout_range = handle._context.layout_range if output_layout == ep.DispatchLayout.EXPERT_MAJOR else None
     torch.cuda.synchronize()
     print(f"[rank {rank}] post-dispatch", flush=True)
     # expert-major: packed_recv_x [num_local_experts, num_ranks * max_tokens, hidden]
