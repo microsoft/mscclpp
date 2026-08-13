@@ -988,8 +988,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
                                const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
                                void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
                                cudaStream_t stream) {
-  static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 ||
-                Hidden == 8704 || Hidden == 9216);
+  static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 5120 || Hidden == 6656 || Hidden == 7168 ||
+                Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
   constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, OutputType, DispatchMaxNRecvTmaWorkers>();
   static_assert(NRecvTmaWorkers > 0);
@@ -1114,6 +1114,10 @@ inline void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* 
                                   numBlocks, stream);
     case 4096:
       return dispatchLayout<4096>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+                                  outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
+                                  numBlocks, stream);
+    case 5120:
+      return dispatchLayout<5120>(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                                   outputCount, input, topkIdx, topkWeights, workload, recvBuffer, comm, workspace,
                                   numBlocks, stream);
     case 6656:
