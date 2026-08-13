@@ -152,7 +152,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
                                                  const int64_t* __restrict__ topkIndices,
                                                  const float* __restrict__ topkWeights, void* stagedToken, int tokenIdx,
                                                  int nTopk, int nLocalExperts, int maxTokensPerRank, int nRanks,
-                                                 int nExperts, int ringSlotBase) {
+                                                 int nExperts, int invalidTokenExpertId, int ringSlotBase) {
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   const int laneId = get_lane_id();
   auto* gin = transport.gpuNetIo_;
@@ -186,13 +186,15 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
     }
     if (laneId < nTopk) {
       const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      slotIds[laneId] = isLocal ? candidateExpert : -1;
+      slotIds[laneId] = isLocal ? candidateExpert : invalidTokenExpertId;
       slotWeights[laneId] = isLocal ? candidateWeight : 0.0f;
     }
     __syncwarp();
+    // Make all lanes slot metadata visible before the leader posts RDMA reads from it.
+    __threadfence();
+    __syncwarp();
 
     if (laneId == leaderLane) {
-      __threadfence();
       const size_t tokenRowOffset =
           (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
       const size_t idRowOffset =
@@ -206,18 +208,17 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
       gin->put(destinationRank, transport.symmetricOffset(remoteToken), transport.symmetricOffset(slot), HiddenBytes);
       gin->put(destinationRank, transport.symmetricOffset(remoteIds),
                transport.symmetricOffset(slotIds), static_cast<size_t>(nTopk) * sizeof(int));
-      gin->put(destinationRank, transport.symmetricOffset(remoteWeights),
-               transport.symmetricOffset(slotWeights), static_cast<size_t>(nTopk) * sizeof(float));
       // Fused completion signal: bump the peer flag for this source rank only
-      // after the payload settles. flush() frees the staging slot for reuse.
+      // after the payload and metadata settle. flush() frees the staging slot for reuse.
       auto* remoteFlag = reinterpret_cast<uint8_t*>(layout.gpuNetIoFlagsBuffer_) +
                          static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
-      gin->putWithSignal(destinationRank, transport.symmetricOffset(remoteFlag), transport.symmetricOffset(slot),
-                         /*size=*/0, transport.symmetricOffset(remoteFlag), /*signalValue=*/1);
+      gin->putWithSignal(destinationRank, transport.symmetricOffset(remoteWeights), transport.symmetricOffset(slotWeights),
+                         static_cast<size_t>(nTopk) * sizeof(float), transport.symmetricOffset(remoteFlag),
+                         /*signalValue=*/1);
       gin->flush(destinationRank);
     }
     __syncwarp();
-    ringSlot += WARP_SIZE;
+    ringSlot += 1;
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
@@ -278,9 +279,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     }
     if (crossDomain) {
       const int ringSlotBase =
-          (static_cast<int>(blockIdx.x) * DispatchMaxNWarpGroups + warpGroupId) * WARP_SIZE % GpuNetIoStagingSlots;
+          ((static_cast<int>(blockIdx.x) * DispatchMaxNWarpGroups + warpGroupId) * nTopk) % GpuNetIoStagingSlots;
       sendRankMajorGpuNetIo<Hidden>(transport, route, topkIndices, topkWeights, stagedToken, tokenIdx, nTopk,
-                                    nLocalExperts, maxTokensPerRank, nRanks, nExperts, ringSlotBase);
+                                    nLocalExperts, maxTokensPerRank, nRanks, nExperts, invalidTokenExpertId,
+                                    ringSlotBase);
     }
     // NVLink metadata + completion for NVLink leaders only (cross-domain metadata
     // and completion travel with the GPUNetIO send above).

@@ -20,7 +20,7 @@ inline constexpr size_t BufferAlignmentBytes = 128;
 // tokens are copied into this ring before being RDMA-written to the peer. The
 // ring is intentionally small (a few MB): the inter-domain send pass serializes
 // token puts through it, trading a little latency for a bounded footprint.
-inline constexpr int GpuNetIoStagingSlots = 256;
+inline constexpr int GpuNetIoStagingSlots = 32768;
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
