@@ -160,6 +160,7 @@ void MoELowLatencyRuntime::setup() {
     commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
     commContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
+    available_ = true;
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 }

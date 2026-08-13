@@ -287,13 +287,23 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
-    if (!transport.isSelf(peerRank)
+    if (!transport.isSelf(peerRank)) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-        && transport.isNvlinkPeer(peerRank)
+      if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(peerRank)) {
+        auto* remoteFlag = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) +
+                           static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
+        transport.gpuNetIo_->atomicAdd(peerRank, transport.symmetricOffset(remoteFlag), 1);
+        transport.gpuNetIo_->flush(peerRank);
+        auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);
+        while (flags[peerRank] < 1) {
+        }
+        flags[peerRank] = 0;
+      } else
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
-    ) {
-      transport.baseMemoryChannels_[peerRank].relaxedSignal();
-      transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
+      {
+        transport.baseMemoryChannels_[peerRank].relaxedSignal();
+        transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
+      }
     }
   }
   // Every valid combine follows a dispatch that advances this epoch.
@@ -497,8 +507,9 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
       const int slotRank = warpBroadcast(partialRank, topkLane);
       const int slotSlot = warpBroadcast(partialSlot, topkLane);
       if (slotRank < 0) continue;
-      if (laneId == topkLane) {
-        auto* slot = stagingBase + static_cast<size_t>((warpId * nTopk + topkLane) % GpuNetIoStagingSlots) *
+      if (transport.isNvlinkPeer(slotRank)) continue;
+      if (warpId == 0 && laneId == 0) {
+        auto* slot = stagingBase + static_cast<size_t>((static_cast<int>(blockIdx.x) * nTopk + topkLane) % GpuNetIoStagingSlots) *
                                        transport.gpuNetIoSlotStride_;
         const uint64_t remoteRowOffset =
             transport.symmetricOffset(const_cast<void*>(expertOutput)) +
@@ -506,16 +517,25 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
         gin->get(slotRank, remoteRowOffset, transport.symmetricOffset(slot), HiddenBytes);
       }
     }
-    __syncwarp();
+    __syncthreads();
 
     for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
       float2 reduced[Bf16PairsPerInt4] = {};
       for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
         const int slotRank = warpBroadcast(partialRank, topkLane);
+        const int slotSlot = warpBroadcast(partialSlot, topkLane);
         if (slotRank < 0) continue;
-        auto* slot = stagingBase + static_cast<size_t>((warpId * nTopk + topkLane) % GpuNetIoStagingSlots) *
-                                       transport.gpuNetIoSlotStride_;
-        const int4 packed = reinterpret_cast<const int4*>(slot)[hiddenIdx];
+        int4 packed;
+        if (transport.isNvlinkPeer(slotRank)) {
+          const auto* source =
+              reinterpret_cast<const int4*>(transport.mappedBuffer(const_cast<void*>(expertOutput), slotRank)) +
+              (static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotSlot) * HiddenInt4;
+          packed = source[hiddenIdx];
+        } else {
+          auto* slot = stagingBase + static_cast<size_t>((static_cast<int>(blockIdx.x) * nTopk + topkLane) % GpuNetIoStagingSlots) *
+                                         transport.gpuNetIoSlotStride_;
+          packed = reinterpret_cast<const int4*>(slot)[hiddenIdx];
+        }
         const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
         for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
@@ -533,7 +553,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
       auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * HiddenInt4;
       outputRow[hiddenIdx] = packedOutput;
     }
-    __syncwarp();
+    __syncthreads();
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
