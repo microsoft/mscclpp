@@ -315,6 +315,11 @@ inline void gpuMemset(void* ptr, int value, size_t bytes) { detail::gpuMemset(pt
 /// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
 bool isNvlsSupported();
 
+/// Check if bulk asynchronous copy is supported by the current device.
+///
+/// @return True if bulk asynchronous copy is supported, false otherwise.
+bool isBulkSupported();
+
 /// Check if ptr is allocaed by cuMemMap.
 /// @param ptr The pointer to check.
 /// @return True if the pointer is allocated by cuMemMap, false otherwise.

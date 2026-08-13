@@ -124,6 +124,7 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
 
 void register_gpu_utils(nb::module_& m) {
   m.def("is_nvls_supported", &isNvlsSupported);
+  m.def("is_bulk_supported", &isBulkSupported);
 
   nb::enum_<GpuBufferGranularity>(m, "CppGpuBufferGranularity")
       .value("MultiCastMinimum", GpuBufferGranularity::MultiCastMinimum)

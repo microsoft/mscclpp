@@ -168,6 +168,10 @@ size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
   return gran;
 }
 
+// Query the multicast allocation granularity for the given handle types and device count.
+// Note on `size`: it only influences the CU_MULTICAST_GRANULARITY_RECOMMENDED result (which grows
+// with the requested size for better performance). For CU_MULTICAST_GRANULARITY_MINIMUM the returned
+// value is a fixed device/platform quantum, independent of `size`
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
@@ -455,6 +459,23 @@ bool isNvlsSupported() {
     result = (isMulticastSupported == 1);
     isChecked = true;
     return result;
+  }
+  return result;
+#endif
+  return false;
+}
+
+bool isBulkSupported() {
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
+#if !defined(MSCCLPP_USE_ROCM)
+  if (!isChecked) {
+    int deviceId;
+    int major;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, deviceId));
+    result = (major >= 9);
+    isChecked = true;
   }
   return result;
 #endif

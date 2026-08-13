@@ -11,7 +11,10 @@
 #include <cuda_fp16.h>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/poll_device.hpp>
+#include <mscclpp/semaphore_device.hpp>
 
 #include "device.hpp"
 
@@ -25,8 +28,31 @@ struct SwitchChannelDeviceHandle {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
+  /// Backing group-barrier semaphore over the switch multimem. Its pointers are null if the owning
+  /// connection was created without barrier support (see NvlsConnection::attachBarrier).
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrier_;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
+  /// Issue an ordered cross-rank arrival, publishing this rank's prior writes; pair with wait().
+  ///
+  /// Delegates to the backing group-barrier semaphore. See
+  /// SwitchDevice2DeviceSemaphoreDeviceHandle for the full barrier protocol and ordering semantics.
+  MSCCLPP_DEVICE_INLINE void signal() { barrier_.signal(); }
+
+  /// Issue a relaxed cross-rank arrival, without any data-visibility ordering; pair with relaxedWait().
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() { barrier_.relaxedSignal(); }
+
+  /// Wait (acquire) until every rank has arrived; pair with signal().
+  ///
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { barrier_.wait(maxSpinCount); }
+
+  /// Relaxed wait until every rank has arrived, without any data-visibility ordering; pair with
+  /// relaxedSignal().
+  ///
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) { barrier_.relaxedWait(maxSpinCount); }
+
   template <typename T>
   MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
     return SwitchChannelDeviceHandle::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
