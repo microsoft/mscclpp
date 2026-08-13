@@ -59,7 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (nRanksPerIpcDomain - 1) * blockIdx.x;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_IPC_DOMAIN_NRANKS - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nRanksPerIpcDomain - 1) {
     channels[lid] = memoryChans[lid];
