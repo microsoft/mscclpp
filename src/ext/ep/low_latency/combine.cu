@@ -472,11 +472,27 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
 }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
+MSCCLPP_DEVICE_INLINE int rankMajorSlotForDestination(const int64_t* __restrict__ topkIndices,
+                                                      WorkspaceView& workspaceView, int tokenIdx, int nTopk,
+                                                      int nLocalExperts, int destinationRank) {
+  int destinationSlot = -1;
+#pragma unroll
+  for (int topkLane = 0; topkLane < WARP_SIZE; ++topkLane) {
+    if (topkLane < nTopk) {
+      const int globalExpertIdx = static_cast<int>(topkIndices[tokenIdx * nTopk + topkLane]);
+      const int rank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
+      if (destinationSlot < 0 && rank == destinationRank) {
+        destinationSlot = workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + topkLane];
+      }
+    }
+  }
+  return destinationSlot;
+}
+
 // Cross-domain rank-major combine (approach 2). The reduce is a remote *read*
 // (pull) over peers outside this rank's NVLink/IPC domain, which one-sided put
 // cannot express, so each needed remote expert-output row is first RDMA-read
-// (gin->get) into the symmetric staging ring, then reduced from there. One token
-// per iteration; the leader lane for each valid top-k slot issues the get.
+// (gin->get) into the symmetric staging ring, then reduced from there.
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, const void* expertOutput,
                                                               const int64_t* __restrict__ topkIndices, int nTokens,
@@ -488,52 +504,45 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   const int threadId = static_cast<int>(threadIdx.x);
-  const int laneId = get_lane_id();
-  const int warpId = threadId / WARP_SIZE;
   const int nLocalExperts = nExperts / nRanks;
   auto* gin = transport.gpuNetIo_;
   auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
 
   for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
-    const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-    const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
-    const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
-    const int partialRank = destinationRank >= 0 && firstLaneForRank ? destinationRank : -1;
-    const int partialSlot = partialRank >= 0 ? workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId] : -1;
-
-    // RDMA-read each valid top-k slot's remote expert-output row into its own
-    // staging slot (keyed by warp*nTopk + topkLane), then reduce from staging.
-    for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
-      const int slotRank = warpBroadcast(partialRank, topkLane);
-      const int slotSlot = warpBroadcast(partialSlot, topkLane);
-      if (slotRank < 0) continue;
-      if (transport.isNvlinkPeer(slotRank)) continue;
-      if (warpId == 0 && laneId == 0) {
-        auto* slot = stagingBase + static_cast<size_t>((static_cast<int>(blockIdx.x) * nTopk + topkLane) % GpuNetIoStagingSlots) *
-                                       transport.gpuNetIoSlotStride_;
+    if (threadId == 0) {
+      for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
+        const int destinationSlot =
+            rankMajorSlotForDestination(topkIndices, workspaceView, tokenIdx, nTopk, nLocalExperts, destinationRank);
+        if (destinationSlot < 0 || transport.isNvlinkPeer(destinationRank)) continue;
+        auto* slot = stagingBase +
+                     static_cast<size_t>((static_cast<int>(blockIdx.x) * nRanks + destinationRank) %
+                                         GpuNetIoStagingSlots) *
+                         transport.gpuNetIoSlotStride_;
         const uint64_t remoteRowOffset =
             transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-            (static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotSlot) * HiddenBytes;
-        gin->get(slotRank, remoteRowOffset, transport.symmetricOffset(slot), HiddenBytes);
+            (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
+        gin->get(destinationRank, remoteRowOffset, transport.symmetricOffset(slot), HiddenBytes);
       }
     }
     __syncthreads();
 
     for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
       float2 reduced[Bf16PairsPerInt4] = {};
-      for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
-        const int slotRank = warpBroadcast(partialRank, topkLane);
-        const int slotSlot = warpBroadcast(partialSlot, topkLane);
-        if (slotRank < 0) continue;
+      for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
+        const int destinationSlot =
+            rankMajorSlotForDestination(topkIndices, workspaceView, tokenIdx, nTopk, nLocalExperts, destinationRank);
+        if (destinationSlot < 0) continue;
         int4 packed;
-        if (transport.isNvlinkPeer(slotRank)) {
+        if (transport.isNvlinkPeer(destinationRank)) {
           const auto* source =
-              reinterpret_cast<const int4*>(transport.mappedBuffer(const_cast<void*>(expertOutput), slotRank)) +
-              (static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotSlot) * HiddenInt4;
+              reinterpret_cast<const int4*>(transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank)) +
+              (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenInt4;
           packed = source[hiddenIdx];
         } else {
-          auto* slot = stagingBase + static_cast<size_t>((static_cast<int>(blockIdx.x) * nTopk + topkLane) % GpuNetIoStagingSlots) *
-                                         transport.gpuNetIoSlotStride_;
+          auto* slot = stagingBase +
+                       static_cast<size_t>((static_cast<int>(blockIdx.x) * nRanks + destinationRank) %
+                                           GpuNetIoStagingSlots) *
+                           transport.gpuNetIoSlotStride_;
           packed = reinterpret_cast<const int4*>(slot)[hiddenIdx];
         }
         const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
