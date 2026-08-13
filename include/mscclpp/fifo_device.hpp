@@ -25,6 +25,8 @@ constexpr unsigned int TriggerBitsOffset = 32;
 constexpr unsigned int TriggerBitsMemoryId = 9;
 constexpr unsigned int TriggerBitsType = 3;
 constexpr unsigned int TriggerBitsSemaphoreId = 10;
+// The FIFO uses the reserved bit to mark a slot as written, so a trigger must not carry data
+// there. See FifoDeviceHandle::push().
 constexpr unsigned int TriggerBitsFifoReserved = 1;
 
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
@@ -47,8 +49,8 @@ union alignas(16) ProxyTrigger {
     uint64_t dstMemoryId : TriggerBitsMemoryId;
     uint64_t type : TriggerBitsType;
     uint64_t semaphoreId : TriggerBitsSemaphoreId;
-    uint64_t : (64 - TriggerBitsOffset - TriggerBitsMemoryId - TriggerBitsMemoryId - TriggerBitsType -
-                TriggerBitsSemaphoreId - TriggerBitsFifoReserved);  // ensure 64-bit alignment
+    // The fields above use 63 bits; the commit bit occupies bit 63. Do not insert a zero-width
+    // bitfield here: C++ uses it to start a new allocation unit, moving reserved out of snd.
     uint64_t reserved : TriggerBitsFifoReserved;
   } fields;
 
@@ -71,7 +73,6 @@ union alignas(16) ProxyTrigger {
     MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << TriggerBitsOffset), "dstOffset is too large");
     MSCCLPP_ASSERT_DEVICE(srcId < (1ULL << TriggerBitsMemoryId), "srcId is too large");
     MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << TriggerBitsOffset), "srcOffset is too large");
-    MSCCLPP_ASSERT_DEVICE(bytes != 0, "bytes must not be zero");
     MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << TriggerBitsSize), "bytes is too large");
     MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << TriggerBitsSemaphoreId), "semaphoreId is too large");
     constexpr uint64_t maskSize = (1ULL << TriggerBitsSize) - 1;
@@ -93,6 +94,8 @@ union alignas(16) ProxyTrigger {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
+static_assert(sizeof(ProxyTrigger) == 16, "ProxyTrigger must be exactly two 64-bit words");
+
 /// Concurrent FIFO where multiple device threads (the number of threads should not exceed the FIFO size) to push
 /// Head pointer is on device, tail pointer is on host (readable by device).
 /// The FIFO’s capacity is limited only by MAX_UINT64—effectively infinite for practical use. Exceeding this limit will
@@ -106,29 +109,32 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
     uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
 
-    // Flip the last bit for safe polling; host will revert.
-    constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
-    trigger.snd ^= flipMask;
-
-    // Wait until the trigger is freed by the host.
+    // Wait until the slot's previous occupant has been consumed. Lap parity identifies a stale
+    // trigger but does not prevent overwriting a live one; this does.
     if (prevHead >= size + *tailCache) {
       sync(prevHead - size, maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
+    // Commit bit: the parity of the lap this slot is on, so that the value left by the previous
+    // lap reads as stale. Lap 0 writes 1, which makes a zero-initialized buffer read as empty.
+    trigger.fields.reserved = ((prevHead >> sizeShift) & 1ULL) ^ 1ULL;
 
+    ProxyTrigger* triggerPtr = &(triggers[prevHead & sizeMask]);
+
+    // snd is the commit word: a consumer that observes this lap's parity must also observe the
+    // payload that goes with it.
 #if defined(MSCCLPP_DEVICE_CUDA)
-#if __CUDA_ARCH__ == 800
-    // This is faster than release for A100.
-    __threadfence_system();
-    asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
-#else
+    // One 128-bit store publishes both words together, so no ordering is needed between them.
+    // The proxy already relies on this: a torn store would let it read a new fst against the
+    // previous lap's snd, and dispatch on a stale semaphoreId.
+    //
+    // sm_80 used __threadfence_system() plus a relaxed store here, which was once faster. On
+    // A100 with CUDA 12.9 it is no longer, according to `FifoTest.Fifo`.
     asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
-#endif
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
-    // Store snd no later than fst.
-    atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelaxed);
-    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
+    // No vector store here, so order the payload ahead of the commit explicitly.
+    atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelaxed);
+    atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
     return prevHead;
@@ -168,8 +174,12 @@ struct FifoDeviceHandle {
   uint64_t* tail;
   /// Cached tail value.
   uint64_t* tailCache;
-  /// FIFO size.
+  /// FIFO size. Always a power of two.
   int size;
+  /// size - 1, for mapping a position to a slot.
+  uint64_t sizeMask;
+  /// log2(size), for extracting the lap from a position.
+  uint64_t sizeShift;
 };
 
 }  // namespace mscclpp
