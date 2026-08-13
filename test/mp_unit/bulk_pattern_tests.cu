@@ -340,7 +340,9 @@ TEST(BulkPatternTest, Combine) {
 // Instead of every rank pulling and summing, each rank accumulates its own contribution straight
 // into the destination's accumulator with bulkReduceStore(). The copy engine performs the add at the
 // destination, so the accumulator is never read back across the link and no rank stages anyone
-// else's data. The reverse link direction stays idle.
+// else's data. Cross-device atomicity is guaranteed only by PTX ISA 9.3's system-scope semantics;
+// with earlier supported toolkits this pattern exercises empirically observed behavior rather than a
+// portable guarantee. The reverse link direction stays idle.
 // ------------------------------------------------------------------------------------------------
 __global__ void kernelCombineReduce([[maybe_unused]] const float* contribution, [[maybe_unused]] void** peerPools,
                                     [[maybe_unused]] int rank, [[maybe_unused]] int worldSize) {
@@ -369,13 +371,16 @@ __global__ void kernelCombineReduce([[maybe_unused]] const float* contribution, 
         mscclpp::bulkFence();  // staged data -> the reduction's read of the tile
         mscclpp::bulkReduceStore<float>(dstRow + off, tile, kChunkBytes);
         mscclpp::bulkStoreCommit();
-        mscclpp::bulkStoreWait<0>();  // the accumulate must land before the tile is refilled
+        mscclpp::bulkStoreWaitSource<0>();  // the tile can be refilled once its source read completes
       }
       __syncthreads();
     }
   }
 
-  if (threadIdx.x == 0) barrier.invalidate();
+  if (threadIdx.x == 0) {
+    mscclpp::bulkStoreWait<0>();  // every accumulate must land before the kernel completes
+    barrier.invalidate();
+  }
 #endif
 }
 

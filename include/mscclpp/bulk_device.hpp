@@ -193,16 +193,20 @@ enum class BulkRedOp { Add };
 /// returns immediately, joins the calling thread's open bulk group, and requires a preceding
 /// bulkFence() to make generic writes to @p srcShared visible.
 ///
-/// Measured on H200 at roughly 90% of the bulkStore() rate for the same payload, from a single
-/// issuing thread, so the accumulate is close to free relative to the transfer.
+/// Measured on H200 at roughly 90% of the bulkStore() rate for the same payload from a single
+/// issuing thread, a roughly 10% throughput cost in that microbenchmark. The cost visible to a
+/// workload depends on its transfer overlap and bottlenecks.
 ///
-/// @warning When several devices accumulate into the same destination address concurrently, the
-/// result depends on the per-element reduction being atomic across peers. That holds in every
-/// measurement taken here (exact results on H200 across 8 six-rank runs and on GB200 across 50
-/// four-GPU runs), but it is an empirical result, not a guarantee found in the PTX documentation.
-/// Confirm it on the target hardware before relying on it for a collective.
+/// PTX ISA 9.3 specifies each element-wise reduction as atomic and defaults an omitted scope to
+/// `.relaxed.sys`. Earlier PTX documentation, including that shipped with CUDA 12.9 and 13.0,
+/// specifies `.relaxed.gpu` semantics and does not guarantee atomicity across devices. Because this
+/// API supports those toolkits, concurrent reductions from several devices into the same peer address
+/// must be treated as empirical rather than portable; exact results were observed on H200 and GB200,
+/// but callers must confirm the behavior on their target toolchain and hardware.
 ///
-/// @tparam T Element type. Currently `float`, `__nv_bfloat16`, and `uint32_t`. Other types are
+/// @tparam T Source and destination element type. Currently `float`, `__nv_bfloat16`, and `uint32_t`.
+/// The instruction does not perform mixed-precision conversion: `__nv_bfloat16` accumulates in bf16;
+/// for fp32 accumulation, convert the source tile and use a float destination. Other types are
 /// rejected at compile time rather than silently mapped, because the underlying instruction accepts
 /// only certain operation and type combinations.
 /// @tparam Op Reduction operation.
