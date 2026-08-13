@@ -104,22 +104,35 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
+    def _rank_major_weighted_input(dispatch_out):
+        assert expert_output is not None
+        expert_output.copy_(simulated_gemm_output(dispatch_out))
+        if dispatch_quant is None:
+            local_weight_sum = dispatch_out.weights.masked_fill(dispatch_out.topk_ids == num_experts, 0.0).sum(dim=1)
+            expert_output.mul_(local_weight_sum.to(torch.bfloat16).view(-1, 1))
+        return expert_output
+
     def _combine(dispatch_out, handle):
-        # Rank-major MoE writes directly into the runtime-owned registered output
-        # buffer. Pre-fill it once to benchmark communication without timing a copy.
-        combine_input = expert_output if expert_output is not None else simulated_gemm_output(dispatch_out)
+        # Rank-major combine consumes the runtime-owned registered expert-output buffer.
+        combine_input = (
+            _rank_major_weighted_input(dispatch_out)
+            if expert_output is not None
+            else simulated_gemm_output(dispatch_out)
+        )
         moe_comm.combine(combine_input, handle, out=out)
 
     # Optional one-time correctness check (mirrors test_low_latency_multirank).
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
+        torch.cuda.synchronize()
         v_out = torch.empty_like(out)
-        validation_input = simulated_gemm_output(v_dispatch_out)
-        if expert_output is not None:
-            # Rank-major combine reads the runtime-owned registered buffer, so the
-            # simulated expert output has to be staged into it first.
-            expert_output.copy_(validation_input)
-            validation_input = expert_output
+        validation_input = (
+            _rank_major_weighted_input(v_dispatch_out)
+            if expert_output is not None
+            else simulated_gemm_output(v_dispatch_out)
+        )
+        torch.cuda.synchronize()
+        comm.Barrier()
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
         if dispatch_quant is None:
@@ -182,7 +195,12 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
         def _graph_combine():
-            moe_comm.combine(simulated_gemm_output(_cap["out"]), _cap["handle"], out=out)
+            graph_input = (
+                _rank_major_weighted_input(_cap["out"])
+                if expert_output is not None
+                else simulated_gemm_output(_cap["out"])
+            )
+            moe_comm.combine(graph_input, _cap["handle"], out=out)
 
         graph_spec = {
             "dispatch": _graph_dispatch,
