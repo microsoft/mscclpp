@@ -217,6 +217,10 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
             min_message_size=512 * 1024 + 1,
         ),
         CandidateSpec(
+            "default_allreduce_rsag",
+            min_message_size=512 * 1024 + 1,
+        ),
+        CandidateSpec(
             "default_allreduce_fullmesh",
             min_message_size=512 * 1024 + 1,
             max_nblocks=64,
