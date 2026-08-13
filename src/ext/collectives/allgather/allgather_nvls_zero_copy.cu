@@ -40,9 +40,9 @@ __global__ void __launch_bounds__(1024, 1)
                   [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                   [[maybe_unused]] const void* sendbuff, [[maybe_unused]] size_t channelOutOffset,
                   [[maybe_unused]] size_t bytesPerRank, [[maybe_unused]] int rank,
-                  [[maybe_unused]] int nRanksPerNode) {
+                  [[maybe_unused]] int nRanksPerIpcDomain) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-  const int nPeers = nRanksPerNode - 1;
+  const int nPeers = nRanksPerIpcDomain - 1;
   const int nBlocks = gridDim.x;
   const int bid = blockIdx.x;
   const size_t minAlign = 16;
@@ -57,11 +57,11 @@ __global__ void __launch_bounds__(1024, 1)
 
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
 
-  const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x;
+  const size_t chanOffset = (nRanksPerIpcDomain - 1) * blockIdx.x;
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
-  if (lid < nRanksPerNode - 1) {
+  if (lid < nRanksPerIpcDomain - 1) {
     channels[lid] = memoryChans[lid];
   }
   __syncwarp();
@@ -117,11 +117,11 @@ CommResult AllgatherNvls::allgatherKernelFunc(const std::shared_ptr<void> ctx_vo
 
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {::min(ctx->nRanksPerNode, MAX_NBLOCKS), 1024};
+    numBlocksAndThreads = {::min(ctx->nRanksPerIpcDomain, MAX_NBLOCKS), 1024};
     // For GB200 devices with MNNVLS, scale the number of blocks inversely with the number of GPUs
     // (empirically 128 / nGPUs, clamped to [1, MAX_NBLOCKS]), mirroring the NVLS allreduce heuristic.
     if (computeCapabilityMajor_ == 10) {
-      numBlocksAndThreads.first = ::max(1, ::min(128 / ctx->workSize, MAX_NBLOCKS));
+      numBlocksAndThreads.first = ::max(1, ::min(128 / ctx->worldSize, MAX_NBLOCKS));
     }
   }
   if (numBlocksAndThreads.first > MAX_NBLOCKS) {
@@ -131,7 +131,7 @@ CommResult AllgatherNvls::allgatherKernelFunc(const std::shared_ptr<void> ctx_vo
 
   allgatherNvls<<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
       this->memoryChannelsDeviceHandle_.get(), nvlsChannels, input, channelOutOffset, inputSize, ctx->rank,
-      ctx->nRanksPerNode);
+      ctx->nRanksPerIpcDomain);
   cudaError_t error = cudaGetLastError();
   if (error != cudaSuccess) {
     WARN("AllgatherNvls failed with error: %s", cudaGetErrorString(error));
@@ -158,15 +158,15 @@ std::shared_ptr<void> AllgatherNvls::initAllgatherContext(std::shared_ptr<mscclp
                                                           void* output, size_t, mscclpp::DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->worldSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // NVLS multicast channels over the output buffer (each rank stores its chunk to all ranks).
-  ctx->switchChannels = setupNvlsChannels(this->nvlsConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
+  ctx->switchChannels = setupNvlsChannels(comm, this->nvlsConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
