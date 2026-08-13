@@ -114,12 +114,7 @@ jobs:
       user: azhpcuser
       headNode: $(headNode)
       hostfile: $(System.DefaultWorkingDirectory)/test/deploy/hostfile
-      hostfileMpi: /root/mscclpp/test/deploy/hostfile_mpi
       gpuArch: '100a'
-      cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
-      npProcs: 8
-      npPerNode: 4
-      tcpIfInclude: '10.0.5.0/24'
 
   - template: templates/run-remote-task.yml
     parameters:
