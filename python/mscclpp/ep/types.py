@@ -117,6 +117,7 @@ class ExpertMajorCombineContext:
     hidden_size: int
     src_info: torch.Tensor
     layout_range: torch.Tensor
+    dispatch_epoch: int
 
 
 @dataclass
@@ -128,6 +129,7 @@ class RankMajorCombineContext:
     num_tokens: int
     hidden_size: int
     max_tokens_per_rank: int
+    dispatch_epoch: int
 
 
 @dataclass

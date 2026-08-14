@@ -771,7 +771,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(comm);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
-  const uint32_t dispatchEpoch = *workspaceView.dispatchEpoch_ + 1;
+  const uint32_t dispatchEpoch = workload.dispatchEpoch_;
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     static_assert(DataType == DispatchDataType::BF16);
     dispatchSendRankMajor<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks,
@@ -797,10 +797,6 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                            comm.rank_, nRanks, nTopk, maxTokensPerRank, recvBuffer,
                                                            workspace, dispatchEpoch, sharedMem);
     }
-  }
-
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
-    *workspaceView.dispatchEpoch_ = dispatchEpoch;
   }
 }
 

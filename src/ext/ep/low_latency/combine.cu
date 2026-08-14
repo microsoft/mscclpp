@@ -279,7 +279,7 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
 }
 
 MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks,
-                                                       WorkspaceView& workspaceView) {
+                                                       uint32_t combineEpoch, WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
@@ -288,8 +288,6 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
       transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
     }
   }
-  // Every valid combine follows a dispatch that advances this epoch.
-  const uint32_t combineEpoch = *workspaceView.dispatchEpoch_;
   if (blockIdx.x == 0) {
     __syncthreads();
     if (threadIdx.x == 0) {
@@ -595,7 +593,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
     static_assert(DispatchType == DispatchDataType::BF16);
     if (nTopk <= RankMajorTmaMaxNTopk) {
-      const uint32_t combineEpoch = *workspaceView.dispatchEpoch_;
+      const uint32_t combineEpoch = workload.dispatchEpoch_;
       if (blockIdx.x == 0) {
         publishRankMajorCombineReady(transport, nRanks, combineEpoch, workspaceView);
       } else {
@@ -604,7 +602,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
       }
       return;
     }
-    synchronizeRankMajorCombine(transport, nRanks, workspaceView);
+    synchronizeRankMajorCombine(transport, nRanks, workload.dispatchEpoch_, workspaceView);
     recvRankMajorRemotePartials<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                         maxTokensPerRank, transport, workspaceView);
     return;

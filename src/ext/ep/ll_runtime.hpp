@@ -32,16 +32,17 @@ class MoELowLatencyRuntime : public MoERuntime {
   void* outputTokensBuffer() const;
   void* expertOutputBuffer() const;
 
-  void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
-                int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
-                const float* topkWeights, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-                int invalidTokenExpertId, DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-                int numBlocks, cudaStream_t stream);
+  uint32_t dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                    float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                    const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
+                    int maxTokensPerRank, int numExperts, int invalidTokenExpertId, DispatchLayout dispatchLayout,
+                    low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream);
 
   void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-               const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-               DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-               low_latency::CombineMode mode, int numBlocks, cudaStream_t stream);
+               const int64_t* layoutRange, uint32_t dispatchEpoch, int numTokens, int hidden, int numTopk,
+               int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
+               low_latency::DispatchDataType dispatchDataType, low_latency::CombineMode mode, int numBlocks,
+               cudaStream_t stream);
 
  private:
   int deviceId_;
@@ -52,6 +53,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   DispatchLayout outputLayout_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
+  uint32_t dispatchEpoch_ = 0;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   low_latency::CommContext commContext_{};
