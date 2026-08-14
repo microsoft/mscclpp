@@ -64,6 +64,22 @@ function run_mscclpp_test()
     --baseline-file ${PERF_BASELINE}
 }
 
+function run_mscclpp_default_algos()
+{
+  echo "=================Run mscclpp default algos on 2 nodes========================="
+  mpirun ${MPI_ARGS} -np 16 \
+    ${MSCCLPP_ENV} \
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+
+  mpirun ${MPI_ARGS} -np 16 \
+    ${MSCCLPP_ENV} \
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+
+  mpirun ${MPI_ARGS} -np 16 \
+    ${MSCCLPP_ENV} \
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+}
+
 function run_mp_ut()
 {
   echo "============Run multi-process unit tests on 2 nodes (np=2, npernode=1)========================="
