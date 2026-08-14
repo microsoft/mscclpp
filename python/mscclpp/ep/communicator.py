@@ -61,9 +61,9 @@ class MoECommunicator:
             raise TypeError("MoECommunicatorConfig.mode must be a MoEMode")
 
         _validate_common_config(config)
-        self.mode = config.mode
-        self.output_layout = _resolve_output_layout(config.output_layout, self.mode)
-        self._backend = create_backend(config, self.output_layout)
+        self._backend = create_backend(config)
+        self.mode = self._backend.mode
+        self.output_layout = self._backend.output_layout
         self._publish_backend_state()
 
     def _publish_backend_state(self) -> None:
@@ -158,11 +158,5 @@ class MoECommunicator:
 def _validate_common_config(config: MoECommunicatorConfig) -> None:
     if config.num_experts <= 0 or config.hidden_size <= 0 or config.topk <= 0 or config.max_tokens_per_rank <= 0:
         raise ValueError("num_experts, hidden_size, topk, and max_tokens_per_rank must be positive")
-
-
-def _resolve_output_layout(layout: Optional[DispatchLayout], mode: MoEMode) -> DispatchLayout:
-    if layout is None:
-        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LATENCY else DispatchLayout.TOKEN_MAJOR
-    if not isinstance(layout, DispatchLayout):
+    if config.output_layout is not None and not isinstance(config.output_layout, DispatchLayout):
         raise TypeError("MoECommunicatorConfig.output_layout must be a DispatchLayout")
-    return layout

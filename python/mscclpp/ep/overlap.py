@@ -47,11 +47,13 @@ class OverlapBackend(Backend):
     def __init__(
         self,
         config: MoECommunicatorConfig,
-        output_layout: DispatchLayout,
     ) -> None:
         comm = config.comm
         if comm is None:
             raise ValueError("mode=OVERLAP requires an mscclpp.CommGroup via comm=")
+        output_layout = config.output_layout
+        if output_layout is None:
+            output_layout = DispatchLayout.TOKEN_MAJOR
         max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
         runtime = Runtime(
             comm,

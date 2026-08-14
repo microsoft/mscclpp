@@ -9,7 +9,7 @@ from typing import Optional
 
 import torch
 
-from mscclpp.ep._cpp import DispatchLayout, MoEMode
+from mscclpp.ep._cpp import MoEMode
 from mscclpp.ep.runtime import Runtime
 from mscclpp.ep.types import DispatchHandle, DispatchOutput, MoECommunicatorConfig, QuantConfig
 
@@ -61,14 +61,14 @@ class Backend(ABC):
         raise NotImplementedError
 
 
-def create_backend(config: MoECommunicatorConfig, output_layout: DispatchLayout) -> Backend:
+def create_backend(config: MoECommunicatorConfig) -> Backend:
     """Construct the backend selected by ``config.mode``."""
     if config.mode == MoEMode.LATENCY:
         from mscclpp.ep.latency import LatencyBackend
 
-        return LatencyBackend(config, output_layout)
+        return LatencyBackend(config)
     if config.mode == MoEMode.OVERLAP:
         from mscclpp.ep.overlap import OverlapBackend
 
-        return OverlapBackend(config, output_layout)
+        return OverlapBackend(config)
     raise ValueError(f"unsupported MoE mode: {config.mode}")

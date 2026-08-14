@@ -122,10 +122,13 @@ def _fp8_e4m3_tensor_from_pointer(
 class LatencyBackend(Backend):
     """Latency-mode backend."""
 
-    def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
+    def __init__(self, config: MoECommunicatorConfig) -> None:
         comm = config.comm
         if comm is None:
             raise ValueError("mode=LATENCY requires an mscclpp.CommGroup via comm=")
+        output_layout = config.output_layout
+        if output_layout is None:
+            output_layout = DispatchLayout.EXPERT_MAJOR
         runtime = Runtime(
             comm,
             MoEMode.LATENCY,

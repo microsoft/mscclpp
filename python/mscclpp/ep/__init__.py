@@ -9,7 +9,7 @@ latency-optimized algorithms; `mode=MoEMode.OVERLAP` selects bounded-resource
 token-major algorithms.
 """
 
-from mscclpp.ep.communicator import (  # noqa: F401
+from mscclpp.ep.communicator import (
     BlockOverlapConfig,
     CommOverlapConfig,
     CombineMode,
