@@ -9,6 +9,8 @@ from typing import Any, Optional
 import torch
 
 from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from .backend import Backend
+from .runtime import Runtime
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -117,17 +119,23 @@ def _fp8_e4m3_tensor_from_pointer(
     return buffer_view, tensor
 
 
-class _Latency:
-    """Implement latency-mode operations for the unified backend."""
+class LatencyBackend(Backend):
+    """Latency-mode backend."""
 
     def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
-        if config.mode != MoEMode.LATENCY:
-            super().__init__(config, output_layout)
-            return
-
         comm = config.comm
         if comm is None:
             raise ValueError("mode=LATENCY requires an mscclpp.CommGroup via comm=")
+        runtime = Runtime(
+            comm,
+            MoEMode.LATENCY,
+            max_tokens_per_rank=config.max_tokens_per_rank,
+            hidden=config.hidden_size,
+            num_experts=config.num_experts,
+            num_topk=config.topk,
+            output_layout=output_layout,
+        )
+        super().__init__(runtime)
 
         self.comm = comm
         self.rank = comm.my_rank
@@ -279,7 +287,7 @@ class _Latency:
         active_capacity = self._resolve_runtime_max_tokens_per_rank(runtime_max_tokens_per_rank)
         if output_buffer is None:
             output_buffer = self.dispatch_output_buffer
-        _Latency._validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer, active_capacity)
+        self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer, active_capacity)
 
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
@@ -372,7 +380,7 @@ class _Latency:
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
-        _Latency._validate_combine_inputs(self, expert_output, handle, out)
+        self._validate_combine_inputs(expert_output, handle, out)
         context = handle._context
         if isinstance(context, _ExpertMajorCombineContext):
             topk_weights = context.weights

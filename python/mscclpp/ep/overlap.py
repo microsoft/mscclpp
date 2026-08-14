@@ -19,6 +19,8 @@ from typing import List, Optional
 import torch
 
 from ._cpp import DispatchLayout, MoEMode
+from .backend import Backend
+from .runtime import Runtime
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -36,8 +38,8 @@ from .utils import (
 )
 
 
-class _Overlap:
-    """Implement overlap-mode operations for the unified backend."""
+class OverlapBackend(Backend):
+    """Overlap-mode backend."""
 
     #: Default number of SMs reserved for comms kernels. Matches DeepEP.
     num_sms: int = 20
@@ -47,12 +49,17 @@ class _Overlap:
         config: MoECommunicatorConfig,
         output_layout: DispatchLayout,
     ) -> None:
-        if config.mode != MoEMode.OVERLAP:
-            raise ValueError("overlap implementation requires mode=OVERLAP")
-
         comm = config.comm
         if comm is None:
             raise ValueError("mode=OVERLAP requires an mscclpp.CommGroup via comm=")
+        max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
+        runtime = Runtime(
+            comm,
+            MoEMode.OVERLAP,
+            max_hidden_bytes=max_hidden_bytes,
+            num_sms=config.num_sms,
+        )
+        super().__init__(runtime)
 
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
@@ -293,7 +300,7 @@ class _Overlap:
         quant: Optional[QuantConfig],
         previous_handle: Optional[DispatchHandle],
     ) -> tuple[DispatchOutput, DispatchHandle]:
-        _Overlap._validate_dispatch_inputs(self, input, topk_ids, weights, quant)
+        self._validate_dispatch_inputs(input, topk_ids, weights, quant)
         implicit_weights = weights is None
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
@@ -447,7 +454,7 @@ class _Overlap:
         handle: DispatchHandle,
         out: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        _Overlap._validate_combine_inputs(self, expert_output, handle)
+        self._validate_combine_inputs(expert_output, handle)
         context = handle._context
         combined_x, _combined_w = self._combine_token_major(
             expert_output,

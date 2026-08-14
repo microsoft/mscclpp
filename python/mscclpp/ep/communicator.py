@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import torch
 
 from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
-from .backend import Backend
+from .backend import create_backend
 from .types import (
     BlockOverlapConfig,
     CommOverlapConfig,
@@ -63,7 +63,7 @@ class MoECommunicator:
         _validate_common_config(config)
         self.mode = config.mode
         self.output_layout = _resolve_output_layout(config.output_layout, self.mode)
-        self._backend = Backend(config, self.output_layout)
+        self._backend = create_backend(config, self.output_layout)
         self._publish_backend_state()
 
     def _publish_backend_state(self) -> None:
