@@ -169,12 +169,6 @@ def tensor_from_pointer(
     return buffer_view, tensor
 
 
-def bf16_view(ptr: int, num_tokens: int, hidden: int, owner: Any) -> torch.Tensor:
-    """View a raw device pointer as a ``[num_tokens, hidden]`` bfloat16 tensor."""
-    _, tensor = tensor_from_pointer(ptr, (num_tokens, hidden), torch.bfloat16, torch.device("cuda"), owner)
-    return tensor
-
-
 def requires_dequantization(tensor: torch.Tensor) -> bool:
     fp8_dtype = getattr(torch, "float8_e4m3fn", None)
     return fp8_dtype is not None and tensor.dtype == fp8_dtype

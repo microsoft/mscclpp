@@ -31,10 +31,10 @@ from mscclpp.ep.types import (
     _TokenMajorOverlapCombineContext,
 )
 from mscclpp.ep.utils import (
-    bf16_view as _bf16_view,
     current_stream_ptr as _stream_ptr,
     ptr as _ptr,
     resolve_expert_placement,
+    tensor_from_pointer,
 )
 
 
@@ -240,7 +240,14 @@ class OverlapBackend(Backend):
         )
         if pool_ptr == 0:
             raise RuntimeError("token-major overlap receive-pool capacity exceeded")
-        return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
+        _, recv_x = tensor_from_pointer(
+            pool_ptr,
+            (num_recv_tokens, hidden),
+            torch.bfloat16,
+            self.device,
+            self,
+        )
+        return recv_x
 
     def _combine_token_major(
         self,
