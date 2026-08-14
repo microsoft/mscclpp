@@ -25,38 +25,13 @@ from mscclpp.ep.utils import (
     DevicePointerArray,
     bf16_tensor_from_pointer,
     cuda_stream_ptr,
+    dispatch_scale_block_size,
+    dispatch_scale_dtype,
     fp8_e4m3_tensor_from_pointer,
     resolve_expert_placement,
+    resolve_dispatch_data_type,
     tensor_from_pointer,
 )
-
-
-def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
-    if quant is None:
-        return DispatchDataType.BF16
-
-    quant_format = quant.format
-    if quant_format is not None and not isinstance(quant_format, DispatchDataType):
-        raise TypeError("quant.format must be a DispatchDataType")
-    if quant_format is None:
-        raise ValueError("quant.format is required")
-    if quant_format != DispatchDataType.FP8_E4M3:
-        raise ValueError("unsupported latency dispatch quantization format")
-    if quant.block_scales is not None:
-        raise ValueError("communicator quant config must not contain precomputed scales")
-    return quant_format
-
-
-def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
-    if data_type == DispatchDataType.FP8_E4M3:
-        return 128
-    return 0
-
-
-def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
-    if data_type == DispatchDataType.FP8_E4M3:
-        return torch.float32
-    raise ValueError("BF16 dispatch does not have block scales")
 
 
 class LatencyBackend(Backend):
@@ -131,7 +106,7 @@ class LatencyBackend(Backend):
             local_expert_start=config.local_expert_start,
         )
 
-        self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
+        self.dispatch_data_type = resolve_dispatch_data_type(config.quant)
         if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
 
@@ -382,12 +357,12 @@ class LatencyBackend(Backend):
                     device=device,
                 )
                 self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
-                scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
+                scale_block_size = dispatch_scale_block_size(self.dispatch_data_type)
                 if scale_block_size:
                     num_scales = self.hidden_size // scale_block_size
                     scale_storage = torch.empty(
                         (self.num_local_experts, num_scales, slots_per_expert),
-                        dtype=_dispatch_scale_dtype(self.dispatch_data_type),
+                        dtype=dispatch_scale_dtype(self.dispatch_data_type),
                         device=device,
                     )
                     self._dispatch_scales = scale_storage.transpose(1, 2)

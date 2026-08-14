@@ -10,6 +10,40 @@ from typing import Any, List, Optional, Tuple, Union
 import numpy as np
 import torch
 
+from mscclpp.ep._cpp import DispatchDataType
+from mscclpp.ep.types import QuantConfig
+
+
+def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
+    """Resolve dispatch storage type from optional quantization metadata."""
+    if quant is None:
+        return DispatchDataType.BF16
+
+    quant_format = quant.format
+    if quant_format is not None and not isinstance(quant_format, DispatchDataType):
+        raise TypeError("quant.format must be a DispatchDataType")
+    if quant_format is None:
+        raise ValueError("quant.format is required")
+    if quant_format != DispatchDataType.FP8_E4M3:
+        raise ValueError("unsupported dispatch quantization format")
+    if quant.block_scales is not None:
+        raise ValueError("communicator quant config must not contain precomputed scales")
+    return quant_format
+
+
+def dispatch_scale_block_size(data_type: DispatchDataType) -> int:
+    """Return the hidden-element count represented by one dispatch scale."""
+    if data_type == DispatchDataType.FP8_E4M3:
+        return 128
+    return 0
+
+
+def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the scale dtype for a quantized dispatch format."""
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float32
+    raise ValueError("BF16 dispatch does not have block scales")
+
 
 def send_bytes(comm: Any, payload: bytes, peer: int, tag: int) -> None:
     comm.send(np.frombuffer(payload, dtype=np.uint8), peer, tag)
