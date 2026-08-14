@@ -643,7 +643,8 @@ def main():
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
     simulated_gemm_x = simulated_gemm_output(dispatch_out)
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        rank_major_expert_output = moe_comm.get_combine_input_buffer()
+        rank_major_expert_output = dispatch_out.combine_input_buffer
+        assert rank_major_expert_output is not None
         rank_major_expert_output.copy_(simulated_gemm_x)
         simulated_gemm_x = rank_major_expert_output
     reference_x = x
@@ -718,7 +719,8 @@ def main():
             dispatch_end.record()
             graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
             if output_layout == ep.DispatchLayout.RANK_MAJOR and expert_output is None:
-                rank_major_expert_output = moe_comm.get_combine_input_buffer()
+                rank_major_expert_output = graph_dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(graph_expert_output)
                 graph_expert_output = rank_major_expert_output
             graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
@@ -830,7 +832,8 @@ def main():
             warmup_dout = _dispatch()
             warmup_expert_output = simulated_gemm_output(warmup_dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_combine_input_buffer()
+                rank_major_expert_output = warmup_dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(warmup_expert_output)
                 warmup_expert_output = rank_major_expert_output
             _combine(warmup_expert_output, warmup_dout[1], bench_out)
@@ -846,7 +849,8 @@ def main():
             dispatch_end_events[i].record()
             bench_expert_output = simulated_gemm_output(dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_combine_input_buffer()
+                rank_major_expert_output = dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(bench_expert_output)
                 bench_expert_output = rank_major_expert_output
             _combine(bench_expert_output, dout[1], bench_out)
@@ -862,7 +866,8 @@ def main():
             dout = _dispatch()
             bench_expert_output = simulated_gemm_output(dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_combine_input_buffer()
+                rank_major_expert_output = dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(bench_expert_output)
                 bench_expert_output = rank_major_expert_output
             combine_start_events[i].record()

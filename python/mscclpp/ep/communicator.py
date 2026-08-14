@@ -137,13 +137,6 @@ class MoECommunicator:
             raise RuntimeError("dispatch output buffer is only available in latency mode")
         return buffer
 
-    def get_combine_input_buffer(self) -> torch.Tensor:
-        """Return the runtime-owned rank-major MLP output consumed by combine."""
-        buffer = getattr(self._backend, "combine_input_buffer", None)
-        if buffer is None:
-            raise RuntimeError("combine input buffer is only available for RANK_MAJOR latency mode")
-        return buffer
-
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
 

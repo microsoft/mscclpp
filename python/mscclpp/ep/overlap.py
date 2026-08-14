@@ -47,6 +47,9 @@ class _Overlap:
         config: MoECommunicatorConfig,
         output_layout: DispatchLayout,
     ) -> None:
+        if config.mode != MoEMode.OVERLAP:
+            raise ValueError("overlap implementation requires mode=OVERLAP")
+
         comm = config.comm
         if comm is None:
             raise ValueError("mode=OVERLAP requires an mscclpp.CommGroup via comm=")

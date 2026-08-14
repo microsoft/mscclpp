@@ -31,7 +31,6 @@ class Backend(_Latency, _Overlap):
                 num_topk=config.topk,
                 output_layout=output_layout,
             )
-            _Latency.__init__(self, config, output_layout)
         else:
             max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
             self.runtime = Runtime(
@@ -40,7 +39,7 @@ class Backend(_Latency, _Overlap):
                 max_hidden_bytes=max_hidden_bytes,
                 num_sms=config.num_sms,
             )
-            _Overlap.__init__(self, config, output_layout)
+        super().__init__(config, output_layout)
 
     def is_available(self) -> bool:
         """Return whether the selected operation family is available."""

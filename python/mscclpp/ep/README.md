@@ -576,7 +576,9 @@ The MoE runner must write its rank-major output into the runtime-owned
 registered buffer:
 
 ```python
-expert_output = communicator.get_combine_input_buffer()
+dispatch_out, handle = communicator.dispatch(x, topk_ids, topk_weights)
+expert_output = dispatch_out.combine_input_buffer
+assert expert_output is not None
 moe(..., output=expert_output)
 combined = communicator.combine(expert_output, handle)
 ```

@@ -101,6 +101,7 @@ class DispatchOutput:
     layout: DispatchLayoutInfo
     topk_ids: Optional[torch.Tensor] = None
     weights: Optional[torch.Tensor] = None
+    combine_input_buffer: Optional[torch.Tensor] = None
 
 
 # Private combine-side context.

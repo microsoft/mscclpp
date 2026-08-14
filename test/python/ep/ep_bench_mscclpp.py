@@ -79,9 +79,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         if rank_major
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
-    expert_output = moe_comm.get_combine_input_buffer() if rank_major else None
-    if expert_output is not None:
-        expert_output.normal_()
+    expert_output_initialized = False
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _dispatch():
@@ -89,9 +87,15 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
     def _combine(dispatch_out, handle):
+        nonlocal expert_output_initialized
         # Rank-major MoE writes directly into the runtime-owned registered output
         # buffer. Pre-fill it once to benchmark communication without timing a copy.
-        combine_input = expert_output if expert_output is not None else simulated_gemm_output(dispatch_out)
+        combine_input = dispatch_out.combine_input_buffer
+        if combine_input is None:
+            combine_input = simulated_gemm_output(dispatch_out)
+        elif not expert_output_initialized:
+            combine_input.normal_()
+            expert_output_initialized = True
         moe_comm.combine(combine_input, handle, out=out)
 
     # Optional one-time correctness check (mirrors test_low_latency_multirank).
@@ -99,11 +103,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
         validation_input = simulated_gemm_output(v_dispatch_out)
-        if expert_output is not None:
+        if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
-            expert_output.copy_(validation_input)
-            validation_input = expert_output
+            v_dispatch_out.combine_input_buffer.copy_(validation_input)
+            validation_input = v_dispatch_out.combine_input_buffer
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
         if dispatch_quant is None:
@@ -137,7 +141,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "moe": moe_comm,
         "inputs": input_samples,
         "obuf": output_buffer,
-        "expert_output": expert_output,
         "out": out,
         "grp": ep_group,
     }

@@ -121,6 +121,10 @@ class _Latency:
     """Implement latency-mode operations for the unified backend."""
 
     def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
+        if config.mode != MoEMode.LATENCY:
+            super().__init__(config, output_layout)
+            return
+
         comm = config.comm
         if comm is None:
             raise ValueError("mode=LATENCY requires an mscclpp.CommGroup via comm=")
@@ -326,6 +330,9 @@ class _Latency:
             layout=output_info.layout,
             topk_ids=recv_topk_ids,
             weights=recv_weights,
+            combine_input_buffer=(
+                self.combine_input_buffer if self.output_layout == DispatchLayout.RANK_MAJOR else None
+            ),
         )
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             assert layout_range is not None
