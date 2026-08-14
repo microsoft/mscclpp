@@ -285,7 +285,7 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
   }
 }
 
-MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks,
+MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks, uint32_t epoch,
                                                        WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
@@ -295,26 +295,24 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
       transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
     }
   }
-  // Every valid combine follows a dispatch that advances this epoch.
-  const uint32_t combineEpoch = *workspaceView.dispatchEpoch_;
   if (blockIdx.x == 0) {
     __syncthreads();
     if (threadIdx.x == 0) {
-      mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineReadyEpoch_, combineEpoch,
+      mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineReadyEpoch_, epoch,
                                                            mscclpp::memoryOrderRelaxed);
     }
   } else {
     if (threadIdx.x == 0) {
       while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspaceView.combineReadyEpoch_,
-                                                                 mscclpp::memoryOrderRelaxed) != combineEpoch) {
+                                                                 mscclpp::memoryOrderRelaxed) != epoch) {
       }
     }
     __syncthreads();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& transport, int nRanks,
-                                                        uint32_t combineEpoch, WorkspaceView& workspaceView) {
+MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& transport, int nRanks, uint32_t epoch,
+                                                        WorkspaceView& workspaceView) {
   if (blockIdx.x != 0) return;
   const int threadId = static_cast<int>(threadIdx.x);
   if (threadId < nRanks) {
@@ -322,7 +320,7 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
       transport.baseMemoryChannels_[threadId].relaxedSignal();
       transport.baseMemoryChannels_[threadId].relaxedWait(-1);
     }
-    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadId, combineEpoch,
+    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadId, epoch,
                                                          mscclpp::memoryOrderRelaxed);
   }
 }
@@ -366,7 +364,7 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
                                                           const int64_t* __restrict__ topkIndices, int nTokens,
                                                           int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
-                                                          uint32_t combineEpoch, const TransportView& transport,
+                                                          uint32_t epoch, const TransportView& transport,
                                                           WorkspaceView& workspaceView, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major combine requires SM90 or newer");
@@ -414,7 +412,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
       while (__any_sync(0xffffffff, pending)) {
         const bool ready = pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
                                           workspaceView.combineRankReadyEpochs_ + destinationRank,
-                                          mscclpp::memoryOrderRelaxed) == combineEpoch;
+                                          mscclpp::memoryOrderRelaxed) == epoch;
         if (pending && ready) {
           const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
               transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));
@@ -607,16 +605,16 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
     static_assert(DispatchType == DispatchDataType::BF16);
     if (nTopk <= RankMajorTmaMaxNTopk) {
-      const uint32_t combineEpoch = *workspaceView.dispatchEpoch_;
+      const uint32_t epoch = workload.epoch_;
       if (blockIdx.x == 0) {
-        publishRankMajorCombineReady(transport, nRanks, combineEpoch, workspaceView);
+        publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
       } else {
         recvRankMajorRemotePartialsTma<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
-                                               maxTokensPerRank, combineEpoch, transport, workspaceView, sharedMemory);
+                                               maxTokensPerRank, epoch, transport, workspaceView, sharedMemory);
       }
       return;
     }
-    synchronizeRankMajorCombine(transport, nRanks, workspaceView);
+    synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
     recvRankMajorRemotePartials<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                         maxTokensPerRank, transport, workspaceView);
     return;

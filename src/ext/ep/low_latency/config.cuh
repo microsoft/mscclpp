@@ -106,7 +106,6 @@ static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
-  uint32_t* dispatchEpoch_;
   int* dispatchRankPayloadSlots_;
   int* dispatchRankPayloadCompletions_;
   mscclpp::DeviceSemaphore* dispatchLocalPayloadReady_;
@@ -122,7 +121,6 @@ struct WorkspaceView {
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
-    dispatchEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
     dispatchRankPayloadCompletions_ = cursor;
@@ -145,8 +143,7 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return sizeof(uint32_t) +                                // dispatchEpoch_
-           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
+    return static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
            static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
