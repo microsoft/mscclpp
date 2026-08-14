@@ -23,11 +23,9 @@ from mscclpp.ep.types import (
 )
 from mscclpp.ep.utils import (
     DevicePointerArray,
-    bf16_tensor_from_pointer,
     cuda_stream_ptr,
     dispatch_scale_block_size,
     dispatch_scale_dtype,
-    fp8_e4m3_tensor_from_pointer,
     resolve_expert_placement,
     resolve_dispatch_data_type,
     tensor_from_pointer,
@@ -135,16 +133,18 @@ class LatencyBackend(Backend):
             dispatch_shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
 
         if self.dispatch_data_type == DispatchDataType.BF16:
-            self._dispatch_output_owner, self.dispatch_output_buffer = bf16_tensor_from_pointer(
+            self._dispatch_output_owner, self.dispatch_output_buffer = tensor_from_pointer(
                 self.runtime.cpp_runtime.dispatch_output_buffer_ptr(),
                 dispatch_shape,
+                torch.bfloat16,
                 self.device,
                 self.runtime,
             )
         else:
-            self._dispatch_output_owner, self.dispatch_output_buffer = fp8_e4m3_tensor_from_pointer(
+            self._dispatch_output_owner, self.dispatch_output_buffer = tensor_from_pointer(
                 self.runtime.cpp_runtime.dispatch_output_buffer_ptr(),
                 dispatch_shape,
+                torch.float8_e4m3fn,
                 self.device,
                 self.runtime,
             )
@@ -157,7 +157,7 @@ class LatencyBackend(Backend):
             ) = tensor_from_pointer(
                 self.runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
-                "<i4",
+                torch.int32,
                 self.device,
                 self.runtime,
             )
@@ -167,16 +167,17 @@ class LatencyBackend(Backend):
             ) = tensor_from_pointer(
                 self.runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
-                "<f4",
+                torch.float32,
                 self.device,
                 self.runtime,
             )
             (
                 self._combine_input_owner,
                 self.combine_input_buffer,
-            ) = bf16_tensor_from_pointer(
+            ) = tensor_from_pointer(
                 self.runtime.cpp_runtime.combine_input_buffer_ptr(),
                 dispatch_shape,
+                torch.bfloat16,
                 self.device,
                 self.runtime,
             )

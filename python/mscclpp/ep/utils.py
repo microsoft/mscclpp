@@ -144,41 +144,26 @@ class DevicePointerArray:
 def tensor_from_pointer(
     pointer: int,
     shape: Tuple[int, ...],
-    typestr: str,
+    dtype: torch.dtype,
     device: torch.device,
     owner: Any,
 ) -> Tuple[DevicePointerArray, torch.Tensor]:
     """Create a zero-copy tensor view over runtime-owned CUDA memory."""
+    storage_types = {
+        torch.bfloat16: "<u2",
+        torch.float8_e4m3fn: "|u1",
+        torch.int32: "<i4",
+        torch.float32: "<f4",
+    }
+    try:
+        typestr = storage_types[dtype]
+    except KeyError as exc:
+        raise ValueError(f"unsupported CUDA pointer view dtype: {dtype}") from exc
+
     buffer_view = DevicePointerArray(pointer, shape, typestr, owner)
     tensor = torch.as_tensor(buffer_view, device=device)
-    tensor._mscclpp_owner = owner
-    tensor._mscclpp_buffer_view = buffer_view
-    return buffer_view, tensor
-
-
-def bf16_tensor_from_pointer(
-    pointer: int,
-    shape: Tuple[int, ...],
-    device: torch.device,
-    owner: Any,
-) -> Tuple[DevicePointerArray, torch.Tensor]:
-    """Create a zero-copy BF16 tensor view over runtime-owned CUDA memory."""
-    buffer_view, tensor = tensor_from_pointer(pointer, shape, "<u2", device, owner)
-    tensor = tensor.view(torch.bfloat16)
-    tensor._mscclpp_owner = owner
-    tensor._mscclpp_buffer_view = buffer_view
-    return buffer_view, tensor
-
-
-def fp8_e4m3_tensor_from_pointer(
-    pointer: int,
-    shape: Tuple[int, ...],
-    device: torch.device,
-    owner: Any,
-) -> Tuple[DevicePointerArray, torch.Tensor]:
-    """Create a zero-copy FP8 E4M3 tensor view over runtime-owned CUDA memory."""
-    buffer_view, tensor = tensor_from_pointer(pointer, shape, "|u1", device, owner)
-    tensor = tensor.view(torch.float8_e4m3fn)
+    if tensor.dtype != dtype:
+        tensor = tensor.view(dtype)
     tensor._mscclpp_owner = owner
     tensor._mscclpp_buffer_view = buffer_view
     return buffer_view, tensor
@@ -186,7 +171,7 @@ def fp8_e4m3_tensor_from_pointer(
 
 def bf16_view(ptr: int, num_tokens: int, hidden: int, owner: Any) -> torch.Tensor:
     """View a raw device pointer as a ``[num_tokens, hidden]`` bfloat16 tensor."""
-    _, tensor = bf16_tensor_from_pointer(ptr, (num_tokens, hidden), torch.device("cuda"), owner)
+    _, tensor = tensor_from_pointer(ptr, (num_tokens, hidden), torch.bfloat16, torch.device("cuda"), owner)
     return tensor
 
 
