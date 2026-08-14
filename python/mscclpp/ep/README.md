@@ -553,7 +553,6 @@ only once.
 Latency mode defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 
 ```python
-dispatch_buffer = communicator.get_dispatch_output_buffer()
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 ```
 
@@ -561,7 +560,6 @@ dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 `MoeAlltoAll`:
 
 ```python
-dispatch_buffer = communicator.get_dispatch_output_buffer()
 dispatch_out.tokens     # [world_size * max_tokens_per_rank, H]
 dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]

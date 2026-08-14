@@ -553,16 +553,10 @@ def main():
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR
         else (num_ranks * num_tokens, hidden)
     )
-    runtime_dispatch_output_buffer = moe_comm.get_dispatch_output_buffer()
-    assert tuple(runtime_dispatch_output_buffer.shape) == dispatch_output_shape
-    assert runtime_dispatch_output_buffer.dtype == dispatch_dtype
-    dispatch_output_buffer = None if output_layout == ep.DispatchLayout.RANK_MAJOR else runtime_dispatch_output_buffer
-    dispatch_out, handle = moe_comm.dispatch(
-        x,
-        topk_idx,
-        topk_weights,
-        output_buffer=dispatch_output_buffer,
-    )
+    dispatch_output_buffer = None
+    dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
+    assert tuple(dispatch_out.tokens.shape) == dispatch_output_shape
+    assert dispatch_out.tokens.dtype == dispatch_dtype
     packed_recv_x = dispatch_out.tokens
     packed_recv_count = (
         dispatch_out.layout.num_tokens_per_expert

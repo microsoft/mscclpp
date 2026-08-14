@@ -126,17 +126,6 @@ class MoECommunicator:
     ) -> torch.Tensor:
         return self._backend.combine(expert_output, handle, out=out, stream=stream)
 
-    def get_dispatch_output_buffer(self) -> torch.Tensor:
-        """Return the runtime-owned fixed-buffer dispatch output.
-
-        This aliases runtime memory that every dispatch reuses; it is not a fresh
-        allocation per call. Copy out anything that must outlive the next call.
-        """
-        buffer = getattr(self._backend, "dispatch_output_buffer", None)
-        if buffer is None:
-            raise RuntimeError("dispatch output buffer is only available in latency mode")
-        return buffer
-
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
 
