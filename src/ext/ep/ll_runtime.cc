@@ -161,7 +161,9 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
-  const low_latency::Workload workload{.numTokens_ = numTokens,
+  ++epoch_;
+  const low_latency::Workload workload{.epoch_ = epoch_,
+                                       .numTokens_ = numTokens,
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
@@ -196,7 +198,8 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
     EP_HOST_ASSERT(input == allocationLayout.rankMajorExpertOutputBuffer_);
   }
 
-  const low_latency::Workload workload{.numTokens_ = numTokens,
+  const low_latency::Workload workload{.epoch_ = epoch_,
+                                       .numTokens_ = numTokens,
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
