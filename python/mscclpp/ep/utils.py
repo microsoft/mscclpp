@@ -107,10 +107,53 @@ class DevicePointerArray:
         }
 
 
+def tensor_from_pointer(
+    pointer: int,
+    shape: Tuple[int, ...],
+    typestr: str,
+    device: torch.device,
+    owner: Any,
+) -> Tuple[DevicePointerArray, torch.Tensor]:
+    """Create a zero-copy tensor view over runtime-owned CUDA memory."""
+    buffer_view = DevicePointerArray(pointer, shape, typestr, owner)
+    tensor = torch.as_tensor(buffer_view, device=device)
+    tensor._mscclpp_owner = owner
+    tensor._mscclpp_buffer_view = buffer_view
+    return buffer_view, tensor
+
+
+def bf16_tensor_from_pointer(
+    pointer: int,
+    shape: Tuple[int, ...],
+    device: torch.device,
+    owner: Any,
+) -> Tuple[DevicePointerArray, torch.Tensor]:
+    """Create a zero-copy BF16 tensor view over runtime-owned CUDA memory."""
+    buffer_view, tensor = tensor_from_pointer(pointer, shape, "<u2", device, owner)
+    tensor = tensor.view(torch.bfloat16)
+    tensor._mscclpp_owner = owner
+    tensor._mscclpp_buffer_view = buffer_view
+    return buffer_view, tensor
+
+
+def fp8_e4m3_tensor_from_pointer(
+    pointer: int,
+    shape: Tuple[int, ...],
+    device: torch.device,
+    owner: Any,
+) -> Tuple[DevicePointerArray, torch.Tensor]:
+    """Create a zero-copy FP8 E4M3 tensor view over runtime-owned CUDA memory."""
+    buffer_view, tensor = tensor_from_pointer(pointer, shape, "|u1", device, owner)
+    tensor = tensor.view(torch.float8_e4m3fn)
+    tensor._mscclpp_owner = owner
+    tensor._mscclpp_buffer_view = buffer_view
+    return buffer_view, tensor
+
+
 def bf16_view(ptr: int, num_tokens: int, hidden: int, owner: Any) -> torch.Tensor:
     """View a raw device pointer as a ``[num_tokens, hidden]`` bfloat16 tensor."""
-    u16 = torch.as_tensor(DevicePointerArray(ptr, (num_tokens, hidden), "<u2", owner), device="cuda")
-    return u16.view(torch.bfloat16)
+    _, tensor = bf16_tensor_from_pointer(ptr, (num_tokens, hidden), torch.device("cuda"), owner)
+    return tensor
 
 
 def requires_dequantization(tensor: torch.Tensor) -> bool:

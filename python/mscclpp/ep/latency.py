@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 
@@ -21,7 +21,14 @@ from mscclpp.ep.types import (
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
 )
-from mscclpp.ep.utils import cuda_stream_ptr, resolve_expert_placement
+from mscclpp.ep.utils import (
+    DevicePointerArray,
+    bf16_tensor_from_pointer,
+    cuda_stream_ptr,
+    fp8_e4m3_tensor_from_pointer,
+    resolve_expert_placement,
+    tensor_from_pointer,
+)
 
 
 def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
@@ -50,73 +57,6 @@ def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float32
     raise ValueError("BF16 dispatch does not have block scales")
-
-
-class _CudaBufferView:
-    """Zero-copy view over a runtime-owned CUDA buffer.
-
-    The pointer belongs to the runtime's registered symmetric buffer, not to
-    PyTorch. ``owner`` is retained only to keep the runtime alive for as long as
-    the view exists.
-
-    Every dispatch/combine writes into the same underlying allocation, so
-    tensors built from this view alias runtime state and are only valid until
-    the next call. Callers that need results to survive across iterations must
-    copy them out (e.g. ``tensor.clone()``).
-    """
-
-    def __init__(self, pointer: int, shape: tuple[int, ...], typestr: str, owner: Any) -> None:
-        self.pointer = pointer
-        self.shape = shape
-        self.typestr = typestr
-        self.owner = owner
-
-    @property
-    def __cuda_array_interface__(self):
-        return {
-            "shape": self.shape,
-            "strides": None,
-            "typestr": self.typestr,
-            "data": (self.pointer, False),
-            "version": 3,
-        }
-
-
-def _bf16_tensor_from_pointer(
-    pointer: int,
-    shape: tuple[int, ...],
-    device: torch.device,
-    owner: Any,
-) -> tuple[_CudaBufferView, torch.Tensor]:
-    buffer_view = _CudaBufferView(pointer, shape, "<u2", owner)
-    tensor = torch.as_tensor(buffer_view, device=device).view(torch.bfloat16)
-    tensor._mscclpp_owner = owner
-    return buffer_view, tensor
-
-
-def _tensor_from_pointer(
-    pointer: int,
-    shape: tuple[int, ...],
-    typestr: str,
-    device: torch.device,
-    owner: Any,
-) -> tuple[_CudaBufferView, torch.Tensor]:
-    buffer_view = _CudaBufferView(pointer, shape, typestr, owner)
-    tensor = torch.as_tensor(buffer_view, device=device)
-    tensor._mscclpp_owner = owner
-    return buffer_view, tensor
-
-
-def _fp8_e4m3_tensor_from_pointer(
-    pointer: int,
-    shape: tuple[int, ...],
-    device: torch.device,
-    owner: Any,
-) -> tuple[_CudaBufferView, torch.Tensor]:
-    buffer_view, tensor = _tensor_from_pointer(pointer, shape, "|u1", device, owner)
-    tensor = tensor.view(torch.float8_e4m3fn)
-    tensor._mscclpp_owner = owner
-    return buffer_view, tensor
 
 
 class LatencyBackend(Backend):
@@ -203,10 +143,10 @@ class LatencyBackend(Backend):
         self._dispatch_count: Optional[torch.Tensor] = None
 
         self._is_internode = self.runtime.is_internode_available()
-        self._dispatch_output_owner: Optional[_CudaBufferView] = None
-        self._combine_input_owner: Optional[_CudaBufferView] = None
-        self._output_topk_ids_owner: Optional[_CudaBufferView] = None
-        self._output_topk_weights_owner: Optional[_CudaBufferView] = None
+        self._dispatch_output_owner: Optional[DevicePointerArray] = None
+        self._combine_input_owner: Optional[DevicePointerArray] = None
+        self._output_topk_ids_owner: Optional[DevicePointerArray] = None
+        self._output_topk_weights_owner: Optional[DevicePointerArray] = None
         self._output_topk_ids: Optional[torch.Tensor] = None
         self._output_topk_weights: Optional[torch.Tensor] = None
         self.combine_input_buffer: Optional[torch.Tensor] = None
@@ -220,14 +160,14 @@ class LatencyBackend(Backend):
             dispatch_shape = (self.world_size * self.max_tokens_per_rank, self.hidden_size)
 
         if self.dispatch_data_type == DispatchDataType.BF16:
-            self._dispatch_output_owner, self.dispatch_output_buffer = _bf16_tensor_from_pointer(
+            self._dispatch_output_owner, self.dispatch_output_buffer = bf16_tensor_from_pointer(
                 self.runtime.cpp_runtime.dispatch_output_buffer_ptr(),
                 dispatch_shape,
                 self.device,
                 self.runtime,
             )
         else:
-            self._dispatch_output_owner, self.dispatch_output_buffer = _fp8_e4m3_tensor_from_pointer(
+            self._dispatch_output_owner, self.dispatch_output_buffer = fp8_e4m3_tensor_from_pointer(
                 self.runtime.cpp_runtime.dispatch_output_buffer_ptr(),
                 dispatch_shape,
                 self.device,
@@ -239,7 +179,7 @@ class LatencyBackend(Backend):
             (
                 self._output_topk_ids_owner,
                 self._output_topk_ids,
-            ) = _tensor_from_pointer(
+            ) = tensor_from_pointer(
                 self.runtime.cpp_runtime.output_topk_ids_buffer_ptr(),
                 metadata_shape,
                 "<i4",
@@ -249,7 +189,7 @@ class LatencyBackend(Backend):
             (
                 self._output_topk_weights_owner,
                 self._output_topk_weights,
-            ) = _tensor_from_pointer(
+            ) = tensor_from_pointer(
                 self.runtime.cpp_runtime.output_topk_weights_buffer_ptr(),
                 metadata_shape,
                 "<f4",
@@ -259,7 +199,7 @@ class LatencyBackend(Backend):
             (
                 self._combine_input_owner,
                 self.combine_input_buffer,
-            ) = _bf16_tensor_from_pointer(
+            ) = bf16_tensor_from_pointer(
                 self.runtime.cpp_runtime.combine_input_buffer_ptr(),
                 dispatch_shape,
                 self.device,
