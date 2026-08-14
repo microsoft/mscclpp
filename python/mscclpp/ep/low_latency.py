@@ -303,7 +303,7 @@ class LowLatencyBackend:
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
         )
-        dispatch_epoch = self._runtime.cpp_runtime.ll_dispatch(
+        self._runtime.cpp_runtime.ll_dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
@@ -363,7 +363,6 @@ class LowLatencyBackend:
                     hidden_size=self.hidden_size,
                     src_info=src_info,
                     layout_range=layout_range,
-                    dispatch_epoch=dispatch_epoch,
                 ),
             )
         elif self.output_layout == DispatchLayout.RANK_MAJOR:
@@ -375,7 +374,6 @@ class LowLatencyBackend:
                     num_tokens=input.size(0),
                     hidden_size=self.hidden_size,
                     max_tokens_per_rank=active_capacity,
-                    dispatch_epoch=dispatch_epoch,
                 ),
             )
         else:
@@ -419,7 +417,6 @@ class LowLatencyBackend:
             0 if src_info is None else src_info.data_ptr(),
             0 if layout_range is None else layout_range.data_ptr(),
             out.data_ptr(),
-            context.dispatch_epoch,
             context.num_tokens,
             self.hidden_size,
             self.topk,

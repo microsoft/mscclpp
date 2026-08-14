@@ -813,10 +813,6 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                            workspace, dispatchEpoch, sharedMem);
     }
   }
-
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
-    *workspaceView.dispatchEpoch_ = dispatchEpoch;
-  }
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 

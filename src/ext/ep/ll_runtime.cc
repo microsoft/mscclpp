@@ -135,13 +135,13 @@ void MoELowLatencyRuntime::setup() {
   available_ = ipcDomainSize >= numRanks_;
 }
 
-uint32_t MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
-                                        const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                        int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-                                        int invalidTokenExpertId, DispatchLayout dispatchLayout,
-                                        low_latency::DispatchDataType dispatchDataType, int numBlocks,
-                                        cudaStream_t stream) {
+void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                                    float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
+                                    const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens,
+                                    int hidden, int numTopk, int maxTokensPerRank, int numExperts,
+                                    int invalidTokenExpertId, DispatchLayout dispatchLayout,
+                                    low_latency::DispatchDataType dispatchDataType, int numBlocks,
+                                    cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
@@ -161,8 +161,8 @@ uint32_t MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* o
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
-  const uint32_t dispatchEpoch = ++dispatchEpoch_;
-  const low_latency::Workload workload{.dispatchEpoch_ = dispatchEpoch,
+  ++dispatchEpoch_;
+  const low_latency::Workload workload{.dispatchEpoch_ = dispatchEpoch_,
                                        .numTokens_ = numTokens,
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
@@ -176,14 +176,13 @@ uint32_t MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* o
   low_latency::dispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, commContext_,
                         workspace_, numBlocks, stream);
-  return dispatchEpoch;
 }
 
 void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                   const int* srcInfo, const int64_t* layoutRange, uint32_t dispatchEpoch,
-                                   int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-                                   DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-                                   low_latency::CombineMode mode, int numBlocks, cudaStream_t stream) {
+                                   const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
+                                   int numTopk, int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
+                                   low_latency::DispatchDataType dispatchDataType, low_latency::CombineMode mode,
+                                   int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
@@ -199,7 +198,7 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
     EP_HOST_ASSERT(input == allocationLayout.rankMajorExpertOutputBuffer_);
   }
 
-  const low_latency::Workload workload{.dispatchEpoch_ = dispatchEpoch,
+  const low_latency::Workload workload{.dispatchEpoch_ = dispatchEpoch_,
                                        .numTokens_ = numTokens,
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
