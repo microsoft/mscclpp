@@ -8,9 +8,9 @@ from typing import Optional, Tuple
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
-from .backend import create_backend
-from .types import (
+from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep.backend import create_backend
+from mscclpp.ep.types import (
     BlockOverlapConfig,
     CommOverlapConfig,
     DispatchHandle,

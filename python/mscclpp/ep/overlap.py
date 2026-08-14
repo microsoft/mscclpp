@@ -18,10 +18,10 @@ from typing import List, Optional
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode
-from .backend import Backend
-from .runtime import Runtime
-from .types import (
+from mscclpp.ep._cpp import DispatchLayout, MoEMode
+from mscclpp.ep.backend import Backend
+from mscclpp.ep.runtime import Runtime
+from mscclpp.ep.types import (
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
@@ -30,7 +30,7 @@ from .types import (
     QuantConfig,
     _TokenMajorOverlapCombineContext,
 )
-from .utils import (
+from mscclpp.ep.utils import (
     bf16_view as _bf16_view,
     current_stream_ptr as _stream_ptr,
     ptr as _ptr,

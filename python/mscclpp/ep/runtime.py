@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._cpp import DispatchLayout, MoEMode, create_moe_runtime
+from mscclpp.ep._cpp import DispatchLayout, MoEMode, create_moe_runtime
 
 
 class Runtime:

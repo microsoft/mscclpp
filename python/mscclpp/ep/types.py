@@ -10,7 +10,7 @@ from typing import List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 
 # Quantization metadata.
 

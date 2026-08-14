@@ -8,10 +8,10 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
-from .backend import Backend
-from .runtime import Runtime
-from .types import (
+from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep.backend import Backend
+from mscclpp.ep.runtime import Runtime
+from mscclpp.ep.types import (
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
@@ -21,7 +21,7 @@ from .types import (
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
 )
-from .utils import cuda_stream_ptr, resolve_expert_placement
+from mscclpp.ep.utils import cuda_stream_ptr, resolve_expert_placement
 
 
 def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
