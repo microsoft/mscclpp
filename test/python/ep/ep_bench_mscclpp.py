@@ -58,7 +58,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
-        low_latency_combine_mode=combine_mode,
+        combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
         quant=dispatch_quant,
@@ -79,7 +79,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         if rank_major
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
-    expert_output = moe_comm.get_expert_output_buffer() if rank_major else None
+    expert_output = moe_comm.get_combine_input_buffer() if rank_major else None
     if expert_output is not None:
         expert_output.normal_()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")

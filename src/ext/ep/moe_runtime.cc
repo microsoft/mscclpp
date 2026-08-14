@@ -59,9 +59,9 @@ void* MoERuntime::dispatchOutputBuffer() const {
   return fixedBuffer_->dispatchOutputBuffer();
 }
 
-void* MoERuntime::expertOutputBuffer() const {
+void* MoERuntime::combineInputBuffer() const {
   requireMode(MoEMode::LATENCY);
-  return fixedBuffer_->expertOutputBuffer();
+  return fixedBuffer_->combineInputBuffer();
 }
 
 void MoERuntime::dispatchLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,

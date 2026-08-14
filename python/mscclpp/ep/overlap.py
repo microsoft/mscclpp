@@ -36,13 +36,13 @@ from .utils import (
 )
 
 
-class _OverlapMethods:
-    """Provide overlap-mode methods to the unified backend."""
+class _Overlap:
+    """Implement overlap-mode operations for the unified backend."""
 
     #: Default number of SMs reserved for comms kernels. Matches DeepEP.
     num_sms: int = 20
 
-    def _init_overlap(
+    def __init__(
         self,
         config: MoECommunicatorConfig,
         output_layout: DispatchLayout,
@@ -262,7 +262,7 @@ class _OverlapMethods:
         )
         return combined_x, combined_topk_weights
 
-    def _dispatch_overlap(
+    def dispatch(
         self,
         input: torch.Tensor,
         topk_ids: torch.Tensor,
@@ -279,10 +279,10 @@ class _OverlapMethods:
             raise ValueError("runtime_max_tokens_per_rank is only supported by latency rank-major dispatch")
         if stream is not None:
             with torch.cuda.stream(stream):
-                return self._dispatch_overlap_impl(input, topk_ids, weights, quant, previous_handle)
-        return self._dispatch_overlap_impl(input, topk_ids, weights, quant, previous_handle)
+                return self._dispatch_impl(input, topk_ids, weights, quant, previous_handle)
+        return self._dispatch_impl(input, topk_ids, weights, quant, previous_handle)
 
-    def _dispatch_overlap_impl(
+    def _dispatch_impl(
         self,
         input: torch.Tensor,
         topk_ids: torch.Tensor,
@@ -290,7 +290,7 @@ class _OverlapMethods:
         quant: Optional[QuantConfig],
         previous_handle: Optional[DispatchHandle],
     ) -> tuple[DispatchOutput, DispatchHandle]:
-        self._validate_overlap_dispatch_inputs(input, topk_ids, weights, quant)
+        _Overlap._validate_dispatch_inputs(self, input, topk_ids, weights, quant)
         implicit_weights = weights is None
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
@@ -425,7 +425,7 @@ class _OverlapMethods:
             and (implicit_weights or cache.get("weights_version") == weights._version)
         )
 
-    def _combine_overlap(
+    def combine(
         self,
         expert_output: torch.Tensor,
         handle: DispatchHandle,
@@ -435,16 +435,16 @@ class _OverlapMethods:
     ) -> torch.Tensor:
         if stream is not None:
             with torch.cuda.stream(stream):
-                return self._combine_overlap_impl(expert_output, handle, out)
-        return self._combine_overlap_impl(expert_output, handle, out)
+                return self._combine_impl(expert_output, handle, out)
+        return self._combine_impl(expert_output, handle, out)
 
-    def _combine_overlap_impl(
+    def _combine_impl(
         self,
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         out: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        self._validate_overlap_combine_inputs(expert_output, handle)
+        _Overlap._validate_combine_inputs(self, expert_output, handle)
         context = handle._context
         combined_x, _combined_w = self._combine_token_major(
             expert_output,
@@ -456,7 +456,7 @@ class _OverlapMethods:
             return out
         return combined_x
 
-    def _validate_overlap_dispatch_inputs(self, input, topk_ids, weights, quant) -> None:
+    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant) -> None:
         if quant is not None:
             raise NotImplementedError("overlap dispatch does not support quantized input scales yet")
         if input.dim() != 2 or not input.is_contiguous():
@@ -481,7 +481,7 @@ class _OverlapMethods:
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
 
-    def _validate_overlap_combine_inputs(self, expert_output, handle) -> None:
+    def _validate_combine_inputs(self, expert_output, handle) -> None:
         if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _TokenMajorOverlapCombineContext):
             raise TypeError("handle must be a DispatchHandle returned by dispatch")
         if expert_output.dim() != 2 or not expert_output.is_contiguous():

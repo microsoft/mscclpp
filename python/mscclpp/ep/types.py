@@ -59,8 +59,8 @@ class MoECommunicatorConfig:
 
     # Launch tuning
     num_sms: int = 20
-    low_latency_num_blocks: int = 130
-    low_latency_combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
+    latency_num_blocks: int = 130
+    combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
     # Overlap receive-pool tuning (advanced)

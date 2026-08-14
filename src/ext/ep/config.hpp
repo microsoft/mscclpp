@@ -182,7 +182,8 @@ struct FixedBufferLayout {
     dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t recvBufferBytes = std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
     recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = 2 * recvBufferBytes_;
+    totalBytes_ =
+        2 * recvBufferBytes_ + (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -190,7 +191,7 @@ struct FixedBufferLayout {
       combineRecvBuffer_ = base + recvBufferBytes_;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes : combineRecvBuffer_;
+      dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes : base + 2 * recvBufferBytes_;
     }
   }
 };

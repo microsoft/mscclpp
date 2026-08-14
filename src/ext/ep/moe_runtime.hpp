@@ -43,7 +43,7 @@ class MoERuntime {
   void* outputTopkIdsBuffer() const;
   void* outputTopkWeightsBuffer() const;
   void* dispatchOutputBuffer() const;
-  void* expertOutputBuffer() const;
+  void* combineInputBuffer() const;
 
   void dispatchLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,

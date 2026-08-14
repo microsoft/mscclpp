@@ -72,7 +72,7 @@ void* FixedBufferResources::dispatchOutputBuffer() const {
                            outputLayout_)
       .dispatchOutputBuffer_;
 }
-void* FixedBufferResources::expertOutputBuffer() const {
+void* FixedBufferResources::combineInputBuffer() const {
   EP_HOST_ASSERT(outputLayout_ == DispatchLayout::RANK_MAJOR);
   return FixedBufferLayout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                            outputLayout_)

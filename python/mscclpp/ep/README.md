@@ -167,7 +167,7 @@ The mode also fixes the SM budget, which is the main scheduling consideration:
 
 | Mode | SMs used | Intended use |
 |---|---|---|
-| `MoEMode.LATENCY` | ~128 (`low_latency_num_blocks - 2`) | minimize standalone latency |
+| `MoEMode.LATENCY` | ~128 (`latency_num_blocks - 2`) | minimize standalone latency |
 | `MoEMode.OVERLAP` | 20 (`Config.num_sms`) | overlap communication with expert GEMMs |
 
 The selected mode determines the default dispatch output layout:
@@ -553,6 +553,7 @@ only once.
 Latency mode defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 
 ```python
+dispatch_buffer = communicator.get_dispatch_output_buffer()
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 ```
 
@@ -560,6 +561,7 @@ dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 `MoeAlltoAll`:
 
 ```python
+dispatch_buffer = communicator.get_dispatch_output_buffer()
 dispatch_out.tokens     # [world_size * max_tokens_per_rank, H]
 dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
@@ -574,7 +576,7 @@ The MoE runner must write its rank-major output into the runtime-owned
 registered buffer:
 
 ```python
-expert_output = communicator.get_expert_output_buffer()
+expert_output = communicator.get_combine_input_buffer()
 moe(..., output=expert_output)
 combined = communicator.combine(expert_output, handle)
 ```

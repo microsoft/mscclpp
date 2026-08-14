@@ -81,8 +81,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
            })
       .def("dispatch_output_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.dispatchOutputBuffer()); })
-      .def("expert_output_buffer_ptr",
-           [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.expertOutputBuffer()); })
+      .def("combine_input_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.combineInputBuffer()); })
       .def(
           "dispatch_latency",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,

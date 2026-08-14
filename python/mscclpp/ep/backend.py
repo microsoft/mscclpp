@@ -8,14 +8,14 @@ from typing import Optional
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode
-from .latency import _LatencyMethods
-from .overlap import _OverlapMethods
-from .runtime import Runtime
-from .types import DispatchHandle, DispatchOutput, MoECommunicatorConfig, QuantConfig
+from mscclpp.ep._cpp import DispatchLayout, MoEMode
+from mscclpp.ep.latency import _Latency
+from mscclpp.ep.overlap import _Overlap
+from mscclpp.ep.runtime import Runtime
+from mscclpp.ep.types import DispatchHandle, DispatchOutput, MoECommunicatorConfig, QuantConfig
 
 
-class Backend(_LatencyMethods, _OverlapMethods):
+class Backend(_Latency, _Overlap):
     """Own one runtime and expose latency or overlap dispatch/combine."""
 
     def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
@@ -31,7 +31,7 @@ class Backend(_LatencyMethods, _OverlapMethods):
                 num_topk=config.topk,
                 output_layout=output_layout,
             )
-            self._init_latency(config, output_layout)
+            _Latency.__init__(self, config, output_layout)
         else:
             max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
             self.runtime = Runtime(
@@ -40,8 +40,7 @@ class Backend(_LatencyMethods, _OverlapMethods):
                 max_hidden_bytes=max_hidden_bytes,
                 num_sms=config.num_sms,
             )
-            self._init_overlap(config, output_layout)
-            self.expert_output_buffer = None
+            _Overlap.__init__(self, config, output_layout)
 
     def is_available(self) -> bool:
         """Return whether the selected operation family is available."""
@@ -69,7 +68,8 @@ class Backend(_LatencyMethods, _OverlapMethods):
     ) -> tuple[DispatchOutput, DispatchHandle]:
         """Dispatch tokens with the selected operation family."""
         if self.mode == MoEMode.LATENCY:
-            return self._dispatch_latency(
+            return _Latency.dispatch(
+                self,
                 input,
                 topk_ids,
                 weights,
@@ -79,7 +79,8 @@ class Backend(_LatencyMethods, _OverlapMethods):
                 previous_handle=previous_handle,
                 runtime_max_tokens_per_rank=runtime_max_tokens_per_rank,
             )
-        return self._dispatch_overlap(
+        return _Overlap.dispatch(
+            self,
             input,
             topk_ids,
             weights,
@@ -100,5 +101,5 @@ class Backend(_LatencyMethods, _OverlapMethods):
     ) -> torch.Tensor:
         """Combine expert output with the selected operation family."""
         if self.mode == MoEMode.LATENCY:
-            return self._combine_latency(expert_output, handle, out=out, stream=stream)
-        return self._combine_overlap(expert_output, handle, out=out, stream=stream)
+            return _Latency.combine(self, expert_output, handle, out=out, stream=stream)
+        return _Overlap.combine(self, expert_output, handle, out=out, stream=stream)
