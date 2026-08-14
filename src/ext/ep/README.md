@@ -11,7 +11,6 @@ by dispatch and combine kernels.
 - **`OVERLAP`** algorithms use a bounded SM budget so communication can run
   concurrently with expert compute.
 
-`LOW_LATENCY` and `HIGH_THROUGHPUT` remain compatibility aliases.
 Mode-specific buffers are allocated conditionally; selecting one family does
 not allocate the other family's resources.
 

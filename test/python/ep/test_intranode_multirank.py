@@ -114,7 +114,7 @@ def main():
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        mode=ep.MoEMode.OVERLAP,
         num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
     )
     if rank == 0:
@@ -247,7 +247,7 @@ def main():
         hidden_size=bench_hidden,
         topk=bench_num_topk,
         max_tokens_per_rank=bench_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        mode=ep.MoEMode.OVERLAP,
         num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
     )
     assert moe.is_available()

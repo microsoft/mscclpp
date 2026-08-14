@@ -26,7 +26,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
         print(
-            f"[cfg] backend=mscclpp algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=mscclpp algorithm=LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters} num_rdma_bytes={num_rdma_bytes}",
             flush=True,
@@ -57,7 +57,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.LOW_LATENCY,
+        mode=ep.MoEMode.LATENCY,
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,

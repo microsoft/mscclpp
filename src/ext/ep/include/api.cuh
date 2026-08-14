@@ -24,11 +24,7 @@ enum class MoEMode {
   /// Algorithms optimized for minimum standalone latency.
   LATENCY,
   /// Resource-bounded algorithms optimized for compute/communication overlap.
-  OVERLAP,
-  /// Compatibility alias for `LATENCY`.
-  LOW_LATENCY = LATENCY,
-  /// Compatibility alias for `OVERLAP`.
-  HIGH_THROUGHPUT = OVERLAP
+  OVERLAP
 };
 
 /// Logical dispatch output layout.

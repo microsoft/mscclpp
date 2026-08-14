@@ -9,12 +9,8 @@
 // One `MoERuntime` class is exposed, with a torch-free, raw-pointer (uintptr_t)
 // boundary so the module never links libtorch. `MoEMode` selects the backend at
 // construction:
-//   - MoEMode.LOW_LATENCY  -> `ll_*` methods (dispatch/combine).
-//   - MoEMode.HIGH_THROUGHPUT -> `ht_*` methods. Dynamic recv sizing uses an
-//     explicit multi-step API (ht_compute_dispatch_counts -> ht_notify_dispatch
-//     -> caller allocates -> ht_dispatch).
-// The two backends keep separate method prefixes because their call protocols
-// genuinely differ; calling the other mode's methods raises.
+//   - MoEMode.LATENCY selects fixed-buffer dispatch/combine.
+//   - MoEMode.OVERLAP selects bounded receive-pool dispatch/combine.
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -42,8 +38,6 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   nb::module_::import_("mscclpp._mscclpp");
 
   nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
-      .value("LOW_LATENCY", mscclpp::ep::MoEMode::LOW_LATENCY)
-      .value("HIGH_THROUGHPUT", mscclpp::ep::MoEMode::HIGH_THROUGHPUT)
       .value("LATENCY", mscclpp::ep::MoEMode::LATENCY)
       .value("OVERLAP", mscclpp::ep::MoEMode::OVERLAP);
 

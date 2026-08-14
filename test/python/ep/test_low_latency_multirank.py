@@ -522,7 +522,7 @@ def main():
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.LOW_LATENCY,
+        mode=ep.MoEMode.LATENCY,
         latency_num_blocks=args.num_blocks,
         combine_mode=combine_mode,
         output_layout=output_layout,
