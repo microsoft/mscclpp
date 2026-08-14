@@ -285,8 +285,8 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
   }
 }
 
-MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks,
-                                                       uint32_t epoch, WorkspaceView& workspaceView) {
+MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks, uint32_t epoch,
+                                                       WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
@@ -311,8 +311,8 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
   }
 }
 
-MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& transport, int nRanks,
-                                                        uint32_t epoch, WorkspaceView& workspaceView) {
+MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& transport, int nRanks, uint32_t epoch,
+                                                        WorkspaceView& workspaceView) {
   if (blockIdx.x != 0) return;
   const int threadId = static_cast<int>(threadIdx.x);
   if (threadId < nRanks) {
