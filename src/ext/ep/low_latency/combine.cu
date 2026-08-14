@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <mscclpp/bulk_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 
 #include "api.cuh"
@@ -20,23 +21,13 @@ constexpr int DirectSendMaxNWorkers = WARP_SIZE;
 constexpr int CombineMaxNTopk = 9;
 constexpr int RankMajorTmaMaxNTopk = 8;
 
-MSCCLPP_DEVICE_INLINE RecvTask loadRecvTask(const RecvTask* tasks, int taskIdx) {
-  const int laneId = get_lane_id();
-  RecvTask task{};
-  if (laneId == 0) task = tasks[taskIdx];
-  task.sourceRank_ = warpBroadcast(task.sourceRank_, 0);
-  task.tokenBegin_ = warpBroadcast(task.tokenBegin_, 0);
-  task.tokenEnd_ = warpBroadcast(task.tokenEnd_, 0);
-  return task;
-}
-
 MSCCLPP_HOST_DEVICE_INLINE size_t directSendControlBytes(int nLocalExperts) {
   return configAlign<size_t>(static_cast<size_t>(nLocalExperts + 1) * sizeof(int), 128);
 }
 
 template <int Hidden>
 MSCCLPP_HOST_DEVICE_INLINE constexpr size_t directSendWorkerBytes() {
-  return static_cast<size_t>(Hidden) * sizeof(Bf16) + sizeof(uint64_t);
+  return static_cast<size_t>(Hidden) * sizeof(Bf16) + sizeof(mscclpp::BulkBarrier);
 }
 
 template <int Hidden>
@@ -53,7 +44,7 @@ MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts, int nTop
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     if (nTopk <= RankMajorTmaMaxNTopk) {
       constexpr size_t RowsBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * Hidden * sizeof(Bf16);
-      constexpr size_t BarrierBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * sizeof(uint64_t);
+      constexpr size_t BarrierBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * sizeof(mscclpp::BulkBarrier);
       constexpr size_t ValidBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * sizeof(int);
       constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + BarrierBytes + ValidBytes, 128);
       static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
@@ -67,6 +58,18 @@ MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts, int nTop
            static_cast<size_t>(directSendWorkerCount<Hidden>(nLocalExperts)) * directSendWorkerBytes<Hidden>();
   }
   return CombineNStages * TileBytes;
+}
+
+#if MSCCLPP_BULK_AVAILABLE
+
+MSCCLPP_DEVICE_INLINE RecvTask loadRecvTask(const RecvTask* tasks, int taskIdx) {
+  const int laneId = get_lane_id();
+  RecvTask task{};
+  if (laneId == 0) task = tasks[taskIdx];
+  task.sourceRank_ = warpBroadcast(task.sourceRank_, 0);
+  task.tokenBegin_ = warpBroadcast(task.tokenBegin_, 0);
+  task.tokenEnd_ = warpBroadcast(task.tokenEnd_, 0);
+  return task;
 }
 
 template <int HiddenInt4>
@@ -174,7 +177,7 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
       }
 
       if (tokenIteration >= CombineNStages && threadId == 0) {
-        waitBulkGroupRead<CombineNStages - 1>();
+        mscclpp::bulkStoreWaitSource<CombineNStages - 1>();
       }
       if (tokenIteration >= CombineNStages) __syncthreads();
 #pragma unroll
@@ -185,18 +188,18 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
       __syncthreads();
 
       if (threadId == 0) {
-        fenceProxyAsyncSharedCta();
+        mscclpp::bulkFence();
         const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
         void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
         auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                                (static_cast<size_t>(transport.rank_) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
-        issueTmaStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+        mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+        mscclpp::bulkStoreCommit();
       }
     }
   }
-
-  if (tokenIteration > 0 && threadId == 0) waitBulkGroup();
+  if (tokenIteration > 0 && threadId == 0) mscclpp::bulkStoreWait();
 }
 
 template <int Hidden>
@@ -227,16 +230,18 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
   const int nTotalRows = expertTokenPrefix[nLocalExperts];
   const int blockRowBegin = static_cast<int>(static_cast<int64_t>(nTotalRows) * blockIdx.x / gridDim.x);
   const int blockRowEnd = static_cast<int>(static_cast<int64_t>(nTotalRows) * (blockIdx.x + 1) / gridDim.x);
-  auto* tmaBarriers = reinterpret_cast<uint64_t*>(outputTiles + static_cast<size_t>(nWorkers) * HiddenBytes);
+  auto* bulkBarriers =
+      reinterpret_cast<mscclpp::BulkBarrier*>(outputTiles + static_cast<size_t>(nWorkers) * HiddenBytes);
   if (laneId < nWorkers) {
     auto* outputTile = outputTiles + static_cast<size_t>(laneId) * HiddenBytes;
-    auto* tmaBarrier = tmaBarriers + laneId;
-    uint32_t tmaPhase = 0;
-    if (blockRowBegin + laneId < blockRowEnd) initTmaLoadBarrier(tmaBarrier);
+    auto* bulkBarrier = bulkBarriers + laneId;
+    uint32_t bulkPhase = 0;
+    const bool hasRows = blockRowBegin + laneId < blockRowEnd;
+    if (hasRows) bulkBarrier->init();
 
     bool hasPendingStore = false;
     for (int flatRowIdx = blockRowBegin + laneId; flatRowIdx < blockRowEnd; flatRowIdx += nWorkers) {
-      if (hasPendingStore) waitBulkGroupRead();
+      if (hasPendingStore) mscclpp::bulkStoreWaitSource();
       int localExpertIdx = 0;
       while (flatRowIdx >= expertTokenPrefix[localExpertIdx + 1]) ++localExpertIdx;
       const int expertTokenIdx = flatRowIdx - expertTokenPrefix[localExpertIdx];
@@ -253,18 +258,20 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
       EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
       const auto* inputRow =
           reinterpret_cast<const uint8_t*>(expertOutput) + static_cast<size_t>(inputRowOffset) * HiddenBytes;
-      issueTmaLoadAndExpect(inputRow, outputTile, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
-      waitTmaLoad(tmaBarrier, tmaPhase);
-      fenceProxyAsyncSharedCta();
+      bulkBarrier->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
+      mscclpp::bulkLoad(outputTile, inputRow, static_cast<uint32_t>(HiddenBytes), *bulkBarrier);
+      bulkBarrier->wait(bulkPhase);
+      mscclpp::bulkFence();
       const int globalExpertIdx = transport.rank_ * nLocalExperts + localExpertIdx;
       void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
       auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                              (static_cast<size_t>(globalExpertIdx) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
-      issueTmaStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+      mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+      mscclpp::bulkStoreCommit();
       hasPendingStore = true;
     }
 
-    if (hasPendingStore) waitBulkGroup();
+    if (hasPendingStore) mscclpp::bulkStoreWait();
   }
 }
 
@@ -372,15 +379,15 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   const int laneId = get_lane_id();
   const int nLocalExperts = nExperts / nRanks;
   auto* sharedRows = reinterpret_cast<int4*>(sharedMemory);
-  auto* tmaBarriers = reinterpret_cast<uint64_t*>(sharedMemory + RowsBytes);
-  auto* validRows = reinterpret_cast<int*>(tmaBarriers + RankMajorTmaMaxNTopk);
+  auto* bulkBarriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
+  auto* validRows = reinterpret_cast<int*>(bulkBarriers + RankMajorTmaMaxNTopk);
 
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - 1;
   // Reuse each mbarrier by advancing its parity instead of reinitializing it.
-  uint32_t tmaPhase = 0;
+  uint32_t bulkPhase = 0;
   if (warpId == 0) {
     if (laneId < RankMajorTmaMaxNTopk) {
-      initTmaLoadBarrier(tmaBarriers + laneId);
+      bulkBarriers[laneId].init();
     }
     __syncwarp();
   }
@@ -413,13 +420,14 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
               remoteExpertOutput +
               (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
           auto* sharedRow = reinterpret_cast<uint8_t*>(sharedRows) + static_cast<size_t>(laneId) * HiddenBytes;
-          issueTmaLoadAndExpect(source, sharedRow, tmaBarriers + laneId, static_cast<uint32_t>(HiddenBytes));
+          bulkBarriers[laneId].arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
+          mscclpp::bulkLoad(sharedRow, source, static_cast<uint32_t>(HiddenBytes), bulkBarriers[laneId]);
           pending = false;
         }
       }
-      if (validRow) waitTmaLoad(tmaBarriers + laneId, tmaPhase);
+      if (validRow) bulkBarriers[laneId].wait(bulkPhase);
       __syncwarp();
-      if (laneId == 0) fenceProxyAsyncSharedCta();
+      if (laneId == 0) mscclpp::bulkFence();
     }
     __syncthreads();
 
@@ -511,7 +519,7 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __
       }
     }
     if (tokenIteration >= CombineNStages && threadId == 0) {
-      waitBulkGroupRead<CombineNStages - 1>();
+      mscclpp::bulkStoreWaitSource<CombineNStages - 1>();
     }
     if (tokenIteration >= CombineNStages) __syncthreads();
 #pragma unroll
@@ -522,12 +530,13 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __
     __syncthreads();
 
     if (threadId == 0) {
-      fenceProxyAsyncSharedCta();
+      mscclpp::bulkFence();
       auto* outputRow = reinterpret_cast<uint8_t*>(output) + static_cast<size_t>(tokenIdx) * HiddenBytes;
-      issueTmaStore(outputRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+      mscclpp::bulkStore(outputRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+      mscclpp::bulkStoreCommit();
     }
   }
-  if (tokenIteration > 0 && threadId == 0) waitBulkGroup();
+  if (tokenIteration > 0 && threadId == 0) mscclpp::bulkStoreWait();
 }
 
 template <int Hidden>
@@ -574,12 +583,15 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __r
   }
 }
 
+#endif  // MSCCLPP_BULK_AVAILABLE
+
 template <low_latency::CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize,
           DispatchLayout Layout>
 __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
     void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
     const float* __restrict__ topkWeights, const int* srcInfo, const int64_t* layoutRange, Workload workload,
     void* combineRecvBuffer, const void* dispatchRecvBuffer, CommContext comm, void* workspace) {
+#if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   const int nTokens = workload.numTokens_;
   const int nExperts = workload.numExperts_;
@@ -625,6 +637,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
   } else {
     recvExpertRowsDirect<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineRecvBuffer);
   }
+#endif  // MSCCLPP_BULK_AVAILABLE
 }
 
 template <low_latency::CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize,
