@@ -77,7 +77,7 @@ void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceCont
 ///
 /// This data-movement phase follows tokenMajorExchangeCounts(), or
 /// tokenMajorPublishCachedPrefix() for cached routing.
-/// @param[out] sendHead Opaque per-token, per-rank state consumed by tokenMajorReduce().
+/// @param[out] sendHead Opaque per-token, per-rank state consumed by tokenMajorReduceCombine().
 /// @param[in] input Local token payload [numTokens, hiddenInt4].
 /// @param[in] topkIdx Global expert indices, or nullptr in cached mode.
 /// @param[in] topkWeights Routing weights, or nullptr when omitted or cached.
@@ -106,9 +106,10 @@ namespace combine {
 /// @param[in] sendHead Opaque routing state returned by tokenMajorDispatch().
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] stream CUDA stream.
-void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                      int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context, cudaStream_t stream);
+void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             cudaStream_t stream);
 
 }  // namespace combine
 
@@ -231,10 +232,10 @@ namespace combine {
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void expertMajorRankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
-                                void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                                cudaStream_t stream);
+void expertMajorLocalReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                   int numBlocks, cudaStream_t stream);
 
 /// Gather rank-major weighted partials from peers and reduce them locally.
 ///
@@ -253,9 +254,10 @@ void expertMajorRankLocalReduce(void* output, const void* input, const int64_t* 
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine worker blocks.
 /// @param[in] stream CUDA stream.
-void rankMajorGatherReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
 
 /// Send every expert-major row directly and reduce on each source rank.
 ///
@@ -274,9 +276,10 @@ void rankMajorGatherReduce(void* output, const void* input, const int64_t* topkI
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void expertMajorDirectSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void expertMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
 
 }  // namespace combine
 

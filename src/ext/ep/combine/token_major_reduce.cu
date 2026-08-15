@@ -39,9 +39,9 @@ namespace detail {
 
 template <int NumRanks, int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    tokenMajorReduceKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                           int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                           int64_t metadataSlotBytes, const DeviceContext* context) {
+    tokenMajorReduceCombineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                                  int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                                  int64_t metadataSlotBytes, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   static_assert(MaxContributors <= NumRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
@@ -196,7 +196,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   if (device != cachedDevice || dynamicSharedBytes != cachedSharedBytes) {
     int blocksPerSm;
     int numSms;
-    auto kernel = tokenMajorReduceKernel<NumRanks, MaxContributors, NumWarps>;
+    auto kernel = tokenMajorReduceCombineKernel<NumRanks, MaxContributors, NumWarps>;
     CUDA_CHECK(
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumWarps * WARP_SIZE, dynamicSharedBytes));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
@@ -207,9 +207,10 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   return cachedMaxBlocks;
 }
 
-void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                      int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context, cudaStream_t stream) {
+void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(sendHead != nullptr);
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
@@ -223,7 +224,7 @@ void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHea
 
 #define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
   {                                                                                                                    \
-    auto kernel = tokenMajorReduceKernel<ranks, maxContributors, numWarps>;                                            \
+    auto kernel = tokenMajorReduceCombineKernel<ranks, maxContributors, numWarps>;                                     \
     const size_t sharedBytes =                                                                                         \
         static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
         static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
@@ -277,11 +278,13 @@ void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHea
 
 }  // namespace detail
 
-void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
-                      int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context, cudaStream_t stream) {
-  detail::tokenMajorReduce(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk, recvPoolHeaderBytes,
-                           recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context, stream);
+void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             cudaStream_t stream) {
+  detail::tokenMajorReduceCombine(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                                  recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context,
+                                  stream);
 }
 
 }  // namespace combine

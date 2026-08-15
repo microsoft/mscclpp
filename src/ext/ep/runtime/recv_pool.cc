@@ -294,9 +294,10 @@ void RecvPoolResources::combine(void* combinedX, float* combinedTopkWeights, con
   }
 
   const int numBlocks = config_.numSms_;
-  combine::tokenMajorReduce(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
-                            static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
-                            RecvPoolConfig::RecvPoolMetaBytes, numBlocks, context_, stream);
+  combine::tokenMajorReduceCombine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                                   static_cast<int64_t>(recvPoolHeaderBytes),
+                                   static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
+                                   numBlocks, context_, stream);
 }
 
 }  // namespace detail

@@ -225,14 +225,14 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-    combine::rankMajorGatherReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                   combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                          combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   } else if (mode == CombineMode::DIRECT_SEND) {
-    combine::expertMajorDirectSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                   combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                          combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   } else {
-    combine::expertMajorRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                        combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                           combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   }
 }
 
