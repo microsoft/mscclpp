@@ -178,8 +178,8 @@ void RecvPoolResources::prepare(int* numTokensPerRank, int* numTokensPerExpert, 
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  dispatch::prepareTokenMajorOverlap(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk,
-                                     numExperts, contextHost_, contextDevice_, stream);
+  dispatch::tokenMajorPrepare(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk,
+                              numExperts, contextHost_, contextDevice_, stream);
 }
 
 int RecvPoolResources::numChannels(int xElementSize) const { return dispatchBlockCount(xElementSize); }
@@ -202,9 +202,9 @@ int RecvPoolResources::notify(int* rankPrefixMatrix, int* channelPrefixMatrix, i
 
   *moeRecvCounter_ = -1;
   for (int i = 0; i < numLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
-  dispatch::exchangeTokenMajorCountsOverlap(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
-                                            channelPrefixMatrix, rankPrefixMatrix, expertAlignment, contextHost_,
-                                            contextDevice_, stream, numChannels);
+  dispatch::tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
+                                     channelPrefixMatrix, rankPrefixMatrix, expertAlignment, contextHost_,
+                                     contextDevice_, stream, numChannels);
 
   int numRecvTokens = -1;
   const auto start = std::chrono::high_resolution_clock::now();
@@ -247,7 +247,7 @@ void RecvPoolResources::dispatch(void* recvX, float* recvXScales, int64_t* recvT
   const int numChannels = dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
   if (cachedMode) {
-    dispatch::publishCachedTokenMajorPrefixOverlap(rankPrefixMatrix, contextHost_, contextDevice_, stream);
+    dispatch::tokenMajorPublishCachedPrefix(rankPrefixMatrix, contextHost_, contextDevice_, stream);
   }
 
   dispatchReady_ = canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize);
@@ -258,11 +258,11 @@ void RecvPoolResources::dispatch(void* recvX, float* recvXScales, int64_t* recvT
   const int hiddenInt4 = static_cast<int>(static_cast<int64_t>(hidden) * xElementSize / sizeof(int4));
   dispatchMetadataReady_ = true;
   if (recvTopkWeights != nullptr) recvTopkWeights_ = recvTopkWeights;
-  dispatch::tokenMajorOverlap(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
-                              numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx,
-                              recvTopkWeights, recvXScales, numChannels, static_cast<int64_t>(poolHeaderBytes),
-                              static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(numRanks_)),
-                              RecvPoolConfig::RecvPoolMetaBytes, contextHost_, contextDevice_, stream);
+  dispatch::tokenMajorDispatch(
+      sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens, numRecvTokens,
+      hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx, recvTopkWeights, recvXScales, numChannels,
+      static_cast<int64_t>(poolHeaderBytes), static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(numRanks_)),
+      RecvPoolConfig::RecvPoolMetaBytes, contextHost_, contextDevice_, stream);
 }
 
 void RecvPoolResources::combine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
@@ -294,10 +294,9 @@ void RecvPoolResources::combine(void* combinedX, float* combinedTopkWeights, con
   }
 
   const int numBlocks = config_.numSms_;
-  combine::tokenMajorReduceOverlap(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
-                                   static_cast<int64_t>(recvPoolHeaderBytes),
-                                   static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
-                                   numBlocks, contextHost_, contextDevice_, stream);
+  combine::tokenMajorReduce(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                            static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
+                            RecvPoolConfig::RecvPoolMetaBytes, numBlocks, contextHost_, contextDevice_, stream);
 }
 
 }  // namespace detail

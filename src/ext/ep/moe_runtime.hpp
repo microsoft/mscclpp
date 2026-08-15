@@ -45,35 +45,32 @@ class MoERuntime {
   void* dispatchOutputBuffer() const;
   void* combineInputBuffer() const;
 
-  void dispatchLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+  void latencyDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
                        int maxTokensPerRank, int numExperts, int invalidTokenExpertId, DispatchLayout dispatchLayout,
                        DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream);
 
-  void combineLatency(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+  void latencyCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                       const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
                       int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
                       DispatchDataType dispatchDataType, CombineMode mode, int numBlocks, cudaStream_t stream);
 
-  void prepareTokenMajorOverlap(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                                const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
-                                cudaStream_t stream);
-  int getTokenMajorOverlapNumChannels(int xElementSize) const;
-  void* resolveTokenMajorOverlapRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
-  int notifyTokenMajorOverlap(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
-                              const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
-                              int numTokens, int numExperts, int xElementSize, int expertAlignment,
-                              cudaStream_t stream);
-  void dispatchTokenMajorOverlap(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
-                                 int* sendHead, const void* x, const float* xScales, const int64_t* topkIdx,
-                                 const float* topkWeights, const bool* isTokenInRank, const int* rankPrefixMatrix,
-                                 const int* channelPrefixMatrix, int numTokens, int hidden, int numTopk, int numScales,
-                                 int numExperts, int xElementSize, int numRecvTokens, bool cachedMode,
-                                 cudaStream_t stream);
-  void combineTokenMajorOverlap(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
-                                const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk,
-                                int xElementSize, cudaStream_t stream);
+  void tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
+                         int numTokens, int numTopk, int numExperts, cudaStream_t stream);
+  int tokenMajorNumChannels(int xElementSize) const;
+  void* tokenMajorResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
+  int tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
+                       const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
+                       int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
+  void tokenMajorDispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights, int* sendHead,
+                          const void* x, const float* xScales, const int64_t* topkIdx, const float* topkWeights,
+                          const bool* isTokenInRank, const int* rankPrefixMatrix, const int* channelPrefixMatrix,
+                          int numTokens, int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
+                          int numRecvTokens, bool cachedMode, cudaStream_t stream);
+  void tokenMajorCombine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
+                         const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk,
+                         int xElementSize, cudaStream_t stream);
 
  private:
   void requireMode(MoEMode expected) const;

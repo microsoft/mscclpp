@@ -39,9 +39,9 @@ namespace detail {
 
 template <int NumRanks, int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    combineTokenMajorOverlapKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
-                                   int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                                   int64_t metadataSlotBytes, const DeviceContext* context) {
+    tokenMajorReduceKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
+                           int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                           int64_t metadataSlotBytes, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   static_assert(MaxContributors <= NumRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
@@ -196,7 +196,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   if (device != cachedDevice || dynamicSharedBytes != cachedSharedBytes) {
     int blocksPerSm;
     int numSms;
-    auto kernel = combineTokenMajorOverlapKernel<NumRanks, MaxContributors, NumWarps>;
+    auto kernel = tokenMajorReduceKernel<NumRanks, MaxContributors, NumWarps>;
     CUDA_CHECK(
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumWarps * WARP_SIZE, dynamicSharedBytes));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
@@ -207,10 +207,10 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   return cachedMaxBlocks;
 }
 
-void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
-                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                             const DeviceContext* deviceContext, cudaStream_t stream) {
+void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
+                      int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                      const DeviceContext* deviceContext, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(sendHead != nullptr);
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
@@ -224,7 +224,7 @@ void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* 
 
 #define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
   {                                                                                                                    \
-    auto kernel = combineTokenMajorOverlapKernel<ranks, maxContributors, numWarps>;                                    \
+    auto kernel = tokenMajorReduceKernel<ranks, maxContributors, numWarps>;                                            \
     const size_t sharedBytes =                                                                                         \
         static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
         static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
@@ -277,13 +277,12 @@ void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* 
 
 }  // namespace detail
 
-void tokenMajorReduceOverlap(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
-                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                             const DeviceContext* deviceContext, cudaStream_t stream) {
-  detail::tokenMajorReduceOverlap(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
-                                  recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context,
-                                  deviceContext, stream);
+void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
+                      int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                      const DeviceContext* deviceContext, cudaStream_t stream) {
+  detail::tokenMajorReduce(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk, recvPoolHeaderBytes,
+                           recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context, deviceContext, stream);
 }
 
 }  // namespace combine

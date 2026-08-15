@@ -28,7 +28,7 @@ from mscclpp.ep.types import (
     DispatchOutputInfo,
     MoECommunicatorConfig,
     QuantConfig,
-    _TokenMajorOverlapCombineContext,
+    _TokenMajorCombineContext,
 )
 from mscclpp.ep.utils import (
     current_stream_ptr as _stream_ptr,
@@ -111,7 +111,7 @@ class OverlapBackend(Backend):
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, self.group_size), dtype=torch.bool, device="cuda")
 
-        self.runtime.cpp_runtime.prepare_token_major_overlap(
+        self.runtime.cpp_runtime.token_major_prepare(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -146,7 +146,7 @@ class OverlapBackend(Backend):
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = self.runtime.cpp_runtime.get_token_major_overlap_num_channels(x_element_size)
+        num_channels = self.runtime.cpp_runtime.token_major_num_channels(x_element_size)
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -167,7 +167,7 @@ class OverlapBackend(Backend):
             rank_prefix_matrix = torch.empty((self.group_size, self.group_size), dtype=torch.int32, device="cuda")
             channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
             num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
-            num_recv_tokens = self.runtime.cpp_runtime.notify_token_major_overlap(
+            num_recv_tokens = self.runtime.cpp_runtime.token_major_notify(
                 _ptr(rank_prefix_matrix),
                 _ptr(channel_prefix_matrix),
                 _ptr(num_recv_per_expert_host),
@@ -199,7 +199,7 @@ class OverlapBackend(Backend):
             else None
         )
 
-        self.runtime.cpp_runtime.dispatch_token_major_overlap(
+        self.runtime.cpp_runtime.token_major_dispatch(
             _ptr(recv_x),
             _ptr(recv_x_scales),
             _ptr(recv_topk_idx),
@@ -235,7 +235,7 @@ class OverlapBackend(Backend):
 
     def _alloc_recv_x(self, num_tokens: int, num_recv_tokens: int, hidden: int, x_element_size: int) -> torch.Tensor:
         """Return this rank's direct receive-pool view."""
-        pool_ptr = self.runtime.cpp_runtime.resolve_token_major_overlap_recv_buffer(
+        pool_ptr = self.runtime.cpp_runtime.token_major_resolve_recv_buffer(
             num_tokens, num_recv_tokens, hidden, x_element_size
         )
         if pool_ptr == 0:
@@ -266,7 +266,7 @@ class OverlapBackend(Backend):
             if topk_weights is not None
             else None
         )
-        self.runtime.cpp_runtime.combine_token_major_overlap(
+        self.runtime.cpp_runtime.token_major_combine(
             _ptr(combined_x),
             _ptr(combined_topk_weights),
             _ptr(x),
@@ -359,7 +359,7 @@ class OverlapBackend(Backend):
             recv_topk_idx = cache["recv_topk_idx"]
             recv_topk_weights = cache["recv_topk_weights"]
             num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
-            combine_context = _TokenMajorOverlapCombineContext(
+            combine_context = _TokenMajorCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 send_head=send_head,
             )
@@ -387,7 +387,7 @@ class OverlapBackend(Backend):
                 None,
                 self.expert_alignment,
             )
-            combine_context = _TokenMajorOverlapCombineContext(
+            combine_context = _TokenMajorCombineContext(
                 recv_topk_weights=recv_topk_weights,
                 send_head=send_head,
             )
@@ -501,7 +501,7 @@ class OverlapBackend(Backend):
                 raise ValueError("weights shape must match topk_ids")
 
     def _validate_combine_inputs(self, expert_output, handle) -> None:
-        if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _TokenMajorOverlapCombineContext):
+        if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _TokenMajorCombineContext):
             raise TypeError("handle must be a DispatchHandle returned by dispatch")
         if expert_output.dim() != 2 or not expert_output.is_contiguous():
             raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")

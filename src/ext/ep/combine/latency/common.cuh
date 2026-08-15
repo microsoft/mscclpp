@@ -590,11 +590,10 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __r
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
-MSCCLPP_DEVICE_INLINE void combineLatencyBody(void* output, const void* expertOutput,
-                                              const int64_t* __restrict__ topkIndices,
-                                              const float* __restrict__ topkWeights, const int* srcInfo,
-                                              const int64_t* layoutRange, Workload workload, void* combineRecvBuffer,
-                                              const void* dispatchRecvBuffer, const DeviceContext* context) {
+MSCCLPP_DEVICE_INLINE void latencyBody(void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
+                                       const float* __restrict__ topkWeights, const int* srcInfo,
+                                       const int64_t* layoutRange, Workload workload, void* combineRecvBuffer,
+                                       const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   const int nTokens = workload.numTokens_;

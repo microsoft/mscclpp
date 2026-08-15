@@ -93,9 +93,9 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
 }  // namespace detail
 
-void prepareTokenMajorOverlap(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert,
-                              bool* isTokenInRank, int numTokens, int numTopk, int numExperts,
-                              const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
+void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                       int numTokens, int numTopk, int numExperts, const DeviceContext& context,
+                       const DeviceContext* deviceContext, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;

@@ -211,7 +211,7 @@ class LatencyBackend(Backend):
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
         )
-        self.runtime.cpp_runtime.dispatch_latency(
+        self.runtime.cpp_runtime.latency_dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
@@ -319,7 +319,7 @@ class LatencyBackend(Backend):
                 dtype=torch.bfloat16,
                 device=expert_output.device,
             )
-        self.runtime.cpp_runtime.combine_latency(
+        self.runtime.cpp_runtime.latency_combine(
             expert_output.data_ptr(),
             context.topk_ids.data_ptr(),
             0 if topk_weights is None else topk_weights.data_ptr(),

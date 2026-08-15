@@ -107,10 +107,10 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
   }
 }
 
-void exchangeTokenMajorCountsOverlap(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts,
-                                     int numTokens, const bool* isTokenInRank, int* channelPrefixMatrix,
-                                     int* rankPrefixMatrix, int expertAlignment, const DeviceContext& context,
-                                     const DeviceContext* deviceContext, cudaStream_t stream, int numChannels) {
+void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
+                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                              int expertAlignment, const DeviceContext& context, const DeviceContext* deviceContext,
+                              cudaStream_t stream, int numChannels) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                             \
   LAUNCH_KERNEL(config.get(), exchangeTokenMajorCountsKernel<ranks>, numTokensPerRank, numTokensPerExpert, numExperts, \
                 numTokens, numChannels, isTokenInRank, channelPrefixMatrix, rankPrefixMatrix, expertAlignment,         \
@@ -144,8 +144,8 @@ __global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix,
   if (threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
 }
 
-void publishCachedTokenMajorPrefixOverlap(const int* rankPrefixMatrix, const DeviceContext& context,
-                                          const DeviceContext* deviceContext, cudaStream_t stream) {
+void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context,
+                                   const DeviceContext* deviceContext, cudaStream_t stream) {
 #define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                           \
   LAUNCH_KERNEL(config.get(), publishCachedTokenMajorPrefixKernel<ranks>, rankPrefixMatrix, deviceContext); \
   break
@@ -157,12 +157,12 @@ void publishCachedTokenMajorPrefixOverlap(const int* rankPrefixMatrix, const Dev
 
 template <int NumRanks, int NumThreads>
 __global__ void __launch_bounds__(NumThreads, 1)
-    dispatchTokenMajorOverlapKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
-                                    const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                                    int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts,
-                                    int numScales, int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales,
-                                    int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                                    int64_t metadataSlotBytes, const DeviceContext* context) {
+    tokenMajorDispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
+                             const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                             int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts,
+                             int numScales, int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales,
+                             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                             const DeviceContext* context) {
   const int numChannels = static_cast<int>(gridDim.x);
   const int channel = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
@@ -263,7 +263,7 @@ int maxCooperativeTokenMajorBlocks() {
   if (device != cachedDevice) {
     int blocksPerSm;
     int numSms;
-    auto kernel = dispatchTokenMajorOverlapKernel<NumRanks, NumThreads>;
+    auto kernel = tokenMajorDispatchKernel<NumRanks, NumThreads>;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumThreads, 0));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
     cachedDevice = device;
@@ -272,12 +272,12 @@ int maxCooperativeTokenMajorBlocks() {
   return cachedMaxBlocks;
 }
 
-void tokenMajorOverlap(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                       const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                       int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
-                       int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
-                       int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                       const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
+void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
+                        int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
+                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                        const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
   constexpr int NumThreads = 512;
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
@@ -287,7 +287,7 @@ void tokenMajorOverlap(int* sendHead, const void* input, const int64_t* topkIdx,
 
 #define DISPATCH_LAUNCH_CASE(ranks)                                                                        \
   EP_HOST_ASSERT((numBlocks <= maxCooperativeTokenMajorBlocks<ranks, NumThreads>()));                      \
-  LAUNCH_KERNEL(config.get(), (dispatchTokenMajorOverlapKernel<ranks, NumThreads>), sendHead,              \
+  LAUNCH_KERNEL(config.get(), (tokenMajorDispatchKernel<ranks, NumThreads>), sendHead,                     \
                 reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,    \
                 channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, \
                 recvTopkIdx, recvTopkWeights, recvXScales, recvPoolHeaderBytes, recvPoolMetadataOffset,    \
@@ -301,30 +301,30 @@ void tokenMajorOverlap(int* sendHead, const void* input, const int64_t* topkIdx,
 
 }  // namespace detail
 
-void exchangeTokenMajorCountsOverlap(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts,
-                                     int numTokens, const bool* isTokenInRank, int* channelPrefixMatrix,
-                                     int* rankPrefixMatrix, int expertAlignment, const DeviceContext& context,
-                                     const DeviceContext* deviceContext, cudaStream_t stream, int numChannels) {
-  detail::exchangeTokenMajorCountsOverlap(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
-                                          channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context,
-                                          deviceContext, stream, numChannels);
+void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
+                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                              int expertAlignment, const DeviceContext& context, const DeviceContext* deviceContext,
+                              cudaStream_t stream, int numChannels) {
+  detail::tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
+                                   channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context, deviceContext,
+                                   stream, numChannels);
 }
 
-void publishCachedTokenMajorPrefixOverlap(const int* rankPrefixMatrix, const DeviceContext& context,
-                                          const DeviceContext* deviceContext, cudaStream_t stream) {
-  detail::publishCachedTokenMajorPrefixOverlap(rankPrefixMatrix, context, deviceContext, stream);
+void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context,
+                                   const DeviceContext* deviceContext, cudaStream_t stream) {
+  detail::tokenMajorPublishCachedPrefix(rankPrefixMatrix, context, deviceContext, stream);
 }
 
-void tokenMajorOverlap(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                       const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                       int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
-                       int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
-                       int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                       const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
-  detail::tokenMajorOverlap(sendHead, input, topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix,
-                            numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx,
-                            recvTopkWeights, recvXScales, numBlocks, recvPoolHeaderBytes, recvPoolMetadataOffset,
-                            metadataSlotBytes, context, deviceContext, stream);
+void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
+                        int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
+                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                        const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
+  detail::tokenMajorDispatch(sendHead, input, topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix,
+                             numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx,
+                             recvTopkWeights, recvXScales, numBlocks, recvPoolHeaderBytes, recvPoolMetadataOffset,
+                             metadataSlotBytes, context, deviceContext, stream);
 }
 
 }  // namespace dispatch

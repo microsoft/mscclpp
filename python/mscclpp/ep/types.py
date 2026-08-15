@@ -132,7 +132,7 @@ class _RankMajorCombineContext:
 
 
 @dataclass
-class _TokenMajorOverlapCombineContext:
+class _TokenMajorCombineContext:
     """Combine context for token-major overlap output."""
 
     recv_topk_weights: Optional[torch.Tensor]
@@ -142,7 +142,7 @@ class _TokenMajorOverlapCombineContext:
 _CombineContext = Union[
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
-    _TokenMajorOverlapCombineContext,
+    _TokenMajorCombineContext,
 ]
 
 

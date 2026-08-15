@@ -184,11 +184,11 @@ void FixedBufferResources::dispatch(void* output, void* outputScales, int* outpu
   const size_t workspaceBytes = fixedBufferWorkspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    dispatch::rankMajorLatency(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+    dispatch::latencyRankMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                                outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, contextHost_,
                                contextDevice_, numBlocks, stream);
   } else {
-    dispatch::expertMajorLatency(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+    dispatch::latencyExpertMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                                  outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, contextHost_,
                                  contextDevice_, numBlocks, stream);
   }
@@ -225,10 +225,10 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
   const size_t workspaceBytes = fixedBufferWorkspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (mode == CombineMode::DIRECT_SEND) {
-    combine::directSendLatency(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+    combine::latencyDirectSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                                dispatchRecvBuffer, contextHost_, contextDevice_, numBlocks, stream);
   } else {
-    combine::rankLocalReduceLatency(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+    combine::latencyRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
                                     combineRecvBuffer, dispatchRecvBuffer, contextHost_, contextDevice_, numBlocks,
                                     stream);
   }

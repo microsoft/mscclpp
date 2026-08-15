@@ -64,7 +64,7 @@ void* MoERuntime::combineInputBuffer() const {
   return fixedBuffer_->combineInputBuffer();
 }
 
-void MoERuntime::dispatchLatency(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+void MoERuntime::latencyDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                  float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                  const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden,
                                  int numTopk, int maxTokensPerRank, int numExperts, int invalidTokenExpertId,
@@ -76,7 +76,7 @@ void MoERuntime::dispatchLatency(void* output, void* outputScales, int* outputSr
                          numExperts, invalidTokenExpertId, dispatchLayout, dispatchDataType, numBlocks, stream);
 }
 
-void MoERuntime::combineLatency(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+void MoERuntime::latencyCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                                 const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
                                 int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
                                 DispatchDataType dispatchDataType, CombineMode mode, int numBlocks,
@@ -86,51 +86,49 @@ void MoERuntime::combineLatency(void* output, const void* input, const int64_t* 
                         maxTokensPerRank, numExperts, dispatchLayout, dispatchDataType, mode, numBlocks, stream);
 }
 
-void MoERuntime::prepareTokenMajorOverlap(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                                          const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
-                                          cudaStream_t stream) {
+void MoERuntime::tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                                   const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
+                                   cudaStream_t stream) {
   requireMode(MoEMode::OVERLAP);
   recvPool_->prepare(numTokensPerRank, numTokensPerExpert, isTokenInRank, topkIdx, numTokens, numTopk, numExperts,
                      stream);
 }
 
-int MoERuntime::getTokenMajorOverlapNumChannels(int xElementSize) const {
+int MoERuntime::tokenMajorNumChannels(int xElementSize) const {
   requireMode(MoEMode::OVERLAP);
   return recvPool_->numChannels(xElementSize);
 }
 
-void* MoERuntime::resolveTokenMajorOverlapRecvBuffer(int numTokens, int numRecvTokens, int hidden,
-                                                     int xElementSize) const {
+void* MoERuntime::tokenMajorResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const {
   requireMode(MoEMode::OVERLAP);
   return recvPool_->resolveRecvBuffer(numTokens, numRecvTokens, hidden, xElementSize);
 }
 
-int MoERuntime::notifyTokenMajorOverlap(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
-                                        const int* numTokensPerRank, const int* numTokensPerExpert,
-                                        const bool* isTokenInRank, int numTokens, int numExperts, int xElementSize,
-                                        int expertAlignment, cudaStream_t stream) {
+int MoERuntime::tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
+                                 const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
+                                 int numTokens, int numExperts, int xElementSize, int expertAlignment,
+                                 cudaStream_t stream) {
   requireMode(MoEMode::OVERLAP);
   return recvPool_->notify(rankPrefixMatrix, channelPrefixMatrix, numRecvTokensPerExpert, numTokensPerRank,
                            numTokensPerExpert, isTokenInRank, numTokens, numExperts, xElementSize, expertAlignment,
                            stream);
 }
 
-void MoERuntime::dispatchTokenMajorOverlap(void* recvX, float* recvXScales, int64_t* recvTopkIdx,
-                                           float* recvTopkWeights, int* sendHead, const void* x, const float* xScales,
-                                           const int64_t* topkIdx, const float* topkWeights, const bool* isTokenInRank,
-                                           const int* rankPrefixMatrix, const int* channelPrefixMatrix, int numTokens,
-                                           int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
-                                           int numRecvTokens, bool cachedMode, cudaStream_t stream) {
+void MoERuntime::tokenMajorDispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
+                                    int* sendHead, const void* x, const float* xScales, const int64_t* topkIdx,
+                                    const float* topkWeights, const bool* isTokenInRank, const int* rankPrefixMatrix,
+                                    const int* channelPrefixMatrix, int numTokens, int hidden, int numTopk,
+                                    int numScales, int numExperts, int xElementSize, int numRecvTokens, bool cachedMode,
+                                    cudaStream_t stream) {
   requireMode(MoEMode::OVERLAP);
   recvPool_->dispatch(recvX, recvXScales, recvTopkIdx, recvTopkWeights, sendHead, x, xScales, topkIdx, topkWeights,
                       isTokenInRank, rankPrefixMatrix, channelPrefixMatrix, numTokens, hidden, numTopk, numScales,
                       numExperts, xElementSize, numRecvTokens, cachedMode, stream);
 }
 
-void MoERuntime::combineTokenMajorOverlap(void* combinedX, float* combinedTopkWeights, const void* x,
-                                          const float* topkWeights, const int* sendHead, int numInputTokens,
-                                          int numOutputTokens, int hidden, int numTopk, int xElementSize,
-                                          cudaStream_t stream) {
+void MoERuntime::tokenMajorCombine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
+                                   const int* sendHead, int numInputTokens, int numOutputTokens, int hidden,
+                                   int numTopk, int xElementSize, cudaStream_t stream) {
   requireMode(MoEMode::OVERLAP);
   recvPool_->combine(combinedX, combinedTopkWeights, x, topkWeights, sendHead, numInputTokens, numOutputTokens, hidden,
                      numTopk, xElementSize, stream);

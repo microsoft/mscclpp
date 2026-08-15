@@ -769,11 +769,11 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
-MSCCLPP_DEVICE_INLINE void dispatchLatencyBody(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                               float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
-                                               const int64_t* __restrict__ topkIndices,
-                                               const float* __restrict__ topkWeights, const void* inputTokens,
-                                               Workload workload, void* recvBuffer, const DeviceContext* context) {
+MSCCLPP_DEVICE_INLINE void latencyBody(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
+                                       const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
+                                       const void* inputTokens, Workload workload, void* recvBuffer,
+                                       const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
