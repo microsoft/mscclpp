@@ -15,28 +15,29 @@ namespace ep {
 namespace dispatch {
 namespace detail {
 
-using ::mscclpp::ep::detail::configureKernel;
-using ::mscclpp::ep::detail::DispatchElementType;
-using ::mscclpp::ep::detail::DispatchMaxNRecvTmaWorkers;
-using ::mscclpp::ep::detail::DispatchMaxNWarpGroups;
-using ::mscclpp::ep::detail::dispatchMetadataBytes;
-using ::mscclpp::ep::detail::DispatchNThreads;
-using ::mscclpp::ep::detail::DispatchNWarps;
-using ::mscclpp::ep::detail::dispatchNWarpsPerGroup;
-using ::mscclpp::ep::detail::dispatchPayloadStride;
-using ::mscclpp::ep::detail::DispatchPayloadView;
-using ::mscclpp::ep::detail::DispatchScaleType;
-using ::mscclpp::ep::detail::DispatchSchedulerPrefixBarrier;
-using ::mscclpp::ep::detail::DispatchSchedulerReadyBarrier;
-using ::mscclpp::ep::detail::dispatchSharedBytes;
-using ::mscclpp::ep::detail::dispatchSharedControlBytes;
-using ::mscclpp::ep::detail::DispatchWarpGroupBarrierBase;
-using ::mscclpp::ep::detail::isSupportedDispatchDataType;
-using ::mscclpp::ep::detail::KernelConfigCache;
-using ::mscclpp::ep::detail::RecvTask;
-using ::mscclpp::ep::detail::tmaWorkerCount;
-using ::mscclpp::ep::detail::TransportView;
-using ::mscclpp::ep::detail::WorkspaceView;
+namespace shared = ::mscclpp::ep::detail;
+using shared::configureKernel;
+using shared::DispatchElementType;
+using shared::DispatchMaxNRecvTmaWorkers;
+using shared::DispatchMaxNWarpGroups;
+using shared::dispatchMetadataBytes;
+using shared::DispatchNThreads;
+using shared::DispatchNWarps;
+using shared::dispatchNWarpsPerGroup;
+using shared::dispatchPayloadStride;
+using shared::DispatchPayloadView;
+using shared::DispatchScaleType;
+using shared::DispatchSchedulerPrefixBarrier;
+using shared::DispatchSchedulerReadyBarrier;
+using shared::dispatchSharedBytes;
+using shared::dispatchSharedControlBytes;
+using shared::DispatchWarpGroupBarrierBase;
+using shared::isSupportedDispatchDataType;
+using shared::KernelConfigCache;
+using shared::RecvTask;
+using shared::tmaWorkerCount;
+using shared::TransportView;
+using shared::WorkspaceView;
 
 #if MSCCLPP_BULK_AVAILABLE
 
