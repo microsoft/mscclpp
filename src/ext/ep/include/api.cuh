@@ -139,6 +139,8 @@ enum class DispatchDataType {
 
 /// Per-call dispatch or combine workload dimensions.
 struct Workload {
+  /// Host-assigned epoch shared by the matching dispatch and combine calls.
+  uint32_t epoch_;
   /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.

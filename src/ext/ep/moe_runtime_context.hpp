@@ -146,6 +146,7 @@ struct LatencyContext {
   DispatchLayout outputLayout_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
+  uint32_t epoch_ = 0;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};

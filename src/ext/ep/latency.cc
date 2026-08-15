@@ -202,7 +202,9 @@ void MoERuntime::launchLatencyDispatch(const detail::LatencyDispatchRequest& req
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
-  const Workload workload{.numTokens_ = numTokens,
+  ++context.epoch_;
+  const Workload workload{.epoch_ = context.epoch_,
+                          .numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
                           .numExperts_ = numExperts,
@@ -257,7 +259,8 @@ void MoERuntime::launchLatencyCombine(const detail::LatencyCombineRequest& reque
     EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
   }
 
-  const Workload workload{.numTokens_ = numTokens,
+  const Workload workload{.epoch_ = context.epoch_,
+                          .numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
                           .numExperts_ = numExperts,
