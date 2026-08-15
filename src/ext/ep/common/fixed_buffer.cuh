@@ -132,7 +132,7 @@ struct WorkspaceView {
     dispatchRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
     dispatchRecvTasks_ = reinterpret_cast<RecvTask*>(cursor);
-    cursor += static_cast<size_t>(FixedBufferMaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
+    cursor += static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) / sizeof(int);
     dispatchTasksReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchNumRecvTasks_ = cursor++;
     combineRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
@@ -150,13 +150,12 @@ struct WorkspaceView {
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
            static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
-           static_cast<size_t>(FixedBufferMaxWorkerBlocks) * sizeof(RecvTask) +
-           sizeof(uint32_t) +                                            // dispatchTasksReadyEpoch_
-           sizeof(int) +                                                 // dispatchNumRecvTasks_
-           static_cast<size_t>(nRanks) * sizeof(uint32_t) +              // combineRankReadyEpochs_
-           sizeof(uint32_t) +                                            // combineReadyEpoch_
-           sizeof(mscclpp::DeviceSyncer) +                               // combineSyncer_
-           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);  // rankMajorSendIndices_
+           static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
+           sizeof(int) +                                                                 // dispatchNumRecvTasks_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
+           sizeof(uint32_t) +                                                            // combineReadyEpoch_
+           sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
+           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
 

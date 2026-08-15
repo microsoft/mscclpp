@@ -590,7 +590,7 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __r
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
-MSCCLPP_DEVICE_INLINE void latencyBody(void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
+MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
                                        const float* __restrict__ topkWeights, const int* srcInfo,
                                        const int64_t* layoutRange, Workload workload, void* combineRecvBuffer,
                                        const void* dispatchRecvBuffer, const DeviceContext* context) {
@@ -739,7 +739,7 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(workload.numTokens_ >= 0 && workload.numTokens_ <= workload.maxTokensPerRank_);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= CombineMaxNTopk);
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= FixedBufferMaxWorkerBlocks);
+  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE || Mode == CombineMode::DIRECT_SEND);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR);

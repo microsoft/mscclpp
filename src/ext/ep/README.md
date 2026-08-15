@@ -134,20 +134,16 @@ src/ext/ep/
 │   ├── recv_pool.cuh
 │   └── overlap_barrier.cuh
 ├── dispatch/
-│   ├── latency/
-│   │   ├── common.cuh
-│   │   ├── expert_major.cu
-│   │   └── rank_major.cu
-│   └── overlap/
-│       ├── token_major_prepare.cu
-│       └── token_major.cu
+│   ├── common.cuh
+│   ├── expert_major.cu
+│   ├── rank_major.cu
+│   ├── token_major_prepare.cu
+│   └── token_major.cu
 ├── combine/
-│   ├── latency/
-│   │   ├── common.cuh
-│   │   ├── rank_local_reduce.cu
-│   │   └── direct_send.cu
-│   └── overlap/
-│       └── token_major_reduce.cu
+│   ├── common.cuh
+│   ├── rank_local_reduce.cu
+│   ├── direct_send.cu
+│   └── token_major_reduce.cu
 ├── include/
 │   ├── api.cuh
 │   └── device_context.cuh

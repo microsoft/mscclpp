@@ -57,13 +57,13 @@ set(EP_SOURCES
     runtime/fixed_buffer.cc
     runtime/recv_pool.cc
     bindings.cpp
-    dispatch/latency/expert_major.cu
-    dispatch/latency/rank_major.cu
-    combine/latency/rank_local_reduce.cu
-    combine/latency/direct_send.cu
-    dispatch/overlap/token_major_prepare.cu
-    dispatch/overlap/token_major.cu
-    combine/overlap/token_major_reduce.cu
+    dispatch/expert_major.cu
+    dispatch/rank_major.cu
+    dispatch/token_major_prepare.cu
+    dispatch/token_major.cu
+    combine/rank_local_reduce.cu
+    combine/direct_send.cu
+    combine/token_major_reduce.cu
 )
 
 # Build as a Python extension module (shared object with Python ABI suffix).

@@ -8,26 +8,26 @@ namespace ep {
 namespace combine {
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
-__global__ __launch_bounds__(detail::CombineNThreads, 1) void latencyDirectSendKernel(
+__global__ __launch_bounds__(detail::CombineNThreads, 1) void rankLocalReduceKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
-  detail::latencyBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout>(
+  detail::combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
 
-struct LatencyDirectSendKernelSelector {
+struct RankLocalReduceKernelSelector {
   template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
   static auto get() {
-    return latencyDirectSendKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return rankLocalReduceKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
   }
 };
 
-void latencyDirectSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                       const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                       void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  detail::combineAlgorithm<CombineMode::DIRECT_SEND, LatencyDirectSendKernelSelector>(
+void rankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                     const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                     void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  detail::combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, RankLocalReduceKernelSelector>(
       output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
       numBlocks, stream);
 }

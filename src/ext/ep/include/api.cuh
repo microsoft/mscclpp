@@ -113,13 +113,13 @@ void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHea
 }  // namespace combine
 
 /// Number of non-worker blocks in the dispatch grid.
-inline constexpr int FixedBufferDispatchControlBlocks = 2;
+inline constexpr int DispatchControlBlocks = 2;
 /// Maximum worker blocks used by dispatch or combine.
-inline constexpr int FixedBufferMaxWorkerBlocks = 128;
+inline constexpr int MaxWorkerBlocks = 128;
 /// Maximum total dispatch grid size.
-inline constexpr int FixedBufferMaxDispatchBlocks = FixedBufferMaxWorkerBlocks + FixedBufferDispatchControlBlocks;
+inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
 
-/// Fixed-buffer combine algorithm.
+/// Combine algorithm.
 enum class CombineMode {
   /// Reduce expert rows on each destination rank before sending one partial per rank and token.
   RANK_LOCAL_REDUCE,
@@ -155,8 +155,8 @@ struct Workload {
   DispatchDataType dispatchDataType_;
 };
 
-/// Return workspace bytes required by fixed-buffer dispatch and combine.
-size_t fixedBufferWorkspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+/// Return workspace bytes required by dispatch and combine.
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
 namespace dispatch {
 
@@ -180,10 +180,10 @@ namespace dispatch {
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
 /// @param[in] stream CUDA stream.
-void latencyExpertMajor(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                        const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                         float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                         const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                         const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 /// Dispatch tokens into a fixed-stride rank-major output.
 ///
@@ -206,10 +206,10 @@ void latencyExpertMajor(void* output, void* outputScales, int* outputSrcInfo, in
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Total dispatch grid size, including control blocks.
 /// @param[in] stream CUDA stream.
-void latencyRankMajor(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                      float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                      const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                      const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                       const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                       const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 }  // namespace dispatch
 
@@ -233,9 +233,9 @@ namespace combine {
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void latencyRankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                            const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                            void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                     const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                     void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 /// Send every expert-major row directly and reduce on each source rank.
 ///
@@ -254,9 +254,9 @@ void latencyRankLocalReduce(void* output, const void* input, const int64_t* topk
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void latencyDirectSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                       const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                       void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void directSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+                const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 }  // namespace combine
 

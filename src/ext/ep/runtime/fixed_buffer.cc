@@ -29,7 +29,7 @@ FixedBufferResources::FixedBufferResources(mscclpp::Communicator& communicator, 
       outputLayout_(outputLayout),
       symmetricBufferBytes_(static_cast<int64_t>(
           fixedBufferSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout))),
-      workspaceBytes_(fixedBufferWorkspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
+      workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
@@ -159,8 +159,7 @@ void FixedBufferResources::dispatch(void* output, void* outputScales, int* outpu
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
-  EP_HOST_ASSERT(numBlocks - FixedBufferDispatchControlBlocks >= numRanks_ &&
-                 numBlocks <= FixedBufferMaxDispatchBlocks);
+  EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
   FixedBufferLayout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
@@ -181,16 +180,16 @@ void FixedBufferResources::dispatch(void* output, void* outputScales, int* outpu
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType};
-  const size_t workspaceBytes = fixedBufferWorkspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
+  const size_t workspaceBytes = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    dispatch::latencyRankMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                               outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
-                               numBlocks, stream);
+    dispatch::rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+                                outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
+                                numBlocks, stream);
   } else {
-    dispatch::latencyExpertMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                 outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
-                                 numBlocks, stream);
+    dispatch::expertMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+                                  outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
+                                  numBlocks, stream);
   }
 }
 
@@ -202,7 +201,7 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= FixedBufferMaxWorkerBlocks);
+  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
   FixedBufferLayout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
@@ -222,14 +221,14 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType};
-  const size_t workspaceBytes = fixedBufferWorkspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
+  const size_t workspaceBytes = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (mode == CombineMode::DIRECT_SEND) {
-    combine::latencyDirectSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-                               dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::directSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+                        dispatchRecvBuffer, context_, numBlocks, stream);
   } else {
-    combine::latencyRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                    combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::rankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+                             dispatchRecvBuffer, context_, numBlocks, stream);
   }
 }
 

@@ -208,7 +208,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, int nExpert
                                             const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                             int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                             void* workspace, int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -268,7 +268,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
                                            int maxTokensPerRank, void* recvBuffer, const TransportView& transport,
                                            void* workspace, int* sharedMem) {
   static_assert(DataType == DispatchDataType::FP8_E4M3);
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -440,7 +440,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, const Transport
                                         const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                         int maxTokensPerRank, void* recvBuffer, void* workspace, uint32_t dispatchEpoch,
                                         int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     if constexpr (DataType == DispatchDataType::BF16) {
       dispatchSendBf16<Hidden>(inputTokens, nExperts, transport.rank_, nRanks, topkIndices, topkWeights, nTokens, nTopk,
@@ -463,7 +463,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajor(void* output, int* outputTopkId
                                                  const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                                  int invalidTokenExpertId, int maxTokensPerRank, void* recvBuffer,
                                                  void* workspace, uint32_t dispatchEpoch, int* sharedMem) {
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     dispatchSendRankMajorBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks,
                                       topkIndices, topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank,
@@ -485,7 +485,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
   const int laneId = get_lane_id();
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
   const int nLocalExperts = nExperts / nRanks;
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
@@ -769,15 +769,15 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout>
-MSCCLPP_DEVICE_INLINE void latencyBody(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
-                                       const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
-                                       const void* inputTokens, Workload workload, void* recvBuffer,
-                                       const DeviceContext* context) {
+MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
+                                        const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
+                                        const void* inputTokens, Workload workload, void* recvBuffer,
+                                        const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - FixedBufferDispatchControlBlocks;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   const int nExperts = workload.numExperts_;
   const int nRanks = context->numRanks_;
   const int nTokens = workload.numTokens_;
@@ -897,7 +897,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   const int nExperts = workload.numExperts_;
   const int rank = context.rank_;
   const int nRanks = context.numRanks_;
-  const int numWorkerBlocks = numBlocks - FixedBufferDispatchControlBlocks;
+  const int numWorkerBlocks = numBlocks - DispatchControlBlocks;
 
   EP_HOST_ASSERT(nRanks > 0);
   EP_HOST_ASSERT(nExperts > 0);
@@ -907,7 +907,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= WARP_SIZE);
   EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
-  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= FixedBufferMaxWorkerBlocks);
+  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
