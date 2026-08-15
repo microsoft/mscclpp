@@ -24,9 +24,9 @@ struct RecvPoolConfig {
        BufferAlignmentBytes) *
       BufferAlignmentBytes;
 
-  int numSms_;
+  int numBlocks_;
 
-  explicit RecvPoolConfig(int numSms) : numSms_(numSms) { EP_HOST_ASSERT(numSms > 0); }
+  explicit RecvPoolConfig(int numBlocks) : numBlocks_(numBlocks) { EP_HOST_ASSERT(numBlocks > 0); }
 
   size_t controlBufferBytes(int numRanks) const {
     EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);

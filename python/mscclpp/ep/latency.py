@@ -42,6 +42,7 @@ class LatencyBackend(Backend):
         output_layout = config.output_layout
         if output_layout is None:
             output_layout = DispatchLayout.EXPERT_MAJOR
+        num_blocks = 130 if config.num_blocks is None else config.num_blocks
         runtime = Runtime(
             comm,
             MoEMode.LATENCY,
@@ -49,6 +50,7 @@ class LatencyBackend(Backend):
             hidden=config.hidden_size,
             num_experts=config.num_experts,
             num_topk=config.topk,
+            num_blocks=num_blocks,
             output_layout=output_layout,
         )
         super().__init__(runtime)
@@ -65,8 +67,7 @@ class LatencyBackend(Backend):
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_blocks = config.latency_num_blocks
-        self.num_sms = self.num_blocks - 2
+        self.num_blocks = num_blocks
         self.combine_mode = config.combine_mode
         self.invalid_token_expert_id = (
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
@@ -81,7 +82,7 @@ class LatencyBackend(Backend):
         if self.num_experts % self.world_size != 0:
             raise ValueError("latency mode requires num_experts divisible by world_size")
         if not self.world_size + 2 <= self.num_blocks <= 130:
-            raise ValueError("latency_num_blocks must be between world_size + 2 and 130")
+            raise ValueError("num_blocks must be between world_size + 2 and 130 in latency mode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.invalid_token_expert_id) is not int:

@@ -83,13 +83,13 @@ metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
 There is no ring algorithm or runtime fallback. Set the communication block
-budget through the `num_sms` API configuration.
+budget through the `num_blocks` API configuration.
 
 The persistent overlap configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_sms` | Maximum overlap communication block budget |
+| `num_blocks` | Maximum overlap communication block budget |
 
 ## Build
 

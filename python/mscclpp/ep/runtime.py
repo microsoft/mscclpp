@@ -22,7 +22,7 @@ class Runtime:
         num_experts: int = 0,
         num_topk: int = 0,
         max_hidden_bytes: int = 0,
-        num_sms: int = 20,
+        num_blocks: int = 20,
         output_layout: DispatchLayout = DispatchLayout.EXPERT_MAJOR,
     ) -> None:
         self.rank: int = comm.my_rank
@@ -36,7 +36,7 @@ class Runtime:
             num_experts=num_experts,
             num_topk=num_topk,
             max_hidden_bytes=max_hidden_bytes,
-            num_sms=num_sms,
+            num_blocks=num_blocks,
             output_layout=output_layout,
         )
 

@@ -25,12 +25,6 @@ from __future__ import annotations
 import os
 import sys
 
-# Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
-# It runs in a background thread polling the TCPStore; under mpirun, rank 0
-# (the store server) can exit before non-zero ranks finish teardown, producing
-# noisy 'recvValue failed / Connection was likely closed' stack traces.
-os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
-
 import torch
 import torch.distributed as dist
 
@@ -115,7 +109,7 @@ def main():
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.OVERLAP,
-        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
     )
     if rank == 0:
         print(
@@ -248,7 +242,7 @@ def main():
         topk=bench_num_topk,
         max_tokens_per_rank=bench_tokens,
         mode=ep.MoEMode.OVERLAP,
-        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
     )
     assert moe.is_available()
 

@@ -77,7 +77,7 @@ class MoECommunicator:
             "hidden_size",
             "topk",
             "max_tokens_per_rank",
-            "num_sms",
+            "num_blocks",
             "enable_overlap",
             "num_local_experts",
             "local_expert_start",

@@ -58,8 +58,7 @@ class MoECommunicatorConfig:
     quant: Optional[QuantConfig] = None
 
     # Launch tuning
-    num_sms: int = 20
-    latency_num_blocks: int = 130
+    num_blocks: Optional[int] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 

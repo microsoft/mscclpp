@@ -69,8 +69,8 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch resources
-    num_sms: int = 20
+    # Launch resources; defaults to 130 for LATENCY and 20 for OVERLAP
+    num_blocks: Optional[int] = None
 
     # Overlap
     enable_overlap: bool = False
@@ -140,7 +140,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_sms` | backend launch/resource tuning |
+| `num_blocks` | communication block count; mode-specific default when unset |
 | `dispatch_config`, `combine_config` | backend-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 
@@ -163,12 +163,12 @@ This keeps `MoECommunicator` policy-free. Serving frameworks such as SGLang can
 choose a mode based on their own scheduling policy, batch shape, runner backend,
 and benchmarking data once multiple active backends are available.
 
-The mode also fixes the SM budget, which is the main scheduling consideration:
+The mode selects the default communication block budget:
 
-| Mode | SMs used | Intended use |
+| Mode | Default blocks | Intended use |
 |---|---|---|
-| `MoEMode.LATENCY` | ~128 (`latency_num_blocks - 2`) | minimize standalone latency |
-| `MoEMode.OVERLAP` | 20 (`Config.num_sms`) | overlap communication with expert GEMMs |
+| `MoEMode.LATENCY` | 130 | minimize standalone latency |
+| `MoEMode.OVERLAP` | 20 | overlap communication with expert GEMMs |
 
 The selected mode determines the default dispatch output layout:
 

@@ -160,7 +160,7 @@ void RecvPoolResources::setup(mscclpp::Communicator& communicator) {
 
 int RecvPoolResources::dispatchBlockCount(int xElementSize) const {
   EP_HOST_ASSERT(xElementSize == 2);
-  return config_.numSms_;
+  return config_.numBlocks_;
 }
 
 bool RecvPoolResources::canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const {
@@ -293,7 +293,7 @@ void RecvPoolResources::combine(void* combinedX, float* combinedTopkWeights, con
                                  weightBytes, numInputTokens, cudaMemcpyDeviceToDevice, stream));
   }
 
-  const int numBlocks = config_.numSms_;
+  const int numBlocks = config_.numBlocks_;
   combine::tokenMajorReduceCombine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
                                    static_cast<int64_t>(recvPoolHeaderBytes),
                                    static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,

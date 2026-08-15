@@ -19,12 +19,11 @@ struct RecvPoolResources;
 
 /// Unified host runtime for all expert-parallel dispatch and combine algorithms.
 ///
-/// `MoEMode` remains a compatibility selector for the Python API. The selected
-/// mode allocates only its required fixed-buffer or receive-pool resources.
+/// The selected mode allocates only its required fixed-buffer or receive-pool resources.
 class MoERuntime {
  public:
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
-             int numTopk, int64_t maxHiddenBytes, int numSms,
+             int numTopk, int64_t maxHiddenBytes, int numBlocks,
              DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
   ~MoERuntime() noexcept(false);
 
@@ -90,7 +89,7 @@ class MoERuntime {
 /// Create the unified MoE runtime selected by @p mode.
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numSms, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
+                                             int numBlocks, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
 
 }  // namespace ep
 }  // namespace mscclpp

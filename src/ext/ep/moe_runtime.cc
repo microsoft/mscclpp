@@ -13,7 +13,7 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
-                       int numExperts, int numTopk, int64_t maxHiddenBytes, int numSms, DispatchLayout outputLayout)
+                       int numExperts, int numTopk, int64_t maxHiddenBytes, int numBlocks, DispatchLayout outputLayout)
     : bootstrap_(communicator.bootstrap()),
       mode_(mode),
       rank_(bootstrap_->getRank()),
@@ -30,7 +30,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     available_ = fixedBuffer_->available();
   } else {
     recvPool_ = std::make_unique<detail::RecvPoolResources>(
-        communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_, maxHiddenBytes, RecvPoolConfig(numSms));
+        communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_, maxHiddenBytes, RecvPoolConfig(numBlocks));
     available_ = recvPool_->available();
   }
 }
@@ -136,9 +136,9 @@ void MoERuntime::tokenMajorCombine(void* combinedX, float* combinedTopkWeights, 
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numSms, DispatchLayout outputLayout) {
+                                             int numBlocks, DispatchLayout outputLayout) {
   return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, maxHiddenBytes,
-                                      numSms, outputLayout);
+                                      numBlocks, outputLayout);
 }
 
 }  // namespace ep

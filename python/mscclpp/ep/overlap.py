@@ -41,9 +41,6 @@ from mscclpp.ep.utils import (
 class OverlapBackend(Backend):
     """Overlap-mode backend."""
 
-    #: Default number of SMs reserved for comms kernels. Matches DeepEP.
-    num_sms: int = 20
-
     def __init__(
         self,
         config: MoECommunicatorConfig,
@@ -54,12 +51,15 @@ class OverlapBackend(Backend):
         output_layout = config.output_layout
         if output_layout is None:
             output_layout = DispatchLayout.TOKEN_MAJOR
+        num_blocks = 20 if config.num_blocks is None else config.num_blocks
+        if num_blocks <= 0:
+            raise ValueError("num_blocks must be positive in overlap mode")
         max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
         runtime = Runtime(
             comm,
             MoEMode.OVERLAP,
             max_hidden_bytes=max_hidden_bytes,
-            num_sms=config.num_sms,
+            num_blocks=num_blocks,
         )
         super().__init__(runtime)
 
@@ -75,7 +75,7 @@ class OverlapBackend(Backend):
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_sms = config.num_sms
+        self.num_blocks = num_blocks
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout != DispatchLayout.TOKEN_MAJOR:
