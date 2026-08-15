@@ -27,11 +27,10 @@ struct LatencyRankMajorKernelSelector {
 void latencyRankMajor(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                       const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                      const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
-                      cudaStream_t stream) {
+                      const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   detail::dispatchAlgorithm<DispatchLayout::RANK_MAJOR, LatencyRankMajorKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
-      topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+      topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
 
 }  // namespace dispatch

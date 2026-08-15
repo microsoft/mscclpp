@@ -648,8 +648,7 @@ template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int Scale
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                              const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
-                              cudaStream_t stream) {
+                              const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 || Hidden == 7168 ||
                 Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
   const int nExperts = workload.numExperts_;
@@ -671,34 +670,33 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
 
   combineFunc<<<dim3(launchBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
-      deviceContext);
+      context.devicePtr_);
   CUDA_CHECK(cudaGetLastError());
 }
 
 template <CombineMode Mode, int Hidden, typename KernelSelector>
 inline void combineHidden(void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights,
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                          void* dispatchRecvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
-                          int numBlocks, cudaStream_t stream) {
+                          void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
     if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
       EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
       return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::BF16, 0,
                                DispatchLayout::RANK_MAJOR, KernelSelector>(
           output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-          dispatchRecvBuffer, context, deviceContext, numBlocks, stream);
+          dispatchRecvBuffer, context, numBlocks, stream);
     }
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
         return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::BF16, 0,
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, deviceContext, numBlocks, stream);
+            dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
         return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::FP8_E4M3, 128,
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, deviceContext, numBlocks, stream);
+            dispatchRecvBuffer, context, numBlocks, stream);
     }
   } else {
     switch (workload.dispatchDataType_) {
@@ -706,12 +704,12 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
         return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::BF16, 0,
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, deviceContext, numBlocks, stream);
+            dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
         return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::FP8_E4M3, 128,
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, deviceContext, numBlocks, stream);
+            dispatchRecvBuffer, context, numBlocks, stream);
     }
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
@@ -721,8 +719,7 @@ template <CombineMode Mode, typename KernelSelector>
 inline void combineAlgorithm(void* output, const void* expertOutput, const int64_t* topkIndices,
                              const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                              const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                             const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
-                             cudaStream_t stream) {
+                             const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   const int nExperts = workload.numExperts_;
   const int rank = context.rank_;
   const int nRanks = context.numRanks_;
@@ -736,7 +733,7 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(context.workspace_ != nullptr);
-  EP_HOST_ASSERT(deviceContext != nullptr);
+  EP_HOST_ASSERT(context.devicePtr_ != nullptr);
   EP_HOST_ASSERT(nRanks > 0 && nRanks <= 2 * WARP_SIZE);
   EP_HOST_ASSERT(nExperts > 0 && nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
@@ -761,31 +758,31 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
     case 4096:
       return combineHidden<Mode, 4096, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 4352:
       return combineHidden<Mode, 4352, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 6656:
       return combineHidden<Mode, 6656, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 7168:
       return combineHidden<Mode, 7168, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 8192:
       return combineHidden<Mode, 8192, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 8704:
       return combineHidden<Mode, 8704, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     case 9216:
       return combineHidden<Mode, 9216, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       deviceContext, numBlocks, stream);
+                                                       numBlocks, stream);
     default:
       EP_HOST_ASSERT(false && "unsupported latency combine hidden size");
   }

@@ -209,8 +209,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
 
 void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
                       int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                      const DeviceContext* deviceContext, cudaStream_t stream) {
+                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(sendHead != nullptr);
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
@@ -233,7 +232,8 @@ void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHea
     EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \
     LaunchConfig config(numBlocks, numWarps* WARP_SIZE, sharedBytes, stream, true);                                    \
     LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
-                  hidden, numTopk, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, deviceContext);     \
+                  hidden, numTopk, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes,                     \
+                  context.devicePtr_);                                                                                 \
   }
 
   switch (context.numRanks_) {
@@ -279,10 +279,9 @@ void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHea
 
 void tokenMajorReduce(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens, int hidden,
                       int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                      const DeviceContext* deviceContext, cudaStream_t stream) {
+                      int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context, cudaStream_t stream) {
   detail::tokenMajorReduce(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk, recvPoolHeaderBytes,
-                           recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context, deviceContext, stream);
+                           recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context, stream);
 }
 
 }  // namespace combine

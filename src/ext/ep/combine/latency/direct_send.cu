@@ -26,11 +26,10 @@ struct LatencyDirectSendKernelSelector {
 
 void latencyDirectSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                        const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                       void* dispatchRecvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
-                       int numBlocks, cudaStream_t stream) {
+                       void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   detail::combineAlgorithm<CombineMode::DIRECT_SEND, LatencyDirectSendKernelSelector>(
       output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-      deviceContext, numBlocks, stream);
+      numBlocks, stream);
 }
 
 }  // namespace combine

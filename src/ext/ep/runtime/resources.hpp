@@ -61,8 +61,7 @@ struct FixedBufferResources {
   size_t workspaceBytes_;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
-  DeviceContext contextHost_{};
-  DeviceContext* contextDevice_ = nullptr;
+  DeviceContext context_{};
   mscclpp::Communicator* communicator_ = nullptr;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
@@ -130,8 +129,7 @@ struct RecvPoolResources {
   int* moeRecvCounterMapped_ = nullptr;
   volatile int* moeRecvExpertCounter_ = nullptr;
   int* moeRecvExpertCounterMapped_ = nullptr;
-  DeviceContext contextHost_{};
-  DeviceContext* contextDevice_ = nullptr;
+  DeviceContext context_{};
 };
 
 }  // namespace detail

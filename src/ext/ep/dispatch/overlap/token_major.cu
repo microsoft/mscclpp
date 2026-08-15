@@ -109,12 +109,11 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
 
 void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
                               const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                              int expertAlignment, const DeviceContext& context, const DeviceContext* deviceContext,
-                              cudaStream_t stream, int numChannels) {
+                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                             \
   LAUNCH_KERNEL(config.get(), exchangeTokenMajorCountsKernel<ranks>, numTokensPerRank, numTokensPerExpert, numExperts, \
                 numTokens, numChannels, isTokenInRank, channelPrefixMatrix, rankPrefixMatrix, expertAlignment,         \
-                deviceContext);                                                                                        \
+                context.devicePtr_);                                                                                   \
   break
 
   constexpr int NumThreads = 128;
@@ -144,10 +143,9 @@ __global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix,
   if (threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
 }
 
-void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context,
-                                   const DeviceContext* deviceContext, cudaStream_t stream) {
-#define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                           \
-  LAUNCH_KERNEL(config.get(), publishCachedTokenMajorPrefixKernel<ranks>, rankPrefixMatrix, deviceContext); \
+void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
+#define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                \
+  LAUNCH_KERNEL(config.get(), publishCachedTokenMajorPrefixKernel<ranks>, rankPrefixMatrix, context.devicePtr_); \
   break
 
   LaunchConfig config(1, 128, 0, stream);
@@ -277,7 +275,7 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                         int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
                         int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
                         int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
+                        const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = 512;
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
@@ -291,7 +289,7 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                 reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,    \
                 channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, \
                 recvTopkIdx, recvTopkWeights, recvXScales, recvPoolHeaderBytes, recvPoolMetadataOffset,    \
-                metadataSlotBytes, deviceContext);                                                         \
+                metadataSlotBytes, context.devicePtr_);                                                    \
   break
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream, true);
@@ -303,16 +301,14 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
 
 void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
                               const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                              int expertAlignment, const DeviceContext& context, const DeviceContext* deviceContext,
-                              cudaStream_t stream, int numChannels) {
+                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels) {
   detail::tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
-                                   channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context, deviceContext,
-                                   stream, numChannels);
+                                   channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context, stream,
+                                   numChannels);
 }
 
-void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context,
-                                   const DeviceContext* deviceContext, cudaStream_t stream) {
-  detail::tokenMajorPublishCachedPrefix(rankPrefixMatrix, context, deviceContext, stream);
+void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
+  detail::tokenMajorPublishCachedPrefix(rankPrefixMatrix, context, stream);
 }
 
 void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
@@ -320,11 +316,11 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                         int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
                         int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
                         int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        const DeviceContext& context, const DeviceContext* deviceContext, cudaStream_t stream) {
+                        const DeviceContext& context, cudaStream_t stream) {
   detail::tokenMajorDispatch(sendHead, input, topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix,
                              numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx,
                              recvTopkWeights, recvXScales, numBlocks, recvPoolHeaderBytes, recvPoolMetadataOffset,
-                             metadataSlotBytes, context, deviceContext, stream);
+                             metadataSlotBytes, context, stream);
 }
 
 }  // namespace dispatch

@@ -35,6 +35,8 @@ struct DeviceContext {
   int rank_;
   /// Number of ranks.
   int numRanks_;
+  /// Persistent device copy used by kernel launches. Host launch code only.
+  DeviceContext* devicePtr_ = nullptr;
 };
 
 }  // namespace ep

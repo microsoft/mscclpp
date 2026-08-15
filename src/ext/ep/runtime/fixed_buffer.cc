@@ -49,7 +49,7 @@ FixedBufferResources::FixedBufferResources(mscclpp::Communicator& communicator, 
 
 FixedBufferResources::~FixedBufferResources() noexcept(false) {
   CUDA_CHECK(cudaDeviceSynchronize());
-  if (contextDevice_ != nullptr) CUDA_CHECK(cudaFree(contextDevice_));
+  if (context_.devicePtr_ != nullptr) CUDA_CHECK(cudaFree(context_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) CUDA_CHECK(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) CUDA_CHECK(cudaFree(workspace_));
   if (symmetricBuffer_ != nullptr) {
@@ -130,21 +130,21 @@ void FixedBufferResources::setup() {
   int numSms;
   CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
   CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
-  contextHost_ = {.localBufferBase_ = symmetricBuffer_,
-                  .peerBufferBases_ = peerMappedBufferBasesGpu_,
-                  .peerPayloadBases_ = nullptr,
-                  .channels_ = baseMemoryChannelHandles_.get(),
-                  .workspace_ = workspace_,
-                  .combineRecvIdx_ = nullptr,
-                  .mappedRecvCounter_ = nullptr,
-                  .mappedRecvExpertCounters_ = nullptr,
-                  .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
-                  .numSms_ = numSms,
-                  .deviceId_ = deviceId_,
-                  .rank_ = rank_,
-                  .numRanks_ = numRanks_};
-  CUDA_CHECK(cudaMalloc(&contextDevice_, sizeof(DeviceContext)));
-  CUDA_CHECK(cudaMemcpy(contextDevice_, &contextHost_, sizeof(DeviceContext), cudaMemcpyHostToDevice));
+  context_ = {.localBufferBase_ = symmetricBuffer_,
+              .peerBufferBases_ = peerMappedBufferBasesGpu_,
+              .peerPayloadBases_ = nullptr,
+              .channels_ = baseMemoryChannelHandles_.get(),
+              .workspace_ = workspace_,
+              .combineRecvIdx_ = nullptr,
+              .mappedRecvCounter_ = nullptr,
+              .mappedRecvExpertCounters_ = nullptr,
+              .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
+              .numSms_ = numSms,
+              .deviceId_ = deviceId_,
+              .rank_ = rank_,
+              .numRanks_ = numRanks_};
+  CUDA_CHECK(cudaMalloc(&context_.devicePtr_, sizeof(DeviceContext)));
+  CUDA_CHECK(cudaMemcpy(context_.devicePtr_, &context_, sizeof(DeviceContext), cudaMemcpyHostToDevice));
   available_ = ipcDomainSize >= numRanks_;
 }
 
@@ -185,12 +185,12 @@ void FixedBufferResources::dispatch(void* output, void* outputScales, int* outpu
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     dispatch::latencyRankMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                               outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, contextHost_,
-                               contextDevice_, numBlocks, stream);
+                               outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
+                               numBlocks, stream);
   } else {
     dispatch::latencyExpertMajor(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                 outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, contextHost_,
-                                 contextDevice_, numBlocks, stream);
+                                 outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context_,
+                                 numBlocks, stream);
   }
 }
 
@@ -226,11 +226,10 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   if (mode == CombineMode::DIRECT_SEND) {
     combine::latencyDirectSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-                               dispatchRecvBuffer, contextHost_, contextDevice_, numBlocks, stream);
+                               dispatchRecvBuffer, context_, numBlocks, stream);
   } else {
     combine::latencyRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                    combineRecvBuffer, dispatchRecvBuffer, contextHost_, contextDevice_, numBlocks,
-                                    stream);
+                                    combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   }
 }
 

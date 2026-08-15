@@ -94,8 +94,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
 }  // namespace detail
 
 void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                       int numTokens, int numTopk, int numExperts, const DeviceContext& context,
-                       const DeviceContext* deviceContext, cudaStream_t stream) {
+                       int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;
@@ -105,7 +104,7 @@ void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
   LaunchConfig config(numBlocks, NumThreads, 0, stream);
   LAUNCH_KERNEL(config.get(), (detail::prepareTokenMajorKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>),
                 topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
-                deviceContext);
+                context.devicePtr_);
 }
 
 }  // namespace dispatch

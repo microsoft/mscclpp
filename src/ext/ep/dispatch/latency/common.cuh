@@ -825,8 +825,7 @@ template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLay
 inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
-                               void* recvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
-                               int numBlocks, cudaStream_t stream) {
+                               void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 || Hidden == 7168 ||
                 Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
@@ -843,7 +842,7 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
   kernel<<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIdx,
-      topkWeights, input, workload, recvBuffer, deviceContext);
+      topkWeights, input, workload, recvBuffer, context.devicePtr_);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -851,23 +850,22 @@ template <int Hidden, DispatchLayout Layout, typename KernelSelector>
 inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                           const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
-                           cudaStream_t stream) {
+                           const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
     return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
   } else {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
         return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
         return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout, KernelSelector>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     }
     EP_HOST_ASSERT(false && "unsupported dispatch data type");
   }
@@ -877,17 +875,16 @@ template <int Hidden>
 inline void dispatchLayout(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                           const DeviceContext& context, const DeviceContext* deviceContext, int numBlocks,
-                           cudaStream_t stream) {
+                           const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
     return dispatchHidden<Hidden, DispatchLayout::EXPERT_MAJOR>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
   }
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
     return dispatchHidden<Hidden, DispatchLayout::RANK_MAJOR>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
   }
   EP_HOST_ASSERT(false && "unsupported dispatch layout");
 }
@@ -896,8 +893,7 @@ template <DispatchLayout Layout, typename KernelSelector>
 inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                               float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                               const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
-                              void* recvBuffer, const DeviceContext& context, const DeviceContext* deviceContext,
-                              int numBlocks, cudaStream_t stream) {
+                              void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   const int nExperts = workload.numExperts_;
   const int rank = context.rank_;
   const int nRanks = context.numRanks_;
@@ -932,41 +928,41 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(context.localBufferBase_ != nullptr);
   EP_HOST_ASSERT(context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.workspace_ != nullptr);
-  EP_HOST_ASSERT(deviceContext != nullptr);
+  EP_HOST_ASSERT(context.devicePtr_ != nullptr);
 
   switch (workload.hidden_) {
     case 2048:
       return dispatchHidden<2048, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4096:
       return dispatchHidden<4096, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4352:
       return dispatchHidden<4352, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 6656:
       return dispatchHidden<6656, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 7168:
       return dispatchHidden<7168, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8192:
       return dispatchHidden<8192, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8704:
       return dispatchHidden<8704, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 9216:
       return dispatchHidden<9216, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, deviceContext, numBlocks, stream);
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     default:
       EP_HOST_ASSERT(false && "unsupported latency dispatch hidden size");
   }
