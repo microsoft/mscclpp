@@ -223,12 +223,16 @@ void FixedBufferResources::combine(void* output, const void* input, const int64_
                           .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
-  if (mode == CombineMode::DIRECT_SEND) {
-    combine::directSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-                        dispatchRecvBuffer, context_, numBlocks, stream);
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
+    combine::rankMajorGatherReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                   combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
+  } else if (mode == CombineMode::DIRECT_SEND) {
+    combine::expertMajorDirectSend(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                   combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   } else {
-    combine::rankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-                             dispatchRecvBuffer, context_, numBlocks, stream);
+    combine::expertMajorRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                        combineRecvBuffer, dispatchRecvBuffer, context_, numBlocks, stream);
   }
 }
 

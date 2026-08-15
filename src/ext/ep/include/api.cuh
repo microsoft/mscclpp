@@ -215,27 +215,47 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
 
 namespace combine {
 
-/// Combine through one rank-local partial per destination rank and source token.
+/// Reduce expert-major rows locally before returning one partial per rank.
 ///
-/// For EXPERT_MAJOR, each destination rank applies routing weights while
-/// reducing local expert rows, then sends one BF16 partial to the source. For
-/// RANK_MAJOR, the MLP output is already rank-reduced and weighted; source ranks
-/// read the required registered peer rows directly and sum them.
+/// Each destination rank applies routing weights while reducing its local expert
+/// rows, then sends one BF16 partial per source token back to the source rank.
 /// @param[out] output Combined local tokens [num_tokens, hidden].
-/// @param[in] input Expert-major expert outputs or rank-major weighted partials.
+/// @param[in] input Expert-major expert outputs.
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
-/// @param[in] topkWeights Routing weights for EXPERT_MAJOR; nullptr for RANK_MAJOR.
-/// @param[in] srcInfo Source-token index for EXPERT_MAJOR rows; nullptr for RANK_MAJOR.
-/// @param[in] layoutRange Packed EXPERT_MAJOR count/offset metadata; nullptr for RANK_MAJOR.
+/// @param[in] topkWeights Routing weights, or nullptr for unit weights.
+/// @param[in] srcInfo Source-token index for every expert-major row.
+/// @param[in] layoutRange Packed count/offset metadata for each [local expert, source rank].
 /// @param[in] workload Per-call workload dimensions.
 /// @param[in,out] recvBuffer Symmetric scratch buffer receiving partials.
 /// @param[in] dispatchRecvBuffer Dispatch metadata rewritten for combine.
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void rankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                     const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                     void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void expertMajorRankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
+                                cudaStream_t stream);
+
+/// Gather rank-major weighted partials from peers and reduce them locally.
+///
+/// The MLP output already contains one weighted partial per destination rank
+/// and source token. Each source rank reads only the peer rows named by its
+/// routing metadata and sums them into the final token output.
+/// @param[out] output Combined local tokens [num_tokens, hidden].
+/// @param[in] input Registered rank-major MLP output.
+/// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
+/// @param[in] topkWeights Unused; must be nullptr.
+/// @param[in] srcInfo Unused; must be nullptr.
+/// @param[in] layoutRange Unused; must be nullptr.
+/// @param[in] workload Per-call workload dimensions.
+/// @param[in,out] recvBuffer Symmetric scratch buffer.
+/// @param[in] dispatchRecvBuffer Dispatch metadata rewritten for combine.
+/// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
+/// @param[in] numBlocks Number of combine worker blocks.
+/// @param[in] stream CUDA stream.
+void rankMajorGatherReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 /// Send every expert-major row directly and reduce on each source rank.
 ///
@@ -254,9 +274,9 @@ void rankLocalReduce(void* output, const void* input, const int64_t* topkIdx, co
 /// @param[in] context Persistent runtime context, including its kernel-visible device pointer.
 /// @param[in] numBlocks Number of combine blocks.
 /// @param[in] stream CUDA stream.
-void directSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
-                const int64_t* layoutRange, const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void expertMajorDirectSend(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
+                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 }  // namespace combine
 
