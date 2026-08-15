@@ -4,7 +4,7 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// Token-major overlap routing-count construction.
+// Token-major throughput routing-count construction.
 
 #include "api.cuh"
 #include "exception.cuh"

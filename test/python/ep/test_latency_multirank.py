@@ -3,14 +3,14 @@
 """Multi-rank low-latency functional test for mscclpp_ep.
 
 Launch with (intra-node, 8 GPUs):
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
     # Rank-major output:
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --output-layout rank_major
     # Optional CUDA graph smoke/benchmark:
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --cuda-graph --bench
 
@@ -18,11 +18,11 @@ Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
     # node 0:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=0 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_latency_multirank.py
     # node 1:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=1 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_latency_multirank.py
 
 Exercises the optimized BF16 or FP8 E4M3 LL dispatch plus the default combine
 path on a single node. The experimental optimized combine performs rank-local

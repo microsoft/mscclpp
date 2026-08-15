@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_DISPATCH_COMMON_CUH_
+#define MSCCLPP_EP_DISPATCH_COMMON_CUH_
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "api.cuh"
-#include "common/fixed_buffer.cuh"
+#include "common/latency.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 #include "quantization.cuh"
@@ -15,29 +16,7 @@ namespace ep {
 namespace dispatch {
 namespace detail {
 
-namespace shared = ::mscclpp::ep::detail;
-using shared::configureKernel;
-using shared::DispatchElementType;
-using shared::DispatchMaxNRecvTmaWorkers;
-using shared::DispatchMaxNWarpGroups;
-using shared::dispatchMetadataBytes;
-using shared::DispatchNThreads;
-using shared::DispatchNWarps;
-using shared::dispatchNWarpsPerGroup;
-using shared::dispatchPayloadStride;
-using shared::DispatchPayloadView;
-using shared::DispatchScaleType;
-using shared::DispatchSchedulerPrefixBarrier;
-using shared::DispatchSchedulerReadyBarrier;
-using shared::dispatchSharedBytes;
-using shared::dispatchSharedControlBytes;
-using shared::DispatchWarpGroupBarrierBase;
-using shared::isSupportedDispatchDataType;
-using shared::KernelConfigCache;
-using shared::RecvTask;
-using shared::tmaWorkerCount;
-using shared::TransportView;
-using shared::WorkspaceView;
+using namespace mscclpp::ep::detail;
 
 #if MSCCLPP_BULK_AVAILABLE
 
@@ -996,3 +975,5 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
 }  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_DISPATCH_COMMON_CUH_

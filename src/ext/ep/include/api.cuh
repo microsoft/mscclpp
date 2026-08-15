@@ -6,7 +6,8 @@
 //
 // Private host-callable API exposed by the EP CUDA kernels.
 
-#pragma once
+#ifndef MSCCLPP_EP_INCLUDE_API_CUH_
+#define MSCCLPP_EP_INCLUDE_API_CUH_
 
 #include <cuda_runtime.h>
 #include <library_types.h>
@@ -23,15 +24,15 @@ namespace ep {
 enum class MoEMode {
   /// Algorithms optimized for minimum standalone latency.
   LATENCY,
-  /// Resource-bounded algorithms optimized for compute/communication overlap.
-  OVERLAP
+  /// Resource-bounded algorithms optimized for end-to-end throughput.
+  THROUGHPUT
 };
 
 /// Logical dispatch output layout.
 enum class DispatchLayout {
   /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
   EXPERT_MAJOR,
-  /// Dynamically sized token-major rows [num_recv_tokens, hidden]. Overlap mode only.
+  /// Dynamically sized token-major rows [num_recv_tokens, hidden]. Throughput mode only.
   TOKEN_MAJOR,
   /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
   RANK_MAJOR
@@ -285,3 +286,5 @@ void expertMajorDirectSendCombine(void* output, const void* input, const int64_t
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_INCLUDE_API_CUH_

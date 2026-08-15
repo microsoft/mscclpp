@@ -98,7 +98,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             expert_output_initialized = True
         moe_comm.combine(combine_input, handle, out=out)
 
-    # Optional one-time correctness check (mirrors test_low_latency_multirank).
+    # Optional one-time correctness check (mirrors test_latency_multirank).
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)

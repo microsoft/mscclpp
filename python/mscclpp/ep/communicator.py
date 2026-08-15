@@ -9,7 +9,8 @@ from typing import Optional, Tuple
 import torch
 
 from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
-from mscclpp.ep.backend import create_backend
+from mscclpp.ep.context import create_context
+from mscclpp.ep.runtime import Runtime
 from mscclpp.ep.types import (
     BlockOverlapConfig,
     CommOverlapConfig,
@@ -44,7 +45,7 @@ class MoECommunicator:
     """High-level MoE communicator for dispatch/combine.
 
     `mode=MoEMode.LATENCY` selects the latency algorithms (EXPERT_MAJOR by
-    default); `mode=MoEMode.OVERLAP` selects bounded-resource overlap
+    default); `mode=MoEMode.THROUGHPUT` selects bounded-resource throughput
     algorithms (TOKEN_MAJOR).
     """
 
@@ -61,12 +62,13 @@ class MoECommunicator:
             raise TypeError("MoECommunicatorConfig.mode must be a MoEMode")
 
         _validate_common_config(config)
-        self._backend = create_backend(config)
-        self.mode = self._backend.mode
-        self.output_layout = self._backend.output_layout
-        self._publish_backend_state()
+        self._context = create_context(config)
+        self._runtime = Runtime.create(self._context)
+        self.mode = self._context.mode
+        self.output_layout = self._context.output_layout
+        self._publish_context_state()
 
-    def _publish_backend_state(self) -> None:
+    def _publish_context_state(self) -> None:
         for name in (
             "comm",
             "rank",
@@ -82,16 +84,16 @@ class MoECommunicator:
             "num_local_experts",
             "local_expert_start",
         ):
-            setattr(self, name, getattr(self._backend, name))
+            setattr(self, name, getattr(self._context, name))
 
     def is_available(self) -> bool:
-        return self._backend.is_available()
+        return self._runtime.is_available()
 
     def is_internode_available(self) -> bool:
-        return self._backend.is_internode_available()
+        return self._runtime.is_internode_available()
 
     def is_internode(self) -> bool:
-        return self._backend.is_internode()
+        return self._runtime.is_internode_available()
 
     def dispatch(
         self,
@@ -105,7 +107,7 @@ class MoECommunicator:
         previous_handle: Optional[DispatchHandle] = None,
         runtime_max_tokens_per_rank: Optional[int] = None,
     ) -> Tuple[DispatchOutput, DispatchHandle]:
-        return self._backend.dispatch(
+        return self._runtime.dispatch(
             input,
             topk_ids,
             weights,
@@ -124,7 +126,7 @@ class MoECommunicator:
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
-        return self._backend.combine(expert_output, handle, out=out, stream=stream)
+        return self._runtime.combine(expert_output, handle, out=out, stream=stream)
 
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")

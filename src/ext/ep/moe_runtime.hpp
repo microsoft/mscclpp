@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_MOE_RUNTIME_HPP_
+#define MSCCLPP_EP_MOE_RUNTIME_HPP_
 
 #include <cuda_runtime.h>
 
@@ -13,13 +14,19 @@
 namespace mscclpp {
 namespace ep {
 namespace detail {
-struct FixedBufferResources;
-struct RecvPoolResources;
+struct LatencyContext;
+struct ThroughputContext;
+struct LatencyDispatchRequest;
+struct ThroughputDispatchRequest;
+struct DispatchRequest;
+struct LatencyCombineRequest;
+struct ThroughputCombineRequest;
+struct CombineRequest;
 }  // namespace detail
 
 /// Unified host runtime for all expert-parallel dispatch and combine algorithms.
 ///
-/// The selected mode allocates only its required fixed-buffer or receive-pool resources.
+/// The selected mode allocates only its required latency or throughput context.
 class MoERuntime {
  public:
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
@@ -44,16 +51,8 @@ class MoERuntime {
   void* dispatchOutputBuffer() const;
   void* combineInputBuffer() const;
 
-  void latencyDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                       const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
-                       int maxTokensPerRank, int numExperts, int invalidTokenExpertId, DispatchLayout dispatchLayout,
-                       DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream);
-
-  void latencyCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                      const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
-                      int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
-                      DispatchDataType dispatchDataType, CombineMode mode, int numBlocks, cudaStream_t stream);
+  void dispatch(const detail::DispatchRequest& request);
+  void combine(const detail::CombineRequest& request);
 
   void tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
                          int numTokens, int numTopk, int numExperts, cudaStream_t stream);
@@ -62,17 +61,13 @@ class MoERuntime {
   int tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
                        const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
                        int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
-  void tokenMajorDispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights, int* sendHead,
-                          const void* x, const float* xScales, const int64_t* topkIdx, const float* topkWeights,
-                          const bool* isTokenInRank, const int* rankPrefixMatrix, const int* channelPrefixMatrix,
-                          int numTokens, int hidden, int numTopk, int numScales, int numExperts, int xElementSize,
-                          int numRecvTokens, bool cachedMode, cudaStream_t stream);
-  void tokenMajorCombine(void* combinedX, float* combinedTopkWeights, const void* x, const float* topkWeights,
-                         const int* sendHead, int numInputTokens, int numOutputTokens, int hidden, int numTopk,
-                         int xElementSize, cudaStream_t stream);
 
  private:
   void requireMode(MoEMode expected) const;
+  void launchLatencyDispatch(const detail::LatencyDispatchRequest& request);
+  void launchThroughputDispatch(const detail::ThroughputDispatchRequest& request);
+  void launchLatencyCombine(const detail::LatencyCombineRequest& request);
+  void launchThroughputCombine(const detail::ThroughputCombineRequest& request);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
   MoEMode mode_;
@@ -82,8 +77,8 @@ class MoERuntime {
   int numRanksPerIpcDomain_;
   bool available_ = false;
 
-  std::unique_ptr<detail::FixedBufferResources> fixedBuffer_;
-  std::unique_ptr<detail::RecvPoolResources> recvPool_;
+  std::unique_ptr<detail::LatencyContext> latencyContext_;
+  std::unique_ptr<detail::ThroughputContext> throughputContext_;
 };
 
 /// Create the unified MoE runtime selected by @p mode.
@@ -93,3 +88,5 @@ std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_MOE_RUNTIME_HPP_

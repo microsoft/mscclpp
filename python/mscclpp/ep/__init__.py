@@ -5,7 +5,7 @@
 
 
 `MoECommunicator` is the public API. `mode=MoEMode.LATENCY` selects
-latency-optimized algorithms; `mode=MoEMode.OVERLAP` selects bounded-resource
+latency-optimized algorithms; `mode=MoEMode.THROUGHPUT` selects throughput-optimized bounded-resource
 token-major algorithms.
 """
 

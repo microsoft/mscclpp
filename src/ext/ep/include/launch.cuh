@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_INCLUDE_LAUNCH_CUH_
+#define MSCCLPP_EP_INCLUDE_LAUNCH_CUH_
 
 #include "exception.cuh"
 
@@ -33,7 +34,7 @@ class LaunchConfig {
 
 #define LAUNCH_KERNEL(config, kernel, ...) CUDA_CHECK(cudaLaunchKernelEx(config, kernel, ##__VA_ARGS__))
 
-// Overlap kernels are specialized for the rank counts supported by the runtime and
+// Throughput kernels are specialized for the rank counts supported by the runtime and
 // control-buffer layout.
 #define SWITCH_RANKS(num_ranks, case_macro)           \
   do {                                                \
@@ -53,3 +54,5 @@ class LaunchConfig {
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_INCLUDE_LAUNCH_CUH_

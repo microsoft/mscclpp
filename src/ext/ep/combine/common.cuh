@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMBINE_COMMON_CUH_
+#define MSCCLPP_EP_COMBINE_COMMON_CUH_
 
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 
 #include "api.cuh"
-#include "common/fixed_buffer.cuh"
+#include "common/latency.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 
@@ -15,17 +16,7 @@ namespace ep {
 namespace combine {
 namespace detail {
 
-namespace shared = ::mscclpp::ep::detail;
-using shared::configureKernel;
-using shared::dispatchMetadataBytes;
-using shared::dispatchPayloadStride;
-using shared::DispatchPayloadView;
-using shared::isSupportedDispatchDataType;
-using shared::KernelConfigCache;
-using shared::OptimizedDynamicSharedMemoryBytes;
-using shared::RecvTask;
-using shared::TransportView;
-using shared::WorkspaceView;
+using namespace mscclpp::ep::detail;
 
 constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
@@ -804,3 +795,5 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
 }  // namespace combine
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMBINE_COMMON_CUH_

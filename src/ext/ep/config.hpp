@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_CONFIG_HPP_
+#define MSCCLPP_EP_CONFIG_HPP_
 
 #include <algorithm>
 #include <cstddef>
@@ -9,6 +10,8 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
+
+#include "include/api.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -152,18 +155,18 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
-struct FixedBufferLayout {
+struct LatencyStorageLayout {
   size_t totalBytes_;
   size_t recvBufferBytes_;
   size_t dispatchOutputBytes_;
-  void* dispatchRecvBuffer_;
-  void* combineRecvBuffer_;
-  void* rankMajorTopkIdsBuffer_;
-  void* rankMajorTopkWeightsBuffer_;
-  void* dispatchOutputBuffer_;
+  void* dispatchRecvBuffer_ = nullptr;
+  void* combineRecvBuffer_ = nullptr;
+  void* rankMajorTopkIdsBuffer_ = nullptr;
+  void* rankMajorTopkWeightsBuffer_ = nullptr;
+  void* dispatchOutputBuffer_ = nullptr;
 
-  FixedBufferLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                    DispatchLayout outputLayout) {
+  LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
+                       int numTopk, DispatchLayout outputLayout) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
@@ -196,12 +199,14 @@ struct FixedBufferLayout {
   }
 };
 
-inline size_t fixedBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                              DispatchLayout outputLayout) {
+inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+                                 DispatchLayout outputLayout) {
   const auto numBytes =
-      FixedBufferLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout).totalBytes_;
+      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout).totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_CONFIG_HPP_

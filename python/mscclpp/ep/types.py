@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
@@ -62,7 +62,7 @@ class MoECommunicatorConfig:
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
-    # Overlap receive-pool tuning (advanced)
+    # Throughput receive-pool tuning (advanced)
     expert_alignment: int = 1
 
 
@@ -132,7 +132,7 @@ class _RankMajorCombineContext:
 
 @dataclass
 class _TokenMajorCombineContext:
-    """Combine context for token-major overlap output."""
+    """Combine context for token-major throughput output."""
 
     recv_topk_weights: Optional[torch.Tensor]
     send_head: torch.Tensor
@@ -154,6 +154,7 @@ class DispatchHandle:
 
     output_info: DispatchOutputInfo
     _context: _CombineContext
+    _dispatch_cache: Optional[dict[str, Any]] = None
 
 
 # Optional async/overlap configuration.

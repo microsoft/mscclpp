@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_
+#define MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_
 
 #include <mscclpp/memory_channel_device.hpp>
 
@@ -19,11 +20,11 @@ struct DeviceContext {
   mscclpp::BaseMemoryChannelDeviceHandle* channels_;
   /// Optional algorithm workspace.
   void* workspace_;
-  /// Optional token/rank receive indices used by overlap combine.
+  /// Optional token/rank receive indices used by throughput combine.
   int* combineRecvIdx_;
-  /// Optional mapped receive count used by overlap preparation.
+  /// Optional mapped receive count used by throughput preparation.
   int* mappedRecvCounter_;
-  /// Optional mapped per-expert receive counts used by overlap preparation.
+  /// Optional mapped per-expert receive counts used by throughput preparation.
   int* mappedRecvExpertCounters_;
   /// Maximum dynamic shared memory available to one block.
   int maxSharedMemoryPerBlock_;
@@ -41,3 +42,5 @@ struct DeviceContext {
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_

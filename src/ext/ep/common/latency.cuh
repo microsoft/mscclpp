@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMMON_LATENCY_CUH_
+#define MSCCLPP_EP_COMMON_LATENCY_CUH_
 
 #include <cstdint>
 #include <mscclpp/bulk_device.hpp>
@@ -8,8 +9,8 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
-#include "../config.hpp"
 #include "api.cuh"
+#include "config.hpp"
 #include "device_helpers.cuh"
 
 namespace mscclpp {
@@ -229,3 +230,5 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, 
 }  // namespace detail
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMMON_LATENCY_CUH_

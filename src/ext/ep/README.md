@@ -4,31 +4,43 @@ The EP extension is a torch-free nanobind module for MoE dispatch and combine.
 It exposes one concrete `MoERuntime` and one persistent `DeviceContext*` shared
 by dispatch and combine kernels.
 
-`MoEMode` selects a resource and algorithm family:
+`MoEMode` selects a runtime context and algorithm family:
 
 - **`LATENCY`** algorithms use broad GPU resources to minimize standalone
   dispatch/combine latency.
-- **`OVERLAP`** algorithms use a bounded SM budget so communication can run
+- **`THROUGHPUT`** algorithms use a bounded SM budget so communication can run
   concurrently with expert compute.
 
-Mode-specific buffers are allocated conditionally; selecting one family does
-not allocate the other family's resources.
+Mode-specific contexts are allocated conditionally; selecting one family does
+not allocate the other family's buffers.
+
+The Python call path is:
+
+```text
+MoECommunicator -> LatencyRuntime / ThroughputRuntime -> MoERuntime
+                          |
+                 passive mode context
+```
+
+The context is a passive holder for mode-specific configuration, tensors, and
+metadata. `Runtime` owns dispatch/combine and all mode-specific execution
+helpers. There is no separate backend or strategy object.
 
 ## Status
 
 | Feature | Status |
 |---|---|
 | Latency dispatch/combine | Validated on Hopper and newer GPUs |
-| Overlap dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
-| Overlap RDMA/IB fallback | Not supported |
-| Python frontend | `mscclpp.ep.MoECommunicator` selects latency or overlap algorithms with `MoEMode` |
+| Throughput dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
+| Throughput RDMA/IB fallback | Not supported |
+| Python frontend | `mscclpp.ep.MoECommunicator` selects latency or throughput algorithms with `MoEMode` |
 | ROCm | Not supported |
 
 ## Runtime architecture
 
 ### Latency algorithms
 
-The latency resource plan allocates CUDA physical symmetric memory and maps peer buffers through the
+The latency context allocates CUDA physical symmetric memory and maps peer buffers through the
 existing `mscclpp::Communicator`. Payloads use direct peer mappings;
 `BaseMemoryChannel` handles are used only for synchronization.
 
@@ -48,12 +60,12 @@ Latency dispatch supports two user-visible layouts:
 Quantized latency dispatch supports E4M3 payloads with FP32 scales per 128 hidden
 elements (`FP8_E4M3`).
 
-### Overlap algorithms
+### Throughput algorithms
 
-The overlap resource plan follows the same direct-mapping model:
+The throughput context follows the same direct-mapping model:
 
 1. Python passes the existing `mscclpp::Communicator` into
-   `MoERuntime` with `MoEMode::OVERLAP`.
+   `MoERuntime` with `MoEMode::THROUGHPUT`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
    internal receive pool. The pool provides stable peer mappings before the
    data-dependent receive count is known; Python later exposes its exact-size
@@ -63,11 +75,11 @@ The overlap resource plan follows the same direct-mapping model:
 4. Dispatch and combine launch directly on the caller's CUDA stream.
 
 The detected GPU IPC domain may span multiple hosts, such as an NVL fabric
-domain with CUDA fabric handles. The overlap path does not create a private bootstrap, proxy
+domain with CUDA fabric handles. The throughput path does not create a private bootstrap, proxy
 service, RDMA channel, NVLS multicast object, or private communication stream,
 and it has no RDMA/IB fallback outside that domain.
 
-The overlap dispatch API remains two-phase because the receive token count is data
+The throughput dispatch API remains two-phase because the receive token count is data
 dependent:
 
 1. The notify phase exchanges counts and produces prefix matrices.
@@ -76,20 +88,20 @@ dependent:
 
 Cached dispatch reuses the previous receive count and prefix matrices.
 
-## Overlap data path
+## Throughput data path
 
-The overlap family has one direct path. Every dispatch block writes hidden rows and routing
+The throughput family has one direct path. Every dispatch block writes hidden rows and routing
 metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
 There is no ring algorithm or runtime fallback. Set the communication block
 budget through the `num_blocks` API configuration.
 
-The persistent overlap configuration contains only:
+The persistent throughput configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_blocks` | Maximum overlap communication block budget |
+| `num_blocks` | Maximum throughput communication block budget |
 
 ## Build
 
@@ -117,7 +129,6 @@ Available CMake options:
 | Variable | Default | Meaning |
 |---|---:|---|
 | `MSCCLPP_BUILD_EXT_EP` | `ON` | Build the EP extension |
-| `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT` | `OFF` | Use a shorter kernel spin timeout |
 
 ## Source layout
 
@@ -125,12 +136,11 @@ Available CMake options:
 src/ext/ep/
 ├── bindings.cpp
 ├── moe_runtime.{cc,hpp}
-├── runtime/
-│   ├── resources.hpp
-│   ├── fixed_buffer.cc
-│   └── recv_pool.cc
+├── moe_runtime_context.hpp
+├── latency.cc
+├── throughput.cc
 ├── common/
-│   ├── fixed_buffer.cuh
+│   ├── latency.cuh
 │   ├── recv_pool.cuh
 │   └── overlap_barrier.cuh
 ├── dispatch/
@@ -146,13 +156,17 @@ src/ext/ep/
 │   └── token_major_reduce.cu
 ├── include/
 │   ├── api.cuh
-│   └── device_context.cuh
+│   ├── device_context.cuh
+│   ├── device_helpers.cuh
+│   ├── exception.cuh
+│   ├── launch.cuh
+│   └── quantization.cuh
 └── config.hpp
 ```
 
 ## Validation
 
-Build the extension, then run the single-node overlap test:
+Build the extension, then run the single-node throughput test:
 
 ```bash
 HWLOC_COMPONENTS=-gl \
@@ -167,5 +181,5 @@ The latency validation remains:
 HWLOC_COMPONENTS=-gl \
 LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
 torchrun --standalone --nproc_per_node=8 \
-    test/python/ep/test_low_latency_multirank.py
+    test/python/ep/test_latency_multirank.py
 ```

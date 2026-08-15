@@ -1,49 +1,64 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified low-level expert-parallel runtime wrapper."""
+"""Expert-parallel runtime interface."""
 
 from __future__ import annotations
 
-from typing import Any
+from abc import ABC, abstractmethod
+from typing import Optional
 
-from mscclpp.ep._cpp import DispatchLayout, MoEMode, create_moe_runtime
+import torch
+
+from mscclpp.ep.context import Context
+from mscclpp.ep.types import DispatchHandle, DispatchOutput, QuantConfig
 
 
-class Runtime:
-    """Own one C++ runtime configured for latency or overlap algorithms."""
+class Runtime(ABC):
+    """Common interface over one mode-configured C++ runtime."""
 
-    def __init__(
-        self,
-        comm: Any,
-        mode: MoEMode,
-        *,
-        max_tokens_per_rank: int = 0,
-        hidden: int = 0,
-        num_experts: int = 0,
-        num_topk: int = 0,
-        max_hidden_bytes: int = 0,
-        num_blocks: int = 20,
-        output_layout: DispatchLayout = DispatchLayout.EXPERT_MAJOR,
-    ) -> None:
-        self.rank: int = comm.my_rank
-        self.group_size: int = comm.nranks
-        self.comm = comm
-        self.cpp_runtime = create_moe_runtime(
-            comm.communicator,
-            mode,
-            max_tokens_per_rank=max_tokens_per_rank,
-            hidden=hidden,
-            num_experts=num_experts,
-            num_topk=num_topk,
-            max_hidden_bytes=max_hidden_bytes,
-            num_blocks=num_blocks,
-            output_layout=output_layout,
-        )
+    def __init__(self, context: Context, cpp_runtime) -> None:
+        self.context = context
+        self.cpp_runtime = cpp_runtime
+
+    @staticmethod
+    def create(context: Context) -> "Runtime":
+        from mscclpp.ep.latency import LatencyContext, LatencyRuntime
+        from mscclpp.ep.throughput import ThroughputContext, ThroughputRuntime
+
+        if isinstance(context, LatencyContext):
+            return LatencyRuntime(context)
+        if isinstance(context, ThroughputContext):
+            return ThroughputRuntime(context)
+        raise TypeError(f"unsupported EP context: {type(context).__name__}")
 
     def is_available(self) -> bool:
-        """Return whether the selected algorithms are available."""
         return self.cpp_runtime.is_available()
 
     def is_internode_available(self) -> bool:
-        """Return whether the selected algorithms support this internode topology."""
         return self.cpp_runtime.is_internode_available()
+
+    @abstractmethod
+    def dispatch(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor],
+        quant: Optional[QuantConfig],
+        *,
+        output_buffer: Optional[torch.Tensor],
+        stream: Optional[torch.cuda.Stream],
+        previous_handle: Optional[DispatchHandle],
+        runtime_max_tokens_per_rank: Optional[int],
+    ) -> tuple[DispatchOutput, DispatchHandle]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def combine(
+        self,
+        expert_output: torch.Tensor,
+        handle: DispatchHandle,
+        *,
+        out: Optional[torch.Tensor],
+        stream: Optional[torch.cuda.Stream],
+    ) -> torch.Tensor:
+        raise NotImplementedError
