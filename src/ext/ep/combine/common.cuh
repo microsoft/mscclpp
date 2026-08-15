@@ -14,7 +14,17 @@ namespace mscclpp {
 namespace ep {
 namespace combine {
 namespace detail {
-using namespace ::mscclpp::ep::detail;
+
+using ::mscclpp::ep::detail::configureKernel;
+using ::mscclpp::ep::detail::dispatchMetadataBytes;
+using ::mscclpp::ep::detail::dispatchPayloadStride;
+using ::mscclpp::ep::detail::DispatchPayloadView;
+using ::mscclpp::ep::detail::isSupportedDispatchDataType;
+using ::mscclpp::ep::detail::KernelConfigCache;
+using ::mscclpp::ep::detail::OptimizedDynamicSharedMemoryBytes;
+using ::mscclpp::ep::detail::RecvTask;
+using ::mscclpp::ep::detail::TransportView;
+using ::mscclpp::ep::detail::WorkspaceView;
 
 constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;

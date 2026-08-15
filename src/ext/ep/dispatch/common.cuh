@@ -14,7 +14,29 @@ namespace mscclpp {
 namespace ep {
 namespace dispatch {
 namespace detail {
-using namespace ::mscclpp::ep::detail;
+
+using ::mscclpp::ep::detail::configureKernel;
+using ::mscclpp::ep::detail::DispatchElementType;
+using ::mscclpp::ep::detail::DispatchMaxNRecvTmaWorkers;
+using ::mscclpp::ep::detail::DispatchMaxNWarpGroups;
+using ::mscclpp::ep::detail::dispatchMetadataBytes;
+using ::mscclpp::ep::detail::DispatchNThreads;
+using ::mscclpp::ep::detail::DispatchNWarps;
+using ::mscclpp::ep::detail::dispatchNWarpsPerGroup;
+using ::mscclpp::ep::detail::dispatchPayloadStride;
+using ::mscclpp::ep::detail::DispatchPayloadView;
+using ::mscclpp::ep::detail::DispatchScaleType;
+using ::mscclpp::ep::detail::DispatchSchedulerPrefixBarrier;
+using ::mscclpp::ep::detail::DispatchSchedulerReadyBarrier;
+using ::mscclpp::ep::detail::dispatchSharedBytes;
+using ::mscclpp::ep::detail::dispatchSharedControlBytes;
+using ::mscclpp::ep::detail::DispatchWarpGroupBarrierBase;
+using ::mscclpp::ep::detail::isSupportedDispatchDataType;
+using ::mscclpp::ep::detail::KernelConfigCache;
+using ::mscclpp::ep::detail::RecvTask;
+using ::mscclpp::ep::detail::tmaWorkerCount;
+using ::mscclpp::ep::detail::TransportView;
+using ::mscclpp::ep::detail::WorkspaceView;
 
 #if MSCCLPP_BULK_AVAILABLE
 
