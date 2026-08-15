@@ -145,15 +145,15 @@ src/ext/ep/
 │   └── overlap_barrier.cuh
 ├── dispatch/
 │   ├── common.cuh
-│   ├── expert_major.cu
-│   ├── rank_major.cu
+│   ├── expert_major_dispatch.cu
+│   ├── rank_major_dispatch.cu
 │   ├── token_major_prepare.cu
-│   └── token_major.cu
+│   └── token_major_dispatch.cu
 ├── combine/
 │   ├── common.cuh
-│   ├── rank_local_reduce.cu
-│   ├── direct_send.cu
-│   └── token_major_reduce.cu
+│   ├── rank_local_reduce_combine.cu
+│   ├── direct_send_combine.cu
+│   └── token_major_reduce_combine.cu
 ├── include/
 │   ├── api.cuh
 │   ├── device_context.cuh

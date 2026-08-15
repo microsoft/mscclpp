@@ -53,13 +53,13 @@ set(_mscclpp_ep_sources
     latency.cc
     throughput.cc
     bindings.cpp
-    dispatch/expert_major.cu
-    dispatch/rank_major.cu
+    dispatch/expert_major_dispatch.cu
+    dispatch/rank_major_dispatch.cu
     dispatch/token_major_prepare.cu
-    dispatch/token_major.cu
-    combine/rank_local_reduce.cu
-    combine/direct_send.cu
-    combine/token_major_reduce.cu
+    dispatch/token_major_dispatch.cu
+    combine/rank_local_reduce_combine.cu
+    combine/direct_send_combine.cu
+    combine/token_major_reduce_combine.cu
 )
 
 nanobind_add_module(mscclpp_ep_cpp ${_mscclpp_ep_sources})
