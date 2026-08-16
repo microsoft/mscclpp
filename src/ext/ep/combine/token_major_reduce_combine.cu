@@ -6,16 +6,15 @@
 #include <algorithm>
 #include <mscclpp/bulk_device.hpp>
 
-#include "api.cuh"
+#include "common/device_helpers.cuh"
 #include "common/overlap_barrier.cuh"
-#include "common/recv_pool.cuh"
-#include "device_helpers.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
+#include "exception.hpp"
+#include "kernels.hpp"
+#include "launch.hpp"
+#include "recv_pool.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 #ifndef EP_HT_COMBINE_TMA_CHUNK_INT4
 #define EP_HT_COMBINE_TMA_CHUNK_INT4 64
@@ -273,17 +272,6 @@ void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* 
       EP_HOST_ASSERT(false && "Unsupported ranks");
   }
 #undef COMBINE_LAUNCH
-}
-
-}  // namespace detail
-
-void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
-                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                             cudaStream_t stream) {
-  detail::tokenMajorReduceCombine(output, outputTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
-                                  recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes, numBlocks, context,
-                                  stream);
 }
 
 }  // namespace ep

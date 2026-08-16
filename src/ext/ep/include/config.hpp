@@ -7,11 +7,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <mscclpp/device.hpp>
+#include <mscclpp/ext/ep/types.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
-
-#include "include/api.cuh"
 
 namespace mscclpp {
 namespace ep {

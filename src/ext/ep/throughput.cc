@@ -7,12 +7,12 @@
 #include <algorithm>
 #include <chrono>
 #include <future>
+#include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <stdexcept>
 
-#include "api.cuh"
-#include "exception.cuh"
-#include "moe_runtime.hpp"
+#include "exception.hpp"
+#include "kernels.hpp"
 #include "moe_runtime_context.hpp"
 
 namespace mscclpp {
@@ -22,7 +22,6 @@ namespace {
 constexpr auto ReceiveCountTimeout = std::chrono::seconds(100);
 
 }  // namespace
-namespace detail {
 
 ThroughputContext::ThroughputContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
                                      int numRanksPerIpcDomain, int64_t maxHiddenBytes, const RecvPoolConfig& config)
@@ -173,8 +172,6 @@ bool ThroughputContext::canUseDirectRecvPool(int numTokens, int numRecvTokens, i
                                                RecvPoolConfig::recvPoolHiddenBytes(numRanks_);
 }
 
-}  // namespace detail
-
 void MoERuntime::tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
                                    const int64_t* topkIdx, int numTokens, int numTopk, int numExperts,
                                    cudaStream_t stream) {
@@ -245,28 +242,28 @@ int MoERuntime::tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix
   return numRecvTokens;
 }
 
-void MoERuntime::launchThroughputDispatch(const detail::ThroughputDispatchRequest& request) {
-  void* recvX = request.recvX_;
-  float* recvXScales = request.recvXScales_;
-  int64_t* recvTopkIdx = request.recvTopkIdx_;
-  float* recvTopkWeights = request.recvTopkWeights_;
-  int* sendHead = request.sendHead_;
-  const void* x = request.input_;
-  const float* xScales = request.inputScales_;
-  const int64_t* topkIdx = request.topkIdx_;
-  const float* topkWeights = request.topkWeights_;
-  const bool* isTokenInRank = request.isTokenInRank_;
-  const int* rankPrefixMatrix = request.rankPrefixMatrix_;
-  const int* channelPrefixMatrix = request.channelPrefixMatrix_;
-  const int numTokens = request.numTokens_;
-  const int hidden = request.hidden_;
-  const int numTopk = request.numTopk_;
-  const int numScales = request.numScales_;
-  const int numExperts = request.numExperts_;
-  const int xElementSize = request.inputElementSize_;
-  const int numRecvTokens = request.numRecvTokens_;
-  const bool cachedMode = request.cachedMode_;
-  const cudaStream_t stream = request.stream_;
+void MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& request) {
+  void* recvX = request.recvX;
+  float* recvXScales = request.recvXScales;
+  int64_t* recvTopkIdx = request.recvTopkIdx;
+  float* recvTopkWeights = request.recvTopkWeights;
+  int* sendHead = request.sendHead;
+  const void* x = request.input;
+  const float* xScales = request.inputScales;
+  const int64_t* topkIdx = request.topkIdx;
+  const float* topkWeights = request.topkWeights;
+  const bool* isTokenInRank = request.isTokenInRank;
+  const int* rankPrefixMatrix = request.rankPrefixMatrix;
+  const int* channelPrefixMatrix = request.channelPrefixMatrix;
+  const int numTokens = request.numTokens;
+  const int hidden = request.hidden;
+  const int numTopk = request.numTopk;
+  const int numScales = request.numScales;
+  const int numExperts = request.numExperts;
+  const int xElementSize = request.inputElementSize;
+  const int numRecvTokens = request.numRecvTokens;
+  const bool cachedMode = request.cachedMode;
+  const cudaStream_t stream = request.stream;
 
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
@@ -297,18 +294,18 @@ void MoERuntime::launchThroughputDispatch(const detail::ThroughputDispatchReques
                      RecvPoolConfig::RecvPoolMetaBytes, context.deviceContext_, stream);
 }
 
-void MoERuntime::launchThroughputCombine(const detail::ThroughputCombineRequest& request) {
-  void* combinedX = request.output_;
-  float* combinedTopkWeights = request.outputTopkWeights_;
-  const void* x = request.input_;
-  const float* topkWeights = request.topkWeights_;
-  const int* sendHead = request.sendHead_;
-  const int numInputTokens = request.numInputTokens_;
-  const int numOutputTokens = request.numOutputTokens_;
-  const int hidden = request.hidden_;
-  const int numTopk = request.numTopk_;
-  const int xElementSize = request.inputElementSize_;
-  const cudaStream_t stream = request.stream_;
+void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
+  void* combinedX = request.output;
+  float* combinedTopkWeights = request.outputTopkWeights;
+  const void* x = request.input;
+  const float* topkWeights = request.topkWeights;
+  const int* sendHead = request.sendHead;
+  const int numInputTokens = request.numInputTokens;
+  const int numOutputTokens = request.numOutputTokens;
+  const int hidden = request.hidden;
+  const int numTopk = request.numTopk;
+  const int xElementSize = request.inputElementSize;
+  const cudaStream_t stream = request.stream;
 
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);

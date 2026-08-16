@@ -7,11 +7,11 @@ namespace mscclpp {
 namespace ep {
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
-__global__ __launch_bounds__(detail::CombineNThreads, 1) void directSendCombineKernel(
+__global__ __launch_bounds__(CombineNThreads, 1) void directSendCombineKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
-  detail::combineBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout>(
+  combineBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
@@ -27,7 +27,7 @@ void expertMajorDirectSendCombine(void* output, const void* input, const int64_t
                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
                                   int numBlocks, cudaStream_t stream) {
-  detail::combineAlgorithm<CombineMode::DIRECT_SEND, DirectSendCombineKernelSelector>(
+  combineAlgorithm<CombineMode::DIRECT_SEND, DirectSendCombineKernelSelector>(
       output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
       numBlocks, stream);
 }

@@ -9,13 +9,12 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
-#include "api.cuh"
 #include "config.hpp"
 #include "device_helpers.cuh"
+#include "kernels.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 constexpr int DispatchNWarps = 16;
 constexpr int DispatchMinNWarpsPerGroup = 8;
@@ -224,7 +223,6 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, 
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
 }
 
-}  // namespace detail
 }  // namespace ep
 }  // namespace mscclpp
 

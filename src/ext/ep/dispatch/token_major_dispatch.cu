@@ -6,15 +6,14 @@
 
 #include <cooperative_groups.h>
 
-#include "api.cuh"
+#include "common/device_helpers.cuh"
 #include "common/overlap_barrier.cuh"
-#include "device_helpers.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
+#include "exception.hpp"
+#include "kernels.hpp"
+#include "launch.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 template <int NumRanks>
 __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, const int* numTokensPerExpert,
@@ -294,32 +293,6 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
   LaunchConfig config(numBlocks, NumThreads, 0, stream, true);
   SWITCH_RANKS(context.numRanks_, DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
-}
-
-}  // namespace detail
-
-void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
-                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels) {
-  detail::tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
-                                   channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context, stream,
-                                   numChannels);
-}
-
-void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
-  detail::tokenMajorPublishCachedPrefix(rankPrefixMatrix, context, stream);
-}
-
-void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
-                        int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
-                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        const DeviceContext& context, cudaStream_t stream) {
-  detail::tokenMajorDispatch(sendHead, input, topkIdx, topkWeights, inputScales, isTokenInRank, channelPrefixMatrix,
-                             numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx,
-                             recvTopkWeights, recvXScales, numBlocks, recvPoolHeaderBytes, recvPoolMetadataOffset,
-                             metadataSlotBytes, context, stream);
 }
 
 }  // namespace ep

@@ -135,14 +135,14 @@ Available CMake options:
 ```text
 src/ext/ep/
 ├── bindings.cpp
-├── moe_runtime.{cc,hpp}
-├── moe_runtime_context.hpp
+├── moe_runtime.cc
 ├── latency.cc
 ├── throughput.cc
 ├── common/
+│   ├── device_helpers.cuh
 │   ├── latency.cuh
-│   ├── recv_pool.cuh
-│   └── overlap_barrier.cuh
+│   ├── overlap_barrier.cuh
+│   └── quantization.cuh
 ├── dispatch/
 │   ├── common.cuh
 │   ├── expert_major_dispatch.cu
@@ -155,13 +155,17 @@ src/ext/ep/
 │   ├── direct_send_combine.cu
 │   └── token_major_reduce_combine.cu
 ├── include/
-│   ├── api.cuh
-│   ├── device_context.cuh
-│   ├── device_helpers.cuh
-│   ├── exception.cuh
-│   ├── launch.cuh
-│   └── quantization.cuh
-└── config.hpp
+│   ├── config.hpp
+│   ├── device_context.hpp
+│   ├── exception.hpp
+│   ├── kernels.hpp
+│   ├── launch.hpp
+│   ├── moe_runtime_context.hpp
+│   └── recv_pool.hpp
+
+include/mscclpp/ext/ep/
+├── moe_runtime.hpp
+└── types.hpp
 ```
 
 ## Validation

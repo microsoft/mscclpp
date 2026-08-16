@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_COMMON_RECV_POOL_CUH_
-#define MSCCLPP_EP_COMMON_RECV_POOL_CUH_
+#ifndef MSCCLPP_EP_RECV_POOL_HPP_
+#define MSCCLPP_EP_RECV_POOL_HPP_
 
 #include <cstddef>
 #include <cstdint>
 
 #include "config.hpp"
-#include "exception.cuh"
+#include "exception.hpp"
 
 namespace mscclpp {
 namespace ep {
@@ -60,4 +60,4 @@ struct RecvPoolConfig {
 }  // namespace ep
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EP_COMMON_RECV_POOL_CUH_
+#endif  // MSCCLPP_EP_RECV_POOL_HPP_

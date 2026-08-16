@@ -1,12 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "moe_runtime.hpp"
-
 #include <algorithm>
+#include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <stdexcept>
 
-#include "exception.cuh"
+#include "exception.hpp"
 #include "moe_runtime_context.hpp"
 
 namespace mscclpp {
@@ -26,14 +25,14 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
   switch (mode_) {
     case MoEMode::LATENCY:
       latencyContext_ =
-          std::make_unique<detail::LatencyContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                                   maxTokensPerRank, hidden, numExperts, numTopk, outputLayout);
+          std::make_unique<LatencyContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
+                                           maxTokensPerRank, hidden, numExperts, numTopk, outputLayout);
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
       throughputContext_ =
-          std::make_unique<detail::ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_,
-                                                      numRanksPerIpcDomain_, maxHiddenBytes, RecvPoolConfig(numBlocks));
+          std::make_unique<ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
+                                              maxHiddenBytes, RecvPoolConfig(numBlocks));
       available_ = throughputContext_->available_;
       break;
     default:
@@ -50,10 +49,10 @@ void MoERuntime::requireMode(MoEMode expected) const {
   }
 }
 
-void MoERuntime::dispatch(const detail::DispatchRequest& request) {
+void MoERuntime::dispatch(const DispatchRequest& request) {
   switch (mode_) {
     case MoEMode::LATENCY: {
-      const auto* latencyRequest = std::get_if<detail::LatencyDispatchRequest>(&request.value_);
+      const auto* latencyRequest = std::get_if<LatencyDispatchRequest>(&request.value_);
       if (latencyRequest == nullptr) {
         throw std::invalid_argument("Latency runtime requires a latency dispatch request");
       }
@@ -61,7 +60,7 @@ void MoERuntime::dispatch(const detail::DispatchRequest& request) {
       return;
     }
     case MoEMode::THROUGHPUT: {
-      const auto* throughputRequest = std::get_if<detail::ThroughputDispatchRequest>(&request.value_);
+      const auto* throughputRequest = std::get_if<ThroughputDispatchRequest>(&request.value_);
       if (throughputRequest == nullptr) {
         throw std::invalid_argument("Throughput runtime requires a throughput dispatch request");
       }
@@ -73,10 +72,10 @@ void MoERuntime::dispatch(const detail::DispatchRequest& request) {
   }
 }
 
-void MoERuntime::combine(const detail::CombineRequest& request) {
+void MoERuntime::combine(const CombineRequest& request) {
   switch (mode_) {
     case MoEMode::LATENCY: {
-      const auto* latencyRequest = std::get_if<detail::LatencyCombineRequest>(&request.value_);
+      const auto* latencyRequest = std::get_if<LatencyCombineRequest>(&request.value_);
       if (latencyRequest == nullptr) {
         throw std::invalid_argument("Latency runtime requires a latency combine request");
       }
@@ -84,7 +83,7 @@ void MoERuntime::combine(const detail::CombineRequest& request) {
       return;
     }
     case MoEMode::THROUGHPUT: {
-      const auto* throughputRequest = std::get_if<detail::ThroughputCombineRequest>(&request.value_);
+      const auto* throughputRequest = std::get_if<ThroughputCombineRequest>(&request.value_);
       if (throughputRequest == nullptr) {
         throw std::invalid_argument("Throughput runtime requires a throughput combine request");
       }

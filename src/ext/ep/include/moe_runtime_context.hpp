@@ -8,120 +8,17 @@
 #include <cstdint>
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
-#include <utility>
-#include <variant>
 #include <vector>
 
-#include "common/recv_pool.cuh"
 #include "config.hpp"
-#include "include/api.cuh"
-#include "include/device_context.cuh"
+#include "device_context.hpp"
+#include "recv_pool.hpp"
 
 namespace mscclpp {
 namespace ep {
-class MoERuntime;
-
-namespace detail {
-
-struct LatencyDispatchRequest {
-  void* output_;
-  void* outputScales_;
-  int* outputSrcInfo_;
-  int* outputTopkIdx_;
-  float* outputTopkWeights_;
-  int64_t* outputLayoutRange_;
-  int* outputCount_;
-  const void* input_;
-  const int64_t* topkIdx_;
-  const float* topkWeights_;
-  int numTokens_;
-  int hidden_;
-  int numTopk_;
-  int maxTokensPerRank_;
-  int numExperts_;
-  int invalidTokenExpertId_;
-  DispatchLayout dispatchLayout_;
-  DispatchDataType dispatchDataType_;
-  int numBlocks_;
-  cudaStream_t stream_;
-};
-
-struct ThroughputDispatchRequest {
-  void* recvX_;
-  float* recvXScales_;
-  int64_t* recvTopkIdx_;
-  float* recvTopkWeights_;
-  int* sendHead_;
-  const void* input_;
-  const float* inputScales_;
-  const int64_t* topkIdx_;
-  const float* topkWeights_;
-  const bool* isTokenInRank_;
-  const int* rankPrefixMatrix_;
-  const int* channelPrefixMatrix_;
-  int numTokens_;
-  int hidden_;
-  int numTopk_;
-  int numScales_;
-  int numExperts_;
-  int inputElementSize_;
-  int numRecvTokens_;
-  bool cachedMode_;
-  cudaStream_t stream_;
-};
-
-struct DispatchRequest {
-  explicit DispatchRequest(LatencyDispatchRequest request) : value_(std::move(request)) {}
-  explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
-
- private:
-  friend class ep::MoERuntime;
-  std::variant<LatencyDispatchRequest, ThroughputDispatchRequest> value_;
-};
-
-struct LatencyCombineRequest {
-  void* output_;
-  const void* input_;
-  const int64_t* topkIdx_;
-  const float* topkWeights_;
-  const int* srcInfo_;
-  const int64_t* layoutRange_;
-  int numTokens_;
-  int hidden_;
-  int numTopk_;
-  int maxTokensPerRank_;
-  int numExperts_;
-  DispatchLayout dispatchLayout_;
-  DispatchDataType dispatchDataType_;
-  CombineMode combineMode_;
-  int numBlocks_;
-  cudaStream_t stream_;
-};
-
-struct ThroughputCombineRequest {
-  void* output_;
-  float* outputTopkWeights_;
-  const void* input_;
-  const float* topkWeights_;
-  const int* sendHead_;
-  int numInputTokens_;
-  int numOutputTokens_;
-  int hidden_;
-  int numTopk_;
-  int inputElementSize_;
-  cudaStream_t stream_;
-};
-
-struct CombineRequest {
-  explicit CombineRequest(LatencyCombineRequest request) : value_(std::move(request)) {}
-  explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
-
- private:
-  friend class ep::MoERuntime;
-  std::variant<LatencyCombineRequest, ThroughputCombineRequest> value_;
-};
 
 // Mode-specific contexts owned by MoERuntime.
 struct LatencyContext {
@@ -130,7 +27,7 @@ struct LatencyContext {
   ~LatencyContext() noexcept(false);
 
  private:
-  friend class ep::MoERuntime;
+  friend class MoERuntime;
 
   void setup();
 
@@ -164,7 +61,7 @@ struct ThroughputContext {
   ~ThroughputContext() noexcept(false);
 
  private:
-  friend class ep::MoERuntime;
+  friend class MoERuntime;
 
   void setup(mscclpp::Communicator& communicator);
   int dispatchBlockCount(int xElementSize) const;
@@ -204,7 +101,6 @@ struct ThroughputContext {
   DeviceContext deviceContext_{};
 };
 
-}  // namespace detail
 }  // namespace ep
 }  // namespace mscclpp
 

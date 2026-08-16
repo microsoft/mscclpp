@@ -48,21 +48,9 @@ endif()
 list(REMOVE_DUPLICATES _mscclpp_ep_gpu_archs)
 message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
 
-set(_mscclpp_ep_sources
-    moe_runtime.cc
-    latency.cc
-    throughput.cc
-    bindings.cpp
-    dispatch/expert_major_dispatch.cu
-    dispatch/rank_major_dispatch.cu
-    dispatch/token_major_prepare.cu
-    dispatch/token_major_dispatch.cu
-    combine/rank_local_reduce_combine.cu
-    combine/direct_send_combine.cu
-    combine/token_major_reduce_combine.cu
-)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cc *.cpp *.cu)
 
-nanobind_add_module(mscclpp_ep_cpp ${_mscclpp_ep_sources})
+nanobind_add_module(mscclpp_ep_cpp ${SOURCES})
 
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

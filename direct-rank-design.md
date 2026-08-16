@@ -119,7 +119,7 @@ src/ext/ep/low_latency/dispatch.cu
 src/ext/ep/low_latency/config.cuh
   WorkspaceView::rankMajorSendIndices_
 
-src/ext/ep/config.hpp
+src/ext/ep/include/config.hpp
   rankMajorTopkIdsBuffer_
   rankMajorTopkWeightsBuffer_
   rankMajorTokenBuffer_
@@ -439,7 +439,7 @@ CombineMode::RANK_MAJOR_DIRECT_WRITE
 MSCCL++ changes:
 
 ```text
-src/ext/ep/config.hpp
+src/ext/ep/include/config.hpp
   add source-token metadata
   add two-slot direct route receive buffer
   add direct ready epochs
@@ -452,7 +452,7 @@ src/ext/ep/low_latency/dispatch.cu
   publish source_token_idx for each compact destination row
   build per-phase source masks
 
-src/ext/ep/include/api.cuh
+include/mscclpp/ext/ep/types.hpp
   define the direct-rank context/accessors
 
 src/ext/ep/runtime/fixed_buffer.cc

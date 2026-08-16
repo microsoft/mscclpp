@@ -6,14 +6,13 @@
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 
-#include "api.cuh"
+#include "common/device_helpers.cuh"
 #include "common/latency.cuh"
-#include "device_helpers.cuh"
-#include "exception.cuh"
+#include "exception.hpp"
+#include "kernels.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
@@ -784,8 +783,6 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
       EP_HOST_ASSERT(false && "unsupported latency combine hidden size");
   }
 }
-
-}  // namespace detail
 
 }  // namespace ep
 }  // namespace mscclpp

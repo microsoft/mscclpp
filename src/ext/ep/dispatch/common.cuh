@@ -5,15 +5,14 @@
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
-#include "api.cuh"
+#include "common/device_helpers.cuh"
 #include "common/latency.cuh"
-#include "device_helpers.cuh"
-#include "exception.cuh"
-#include "quantization.cuh"
+#include "common/quantization.cuh"
+#include "exception.hpp"
+#include "kernels.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 #if MSCCLPP_BULK_AVAILABLE
 
@@ -955,8 +954,6 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
       EP_HOST_ASSERT(false && "unsupported latency dispatch hidden size");
   }
 }
-
-}  // namespace detail
 
 }  // namespace ep
 }  // namespace mscclpp

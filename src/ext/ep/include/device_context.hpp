@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_
-#define MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_
+#ifndef MSCCLPP_EP_DEVICE_CONTEXT_HPP_
+#define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
 #include <mscclpp/memory_channel_device.hpp>
 
@@ -43,4 +43,4 @@ struct DeviceContext {
 }  // namespace ep
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EP_INCLUDE_DEVICE_CONTEXT_CUH_
+#endif  // MSCCLPP_EP_DEVICE_CONTEXT_HPP_

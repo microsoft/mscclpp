@@ -6,7 +6,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "device_helpers.cuh"
-#include "exception.cuh"
+#include "exception.hpp"
 
 namespace mscclpp {
 namespace ep {

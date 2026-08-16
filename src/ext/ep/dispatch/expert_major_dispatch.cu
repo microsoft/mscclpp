@@ -7,11 +7,11 @@ namespace mscclpp {
 namespace ep {
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(detail::DispatchNThreads, 1) void expertMajorDispatchKernel(
+__global__ __launch_bounds__(DispatchNThreads, 1) void expertMajorDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
     int64_t* outputLayout, int* outputCount, const int64_t* topkIndices, const float* topkWeights,
     const void* inputTokens, Workload workload, void* recvBuffer, const DeviceContext* context) {
-  detail::dispatchBody<Hidden, DataType, ScaleBlockSize, DispatchLayout::EXPERT_MAJOR>(
+  dispatchBody<Hidden, DataType, ScaleBlockSize, DispatchLayout::EXPERT_MAJOR>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIndices,
       topkWeights, inputTokens, workload, recvBuffer, context);
 }
@@ -27,13 +27,13 @@ void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, i
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                          const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                          const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  detail::dispatchAlgorithm<DispatchLayout::EXPERT_MAJOR, ExpertMajorDispatchKernelSelector>(
+  dispatchAlgorithm<DispatchLayout::EXPERT_MAJOR, ExpertMajorDispatchKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk) {
-  return detail::workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk);
+  return workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk);
 }
 
 }  // namespace ep

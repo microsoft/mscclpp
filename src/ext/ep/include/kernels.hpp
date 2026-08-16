@@ -1,0 +1,93 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+// Private host-callable API exposed by the EP CUDA kernels.
+
+#ifndef MSCCLPP_EP_KERNELS_HPP_
+#define MSCCLPP_EP_KERNELS_HPP_
+
+#include <cuda_runtime.h>
+
+#include <mscclpp/ext/ep/types.hpp>
+
+#include "device_context.hpp"
+
+namespace mscclpp {
+namespace ep {
+
+void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                       int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream);
+
+void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
+                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels);
+
+void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream);
+
+void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
+                        int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
+                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                        const DeviceContext& context, cudaStream_t stream);
+
+void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             cudaStream_t stream);
+
+inline constexpr int DispatchControlBlocks = 2;
+inline constexpr int MaxWorkerBlocks = 128;
+inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+
+struct Workload {
+  /// Host-assigned epoch shared by the matching dispatch and combine calls.
+  uint32_t epoch_;
+  /// Number of local input or output tokens.
+  int numTokens_;
+  /// Hidden dimension size.
+  int hidden_;
+  /// Number of top-k experts per token.
+  int numTopk_;
+  /// Total number of experts.
+  int numExperts_;
+  /// Sentinel used for rank-major padding and non-local expert entries.
+  int invalidTokenExpertId_;
+  /// Maximum tokens per rank in the packed layout.
+  int maxTokensPerRank_;
+  /// User-visible dispatch output layout.
+  DispatchLayout outputLayout_;
+  /// Dispatch payload data format.
+  DispatchDataType dispatchDataType_;
+};
+
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+
+void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                         float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                         const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                         const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                       const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                       const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void expertMajorLocalReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                   int numBlocks, cudaStream_t stream);
+
+void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
+
+void expertMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
+
+}  // namespace ep
+}  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_KERNELS_HPP_

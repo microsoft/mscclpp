@@ -6,15 +6,14 @@
 #include <algorithm>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/ext/ep/moe_runtime.hpp>
 
-#include "api.cuh"
-#include "exception.cuh"
-#include "moe_runtime.hpp"
+#include "exception.hpp"
+#include "kernels.hpp"
 #include "moe_runtime_context.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
                                int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
@@ -126,8 +125,6 @@ void LatencyContext::setup() {
   available_ = ipcDomainSize >= numRanks_;
 }
 
-}  // namespace detail
-
 void* MoERuntime::outputTopkIdsBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
@@ -161,27 +158,27 @@ void* MoERuntime::combineInputBuffer() const {
       .combineRecvBuffer_;
 }
 
-void MoERuntime::launchLatencyDispatch(const detail::LatencyDispatchRequest& request) {
-  void* output = request.output_;
-  void* outputScales = request.outputScales_;
-  int* outputSrcInfo = request.outputSrcInfo_;
-  int* outputTopkIdx = request.outputTopkIdx_;
-  float* outputTopkWeights = request.outputTopkWeights_;
-  int64_t* outputLayout = request.outputLayoutRange_;
-  int* outputCount = request.outputCount_;
-  const void* input = request.input_;
-  const int64_t* topkIdx = request.topkIdx_;
-  const float* topkWeights = request.topkWeights_;
-  const int numTokens = request.numTokens_;
-  const int hidden = request.hidden_;
-  const int numTopk = request.numTopk_;
-  const int maxTokensPerRank = request.maxTokensPerRank_;
-  const int numExperts = request.numExperts_;
-  const int invalidTokenExpertId = request.invalidTokenExpertId_;
-  const DispatchLayout dispatchLayout = request.dispatchLayout_;
-  const DispatchDataType dispatchDataType = request.dispatchDataType_;
-  const int numBlocks = request.numBlocks_;
-  const cudaStream_t stream = request.stream_;
+void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
+  void* output = request.output;
+  void* outputScales = request.outputScales;
+  int* outputSrcInfo = request.outputSrcInfo;
+  int* outputTopkIdx = request.outputTopkIdx;
+  float* outputTopkWeights = request.outputTopkWeights;
+  int64_t* outputLayout = request.outputLayoutRange;
+  int* outputCount = request.outputCount;
+  const void* input = request.input;
+  const int64_t* topkIdx = request.topkIdx;
+  const float* topkWeights = request.topkWeights;
+  const int numTokens = request.numTokens;
+  const int hidden = request.hidden;
+  const int numTopk = request.numTopk;
+  const int maxTokensPerRank = request.maxTokensPerRank;
+  const int numExperts = request.numExperts;
+  const int invalidTokenExpertId = request.invalidTokenExpertId;
+  const DispatchLayout dispatchLayout = request.dispatchLayout;
+  const DispatchDataType dispatchDataType = request.dispatchDataType;
+  const int numBlocks = request.numBlocks;
+  const cudaStream_t stream = request.stream;
 
   auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.available_);
@@ -225,23 +222,23 @@ void MoERuntime::launchLatencyDispatch(const detail::LatencyDispatchRequest& req
   }
 }
 
-void MoERuntime::launchLatencyCombine(const detail::LatencyCombineRequest& request) {
-  void* output = request.output_;
-  const void* input = request.input_;
-  const int64_t* topkIdx = request.topkIdx_;
-  const float* topkWeights = request.topkWeights_;
-  const int* srcInfo = request.srcInfo_;
-  const int64_t* layoutRange = request.layoutRange_;
-  const int numTokens = request.numTokens_;
-  const int hidden = request.hidden_;
-  const int numTopk = request.numTopk_;
-  const int maxTokensPerRank = request.maxTokensPerRank_;
-  const int numExperts = request.numExperts_;
-  const DispatchLayout dispatchLayout = request.dispatchLayout_;
-  const DispatchDataType dispatchDataType = request.dispatchDataType_;
-  const CombineMode mode = request.combineMode_;
-  const int numBlocks = request.numBlocks_;
-  const cudaStream_t stream = request.stream_;
+void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
+  void* output = request.output;
+  const void* input = request.input;
+  const int64_t* topkIdx = request.topkIdx;
+  const float* topkWeights = request.topkWeights;
+  const int* srcInfo = request.srcInfo;
+  const int64_t* layoutRange = request.layoutRange;
+  const int numTokens = request.numTokens;
+  const int hidden = request.hidden;
+  const int numTopk = request.numTopk;
+  const int maxTokensPerRank = request.maxTokensPerRank;
+  const int numExperts = request.numExperts;
+  const DispatchLayout dispatchLayout = request.dispatchLayout;
+  const DispatchDataType dispatchDataType = request.dispatchDataType;
+  const CombineMode mode = request.combineMode;
+  const int numBlocks = request.numBlocks;
+  const cudaStream_t stream = request.stream;
 
   auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.available_);

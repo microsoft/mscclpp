@@ -6,13 +6,12 @@
 //
 // Token-major throughput routing-count construction.
 
-#include "api.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
+#include "exception.hpp"
+#include "kernels.hpp"
+#include "launch.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace detail {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
 __global__ void __launch_bounds__(NumThreads, 1)
@@ -90,8 +89,6 @@ __global__ void __launch_bounds__(NumThreads, 1)
   }
 }
 
-}  // namespace detail
-
 void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
                        int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = 256;
@@ -101,8 +98,8 @@ void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
                         (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream);
-  LAUNCH_KERNEL(config.get(), (detail::prepareTokenMajorKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>),
-                topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
+  LAUNCH_KERNEL(config.get(), (prepareTokenMajorKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,
+                numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
                 context.devicePtr_);
 }
 

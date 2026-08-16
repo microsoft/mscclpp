@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_INCLUDE_LAUNCH_CUH_
-#define MSCCLPP_EP_INCLUDE_LAUNCH_CUH_
+#ifndef MSCCLPP_EP_LAUNCH_HPP_
+#define MSCCLPP_EP_LAUNCH_HPP_
 
-#include "exception.cuh"
+#include "exception.hpp"
 
 namespace mscclpp {
 namespace ep {
@@ -55,4 +55,4 @@ class LaunchConfig {
 }  // namespace ep
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EP_INCLUDE_LAUNCH_CUH_
+#endif  // MSCCLPP_EP_LAUNCH_HPP_
