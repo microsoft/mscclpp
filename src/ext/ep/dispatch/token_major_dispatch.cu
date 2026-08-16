@@ -14,7 +14,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace dispatch {
 namespace detail {
 
 template <int NumRanks>
@@ -323,6 +322,5 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                              metadataSlotBytes, context, stream);
 }
 
-}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp

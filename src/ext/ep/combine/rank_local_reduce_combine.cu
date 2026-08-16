@@ -5,7 +5,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace combine {
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
 __global__ __launch_bounds__(detail::CombineNThreads, 1) void rankLocalReduceCombineKernel(
@@ -54,6 +53,5 @@ void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-}  // namespace combine
 }  // namespace ep
 }  // namespace mscclpp

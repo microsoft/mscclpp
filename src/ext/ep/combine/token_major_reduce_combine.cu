@@ -15,7 +15,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace combine {
 namespace detail {
 
 #ifndef EP_HT_COMBINE_TMA_CHUNK_INT4
@@ -287,6 +286,5 @@ void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* 
                                   stream);
 }
 
-}  // namespace combine
 }  // namespace ep
 }  // namespace mscclpp

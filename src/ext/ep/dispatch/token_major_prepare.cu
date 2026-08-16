@@ -12,7 +12,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace dispatch {
 namespace detail {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
@@ -107,6 +106,5 @@ void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
                 context.devicePtr_);
 }
 
-}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp

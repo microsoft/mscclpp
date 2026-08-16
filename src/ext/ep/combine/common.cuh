@@ -13,10 +13,7 @@
 
 namespace mscclpp {
 namespace ep {
-namespace combine {
 namespace detail {
-
-using namespace mscclpp::ep::detail;
 
 constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
@@ -790,7 +787,6 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
 
 }  // namespace detail
 
-}  // namespace combine
 }  // namespace ep
 }  // namespace mscclpp
 

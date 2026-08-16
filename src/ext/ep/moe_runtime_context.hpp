@@ -77,7 +77,7 @@ struct DispatchRequest {
   explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
 
  private:
-  friend class ::mscclpp::ep::MoERuntime;
+  friend class ep::MoERuntime;
   std::variant<LatencyDispatchRequest, ThroughputDispatchRequest> value_;
 };
 
@@ -119,7 +119,7 @@ struct CombineRequest {
   explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
 
  private:
-  friend class ::mscclpp::ep::MoERuntime;
+  friend class ep::MoERuntime;
   std::variant<LatencyCombineRequest, ThroughputCombineRequest> value_;
 };
 
@@ -130,7 +130,7 @@ struct LatencyContext {
   ~LatencyContext() noexcept(false);
 
  private:
-  friend class ::mscclpp::ep::MoERuntime;
+  friend class ep::MoERuntime;
 
   void setup();
 
@@ -164,7 +164,7 @@ struct ThroughputContext {
   ~ThroughputContext() noexcept(false);
 
  private:
-  friend class ::mscclpp::ep::MoERuntime;
+  friend class ep::MoERuntime;
 
   void setup(mscclpp::Communicator& communicator);
   int dispatchBlockCount(int xElementSize) const;

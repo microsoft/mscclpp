@@ -215,13 +215,13 @@ void MoERuntime::launchLatencyDispatch(const detail::LatencyDispatchRequest& req
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    dispatch::rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer,
-                                context.deviceContext_, numBlocks, stream);
+    rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
+                      input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
+                      stream);
   } else {
-    dispatch::expertMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer,
-                                  context.deviceContext_, numBlocks, stream);
+    expertMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
+                        outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_,
+                        numBlocks, stream);
   }
 }
 
@@ -272,17 +272,14 @@ void MoERuntime::launchLatencyCombine(const detail::LatencyCombineRequest& reque
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-    combine::rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                          combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks,
-                                          stream);
+    rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+                                 dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   } else if (mode == CombineMode::DIRECT_SEND) {
-    combine::expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                          combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks,
-                                          stream);
+    expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+                                 dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   } else {
-    combine::expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                           combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks,
-                                           stream);
+    expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                  combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
 }
 

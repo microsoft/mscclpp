@@ -13,10 +13,7 @@
 
 namespace mscclpp {
 namespace ep {
-namespace dispatch {
 namespace detail {
-
-using namespace mscclpp::ep::detail;
 
 #if MSCCLPP_BULK_AVAILABLE
 
@@ -961,7 +958,6 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
 
 }  // namespace detail
 
-}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp
 

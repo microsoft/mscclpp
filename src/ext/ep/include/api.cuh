@@ -38,8 +38,6 @@ enum class DispatchLayout {
   RANK_MAJOR
 };
 
-namespace dispatch {
-
 /// Build local routing metadata for dynamically sized token-major dispatch.
 ///
 /// Each token is counted once per destination rank even when several selected
@@ -95,10 +93,6 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                         int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
                         const DeviceContext& context, cudaStream_t stream);
 
-}  // namespace dispatch
-
-namespace combine {
-
 /// Return token-major expert outputs to source ranks and reduce contributions.
 ///
 /// Expert output and optional weights must be staged in the local receive pool.
@@ -111,8 +105,6 @@ void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* 
                              int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
                              int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
                              cudaStream_t stream);
-
-}  // namespace combine
 
 /// Number of non-worker blocks in the dispatch grid.
 inline constexpr int DispatchControlBlocks = 2;
@@ -161,8 +153,6 @@ struct Workload {
 
 /// Return workspace bytes required by dispatch and combine.
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
-
-namespace dispatch {
 
 /// Dispatch tokens into a fixed-capacity expert-major output.
 ///
@@ -214,10 +204,6 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream);
-
-}  // namespace dispatch
-
-namespace combine {
 
 /// Reduce expert-major rows locally before returning one partial per rank.
 ///
@@ -283,8 +269,6 @@ void expertMajorDirectSendCombine(void* output, const void* input, const int64_t
                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
                                   int numBlocks, cudaStream_t stream);
-
-}  // namespace combine
 
 }  // namespace ep
 }  // namespace mscclpp

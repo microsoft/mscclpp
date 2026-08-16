@@ -183,8 +183,8 @@ void MoERuntime::tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExper
   EP_HOST_ASSERT(context.available_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % context.numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  dispatch::tokenMajorPrepare(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk,
-                              numExperts, context.deviceContext_, stream);
+  ep::tokenMajorPrepare(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
+                        context.deviceContext_, stream);
 }
 
 int MoERuntime::tokenMajorNumChannels(int xElementSize) const {
@@ -216,9 +216,9 @@ int MoERuntime::tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix
 
   *context.moeRecvCounter_ = -1;
   for (int i = 0; i < numLocalExperts; ++i) context.moeRecvExpertCounter_[i] = -1;
-  dispatch::tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
-                                     channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context.deviceContext_,
-                                     stream, numChannels);
+  tokenMajorExchangeCounts(numTokensPerRank, numTokensPerExpert, numExperts, numTokens, isTokenInRank,
+                           channelPrefixMatrix, rankPrefixMatrix, expertAlignment, context.deviceContext_, stream,
+                           numChannels);
 
   int numRecvTokens = -1;
   const auto start = std::chrono::steady_clock::now();
@@ -279,7 +279,7 @@ void MoERuntime::launchThroughputDispatch(const detail::ThroughputDispatchReques
   const int numChannels = context.dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
   if (cachedMode) {
-    dispatch::tokenMajorPublishCachedPrefix(rankPrefixMatrix, context.deviceContext_, stream);
+    tokenMajorPublishCachedPrefix(rankPrefixMatrix, context.deviceContext_, stream);
   }
 
   context.dispatchReady_ = context.canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize);
@@ -290,12 +290,11 @@ void MoERuntime::launchThroughputDispatch(const detail::ThroughputDispatchReques
   const int hiddenInt4 = static_cast<int>(static_cast<int64_t>(hidden) * xElementSize / sizeof(int4));
   context.dispatchMetadataReady_ = true;
   if (recvTopkWeights != nullptr) context.recvTopkWeights_ = recvTopkWeights;
-  dispatch::tokenMajorDispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix,
-                               numTokens, numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales,
-                               recvTopkIdx, recvTopkWeights, recvXScales, numChannels,
-                               static_cast<int64_t>(poolHeaderBytes),
-                               static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(context.numRanks_)),
-                               RecvPoolConfig::RecvPoolMetaBytes, context.deviceContext_, stream);
+  tokenMajorDispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
+                     numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx, recvTopkWeights,
+                     recvXScales, numChannels, static_cast<int64_t>(poolHeaderBytes),
+                     static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(context.numRanks_)),
+                     RecvPoolConfig::RecvPoolMetaBytes, context.deviceContext_, stream);
 }
 
 void MoERuntime::launchThroughputCombine(const detail::ThroughputCombineRequest& request) {
@@ -339,10 +338,9 @@ void MoERuntime::launchThroughputCombine(const detail::ThroughputCombineRequest&
   }
 
   const int numBlocks = context.config_.numBlocks_;
-  combine::tokenMajorReduceCombine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
-                                   static_cast<int64_t>(recvPoolHeaderBytes),
-                                   static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
-                                   numBlocks, context.deviceContext_, stream);
+  tokenMajorReduceCombine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk,
+                          static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
+                          RecvPoolConfig::RecvPoolMetaBytes, numBlocks, context.deviceContext_, stream);
 }
 
 }  // namespace ep

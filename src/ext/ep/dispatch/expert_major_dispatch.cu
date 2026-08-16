@@ -5,10 +5,9 @@
 
 namespace mscclpp {
 namespace ep {
-namespace dispatch {
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(::mscclpp::ep::detail::DispatchNThreads, 1) void expertMajorDispatchKernel(
+__global__ __launch_bounds__(detail::DispatchNThreads, 1) void expertMajorDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
     int64_t* outputLayout, int* outputCount, const int64_t* topkIndices, const float* topkWeights,
     const void* inputTokens, Workload workload, void* recvBuffer, const DeviceContext* context) {
@@ -32,8 +31,6 @@ void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, i
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
-
-}  // namespace dispatch
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk) {
   return detail::workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk);

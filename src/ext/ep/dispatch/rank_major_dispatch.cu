@@ -5,10 +5,9 @@
 
 namespace mscclpp {
 namespace ep {
-namespace dispatch {
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(::mscclpp::ep::detail::DispatchNThreads, 1) void rankMajorDispatchKernel(
+__global__ __launch_bounds__(detail::DispatchNThreads, 1) void rankMajorDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
     int64_t* outputLayout, int* outputCount, const int64_t* topkIndices, const float* topkWeights,
     const void* inputTokens, Workload workload, void* recvBuffer, const DeviceContext* context) {
@@ -33,6 +32,5 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
 
-}  // namespace dispatch
 }  // namespace ep
 }  // namespace mscclpp
