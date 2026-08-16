@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import torch
 
@@ -13,7 +13,7 @@ from mscclpp.ep.context import create_context
 from mscclpp.ep.runtime import Runtime
 from mscclpp.ep.types import (
     BlockOverlapConfig,
-    CommOverlapConfig,
+    OverlapConfig,
     DispatchHandle,
     DispatchLayoutInfo,
     DispatchOutput,
@@ -24,7 +24,7 @@ from mscclpp.ep.types import (
 )
 
 __all__ = [
-    "CommOverlapConfig",
+    "OverlapConfig",
     "BlockOverlapConfig",
     "CombineMode",
     "DispatchHandle",
@@ -64,27 +64,66 @@ class MoECommunicator:
         _validate_common_config(config)
         self._context = create_context(config)
         self._runtime = Runtime.create(self._context)
-        self.mode = self._context.mode
-        self.output_layout = self._context.output_layout
-        self._publish_context_state()
 
-    def _publish_context_state(self) -> None:
-        for name in (
-            "comm",
-            "rank",
-            "world_size",
-            "local_rank",
-            "device",
-            "num_experts",
-            "hidden_size",
-            "topk",
-            "max_tokens_per_rank",
-            "num_blocks",
-            "enable_overlap",
-            "num_local_experts",
-            "local_expert_start",
-        ):
-            setattr(self, name, getattr(self._context, name))
+    @property
+    def comm(self) -> Any:
+        return self._context.comm
+
+    @property
+    def rank(self) -> int:
+        return self._context.rank
+
+    @property
+    def world_size(self) -> int:
+        return self._context.world_size
+
+    @property
+    def local_rank(self) -> int:
+        return self._context.local_rank
+
+    @property
+    def device(self) -> torch.device:
+        return self._context.device
+
+    @property
+    def mode(self) -> Any:
+        return self._context.mode
+
+    @property
+    def output_layout(self) -> Any:
+        return self._context.output_layout
+
+    @property
+    def num_experts(self) -> int:
+        return self._context.num_experts
+
+    @property
+    def hidden_size(self) -> int:
+        return self._context.hidden_size
+
+    @property
+    def topk(self) -> int:
+        return self._context.topk
+
+    @property
+    def max_tokens_per_rank(self) -> int:
+        return self._context.max_tokens_per_rank
+
+    @property
+    def num_blocks(self) -> int:
+        return self._context.num_blocks
+
+    @property
+    def enable_overlap(self) -> bool:
+        return self._context.enable_overlap
+
+    @property
+    def num_local_experts(self) -> int:
+        return self._context.num_local_experts
+
+    @property
+    def local_expert_start(self) -> int:
+        return self._context.local_expert_start
 
     def is_available(self) -> bool:
         return self._runtime.is_available()
@@ -136,14 +175,14 @@ class MoECommunicator:
 
     def create_overlap_config(
         self, op: str, *, handle: Optional[DispatchHandle] = None, level: str = "op"
-    ) -> CommOverlapConfig:
+    ) -> OverlapConfig:
         if op not in ("dispatch", "combine"):
             raise ValueError("op must be 'dispatch' or 'combine'")
         if level != "op":
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
-        return CommOverlapConfig(operation=OperationOverlapConfig())
+        return OverlapConfig(operation=OperationOverlapConfig())
 
 
 def _validate_common_config(config: MoECommunicatorConfig) -> None:

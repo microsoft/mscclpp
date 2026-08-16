@@ -182,7 +182,7 @@ class BlockOverlapConfig:
 
 
 @dataclass
-class CommOverlapConfig:
+class OverlapConfig:
     """Mutually exclusive operation-level or block-level overlap configuration."""
 
     operation: Optional[OperationOverlapConfig] = None

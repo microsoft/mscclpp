@@ -29,7 +29,7 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
   const int numWarps = numThreads / WARP_SIZE;
 
   if (blockId == 0) {
-    if (threadId < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+    if (threadId < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
     __syncthreads();
 
     const int numExpertsPerRank = numExperts / NumRanks;
@@ -48,7 +48,7 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
     }
     __syncthreads();
 
-    if (threadId < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+    if (threadId < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
     __syncthreads();
 
     auto* localRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[context->rank_]);
@@ -77,7 +77,7 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
       rankPrefixMatrix[index] = localRankCounts[index];
     }
     memory_fence();
-    if (threadId < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+    if (threadId < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
     __syncthreads();
     return;
   }
@@ -126,7 +126,7 @@ void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensP
 
 template <int NumRanks>
 __global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix, const DeviceContext* context) {
-  if (threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+  if (threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
   __syncthreads();
 
   const int threadId = static_cast<int>(threadIdx.x);
@@ -138,7 +138,7 @@ __global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix,
   }
   memory_fence();
   __syncthreads();
-  if (threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+  if (threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
 }
 
 void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
@@ -222,7 +222,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
 
   memory_fence();
   cooperative_groups::this_grid().sync();
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) common::overlapBarrier<NumRanks>(context->channels_, context->rank_);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
   cooperative_groups::this_grid().sync();
 
   const auto* localPool = reinterpret_cast<const uint8_t*>(context->peerPayloadBases_[context->rank_]);

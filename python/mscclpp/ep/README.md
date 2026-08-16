@@ -219,10 +219,10 @@ class MoECommunicator:
     ) -> torch.Tensor:
         ...
 
-    def dispatch_async(..., overlap_config: Optional[CommOverlapConfig] = None) -> DispatchRequest:
+    def dispatch_async(..., overlap_config: Optional[OverlapConfig] = None) -> DispatchRequest:
         ...
 
-    def combine_async(..., overlap_config: Optional[CommOverlapConfig] = None) -> CombineRequest:
+    def combine_async(..., overlap_config: Optional[OverlapConfig] = None) -> CombineRequest:
         ...
 
     def create_overlap_config(
@@ -231,7 +231,7 @@ class MoECommunicator:
         *,
         handle: Optional[DispatchHandle] = None,
         level: str = "op",  # "op" or "block"
-    ) -> CommOverlapConfig:
+    ) -> OverlapConfig:
         ...
 ```
 
@@ -366,7 +366,7 @@ class BlockOverlapConfig:
 
 
 @dataclass
-class CommOverlapConfig:
+class OverlapConfig:
     operation: Optional[OperationOverlapConfig] = None
     block: Optional[BlockOverlapConfig] = None
 
@@ -403,7 +403,7 @@ combine_overlap_config = moe_comm.create_overlap_config(
 `op="dispatch", level="block"` is not part of the first version. Dispatch
 overlap is operation-level only.
 
-`CommOverlapConfig` contains exactly one overlap mode:
+`OverlapConfig` contains exactly one overlap mode:
 
 | Field | Purpose |
 |---|---|

@@ -11,7 +11,7 @@ token-major algorithms.
 
 from mscclpp.ep.communicator import (
     BlockOverlapConfig,
-    CommOverlapConfig,
+    OverlapConfig,
     CombineMode,
     DispatchHandle,
     DispatchDataType,
@@ -28,7 +28,7 @@ from mscclpp.ep.communicator import (
 
 __all__ = [
     "BlockOverlapConfig",
-    "CommOverlapConfig",
+    "OverlapConfig",
     "CombineMode",
     "DispatchHandle",
     "DispatchDataType",

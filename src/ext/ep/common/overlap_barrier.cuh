@@ -10,7 +10,6 @@
 
 namespace mscclpp {
 namespace ep {
-namespace common {
 
 template <int NumRanks>
 __forceinline__ __device__ void overlapBarrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
@@ -28,7 +27,6 @@ __forceinline__ __device__ void overlapBarrier(mscclpp::BaseMemoryChannelDeviceH
   __syncwarp();
 }
 
-}  // namespace common
 }  // namespace ep
 }  // namespace mscclpp
 
