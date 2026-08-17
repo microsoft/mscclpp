@@ -17,7 +17,7 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: ''   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+  default: 'mnnvl'   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
 - name: hostEntries
   type: string
   default: |
