@@ -724,7 +724,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
     // intra-domain producers; cross-domain ordering relies on the dispatch-epoch
     // handshake and is pending hardware validation.
     if (transport.gpuNetIo_ != nullptr) {
-      synchronizeRankMajorCombine(transport, nRanks, workspaceView);
+      synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
       recvRankMajorRemotePartialsGpuNetIo<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                                   maxTokensPerRank, transport, workspaceView);
       return;
