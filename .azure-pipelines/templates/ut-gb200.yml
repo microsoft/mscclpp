@@ -14,6 +14,11 @@ parameters:
 - name: gpuArch
   type: string
   default: '100a'
+# Subnet (or interface name) passed to Open MPI's btl_tcp_if_include so every
+# rank selects the routable interface matching the node IPs.
+- name: mpiTcpIfInclude
+  type: string
+  default: '10.0.5.0/24'
 # Single-node rank ladder for mp_unit_tests. Space-separated; each value is one
 # mpirun -np run on the head node. GB200 nodes have 4 GPUs, so 2 and 4 exercise
 # the intra-node paths (IPC / NVLink). Every value must be >= 2 (the Prelim test
@@ -111,6 +116,6 @@ steps:
       displayName: Run mscclpp multi-process bootstrap tests (cross-node)
       runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
       remoteScript: |
-        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
+        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
