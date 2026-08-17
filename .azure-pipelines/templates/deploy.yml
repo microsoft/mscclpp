@@ -157,5 +157,5 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }} ${{ parameters.sglangImage }} ${{ parameters.pilot }}
+    arguments: ${{ parameters.deployArgs }} "${{ parameters.containerName }}" "${{ parameters.sglangImage }}" ${{ parameters.pilot }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
