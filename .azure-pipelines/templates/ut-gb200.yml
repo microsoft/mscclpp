@@ -2,60 +2,32 @@ parameters:
 - name: user
   type: string
   default: 'azhpcuser'
-# Head node used to launch mpirun (mnnvl-test.yml publishes this as $(headNode)).
 - name: headNode
   type: string
-# Agent-side hostfile listing every node (user@ip per line). run-remote.sh uses
-# it to build the tests on all nodes in parallel.
 - name: hostfile
   type: string
   default: '$(System.DefaultWorkingDirectory)/test/deploy/hostfile'
-# CUDA architecture passed to CMake for native GB200 builds.
 - name: gpuArch
   type: string
   default: '100a'
-# Subnet (or interface name) passed to Open MPI's btl_tcp_if_include so every
-# rank selects the routable interface matching the node IPs.
 - name: mpiTcpIfInclude
   type: string
   default: '10.0.5.0/24'
-# Single-node rank ladder for mp_unit_tests. Space-separated; each value is one
-# mpirun -np run on the head node. GB200 nodes have 4 GPUs, so 2 and 4 exercise
-# the intra-node paths (IPC / NVLink). Every value must be >= 2 (the Prelim test
-# asserts worldSize >= 2). The communicator/channel/executor tests only have a
-# working transport intra-node in a no-IB build, so they must run single-node.
 - name: singleNodeNps
   type: string
   default: '2 4'
-# Negative substring filter for the single-node runs. Comma-separated patterns
-# are all excluded. -Ib skips the InfiniBand tests (no IB on MNNVL).
 - name: filter
   type: string
   default: '-Ib'
-# Whether to also run a cross-node mp_unit_tests pass. It validates the
-# multi-node TcpBootstrap rendezvous over the routable subnet -- the path unique
-# to the MNNVL topology -- using only the tests that work cross-node without IB.
 - name: runCrossNodeBootstrap
   type: boolean
   default: true
-# Negative filter for the cross-node pass. On a single MNNVL/IMEX domain the
-# CudaIpc data path works cross-node via fabric handles, so MemoryChannel /
-# PortChannel (IPC) / SwitchChannel / SemaphorePerf run and validate the
-# cross-node fabric. IB-only variants self-skip via REQUIRE_IBVERBS in a no-IB
-# build, and Executor self-skips unless world==2 & ranksPerNode==2. Only Ib and
-# TimeoutWithId are excluded: Ib has no hardware here, and TimeoutWithId's 100ms
-# window on a 1s timeout is too tight for remote ranks over TCP.
 - name: crossNodeFilter
   type: string
-  default: '-Ib,TimeoutWithId'
-# TcpBootstrap rendezvous port. The bootstrap root address is set to
-# <headNode>:<bootstrapPort> so ranks on other nodes reach rank 0 over the
-# routable subnet. The mp_unit_tests default (127.0.0.1) only works
-# single-node and makes BootstrapTest.*IpPortPair time out across nodes.
+  default: '-Communicator,Ib'
 - name: bootstrapPort
   type: number
   default: 50053
-# Whether to also run the single-process unit_tests binary.
 - name: runUnitTests
   type: boolean
   default: true
@@ -100,7 +72,7 @@ steps:
     remoteScript: |
       for np in ${{ parameters.singleNodeNps }}; do
         echo "=== mp_unit_tests -np ${np} (single-node) ==="
-        mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
       done
@@ -117,6 +89,6 @@ steps:
       displayName: Run mscclpp multi-process bootstrap tests (cross-node)
       runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
       remoteScript: |
-        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
