@@ -404,7 +404,7 @@ void IbQp::postSend() {
   numPostedSignaledSend_ += numStagedSignaledSend_;
   numStagedSignaledSend_ = 0;
   if (numPostedSignaledSend_ + 4 > maxSendCqSize_) {
-    WARN(NET, "IB: CQ is almost full (", numPostedSignaledSend_, " / ", maxSendCqSize_,
+    INFO(NET, "IB: CQ is almost full (", numPostedSignaledSend_, " / ", maxSendCqSize_,
          "). The connection needs to be flushed to prevent timeout errors.");
   }
 }

@@ -36,14 +36,12 @@ static bool consumePerfTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int nu
   for (int i = 0; i < totalTriggers; ++i) {
     mscclpp::ProxyTrigger trigger;
     uint64_t spin = 0;
-    do {
-      trigger = hostFifo->poll();
+    while (!hostFifo->poll(trigger)) {
       if (spin++ > TIMEOUT_SPINS) {
         return false;
       }
-    } while (trigger.fst == 0 || trigger.snd == 0);
+    }
 
-    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
     trigger.snd = trigger.snd ^ trigger.fst;
     if (triggerCounts[trigger.snd] + 1 != trigger.fst) {
       return false;  // Validation failed

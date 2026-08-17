@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include <cstdint>
-
 #include "config.hpp"
 #include "exception.cuh"
 
@@ -25,75 +23,6 @@ __device__ __forceinline__ void memory_fence() { asm volatile("fence.acq_rel.sys
 __device__ __forceinline__ void syncNamedBarrier(int barrierId, int numThreads) {
   asm volatile("bar.sync %0, %1;" ::"r"(barrierId), "r"(numThreads) : "memory");
 }
-
-#if defined(__CUDACC__)
-__device__ __forceinline__ void fenceProxyAsyncSharedCta() {
-  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
-}
-
-__device__ __forceinline__ void initTmaLoadBarrier(uint64_t* sharedBarrier) {
-  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
-  asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));
-  fenceProxyAsyncSharedCta();
-}
-
-__device__ __forceinline__ void issueTmaLoad(const void* source, void* sharedTile, uint64_t* sharedBarrier,
-                                             uint32_t nBytes) {
-  const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
-  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
-  asm volatile(
-      "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
-      "[%0], [%1], %2, [%3];" ::"r"(tileAddress),
-      "l"(source), "r"(nBytes), "r"(barrierAddress)
-      : "memory");
-}
-
-__device__ __forceinline__ void expectTmaLoad(uint64_t* sharedBarrier, uint32_t nBytes) {
-  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
-  [[maybe_unused]] uint64_t state;
-  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
-               : "=l"(state)
-               : "r"(barrierAddress), "r"(nBytes));
-}
-
-__device__ __forceinline__ void issueTmaLoadAndExpect(const void* source, void* sharedTile, uint64_t* sharedBarrier,
-                                                      uint32_t nBytes) {
-  issueTmaLoad(source, sharedTile, sharedBarrier, nBytes);
-  expectTmaLoad(sharedBarrier, nBytes);
-}
-
-__device__ __forceinline__ void waitTmaLoad(uint64_t* sharedBarrier, uint32_t& phase) {
-  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
-  uint32_t done = 0;
-  while (!done) {
-    asm volatile(
-        "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;"
-        " selp.u32 %0, 1, 0, p; }"
-        : "=r"(done)
-        : "r"(barrierAddress), "r"(phase));
-  }
-  phase ^= 1;
-}
-
-__device__ __forceinline__ void issueTmaStore(void* destination, void* sharedTile, uint32_t nBytes) {
-  const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
-  asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(destination), "r"(tileAddress),
-               "r"(nBytes)
-               : "memory");
-  asm volatile("cp.async.bulk.commit_group;");
-}
-
-template <int NumPendingGroups = 0>
-__device__ __forceinline__ void waitBulkGroupRead() {
-  // Wait until at most NumPendingGroups committed bulk groups may still read shared memory.
-  asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(NumPendingGroups) : "memory");
-}
-
-__device__ __forceinline__ void waitBulkGroup() {
-  // Wait for every committed bulk group to complete.
-  asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
-}
-#endif
 
 // `st.global.L1::no_allocate` will be translated into `ST.E.NA.[width]` in SASS
 #ifndef DISABLE_AGGRESSIVE_PTX_INSTRS

@@ -27,7 +27,7 @@ namespace ep {
 class MoELowLatencyRuntime : public MoERuntime {
  public:
   MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk);
+                       int numTopk, DispatchLayout outputLayout);
   ~MoELowLatencyRuntime() noexcept(false);
 
   MoEMode mode() const override { return MoEMode::LOW_LATENCY; }
@@ -54,8 +54,10 @@ class MoELowLatencyRuntime : public MoERuntime {
   int hidden_;
   int numExperts_;
   int numTopk_;
+  DispatchLayout outputLayout_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
+  uint32_t epoch_ = 0;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   low_latency::CommContext commContext_{};

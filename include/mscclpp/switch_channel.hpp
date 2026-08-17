@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_SWITCH_CHANNEL_HPP_
 #define MSCCLPP_SWITCH_CHANNEL_HPP_
 
+#include <cstdint>
+#include <memory>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/switch_channel_device.hpp>
 
@@ -16,6 +18,9 @@ struct SwitchChannel {
   void* devicePtr_;
   std::shared_ptr<void> mcPtr_;
   size_t bufferSize_;
+  // Barrier semaphore inherited from the owning NvlsConnection (see NvlsConnection::bindAllocatedMemory).
+  // Its pointers are null if the connection was created without barrier support.
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrier_ = {};
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
@@ -41,9 +46,24 @@ class NvlsConnection {
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
+  /// Attach a device-side barrier resource shared by all SwitchChannels created from this
+  /// connection. Allocates the barrier flag buffer, binds it to this connection's multicast region,
+  /// and keeps both alive for the connection's lifetime. After this call,
+  /// `SwitchChannel::deviceHandle().barrier()` can synchronize all ranks in the multicast group
+  /// without a separate mesh of memory-channel semaphores. This is set up automatically by
+  /// `connectNvlsCollective`; it is an internal setup hook and is not intended to be called directly.
+  /// @param nRanks Number of ranks participating in the multicast group.
+  void attachBarrier(int nRanks);
+
  private:
   class Impl;
   std::shared_ptr<Impl> pimpl_;
+
+  // Barrier resources, owned by this connection and shared by every SwitchChannel it creates. The
+  // flag is carved from this connection's own multicast region, so no auxiliary connection is kept.
+  std::shared_ptr<void> barrierBuffer_;
+  std::shared_ptr<SwitchChannel> barrierChannel_;
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrierSem_ = {};
 };
 
 class Communicator;

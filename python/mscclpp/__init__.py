@@ -52,6 +52,7 @@ from ._mscclpp import (
     CppRawGpuBuffer as RawGpuBuffer,
     CppReduceOp as ReduceOp,
     env,
+    is_bulk_supported,
     is_nvls_supported,
     cpp_npkit as npkit,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "ReduceOp",
     "env",
     "version",
+    "is_bulk_supported",
     "is_nvls_supported",
     "alloc_shared_physical_cuda",
     "npkit",

@@ -2,8 +2,10 @@
 // Licensed under the MIT license.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 
 #include <mscclpp/fifo.hpp>
+#include <optional>
 
 namespace nb = nanobind;
 using namespace mscclpp;
@@ -28,7 +30,12 @@ void register_fifo(nb::module_& m) {
 
   nb::class_<Fifo>(m, "CppFifo")
       .def(nb::init<int>(), nb::arg("size") = DEFAULT_FIFO_SIZE)
-      .def("poll", &Fifo::poll)
+      .def("poll",
+           [](Fifo& self) -> std::optional<ProxyTrigger> {
+             ProxyTrigger trigger;
+             if (!self.poll(trigger)) return std::nullopt;
+             return trigger;
+           })
       .def("pop", &Fifo::pop)
       .def("size", &Fifo::size)
       .def("device_handle", &Fifo::deviceHandle);
