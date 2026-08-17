@@ -190,7 +190,7 @@ struct Layout {
   size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
-                                    int numExperts, int numTopk) {
+                                    int numExperts, int numTopk, bool rankMajor = false) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -203,8 +203,10 @@ struct Layout {
     const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    recvBufferBytes_ = configAlign<size_t>(
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes}), BufferAlignmentBytes);
+    const size_t recvBufferBytes =
+        rankMajor ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, rankMajorTokenBytes})
+                  : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, combineBufferBytes});
+    recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
 
     // GPUNetIO region sizing (small, always reserved so the layout is uniform
     // regardless of whether the backend is compiled in / enabled).
@@ -234,8 +236,9 @@ struct Layout {
   }
 };
 
-inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
-  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk).totalBytes_;
+inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+                                  bool rankMajor = false) {
+  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, rankMajor).totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 

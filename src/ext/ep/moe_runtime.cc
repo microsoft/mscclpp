@@ -11,9 +11,10 @@ namespace ep {
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numSms) {
+                                             int numSms, DispatchLayout outputLayout) {
   if (mode == MoEMode::LOW_LATENCY) {
-    return std::make_shared<MoELowLatencyRuntime>(communicator, maxTokensPerRank, hidden, numExperts, numTopk);
+    return std::make_shared<MoELowLatencyRuntime>(communicator, maxTokensPerRank, hidden, numExperts, numTopk,
+                                                  outputLayout);
   }
   return std::make_shared<MoEHighThroughputRuntime>(communicator, maxHiddenBytes, high_throughput::Config(numSms));
 }
