@@ -187,6 +187,30 @@ class MemoryChannelOneToOneTest : public CommunicatorTestBase {
   std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 };
 
+/// Fixture for the bulk-copy usage patterns, shaped after the expert-parallel dispatch and combine
+/// kernels: a full mesh where every rank holds a receive pool addressable by every peer, channels
+/// used only for synchronization, and the peer pool pointers handed to the kernel as a plain array.
+class BulkPatternTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override;
+  void TearDown() override;
+
+  /// Register @p pool on every rank, exchange it around a full mesh, and build one synchronization
+  /// channel per peer. Fills peerPools and syncHandles.
+  void setupPeerPools(void* pool, size_t poolBytes);
+
+  int worldSize = 0;
+  int rank = 0;
+  /// Receive pool base address of each rank, indexed by rank. The local entry is the local pool.
+  /// This mirrors the expert-parallel kernels, which address peers by raw pointer and never route
+  /// bulk data through a channel.
+  std::vector<void*> peerPools;
+  /// One channel per peer, used only for signal/wait.
+  std::vector<mscclpp::BaseMemoryChannel> syncChannels;
+  std::vector<DeviceHandle<mscclpp::BaseMemoryChannel>> syncHandles;
+  std::vector<mscclpp::RegisteredMemory> remotePoolMemories;
+};
+
 class SemaphorePerfTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;
