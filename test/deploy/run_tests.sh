@@ -112,6 +112,29 @@ function run_py_benchmark()
   -x MSCCLPP_HOME=/root/mscclpp -npernode 8 python3 /root/mscclpp/python/mscclpp_benchmark/allreduce_bench.py
 }
 
+function run_allreduce_test()
+{
+  PLAN_DIR=/root/mscclpp/dsl_plans
+  ALGO=/root/mscclpp/python/mscclpp/default_algos/allreduce_multi_nodes.py
+
+  echo "=============Generate DSL plans on each node=============================="
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 \
+    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp \
+    bash -c "mkdir -p ${PLAN_DIR} && \
+      python3 ${ALGO} --name allreduce_2nodes_1K_64K --num_gpus 16 --gpus_per_node 8 \
+        --tbg 1 --min_message_size 1024 --max_message_size 65536 \
+        > ${PLAN_DIR}/allreduce_2nodes_1K_64K.json"
+
+  echo "=============Run DSL allreduce_multi_nodes on 2 nodes====================="
+  for SIZE in 1K 16K 64K; do
+    mpirun ${MPI_ARGS} -np 16 \
+      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -npernode 8 \
+      python3 /root/mscclpp/python/test/executor_test.py \
+        --execution_plan_path ${PLAN_DIR}/allreduce_2nodes_1K_64K.json \
+        --size ${SIZE} --dtype float16 --in_place
+  done
+}
+
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <mscclpp-test/mp-ut/run_pytests/run_py_benchmark>"
     exit 1

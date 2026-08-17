@@ -86,15 +86,24 @@ jobs:
       gpuArch: '90'
 
 # REPLACE THIS FUNCITON START
+  # - template: templates/run-remote-task.yml
+  #   parameters:
+  #     name: RunMscclppTest
+  #     displayName: Run multi-nodes mscclpp-test
+  #     continueOnError: true
+  #     runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+  #     remoteScript: |
+  #       bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
+# REPLACE THIS FUNCITON END
+
   - template: templates/run-remote-task.yml
     parameters:
-      name: RunMscclppTest
-      displayName: Run multi-nodes mscclpp-test
+      name: RunAllreduceTest
+      displayName: Run multi-nodes allreduce test
       continueOnError: true
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
-# REPLACE THIS FUNCITON END
+        bash /root/mscclpp/test/deploy/run_tests.sh allreduce_test
 
   - template: templates/run-remote-task.yml
     parameters:
