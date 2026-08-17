@@ -38,15 +38,16 @@ parameters:
 - name: runCrossNodeBootstrap
   type: boolean
   default: true
-# Negative filter for the cross-node pass. Excludes every fixture that needs a
-# cross-node data transport (Communicator / Executor / *Channel / Semaphore /
-# Ib), which a no-IB build lacks between nodes and which otherwise deadlocks on
-# the mesh barrier. Also excludes TimeoutWithId, whose 100ms window on a 1s
-# timeout is too tight for remote ranks over TCP. What remains: BootstrapTest.*
-# and MultiProcessTest.* (Prelim / HostName / HostHash).
+# Negative filter for the cross-node pass. On a single MNNVL/IMEX domain the
+# CudaIpc data path works cross-node via fabric handles, so MemoryChannel /
+# PortChannel (IPC) / SwitchChannel / SemaphorePerf run and validate the
+# cross-node fabric. IB-only variants self-skip via REQUIRE_IBVERBS in a no-IB
+# build, and Executor self-skips unless world==2 & ranksPerNode==2. Only Ib and
+# TimeoutWithId are excluded: Ib has no hardware here, and TimeoutWithId's 100ms
+# window on a 1s timeout is too tight for remote ranks over TCP.
 - name: crossNodeFilter
   type: string
-  default: '-Communicator,Executor,Ib,MemoryChannel,PortChannel,SemaphorePerf,SwitchChannel,TimeoutWithId'
+  default: '-Ib,TimeoutWithId'
 # TcpBootstrap rendezvous port. The bootstrap root address is set to
 # <headNode>:<bootstrapPort> so ranks on other nodes reach rank 0 over the
 # routable subnet. The mp_unit_tests default (127.0.0.1) only works
