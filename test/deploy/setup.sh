@@ -31,7 +31,6 @@ fi
 make -C /root/mscclpp/tools/peer-access-test
 set +e
 /root/mscclpp/tools/peer-access-test/peer_access_test
-
 PEER_ACCESS_EXIT_CODE=$?
 set -e
 if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ] && [ "${PLATFORM}" == "cuda" ]; then
@@ -49,7 +48,6 @@ if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ] && [ "${PLATFORM}" == "cuda" ]; then
 elif [ ${PEER_ACCESS_EXIT_CODE} -ne 0 ]; then
     exit ${PEER_ACCESS_EXIT_CODE}
 fi
-
 make -C /root/mscclpp/tools/peer-access-test clean
 
 if [ "${PLATFORM}" == "rocm" ]; then
