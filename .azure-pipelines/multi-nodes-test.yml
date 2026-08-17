@@ -107,6 +107,15 @@ jobs:
 
   - template: templates/run-remote-task.yml
     parameters:
+      name: RunAllgatherTest
+      displayName: Run multi-nodes allgather test
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh allgather_test
+
+  - template: templates/run-remote-task.yml
+    parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'

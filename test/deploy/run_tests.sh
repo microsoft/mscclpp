@@ -135,8 +135,31 @@ function run_allreduce_test()
   done
 }
 
+function run_allgather_test()
+{
+  PLAN_DIR=/root/mscclpp/dsl_plans
+  ALGO=/root/mscclpp/python/mscclpp/default_algos/allgather_multi_nodes.py
+
+  echo "=============Generate DSL allgather plans on each node===================="
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 \
+    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp \
+    bash -c "mkdir -p ${PLAN_DIR} && \
+      python3 ${ALGO} --name allgather_2nodes_1K_8M --num_gpus 16 --gpus_per_node 8 \
+        --no-in_place --min_message_size 1024 --max_message_size 8388608 \
+        > ${PLAN_DIR}/allgather_2nodes_1K_8M.json"
+
+  echo "=============Run DSL allgather_multi_nodes on 2 nodes====================="
+  for SIZE in 1K 64K 1M; do
+    mpirun ${MPI_ARGS} -np 16 \
+      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -npernode 8 \
+      python3 /root/mscclpp/python/test/executor_test.py \
+        --execution_plan_path ${PLAN_DIR}/allgather_2nodes_1K_8M.json \
+        --size ${SIZE} --dtype float16
+  done
+}
+
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <mscclpp-test/mp-ut/run_pytests/run_py_benchmark>"
+    echo "Usage: $0 <mscclpp-test/allreduce_test/allgather_test/mp-ut/run_pytests/run_py_benchmark>"
     exit 1
 fi
 test_name=$1
@@ -144,6 +167,14 @@ case $test_name in
   mscclpp-test)
     echo "==================Run mscclpp-test on 2 nodes========================="
     run_mscclpp_test
+    ;;
+  allreduce_test)
+    echo "==============Run DSL allreduce on 2 nodes============================="
+    run_allreduce_test
+    ;;
+  allgather_test)
+    echo "==============Run DSL allgather on 2 nodes============================="
+    run_allgather_test
     ;;
   mp-ut)
     echo "==================Run mp-ut on 2 nodes================================"
