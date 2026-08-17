@@ -123,4 +123,3 @@ jobs:
       subscription: mscclpp-ci-h100
       vmssName: ${{ parameters.vmssName }}
       resourceGroup: mscclpp
-      
