@@ -102,7 +102,6 @@ PSSH_COMMON=(
 if $USE_DOCKER; then
     INNER="set -euxo pipefail;"
     INNER+=" cd /root/mscclpp;"
-    INNER+=" [ -f /root/mscclpp/.ldpath ] && source /root/mscclpp/.ldpath;"
     INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
     INNER+=" CMD_B64='${CMD_B64}';"
     INNER+=" TMP=\\\$(mktemp);"
