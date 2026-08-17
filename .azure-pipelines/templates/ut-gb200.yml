@@ -10,7 +10,7 @@ parameters:
 - name: hostfile
   type: string
   default: '$(System.DefaultWorkingDirectory)/test/deploy/hostfile'
-# Container-side hostfile passed to mpirun (one ip per line).
+# CUDA architecture passed to CMake for native GB200 builds.
 - name: gpuArch
   type: string
   default: '100a'
