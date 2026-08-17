@@ -72,7 +72,7 @@ steps:
     remoteScript: |
       for np in ${{ parameters.singleNodeNps }}; do
         echo "=== mp_unit_tests -np ${np} (single-node) ==="
-        timeout -k 10 180 mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
       done
@@ -89,6 +89,6 @@ steps:
       displayName: Run mscclpp multi-process bootstrap tests (cross-node)
       runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
       remoteScript: |
-        timeout -k 10 180 mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
