@@ -32,23 +32,12 @@ fi
 
 SSH_OPTION="StrictHostKeyChecking=no"
 
-# CI-agent -> node SSH args. Optionally route through a jumpbox via ProxyCommand
-# (opt-in through SSH_PROXY_JUMP; SSH_PROXY_KEY selects a separate jump key).
-# When the vars are unset there is no proxy, so pipelines that don't set them
-# (e.g. multi-nodes-test.yml) keep using direct SSH unchanged.
-SSH_EXTRA_ARGS="-i ${KeyFilePath}"
-if [ -n "${SSH_PROXY_JUMP:-}" ]; then
-  PROXY_KEY_OPT=""
-  [ -n "${SSH_PROXY_KEY:-}" ] && PROXY_KEY_OPT="-i ${SSH_PROXY_KEY} "
-  SSH_EXTRA_ARGS="${SSH_EXTRA_ARGS} -o ProxyCommand=\"ssh ${PROXY_KEY_OPT}-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p ${SSH_PROXY_JUMP}\""
-fi
-
 chmod 400 ${KeyFilePath}
 ssh-keygen -t rsa -f sshkey -P ""
 
 while true; do
   set +e
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION "hostname"
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "hostname"
   if [ $? -eq 0 ]; then
     break
   fi
@@ -57,21 +46,21 @@ while true; do
 done
 set -e
 
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
-parallel-scp -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo mkdir -p ${DST_DIR} && sudo tar xzf /tmp/mscclpp.tar.gz -C ${DST_DIR} && sudo rm -f /tmp/mscclpp.tar.gz"
 rm -f /tmp/mscclpp.tar.gz
 
 if [ "${PLATFORM}" == "rocm" ]; then
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION "sudo modprobe amdgpu"
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
 fi
 
 # Install GDRCopy kernel module on host VMs (CUDA only)
 GDRCOPY_VERSION="2.5.2"
 if [ "${PLATFORM}" == "cuda" ]; then
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
     "if lsmod | grep -q gdrdrv; then
       echo 'gdrdrv module already loaded'
     else
@@ -93,14 +82,14 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   # force to pull the latest image
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
     "sudo docker pull ${SGLANG_IMAGE}"
 
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
     "sudo docker run --rm -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash ${SGLANG_IMAGE}"
 else
   # force to pull the latest image
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
     "sudo docker pull ${CONTAINERIMAGE}"
 
   # Set GPU passthrough flags based on platform
@@ -121,18 +110,18 @@ else
 
   if [ "${IB_ENVIRONMENT}" == "true" ]; then
     # InfiniBand: use --privileged for RDMA device access
-    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   else
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
-    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   fi
 fi
 
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker exec -t --user root ${CONTAINER_NAME} bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
