@@ -116,6 +116,6 @@ steps:
       displayName: Run mscclpp multi-process bootstrap tests (cross-node)
       runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
       remoteScript: |
-        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 16 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
