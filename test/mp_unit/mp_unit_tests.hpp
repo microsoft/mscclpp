@@ -178,8 +178,8 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
-  void testAccumulateSigned(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
-  void testAccumulateZero(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
+  void testAccumulateRejected(mscclpp::Transport transport, IbMode ibMode, int tag, const char* backendMessage,
+                              bool checkHugeOffset);
   void testBandwidth(PingPongTestParams params);
   void setupMultiQpChannels(int numQps, size_t elemsPerChan, IbMode ibMode, int tagBase,
                             std::vector<std::shared_ptr<int>>& sendBuffs,
