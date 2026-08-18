@@ -55,9 +55,15 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   float maxAbs = maxAbsF32x8(values, Margin);
 
   maxAbs = laneGroupMax<NumLanesPerScale>(maxAbs, laneId);
-  const float quantScale = Fp8E4M3MaxValue / maxAbs;
+  // DeepGEMM's Blackwell grouped-FP8 ABI consumes UE8M0 scales. Quantizing
+  // with maxAbs/448 and rounding only the reported scale later changes the
+  // represented value by up to 2x. Round the scale first, then use that exact
+  // power-of-two for both payload quantization and metadata. SGLang can losslessly
+  // encode the returned FP32 value as UE8M0.
+  const float scale = exp2f(ceilf(log2f(maxAbs / Fp8E4M3MaxValue)));
+  const float quantScale = 1.0f / scale;
   if (laneId % NumLanesPerScale == 0) {
-    *scaleOut = maxAbs / Fp8E4M3MaxValue;
+    *scaleOut = scale;
   }
 
   mscclpp::f32x8 scaledValues;
