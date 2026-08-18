@@ -1,0 +1,94 @@
+parameters:
+- name: user
+  type: string
+  default: 'azhpcuser'
+- name: headNode
+  type: string
+- name: hostfile
+  type: string
+  default: '$(System.DefaultWorkingDirectory)/test/deploy/hostfile'
+- name: gpuArch
+  type: string
+  default: '100a'
+- name: mpiTcpIfInclude
+  type: string
+  default: '10.0.5.0/24'
+- name: singleNodeNps
+  type: string
+  default: '2 4'
+- name: filter
+  type: string
+  default: '-Ib'
+- name: runCrossNodeBootstrap
+  type: boolean
+  default: true
+- name: crossNodeFilter
+  type: string
+  default: '-Communicator,Ib'
+- name: bootstrapPort
+  type: number
+  default: 50053
+- name: runUnitTests
+  type: boolean
+  default: true
+
+steps:
+# Rebuild the C++ tests natively on every node so the binaries are aarch64.
+# The x86-64 CMakeCache.txt shipped from the agent is discarded (rm -rf build).
+- template: run-remote-task.yml
+  parameters:
+    name: BuildGb200Tests
+    displayName: Build unit tests on GB200 nodes
+    runRemoteArgs: '--hostfile ${{ parameters.hostfile }} --user ${{ parameters.user }}'
+    remoteScript: |
+      rm -rf build
+      mkdir -p build && cd build
+      cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+        -DMSCCLPP_USE_CUDA=ON \
+        -DMSCCLPP_BUILD_TESTS=ON \
+        -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} \
+        -DMSCCLPP_USE_IB=OFF ..
+      make -j unit_tests mp_unit_tests
+
+- ${{ if parameters.runUnitTests }}:
+  - template: run-remote-task.yml
+    parameters:
+      name: Gb200UnitTests
+      displayName: Run mscclpp unit tests
+      runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+      remoteScript: |
+        ./build/bin/unit_tests
+
+# Run mp_unit_tests single-node on the head node across the rank ladder. No
+# hostfile / ip_port needed: all ranks are local, so loopback bootstrap works and
+# every fixture has a working intra-node transport (IPC / NVLink).
+- template: run-remote-task.yml
+  parameters:
+    name: Gb200MpUnitTests
+    displayName: Run mscclpp multi-process unit tests (single-node)
+    runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+    remoteScript: |
+      for np in ${{ parameters.singleNodeNps }}; do
+        echo "=== mp_unit_tests -np ${np} (single-node) ==="
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -np ${np} \
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          ./build/bin/mp_unit_tests --filter=${{ parameters.filter }}
+      done
+
+# Cross-node pass: validate the multi-node TcpBootstrap rendezvous. mpirun spans
+# both nodes via the container hostfile; --ip_port points every rank at rank 0 on
+# the head node (the mp_unit_tests default of 127.0.0.1 only works single-node
+# and makes the *IpPortPair tests time out across nodes). crossNodeFilter keeps
+# this to the fixtures that work without cross-node IB.
+- ${{ if parameters.runCrossNodeBootstrap }}:
+  - template: run-remote-task.yml
+    parameters:
+      name: Gb200MpBootstrapMultiNode
+      displayName: Run mscclpp multi-process bootstrap tests (cross-node)
+      runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
+      remoteScript: |
+        timeout -k 10 300 mpirun --allow-run-as-root -tag-output --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          ./build/bin/mp_unit_tests --ip_port=${{ parameters.headNode }}:${{ parameters.bootstrapPort }} --filter=${{ parameters.crossNodeFilter }}
