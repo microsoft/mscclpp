@@ -103,7 +103,26 @@ jobs:
       continueOnError: true
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh allreduce_test
+        set -e
+        # Home is not shared across nodes, so generate the plan once on every node.
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 2 -npernode 1 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          bash -c "mkdir -p /root/mscclpp/dsl_plans && \
+            python3 /root/mscclpp/python/mscclpp/default_algos/allreduce_multi_nodes.py \
+              --name allreduce_2nodes_1K_64K --num_gpus 16 --gpus_per_node 8 --tbg 1 \
+              --min_message_size 1024 --max_message_size 65536 \
+              > /root/mscclpp/dsl_plans/allreduce_2nodes_1K_64K.json"
+        for SIZE in 1K 16K 64K; do
+          mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+            -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+            -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+            -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+            python3 /root/mscclpp/python/test/executor_test.py \
+              --execution_plan_path /root/mscclpp/dsl_plans/allreduce_2nodes_1K_64K.json \
+              --size ${SIZE} --dtype float16 --in_place
+        done
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -112,7 +131,54 @@ jobs:
       continueOnError: true
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh allgather_test
+        set -e
+        # Home is not shared across nodes, so generate the plan once on every node.
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 2 -npernode 1 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          bash -c "mkdir -p /root/mscclpp/dsl_plans && \
+            python3 /root/mscclpp/python/mscclpp/default_algos/allgather_multi_nodes.py \
+              --name allgather_2nodes_1K_8M --num_gpus 16 --gpus_per_node 8 --no-in_place \
+              --min_message_size 1024 --max_message_size 8388608 \
+              > /root/mscclpp/dsl_plans/allgather_2nodes_1K_8M.json"
+        for SIZE in 1K 64K 1M; do
+          mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+            -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+            -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+            -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+            python3 /root/mscclpp/python/test/executor_test.py \
+              --execution_plan_path /root/mscclpp/dsl_plans/allgather_2nodes_1K_8M.json \
+              --size ${SIZE} --dtype float16
+        done
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunReduceScatterTest
+      displayName: Run multi-nodes reducescatter test
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        set -e
+        # Home is not shared across nodes, so generate the plan once on every node.
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 2 -npernode 1 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          bash -c "mkdir -p /root/mscclpp/dsl_plans && \
+            python3 /root/mscclpp/python/mscclpp/default_algos/reducescatter_multi_nodes.py \
+              --name reducescatter_2nodes_1K_64K --num_gpus 16 --gpus_per_node 8 --tbg 1 \
+              --min_message_size 1024 --max_message_size 65536 \
+              > /root/mscclpp/dsl_plans/reducescatter_2nodes_1K_64K.json"
+        for SIZE in 1K 16K 64K; do
+          mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+            -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+            -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+            -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+            python3 /root/mscclpp/python/test/executor_test.py \
+              --execution_plan_path /root/mscclpp/dsl_plans/reducescatter_2nodes_1K_64K.json \
+              --size ${SIZE} --dtype float16 --in_place
+        done
 
   - template: templates/run-remote-task.yml
     parameters:
