@@ -538,36 +538,55 @@ void Socket::recv(void* ptr, int size) {
   socketWait(MSCCLPP_SOCKET_RECV, ptr, size, &offset);
 }
 
-void Socket::recvUntilEnd(void* ptr, int size, int* closed) {
+SocketRecvResult Socket::recvUntilEnd(void* ptr, int size, const std::atomic<bool>* localShutdown) {
   int offset = 0;
-  *closed = 0;
   if (state_ != SocketStateReady) {
     std::stringstream ss;
     ss << "socket state (" << state_ << ") is not ready in recvUntilEnd";
     throw Error(ss.str(), ErrorCode::InternalError);
   }
 
-  int bytes = 0;
-  char* data = (char*)ptr;
-
-  do {
-    bytes = ::recv(fd_, data + (offset), size - (offset), 0);
+  char* data = static_cast<char*>(ptr);
+  while (offset < size) {
+    int bytes = ::recv(fd_, data + offset, size - offset, 0);
+    if (bytes > 0) {
+      offset += bytes;
+      continue;
+    }
     if (bytes == 0) {
-      *closed = 1;
-      return;
-    }
-    if (bytes == -1) {
-      if (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN && state_ != SocketStateClosed) {
-        throw SysError("recv until end failed", errno);
-      } else {
-        bytes = 0;
+      if (localShutdown != nullptr && localShutdown->load(std::memory_order_acquire)) {
+        return SocketRecvResult::LocalShutdown;
       }
+      return offset == 0 ? SocketRecvResult::Closed : SocketRecvResult::Truncated;
     }
-    (offset) += bytes;
-    if (abortFlag_ && *abortFlag_ != 0) {
-      throw Error("aborted", ErrorCode::Aborted);
+
+    const int error = errno;
+    if (error == EINTR) continue;
+    if (error == EWOULDBLOCK || error == EAGAIN) {
+      if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
+
+      struct pollfd pfd = {fd_, POLLIN, 0};
+      int ret;
+      do {
+        ret = ::poll(&pfd, 1, 1);
+      } while (ret < 0 && errno == EINTR);
+      if (ret < 0) throw SysError("poll while receiving failed", errno);
+      continue;
     }
-  } while (bytes > 0 && (offset) < size);
+    if (localShutdown != nullptr && localShutdown->load(std::memory_order_acquire) &&
+        (error == ENOTCONN || error == ESHUTDOWN)) {
+      return SocketRecvResult::LocalShutdown;
+    }
+    throw SysError("recv until end failed", error);
+  }
+  return SocketRecvResult::Success;
+}
+
+void Socket::shutdown() noexcept {
+  // shutdown(2) wakes blocked send/recv calls while keeping the descriptor
+  // reserved.  The owner can therefore join those callers before close(2),
+  // avoiding both a close-vs-syscall race and accidental use of a recycled fd.
+  if (fd_ >= 0) ::shutdown(fd_, SHUT_RDWR);
 }
 
 void Socket::close() {

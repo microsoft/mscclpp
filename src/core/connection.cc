@@ -21,6 +21,14 @@
 
 namespace mscclpp {
 
+template <typename... Args>
+static void warnNoexcept(Args&&... args) noexcept {
+  try {
+    WARN(CONN, std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+
 static void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
   if (!mem.transports().has(transport)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
@@ -556,18 +564,41 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const E
   // Starting Thread to Receive Messages
   int deviceId = -1;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  threadRecvMessages_ = std::thread([deviceId, this]() {
-    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
-    this->recvMessages();
+  threadRecvMessages_ = std::thread([deviceId, this]() noexcept {
+    try {
+      MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+      this->recvMessages();
+    } catch (const std::exception& e) {
+      publishReceiverError(std::current_exception());
+      warnNoexcept("Ethernet receive thread stopped with an error: ", e.what());
+    } catch (...) {
+      publishReceiverError(std::current_exception());
+      warnNoexcept("Ethernet receive thread stopped with an unknown error");
+    }
   });
 
   INFO(CONN, "Ethernet connection created");
 }
 
-EthernetConnection::~EthernetConnection() {
-  sendSocket_->close();
-  recvSocket_->close();
-  threadRecvMessages_.join();
+EthernetConnection::~EthernetConnection() noexcept {
+  stopping_.store(true, std::memory_order_release);
+
+  // Keep both descriptors reserved until the receiver is known to be done.
+  // shutdown wakes socket operations; join then establishes that close cannot
+  // race recv or allow the receiver to observe a recycled descriptor number.
+  if (recvSocket_) recvSocket_->shutdown();
+  if (sendSocket_) sendSocket_->shutdown();
+  try {
+    if (threadRecvMessages_.joinable()) threadRecvMessages_.join();
+  } catch (const std::exception& e) {
+    warnNoexcept("Failed to join Ethernet receive thread during teardown: ", e.what());
+    std::terminate();
+  } catch (...) {
+    warnNoexcept("Failed to join Ethernet receive thread during teardown");
+    std::terminate();
+  }
+  if (recvSocket_) recvSocket_->close();
+  if (sendSocket_) sendSocket_->close();
 }
 
 Transport EthernetConnection::transport() const { return Transport::Ethernet; }
@@ -576,6 +607,7 @@ Transport EthernetConnection::remoteTransport() const { return Transport::Ethern
 
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {
+  rethrowReceiverError();
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
@@ -610,6 +642,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
     headerSize = 0;
   }
 
+  rethrowReceiverError();
   INFO(CONN, "EthernetConnection write: from ", srcPtr, " to ", dstPtr, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_EXIT)
@@ -618,6 +651,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
 }
 
 void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  rethrowReceiverError();
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
@@ -646,6 +680,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   // Sending Message
   sendSocket_->send(sendBuffer_.data(), messageSize);
 
+  rethrowReceiverError();
   INFO(CONN, "EthernetConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
@@ -655,6 +690,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
 }
 
 void EthernetConnection::flush(int64_t) {
+  rethrowReceiverError();
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
@@ -664,6 +700,37 @@ void EthernetConnection::flush(int64_t) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+  rethrowReceiverError();
+}
+
+void EthernetConnection::publishReceiverError(std::exception_ptr error) noexcept {
+  try {
+    std::lock_guard<std::mutex> lock(receiverErrorMutex_);
+    if (!receiverError_) receiverError_ = error;
+  } catch (...) {
+    // std::mutex::lock can only fail for a broken runtime.  The receive thread
+    // must still not leak an exception through std::thread's entry point.
+  }
+}
+
+void EthernetConnection::rethrowReceiverError() {
+  std::exception_ptr error;
+  {
+    std::lock_guard<std::mutex> lock(receiverErrorMutex_);
+    error = receiverError_;
+  }
+  if (error) std::rethrow_exception(error);
+}
+
+bool EthernetConnection::receiveFramePart(void* ptr, int size, bool allowBoundaryEof) {
+  SocketRecvResult result = recvSocket_->recvUntilEnd(ptr, size, &stopping_);
+  if (result == SocketRecvResult::Success) return true;
+  if (result == SocketRecvResult::LocalShutdown) return false;
+  if (result == SocketRecvResult::Closed && allowBoundaryEof) return false;
+
+  throw Error(result == SocketRecvResult::Truncated ? "Ethernet peer closed in the middle of a frame"
+                                                    : "Ethernet peer closed before completing a frame",
+              ErrorCode::RemoteError);
 }
 
 void EthernetConnection::recvMessages() {
@@ -671,22 +738,18 @@ void EthernetConnection::recvMessages() {
   char* ptr;
   uint64_t size;
   uint64_t recvSize;
-  int closed = 0;
-  bool received = true;
 
   // Receiving Messages Until Connection is Closed
-  while (recvSocket_->getState() != SocketStateClosed) {
+  while (!stopping_.load(std::memory_order_acquire)) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_META_ENTRY)
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_META_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
     // Receiving Data Address
-    if (closed == 0) recvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
-    received &= !closed;
+    if (!receiveFramePart(&ptr, sizeof(char*), true)) return;
 
     // Receiving data size
-    if (closed == 0) recvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
-    received &= !closed;
+    if (!receiveFramePart(&size, sizeof(uint64_t), false)) return;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_META_EXIT)
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_META_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
@@ -698,13 +761,11 @@ void EthernetConnection::recvMessages() {
 
     // Receiving Data and Copying Data yo GPU
     recvSize = 0;
-    while (recvSize < size && closed == 0) {
+    while (recvSize < size) {
       uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
-      recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
-      received &= !closed;
+      if (!receiveFramePart(recvBuffer_.data(), messageSize, false)) return;
 
-      if (received)
-        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
+      mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
       recvSize += messageSize;
     }
 
