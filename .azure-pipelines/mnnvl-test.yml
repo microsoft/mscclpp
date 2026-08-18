@@ -125,7 +125,7 @@ jobs:
 
   - template: templates/run-remote-task.yml
     parameters:
-      name: PyBench
+      name: RunCollectivebenchmarks
       displayName: Run Collective Benchmarks
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
