@@ -668,10 +668,14 @@ class Connection {
   ///   proxy-launched kernel cannot run while the caller's kernel waits. Use a device-side atomic
   ///   on peer memory reached through a MemoryChannel.
   ///
+  /// The 8-byte target word must fit within @p dst, and its final address must be naturally
+  /// 8-byte aligned.
+  ///
   /// @param dst The destination RegisteredMemory.
   /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
   /// @param value The 64-bit signed value to add.
-  /// @throws Error with ErrorCode::InvalidUsage if the transport cannot accumulate.
+  /// @throws Error with ErrorCode::InvalidUsage if the target is out of bounds or misaligned, or
+  ///   if the transport cannot accumulate.
   void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value);
 
   /// Flush any pending writes to the remote process.

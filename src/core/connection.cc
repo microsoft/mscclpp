@@ -31,6 +31,21 @@ static void validateTransport(RegisteredMemory mem, Transport transport, uint64_
   }
 }
 
+static void validateAccumulateBounds(RegisteredMemory mem, uint64_t offset) {
+  constexpr uint64_t wordSize = sizeof(uint64_t);
+  if (offset > mem.size() || wordSize > mem.size() - offset) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory out of bounds for 64-bit accumulate");
+  }
+}
+
+static void validateAccumulateAlignment(uintptr_t base, uint64_t offset) {
+  constexpr uintptr_t alignment = alignof(uint64_t);
+  uintptr_t targetAlignment = (base % alignment + offset % alignment) % alignment;
+  if (targetAlignment != 0) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "accumulate destination must be naturally 8-byte aligned");
+  }
+}
+
 static bool isSameProcess(const Endpoint& a, const Endpoint& b) {
   return a.hostHash() == b.hostHash() && a.pidHash() == b.pidHash();
 }
@@ -199,10 +214,11 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #endif
 }
 
-void CudaIpcConnection::accumulate([[maybe_unused]] RegisteredMemory dst, [[maybe_unused]] uint64_t dstOffset,
-                                   [[maybe_unused]] int64_t value) {
-#if defined(MSCCLPP_USE_ROCM)
+void CudaIpcConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, [[maybe_unused]] int64_t value) {
   validateTransport(dst, remoteTransport());
+  validateAccumulateBounds(dst, dstOffset);
+  validateAccumulateAlignment(reinterpret_cast<uintptr_t>(dst.data()), dstOffset);
+#if defined(MSCCLPP_USE_ROCM)
   // A kernel on this connection's stream performs the addition, a real read-modify-write, so
   // writers in any number of processes may target one address. The host cannot do it instead:
   // GPU memory is host-accessible only to the process that allocated it, and the proxy holds an
@@ -524,11 +540,13 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 void IBConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
   validateTransport(dst, remoteTransport());
+  validateAccumulateBounds(dst, dstOffset);
   auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
+  validateAccumulateAlignment(static_cast<uintptr_t>(dstMrInfo.addr), dstOffset);
 
   if (ibNoAtomic_) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "accumulate is not supported in IB no-atomic mode");
@@ -723,6 +741,8 @@ static std::mutex& accumulateMutex() {
 
 void EthernetConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
   validateTransport(dst, remoteTransport());
+  validateAccumulateBounds(dst, dstOffset);
+  validateAccumulateAlignment(reinterpret_cast<uintptr_t>(dst.originalDataPtr()), dstOffset);
 
   // Wire format matches write(): [dstPtr(8B)] [size(8B)] [data(size B)]. The MSB of size marks
   // the message as an accumulate.

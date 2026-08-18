@@ -131,15 +131,10 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
-    ProxyTrigger trigger;
-    // The operand occupies fst, spanning the size and srcOffset fields.
-    trigger.fst = static_cast<uint64_t>(value);
-    // snd carries dstOffset, dstMemoryId, the opcode, and semaphoreId.
-    trigger.snd = 0;
-    trigger.fields.dstOffset = dstOffset;
-    trigger.fields.dstMemoryId = dstId;
-    trigger.fields.type = TriggerAccumulate;
-    trigger.fields.semaphoreId = semaphoreId_;
+    // The operand occupies fst, spanning the low size and high srcOffset fields.
+    uint64_t operand = static_cast<uint64_t>(value);
+    ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
+                         static_cast<uint32_t>(operand), semaphoreId_);
     fifo_.push(trigger);
   }
 

@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
 
@@ -34,21 +35,84 @@ inline void requireGdrForIbMode(IbMode mode, mscclpp::Transport ibTransport) {
   }
 }
 #define REQUIRE_GDR_FOR_IB_MODE(mode) requireGdrForIbMode((mode), ibTransport)
+
+inline void requireGdrForHostNoAtomicCollective(int firstRank, int secondRank) {
+  bool participates = gEnv->rank == firstRank || gEnv->rank == secondRank;
+  int localReady = (!participates || mscclpp::gdrEnabled()) ? 1 : 0;
+  int allReady = 0;
+  MPI_Allreduce(&localReady, &allReady, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allReady) {
+    SKIP_TEST() << "HostNoAtomic rejection requires GDRCopy on every participating CUDA rank";
+  }
+}
 #else
 #define REQUIRE_GDR_FOR_IB_MODE(mode)  // No extra requirements on non-CUDA platforms.
+inline void requireGdrForHostNoAtomicCollective(int, int) {}
 #endif
 
-// Skip an IPC-only PortChannel test (useIPC=true, useIB=false, useEthernet=false) when CudaIpc
-// cannot connect this rank pair. CudaIpc works intra-node always, and cross-node only on MNNVL
-// systems (GB200 NVL72 + IMEX). The combined check is "at least 2 ranks per node" OR "fabric
-// (MNNVL) handles are usable on this system".
-#define REQUIRE_CUDA_IPC_AVAILABLE                                           \
-  do {                                                                       \
-    if (gEnv->nRanksPerNode < 2 && !mscclpp::isFabricMemHandleAvailable()) { \
-      SKIP_TEST() << "CudaIpc requires intra-node ranks (nRanksPerNode>=2) or MNNVL fabric handles, \
-both unavailable here.";                                                     \
-    }                                                                        \
-  } while (0)
+inline void requireCudaIpcPairAvailable(int firstRank, int secondRank) {
+  uint64_t localHost = mscclpp::getHostHash();
+  std::vector<uint64_t> hosts(gEnv->worldSize);
+  MPI_Allgather(&localHost, sizeof(localHost), MPI_BYTE, hosts.data(), sizeof(localHost), MPI_BYTE, MPI_COMM_WORLD);
+  if (hosts[firstRank] == hosts[secondRank]) return;
+
+  int localFabric = 0;
+  try {
+    localFabric = mscclpp::isFabricMemHandleAvailable() ? 1 : 0;
+  } catch (...) {
+    // Conservatively treat a failed capability query as unavailable so all ranks skip together.
+  }
+  std::vector<int> fabricAvailable(gEnv->worldSize);
+  MPI_Allgather(&localFabric, 1, MPI_INT, fabricAvailable.data(), 1, MPI_INT, MPI_COMM_WORLD);
+  if (!fabricAvailable[firstRank] || !fabricAvailable[secondRank]) {
+    SKIP_TEST() << "Cross-host CudaIpc requires usable fabric memory handles on both participating ranks";
+  }
+}
+
+#define REQUIRE_CUDA_IPC_AVAILABLE requireCudaIpcPairAvailable(/*firstRank=*/0, /*secondRank=*/1)
+
+inline void requireIbRdmaAtomics(mscclpp::Transport ibTransport) {
+  int localSupport = 0;
+  try {
+    std::string devName = mscclpp::getIBDeviceName(ibTransport);
+    mscclpp::IbCtx ibCtx(devName);
+    localSupport = ibCtx.supportsRdmaAtomics() ? 1 : 0;
+  } catch (...) {
+    // Treat an unavailable or unusable local IB device as lacking atomic support. The collective
+    // below then makes every rank skip together.
+  }
+  int allSupport = 0;
+  MPI_Allreduce(&localSupport, &allSupport, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allSupport) {
+    SKIP_TEST() << "Positive IB accumulate tests require RDMA atomic support on every rank";
+  }
+}
+
+inline void requireCudaIpcFanInAvailable() {
+  uint64_t localHost = mscclpp::getHostHash();
+  std::vector<uint64_t> hosts(gEnv->worldSize);
+  MPI_Allgather(&localHost, sizeof(localHost), MPI_BYTE, hosts.data(), sizeof(localHost), MPI_BYTE, MPI_COMM_WORLD);
+
+  bool hasCrossNodePeer = false;
+  for (int peer = 1; peer < gEnv->worldSize; ++peer) {
+    hasCrossNodePeer |= hosts[peer] != hosts[0];
+  }
+  if (!hasCrossNodePeer) return;
+
+  int localFabric = 0;
+  try {
+    localFabric = mscclpp::isFabricMemHandleAvailable() ? 1 : 0;
+  } catch (...) {
+    // Conservatively treat a failed capability query as unavailable so all ranks skip together.
+  }
+  std::vector<int> fabricAvailable(gEnv->worldSize);
+  MPI_Allgather(&localFabric, 1, MPI_INT, fabricAvailable.data(), 1, MPI_INT, MPI_COMM_WORLD);
+  for (int peer = 1; peer < gEnv->worldSize; ++peer) {
+    if (hosts[peer] != hosts[0] && (!fabricAvailable[0] || !fabricAvailable[peer])) {
+      SKIP_TEST() << "CudaIpc fan-in requires usable fabric memory handles on rank 0 and every cross-node peer";
+    }
+  }
+}
 
 void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks
@@ -703,18 +767,64 @@ __global__ void kernelPortChannelAccumulateSigned(int64_t* localBuff, int nTries
 void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  const int nElem = 1;
+  const int nElem = useEthernet ? 2 : 1;
+  const int allocationElem = useEthernet ? 8 : nElem;
   const int numBlocks = 64;
   const int nTries = 50;
 
   std::vector<mscclpp::PortChannel> portChannels;
-  auto buff = mscclpp::GpuBuffer<int64_t>(nElem);
-  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, nElem * sizeof(int64_t)));
+  auto buff = mscclpp::GpuBuffer<int64_t>(allocationElem);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, allocationElem * sizeof(int64_t)));
 
-  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t), nullptr,
-                       0, ibMode);
+  mscclpp::RegisteredMemory ethernetRemoteMem;
+  if (useEthernet) {
+    const int peer = 1 - gEnv->rank;
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = mscclpp::Transport::Ethernet;
+    auto connFuture = communicator->connect(cfg, peer);
+    auto localMem =
+        communicator->registerMemory(buff.memory().get(), nElem * sizeof(int64_t), mscclpp::Transport::Ethernet);
+    communicator->sendMemory(localMem, peer);
+    auto remoteFuture = communicator->recvMemory(peer);
+
+    auto conn = connFuture.get();
+    ethernetRemoteMem = remoteFuture.get();
+    auto sema = communicator->buildSemaphore(conn, peer).get();
+    auto semaphoreId = proxyService->addSemaphore(sema);
+    portChannels.emplace_back(proxyService->portChannel(semaphoreId, proxyService->addMemory(ethernetRemoteMem),
+                                                        proxyService->addMemory(localMem)));
+  } else {
+    setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t),
+                         nullptr, 0, ibMode);
+  }
 
   ASSERT_EQ(portChannels.size(), 1);
+
+  if (useEthernet) {
+    const int peer = 1 - gEnv->rank;
+    // Keep the allocation larger than its 7-byte registration so a missing check remains in-bounds.
+    auto smallBacking = mscclpp::GpuBuffer<uint8_t>(64).memory();
+    auto smallLocalMem = communicator->registerMemory(smallBacking.get(), 7, mscclpp::Transport::Ethernet);
+    communicator->sendMemory(smallLocalMem, peer, /*tag=*/79);
+    auto smallRemoteFuture = communicator->recvMemory(peer, /*tag=*/79);
+    auto smallRemoteMem = smallRemoteFuture.get();
+    auto& conn = proxyService->semaphore(0)->connection();
+
+    auto rejects = [&](mscclpp::RegisteredMemory memory, uint64_t offset, const char* message) {
+      try {
+        conn.accumulate(memory, offset, 1);
+      } catch (const mscclpp::Error& e) {
+        return e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage &&
+               std::string(e.what()).find(message) != std::string::npos;
+      } catch (...) {
+      }
+      return false;
+    };
+    EXPECT_TRUE(rejects(smallRemoteMem, 0, "out of bounds"));
+    EXPECT_TRUE(rejects(ethernetRemoteMem, nElem * sizeof(int64_t), "out of bounds"));
+    EXPECT_TRUE(rejects(ethernetRemoteMem, nElem * sizeof(int64_t) - 4, "out of bounds"));
+    EXPECT_TRUE(rejects(ethernetRemoteMem, 1, "aligned"));
+  }
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -848,39 +958,63 @@ TEST(PortChannelOneToOneTest, AccumulateZero) {
 
 TEST(PortChannelOneToOneTest, AccumulateCudaIpcRejected) {
   REQUIRE_CUDA_IPC_AVAILABLE;
-  if (gEnv->rank >= numRanksToUse) return;
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsExactEnd = false;
+  bool rejectsPastEnd = false;
+  bool rejectsHuge = false;
+  bool rejectsMisalignment = false;
+  bool rejectsUnsupported = false;
 
-  const int peer = 1 - gEnv->rank;
-  auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
-  mscclpp::RegisteredMemory localMem;
-  mscclpp::RegisteredMemory remoteMem;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    auto buff = mscclpp::GpuBuffer<int64_t>(2).memory();
+    mscclpp::RegisteredMemory localMem;
+    mscclpp::RegisteredMemory remoteMem;
 
-  mscclpp::EndpointConfig cfg;
-  cfg.transport = mscclpp::Transport::CudaIpc;
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = mscclpp::Transport::CudaIpc;
 
-  auto connFuture = communicator->connect(cfg, peer);
-  localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), mscclpp::Transport::CudaIpc);
-  communicator->sendMemory(localMem, peer, /*tag=*/78);
-  auto remoteFuture = communicator->recvMemory(peer, /*tag=*/78);
+    auto connFuture = communicator->connect(cfg, peer);
+    localMem = communicator->registerMemory(buff.get(), 2 * sizeof(int64_t), mscclpp::Transport::CudaIpc);
+    communicator->sendMemory(localMem, peer, /*tag=*/78);
+    auto remoteFuture = communicator->recvMemory(peer, /*tag=*/78);
 
-  auto conn = connFuture.get();
-  remoteMem = remoteFuture.get();
-  registeredMemories.push_back(localMem);
+    auto conn = connFuture.get();
+    remoteMem = remoteFuture.get();
 
-  try {
-    conn.accumulate(remoteMem, 0, 1);
-    FAIL() << "Expected accumulate over CudaIpc to throw InvalidUsage on CUDA";
-  } catch (const mscclpp::Error& e) {
-    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+    auto rejects = [&](uint64_t offset, const char* message) {
+      try {
+        conn.accumulate(remoteMem, offset, 1);
+      } catch (const mscclpp::Error& e) {
+        return e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage &&
+               std::string(e.what()).find(message) != std::string::npos;
+      } catch (...) {
+      }
+      return false;
+    };
+    rejectsExactEnd = rejects(2 * sizeof(int64_t), "out of bounds");
+    rejectsPastEnd = rejects(2 * sizeof(int64_t) - 4, "out of bounds");
+    rejectsHuge = rejects(std::numeric_limits<uint64_t>::max(), "out of bounds");
+    rejectsMisalignment = rejects(1, "aligned");
+    rejectsUnsupported = rejects(0, "not supported over CudaIpc on CUDA");
   }
 
-  communicator->bootstrap()->barrier();
+  // The fixture bootstrap contains only ranks 0 and 1; synchronize the full test world here.
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsExactEnd);
+    EXPECT_TRUE(rejectsPastEnd);
+    EXPECT_TRUE(rejectsHuge);
+    EXPECT_TRUE(rejectsMisalignment);
+    EXPECT_TRUE(rejectsUnsupported);
+  }
 }
 
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
 TEST(PortChannelOneToOneTest, AccumulateIb) {
   REQUIRE_IBVERBS;
+  requireIbRdmaAtomics(ibTransport);
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testAccumulate(false, true, false, IbMode::Host);
 }
@@ -889,6 +1023,7 @@ TEST(PortChannelOneToOneTest, AccumulateEthernet) { testAccumulate(false, false,
 
 TEST(PortChannelOneToOneTest, AccumulateSignedIb) {
   REQUIRE_IBVERBS;
+  requireIbRdmaAtomics(ibTransport);
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testAccumulateSigned(false, true, false, IbMode::Host);
 }
@@ -897,6 +1032,7 @@ TEST(PortChannelOneToOneTest, AccumulateSignedEthernet) { testAccumulateSigned(f
 
 TEST(PortChannelOneToOneTest, AccumulateZeroIb) {
   REQUIRE_IBVERBS;
+  requireIbRdmaAtomics(ibTransport);
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testAccumulateZero(false, true, false, IbMode::Host);
 }
@@ -905,36 +1041,59 @@ TEST(PortChannelOneToOneTest, AccumulateZeroEthernet) { testAccumulateZero(false
 
 TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
   REQUIRE_IBVERBS;
-  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
-  if (gEnv->rank >= numRanksToUse) return;
+  requireGdrForHostNoAtomicCollective(/*firstRank=*/0, /*secondRank=*/1);
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsExactEnd = false;
+  bool rejectsPastEnd = false;
+  bool rejectsHuge = false;
+  bool rejectsMisalignment = false;
+  bool rejectsUnsupported = false;
 
-  const int peer = 1 - gEnv->rank;
-  auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
-  mscclpp::RegisteredMemory localMem;
-  mscclpp::RegisteredMemory remoteMem;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    auto buff = mscclpp::GpuBuffer<int64_t>(2).memory();
+    mscclpp::RegisteredMemory localMem;
+    mscclpp::RegisteredMemory remoteMem;
 
-  mscclpp::EndpointConfig cfg;
-  cfg.transport = ibTransport;
-  cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
-  cfg.ib.mode = IbMode::HostNoAtomic;
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = IbMode::HostNoAtomic;
 
-  auto connFuture = communicator->connect(cfg, peer);
-  localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
-  communicator->sendMemory(localMem, peer, /*tag=*/77);
-  auto remoteFuture = communicator->recvMemory(peer, /*tag=*/77);
+    auto connFuture = communicator->connect(cfg, peer);
+    localMem = communicator->registerMemory(buff.get(), 2 * sizeof(int64_t), ibTransport);
+    communicator->sendMemory(localMem, peer, /*tag=*/77);
+    auto remoteFuture = communicator->recvMemory(peer, /*tag=*/77);
 
-  auto conn = connFuture.get();
-  remoteMem = remoteFuture.get();
-  registeredMemories.push_back(localMem);
+    auto conn = connFuture.get();
+    remoteMem = remoteFuture.get();
 
-  try {
-    conn.accumulate(remoteMem, 0, 1);
-    FAIL() << "Expected accumulate in IB HostNoAtomic mode to throw InvalidUsage";
-  } catch (const mscclpp::Error& e) {
-    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+    auto rejects = [&](uint64_t offset, const char* message) {
+      try {
+        conn.accumulate(remoteMem, offset, 1);
+      } catch (const mscclpp::Error& e) {
+        return e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage &&
+               std::string(e.what()).find(message) != std::string::npos;
+      } catch (...) {
+      }
+      return false;
+    };
+    rejectsExactEnd = rejects(2 * sizeof(int64_t), "out of bounds");
+    rejectsPastEnd = rejects(2 * sizeof(int64_t) - 4, "out of bounds");
+    rejectsHuge = rejects(std::numeric_limits<uint64_t>::max(), "out of bounds");
+    rejectsMisalignment = rejects(1, "aligned");
+    rejectsUnsupported = rejects(0, "not supported in IB no-atomic mode");
   }
 
-  communicator->bootstrap()->barrier();
+  // Keep the entire MPI test world in lockstep before participant-only assertions.
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsExactEnd);
+    EXPECT_TRUE(rejectsPastEnd);
+    EXPECT_TRUE(rejectsHuge);
+    EXPECT_TRUE(rejectsMisalignment);
+    EXPECT_TRUE(rejectsUnsupported);
+  }
 }
 
 static constexpr int kMaxQps = 4;
@@ -1365,20 +1524,16 @@ void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, 
   communicator->bootstrap()->barrier();
 
   if (rank == 0) {
-    // Poll until the total stops changing rather than sleeping a fixed time, so slow arrival is
-    // not mistaken for a lost update. EthernetConnection::flush() is a no-op, so a sender cannot
-    // tell when the receiver applied its updates.
+    // EthernetConnection::flush() is a no-op, so wait up to one overall deadline for the receiver
+    // to apply all updates. Temporary inactivity is not treated as completion.
     const int64_t expected = (int64_t)(worldSize - 1) * nTries * kAccumulateValue;
     int64_t observed = 0;
-    int64_t previous = -1;
-    int stableRounds = 0;
-    for (int i = 0; i < 600 && observed != expected; i++) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (;;) {
       mscclpp::gpuMemcpy(reinterpret_cast<char*>(&observed), reinterpret_cast<char*>(buff.memory().get()),
                          sizeof(int64_t), cudaMemcpyDeviceToHost);
-      stableRounds = (observed == previous) ? stableRounds + 1 : 0;
-      previous = observed;
-      if (stableRounds >= 50) break;  // 5 s with no progress: treat as final
+      if (observed == expected || std::chrono::steady_clock::now() >= deadline) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     if (observed != expected) {
       std::cout << "fan-in lost " << (expected - observed) / kAccumulateValue << " of "
@@ -1396,13 +1551,14 @@ void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, 
 // CudaIpc supports many writers on ROCm: the kernel is a real read-modify-write, so writers in
 // separate processes do not lose updates.
 TEST(PortChannelFanInTest, Accumulate) {
-  REQUIRE_CUDA_IPC_AVAILABLE;
+  requireCudaIpcFanInAvailable();
   testFanIn(true, false, false);
 }
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
 TEST(PortChannelFanInTest, AccumulateIb) {
   REQUIRE_IBVERBS;
+  requireIbRdmaAtomics(ibTransport);
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testFanIn(false, true, false, IbMode::Host);
 }
