@@ -11,7 +11,10 @@
 #include <cuda_fp16.h>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/poll_device.hpp>
+#include <mscclpp/semaphore_device.hpp>
 
 #include "device.hpp"
 
@@ -25,8 +28,31 @@ struct SwitchChannelDeviceHandle {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
+  /// Backing group-barrier semaphore over the switch multimem. Its pointers are null if the owning
+  /// connection was created without barrier support (see NvlsConnection::attachBarrier).
+  SwitchDevice2DeviceSemaphoreDeviceHandle barrier_;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
+  /// Issue an ordered cross-rank arrival, publishing this rank's prior writes; pair with wait().
+  ///
+  /// Delegates to the backing group-barrier semaphore. See
+  /// SwitchDevice2DeviceSemaphoreDeviceHandle for the full barrier protocol and ordering semantics.
+  MSCCLPP_DEVICE_INLINE void signal() { barrier_.signal(); }
+
+  /// Issue a relaxed cross-rank arrival, without any data-visibility ordering; pair with relaxedWait().
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() { barrier_.relaxedSignal(); }
+
+  /// Wait (acquire) until every rank has arrived; pair with signal().
+  ///
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { barrier_.wait(maxSpinCount); }
+
+  /// Relaxed wait until every rank has arrived, without any data-visibility ordering; pair with
+  /// relaxedSignal().
+  ///
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void relaxedWait(int64_t maxSpinCount = 10000000) { barrier_.relaxedWait(maxSpinCount); }
+
   template <typename T>
   MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
     return SwitchChannelDeviceHandle::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
@@ -39,8 +65,7 @@ struct SwitchChannelDeviceHandle {
 
   /// Vectorized multimem load+reduce. The optional `AccumT` template parameter selects the
   /// accumulator: when `AccumT == __half` and `VectorType` is an FP8 vector type, the
-  /// `.acc::f16` variant of the instruction is used (faster but lower precision than the
-  /// default FP32 accumulator). For all other types `AccumT` is ignored.
+  /// `.acc::f16` variant of the instruction is used. For all other types `AccumT` is ignored.
   template <typename VectorType, typename AccumT = void>
   MSCCLPP_DEVICE_INLINE static VectorType multimemLoadReduce(VectorType* ptr) {
     VectorType val;
@@ -84,7 +109,9 @@ struct SwitchChannelDeviceHandle {
           : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
           : "l"(ptr)
           : "memory");
-    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
+    }
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
+    else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
       if constexpr (std::is_same_v<AccumT, __half>) {
         asm("multimem.ld_reduce.relaxed.sys.global.add.acc::f16.e4m3x4 %0, [%1];"
             : "=r"(val.words[0])
@@ -150,8 +177,10 @@ struct SwitchChannelDeviceHandle {
             : "l"(ptr)
             : "memory");
       }
-    } else {
-      static_assert(dependentFalse<VectorType>, "Not supported type");
+    }
+#endif
+    else {
+      static_assert(dependentFalse<VectorType>, "Unsupported vector type for multimemLoadReduce");
     }
     return val;
   };
@@ -194,7 +223,9 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.bf16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
+    }
+#if defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
+    else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
       asm volatile("multimem.st.relaxed.sys.global.e4m3x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
       asm volatile("multimem.st.relaxed.sys.global.v2.e4m3x4  [%0], {%1,%2};" ::"l"(ptr), "r"(val.words[0]),
@@ -214,8 +245,10 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.e5m2x4 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-    } else {
-      static_assert(dependentFalse<VectorType>, "Not supported type");
+    }
+#endif
+    else {
+      static_assert(dependentFalse<VectorType>, "Unsupported vector type for multimemStore");
     }
   };
 
@@ -240,7 +273,7 @@ struct SwitchChannelDeviceHandle {
     } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __half2>) {
       asm volatile("multimem.red.relaxed.sys.global.add.f16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
     } else {
-      static_assert(dependentFalse<T>, "Not supported type");
+      static_assert(dependentFalse<TValue>, "Unsupported vector type for multimemStoreReduce");
     }
   };
 #endif  // defined(MSCCLPP_DEVICE_CUDA)

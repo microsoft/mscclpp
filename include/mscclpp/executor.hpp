@@ -87,6 +87,12 @@ class Executor {
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
                const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
 
+  /// Release cached execution contexts while retaining the communicator and default scratch buffer.
+  ///
+  /// The caller must ensure that no execution is in flight and that all participating ranks reset collectively before
+  /// launching another execution.
+  void reset();
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
