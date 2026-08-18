@@ -18,9 +18,6 @@
 #include <sstream>
 
 #include "logger.hpp"
-#undef INFO
-#undef WARN
-#include "debug.h"
 #include "utils_internal.hpp"
 
 namespace mscclpp {
@@ -100,8 +97,10 @@ static int findInterfaces(const char* prefixList, char* names, union SocketAddre
     int family = interface->ifa_addr->sa_family;
     if (family != AF_INET && family != AF_INET6) continue;
 
-    TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Found interface %s:%s", interface->ifa_name,
+#ifdef MSCCLPP_ENABLE_TRACE
+    DEBUG(NET, "Found interface ", interface->ifa_name, ":",
           SocketToString((union SocketAddress*)interface->ifa_addr, line));
+#endif
 
     /* Allow the caller to force the socket family type */
     if (sock_family != -1 && family != sock_family) continue;
@@ -179,7 +178,7 @@ static bool matchSubnet(struct ifaddrs local_if, union SocketAddress* remote) {
     same &= (local_addr->sin6_scope_id == remote_addr.sin6_scope_id);
     return same;
   } else {
-    WARN("Net : Unsupported address family type");
+    WARN(NET, "Unsupported address family type");
     return false;
   }
 }
@@ -212,14 +211,16 @@ int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, uni
     // Store the interface name
     strncpy(ifNames + found * ifNameMaxSize, interface->ifa_name, ifNameMaxSize);
 
-    TRACE(MSCCLPP_INIT | MSCCLPP_NET, "NET : Found interface %s:%s in the same subnet as remote address %s",
-          interface->ifa_name, SocketToString(localAddrs + found, line), SocketToString(remoteAddr, line_a));
+#ifdef MSCCLPP_ENABLE_TRACE
+    DEBUG(NET, "Found interface ", interface->ifa_name, ":", SocketToString(localAddrs + found, line),
+          " in the same subnet as remote address ", SocketToString(remoteAddr, line_a));
+#endif
     found++;
     if (found == maxIfs) break;
   }
 
   if (found == 0) {
-    WARN("Net : No interface found in the same subnet as remote address %s", SocketToString(remoteAddr, line_a));
+    WARN(NET, "No interface found in the same subnet as remote address ", SocketToString(remoteAddr, line_a));
   }
   freeifaddrs(interfaces);
   return found;
@@ -278,7 +279,7 @@ void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) 
       if (ip_port_pair[i] == ']') break;
     }
     if (i == len) {
-      WARN("Net : No valid [IPv6]:port pair found");
+      WARN(NET, "No valid [IPv6]:port pair found");
       throw Error("Net : No valid [IPv6]:port pair found", ErrorCode::InvalidUsage);
     }
     bool global_scope = (j == -1 ? true : false);  // If no % found, global scope; otherwise, link scope
@@ -310,11 +311,11 @@ int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSiz
   // User specified interface
   const std::string& socketIfname = env()->socketIfname;
   if (inputIfName) {
-    INFO(MSCCLPP_NET, "using iterface %s", inputIfName);
+    INFO(NET, "using iterface ", inputIfName);
     nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
   } else if (socketIfname != "") {
     // Specified by user : find or fail
-    if (shownIfName++ == 0) INFO(MSCCLPP_NET, "MSCCLPP_SOCKET_IFNAME set to %s", socketIfname.c_str());
+    if (shownIfName++ == 0) INFO(NET, "MSCCLPP_SOCKET_IFNAME set to ", socketIfname);
     nIfs = findInterfaces(socketIfname.c_str(), ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
   } else {
     // Try to automatically pick the right one
@@ -418,7 +419,7 @@ void Socket::bind() {
       throw SysError("bind failed", errno);
     }
     if (remainSecs > 0) {
-      INFO(MSCCLPP_INIT, "No available ephemeral ports found, will retry after 1 second");
+      INFO(NET, "No available ephemeral ports found, will retry after 1 second");
       sleep(1);
       remainSecs--;
     } else {
@@ -438,7 +439,7 @@ void Socket::bindAndListen() {
   bind();
 #ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Listening on socket %s", SocketToString(&addr_, line));
+  DEBUG(NET, "Listening on socket ", SocketToString(&addr_, line));
 #endif
 
   /* Put the socket in listen mode
@@ -467,7 +468,9 @@ void Socket::connect(int64_t timeout) {
     if (state_ == SocketStateError) throw Error(ss.str(), ErrorCode::RemoteError);
     throw Error(ss.str(), ErrorCode::InternalError);
   }
-  TRACE(MSCCLPP_INIT | MSCCLPP_NET, "Connecting to socket %s", SocketToString(&addr_, line));
+#ifdef MSCCLPP_ENABLE_TRACE
+  DEBUG(NET, "Connecting to socket ", SocketToString(&addr_, line));
+#endif
 
   if (setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(int)) != 0) {
     throw SysError("setsockopt(TCP_NODELAY) failed", errno);
@@ -628,7 +631,7 @@ void Socket::tryAccept() {
   } else {
     usleep(SLEEP_INT);
     if (++acceptRetries_ % 1000 == 0)
-      INFO(MSCCLPP_ALL, "tryAccept: Call to try accept returned %s, retrying", strerror(errno));
+      INFO(NET, "tryAccept: Call to try accept returned ", strerror(errno), ", retrying");
   }
 }
 
@@ -640,7 +643,7 @@ void Socket::finalizeAccept() {
   if (received == 0) return;
   socketWait(MSCCLPP_SOCKET_RECV, &magic, sizeof(magic), &received);
   if (magic != magic_) {
-    WARN("finalizeAccept: wrong magic %lx != %lx", magic, magic_);
+    WARN(NET, "finalizeAccept: wrong magic ", magic, " != ", magic_);
     ::close(fd_);
     fd_ = -1;
     // Ignore spurious connection and accept again
@@ -673,7 +676,7 @@ void Socket::startConnect() {
     return;
   } else if (errno == ECONNREFUSED || errno == ETIMEDOUT) {
     usleep(SLEEP_INT);
-    if (++connectRetries_ % 1000 == 0) INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(errno));
+    if (++connectRetries_ % 1000 == 0) INFO(NET, "Call to connect returned ", strerror(errno), ", retrying");
     return;
   } else {
     char line[SOCKET_NAME_MAXLEN + 1];
@@ -710,7 +713,7 @@ void Socket::pollConnect() {
     state_ = SocketStateConnected;
   } else if (ret == ECONNREFUSED || ret == ETIMEDOUT) {
     if (++connectRetries_ % 1000 == 0) {
-      INFO(MSCCLPP_ALL, "Call to connect returned %s, retrying", strerror(ret));
+      INFO(NET, "Call to connect returned ", strerror(ret), ", retrying");
     }
     usleep(SLEEP_INT);
 
