@@ -142,6 +142,8 @@ def reducescatter_multi_nodes(
                         continue
 
                     local_packet_slot = local_send_offset + chunk_offset
+                    # Keep the packet copy adjacent to the reduction so the two
+                    # operations can be fused when instruction fusion is enabled.
                     rank.copy_packets(
                         scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
                         local_reduced_chunk,
