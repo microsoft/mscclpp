@@ -37,8 +37,7 @@ def reducescatter_multi_nodes(
         local_receive_slots = (gpus_per_node - 1) * num_nodes
         local_send_offset = local_receive_slots
         remote_receive_offset = local_send_offset + num_nodes
-        local_owner_offset = remote_receive_offset + num_nodes - 1
-        scratch_slots = local_owner_offset + 1
+        scratch_slots = remote_receive_offset + num_nodes - 1
         scratch_buffers = [Buffer(rank, scratch_slots) for rank in range(total_gpus)]
         logical_thread_blocks = (gpus_per_node - 1) + num_nodes
         thread_block_groups = [
@@ -66,9 +65,8 @@ def reducescatter_multi_nodes(
 
         inter_node_channels: dict[tuple[int, int], PortChannel] = {}
         for reducer_local_rank in range(gpus_per_node):
-            for chunk_offset in range(num_nodes):
-                owner_rank = reducer_local_rank * num_nodes + chunk_offset
-                owner_node_id = owner_rank // gpus_per_node
+            for owner_node_id in range(num_nodes):
+                owner_rank = reducer_local_rank + owner_node_id * gpus_per_node
                 for src_node_id in range(num_nodes):
                     if src_node_id == owner_node_id:
                         continue
@@ -78,8 +76,7 @@ def reducescatter_multi_nodes(
                         src_rank,
                     )
 
-        # Each local GPU reduces one contiguous M / gpus_per_node group. Exchange
-        # those groups with one packet operation per local peer.
+        # Local GPU r reduces the chunks owned by local rank r on every node.
         for node_id in range(num_nodes):
             for src_local_rank in range(gpus_per_node):
                 src_rank = src_local_rank + node_id * gpus_per_node
@@ -90,17 +87,18 @@ def reducescatter_multi_nodes(
                     dst_rank = dst_local_rank + node_id * gpus_per_node
                     local_peer_slot = src_local_rank if src_local_rank < dst_local_rank else src_local_rank - 1
                     dst_peer_slot = dst_local_rank - 1 if src_local_rank < dst_local_rank else dst_local_rank
-                    chunk_index = dst_local_rank * num_nodes
-                    scratch_slot = local_peer_slot * num_nodes
-                    intra_node_channels[(dst_rank, src_rank)].put_packets(
-                        scratch_buffers[dst_rank][scratch_slot : scratch_slot + num_nodes],
-                        src_input[chunk_index : chunk_index + num_nodes],
-                        tb_group=thread_block_groups[dst_peer_slot],
-                    )
+                    peer_thread_blocks = thread_block_groups[dst_peer_slot].tb_list
+                    for owner_node_id in range(num_nodes):
+                        chunk_index = dst_local_rank + owner_node_id * gpus_per_node
+                        scratch_slot = local_peer_slot * num_nodes + owner_node_id
+                        intra_node_channels[(dst_rank, src_rank)].put_packets(
+                            scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
+                            src_input[chunk_index : chunk_index + 1],
+                            tb=peer_thread_blocks[owner_node_id % len(peer_thread_blocks)],
+                        )
 
-        # Reduce each contiguous group locally. Remote nodes send their partials
-        # directly to the standard owner while the owner node transfers its one
-        # local partial over NVLink.
+        # Reduce each same-local-rank shard locally, then send every remote-node
+        # partial directly to the same-local-rank owner.
         local_reduce_offset = gpus_per_node - 1
         for src_node_id in range(num_nodes):
             for reducer_local_rank in range(gpus_per_node):
@@ -108,11 +106,10 @@ def reducescatter_multi_nodes(
                 rank = Rank(src_rank)
                 input_buffer = rank.get_input_buffer()
 
-                for chunk_offset in range(num_nodes):
-                    thread_block_group = thread_block_groups[local_reduce_offset + chunk_offset]
-                    chunk_index = reducer_local_rank * num_nodes + chunk_offset
+                for owner_node_id in range(num_nodes):
+                    thread_block_group = thread_block_groups[local_reduce_offset + owner_node_id]
+                    chunk_index = reducer_local_rank + owner_node_id * gpus_per_node
                     owner_rank = chunk_index
-                    owner_node_id = owner_rank // gpus_per_node
                     local_packets = []
                     for peer_local_rank in range(gpus_per_node):
                         if peer_local_rank == reducer_local_rank:
@@ -120,7 +117,7 @@ def reducescatter_multi_nodes(
                         local_peer_slot = (
                             peer_local_rank if peer_local_rank < reducer_local_rank else peer_local_rank - 1
                         )
-                        scratch_slot = local_peer_slot * num_nodes + chunk_offset
+                        scratch_slot = local_peer_slot * num_nodes + owner_node_id
                         local_packets.append(scratch_buffers[src_rank][scratch_slot : scratch_slot + 1])
 
                     local_reduced_chunk = input_buffer[chunk_index : chunk_index + 1]
@@ -132,23 +129,18 @@ def reducescatter_multi_nodes(
                             packet=True,
                         )
 
-                    if src_node_id == owner_node_id:
-                        if src_rank != owner_rank:
-                            intra_node_channels[(owner_rank, src_rank)].put_packets(
-                                scratch_buffers[owner_rank][local_owner_offset : local_owner_offset + 1],
-                                local_reduced_chunk,
-                                tb_group=thread_block_group,
-                            )
+                    if num_nodes == 1:
                         continue
 
-                    local_packet_slot = local_send_offset + chunk_offset
-                    # Keep the packet copy adjacent to the reduction so the two
-                    # operations can be fused when instruction fusion is enabled.
+                    local_packet_slot = local_send_offset + owner_node_id
                     rank.copy_packets(
                         scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
                         local_reduced_chunk,
                         tb_group=thread_block_group,
                     )
+                    if src_node_id == owner_node_id:
+                        continue
+
                     remote_node_slot = src_node_id if src_node_id < owner_node_id else src_node_id - 1
                     inter_node_channels[(owner_rank, src_rank)].read_put_packets(
                         scratch_buffers[owner_rank][
@@ -161,24 +153,19 @@ def reducescatter_multi_nodes(
         if num_nodes == 1:
             return prog
 
-        # Every rank receives one standard shard. The owner-node handoff and
-        # direct IB transfers from the other nodes can progress concurrently.
+        # Every owner consumes its local partial and remote-node partials as packets.
         for owner_rank in range(total_gpus):
             owner = Rank(owner_rank)
             owner_input = owner.get_input_buffer()
             owner_node_id = owner_rank // gpus_per_node
-            reducer_local_rank = owner_rank // num_nodes
-            chunk_offset = owner_rank % num_nodes
-            reducer_rank = reducer_local_rank + owner_node_id * gpus_per_node
-            thread_block_group = thread_block_groups[local_reduce_offset + chunk_offset]
+            thread_block_group = thread_block_groups[local_reduce_offset + owner_node_id]
             owner_chunk = owner_input[owner_rank : owner_rank + 1]
 
-            if reducer_rank != owner_rank:
-                owner.unpack_packets(
-                    owner_chunk,
-                    scratch_buffers[owner_rank][local_owner_offset : local_owner_offset + 1],
-                    tb_group=thread_block_group,
-                )
+            owner.unpack_packets(
+                owner_chunk,
+                scratch_buffers[owner_rank][local_send_offset + owner_node_id : local_send_offset + owner_node_id + 1],
+                tb_group=thread_block_group,
+            )
 
             remote_packets = [
                 scratch_buffers[owner_rank][
