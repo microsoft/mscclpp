@@ -112,14 +112,28 @@ function run_py_benchmark()
   -x MSCCLPP_HOME=/root/mscclpp -npernode 8 python3 /root/mscclpp/python/mscclpp_benchmark/allreduce_bench.py
 }
 
+# Verify every node can resolve python3 and import mscclpp before running DSL tests.
+# The DSL plan generators import mscclpp at module load, so a missing or mismatched
+# interpreter surfaces here with a clear message instead of a bare ModuleNotFoundError.
+function check_python_env()
+{
+  echo "=============Python environment preflight================================="
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 \
+    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" \
+    bash -c 'echo "$(hostname): python3=$(command -v python3)" && \
+      python3 -c "import mscclpp, sys; print(sys.executable, mscclpp.__file__)"'
+}
+
 function run_allreduce_test()
 {
   PLAN_DIR=/root/mscclpp/dsl_plans
   ALGO=/root/mscclpp/python/mscclpp/default_algos/allreduce_multi_nodes.py
 
+  check_python_env
+
   echo "=============Generate DSL plans on each node=============================="
   mpirun ${MPI_ARGS} -np 2 -npernode 1 \
-    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp \
+    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" \
     bash -c "mkdir -p ${PLAN_DIR} && \
       python3 ${ALGO} --name allreduce_2nodes_1K_64K --num_gpus 16 --gpus_per_node 8 \
         --tbg 1 --min_message_size 1024 --max_message_size 65536 \
@@ -128,7 +142,7 @@ function run_allreduce_test()
   echo "=============Run DSL allreduce_multi_nodes on 2 nodes====================="
   for SIZE in 1K 16K 64K; do
     mpirun ${MPI_ARGS} -np 16 \
-      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -npernode 8 \
+      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" -npernode 8 \
       python3 /root/mscclpp/python/test/executor_test.py \
         --execution_plan_path ${PLAN_DIR}/allreduce_2nodes_1K_64K.json \
         --size ${SIZE} --dtype float16 --in_place
@@ -140,9 +154,11 @@ function run_allgather_test()
   PLAN_DIR=/root/mscclpp/dsl_plans
   ALGO=/root/mscclpp/python/mscclpp/default_algos/allgather_multi_nodes.py
 
+  check_python_env
+
   echo "=============Generate DSL allgather plans on each node===================="
   mpirun ${MPI_ARGS} -np 2 -npernode 1 \
-    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp \
+    ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" \
     bash -c "mkdir -p ${PLAN_DIR} && \
       python3 ${ALGO} --name allgather_2nodes_1K_8M --num_gpus 16 --gpus_per_node 8 \
         --no-in_place --min_message_size 1024 --max_message_size 8388608 \
@@ -151,7 +167,7 @@ function run_allgather_test()
   echo "=============Run DSL allgather_multi_nodes on 2 nodes====================="
   for SIZE in 1K 64K 1M; do
     mpirun ${MPI_ARGS} -np 16 \
-      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -npernode 8 \
+      ${MSCCLPP_ENV} -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" -npernode 8 \
       python3 /root/mscclpp/python/test/executor_test.py \
         --execution_plan_path ${PLAN_DIR}/allgather_2nodes_1K_8M.json \
         --size ${SIZE} --dtype float16
