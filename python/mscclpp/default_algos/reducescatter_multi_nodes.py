@@ -49,6 +49,13 @@ def reducescatter_multi_nodes(
             )
             for logical_block in range(logical_thread_blocks)
         ]
+        global_thread_block_group = ThreadBlockGroup(
+            tb_list=[
+                thread_block
+                for thread_block_group in thread_block_groups
+                for thread_block in thread_block_group.tb_list
+            ]
+        )
 
         intra_node_channels: dict[tuple[int, int], MemoryChannel] = {}
         for node_id in range(num_nodes):
@@ -164,7 +171,7 @@ def reducescatter_multi_nodes(
             owner.unpack_packets(
                 owner_chunk,
                 scratch_buffers[owner_rank][local_send_offset + owner_node_id : local_send_offset + owner_node_id + 1],
-                tb_group=thread_block_group,
+                tb_group=global_thread_block_group,
             )
 
             remote_packets = [
@@ -176,7 +183,7 @@ def reducescatter_multi_nodes(
             owner.reduce(
                 owner_chunk,
                 remote_packets,
-                tb_group=thread_block_group,
+                tb_group=global_thread_block_group,
                 packet=True,
             )
 
