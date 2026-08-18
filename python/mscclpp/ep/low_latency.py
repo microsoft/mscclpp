@@ -121,6 +121,7 @@ class LowLatencyRuntime:
         hidden: int,
         num_experts: int,
         num_topk: int,
+        output_layout: DispatchLayout,
     ) -> None:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
@@ -132,6 +133,7 @@ class LowLatencyRuntime:
             hidden=hidden,
             num_experts=num_experts,
             num_topk=num_topk,
+            output_layout=output_layout,
         )
 
     def is_available(self) -> bool:
@@ -225,6 +227,7 @@ class LowLatencyBackend:
             hidden=self.hidden_size,
             num_experts=self.num_experts,
             num_topk=self.topk,
+            output_layout=self.output_layout,
         )
         self._is_internode = self._runtime.is_internode_available()
         self._output_tokens_owner: Optional[_CudaBufferView] = None
@@ -312,6 +315,14 @@ class LowLatencyBackend:
             # token buffer (identity when no GEMM is applied before combine).
             self.token_major_expert_output_buffer = self._token_major_tokens
 
+    def _resolve_runtime_max_tokens_per_rank(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
+        resolved = self.max_tokens_per_rank if runtime_max_tokens_per_rank is None else runtime_max_tokens_per_rank
+        if type(resolved) is not int or not 0 < resolved <= self.max_tokens_per_rank:
+            raise ValueError("runtime_max_tokens_per_rank must be positive and not exceed max_tokens_per_rank")
+        if self.output_layout != DispatchLayout.RANK_MAJOR and resolved != self.max_tokens_per_rank:
+            raise ValueError("runtime_max_tokens_per_rank is only supported by rank-major dispatch")
+        return resolved
+
     def is_available(self) -> bool:
         return self._runtime.is_available()
 
@@ -331,9 +342,11 @@ class LowLatencyBackend:
         output_buffer: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
         previous_handle: Optional[DispatchHandle],
+        runtime_max_tokens_per_rank: Optional[int],
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del previous_handle
-        self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer)
+        active_capacity = self._resolve_runtime_max_tokens_per_rank(runtime_max_tokens_per_rank)
+        self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer, active_capacity)
 
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
@@ -352,7 +365,7 @@ class LowLatencyBackend:
             input.size(0),
             self.hidden_size,
             self.topk,
-            self.max_tokens_per_rank,
+            active_capacity,
             self.num_experts,
             self.invalid_token_expert_id,
             self.output_layout,
@@ -413,6 +426,7 @@ class LowLatencyBackend:
                     num_experts=self.num_experts,
                     num_tokens=input.size(0),
                     hidden_size=self.hidden_size,
+                    max_tokens_per_rank=active_capacity,
                 ),
             )
         elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
@@ -446,16 +460,20 @@ class LowLatencyBackend:
             layout_range = context.layout_range
         elif isinstance(handle, RankMajorDispatchHandle):
             context = handle.combine_context
+            active_capacity = context.max_tokens_per_rank
             topk_weights = None
             src_info = None
             layout_range = None
         elif isinstance(handle, TokenMajorDispatchHandle):
             context = handle.combine_context
+            active_capacity = self.max_tokens_per_rank
             topk_weights = context.weights
             src_info = None
             layout_range = None
         else:
             raise ValueError("DispatchHandle does not contain low-latency combine context")
+        if isinstance(handle, ExpertMajorDispatchHandle):
+            active_capacity = self.max_tokens_per_rank
         if out is None:
             out = torch.empty(
                 (context.num_tokens, self.hidden_size),
@@ -472,7 +490,7 @@ class LowLatencyBackend:
             context.num_tokens,
             self.hidden_size,
             self.topk,
-            self.max_tokens_per_rank,
+            active_capacity,
             context.num_experts,
             self.output_layout,
             self.dispatch_data_type,
@@ -545,7 +563,7 @@ class LowLatencyBackend:
             self._dispatch_count,
         )
 
-    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer) -> None:
+    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer, active_capacity: int) -> None:
         if output_buffer is None and self.output_layout not in (
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
@@ -561,8 +579,8 @@ class LowLatencyBackend:
             raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
-        if input.size(0) > self.max_tokens_per_rank:
-            raise ValueError("input token count exceeds max_tokens_per_rank")
+        if input.size(0) > active_capacity:
+            raise ValueError("input token count exceeds runtime_max_tokens_per_rank")
         if topk_ids.dim() != 2 or not topk_ids.is_contiguous():
             raise ValueError("topk_ids must be a contiguous [num_tokens, topk] tensor")
         if topk_ids.device != input.device or topk_ids.dtype != torch.int64:
@@ -624,7 +642,12 @@ class LowLatencyBackend:
         handle_data_type = DispatchDataType.BF16 if output_quant is None else output_quant.format
         if handle_data_type != self.dispatch_data_type:
             raise ValueError("DispatchHandle quantization does not match this MoECommunicator configuration")
-        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        active_capacity = (
+            handle.combine_context.max_tokens_per_rank
+            if isinstance(handle, RankMajorDispatchHandle)
+            else self.max_tokens_per_rank
+        )
+        slots_per_expert = self.world_size * active_capacity
         if handle.output_info.layout.kind == DispatchLayout.EXPERT_MAJOR:
             expected_shape = (
                 self.num_local_experts,
@@ -633,7 +656,7 @@ class LowLatencyBackend:
             )
         elif handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
             expected_shape = (
-                self.world_size * self.max_tokens_per_rank,
+                self.world_size * active_capacity,
                 self.hidden_size,
             )
         elif handle.output_info.layout.kind == DispatchLayout.TOKEN_MAJOR:

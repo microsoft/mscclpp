@@ -319,8 +319,11 @@ class HighThroughputBackend:
         output_buffer: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
         previous_handle: Optional[DispatchHandle],
+        runtime_max_tokens_per_rank: Optional[int],
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del output_buffer
+        if runtime_max_tokens_per_rank is not None:
+            raise ValueError("runtime_max_tokens_per_rank is only supported by low-latency rank-major dispatch")
         if stream is not None:
             with torch.cuda.stream(stream):
                 return self._dispatch(input, topk_ids, weights, quant, previous_handle)

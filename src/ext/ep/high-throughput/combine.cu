@@ -4,6 +4,7 @@
 #include <cooperative_groups.h>
 
 #include <algorithm>
+#include <mscclpp/bulk_device.hpp>
 
 #include "api.cuh"
 #include "barrier.cuh"
@@ -42,6 +43,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
                   int numTopk, void** recvPoolPtrs, const int* combineRecvIdx,
                   mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
                   int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes) {
+#if MSCCLPP_BULK_AVAILABLE
   static_assert(MaxContributors <= NumRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
   constexpr int NumStages = EP_HT_COMBINE_TMA_STAGES;
@@ -56,13 +58,21 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   const size_t warpStageBytes = static_cast<size_t>(NumStages) * MaxContributors * ChunkBytes;
   auto* warpStages = sharedMemory + warpId * warpStageBytes;
   auto* barriers =
-      reinterpret_cast<uint64_t*>(sharedMemory + static_cast<size_t>(NumWarps) * warpStageBytes) + warpId * NumStages;
+      reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + static_cast<size_t>(NumWarps) * warpStageBytes) +
+      warpId * NumStages;
   auto stage = [&](int stageIdx, int contributorIdx) -> uint8_t* {
     return warpStages + (static_cast<size_t>(stageIdx) * MaxContributors + contributorIdx) * ChunkBytes;
   };
+  uint32_t barrierPhases[NumStages] = {};
 
   if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
   cooperative_groups::this_grid().sync();
+  if (laneId == 0) {
+#pragma unroll
+    for (int stageIdx = 0; stageIdx < NumStages; ++stageIdx) barriers[stageIdx].relaxedInit();
+    mscclpp::bulkFence();
+  }
+  __syncwarp();
 
   const int globalWarp = static_cast<int>(blockIdx.x) * NumWarps + warpId;
   const int totalWarps = static_cast<int>(gridDim.x) * NumWarps;
@@ -92,25 +102,21 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     auto issueLoads = [&](int stageIdx, int chunkOffset, int chunkSize) {
       if (laneId != 0) return;
 
-      initTmaLoadBarrier(&barriers[stageIdx]);
       const uint32_t chunkBytes = static_cast<uint32_t>(chunkSize * static_cast<int>(sizeof(int4)));
+      barriers[stageIdx].arriveAndExpect(chunkBytes * numContributors);
       for (int contributor = 0; contributor < numContributors; ++contributor) {
         const auto* source =
             reinterpret_cast<const uint8_t*>(recvPoolPtrs[contributorRanks[contributor]]) + recvPoolHeaderBytes +
             static_cast<int64_t>(contributorSlots[contributor]) * hiddenInt4 * static_cast<int64_t>(sizeof(int4)) +
             static_cast<int64_t>(chunkOffset) * sizeof(int4);
-        issueTmaLoad(source, stage(stageIdx, contributor), &barriers[stageIdx], chunkBytes);
+        mscclpp::bulkLoad(stage(stageIdx, contributor), source, chunkBytes, barriers[stageIdx]);
       }
-      expectTmaLoad(&barriers[stageIdx], chunkBytes * numContributors);
     };
 
     auto waitStage = [&](int stageIdx) {
-      if (laneId == 0) {
-        uint32_t phase = 0;
-        waitTmaLoad(&barriers[stageIdx], phase);
-      }
+      if (laneId == 0) barriers[stageIdx].wait(barrierPhases[stageIdx]);
       __syncwarp();
-      fenceProxyAsyncSharedCta();
+      mscclpp::bulkFence();
     };
 
     auto reduceStore = [&](int stageIdx, int chunkOffset, int chunkSize) {
@@ -176,6 +182,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
       st_na_global(outputTopkWeights + static_cast<int64_t>(token) * numTopk + laneId, weight);
     }
   }
+#endif  // MSCCLPP_BULK_AVAILABLE
 }
 
 template <int NumRanks, int MaxContributors, int NumWarps>
@@ -220,7 +227,7 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
     auto kernel = combineKernel<ranks, maxContributors, numWarps>;                                                     \
     const size_t sharedBytes =                                                                                         \
         static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
-        static_cast<size_t>(numWarps) * NumStages * sizeof(uint64_t);                                                  \
+        static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
     CUDA_CHECK(                                                                                                        \
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));     \
     EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \

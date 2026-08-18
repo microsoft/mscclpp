@@ -174,7 +174,8 @@ struct Layout {
   void* rankMajorExpertOutputBuffer_;
   void* tokenMajorTokenBuffer_;
 
-  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
+  Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+         bool rankMajor = false) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -192,10 +193,11 @@ struct Layout {
         static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t tokenMajorDispatchBufferBytes = tokenMajorTokenOffsetBytes + tokenMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    recvBufferBytes_ = configAlign<size_t>(
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
-                  combineBufferBytes}),
-        BufferAlignmentBytes);
+    const size_t recvBufferBytes =
+        rankMajor ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, rankMajorTokenBytes})
+                  : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
+                              combineBufferBytes});
+    recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = 2 * recvBufferBytes_;
 
     if (symmetricBuffer != nullptr) {
@@ -211,8 +213,9 @@ struct Layout {
   }
 };
 
-inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk) {
-  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk).totalBytes_;
+inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
+                                  bool rankMajor = false) {
+  const auto numBytes = Layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, rankMajor).totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
