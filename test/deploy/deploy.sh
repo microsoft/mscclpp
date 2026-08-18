@@ -121,13 +121,13 @@ else
 
   if [ "${IB_ENVIRONMENT}" == "true" ]; then
     # InfiniBand: use --privileged for RDMA device access
-    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   else
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
-    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "${SSH_EXTRA_ARGS}" -O $SSH_OPTION \
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
