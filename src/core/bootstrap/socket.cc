@@ -17,6 +17,9 @@
 #include <mscclpp/utils.hpp>
 #include <sstream>
 
+#include "logger.hpp"
+#undef INFO
+#undef WARN
 #include "debug.h"
 #include "utils_internal.hpp"
 
@@ -563,21 +566,21 @@ SocketRecvResult Socket::recvUntilEnd(void* ptr, int size, const std::atomic<boo
     const int error = errno;
     if (error == EINTR) continue;
     if (error == EWOULDBLOCK || error == EAGAIN) {
-      if (abortFlag_ && *abortFlag_ != 0) throw Error("aborted", ErrorCode::Aborted);
+      if (abortFlag_ && *abortFlag_ != 0) THROW(NET, Error, ErrorCode::Aborted, "aborted");
 
       struct pollfd pfd = {fd_, POLLIN, 0};
       int ret;
       do {
         ret = ::poll(&pfd, 1, 1);
       } while (ret < 0 && errno == EINTR);
-      if (ret < 0) throw SysError("poll while receiving failed", errno);
+      if (ret < 0) THROW(NET, SysError, errno, "poll while receiving failed");
       continue;
     }
     if (localShutdown != nullptr && localShutdown->load(std::memory_order_acquire) &&
         (error == ENOTCONN || error == ESHUTDOWN)) {
       return SocketRecvResult::LocalShutdown;
     }
-    throw SysError("recv until end failed", error);
+    THROW(NET, SysError, error, "recv until end failed");
   }
   return SocketRecvResult::Success;
 }

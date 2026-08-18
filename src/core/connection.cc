@@ -728,9 +728,9 @@ bool EthernetConnection::receiveFramePart(void* ptr, int size, bool allowBoundar
   if (result == SocketRecvResult::LocalShutdown) return false;
   if (result == SocketRecvResult::Closed && allowBoundaryEof) return false;
 
-  throw Error(result == SocketRecvResult::Truncated ? "Ethernet peer closed in the middle of a frame"
-                                                    : "Ethernet peer closed before completing a frame",
-              ErrorCode::RemoteError);
+  THROW(CONN, Error, ErrorCode::RemoteError,
+        result == SocketRecvResult::Truncated ? "Ethernet peer closed in the middle of a frame"
+                                              : "Ethernet peer closed before completing a frame");
 }
 
 void EthernetConnection::recvMessages() {
