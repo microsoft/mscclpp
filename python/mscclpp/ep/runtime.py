@@ -37,6 +37,10 @@ class Runtime(ABC):
     def is_internode_available(self) -> bool:
         return self.cpp_runtime.is_internode_available()
 
+    def get_dispatch_output_buffer(self) -> torch.Tensor:
+        """Return the runtime-owned latency dispatch output buffer."""
+        raise RuntimeError("dispatch output buffer is only available in latency mode")
+
     @abstractmethod
     def dispatch(
         self,

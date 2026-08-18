@@ -197,6 +197,9 @@ Use `DispatchLayout` instead of string literals for this field:
 
 ```python
 class MoECommunicator:
+    def get_dispatch_output_buffer(self) -> torch.Tensor:
+        ...
+
     def dispatch(
         self,
         input: torch.Tensor,
@@ -239,6 +242,9 @@ The blocking `dispatch` and `combine` methods should be the default path. The
 `*_async` methods and `create_overlap_config` are optional advanced APIs for
 communication/computation overlap.
 If `stream` is not provided, both methods launch on `torch.cuda.current_stream()`.
+`get_dispatch_output_buffer()` returns the stable runtime-owned latency buffer
+that may be passed as `dispatch(output_buffer=...)`; it is unavailable in
+throughput mode.
 
 ## High-level API
 

@@ -134,6 +134,10 @@ class MoECommunicator:
     def is_internode(self) -> bool:
         return self._runtime.is_internode_available()
 
+    def get_dispatch_output_buffer(self) -> torch.Tensor:
+        """Return the runtime-owned buffer that may be passed to dispatch."""
+        return self._runtime.get_dispatch_output_buffer()
+
     def dispatch(
         self,
         input: torch.Tensor,

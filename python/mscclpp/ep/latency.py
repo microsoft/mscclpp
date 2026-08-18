@@ -134,6 +134,12 @@ class LatencyRuntime(Runtime):
         super().__init__(context, cpp_runtime)
         self._bind_buffers()
 
+    def get_dispatch_output_buffer(self) -> torch.Tensor:
+        """Return the stable runtime-owned dispatch output buffer."""
+        if self.context.dispatch_output_buffer is None:
+            raise RuntimeError("latency dispatch output buffer is unavailable")
+        return self.context.dispatch_output_buffer
+
     def dispatch(
         self,
         input: torch.Tensor,
