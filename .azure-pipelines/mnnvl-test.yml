@@ -126,9 +126,12 @@ jobs:
   - template: templates/run-remote-task.yml
     parameters:
       name: RunCollectivebenchmarks
-      displayName: Run Collective Benchmarks
+      displayName: Run Collective Benchmarks 
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
         mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --symmetric-memory
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
+          /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float16 --symmetric-memory
