@@ -17,45 +17,28 @@ pr: none
 parameters:
 - name: vmssName
   type: string
-  default: ''   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+  default: mscclpp-h100-multinode-ci
 - name: hostEntries
   type: string
   default: |
-    10.0.5.145 DSM121082302011
-    10.0.5.150 DSM121082302014
-    10.0.5.177 DSM121082301013
-    10.0.5.225 DSM121082301032
-
-variables:
-  - group: mscclpp
+    10.0.0.5 mscclpp-h100-multinode-ci000000
+    10.0.0.4 mscclpp-h100-multinode-ci000001
 
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test
   strategy:
     matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
       cuda13:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
-    name: msccl-ci-gb200
+    name: mscclpp-multi-node
   container:
     image: $[ variables['containerImage'] ]
 
   steps:
-  - task: Bash@3
-    displayName: Node connectivity check
-    inputs:
-      targetType: 'inline'
-      script: |
-        set -x
-        echo "Agent egress IP:"; curl -s -m 5 ifconfig.me; echo
-        while IFS= read -r line; do
-          ip=$(awk 'NF>=1{print $1}' <<< "$line")
-          [ -z "$ip" ] && continue
-          timeout 10 bash -c "cat < /dev/null > /dev/tcp/${ip}/22" \
-            && echo "${ip}:22 OPEN" || echo "${ip}:22 UNREACHABLE"
-        done <<< "${{ parameters.hostEntries }}"
-
   - task: Bash@3
     displayName: Add HostEntry
     inputs:
@@ -77,12 +60,10 @@ jobs:
       targetType: 'inline'
       script: |
         set -e
+        VMSS="${{ parameters.vmssName }}"
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
-        # First NVLink pair (2 nodes) from hostEntries; use $1 (the IP) so the
-        # names resolve inside the container too (the DSM hostnames are only in
-        # the agent's /etc/hosts). Bump to more nodes by parsing further lines.
-        NODE0=$(awk 'NF>=2{print $1; exit}'           <<< "${{ parameters.hostEntries }}")
-        NODE1=$(awk 'NF>=2{c++} c==2{print $1; exit}' <<< "${{ parameters.hostEntries }}")
+        NODE0="${VMSS}000000"
+        NODE1="${VMSS}000001"
 
         echo "Host ${NODE0}
           Port 22345
@@ -93,38 +74,52 @@ jobs:
           IdentityFile /root/mscclpp/sshkey
           StrictHostKeyChecking no" > "${DEPLOY_DIR}/config"
 
-        printf '%s\n%s\n' "azhpcuser@${NODE0}" "azhpcuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
+        printf '%s\n%s\n' "azureuser@${NODE0}" "azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
 
         printf '%s\n%s\n' "${NODE0}" "${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
-
-        # Publish the head node so the run steps can target it without hardcoding.
-        echo "##vso[task.setvariable variable=headNode]${NODE0}"
 
   - template: templates/deploy.yml
     parameters:
       subscription: mscclpp-ci-h100
       vmssName: ${{ parameters.vmssName }}
-      pilot: true
       resourceGroup: mscclpp
-      gpuArch: '100a'
-      cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
-
-  - template: templates/ut-gb200.yml
-    parameters:
-      user: azhpcuser
-      headNode: $(headNode)
-      hostfile: $(System.DefaultWorkingDirectory)/test/deploy/hostfile
-      gpuArch: '100a'
+      gpuArch: '90'
 
   - template: templates/run-remote-task.yml
     parameters:
-      name: PyBench
-      displayName: Run Collective Benchmarks
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
+      name: RunMscclppTest
+      displayName: Run multi-nodes mscclpp-test
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
-          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
-          /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --symmetric-memory
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include 10.0.5.0/24 -np 8 -npernode 4 \
-          -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
-          /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float16 --symmetric-memory
+        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodeUnitTest
+      displayName: Run multi-nodes unit tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodePythonTests
+      displayName: Run multi-nodes python tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh pytests
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodePythonBenchmark
+      displayName: Run multi-nodes python benchmark
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
+
+  - template: templates/stop.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+      resourceGroup: mscclpp
