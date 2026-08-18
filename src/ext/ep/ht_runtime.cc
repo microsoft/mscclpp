@@ -232,7 +232,12 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   dispatchReady_ = canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize);
   EP_HOST_ASSERT(dispatchReady_ && "high-throughput direct dispatch capacity exceeded");
   const size_t poolHeaderBytes = high_throughput::Config::recvPoolHeaderBytes(numRanks_);
-  EP_HOST_ASSERT(recvX == static_cast<uint8_t*>(recvPoolPtrs_[rank_]) + poolHeaderBytes);
+  // recvX is only the framework-visible result view; dispatch addresses the
+  // registered pool through recvPoolPtrsGpu_. Pointer equality is invalid for
+  // imported physical-memory aliases, and PyTorch intentionally reports a
+  // null data_ptr for a valid zero-row view on idle DP ranks. Do not validate
+  // this unused argument here.
+  (void)recvX;
 
   const int hiddenInt4 = hidden * xElementSize / sizeof(int4);
   dispatchMetadataReady_ = true;
@@ -255,7 +260,10 @@ void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeigh
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= maxHiddenBytes_);
   EP_HOST_ASSERT((hidden * xElementSize) % sizeof(int4) == 0);
   EP_HOST_ASSERT(numTopk >= 0 && numTopk <= high_throughput::Config::MaxTopk);
-  EP_HOST_ASSERT((combinedTopkWeights == nullptr) == (topkWeights == nullptr));
+  // combinedTopkWeights is an optional diagnostic output. The serving adapter
+  // consumes only combinedX, while routing weights are already staged in the
+  // receive-pool metadata during dispatch. Allow frameworks to omit the output
+  // tensor independently of whether those staged input weights exist.
 
   EP_HOST_ASSERT(numInputTokens <= high_throughput::Config::RecvPoolMaxTokens);
   const size_t recvPoolHeaderBytes = high_throughput::Config::recvPoolHeaderBytes(numRanks_);

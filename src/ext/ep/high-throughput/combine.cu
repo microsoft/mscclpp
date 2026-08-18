@@ -205,7 +205,10 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
              mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, int64_t recvPoolHeaderBytes,
              int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || numOutputTokens == 0);
-  EP_HOST_ASSERT(sendHead != nullptr);
+  // A valid idle DP rank has zero output rows; PyTorch represents its
+  // [0,numRanks] send-head tensor with a null data_ptr. The cooperative
+  // barrier still has to launch, but no token loop dereferences sendHead.
+  EP_HOST_ASSERT(sendHead != nullptr || numOutputTokens == 0);
   EP_HOST_ASSERT(recvPoolPtrs != nullptr);
   EP_HOST_ASSERT(combineRecvIdx != nullptr);
   EP_HOST_ASSERT(barrierChannels != nullptr);
