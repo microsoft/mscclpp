@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_RECV_POOL_HPP_
+#define MSCCLPP_EP_RECV_POOL_HPP_
 
 #include <cstddef>
 #include <cstdint>
 
-#include "../config.hpp"
-#include "exception.cuh"
+#include "config.hpp"
+#include "exception.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
 
-struct Config {
+struct RecvPoolConfig {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;
   static constexpr int MaxLocalExperts = 1024;
@@ -25,9 +25,9 @@ struct Config {
        BufferAlignmentBytes) *
       BufferAlignmentBytes;
 
-  int numSms_;
+  int numBlocks_;
 
-  explicit Config(int numSms) : numSms_(numSms) { EP_HOST_ASSERT(numSms > 0); }
+  explicit RecvPoolConfig(int numBlocks) : numBlocks_(numBlocks) { EP_HOST_ASSERT(numBlocks > 0); }
 
   size_t controlBufferBytes(int numRanks) const {
     EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
@@ -57,6 +57,7 @@ struct Config {
   }
 };
 
-}  // namespace high_throughput
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_RECV_POOL_HPP_

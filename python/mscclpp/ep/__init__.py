@@ -4,15 +4,14 @@
 """MSCCL++ Expert-Parallel
 
 
-``MoECommunicator`` is the public API. ``mode=MoEMode.LOW_LATENCY`` runs on the
-LL backend; ``mode=MoEMode.HIGH_THROUGHPUT`` runs on the HT backend (GB200 TMA
-direct-gather combine + all-sender dispatch).
+`MoECommunicator` is the public API. `mode=MoEMode.LATENCY` selects
+latency-optimized algorithms; `mode=MoEMode.THROUGHPUT` selects throughput-optimized bounded-resource
+token-major algorithms.
 """
 
-from .communicator import (  # noqa: F401
+from mscclpp.ep.communicator import (
     BlockOverlapConfig,
-    CommOverlapConfig,
-    CombineContext,
+    OverlapConfig,
     CombineMode,
     DispatchHandle,
     DispatchDataType,
@@ -20,23 +19,16 @@ from .communicator import (  # noqa: F401
     DispatchLayoutInfo,
     DispatchOutput,
     DispatchOutputInfo,
-    ExpertMajorDispatchHandle,
-    ExpertMajorCombineContext,
-    HighThroughputDispatchHandle,
-    HighThroughputCombineContext,
     MoECommunicator,
     MoECommunicatorConfig,
     MoEMode,
     OperationOverlapConfig,
     QuantConfig,
-    RankMajorDispatchHandle,
-    RankMajorCombineContext,
 )
 
 __all__ = [
     "BlockOverlapConfig",
-    "CommOverlapConfig",
-    "CombineContext",
+    "OverlapConfig",
     "CombineMode",
     "DispatchHandle",
     "DispatchDataType",
@@ -44,15 +36,9 @@ __all__ = [
     "DispatchLayoutInfo",
     "DispatchOutput",
     "DispatchOutputInfo",
-    "ExpertMajorDispatchHandle",
-    "ExpertMajorCombineContext",
-    "HighThroughputDispatchHandle",
-    "HighThroughputCombineContext",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "MoEMode",
     "OperationOverlapConfig",
     "QuantConfig",
-    "RankMajorDispatchHandle",
-    "RankMajorCombineContext",
 ]

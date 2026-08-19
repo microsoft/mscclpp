@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
+#define MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 
 #include "config.hpp"
-#include "exception.cuh"
+#include "exception.hpp"
 
 #ifndef WARP_SIZE
 #if defined(__HIP_PLATFORM_AMD__)
@@ -107,3 +108,5 @@ __forceinline__ __device__ int get_lane_id() {
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_

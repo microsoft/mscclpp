@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_EXCEPTION_HPP_
+#define MSCCLPP_EP_EXCEPTION_HPP_
 
 #include <exception>
 #include <mscclpp/assert_device.hpp>
@@ -49,3 +50,5 @@ class EPException : public std::exception {
 #define EP_DEVICE_ASSERT(cond)
 #endif
 #endif
+
+#endif  // MSCCLPP_EP_EXCEPTION_HPP_

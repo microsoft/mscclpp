@@ -1,23 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMMON_OVERLAP_BARRIER_CUH_
+#define MSCCLPP_EP_COMMON_OVERLAP_BARRIER_CUH_
 
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "device_helpers.cuh"
-#include "exception.cuh"
+#include "exception.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace high_throughput {
 
 template <int NumRanks>
-__forceinline__ __device__ void barrier_device(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
-#ifdef MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT
-  constexpr int64_t MaxSpinCount = 10000000;
-#else
-  constexpr int64_t MaxSpinCount = 100000000;
-#endif
+__forceinline__ __device__ void overlapBarrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
+  constexpr int64_t MaxSpinCount = 100'000'000;
   const int laneId = static_cast<int>(threadIdx.x) % WARP_SIZE;
   EP_DEVICE_ASSERT(NumRanks <= WARP_SIZE);
 
@@ -31,6 +27,7 @@ __forceinline__ __device__ void barrier_device(mscclpp::BaseMemoryChannelDeviceH
   __syncwarp();
 }
 
-}  // namespace high_throughput
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMMON_OVERLAP_BARRIER_CUH_

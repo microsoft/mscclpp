@@ -3,14 +3,14 @@
 """Multi-rank low-latency functional test for mscclpp_ep.
 
 Launch with (intra-node, 8 GPUs):
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
     # Rank-major output:
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --output-layout rank_major
     # Optional CUDA graph smoke/benchmark:
-    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --cuda-graph --bench
 
@@ -18,11 +18,11 @@ Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
     # node 0:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=0 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_latency_multirank.py
     # node 1:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=1 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_latency_multirank.py
 
 Exercises the optimized BF16 or FP8 E4M3 LL dispatch plus the default combine
 path on a single node. The experimental optimized combine performs rank-local
@@ -42,12 +42,6 @@ from __future__ import annotations
 import argparse
 import os
 import random
-
-# Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
-# It runs in a background thread polling the TCPStore; under mpirun, rank 0
-# (the store server) can exit before non-zero ranks finish teardown, producing
-# noisy 'recvValue failed / Connection was likely closed' stack traces.
-os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
 
 import torch
 import torch.distributed as dist
@@ -259,7 +253,7 @@ def validate_expert_major_dispatch(
             output_offset = packed_range >> 32
             if source_count == 0:
                 continue
-            source_tokens = handle.combine_context.src_info[
+            source_tokens = handle._context.src_info[
                 local_expert_idx, output_offset : output_offset + source_count
             ].long()
             actual_tokens = recv_x[output_offset : output_offset + source_count]
@@ -376,7 +370,7 @@ def reconstruct_expert_major_reference(
             output_offset = packed_range >> 32
             if source_count == 0:
                 continue
-            source_tokens = handle.combine_context.src_info[
+            source_tokens = handle._context.src_info[
                 local_expert_idx, output_offset : output_offset + source_count
             ].long()
             selected = first_expert[source_rank, source_tokens] == expert_id
@@ -522,9 +516,9 @@ def main():
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.LOW_LATENCY,
-        low_latency_num_blocks=args.num_blocks,
-        low_latency_combine_mode=combine_mode,
+        mode=ep.MoEMode.LATENCY,
+        num_blocks=args.num_blocks,
+        combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=invalid_token_expert_id,
         quant=dispatch_quant,
@@ -553,17 +547,16 @@ def main():
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR
         else (num_ranks * num_tokens, hidden)
     )
-    dispatch_output_buffer = (
-        None
-        if output_layout == ep.DispatchLayout.RANK_MAJOR
-        else torch.empty(dispatch_output_shape, dtype=dispatch_dtype, device="cuda")
-    )
+    dispatch_output_buffer = moe_comm.get_dispatch_output_buffer()
     dispatch_out, handle = moe_comm.dispatch(
         x,
         topk_idx,
         topk_weights,
         output_buffer=dispatch_output_buffer,
     )
+    assert dispatch_out.tokens.data_ptr() == dispatch_output_buffer.data_ptr()
+    assert tuple(dispatch_out.tokens.shape) == dispatch_output_shape
+    assert dispatch_out.tokens.dtype == dispatch_dtype
     packed_recv_x = dispatch_out.tokens
     packed_recv_count = (
         dispatch_out.layout.num_tokens_per_expert
@@ -571,9 +564,7 @@ def main():
         else dispatch_out.layout.num_tokens_per_rank
     )
     assert packed_recv_count is not None
-    packed_recv_layout_range = (
-        handle.combine_context.layout_range if output_layout == ep.DispatchLayout.EXPERT_MAJOR else None
-    )
+    packed_recv_layout_range = handle._context.layout_range if output_layout == ep.DispatchLayout.EXPERT_MAJOR else None
     torch.cuda.synchronize()
     print(f"[rank {rank}] post-dispatch", flush=True)
     # expert-major: packed_recv_x [num_local_experts, num_ranks * max_tokens, hidden]
@@ -646,7 +637,8 @@ def main():
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
     simulated_gemm_x = simulated_gemm_output(dispatch_out)
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        rank_major_expert_output = moe_comm.get_expert_output_buffer()
+        rank_major_expert_output = dispatch_out.combine_input_buffer
+        assert rank_major_expert_output is not None
         rank_major_expert_output.copy_(simulated_gemm_x)
         simulated_gemm_x = rank_major_expert_output
     reference_x = x
@@ -721,7 +713,8 @@ def main():
             dispatch_end.record()
             graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
             if output_layout == ep.DispatchLayout.RANK_MAJOR and expert_output is None:
-                rank_major_expert_output = moe_comm.get_expert_output_buffer()
+                rank_major_expert_output = graph_dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(graph_expert_output)
                 graph_expert_output = rank_major_expert_output
             graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
@@ -833,7 +826,8 @@ def main():
             warmup_dout = _dispatch()
             warmup_expert_output = simulated_gemm_output(warmup_dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_expert_output_buffer()
+                rank_major_expert_output = warmup_dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(warmup_expert_output)
                 warmup_expert_output = rank_major_expert_output
             _combine(warmup_expert_output, warmup_dout[1], bench_out)
@@ -849,7 +843,8 @@ def main():
             dispatch_end_events[i].record()
             bench_expert_output = simulated_gemm_output(dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_expert_output_buffer()
+                rank_major_expert_output = dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(bench_expert_output)
                 bench_expert_output = rank_major_expert_output
             _combine(bench_expert_output, dout[1], bench_out)
@@ -865,7 +860,8 @@ def main():
             dout = _dispatch()
             bench_expert_output = simulated_gemm_output(dout[0])
             if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = moe_comm.get_expert_output_buffer()
+                rank_major_expert_output = dout[0].combine_input_buffer
+                assert rank_major_expert_output is not None
                 rank_major_expert_output.copy_(bench_expert_output)
                 bench_expert_output = rank_major_expert_output
             combine_start_events[i].record()
