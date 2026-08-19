@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -9,10 +10,6 @@
 #include <memory>
 #include <mscclpp/utils.hpp>
 #include <thread>
-
-#ifdef __linux__
-#include <sys/syscall.h>
-#endif
 
 #include "../framework.hpp"
 #include "socket.h"
@@ -43,25 +40,17 @@ ConnectedSockets connectSockets() {
   return sockets;
 }
 
-#ifdef __linux__
-enum class ProcObservation { Observed, Unavailable, NotObserved };
-
-ProcObservation waitUntilRecvSyscall(pid_t tid) {
+bool waitUntilRecvSyscall(pid_t tid) {
   const std::string path = "/proc/self/task/" + std::to_string(tid) + "/syscall";
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
-  bool procAvailable = false;
   while (std::chrono::steady_clock::now() < deadline) {
     std::ifstream syscallFile(path);
     long syscallNumber = -1;
-    if (syscallFile >> syscallNumber) {
-      procAvailable = true;
-      if (syscallNumber == SYS_recvfrom || syscallNumber == SYS_recvmsg) return ProcObservation::Observed;
-    }
+    if (syscallFile >> syscallNumber && (syscallNumber == SYS_recvfrom || syscallNumber == SYS_recvmsg)) return true;
     std::this_thread::sleep_for(std::chrono::microseconds(100));
   }
-  return procAvailable ? ProcObservation::NotObserved : ProcObservation::Unavailable;
+  return false;
 }
-#endif
 
 }  // namespace
 
@@ -124,15 +113,11 @@ TEST(Socket, BlockedReceiverShutdownJoinCloseIsBounded) {
     ASSERT_EQ(setsockopt(receiverFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)), 0);
 
     std::atomic<bool> recvStarted{false};
-#ifdef __linux__
     std::atomic<pid_t> receiverTid{0};
-#endif
     int recvResult = -1;
     int recvError = 0;
     std::thread receiver([&]() {
-#ifdef __linux__
       receiverTid.store(static_cast<pid_t>(syscall(SYS_gettid)), std::memory_order_release);
-#endif
       recvStarted.store(true, std::memory_order_release);
       char byte;
       recvResult = ::recv(receiverFd, &byte, sizeof(byte), 0);
@@ -140,15 +125,9 @@ TEST(Socket, BlockedReceiverShutdownJoinCloseIsBounded) {
     });
 
     while (!recvStarted.load(std::memory_order_acquire)) std::this_thread::yield();
-#ifdef __linux__
     pid_t tid;
     while ((tid = receiverTid.load(std::memory_order_acquire)) == 0) std::this_thread::yield();
-    ProcObservation observation = waitUntilRecvSyscall(tid);
-#else
-    // SO_RCVTIMEO still bounds the test where /proc syscall inspection is not
-    // available. Give the receiver time to enter recv before shutdown.
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-#endif
+    const bool receiverBlocked = waitUntilRecvSyscall(tid);
 
     const auto shutdownStart = std::chrono::steady_clock::now();
     sockets.receiver->shutdown();
@@ -173,9 +152,7 @@ TEST(Socket, BlockedReceiverShutdownJoinCloseIsBounded) {
     if (reuseFd >= 0 && reuseFd != receiverFd) ::close(reuseFd);
     if (descriptorReused) ::close(receiverFd);
 
-#ifdef __linux__
-    ASSERT_FALSE(observation == ProcObservation::NotObserved);
-#endif
+    ASSERT_TRUE(receiverBlocked);
     const bool localShutdownResult =
         recvResult == 0 || (recvResult < 0 && (recvError == ENOTCONN || recvError == ESHUTDOWN));
     ASSERT_TRUE(descriptorReserved);
