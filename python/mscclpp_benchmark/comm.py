@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 _ALLREDUCE_COLLECTIVE = "allreduce"
 _ALLGATHER_COLLECTIVE = "allgather"
+DEFAULT_DSL_TBG = (1, 2, 4, 8)
+DEFAULT_DSL_TPB = (256, 512, 768, 1024)
 _mscclpp_module = None
 
 from mscclpp_benchmark.gpu import current_device, device_name, set_device
@@ -105,6 +107,9 @@ class Comm:
         *,
         config_store: "TunedConfigStore | None" = None,
         hardware_profile: HardwareProfile | None = None,
+        enable_dsl: bool = False,
+        dsl_tbg: Iterable[int] = DEFAULT_DSL_TBG,
+        dsl_tpb: Iterable[int] = DEFAULT_DSL_TPB,
     ) -> None:
         self._comm_group = comm_group
         self._mpi_comm = getattr(comm_group, "_mpi_comm", None)
@@ -113,6 +118,9 @@ class Comm:
         _ensure_device()
         self._mscclpp = _mscclpp()
         self._scratch_buffer = self._mscclpp.RawGpuBuffer(scratch_buffer_size)
+        # DSL algorithms execute through the Executor and fail without one; native algorithms
+        # ignore it, so it is safe to pass unconditionally in run().
+        self._executor = self._mscclpp.Executor(comm_group.communicator)
         self._config_store = TunedConfigStore.empty() if config_store is None else config_store
         self._hardware_profile = (
             _detect_hardware_profile(scale=self._scale()) if hardware_profile is None else hardware_profile
@@ -127,6 +135,57 @@ class Comm:
         self._algorithms_by_collective: dict[str, dict[str, Any]] = {}
         for algorithm in algorithms:
             self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
+
+        self._dsl_algorithms: set[str] = set()
+        if enable_dsl:
+            self._compile_dsl_algorithms(dsl_tbg, dsl_tpb)
+
+    def _compile_dsl_algorithms(self, tbg_values: Iterable[int], tpb_values: Iterable[int]) -> None:
+        """Compile DSL allreduce variants and register them alongside the native algorithms.
+
+        Each (thread_block_group_size, num_threads_per_block) pair is a separate compiled plan, since
+        DSL algorithms bake their launch geometry into the plan and ignore the nblocks/nthreads passed
+        to execute(). The variant name must encode both values: the plan cache key does not include
+        them, so variants sharing a name would silently resolve to the same cached plan.
+        """
+        from mscclpp.default_algos import allreduce_multi_nodes
+        from mscclpp.language.collectives import AllReduce
+        from mscclpp.language.utils import AlgoSpec
+
+        world_size = self._comm_group.nranks
+        nranks_per_node = self._comm_group.nranks_per_node
+        if nranks_per_node <= 0 or world_size % nranks_per_node != 0:
+            return
+        n_nodes = world_size // nranks_per_node
+        if n_nodes < 2:
+            return
+
+        for tbg in tbg_values:
+            for tpb in tpb_values:
+                spec = AlgoSpec(
+                    name=f"dsl_allreduce_{n_nodes}node_{tbg}TBG_{tpb}TPB",
+                    collective=AllReduce(world_size, 1, True),
+                    nranks_per_node=nranks_per_node,
+                    world_size=world_size,
+                    in_place=True,
+                    instances=1,
+                    protocol="LL",
+                    auto_sync=False,
+                    num_threads_per_block=tpb,
+                    reuse_resources=True,
+                    use_double_scratch_buffer=True,
+                    min_message_size=tbg * (1 << 10),
+                    max_message_size=8 << 20,
+                )
+                try:
+                    algorithm = self._mscclpp.compile(
+                        allreduce_multi_nodes, spec, self._rank, thread_block_group_size=tbg
+                    )
+                except Exception as exc:
+                    logger.warning("Skipping DSL variant %s: %s: %s", spec.name, type(exc).__name__, exc)
+                    continue
+                self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
+                self._dsl_algorithms.add(algorithm.name)
 
     @property
     def comm_group(self) -> Any:
@@ -143,6 +202,11 @@ class Comm:
     @property
     def algorithms(self) -> dict[str, dict[str, Any]]:
         return self._algorithms_by_collective
+
+    @property
+    def dsl_algorithms(self) -> set[str]:
+        """Names of the compiled DSL algorithms, which ignore the tuner's nblocks/nthreads sweep."""
+        return self._dsl_algorithms
 
     @property
     def hardware_profile(self) -> HardwareProfile:
@@ -257,6 +321,7 @@ class Comm:
         accum = accum_dtype if accum_dtype is not None else dtype
         ret = algorithm.execute(
             comm=self._comm_group.communicator,
+            executor=self._executor,
             input_buffer=_data_ptr(buffer),
             output_buffer=_data_ptr(output),
             input_size=_nbytes(buffer),
@@ -287,6 +352,7 @@ class Comm:
     def close(self) -> None:
         self.reset()
         self._algorithms_by_collective = {}
+        self._executor = None
         self._scratch_buffer = None
         self._closed = True
         self._mscclpp.ext.AlgorithmCollectionBuilder.reset()

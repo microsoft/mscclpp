@@ -12,7 +12,7 @@ from mpi4py import MPI
 
 _mscclpp_module = None
 
-from mscclpp_benchmark.comm import Comm
+from mscclpp_benchmark.comm import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, Comm
 from mscclpp_benchmark.correctness import (
     CorrectnessStats,
     check_correctness as _check_correctness,
@@ -81,6 +81,10 @@ class CandidateSpec:
     supported_skus: tuple[str, ...] | None = None
     requires_nvls: bool = False
     requires_symmetric_memory: bool = False
+    # None means "use the tuner's global sweep"; an explicit tuple overrides it, which DSL
+    # algorithms need since they bake their launch geometry into the plan and ignore nblocks/nthreads.
+    candidate_nblocks: tuple[int, ...] | None = None
+    candidate_nthreads: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -241,6 +245,33 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
     return candidates
 
 
+def _dsl_candidate_specs(comm: Comm, collective: str) -> tuple[CandidateSpec, ...]:
+    """Synthesize candidate specs for the DSL algorithms compiled by Comm.
+
+    Unlike the native algorithms, DSL variant names are only known at runtime, so their specs cannot
+    be listed statically. Each variant reports its own applicable message size range, which the usual
+    message size filter then applies, and pins the tuner to a single launch config because the plan
+    already bakes in its launch geometry.
+    """
+    available = comm.algorithms.get(collective, {})
+    specs: list[CandidateSpec] = []
+    for name in sorted(getattr(comm, "dsl_algorithms", ())):
+        algorithm = available.get(name)
+        if algorithm is None:
+            continue
+        min_message_size, max_message_size = algorithm.message_size_range
+        specs.append(
+            CandidateSpec(
+                name,
+                min_message_size=min_message_size,
+                max_message_size=max_message_size,
+                candidate_nblocks=(0,),
+                candidate_nthreads=(0,),
+            )
+        )
+    return tuple(specs)
+
+
 def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, CandidateSpec]]:
     available = comm.algorithms.get(case.collective, {})
     candidates: list[tuple[Any, CandidateSpec]] = []
@@ -248,7 +279,10 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
     symmetric_memory = case.symmetric_memory
     profile = getattr(comm, "hardware_profile", None)
     filtered_out = False
-    for candidate in _candidate_specs(case.collective, symmetric_memory=symmetric_memory):
+    for candidate in (
+        *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
+        *_dsl_candidate_specs(comm, case.collective),
+    ):
         if not _candidate_supports_profile(candidate, profile):
             filtered_out = True
             continue
@@ -481,6 +515,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tune-iterations", type=int, default=20)
     parser.add_argument("--candidate-nblocks", help="Comma-separated nblocks tuning candidates")
     parser.add_argument("--candidate-nthreads", help="Comma-separated nthreads tuning candidates")
+    parser.add_argument(
+        "--enable-dsl",
+        action="store_true",
+        help="Compile DSL algorithm variants and tune them alongside the native algorithms",
+    )
+    parser.add_argument("--dsl-tbg", help="Comma-separated DSL thread_block_group_size candidates")
+    parser.add_argument("--dsl-tpb", help="Comma-separated DSL num_threads_per_block candidates")
     parser.add_argument("--symmetric-memory", action="store_true")
     return parser
 
@@ -519,6 +560,8 @@ def main(argv: list[str] | None = None) -> None:
     batch_sizes = _parse_int_list(args.batch_sizes, _DEFAULT_BATCH_SIZES)
     candidate_nblocks = _parse_int_list(args.candidate_nblocks, _DEFAULT_CANDIDATE_NBLOCKS)
     candidate_nthreads = _parse_int_list(args.candidate_nthreads, _DEFAULT_CANDIDATE_NTHREADS)
+    dsl_tbg = _parse_int_list(args.dsl_tbg, DEFAULT_DSL_TBG)
+    dsl_tpb = _parse_int_list(args.dsl_tpb, DEFAULT_DSL_TPB)
 
     comm_group = _mscclpp().CommGroup(MPI.COMM_WORLD)
     setattr(comm_group, "_mpi_comm", MPI.COMM_WORLD)
@@ -529,6 +572,9 @@ def main(argv: list[str] | None = None) -> None:
         config_store=config_store,
         hardware_profile=hardware_profile,
         scratch_buffer_size=args.scratch_buffer_size,
+        enable_dsl=args.enable_dsl,
+        dsl_tbg=dsl_tbg,
+        dsl_tpb=dsl_tpb,
     )
     tuner = OfflineTuner(
         comm,
