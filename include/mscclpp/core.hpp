@@ -652,7 +652,8 @@ class Connection {
   /// Add a value to a 64-bit integer in a destination RegisteredMemory.
   ///
   /// The caller supplies only its own contribution, unlike updateAndSync(), which needs the
-  /// destination's current value. Addition commutes, so arrival order does not matter.
+  /// destination's current value. Addition is modulo 2^64 (the signed operand contributes its
+  /// two's-complement bit pattern) and commutes, so arrival order does not matter.
   ///
   /// The addition must be a real read-modify-write at the destination, so how many concurrent
   /// writers one address allows depends on the transport:

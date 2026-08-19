@@ -25,11 +25,17 @@ using TriggerType = uint64_t;
 constexpr TriggerType TriggerNone = 0;                   // Not an operation; invalid for ProxyService.
 constexpr TriggerType TriggerPut = 1;                    // Transfer data.
 constexpr TriggerType TriggerSignal = 2;                 // Signal the remote semaphore.
-constexpr TriggerType TriggerFlush = 3;                  // Flush the connection.
-constexpr TriggerType TriggerPutWithSignal = 4;          // Transfer data, then signal.
-constexpr TriggerType TriggerPutWithSignalAndFlush = 5;  // Transfer data, signal, then flush.
+constexpr TriggerType TriggerPutWithSignal = 3;          // Transfer data, then signal.
+constexpr TriggerType TriggerFlush = 4;                  // Flush the connection.
 constexpr TriggerType TriggerAccumulate = 6;             // Add a value to remote memory.
-// 7 is unassigned.
+constexpr TriggerType TriggerPutWithSignalAndFlush = 7;  // Transfer data, signal, then flush.
+// 5 is unassigned.
+
+// Preserve the original flag-combination encodings for existing operations. Triggers are now
+// compared as opcodes, but changing these values would break producers and consumers built from
+// different revisions.
+static_assert(TriggerPut == 1 && TriggerSignal == 2 && TriggerPutWithSignal == 3 && TriggerFlush == 4 &&
+              TriggerPutWithSignalAndFlush == 7);
 
 constexpr unsigned int TriggerBitsSize = 32;
 constexpr unsigned int TriggerBitsOffset = 32;

@@ -223,8 +223,8 @@ void CudaIpcConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, [[m
   // writers in any number of processes may target one address. The host cannot do it instead:
   // GPU memory is host-accessible only to the process that allocated it, and the proxy holds an
   // IPC-imported mapping, which is device-only.
-  int64_t* dstPtr = reinterpret_cast<int64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
-  stream_->accumulate(dstPtr, value);
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
+  stream_->accumulate(dstPtr, static_cast<uint64_t>(value));
   INFO(CONN, "CudaIpcConnection accumulate: dst ", dstPtr, ", value ", value);
 #else
   // The host reaches device memory only through the copy engines, which move a value but cannot
@@ -759,9 +759,10 @@ void EthernetConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, in
   std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
   messageSize += sizeof(dataSize);
 
-  char* valueBytes = reinterpret_cast<char*>(&value);
-  std::copy(valueBytes, valueBytes + sizeof(value), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(value);
+  uint64_t addValue = static_cast<uint64_t>(value);
+  char* valueBytes = reinterpret_cast<char*>(&addValue);
+  std::copy(valueBytes, valueBytes + sizeof(addValue), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(addValue);
 
   sendSocket_->send(sendBuffer_.data(), messageSize);
 
@@ -804,20 +805,20 @@ void EthernetConnection::recvMessages() {
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_DATA_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
-    if (isAccumulate && received && size == sizeof(int64_t)) {
-      // Accumulate: receive the operand, then read, add, and write back.
-      int64_t addValue;
-      recvSocket_->recvUntilEnd(&addValue, sizeof(int64_t), &closed);
+    if (isAccumulate && received && size == sizeof(uint64_t)) {
+      // Accumulate modulo 2^64: receive the operand, then read, add, and write back.
+      uint64_t addValue;
+      recvSocket_->recvUntilEnd(&addValue, sizeof(uint64_t), &closed);
       received &= !closed;
       if (received) {
         // Every peer terminates its socket in this process, so several recv threads can be here
         // at once for one address. The read-modify-write below is not atomic, so serialize it
         // against the other recv threads.
         const std::lock_guard<std::mutex> lock(accumulateMutex());
-        int64_t current;
-        mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(int64_t), cudaMemcpyDeviceToHost);
+        uint64_t current;
+        mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(uint64_t), cudaMemcpyDeviceToHost);
         current += addValue;
-        mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(int64_t), cudaMemcpyHostToDevice);
+        mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(uint64_t), cudaMemcpyHostToDevice);
       }
     } else {
       // Regular write: receive data and copy to GPU

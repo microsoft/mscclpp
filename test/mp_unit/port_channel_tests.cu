@@ -720,6 +720,15 @@ __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscc
   }
 }
 
+__global__ void kernelPortChannelAccumulateWrap(uint64_t* localBuff, int* ret) {
+  auto& portChan = gChannelOneToOneTestConstPortChans;
+  portChan.accumulate(0, 1);
+  portChan.signal();
+  portChan.flush();
+  portChan.wait();
+  if (*(volatile uint64_t*)localBuff != 0) *ret = 1;
+}
+
 void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
@@ -775,6 +784,13 @@ void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEt
 
   proxyService->startProxy();
   kernelPortChannelAccumulate<<<32, 1>>>(buff.memory().get(), 20, syncer.get(), ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  EXPECT_EQ(*ret, 0);
+
+  // Every transport defines accumulation modulo 2^64.
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0xff, sizeof(uint64_t)));
+  *ret = 0;
+  kernelPortChannelAccumulateWrap<<<1, 1>>>(reinterpret_cast<uint64_t*>(buff.memory().get()), ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   proxyService->stopProxy();
   EXPECT_EQ(*ret, 0);
