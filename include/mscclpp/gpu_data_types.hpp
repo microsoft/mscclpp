@@ -68,11 +68,11 @@ using __bfloat162 = __nv_bfloat162;
 
 #endif
 
-// Defined when the current device compilation target supports FP8 (`e4m3`/`e5m2`) multimem
-// instructions.
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000) && \
     (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
-#define MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED
+#define MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED 1
+#else
+#define MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED 0
 #endif
 
 /// Software float8 with 4 exponent bits, 3 mantissa bits, exponent bias = 15.
