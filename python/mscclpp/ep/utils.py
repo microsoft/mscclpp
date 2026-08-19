@@ -10,6 +10,40 @@ from typing import Any, List, Optional, Tuple, Union
 import numpy as np
 import torch
 
+from mscclpp.ep._cpp import DispatchDataType
+from mscclpp.ep.types import QuantConfig
+
+
+def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
+    """Resolve dispatch storage type from optional quantization metadata."""
+    if quant is None:
+        return DispatchDataType.BF16
+
+    quant_format = quant.format
+    if quant_format is not None and not isinstance(quant_format, DispatchDataType):
+        raise TypeError("quant.format must be a DispatchDataType")
+    if quant_format is None:
+        raise ValueError("quant.format is required")
+    if quant_format != DispatchDataType.FP8_E4M3:
+        raise ValueError("unsupported dispatch quantization format")
+    if quant.block_scales is not None:
+        raise ValueError("communicator quant config must not contain precomputed scales")
+    return quant_format
+
+
+def dispatch_scale_block_size(data_type: DispatchDataType) -> int:
+    """Return the hidden-element count represented by one dispatch scale."""
+    if data_type == DispatchDataType.FP8_E4M3:
+        return 128
+    return 0
+
+
+def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the scale dtype for a quantized dispatch format."""
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float32
+    raise ValueError("BF16 dispatch does not have block scales")
+
 
 def send_bytes(comm: Any, payload: bytes, peer: int, tag: int) -> None:
     comm.send(np.frombuffer(payload, dtype=np.uint8), peer, tag)
@@ -107,10 +141,32 @@ class DevicePointerArray:
         }
 
 
-def bf16_view(ptr: int, num_tokens: int, hidden: int, owner: Any) -> torch.Tensor:
-    """View a raw device pointer as a ``[num_tokens, hidden]`` bfloat16 tensor."""
-    u16 = torch.as_tensor(DevicePointerArray(ptr, (num_tokens, hidden), "<u2", owner), device="cuda")
-    return u16.view(torch.bfloat16)
+def tensor_from_pointer(
+    pointer: int,
+    shape: Tuple[int, ...],
+    dtype: torch.dtype,
+    device: torch.device,
+    owner: Any,
+) -> Tuple[DevicePointerArray, torch.Tensor]:
+    """Create a zero-copy tensor view over runtime-owned CUDA memory."""
+    storage_types = {
+        torch.bfloat16: "<u2",
+        torch.float8_e4m3fn: "|u1",
+        torch.int32: "<i4",
+        torch.float32: "<f4",
+    }
+    try:
+        typestr = storage_types[dtype]
+    except KeyError as exc:
+        raise ValueError(f"unsupported CUDA pointer view dtype: {dtype}") from exc
+
+    buffer_view = DevicePointerArray(pointer, shape, typestr, owner)
+    tensor = torch.as_tensor(buffer_view, device=device)
+    if tensor.dtype != dtype:
+        tensor = tensor.view(dtype)
+    tensor._mscclpp_owner = owner
+    tensor._mscclpp_buffer_view = buffer_view
+    return buffer_view, tensor
 
 
 def requires_dequantization(tensor: torch.Tensor) -> bool:

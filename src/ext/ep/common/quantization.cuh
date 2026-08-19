@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMMON_QUANTIZATION_CUH_
+#define MSCCLPP_EP_COMMON_QUANTIZATION_CUH_
 
 #include <mscclpp/gpu_data_types.hpp>
 
@@ -77,3 +78,5 @@ MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(typename mscclpp::f8_e4m3x2::Eleme
 
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMMON_QUANTIZATION_CUH_

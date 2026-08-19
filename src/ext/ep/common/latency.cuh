@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#pragma once
+#ifndef MSCCLPP_EP_COMMON_LATENCY_CUH_
+#define MSCCLPP_EP_COMMON_LATENCY_CUH_
 
 #include <cstdint>
 #include <mscclpp/bulk_device.hpp>
@@ -8,14 +9,12 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
-#include "../config.hpp"
-#include "api.cuh"
+#include "config.hpp"
 #include "device_helpers.cuh"
+#include "kernels.hpp"
 
 namespace mscclpp {
 namespace ep {
-namespace low_latency {
-namespace detail {
 
 constexpr int DispatchNWarps = 16;
 constexpr int DispatchMinNWarpsPerGroup = 8;
@@ -39,11 +38,11 @@ struct TransportView {
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
 
-  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
-      : symmetricBufferBase_(comm.symmetricBufferBase_),
-        peerMappedBufferBases_(comm.peerMappedBufferBases_),
-        baseMemoryChannels_(comm.baseMemoryChannels_),
-        rank_(comm.rank_) {}
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
+      : symmetricBufferBase_(context->localBufferBase_),
+        peerMappedBufferBases_(context->peerBufferBases_),
+        baseMemoryChannels_(context->channels_),
+        rank_(context->rank_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 
@@ -164,20 +163,20 @@ struct KernelConfigCache {
 };
 
 template <typename Kernel>
-inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const CommContext& comm,
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
                            KernelConfigCache& cache) {
-  if (cache.deviceId_ != comm.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
+  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
     cudaFuncAttributes attributes;
     CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
     EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
-                   static_cast<size_t>(comm.maxSharedMemoryPerBlock_));
+                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
     CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
                                     static_cast<int>(dynamicSharedBytes)));
     int blocksPerSm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
-    cache.deviceId_ = comm.deviceId_;
+    cache.deviceId_ = context.deviceId_;
     cache.dynamicSharedBytes_ = dynamicSharedBytes;
-    cache.residentBlocks_ = blocksPerSm * comm.numSms_;
+    cache.residentBlocks_ = blocksPerSm * context.numSms_;
   }
   return cache.residentBlocks_;
 }
@@ -224,7 +223,7 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, 
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
 }
 
-}  // namespace detail
-}  // namespace low_latency
 }  // namespace ep
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_COMMON_LATENCY_CUH_
