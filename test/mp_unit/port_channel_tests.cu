@@ -732,49 +732,14 @@ __global__ void kernelPortChannelAccumulateWrap(uint64_t* localBuff, int* ret) {
 void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
-  const int nElem = useEthernet ? 2 : 1;
-  const int allocationElem = useEthernet ? 8 : nElem;
+  const int nElem = 1;
   std::vector<mscclpp::PortChannel> portChannels;
-  auto buff = mscclpp::GpuBuffer<int64_t>(allocationElem);
-  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, allocationElem * sizeof(int64_t)));
+  auto buff = mscclpp::GpuBuffer<int64_t>(nElem);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, nElem * sizeof(int64_t)));
 
-  mscclpp::RegisteredMemory ethernetRemoteMem;
-  if (useEthernet) {
-    const int peer = 1 - gEnv->rank;
-    mscclpp::EndpointConfig cfg;
-    cfg.transport = mscclpp::Transport::Ethernet;
-    auto connFuture = communicator->connect(cfg, peer);
-    auto localMem =
-        communicator->registerMemory(buff.memory().get(), nElem * sizeof(int64_t), mscclpp::Transport::Ethernet);
-    communicator->sendMemory(localMem, peer);
-    auto remoteFuture = communicator->recvMemory(peer);
-
-    auto conn = connFuture.get();
-    ethernetRemoteMem = remoteFuture.get();
-    auto sema = communicator->buildSemaphore(conn, peer).get();
-    auto semaphoreId = proxyService->addSemaphore(sema);
-    portChannels.emplace_back(proxyService->portChannel(semaphoreId, proxyService->addMemory(ethernetRemoteMem),
-                                                        proxyService->addMemory(localMem)));
-  } else {
-    setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t),
-                         nullptr, 0, ibMode);
-  }
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t), nullptr,
+                       0, ibMode);
   ASSERT_EQ(portChannels.size(), 1);
-
-  if (useEthernet) {
-    const int peer = 1 - gEnv->rank;
-    auto smallBacking = mscclpp::GpuBuffer<uint8_t>(64).memory();
-    auto smallLocalMem = communicator->registerMemory(smallBacking.get(), 7, mscclpp::Transport::Ethernet);
-    communicator->sendMemory(smallLocalMem, peer, /*tag=*/79);
-    auto smallRemoteMem = communicator->recvMemory(peer, /*tag=*/79).get();
-    auto& conn = proxyService->semaphore(0)->connection();
-    EXPECT_TRUE(rejectsInvalidUsage([&] { conn.accumulate(smallRemoteMem, 0, 1); }, "out of bounds"));
-    EXPECT_TRUE(
-        rejectsInvalidUsage([&] { conn.accumulate(ethernetRemoteMem, nElem * sizeof(int64_t), 1); }, "out of bounds"));
-    EXPECT_TRUE(rejectsInvalidUsage([&] { conn.accumulate(ethernetRemoteMem, nElem * sizeof(int64_t) - 4, 1); },
-                                    "out of bounds"));
-    EXPECT_TRUE(rejectsInvalidUsage([&] { conn.accumulate(ethernetRemoteMem, 1, 1); }, "aligned"));
-  }
 
   auto handle = portChannels[0].deviceHandle();
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, &handle, sizeof(handle)));
@@ -853,6 +818,49 @@ TEST(PortChannelOneToOneTest, AccumulateIb) {
 }
 
 TEST(PortChannelOneToOneTest, AccumulateEthernet) { testAccumulate(false, false, true); }
+
+TEST(PortChannelOneToOneTest, AccumulateEthernetRejectsInvalidTargets) {
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsUndersized = false;
+  bool rejectsExactEnd = false;
+  bool rejectsStraddling = false;
+  bool rejectsMisalignment = false;
+
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    // The allocations are deliberately larger than their registrations, so a missing bounds check
+    // remains within an allocation while the test reports the failure.
+    auto backing = mscclpp::GpuBuffer<uint8_t>(64).memory();
+    auto smallBacking = mscclpp::GpuBuffer<uint8_t>(64).memory();
+
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = mscclpp::Transport::Ethernet;
+    auto connFuture = communicator->connect(cfg, peer);
+    auto localMem = communicator->registerMemory(backing.get(), 16, mscclpp::Transport::Ethernet);
+    auto smallLocalMem = communicator->registerMemory(smallBacking.get(), 7, mscclpp::Transport::Ethernet);
+    communicator->sendMemory(localMem, peer, /*tag=*/79);
+    communicator->sendMemory(smallLocalMem, peer, /*tag=*/80);
+    auto remoteFuture = communicator->recvMemory(peer, /*tag=*/79);
+    auto smallRemoteFuture = communicator->recvMemory(peer, /*tag=*/80);
+
+    auto conn = connFuture.get();
+    auto remoteMem = remoteFuture.get();
+    auto smallRemoteMem = smallRemoteFuture.get();
+    rejectsUndersized = rejectsInvalidUsage([&] { conn.accumulate(smallRemoteMem, 0, 1); }, "out of bounds");
+    rejectsExactEnd = rejectsInvalidUsage([&] { conn.accumulate(remoteMem, 16, 1); }, "out of bounds");
+    rejectsStraddling = rejectsInvalidUsage([&] { conn.accumulate(remoteMem, 12, 1); }, "out of bounds");
+    rejectsMisalignment = rejectsInvalidUsage([&] { conn.accumulate(remoteMem, 1, 1); }, "aligned");
+  }
+
+  // Only ranks 0 and 1 own the fixture bootstrap; synchronize the full test world after teardown.
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsUndersized);
+    EXPECT_TRUE(rejectsExactEnd);
+    EXPECT_TRUE(rejectsStraddling);
+    EXPECT_TRUE(rejectsMisalignment);
+  }
+}
 
 TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
   REQUIRE_IBVERBS;
