@@ -581,19 +581,34 @@ final receive buffers and exposed as zero-copy Torch tensors.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
 
-The MoE runner must write its rank-major output into the runtime-owned
-registered buffer:
+Set `combine_mode=CombineMode.DIRECT_SEND` with rank-major dispatch to move the
+top-k reduction into combine. The existing `RANK_LOCAL_REDUCE` behavior remains
+available. The MoE runner writes one weighted BF16 row per top-k route into the
+runtime-owned registered buffer:
 
 ```python
 dispatch_out, handle = communicator.dispatch(x, topk_ids, topk_weights)
-expert_output = dispatch_out.combine_input_buffer
-assert expert_output is not None
-moe(..., output=expert_output)
-combined = communicator.combine(expert_output, handle)
+route_output = dispatch_out.combine_input_buffer
+assert route_output is not None
+assert route_output.shape == (
+    world_size * max_tokens_per_rank,
+    top_k,
+    hidden,
+)
+moe(..., route_output=route_output)
+combined = communicator.combine(route_output, handle)
 ```
 
-Combine performs one signal/wait exchange per peer, reads the required rows
-directly from remote rank-major output buffers, and reduces them locally.
+Rank-major storage is selected once from the configured combine mode.
+`RANK_LOCAL_REDUCE` aliases `combine_input_buffer` to the 2-D dispatch output
+because the locally reduced result has the same shape and dispatch/combine calls
+are sequential. `DIRECT_SEND` allocates a separate 3-D route buffer only when
+that mode is configured.
+
+The MoE GEMM remains unchanged. It skips its post-GEMM top-k sum and exposes
+the existing weighted route tensor. Combine performs one signal/wait exchange
+per peer, reads each required top-k route directly from remote rank-major
+output buffers, and performs the full FP32 top-k reduction on the source rank.
 Rank-major buffers are currently single-buffered, so `enable_overlap=True` is
 rejected.
 For expert-major output, only the first
@@ -654,8 +669,10 @@ expert_output = expert_major_mlp(
 
 The MLP must preserve the dispatch output layout and row/slot order. For
 token-major output, combine assumes each row is already weighted and reduced
-across all local experts. `CombineMode.DIRECT_SEND` is therefore available only
-for expert-major output.
+across all local experts. With rank-major output, `CombineMode.DIRECT_SEND`
+consumes weighted route rows and performs the full top-k reduction in combine.
+With expert-major output, it retains its existing expert-row direct-send
+behavior.
 
 ## Combine API
 

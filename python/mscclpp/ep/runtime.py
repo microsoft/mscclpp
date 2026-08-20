@@ -5,12 +5,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from functools import wraps
+from typing import Callable, Optional, ParamSpec, TypeVar
 
 import torch
 
 from mscclpp.ep.context import Context
 from mscclpp.ep.types import DispatchHandle, DispatchOutput, QuantConfig
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def requires_initialized(method: Callable[P, R]) -> Callable[P, R]:
+    """Initialize the mode-specific runtime before entering ``method``."""
+
+    @wraps(method)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        runtime = args[0]
+        if not isinstance(runtime, Runtime):
+            raise TypeError("requires_initialized can only decorate Runtime methods")
+        runtime.initialize()
+        return method(*args, **kwargs)
+
+    return wrapped
 
 
 class Runtime(ABC):
@@ -36,6 +54,19 @@ class Runtime(ABC):
 
     def is_internode_available(self) -> bool:
         return self.cpp_runtime.is_internode_available()
+
+    def initialize(self) -> None:
+        """Collectively initialize deferred runtime resources."""
+        if self.context.initialized:
+            return
+        if torch.cuda.is_current_stream_capturing():
+            raise RuntimeError("MSCCL++ runtime must be initialized collectively before CUDA graph capture")
+        self.cpp_runtime.initialize()
+        self.context.initialized = True
+
+    def is_initialized(self) -> bool:
+        """Return whether deferred runtime resources are initialized."""
+        return self.context.initialized
 
     def get_dispatch_output_buffer(self) -> torch.Tensor:
         """Return the runtime-owned latency dispatch output buffer."""

@@ -119,6 +119,7 @@ def main():
         )
     print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
     assert moe.is_available()
+    assert not moe.is_initialized()
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(num_ranks)))
     expected_internode = num_ranks > local_world_size
     assert moe.is_internode_available() == expected_internode
@@ -129,6 +130,7 @@ def main():
         topk_idx,
         topk_weights,
     )
+    assert moe.is_initialized()
     recv_x = dispatch_out.tokens
     dist.barrier(group=group)
 

@@ -12,7 +12,8 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
-                       int numExperts, int numTopk, int64_t maxHiddenBytes, int numBlocks, DispatchLayout outputLayout)
+                       int numExperts, int numTopk, int64_t maxHiddenBytes, int numBlocks, DispatchLayout outputLayout,
+                       CombineMode combineMode)
     : bootstrap_(communicator.bootstrap()),
       mode_(mode),
       rank_(bootstrap_->getRank()),
@@ -26,7 +27,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     case MoEMode::LATENCY:
       latencyContext_ =
           std::make_unique<LatencyContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                           maxTokensPerRank, hidden, numExperts, numTopk, outputLayout);
+                                           maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
@@ -46,6 +47,19 @@ void MoERuntime::requireMode(MoEMode expected) const {
   if (mode_ != expected) {
     throw std::runtime_error(expected == MoEMode::LATENCY ? "MoE runtime was not created with MoEMode::LATENCY"
                                                           : "MoE runtime was not created with MoEMode::THROUGHPUT");
+  }
+}
+
+void MoERuntime::initialize() {
+  switch (mode_) {
+    case MoEMode::LATENCY:
+      latencyContext_->initialize();
+      return;
+    case MoEMode::THROUGHPUT:
+      throughputContext_->initialize();
+      return;
+    default:
+      throw std::invalid_argument("Unsupported MoE runtime mode");
   }
 }
 
@@ -97,9 +111,9 @@ void MoERuntime::combine(const CombineRequest& request) {
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numBlocks, DispatchLayout outputLayout) {
+                                             int numBlocks, DispatchLayout outputLayout, CombineMode combineMode) {
   return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, maxHiddenBytes,
-                                      numBlocks, outputLayout);
+                                      numBlocks, outputLayout, combineMode);
 }
 
 }  // namespace ep

@@ -183,6 +183,28 @@ def simulated_gemm_output(dispatch_out):
     return output.to(torch.bfloat16)
 
 
+def simulated_rank_major_route_output(dispatch_out):
+    """Return one weighted BF16 output row per rank-major top-k route."""
+    tokens = dequantized_dispatch_tokens(dispatch_out)
+    assert dispatch_out.topk_ids is not None
+    assert dispatch_out.weights is not None
+    weights = dispatch_out.weights.masked_fill(dispatch_out.topk_ids < 0, 0.0)
+    return (tokens.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
+
+
+def stage_simulated_gemm_output(dispatch_out):
+    """Build simulated GEMM output in the runtime-owned buffer when required."""
+    combine_input = dispatch_out.combine_input_buffer
+    if combine_input is None:
+        return simulated_gemm_output(dispatch_out)
+    combine_input.copy_(
+        simulated_rank_major_route_output(dispatch_out)
+        if combine_input.dim() == 3
+        else simulated_gemm_output(dispatch_out)
+    )
+    return combine_input
+
+
 def validate_combine_output(actual, expected, *, exact, group):
     local_diff = (actual.float() - expected.float()).abs().max()
     global_diff = local_diff.clone()
@@ -447,6 +469,13 @@ def expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_r
     return expected.to(torch.bfloat16)
 
 
+def expected_rank_major_route_output(reference_x, topk_idx, topk_weights):
+    """Reference for BF16 route stores followed by source-local FP32 reduction."""
+    weights = (topk_idx >= 0).float() if topk_weights is None else topk_weights.masked_fill(topk_idx < 0, 0.0)
+    routes = (reference_x.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
+    return routes.float().sum(dim=1).to(torch.bfloat16)
+
+
 def main():
     args = parse_args()
     rank, num_ranks, _, group = init_dist()
@@ -471,7 +500,10 @@ def main():
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
     }[args.output_layout]
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        assert combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE, "rank-major output requires rank-local combine"
+        assert combine_mode in (
+            ep.CombineMode.RANK_LOCAL_REDUCE,
+            ep.CombineMode.DIRECT_SEND,
+        ), "rank-major output requires a supported combine mode"
     dispatch_data_type = {
         "bf16": ep.DispatchDataType.BF16,
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
@@ -536,8 +568,13 @@ def main():
         flush=True,
     )
     assert moe_comm.is_available()
+    assert not moe_comm.is_initialized()
+    assert moe_comm._context.dispatch_output_buffer is None
 
     dist.barrier(group=group)
+    moe_comm.initialize()
+    dispatch_output_buffer = moe_comm.get_dispatch_output_buffer()
+    assert moe_comm.is_initialized()
     torch.cuda.synchronize()
     print(f"[rank {rank}] pre-dispatch", flush=True)
 
@@ -547,7 +584,7 @@ def main():
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR
         else (num_ranks * num_tokens, hidden)
     )
-    dispatch_output_buffer = moe_comm.get_dispatch_output_buffer()
+    assert moe_comm._context.dispatch_output_buffer is dispatch_output_buffer
     dispatch_out, handle = moe_comm.dispatch(
         x,
         topk_idx,
@@ -557,6 +594,12 @@ def main():
     assert dispatch_out.tokens.data_ptr() == dispatch_output_buffer.data_ptr()
     assert tuple(dispatch_out.tokens.shape) == dispatch_output_shape
     assert dispatch_out.tokens.dtype == dispatch_dtype
+    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+        assert dispatch_out.combine_input_buffer is not None
+        if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+            assert dispatch_out.combine_input_buffer.data_ptr() == dispatch_out.tokens.data_ptr()
+        else:
+            assert dispatch_out.combine_input_buffer.data_ptr() != dispatch_out.tokens.data_ptr()
     packed_recv_x = dispatch_out.tokens
     packed_recv_count = (
         dispatch_out.layout.num_tokens_per_expert
@@ -635,12 +678,7 @@ def main():
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
     # returns sum(x * weight) across experts.
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
-    simulated_gemm_x = simulated_gemm_output(dispatch_out)
-    if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        rank_major_expert_output = dispatch_out.combine_input_buffer
-        assert rank_major_expert_output is not None
-        rank_major_expert_output.copy_(simulated_gemm_x)
-        simulated_gemm_x = rank_major_expert_output
+    simulated_gemm_x = stage_simulated_gemm_output(dispatch_out)
     reference_x = x
     if dispatch_quant is not None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
@@ -676,7 +714,9 @@ def main():
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
-    if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
+        expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
+    elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
         expected = expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
     else:
         expected = expected_direct_send_output(reference_x, topk_idx, topk_weights)
@@ -711,19 +751,16 @@ def main():
                 output_buffer=dispatch_buffer,
             )
             dispatch_end.record()
-            graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
-            if output_layout == ep.DispatchLayout.RANK_MAJOR and expert_output is None:
-                rank_major_expert_output = graph_dout[0].combine_input_buffer
-                assert rank_major_expert_output is not None
-                rank_major_expert_output.copy_(graph_expert_output)
-                graph_expert_output = rank_major_expert_output
+            graph_expert_output = stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
             graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
             graph_end.record()
         return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end
 
     def _run_cuda_graph_correctness():
         graph_dispatch_output_buffer = (
-            None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer)
+            dispatch_output_buffer
+            if output_layout == ep.DispatchLayout.RANK_MAJOR
+            else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
         )
         graph_out = torch.empty_like(out)
         graph, _, graph_combined_x, _, _, _ = _graph_capture(graph_dispatch_output_buffer, graph_out)
@@ -754,7 +791,11 @@ def main():
 
     warmup = args.bench_warmup
     iters = args.bench_iters
-    bench_dispatch_output_buffer = None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer)
+    bench_dispatch_output_buffer = (
+        dispatch_output_buffer
+        if output_layout == ep.DispatchLayout.RANK_MAJOR
+        else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
+    )
 
     def _dispatch():
         return moe_comm.dispatch(
@@ -824,12 +865,7 @@ def main():
     else:
         for _ in range(warmup):
             warmup_dout = _dispatch()
-            warmup_expert_output = simulated_gemm_output(warmup_dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = warmup_dout[0].combine_input_buffer
-                assert rank_major_expert_output is not None
-                rank_major_expert_output.copy_(warmup_expert_output)
-                warmup_expert_output = rank_major_expert_output
+            warmup_expert_output = stage_simulated_gemm_output(warmup_dout[0])
             _combine(warmup_expert_output, warmup_dout[1], bench_out)
         torch.cuda.synchronize()
         dist.barrier(group=group)
@@ -841,12 +877,7 @@ def main():
             dispatch_start_events[i].record()
             dout = _dispatch()
             dispatch_end_events[i].record()
-            bench_expert_output = simulated_gemm_output(dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = dout[0].combine_input_buffer
-                assert rank_major_expert_output is not None
-                rank_major_expert_output.copy_(bench_expert_output)
-                bench_expert_output = rank_major_expert_output
+            bench_expert_output = stage_simulated_gemm_output(dout[0])
             _combine(bench_expert_output, dout[1], bench_out)
         torch.cuda.synchronize()
         disp_us = sum(start.elapsed_time(end) for start, end in zip(dispatch_start_events, dispatch_end_events)) * 1e3
@@ -858,12 +889,7 @@ def main():
         combine_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
         for i in range(iters):
             dout = _dispatch()
-            bench_expert_output = simulated_gemm_output(dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = dout[0].combine_input_buffer
-                assert rank_major_expert_output is not None
-                rank_major_expert_output.copy_(bench_expert_output)
-                bench_expert_output = rank_major_expert_output
+            bench_expert_output = stage_simulated_gemm_output(dout[0])
             combine_start_events[i].record()
             _combine(bench_expert_output, dout[1], bench_out)
             combine_end_events[i].record()

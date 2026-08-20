@@ -156,7 +156,8 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
-  size_t recvBufferBytes_;
+  size_t dispatchRecvBufferBytes_;
+  size_t combineRecvBufferBytes_;
   size_t dispatchOutputBytes_;
   void* dispatchRecvBuffer_ = nullptr;
   void* combineRecvBuffer_ = nullptr;
@@ -165,8 +166,10 @@ struct LatencyStorageLayout {
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout) {
+                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
+    const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
+    const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -178,30 +181,38 @@ struct LatencyStorageLayout {
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
     const size_t rankMajorDispatchOutputBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
-    const size_t recvBufferBytes = std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
-    recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ =
-        2 * recvBufferBytes_ + (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+    const size_t dispatchRecvBufferBytes =
+        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
+    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
+                                          : rankMajorLocalReduce ? 0
+                                                                 : dispatchOutputBytes_;
+    dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
+    combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
+    totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
+                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
-      combineRecvBuffer_ = base + recvBufferBytes_;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes : base + 2 * recvBufferBytes_;
+      dispatchOutputBuffer_ =
+          rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
+      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
     }
   }
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout) {
+                                 DispatchLayout outputLayout, CombineMode combineMode) {
   const auto numBytes =
-      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout).totalBytes_;
+      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
+          .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 

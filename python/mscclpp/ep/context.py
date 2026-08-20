@@ -11,6 +11,8 @@ from mscclpp.ep.types import MoECommunicatorConfig
 class Context:
     """Persistent mode-specific configuration, buffers, and metadata."""
 
+    initialized: bool
+
 
 def create_context(config: MoECommunicatorConfig) -> Context:
     """Construct the context selected by ``config.mode``."""

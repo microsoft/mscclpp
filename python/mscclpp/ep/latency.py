@@ -10,7 +10,7 @@ import torch
 
 from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, create_moe_runtime
 from mscclpp.ep.context import Context
-from mscclpp.ep.runtime import Runtime
+from mscclpp.ep.runtime import Runtime, requires_initialized
 from mscclpp.ep.types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -49,6 +49,7 @@ class LatencyContext(Context):
         self.world_size = comm.nranks
         self.local_rank = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
+        self.initialized = False
         self.mode = MoEMode.LATENCY
         self.output_layout = output_layout
 
@@ -81,8 +82,11 @@ class LatencyContext(Context):
         if 0 <= self.invalid_token_expert_id < self.num_experts:
             raise ValueError("invalid_token_expert_id must not overlap a valid global expert ID")
         if self.output_layout == DispatchLayout.RANK_MAJOR:
-            if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
-                raise ValueError("RANK_MAJOR output requires RANK_LOCAL_REDUCE combine")
+            if self.combine_mode not in (
+                CombineMode.RANK_LOCAL_REDUCE,
+                CombineMode.DIRECT_SEND,
+            ):
+                raise ValueError("RANK_MAJOR output requires a supported combine mode")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR output does not support overlapping calls yet")
 
@@ -130,16 +134,18 @@ class LatencyRuntime(Runtime):
             num_topk=context.topk,
             num_blocks=context.num_blocks,
             output_layout=context.output_layout,
+            combine_mode=context.combine_mode,
         )
         super().__init__(context, cpp_runtime)
-        self._bind_buffers()
 
+    @requires_initialized
     def get_dispatch_output_buffer(self) -> torch.Tensor:
         """Return the stable runtime-owned dispatch output buffer."""
         if self.context.dispatch_output_buffer is None:
             raise RuntimeError("latency dispatch output buffer is unavailable")
         return self.context.dispatch_output_buffer
 
+    @requires_initialized
     def dispatch(
         self,
         input: torch.Tensor,
@@ -203,6 +209,9 @@ class LatencyRuntime(Runtime):
         else:
             raise ValueError(f"unsupported latency output layout: {mode_context.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
+        combine_input_buffer = mode_context.combine_input_buffer
+        if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+            assert combine_input_buffer is not None
         dispatch_out = DispatchOutput(
             tokens=out_buf,
             quant=output_info.quant,
@@ -210,7 +219,9 @@ class LatencyRuntime(Runtime):
             topk_ids=recv_topk_ids,
             weights=recv_weights,
             combine_input_buffer=(
-                mode_context.combine_input_buffer if mode_context.output_layout == DispatchLayout.RANK_MAJOR else None
+                combine_input_buffer[: mode_context.world_size * active_capacity]
+                if mode_context.output_layout == DispatchLayout.RANK_MAJOR
+                else None
             ),
         )
         if mode_context.output_layout == DispatchLayout.EXPERT_MAJOR:
@@ -243,6 +254,7 @@ class LatencyRuntime(Runtime):
             raise ValueError(f"unsupported latency output layout: {mode_context.output_layout}")
         return dispatch_out, handle
 
+    @requires_initialized
     def combine(
         self,
         expert_output: torch.Tensor,
@@ -292,9 +304,17 @@ class LatencyRuntime(Runtime):
         )
         return out
 
+    def initialize(self) -> None:
+        """Collectively initialize and bind latency communication resources."""
+        super().initialize()
+        if self.context.dispatch_output_buffer is None:
+            self._bind_buffers()
+
     def _bind_buffers(self) -> None:
         """Create tensor views over runtime-owned latency buffers."""
         context = self.context
+        if context.dispatch_output_buffer is not None:
+            return
         if context.output_layout == DispatchLayout.EXPERT_MAJOR:
             dispatch_shape = (
                 context.num_local_experts,
@@ -331,13 +351,21 @@ class LatencyRuntime(Runtime):
             context.device,
             self.cpp_runtime,
         )
-        context._combine_input_owner, context.combine_input_buffer = tensor_from_pointer(
-            self.cpp_runtime.combine_input_buffer_ptr(),
-            dispatch_shape,
-            torch.bfloat16,
-            context.device,
-            self.cpp_runtime,
-        )
+        if context.combine_mode == CombineMode.RANK_LOCAL_REDUCE:
+            context._combine_input_owner = context._dispatch_output_owner
+            context.combine_input_buffer = context.dispatch_output_buffer
+        else:
+            context._combine_input_owner, context.combine_input_buffer = tensor_from_pointer(
+                self.cpp_runtime.combine_input_buffer_ptr(),
+                (
+                    context.world_size * context.max_tokens_per_rank,
+                    context.topk,
+                    context.hidden_size,
+                ),
+                torch.bfloat16,
+                context.device,
+                self.cpp_runtime,
+            )
 
     def _resolve_capacity(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
         mode_context = self.context
@@ -483,6 +511,15 @@ class LatencyRuntime(Runtime):
             expected_shape = (
                 mode_context.num_local_experts,
                 slots_per_expert,
+                mode_context.hidden_size,
+            )
+        elif (
+            handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR
+            and mode_context.combine_mode == CombineMode.DIRECT_SEND
+        ):
+            expected_shape = (
+                mode_context.world_size * active_capacity,
+                mode_context.topk,
                 mode_context.hidden_size,
             )
         elif handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
