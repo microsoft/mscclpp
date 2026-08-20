@@ -182,6 +182,29 @@ jobs:
 
   - template: templates/run-remote-task.yml
     parameters:
+      name: RunBenchCollectiveDslTest
+      displayName: Run multi-nodes bench_collective DSL allreduce
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        set -e
+        # bench_collective compiles the DSL plans in-process on every rank, so unlike the
+        # executor_test steps above this needs no separate plan generation pass.
+        #
+        # Batch sizes are capped so that batch * d_model * sizeof(float16) stays below 512 KiB:
+        # above that the native rsag algorithms become tuning candidates, and they neither
+        # support nor reject multi-node runs, which hangs the tuner.
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          -x PYTHONPATH=/root/mscclpp/python \
+          python3 -m mscclpp_benchmark.bench_collective \
+            --collective allreduce --autotune --enable-dsl \
+            --d-model 5120 --batch-sizes 8,16,32 --dsl-tbg 1,2 --dsl-tpb 512,1024
+
+  - template: templates/run-remote-task.yml
+    parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
