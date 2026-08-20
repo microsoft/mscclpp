@@ -2,8 +2,119 @@
 
 ## 1. Status
 
-This document describes a future implementation. The current MSCCL++ branch
-does not implement this mode.
+The fused GEMM peer-store proposal below is superseded. The accepted
+implementation does not change rank-major dispatch or the GEMM kernel:
+
+```text
+rank-major dispatch
+  -> existing GEMM2 weighted route output [rank_rows, top_k, hidden]
+  -> no post-GEMM producer-local top-k sum
+  -> MSCCL++ combine remotely pulls route rows
+  -> source-local FP32 top-k reduction
+  -> BF16 output
+```
+
+Only the post-GEMM output contract and rank-major combine change. The original
+proposal is retained below as rejected design history; do not implement its
+peer-address GEMM epilogue or completion protocol.
+
+The corrected path is selected by `CombineMode::DIRECT_SEND` together with
+`DispatchLayout::RANK_MAJOR`. `CombineMode::RANK_LOCAL_REDUCE` retains the
+existing producer-local reduction for compatibility and baseline comparison.
+The local-reduce mode aliases its combine input to the dispatch output and does
+not allocate a second 2-D buffer. Direct mode alone allocates the larger 3-D
+route buffer.
+SGLang uses one `MSCCLPPDispatchOutput` and one `MSCCLPPCombineInput` across
+MSCCL++ layouts and modes. The dispatch format tag identifies layout-specific
+metadata. Rank-major dispatch exposes `route_output_buffer` only for direct
+mode; MAI receives exactly one output tensor, either the 2-D alias or the 3-D
+route buffer. Its `reduce_output` flag explicitly selects local reduction
+instead of inferring behavior from tensor rank.
+
+GB200 CUDA-Graph results at `T=64`, `H=4096`, `I=6656`, 16 local experts,
+and top-8:
+
+| GPUs | Rank-local reduce | Combine-side reduce | Delta |
+|---:|---:|---:|---:|
+| 4 | 477.9 us | 470.1 us | -1.62% |
+| 8 | 548.8 us | 533.8 us | -2.73% |
+| 16 | 680.2 us | 654.3 us | -3.81% |
+| 32 | 948.3 us | 896.1 us | -5.50% |
+
+The 32-GPU values are means of two matched runs: 947.0/949.5 us for rank-local
+reduce and 893.2/898.9 us for combine-side reduce. All runs had exact
+eager/CUDA-Graph parity. A 4-GPU identity-GEMM test also matched the analytical
+route-level BF16 reference exactly in both eager and CUDA-Graph execution.
+
+At 32 GPUs and 32 tokens/rank, while retaining 16 local experts/rank (512
+global experts), rank-local reduce took 711.0 us and combine-side reduce took
+683.8 us (-3.83%). A second combine-side run took 685.7 us. The reverse-order
+baseline repeat did not launch because a production SGLang deployment started
+on the test nodes; it produced no benchmark sample.
+
+The original all-routes MAI composition applied SwiGLU to the full rank-major
+capacity, including routes with local expert ID `-1`. The shared production
+path now uses SGLang's filtered `act_and_mul_triton` with those existing IDs,
+without changing dispatch, W8A16 GEMM, route-output addressing, or combine.
+A quick 5-replay by 20-iteration CUDA-Graph A/B while the resident deployment
+was compute-idle measured:
+
+| GPUs | Dense SwiGLU | Active-route SwiGLU | Delta |
+|---:|---:|---:|---:|
+| 4 | 470.5 us | 440.8 us | -6.31% |
+| 16 | 655.2 us | 507.9 us | -22.48% |
+| 32 | 898.2 us | 584.9 us | -34.88% |
+
+The 32-GPU active value is the mean of 585.7 and 584.1 us. All runs had exact
+eager/CUDA-Graph parity. Focused activation tests matched the previous dense
+kernel within the established BF16 tolerance (`max_abs=0.0625`), and the full
+MAI path matched its numerical reference.
+At the EP32 route sparsity, filtered Triton activation outperformed SGLang's
+filtered native JIT kernel: 10.3 vs 13.2 us at T32, 14.6 vs 20.8 us at T64,
+and 24.6 vs 36.9 us at T128. The native JIT kernel was bit-exact to the old
+dense kernel; Triton had max absolute difference 0.0625 within BF16 tolerance.
+The shared production path uses the filtered native JIT kernel to preserve
+bit-exact activation numerics.
+
+A 32-GPU T64 CUDA-Graph stage profile measured rank-mean dispatch at 23.9 us,
+MAI compute at 555.1 us, and combine at 26.1 us. External timing nodes raised
+the profiled graph sum to 605.2 us versus 584.3 us uninstrumented; preserving
+the measured proportions gives an approximate uninstrumented breakdown of
+23.1 us dispatch, 536.0 us compute, and 25.2 us combine.
+
+At 32 GPUs and 32 tokens/rank, active-route SwiGLU measured 534.6 us E2E.
+Stage markers measured 25.4 us dispatch, 498.5 us MAI compute, and 31.8 us
+combine (555.7 us with marker overhead). Normalized to the uninstrumented E2E,
+the approximate breakdown is 24.4 us dispatch, 479.6 us compute, and 30.6 us
+combine.
+
+Matching the production trace dimensions (`H=4352`, `I=6528`) at 32 GPUs and
+32 tokens/rank measured 564.4 us E2E and 1.814M global tokens/s with exact
+eager/CUDA-Graph parity.
+
+At 128 tokens/rank, the same EP32 shape measured 1015.7 us E2E and 4.033M
+global tokens/s with filtered native JIT activation and exact eager/CUDA-Graph
+parity. It uses one FC1, one
+active-route SwiGLU, and one FC2 call; the experimental T1024 chunk loop was
+removed. A prior filtered-Triton rank-zero sequence measured 20.4 us dispatch,
+9.2 us alignment, 22.7 us count/sort, 164.8 us FC1 gather/populate, 321.3 us
+FC1 GEMM, 25.6 us activation, 110.0 us FC2 gather/populate, 194.6 us FC2 GEMM,
+7.1 us metadata kernels, and 127.3 us combine.
+The prior matched filtered-Triton rank-local-reduce baseline measured 1100.7 us
+and 3.721M global tokens/s versus 1008.7 us for direct combine, an E2E reduction
+of 92.0 us (8.36%). The baseline
+eager/CUDA-Graph outputs remained within the configured BF16 tolerance, with
+global max absolute difference 0.25. Representative rank-zero sequences showed
+that the common dispatch/GEMM/activation kernels were within normal run
+variation. Rank-local reduce added an 83.4 us producer top-k reduction and
+14.0 us BF16 copy before its 119.0 us combine; direct mode replaced that tail
+with a 127.3 us combine, reducing the dispatch-to-combine span by 92.8 us.
+
+A rank-zero CUDA kernel profile of that shape attributed 430.2 us to the two
+W8A16 GEMMs, 70.5 us to their gather/populate prologues, 13.0 us to active-route
+SwiGLU, 10.6 us to route alignment/sorting, 7.4 us to other compute kernels,
+14.0 us to dispatch, and 16.7 us to combine. These kernels total 562.4 us,
+within 2.0 us of the uninstrumented 564.4 us E2E.
 
 The proposed mode lets the expert rank's GEMM2 epilogue write each weighted
 route row directly into the originating rank's symmetric route buffer. The

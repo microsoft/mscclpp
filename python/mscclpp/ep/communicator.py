@@ -134,6 +134,14 @@ class MoECommunicator:
     def is_internode(self) -> bool:
         return self._runtime.is_internode_available()
 
+    def initialize(self) -> None:
+        """Collectively initialize deferred communication resources."""
+        self._runtime.initialize()
+
+    def is_initialized(self) -> bool:
+        """Return whether deferred communication resources are initialized."""
+        return self._runtime.is_initialized()
+
     def get_dispatch_output_buffer(self) -> torch.Tensor:
         """Return the runtime-owned buffer that may be passed to dispatch."""
         return self._runtime.get_dispatch_output_buffer()
