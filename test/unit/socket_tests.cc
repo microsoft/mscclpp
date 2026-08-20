@@ -136,27 +136,23 @@ TEST(Socket, BlockedReceiverShutdownJoinCloseIsBounded) {
     sockets.sender->shutdown();
 
     // shutdown must not release the descriptor before the receiver is joined.
-    int temporaryFd = ::open("/dev/null", O_RDONLY);
-    const bool descriptorReserved = temporaryFd >= 0 && temporaryFd != receiverFd;
-    if (temporaryFd >= 0) ::close(temporaryFd);
+    const int descriptorFlagsBeforeClose = ::fcntl(receiverFd, F_GETFD);
 
     receiver.join();
     const auto shutdownLatency =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - shutdownStart);
     sockets.receiver->close();
+    errno = 0;
+    const int descriptorFlagsAfterClose = ::fcntl(receiverFd, F_GETFD);
+    const int descriptorErrorAfterClose = errno;
     sockets.sender->close();
-
-    // Confirm the descriptor can be reused only after join and close.
-    int reuseFd = ::open("/dev/null", O_RDONLY);
-    const bool descriptorReused = reuseFd == receiverFd || (reuseFd >= 0 && ::dup2(reuseFd, receiverFd) == receiverFd);
-    if (reuseFd >= 0 && reuseFd != receiverFd) ::close(reuseFd);
-    if (descriptorReused) ::close(receiverFd);
 
     ASSERT_TRUE(receiverBlocked);
     const bool localShutdownResult =
         recvResult == 0 || (recvResult < 0 && (recvError == ENOTCONN || recvError == ESHUTDOWN));
-    ASSERT_TRUE(descriptorReserved);
-    ASSERT_TRUE(descriptorReused);
+    ASSERT_NE(descriptorFlagsBeforeClose, -1);
+    ASSERT_EQ(descriptorFlagsAfterClose, -1);
+    ASSERT_EQ(descriptorErrorAfterClose, EBADF);
     ASSERT_TRUE(localShutdownResult);
     ASSERT_LT(shutdownLatency.count(), MaxShutdownLatency.count());
   }

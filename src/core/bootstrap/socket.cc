@@ -311,7 +311,7 @@ int FindInterfaces(char* ifNames, union SocketAddress* ifAddrs, int ifNameMaxSiz
   // User specified interface
   const std::string& socketIfname = env()->socketIfname;
   if (inputIfName) {
-    INFO(NET, "using iterface ", inputIfName);
+    INFO(NET, "using interface ", inputIfName);
     nIfs = findInterfaces(inputIfName, ifNames, ifAddrs, sock_family, ifNameMaxSize, maxIfs);
   } else if (socketIfname != "") {
     // Specified by user : find or fail
