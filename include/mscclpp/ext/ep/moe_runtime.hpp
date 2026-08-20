@@ -25,7 +25,8 @@ class MoERuntime {
  public:
   /// Construct a runtime for the selected mode and topology.
   ///
-  /// Only resources required by @p mode are allocated.
+  /// Only resources required by @p mode are allocated. Mode-specific
+  /// communicator buffers are deferred until initialize().
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed latency-mode token capacity.
@@ -35,9 +36,11 @@ class MoERuntime {
   /// @param maxHiddenBytes Maximum throughput-mode bytes per token row.
   /// @param numBlocks Communication block budget.
   /// @param outputLayout Latency-mode dispatch output layout.
+  /// @param combineMode Latency-mode combine algorithm.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, int64_t maxHiddenBytes, int numBlocks,
-             DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
+             DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
+             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
   ~MoERuntime() noexcept(false);
 
   MoERuntime(const MoERuntime&) = delete;
@@ -49,6 +52,11 @@ class MoERuntime {
   bool isAvailable() const { return available_; }
   /// Return whether the runtime is available across more than one node.
   bool isInternodeAvailable() const { return available_ && numRanks_ > numNvlRanks_; }
+  /// Collectively initialize deferred runtime resources.
+  ///
+  /// All ranks must call this method exactly once and in the same order. The
+  /// Python API makes repeated initialize() calls idempotent.
+  void initialize();
 
   /// Return the local rank.
   int rank() const { return rank_; }
@@ -128,7 +136,8 @@ class MoERuntime {
 /// Create the unified MoE runtime selected by @p mode.
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numBlocks, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
+                                             int numBlocks, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
+                                             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
 
 }  // namespace ep
 }  // namespace mscclpp

@@ -23,13 +23,14 @@ namespace ep {
 // Mode-specific contexts owned by MoERuntime.
 struct LatencyContext {
   LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks, int numRanksPerIpcDomain,
-                 int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout);
+                 int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
+                 CombineMode combineMode);
   ~LatencyContext() noexcept(false);
 
  private:
   friend class MoERuntime;
 
-  void setup();
+  void initialize();
 
   int rank_;
   int numRanks_;
@@ -41,6 +42,7 @@ struct LatencyContext {
   int numExperts_;
   int numTopk_;
   DispatchLayout outputLayout_;
+  CombineMode combineMode_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 0;
@@ -63,7 +65,7 @@ struct ThroughputContext {
  private:
   friend class MoERuntime;
 
-  void setup(mscclpp::Communicator& communicator);
+  void initialize();
   int dispatchBlockCount(int xElementSize) const;
   bool canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
@@ -82,6 +84,7 @@ struct ThroughputContext {
   bool dispatchMetadataReady_ = false;
   bool collectiveDirectReady_ = false;
   RecvPoolConfig config_;
+  mscclpp::Communicator* communicator_ = nullptr;
   void* symmetricBuffer_ = nullptr;
   void* recvPool_ = nullptr;
   std::vector<void*> bufferPtrs_;

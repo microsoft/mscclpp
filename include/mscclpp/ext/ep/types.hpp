@@ -36,7 +36,10 @@ enum class DispatchLayout {
 enum class CombineMode {
   /// Reduce local expert rows before sending one partial per rank and token.
   RANK_LOCAL_REDUCE,
-  /// Send every expert row and reduce all contributions on the source rank.
+  /// Reduce all contributions on the source rank.
+  ///
+  /// Expert-major sends every expert row. Rank-major consumes one weighted
+  /// route row per top-k lane and performs the top-k reduction in combine.
   DIRECT_SEND
 };
 

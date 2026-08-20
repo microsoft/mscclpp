@@ -31,7 +31,8 @@ ThroughputContext::ThroughputContext(mscclpp::Communicator& communicator, int ra
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
       bootstrap_(communicator.bootstrap()),
       maxHiddenBytes_(maxHiddenBytes),
-      config_(config) {
+      config_(config),
+      communicator_(&communicator) {
   EP_HOST_ASSERT(maxHiddenBytes_ > 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
@@ -41,11 +42,11 @@ ThroughputContext::ThroughputContext(mscclpp::Communicator& communicator, int ra
   symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
   physicalControlBuffer_ = numRanks_ > numNvlRanks_;
   recvPoolBytes_ = RecvPoolConfig::recvPoolBytes(numRanks_);
-  setup(communicator);
+  available_ = true;
 }
 
 ThroughputContext::~ThroughputContext() noexcept(false) {
-  if (!available_) return;
+  if (deviceContext_.devicePtr_ == nullptr) return;
 
   CUDA_CHECK(cudaDeviceSynchronize());
   bootstrap_->barrier();
@@ -66,13 +67,16 @@ ThroughputContext::~ThroughputContext() noexcept(false) {
     CUDA_CHECK(cudaFree(symmetricBuffer_));
 }
 
-void ThroughputContext::setup(mscclpp::Communicator& communicator) {
-  EP_HOST_ASSERT(!available_);
+void ThroughputContext::initialize() {
+  EP_HOST_ASSERT(available_);
+  EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
+  EP_HOST_ASSERT(communicator_ != nullptr);
+  AvoidCudaGraphCaptureGuard captureGuard;
+  auto& communicator = *communicator_;
   if (physicalControlBuffer_) {
     symmetricBuffer_ = mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_);
   } else {
-    CUDA_CHECK(cudaMalloc(&symmetricBuffer_, symmetricBufferBytes_));
-    CUDA_CHECK(cudaMemset(symmetricBuffer_, 0, symmetricBufferBytes_));
+    symmetricBuffer_ = mscclpp::detail::gpuCalloc(symmetricBufferBytes_);
   }
   recvPool_ = mscclpp::detail::gpuCallocPhysical(recvPoolBytes_);
 
@@ -117,19 +121,19 @@ void ThroughputContext::setup(mscclpp::Communicator& communicator) {
     }
   }
 
-  CUDA_CHECK(cudaMalloc(&bufferPtrsGpu_, sizeof(void*) * numRanks_));
-  CUDA_CHECK(cudaMemcpy(bufferPtrsGpu_, bufferPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMalloc(&recvPoolPtrsGpu_, sizeof(void*) * numRanks_));
-  CUDA_CHECK(cudaMemcpy(recvPoolPtrsGpu_, recvPoolPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
+  bufferPtrsGpu_ = static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
+  mscclpp::gpuMemcpy<void*>(bufferPtrsGpu_, bufferPtrs_.data(), numRanks_, cudaMemcpyHostToDevice);
+  recvPoolPtrsGpu_ = static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
+  mscclpp::gpuMemcpy<void*>(recvPoolPtrsGpu_, recvPoolPtrs_.data(), numRanks_, cudaMemcpyHostToDevice);
   barrierChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
   mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(barrierChannelHandles_.get(), barrierChannelHandles.data(),
                                                              numRanks_, cudaMemcpyHostToDevice);
-  CUDA_CHECK(cudaMalloc(&combineRecvIdxGpu_,
-                        sizeof(int) * static_cast<size_t>(RecvPoolConfig::RecvPoolMaxTokens) * numRanks_));
-  CUDA_CHECK(cudaMallocHost(&moeRecvCounter_, sizeof(int), cudaHostAllocMapped));
+  combineRecvIdxGpu_ = static_cast<int*>(
+      mscclpp::detail::gpuCalloc(sizeof(int) * static_cast<size_t>(RecvPoolConfig::RecvPoolMaxTokens) * numRanks_));
+  moeRecvCounter_ = static_cast<volatile int*>(mscclpp::detail::gpuCallocHost(sizeof(int), cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvCounterMapped_, const_cast<int*>(moeRecvCounter_), 0));
-  CUDA_CHECK(
-      cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * RecvPoolConfig::MaxLocalExperts, cudaHostAllocMapped));
+  moeRecvExpertCounter_ = static_cast<volatile int*>(
+      mscclpp::detail::gpuCallocHost(sizeof(int) * RecvPoolConfig::MaxLocalExperts, cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvExpertCounterMapped_, const_cast<int*>(moeRecvExpertCounter_), 0));
   *moeRecvCounter_ = -1;
   for (int i = 0; i < RecvPoolConfig::MaxLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
@@ -153,9 +157,8 @@ void ThroughputContext::setup(mscclpp::Communicator& communicator) {
                     .deviceId_ = deviceId,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
-  CUDA_CHECK(cudaMalloc(&deviceContext_.devicePtr_, sizeof(DeviceContext)));
-  CUDA_CHECK(cudaMemcpy(deviceContext_.devicePtr_, &deviceContext_, sizeof(DeviceContext), cudaMemcpyHostToDevice));
-  available_ = true;
+  deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
+  mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }
 
 int ThroughputContext::dispatchBlockCount(int xElementSize) const {
@@ -178,6 +181,7 @@ void MoERuntime::tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExper
   requireMode(MoEMode::THROUGHPUT);
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % context.numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   ep::tokenMajorPrepare(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
@@ -186,12 +190,14 @@ void MoERuntime::tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExper
 
 int MoERuntime::tokenMajorNumChannels(int xElementSize) const {
   requireMode(MoEMode::THROUGHPUT);
+  EP_HOST_ASSERT(throughputContext_->deviceContext_.devicePtr_ != nullptr);
   return throughputContext_->dispatchBlockCount(xElementSize);
 }
 
 void* MoERuntime::tokenMajorResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const {
   requireMode(MoEMode::THROUGHPUT);
   const auto& context = *throughputContext_;
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   if (!context.available_ || !context.canUseDirectRecvPool(numTokens, numRecvTokens, hidden, xElementSize))
     return nullptr;
   return static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) +
@@ -205,6 +211,7 @@ int MoERuntime::tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix
   requireMode(MoEMode::THROUGHPUT);
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % context.numRanks_ == 0);
   const int numLocalExperts = numExperts / context.numRanks_;
   EP_HOST_ASSERT(numLocalExperts <= RecvPoolConfig::MaxLocalExperts);
@@ -267,6 +274,7 @@ void MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& reque
 
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(hidden > 0 && xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= context.maxHiddenBytes_);
   EP_HOST_ASSERT((hidden * xElementSize) % sizeof(int4) == 0);
@@ -309,6 +317,7 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
 
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(context.dispatchReady_);
   EP_HOST_ASSERT(xElementSize == 2);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden) * xElementSize <= context.maxHiddenBytes_);

@@ -14,7 +14,7 @@ import torch
 
 from mscclpp.ep._cpp import DispatchLayout, MoEMode, create_moe_runtime
 from mscclpp.ep.context import Context
-from mscclpp.ep.runtime import Runtime
+from mscclpp.ep.runtime import Runtime, requires_initialized
 from mscclpp.ep.types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -56,6 +56,7 @@ class ThroughputContext(Context):
         self.comm = comm
         self.local_rank = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
+        self.initialized = False
         self.mode = MoEMode.THROUGHPUT
         self.output_layout = output_layout
         self.num_experts = config.num_experts
@@ -98,6 +99,7 @@ class ThroughputRuntime(Runtime):
         )
         super().__init__(context, cpp_runtime)
 
+    @requires_initialized
     def dispatch(
         self,
         input: torch.Tensor,
@@ -232,6 +234,7 @@ class ThroughputRuntime(Runtime):
             handle = DispatchHandle(output_info=output_info, _context=combine_context, _dispatch_cache=dispatch_cache)
             return dispatch_out, handle
 
+    @requires_initialized
     def combine(
         self,
         expert_output: torch.Tensor,
