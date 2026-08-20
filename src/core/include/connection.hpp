@@ -5,6 +5,7 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 #include <atomic>
+#include <exception>
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
@@ -181,6 +182,9 @@ class EthernetConnection : public BaseConnection {
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> recvSocket_;
   std::thread threadRecvMessages_;
+  std::atomic<bool> stopping_{false};
+  std::mutex receiverErrorMutex_;
+  std::exception_ptr receiverError_;
   volatile uint32_t* abortFlag_;
   const uint64_t sendBufferSize_;
   const uint64_t recvBufferSize_;
@@ -189,12 +193,15 @@ class EthernetConnection : public BaseConnection {
 
   void recvMessages();
   void sendMessage();
+  void publishReceiverError(std::exception_ptr error) noexcept;
+  void rethrowReceiverError();
+  bool receiveFramePart(void* ptr, int size, bool allowBoundaryEof);
 
  public:
   EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint,
                      uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
 
-  ~EthernetConnection();
+  ~EthernetConnection() noexcept;
 
   Transport transport() const override;
 
