@@ -21,6 +21,29 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
+    name: HostDiagnostics
+    displayName: Dump host GPU / GDRCopy state
+    continueOnError: true
+    runRemoteArgs: '--no-docker'
+    remoteScript: |
+      uname -r
+      cat /proc/driver/nvidia/version | head -2 || true
+      nvidia-smi -L || true
+      echo "gdrdrv loaded: $(cat /sys/module/gdrdrv/version 2>/dev/null || echo none)"
+      ibv_devinfo -l 2>&1 | head -10 || true
+
+- template: run-remote-task.yml
+  parameters:
+    name: ContainerDiagnostics
+    displayName: Dump container CUDA / libgdrapi state
+    continueOnError: true
+    remoteScript: |
+      nvcc --version | tail -4 || true
+      dpkg -l 2>/dev/null | awk '/libgdrapi/ {print $2,$3}' || true
+      ldd build/bin/mp_unit_tests 2>/dev/null | grep -iE 'gdr|cuda|mscclpp|ibverbs|mlx5' || true
+
+- template: run-remote-task.yml
+  parameters:
     name: UnitTests
     displayName: Run mscclpp unit tests
     remoteScript: |
