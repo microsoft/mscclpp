@@ -21,11 +21,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda11 = ["cupy-cuda11x"]
-cuda12 = ["cupy-cuda12x"]
-cuda13 = ["cupy-cuda13x"]
-rocm6 = ["cupy"]
-ep = []
+cuda12 = [
+    "cupy-cuda12x",
+    "cuda-bindings>=12,<13",
+]
+cuda13 = [
+    "cupy-cuda13x",
+    "cuda-bindings>=13,<14",
+]
+rocm6 = [
+    "cupy",
+    "hip-python>=6,<7",
+]
+rocm7 = [
+    "cupy",
+    "hip-python>=7,<8",
+]
 benchmark = [
     "mpi4py",
     "prettytable",
@@ -61,7 +72,6 @@ include= ["python/mscclpp/_version.py"]
 [tool.scikit-build.cmake.define]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
 MSCCLPP_BUILD_TESTS = "OFF"
-MSCCLPP_BUILD_EXT_EP = "ON"
 
 [tool.black]
 line-length = 120
