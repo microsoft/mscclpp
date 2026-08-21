@@ -141,9 +141,7 @@ class Comm:
         if enable_dsl:
             self._compile_dsl_algorithms(collective, dsl_tbg, dsl_tpb)
 
-    def _compile_dsl_algorithms(
-        self, collective: str, tbg_values: Iterable[int], tpb_values: Iterable[int]
-    ) -> None:
+    def _compile_dsl_algorithms(self, collective: str, tbg_values: Iterable[int], tpb_values: Iterable[int]) -> None:
         """Compile the multi-node DSL variants for ``collective`` and register them alongside the natives.
 
         Each (thread_block_group_size, num_threads_per_block) pair is a separate compiled plan, since
