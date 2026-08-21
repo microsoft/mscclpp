@@ -137,6 +137,10 @@ struct ThroughputDispatchRequest {
   int numRecvTokens;
   /// Whether cached routing metadata is reused.
   bool cachedMode;
+  /// Requested dispatch output layout.
+  DispatchLayout dispatchLayout;
+  /// Fixed per-rank row capacity used by rank-major output.
+  int maxTokensPerRank;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
 };

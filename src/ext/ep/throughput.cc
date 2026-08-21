@@ -270,6 +270,8 @@ void MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& reque
   const int xElementSize = request.inputElementSize;
   const int numRecvTokens = request.numRecvTokens;
   const bool cachedMode = request.cachedMode;
+  const DispatchLayout dispatchLayout = request.dispatchLayout;
+  const int maxTokensPerRank = request.maxTokensPerRank;
   const cudaStream_t stream = request.stream;
 
   auto& context = *throughputContext_;
@@ -280,6 +282,8 @@ void MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& reque
   EP_HOST_ASSERT((hidden * xElementSize) % sizeof(int4) == 0);
   EP_HOST_ASSERT(numTopk >= 0 && numTopk <= RecvPoolConfig::MaxTopk);
   EP_HOST_ASSERT(numScales >= 0 && numScales <= RecvPoolConfig::MaxScales);
+  EP_HOST_ASSERT(dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR);
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(maxTokensPerRank > 0);
 
   const int numChannels = context.dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
@@ -299,7 +303,8 @@ void MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& reque
                      numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx, recvTopkWeights,
                      recvXScales, numChannels, static_cast<int64_t>(poolHeaderBytes),
                      static_cast<int64_t>(RecvPoolConfig::recvPoolMetadataOffset(context.numRanks_)),
-                     RecvPoolConfig::RecvPoolMetaBytes, context.deviceContext_, stream);
+                     RecvPoolConfig::RecvPoolMetaBytes, dispatchLayout, maxTokensPerRank, context.deviceContext_,
+                     stream);
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {

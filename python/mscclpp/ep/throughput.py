@@ -67,8 +67,8 @@ class ThroughputContext(Context):
         self.max_hidden_bytes = max_hidden_bytes
         self.enable_overlap = config.enable_overlap
 
-        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
-            raise NotImplementedError("THROUGHPUT mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if self.output_layout not in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR):
+            raise NotImplementedError("THROUGHPUT mode supports TOKEN_MAJOR or RANK_MAJOR output")
         if config.invalid_token_expert_id is not None:
             raise ValueError("invalid_token_expert_id is only supported in latency mode")
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
@@ -217,10 +217,17 @@ class ThroughputRuntime(Runtime):
                     "weights_ptr": 0 if implicit_weights else weights.data_ptr(),
                     "weights_version": 0 if implicit_weights else weights._version,
                 }
+            recv_tokens_per_rank = None
+            if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+                recv_prefix = rank_prefix_matrix[:, mode_context.rank]
+                recv_tokens_per_rank = torch.diff(
+                    recv_prefix, prepend=torch.zeros((1,), dtype=recv_prefix.dtype, device=recv_prefix.device)
+                )
             output_info = DispatchOutputInfo(
                 layout=DispatchLayoutInfo(
                     kind=mode_context.output_layout,
                     num_tokens_per_expert=num_recv_tokens_per_expert_list,
+                    num_tokens_per_rank=recv_tokens_per_rank,
                 ),
                 quant=None,
             )
@@ -363,6 +370,9 @@ class ThroughputRuntime(Runtime):
             )
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
 
+        if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+            num_recv_tokens = mode_context.group_size * mode_context.max_tokens_per_rank
+
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
         recv_x = self._allocate_recv(num_tokens, num_recv_tokens, hidden, x_element_size)
         send_head = torch.empty((num_tokens, mode_context.group_size), dtype=torch.int32, device="cuda")
@@ -401,6 +411,8 @@ class ThroughputRuntime(Runtime):
             x_element_size,
             num_recv_tokens,
             cached_mode,
+            mode_context.output_layout,
+            mode_context.max_tokens_per_rank,
             _stream_ptr(),
         )
         return (

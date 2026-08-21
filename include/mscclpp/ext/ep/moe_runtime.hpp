@@ -18,7 +18,8 @@ struct ThroughputContext;
 ///
 /// One runtime owns the communication buffers and synchronization state for the
 /// selected mode. LATENCY uses fixed-capacity expert-major or rank-major
-/// layouts. THROUGHPUT uses a dynamically sized token-major receive pool.
+/// layouts. THROUGHPUT uses a receive pool exposed as compact token-major or
+/// fixed-stride rank-major rows.
 /// Operations are asynchronous with respect to the host and execute on the
 /// CUDA stream supplied by each request.
 class MoERuntime {

@@ -28,7 +28,7 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                         int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
                         int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
                         int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        const DeviceContext& context, cudaStream_t stream);
+                        DispatchLayout layout, int maxTokensPerRank, const DeviceContext& context, cudaStream_t stream);
 
 void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
                              int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,

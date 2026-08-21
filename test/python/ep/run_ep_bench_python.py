@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified in-process low-latency (LL) EP benchmark that drives BOTH backends'
+"""Unified in-process latency EP benchmark that drives both libraries'
 Python APIs directly, inside the *same* measurement flow:
 
 * **mscclpp EP**   — ``mscclpp.ep.MoECommunicator.dispatch`` / ``.combine``.
 * **NVIDIA NCCL-EP** — ``nccl.ep.Group`` / ``nccl.ep.Handle.dispatch`` / ``.combine``
   (the ``nccl4py`` Pythonic bindings for ``libnccl_ep.so``).
 
-This is a Python port of ``mscclpp_ep_bench.cu`` that additionally understands the
-NCCL-EP Python API. Unlike ``run_ep_bench.py`` (which shells out to a separate
-per-backend process for each measurement), this script calls each backend's Python
-API *in one process* through a single shared paired-benchmark loop, so the two are
-timed with byte-for-byte the same methodology:
+This script calls each backend's Python API in one process through a shared
+paired-benchmark loop, so both are timed with the same methodology:
 
 * **Paired** ``dispatch -> combine`` per iteration, with no per-iteration
   ``stream.synchronize()`` or cross-rank barrier inside the timed loop -- the
@@ -24,12 +21,12 @@ timed with byte-for-byte the same methodology:
   ``bytes = num_valid_selections * hidden * 2`` (BF16) for both dispatch and combine.
 * **Cross-rank reduction** identical to ``printLowLatencyResults``.
 * **Output** mirrors the ``=== Summary (Low Latency, across N ranks) ===`` block so a
-  run can be diffed directly against ``ep_bench`` / ``mscclpp_ep_bench.cu``.
+  run can be diffed directly against NCCL-EP ``ep_bench``.
 
 Bootstrap: MPI (mpi4py + mpirun)
 --------------------------------
 Both backends share an MPI ``COMM_WORLD`` bootstrap (the same mechanism the C++
-``mscclpp_ep_bench`` and NCCL-EP ``ep_test.py`` use), *not* torch.distributed:
+NCCL-EP ``ep_test.py`` uses, *not* torch.distributed:
 
 * mscclpp wraps the MPI communicator with ``CommGroup(mpi_comm=MPI.COMM_WORLD)``.
 * NCCL-EP builds a ``nccl.core.Communicator`` from a unique id broadcast over MPI.
@@ -168,8 +165,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
-        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
+        help="capture dispatch and combine as one CUDA graph and replay it in the timed loop.",
     )
     p.add_argument(
         "--iters-per-graph",
@@ -221,7 +217,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # ============================================================================
-# Shared paired benchmark + summary (mirrors mscclpp_ep_bench.cu / ep_bench).
+# Shared paired benchmark + summary (mirrors NCCL-EP ep_bench).
 # ============================================================================
 def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
@@ -360,28 +356,26 @@ def torch_profiler_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, graph_group_size=1):
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None, on_fail=None, graph_group_size=1):
     """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
     (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
     replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
-    ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
-    given, runs before each replay (e.g. a host MPI barrier that cannot live inside
-    the graph). ``graph_group_size`` dispatch->combine iterations are captured inside
-    the single graph so one replay runs them all -- this amortizes launch overhead
-    and keeps the spin-waiting dispatch/combine kernels from being inflated by
-    per-replay launch skew (reported times are divided back to per-iteration by the
-    caller). Capture is best-effort: on any exception on_fail() is invoked (to let
-    the backend reset its state) and None is returned so the caller keeps the eager
-    path."""
+    ops (no CPU sync, no host collective) that go inside the graph.
+    ``graph_group_size`` dispatch->combine iterations are captured inside the single
+    graph so one replay runs them all -- this amortizes launch overhead and keeps the
+    spin-waiting dispatch/combine kernels from being inflated by per-replay launch
+    skew (reported times are divided back to per-iteration by the caller). Capture is
+    best-effort: on any exception on_fail() is invoked (to let the backend reset its
+    state) and None is returned so the caller keeps the eager path."""
     try:
         if prime:
-            if pre_replay is not None:
-                pre_replay()
+            if pre_capture is not None:
+                pre_capture()
             dispatch_op()
             combine_op()
             torch.cuda.synchronize()
-        if pre_replay is not None:
-            pre_replay()
+        if pre_capture is not None:
+            pre_capture()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             for _ in range(graph_group_size):
@@ -394,8 +388,6 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
         return None
 
     def replay_dispatch():
-        if pre_replay is not None:
-            pre_replay()
         graph.replay()
         return None
 
@@ -481,10 +473,6 @@ def run_backend(
     # per-launch average divides by the kernel count, which scales with the group).
     group = max(1, graph_group_size)
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
-    # In single-graph CUDA-graph mode both phases replay inside dispatch_fn() and
-    # combine_fn is a no-op, so the host-observed combine span is ~0. Clamp to a tiny
-    # epsilon so the downstream throughput division (comb_bytes / c_avg) cannot hit a
-    # ZeroDivisionError; kernel-only kineto reports the real per-phase combine time.
     comb_us = [max(c_start[i].elapsed_time(c_end[i]) * 1e3 / group, 1e-3) for i in range(iters)]
     tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
@@ -683,12 +671,12 @@ def main() -> None:
         backend_barrier = ops.get("barrier")
 
         # CUDA-graph capture is owned HERE, not in the backends: a backend that
-        # supports it hands back a capture spec (capture-safe dispatch/combine ops,
-        # an optional pre-replay barrier, and an on-capture-failure reset). Capturing
-        # dispatch+combine as ONE graph means a single replay runs both phases, so
-        # the skew-free separate kineto pass can no longer isolate combine -- force
-        # the PAIRED single pass (EP_KINETO_SEPARATE=0) so per-phase kernel time is
-        # still attributed by kernel name. If capture fails, keep the eager ops.
+        # supports it hands back capture-safe dispatch/combine ops and an optional
+        # on-capture-failure reset. Capturing dispatch+combine as ONE graph means a
+        # single replay runs both phases, so the skew-free separate kineto pass can
+        # no longer isolate combine -- force the PAIRED single pass
+        # (EP_KINETO_SEPARATE=0) so per-phase kernel time is still attributed by
+        # kernel name. If capture fails, keep the eager ops.
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -696,7 +684,7 @@ def main() -> None:
             graphed = _capture_paired_graph(
                 spec["dispatch"],
                 spec["combine"],
-                pre_replay=spec.get("pre_replay"),
+                pre_capture=spec.get("pre_capture"),
                 on_fail=spec.get("on_fail"),
                 graph_group_size=max(1, args.iters_per_graph),
             )

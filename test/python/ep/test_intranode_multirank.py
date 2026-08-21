@@ -25,12 +25,6 @@ from __future__ import annotations
 import os
 import sys
 
-# Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
-# It runs in a background thread polling the TCPStore; under mpirun, rank 0
-# (the store server) can exit before non-zero ranks finish teardown, producing
-# noisy 'recvValue failed / Connection was likely closed' stack traces.
-os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
-
 import torch
 import torch.distributed as dist
 
@@ -107,6 +101,11 @@ def main():
 
     # Token payload = rank id (cast to bf16) so we can check correctness
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
+    layout_name = os.environ.get("MSCCLPP_EP_OUTPUT_LAYOUT", "token_major")
+    output_layout = {
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+        "rank_major": ep.DispatchLayout.RANK_MAJOR,
+    }[layout_name]
 
     moe = ep.MoECommunicator(
         comm=ep_group,
@@ -114,17 +113,19 @@ def main():
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
-        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        mode=ep.MoEMode.THROUGHPUT,
+        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
+        output_layout=output_layout,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk}",
+            f"num_experts={num_experts} num_topk={num_topk} output_layout={layout_name}",
             flush=True,
         )
     print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
     assert moe.is_available()
+    assert not moe.is_initialized()
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(num_ranks)))
     expected_internode = num_ranks > local_world_size
     assert moe.is_internode_available() == expected_internode
@@ -135,6 +136,7 @@ def main():
         topk_idx,
         topk_weights,
     )
+    assert moe.is_initialized()
     recv_x = dispatch_out.tokens
     dist.barrier(group=group)
 
@@ -155,18 +157,24 @@ def main():
     assert dispatch_out.layout.num_tokens_per_expert is not None
     actual_counts = [int(count) for count in dispatch_out.layout.num_tokens_per_expert]
     assert actual_counts == [int(count) for count in expected_counts]
+    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+        all_rank_counts = torch.empty((num_ranks, num_ranks), dtype=num_tokens_per_rank.dtype, device="cuda")
+        dist.all_gather_into_tensor(all_rank_counts, num_tokens_per_rank, group=group)
+        expected_rank_counts = all_rank_counts[:, rank].cpu()
+        assert dispatch_out.layout.num_tokens_per_rank is not None
+        torch.testing.assert_close(dispatch_out.layout.num_tokens_per_rank.cpu(), expected_rank_counts)
+        for source_rank, count in enumerate(expected_rank_counts.tolist()):
+            row_begin = source_rank * num_tokens
+            block = recv_x[row_begin : row_begin + count]
+            if block.numel():
+                assert torch.all(block == source_rank)
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
 
     # Use a distinct expert-output allocation so the direct TMA path cannot
     # accidentally read stale dispatch payloads from its receive pool.
     expert_out = recv_x + torch.ones_like(recv_x)
-    context = handle.combine_context
-    combined_x, combined_weights = moe._backend._runtime.combine(
-        expert_out,
-        context.recv_topk_weights,
-        context.send_head,
-    )
+    combined_x = moe.combine(expert_out, handle)
 
     # We dispatched rank-valued rows, then each destination added one.
     num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
@@ -178,8 +186,6 @@ def main():
     if rank == 0:
         print(f"[combine] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
     assert diff < 1e-2, f"rank{rank}: combine mismatch max diff {diff}"
-    assert combined_weights is not None
-    assert torch.equal(combined_weights, topk_weights)
 
     dist.barrier(group=group)
     if rank == 0:
@@ -247,8 +253,9 @@ def main():
         hidden_size=bench_hidden,
         topk=bench_num_topk,
         max_tokens_per_rank=bench_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
-        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        mode=ep.MoEMode.THROUGHPUT,
+        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
+        output_layout=output_layout,
     )
     assert moe.is_available()
 

@@ -202,7 +202,7 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
 
 
 # ----------------------------------------------------------------------------
-# LL dtype / combine helpers (ported from test_low_latency_multirank.py).
+# Latency dtype / combine helpers (ported from test_latency_multirank.py).
 # ----------------------------------------------------------------------------
 def fp8_e4m3_block128_scales(x):
     blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)

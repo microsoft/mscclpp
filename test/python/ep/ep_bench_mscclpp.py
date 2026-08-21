@@ -42,7 +42,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
         print(
-            f"[cfg] backend=mscclpp algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=mscclpp algorithm=LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters} num_rdma_bytes={num_rdma_bytes}",
             flush=True,
@@ -73,8 +73,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.LOW_LATENCY,
-        low_latency_combine_mode=combine_mode,
+        mode=ep.MoEMode.LATENCY,
+        combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
         quant=dispatch_quant,
@@ -95,9 +95,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         if rank_major
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
-    expert_output = moe_comm.get_expert_output_buffer() if rank_major else None
-    if expert_output is not None:
-        expert_output.normal_()
+    expert_output_initialized = False
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _dispatch():
@@ -105,21 +103,27 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
     def _combine(dispatch_out, handle):
+        nonlocal expert_output_initialized
         # Rank-major MoE writes directly into the runtime-owned registered output
         # buffer. Pre-fill it once to benchmark communication without timing a copy.
-        combine_input = expert_output if expert_output is not None else simulated_gemm_output(dispatch_out)
+        combine_input = dispatch_out.combine_input_buffer
+        if combine_input is None:
+            combine_input = simulated_gemm_output(dispatch_out)
+        elif not expert_output_initialized:
+            combine_input.normal_()
+            expert_output_initialized = True
         moe_comm.combine(combine_input, handle, out=out)
 
-    # Optional one-time correctness check (mirrors test_low_latency_multirank).
+    # Optional one-time correctness check (mirrors test_latency_multirank).
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
         validation_input = simulated_gemm_output(v_dispatch_out)
-        if expert_output is not None:
+        if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
-            expert_output.copy_(validation_input)
-            validation_input = expert_output
+            v_dispatch_out.combine_input_buffer.copy_(validation_input)
+            validation_input = v_dispatch_out.combine_input_buffer
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
         if dispatch_quant is None:
@@ -153,7 +157,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "moe": moe_comm,
         "inputs": input_samples,
         "obuf": output_buffer,
-        "expert_output": expert_output,
         "out": out,
         "grp": ep_group,
     }
@@ -187,7 +190,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": _graph_dispatch,
             "combine": _graph_combine,
-            "pre_replay": None,
             "on_fail": None,
         }
 
@@ -206,61 +208,48 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
 
 # ============================================================================
-# Backend: mscclpp EP high-throughput (MoECommunicator, HIGH_THROUGHPUT mode).
+# Backend: mscclpp EP throughput mode.
 # ============================================================================
 def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
-    """mscclpp EP high-throughput dispatch/combine via `MoECommunicator` with
-    `mode=MoEMode.HIGH_THROUGHPUT` (GB200 TMA, TOKEN_MAJOR or RANK_MAJOR). Returns
-    the uniform backend dict {dispatch, combine, teardown, barrier, graph} used by
-    the shared harness. Follows the HT flow in test_intranode_multirank.py: an
-    initial uncached dispatch records the routing layout on the handle, then the
-    timed loop replays a cached dispatch (previous_handle=) + combine to isolate
-    the on-GPU kernel cost. Under --cuda-graph the harness captures the cached
-    dispatch + combine as ONE graph; the cached path (previous_handle=) skips
-    notify_dispatch's host wait, so it is capture-safe. Verified capturing at 1/2
-    nodes on GB200 (TOKEN_MAJOR and RANK_MAJOR)."""
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
     x, topk_idx, topk_weights, _ = inputs
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
-    num_sms = int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20"))
-    ep_layout = getattr(args, "ep_layout", None)
-    output_layout = ep.DispatchLayout.RANK_MAJOR if ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
+    num_blocks = int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", os.environ.get("MSCCLPP_EP_NUM_SMS", "20")))
+    output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
 
     if rank == 0:
         print(
-            f"[cfg] backend=mscclpp-ht algorithm=HIGH_THROUGHPUT layout={output_layout} num_ranks={num_ranks} tokens/rank={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} num_sms={num_sms} "
+            f"[cfg] backend=mscclpp-ht algorithm=THROUGHPUT layout={output_layout} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} top_k={num_topk} num_blocks={num_blocks} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
 
-    ep_group = CommGroup(mpi_comm=comm)
+    bootstrap = os.environ.get("EP_MSCCLPP_BOOTSTRAP")
+    ep_group = (
+        CommGroup(interfaceIpPortTrio=bootstrap, rank=rank, size=num_ranks)
+        if bootstrap
+        else (CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm))
+    )
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode=ep.MoEMode.HIGH_THROUGHPUT,
-        num_sms=num_sms,
+        mode=ep.MoEMode.THROUGHPUT,
+        num_blocks=num_blocks,
         output_layout=output_layout,
     )
     assert moe_comm.is_available()
-    if rank == 0:
-        print(
-            f"[cfg] mscclpp-ht MoECommunicator is_internode={moe_comm.is_internode()}",
-            flush=True,
-        )
 
-    # Optional round-trip correctness check (mirrors the mscclpp LL --validate path). The
-    # rank-major layout must reduce to the SAME combined output as the reference token-major
-    # layout built from identical routing/input; validated bit-exact on GB200 (1/2/4 nodes).
-    if getattr(args, "validate", False):
-        v_dispatch_out, v_handle = moe_comm.dispatch(x, topk_idx, topk_weights)
-        got = moe_comm.combine(simulated_gemm_output(v_dispatch_out), v_handle)
+    if args.validate:
+        dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
+        got = moe_comm.combine(simulated_gemm_output(dispatch_out), handle)
         torch.cuda.synchronize()
         assert torch.isfinite(got).all().item(), "mscclpp-ht combine produced NaN/Inf"
         if output_layout == ep.DispatchLayout.RANK_MAJOR:
@@ -270,62 +259,52 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
                 hidden_size=hidden,
                 topk=num_topk,
                 max_tokens_per_rank=num_tokens,
-                mode=ep.MoEMode.HIGH_THROUGHPUT,
-                num_sms=num_sms,
+                mode=ep.MoEMode.THROUGHPUT,
+                num_blocks=num_blocks,
                 output_layout=ep.DispatchLayout.TOKEN_MAJOR,
             )
-            r_dispatch_out, r_handle = ref_comm.dispatch(x, topk_idx, topk_weights)
-            ref = ref_comm.combine(simulated_gemm_output(r_dispatch_out), r_handle)
+            ref_dispatch_out, ref_handle = ref_comm.dispatch(x, topk_idx, topk_weights)
+            ref = ref_comm.combine(simulated_gemm_output(ref_dispatch_out), ref_handle)
             torch.cuda.synchronize()
-            gdiff = validate_combine_output_mpi(got, ref, comm, exact=True)
+            diff = validate_combine_output_mpi(got, ref, comm, exact=True)
             if rank == 0:
-                print(
-                    f"[validate] mscclpp-ht rank-major vs token-major ref bit-exact max|diff|={gdiff:.4e}",
-                    flush=True,
-                )
-            del ref_comm
+                print(f"[validate] mscclpp-ht rank-major bit-exact max|diff|={diff:.4e}", flush=True)
         elif rank == 0:
             print("[validate] mscclpp-ht token-major combine finite OK", flush=True)
 
-    # One uncached dispatch to build the cached routing layout on the handle; the
-    # timed loop reuses it via previous_handle to skip notify_dispatch's host wait
-    # (isolates the on-GPU dispatch-kernel cost, NCCL-EP ep_bench convention).
-    handle0 = moe_comm.dispatch(x, topk_idx, topk_weights)[1]
+    initial_handle = moe_comm.dispatch(x, topk_idx, topk_weights)[1]
 
     def dispatch_fn():
-        return moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=handle0)
+        return moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=initial_handle)
 
     def combine_fn(dout):
         dispatch_out, handle = dout
         moe_comm.combine(dispatch_out.tokens, handle)
 
-    _state = {"moe": moe_comm, "grp": ep_group}
-
-    def teardown():
-        _state.clear()
-        gc.collect()
-        torch.cuda.synchronize()
-
-    # Capture-safe ops for the harness's single-graph capture: replay the CACHED
-    # dispatch (previous_handle=handle0 -> no host-side notify_dispatch wait) then
-    # combine, as ONE graph. combine consumes the dispatch output produced in the
-    # same capture, shared via the _cap holder (like the mscclpp LL backend).
     graph_spec = None
-    if getattr(args, "cuda_graph", False):
-        _cap = {}
+    if args.cuda_graph:
+        captured = {}
 
-        def _graph_dispatch():
-            _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=handle0)
+        def graph_dispatch():
+            captured["out"], captured["handle"] = moe_comm.dispatch(
+                x, topk_idx, topk_weights, previous_handle=initial_handle
+            )
 
-        def _graph_combine():
-            moe_comm.combine(_cap["out"].tokens, _cap["handle"])
+        def graph_combine():
+            moe_comm.combine(captured["out"].tokens, captured["handle"])
 
         graph_spec = {
-            "dispatch": _graph_dispatch,
-            "combine": _graph_combine,
-            "pre_replay": None,
+            "dispatch": graph_dispatch,
+            "combine": graph_combine,
             "on_fail": None,
         }
+
+    state = {"moe": moe_comm, "grp": ep_group}
+
+    def teardown():
+        state.clear()
+        gc.collect()
+        torch.cuda.synchronize()
 
     return {
         "dispatch": dispatch_fn,

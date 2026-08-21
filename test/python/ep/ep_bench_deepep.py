@@ -159,7 +159,6 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": lambda: buffer.dispatch(**cached_dispatch_args),
             "combine": lambda: buffer.combine(**combine_args),
-            "pre_replay": None,
             "on_fail": None,
         }
     else:

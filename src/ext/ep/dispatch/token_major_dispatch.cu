@@ -151,14 +151,14 @@ void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceCont
 #undef CACHED_NOTIFY_DISPATCH_LAUNCH_CASE
 }
 
-template <int NumRanks, int NumThreads>
+template <int NumRanks, int NumThreads, DispatchLayout Layout>
 __global__ void __launch_bounds__(NumThreads, 1)
     tokenMajorDispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
                              const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
                              int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts,
                              int numScales, int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales,
                              int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                             const DeviceContext* context) {
+                             int maxTokensPerRank, const DeviceContext* context) {
   const int numChannels = static_cast<int>(gridDim.x);
   const int channel = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
@@ -173,7 +173,9 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int* dstRankPrefix = reinterpret_cast<const int*>(context->peerBufferBases_[dstRank]);
   const int rankOffset = context->rank_ > 0 ? dstRankPrefix[(context->rank_ - 1) * NumRanks + dstRank] : 0;
   const int channelOffset = channel > 0 ? channelPrefixMatrix[dstRank * numChannels + channel - 1] : 0;
-  const int64_t outputBase = static_cast<int64_t>(rankOffset + channelOffset);
+  const int64_t rankBase =
+      Layout == DispatchLayout::RANK_MAJOR ? static_cast<int64_t>(context->rank_) * maxTokensPerRank : rankOffset;
+  const int64_t outputBase = rankBase + channelOffset;
   auto* dstPool = reinterpret_cast<uint8_t*>(context->peerPayloadBases_[dstRank]);
   auto* dstTokens = reinterpret_cast<int4*>(dstPool + recvPoolHeaderBytes);
   auto* dstMetadata = dstPool + recvPoolMetadataOffset;
@@ -249,7 +251,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
   }
 }
 
-template <int NumRanks, int NumThreads>
+template <int NumRanks, int NumThreads, DispatchLayout Layout>
 int maxCooperativeTokenMajorBlocks() {
   static int cachedDevice = -1;
   static int cachedMaxBlocks = 0;
@@ -259,7 +261,7 @@ int maxCooperativeTokenMajorBlocks() {
   if (device != cachedDevice) {
     int blocksPerSm;
     int numSms;
-    auto kernel = tokenMajorDispatchKernel<NumRanks, NumThreads>;
+    auto kernel = tokenMajorDispatchKernel<NumRanks, NumThreads, Layout>;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumThreads, 0));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
     cachedDevice = device;
@@ -273,7 +275,8 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                         int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
                         int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
                         int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        const DeviceContext& context, cudaStream_t stream) {
+                        DispatchLayout layout, int maxTokensPerRank, const DeviceContext& context,
+                        cudaStream_t stream) {
   constexpr int NumThreads = 512;
   EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
@@ -281,18 +284,26 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                      static_cast<int64_t>(numScales) * static_cast<int64_t>(sizeof(float)) <=
                  metadataSlotBytes);
 
-#define DISPATCH_LAUNCH_CASE(ranks)                                                                        \
-  EP_HOST_ASSERT((numBlocks <= maxCooperativeTokenMajorBlocks<ranks, NumThreads>()));                      \
-  LAUNCH_KERNEL(config.get(), (tokenMajorDispatchKernel<ranks, NumThreads>), sendHead,                     \
+#define DISPATCH_LAUNCH_CASE_LAYOUT(ranks, Layout)                                                         \
+  EP_HOST_ASSERT((numBlocks <= maxCooperativeTokenMajorBlocks<ranks, NumThreads, Layout>()));              \
+  LAUNCH_KERNEL(config.get(), (tokenMajorDispatchKernel<ranks, NumThreads, Layout>), sendHead,             \
                 reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,    \
                 channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, \
                 recvTopkIdx, recvTopkWeights, recvXScales, recvPoolHeaderBytes, recvPoolMetadataOffset,    \
-                metadataSlotBytes, context.devicePtr_);                                                    \
+                metadataSlotBytes, maxTokensPerRank, context.devicePtr_);                                  \
   break
+
+#define DISPATCH_LAUNCH_CASE(ranks)                                  \
+  if (layout == DispatchLayout::RANK_MAJOR) {                        \
+    DISPATCH_LAUNCH_CASE_LAYOUT(ranks, DispatchLayout::RANK_MAJOR);  \
+  } else {                                                           \
+    DISPATCH_LAUNCH_CASE_LAYOUT(ranks, DispatchLayout::TOKEN_MAJOR); \
+  }
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream, true);
   SWITCH_RANKS(context.numRanks_, DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
+#undef DISPATCH_LAUNCH_CASE_LAYOUT
 }
 
 }  // namespace ep
