@@ -72,7 +72,7 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey ctxKey = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory, extras);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     INFO(ALGO, name_, " context cache MISS (creating new context, this triggers collective setup): rank=",
@@ -90,9 +90,9 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
                            nThreadsPerBlock, extras, accumDtype);
 }
 
-AlgorithmCtxKey NativeAlgorithm::makeContextKey(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                                size_t inputSize, size_t outputSize, DataType dtype,
-                                                bool symmetricMemory) const {
+AlgorithmCtxKey NativeAlgorithm::makeContextKey(
+    std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize,
+    DataType dtype, bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras) const {
   AlgorithmCtxKey key = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
   int device = -1;
   if (cudaGetDevice(&device) != cudaSuccess) device = -1;
@@ -102,11 +102,19 @@ AlgorithmCtxKey NativeAlgorithm::makeContextKey(std::shared_ptr<Communicator> co
   key.elementCount = elementBytes == 0 ? 0 : inputSize / elementBytes;
   key.dtype = static_cast<int>(dtype);
   key.symmetricMemory = symmetricMemory;
+  auto getExtra = [&extras](const char* name, uintptr_t fallback) {
+    auto it = extras.find(name);
+    return it == extras.end() ? fallback : it->second;
+  };
+  key.rowCount = static_cast<size_t>(getExtra("rowCount", 1));
+  key.localRowBytes = static_cast<size_t>(getExtra("localRowBytes", inputSize));
+  key.layoutMode = static_cast<int>(getExtra("layoutMode", 0));
   return key;
 }
 
 CommResult NativeAlgorithm::prepare(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                    size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                                    size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory,
+                                    const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!comm || (inputSize != 0 && input == nullptr) || (outputSize != 0 && output == nullptr)) {
     return CommResult::CommInvalidArgument;
   }
@@ -114,7 +122,11 @@ CommResult NativeAlgorithm::prepare(std::shared_ptr<Communicator> comm, const vo
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory, extras);
+  if (inputSize != 0 &&
+      (key.rowCount == 0 || key.localRowBytes == 0 || key.rowCount * key.localRowBytes != inputSize)) {
+    return CommResult::CommInvalidArgument;
+  }
   if (contexts_.find(key) != contexts_.end()) return CommResult::CommSuccess;
   if (inputSize == 0) {
     contexts_.emplace(key, nullptr);
@@ -131,7 +143,7 @@ CommResult NativeAlgorithm::executePrepared(
     DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock, bool symmetricMemory,
     const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype) {
   if (!initialized_ || !comm) return CommResult::CommInvalidUsage;
-  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory, extras);
   auto it = contexts_.find(key);
   if (it == contexts_.end()) return CommResult::CommInvalidUsage;
   if (inputSize == 0) return CommResult::CommSuccess;
@@ -141,9 +153,10 @@ CommResult NativeAlgorithm::executePrepared(
 }
 
 bool NativeAlgorithm::releasePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                      size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                                      size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory,
+                                      const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!comm) return false;
-  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory, extras);
   return contexts_.erase(key) == 1;
 }
 

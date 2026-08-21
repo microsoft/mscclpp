@@ -229,6 +229,7 @@ class Algorithm:
         output_size: int,
         dtype: CppDataType,
         symmetric_memory: bool = False,
+        extras: Optional[Dict[str, int]] = None,
     ) -> int:
         """Prepare an exact native buffer context before CUDA graph capture."""
         return self._algorithm.prepare(
@@ -239,6 +240,7 @@ class Algorithm:
             output_size,
             dtype,
             symmetric_memory,
+            dict(extras) if extras is not None else {},
         )
 
     def execute_prepared(
@@ -283,6 +285,7 @@ class Algorithm:
         output_size: int,
         dtype: CppDataType,
         symmetric_memory: bool = False,
+        extras: Optional[Dict[str, int]] = None,
     ) -> bool:
         """Release one exact prepared context and its registrations/channels."""
         return self._algorithm.release_prepared(
@@ -293,6 +296,7 @@ class Algorithm:
             output_size,
             dtype,
             symmetric_memory,
+            dict(extras) if extras is not None else {},
         )
 
     def reset(self):

@@ -35,7 +35,10 @@ int main() {
   addDifference([](auto& key) { key.elementCount += 1; });
   addDifference([](auto& key) { key.dtype = static_cast<int>(DataType::FLOAT16); });
   addDifference([](auto& key) { key.symmetricMemory = true; });
-  assert(keys.size() == 11);
+  addDifference([](auto& key) { key.rowCount += 1; });
+  addDifference([](auto& key) { key.localRowBytes += 16; });
+  addDifference([](auto& key) { key.layoutMode = 1; });
+  assert(keys.size() == 14);
 
   static_assert(std::is_member_function_pointer_v<decltype(&Algorithm::prepare)>);
   static_assert(std::is_member_function_pointer_v<decltype(&Algorithm::executePrepared)>);

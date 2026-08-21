@@ -115,7 +115,7 @@ class Algorithm {
   /// Prepare and cache an immutable native context before CUDA graph capture.
   /// DSL algorithms reject this operation.
   virtual CommResult prepare(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
-                             bool = false) {
+                             bool = false, const std::unordered_map<std::string, uintptr_t>& = {}) {
     return CommResult::CommInvalidUsage;
   }
 
@@ -130,7 +130,7 @@ class Algorithm {
 
   /// Release one exactly matching prepared context. Returns false on a miss.
   virtual bool releasePrepared(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
-                               bool = false) {
+                               bool = false, const std::unordered_map<std::string, uintptr_t>& = {}) {
     return false;
   }
 
@@ -167,12 +167,16 @@ struct AlgorithmCtxKey {
   size_t elementCount = 0;
   int dtype = static_cast<int>(DataType::AUTO);
   bool symmetricMemory = false;
+  size_t rowCount = 1;
+  size_t localRowBytes = 0;
+  int layoutMode = 0;
 
   bool operator==(const AlgorithmCtxKey& other) const {
     return baseSendBuff == other.baseSendBuff && baseRecvBuff == other.baseRecvBuff &&
            baseSendSize == other.baseSendSize && baseRecvSize == other.baseRecvSize && tag == other.tag &&
            communicatorIdentity == other.communicatorIdentity && device == other.device &&
-           elementCount == other.elementCount && dtype == other.dtype && symmetricMemory == other.symmetricMemory;
+           elementCount == other.elementCount && dtype == other.dtype && symmetricMemory == other.symmetricMemory &&
+           rowCount == other.rowCount && localRowBytes == other.localRowBytes && layoutMode == other.layoutMode;
   }
 };
 
@@ -194,6 +198,9 @@ struct hash<mscclpp::AlgorithmCtxKey> {
     mscclpp::detail::hashCombine(seed, key.elementCount);
     mscclpp::detail::hashCombine(seed, key.dtype);
     mscclpp::detail::hashCombine(seed, key.symmetricMemory);
+    mscclpp::detail::hashCombine(seed, key.rowCount);
+    mscclpp::detail::hashCombine(seed, key.localRowBytes);
+    mscclpp::detail::hashCombine(seed, key.layoutMode);
     return seed;
   }
 };
@@ -273,14 +280,16 @@ class NativeAlgorithm : public Algorithm {
                      bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
                      DataType accumDtype = DataType::AUTO) override;
   CommResult prepare(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                     size_t outputSize, DataType dtype, bool symmetricMemory = false) override;
+                     size_t outputSize, DataType dtype, bool symmetricMemory = false,
+                     const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   CommResult executePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                              size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks = 0,
                              int nThreadsPerBlock = 0, bool symmetricMemory = false,
                              const std::unordered_map<std::string, uintptr_t>& extras = {},
                              DataType accumDtype = DataType::AUTO) override;
   bool releasePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                       size_t outputSize, DataType dtype, bool symmetricMemory = false) override;
+                       size_t outputSize, DataType dtype, bool symmetricMemory = false,
+                       const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -306,7 +315,8 @@ class NativeAlgorithm : public Algorithm {
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<void>> contexts_;
 
   AlgorithmCtxKey makeContextKey(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) const;
+                                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory,
+                                 const std::unordered_map<std::string, uintptr_t>& extras = {}) const;
   bool initialized_ = false;
 };
 

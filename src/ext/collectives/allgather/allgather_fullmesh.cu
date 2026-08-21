@@ -13,12 +13,25 @@ constexpr int kMaxBlocks = 56;
 constexpr int kMaxThreadsPerBlock = 1024;
 }  // namespace
 
+__device__ __forceinline__ size_t outputIndex(size_t localIndex, int sourceRank, size_t nInt4,
+                                              int worldSize, size_t rowWidthInt4, int layoutMode) {
+  if (layoutMode == 1) {
+    const size_t row = localIndex / rowWidthInt4;
+    const size_t column = localIndex % rowWidthInt4;
+    return row * rowWidthInt4 * worldSize + sourceRank * rowWidthInt4 + column;
+  }
+  return nInt4 * sourceRank + localIndex;
+}
+
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                      int rank, int nRanksPerIpcDomain, [[maybe_unused]] int worldSize, size_t nelems) {
+                      int rank, int nRanksPerIpcDomain, int worldSize, size_t nelems, size_t rowCount,
+                      size_t rowWidthInt4, int layoutMode, unsigned long long* executeCounter) {
   const int nPeer = nRanksPerIpcDomain - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
+  if (executeCounter != nullptr && blockIdx.x == 0 && threadIdx.x == 0) atomicAdd(executeCounter, 1ULL);
+  if (layoutMode == 1 && (rowCount == 0 || rowWidthInt4 * rowCount != nelems * sizeof(int) / sizeof(int4))) return;
   // assume (nelems * sizeof(T)) is divisible by 16
   const size_t nInt4 = nelems * sizeof(int) / sizeof(int4);
   auto memoryChans = memoryChannels + chanOffset;
@@ -56,7 +69,8 @@ __global__ void __launch_bounds__(1024, 1)
         channels[peerIdx].write(idx + scratchChunkRankOffset, val);
       }
       if constexpr (IsOutOfPlace) {
-        resultBuff4[nInt4 * rank + idx + itr * nInt4PerChunk] = val;
+        const size_t localIndex = idx + itr * nInt4PerChunk;
+        resultBuff4[outputIndex(localIndex, rank, nInt4, worldSize, rowWidthInt4, layoutMode)] = val;
       }
     }
     // Ensure that all writes of this block have been issued before issuing the signal
@@ -68,10 +82,10 @@ __global__ void __launch_bounds__(1024, 1)
     __syncthreads();
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-      const int resultOffset = nInt4 * remoteRank + itr * nInt4PerChunk;
       for (size_t idx = tid; idx < nInt4PerChunk; idx += blockDim.x * gridDim.x) {
         int4 val = scratch4[nInt4PerChunk * remoteRank + idx];
-        resultBuff4[resultOffset + idx] = val;
+        const size_t localIndex = idx + itr * nInt4PerChunk;
+        resultBuff4[outputIndex(localIndex, remoteRank, nInt4, worldSize, rowWidthInt4, layoutMode)] = val;
       }
     }
   }
@@ -89,7 +103,8 @@ __global__ void __launch_bounds__(1024, 1)
         channels[peerIdx].write(idx + scratchChunkRankOffset, val);
       }
       if constexpr (IsOutOfPlace) {
-        resultBuff4[nInt4 * rank + idx + nItrs * nInt4PerChunk] = val;
+        const size_t localIndex = idx + nItrs * nInt4PerChunk;
+        resultBuff4[outputIndex(localIndex, rank, nInt4, worldSize, rowWidthInt4, layoutMode)] = val;
       }
     }
     // Ensure that all writes of this block have been issued before issuing the signal
@@ -101,10 +116,10 @@ __global__ void __launch_bounds__(1024, 1)
     __syncthreads();
     for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
-      const int resultOffset = nInt4 * remoteRank + nItrs * nInt4PerChunk;
       for (size_t idx = tid; idx < restNInt4; idx += blockDim.x * gridDim.x) {
         int4 val = scratch4[nInt4PerChunk * remoteRank + idx];
-        resultBuff4[resultOffset + idx] = val;
+        const size_t localIndex = idx + nItrs * nInt4PerChunk;
+        resultBuff4[outputIndex(localIndex, remoteRank, nInt4, worldSize, rowWidthInt4, layoutMode)] = val;
       }
     }
   }
@@ -117,7 +132,7 @@ void AllgatherFullmesh::initialize(std::shared_ptr<mscclpp::Communicator> comm) 
 CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                   size_t inputSize, cudaStream_t stream, int nBlocks,
                                                   int nThreadsPerBlock,
-                                                  const std::unordered_map<std::string, uintptr_t>&) {
+                                                  const std::unordered_map<std::string, uintptr_t>& extras) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   int rank = ctx->rank;
   const size_t nElem = inputSize / sizeof(int);
@@ -136,14 +151,26 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
     WARN("AllgatherFullmesh: threads per block must be a multiple of warp size %d", WARP_SIZE);
     return CommResult::CommInvalidArgument;
   }
-  if ((char*)input == (char*)output + rank * inputSize) {
+  auto getExtra = [&extras](const char* name, uintptr_t fallback) {
+    auto it = extras.find(name);
+    return it == extras.end() ? fallback : it->second;
+  };
+  const size_t rowCount = static_cast<size_t>(getExtra("rowCount", 1));
+  const size_t localRowBytes = static_cast<size_t>(getExtra("localRowBytes", inputSize));
+  const int layoutMode = static_cast<int>(getExtra("layoutMode", 0));
+  auto* executeCounter = reinterpret_cast<unsigned long long*>(getExtra("executeCounter", 0));
+  if (rowCount == 0 || localRowBytes == 0 || rowCount * localRowBytes != inputSize || localRowBytes % 16 != 0) {
+    return CommResult::CommInvalidArgument;
+  }
+  const size_t rowWidthInt4 = localRowBytes / sizeof(int4);
+  if ((char*)input == (char*)output + rank * inputSize && layoutMode == 0) {
     allgatherFullmesh<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem, rowCount, rowWidthInt4, layoutMode, executeCounter);
   } else {
     allgatherFullmesh<true><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->worldSize, nElem, rowCount, rowWidthInt4, layoutMode, executeCounter);
   }
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {

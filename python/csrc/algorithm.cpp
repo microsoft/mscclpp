@@ -89,12 +89,14 @@ void register_algorithm(nb::module_& m) {
           .def(
               "prepare",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
-                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory,
+                 std::unordered_map<std::string, uintptr_t> extras) {
                 return self.prepare(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
-                                    inputSize, outputSize, dtype, symmetricMemory);
+                                    inputSize, outputSize, dtype, symmetricMemory, extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
-              nb::arg("dtype"), nb::arg("symmetric_memory") = false)
+              nb::arg("dtype"), nb::arg("symmetric_memory") = false,
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>())
           .def(
               "execute_prepared",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
@@ -114,12 +116,14 @@ void register_algorithm(nb::module_& m) {
           .def(
               "release_prepared",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
-                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory,
+                 std::unordered_map<std::string, uintptr_t> extras) {
                 return self.releasePrepared(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
-                                            inputSize, outputSize, dtype, symmetricMemory);
+                                            inputSize, outputSize, dtype, symmetricMemory, extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
-              nb::arg("dtype"), nb::arg("symmetric_memory") = false)
+              nb::arg("dtype"), nb::arg("symmetric_memory") = false,
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>())
           .def("reset", &Algorithm::reset);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
