@@ -292,6 +292,27 @@ FIFO Device Interfaces
 Device Utilities
 ~~~~~~~~~~~~~~~~
 
+.. doxygendefine:: MSCCLPP_BULK_AVAILABLE
+
+.. doxygenstruct:: mscclpp::BulkBarrier
+   :members:
+
+.. doxygenenum:: mscclpp::BulkRedOp
+
+.. doxygenfunction:: mscclpp::bulkLoad
+
+.. doxygenfunction:: mscclpp::bulkStore
+
+.. doxygenfunction:: mscclpp::bulkReduceStore
+
+.. doxygenfunction:: mscclpp::bulkStoreCommit
+
+.. doxygenfunction:: mscclpp::bulkStoreWait
+
+.. doxygenfunction:: mscclpp::bulkStoreWaitSource
+
+.. doxygenfunction:: mscclpp::bulkFence
+
 .. doxygenstruct:: mscclpp::DeviceSemaphore
    :members:
 
