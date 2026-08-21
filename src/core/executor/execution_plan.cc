@@ -619,11 +619,11 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSi
 }
 
 size_t ExecutionPlan::Impl::calcOffset(size_t size, uint32_t index, uint32_t slices) const {
-  uint32_t nelems = size / (this->bufferAlignment * sizeof(uint8_t));
-  uint32_t minNelems = nelems / slices;
-  uint32_t remainder = nelems % slices;
-  uint32_t offset = index * minNelems + (index % nelems < remainder ? index % nelems : remainder);
-  return static_cast<size_t>(offset) * this->bufferAlignment;
+  const size_t nelems = size / this->bufferAlignment;
+  const size_t minNelems = nelems / slices;
+  const size_t remainder = nelems % slices;
+  const size_t offset = index * minNelems + std::min<size_t>(index, remainder);
+  return offset * this->bufferAlignment;
 }
 
 size_t ExecutionPlan::Impl::calcSize(size_t size, uint32_t index, uint32_t slices) const {
