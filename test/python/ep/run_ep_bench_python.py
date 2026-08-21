@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified in-process low-latency (LL) EP benchmark that drives BOTH backends'
+"""Unified in-process latency EP benchmark that drives both libraries'
 Python APIs directly, inside the *same* measurement flow:
 
 * **mscclpp EP**   — ``mscclpp.ep.MoECommunicator.dispatch`` / ``.combine``.
 * **NVIDIA NCCL-EP** — ``nccl.ep.Group`` / ``nccl.ep.Handle.dispatch`` / ``.combine``
   (the ``nccl4py`` Pythonic bindings for ``libnccl_ep.so``).
 
-This is a Python port of ``mscclpp_ep_bench.cu`` that additionally understands the
-NCCL-EP Python API. Unlike ``run_ep_bench.py`` (which shells out to a separate
-per-backend process for each measurement), this script calls each backend's Python
-API *in one process* through a single shared paired-benchmark loop, so the two are
-timed with byte-for-byte the same methodology:
+This script calls each backend's Python API in one process through a shared
+paired-benchmark loop, so both are timed with the same methodology:
 
 * **Paired** ``dispatch -> combine`` per iteration, with no per-iteration
   ``stream.synchronize()`` or cross-rank barrier inside the timed loop -- the
@@ -24,12 +21,12 @@ timed with byte-for-byte the same methodology:
   ``bytes = num_valid_selections * hidden * 2`` (BF16) for both dispatch and combine.
 * **Cross-rank reduction** identical to ``printLowLatencyResults``.
 * **Output** mirrors the ``=== Summary (Low Latency, across N ranks) ===`` block so a
-  run can be diffed directly against ``ep_bench`` / ``mscclpp_ep_bench.cu``.
+  run can be diffed directly against NCCL-EP ``ep_bench``.
 
 Bootstrap: MPI (mpi4py + mpirun)
 --------------------------------
 Both backends share an MPI ``COMM_WORLD`` bootstrap (the same mechanism the C++
-``mscclpp_ep_bench`` and NCCL-EP ``ep_test.py`` use), *not* torch.distributed:
+NCCL-EP ``ep_test.py`` uses, *not* torch.distributed:
 
 * mscclpp wraps the MPI communicator with ``CommGroup(mpi_comm=MPI.COMM_WORLD)``.
 * NCCL-EP builds a ``nccl.core.Communicator`` from a unique id broadcast over MPI.
@@ -221,7 +218,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # ============================================================================
-# Shared paired benchmark + summary (mirrors mscclpp_ep_bench.cu / ep_bench).
+# Shared paired benchmark + summary (mirrors NCCL-EP ep_bench).
 # ============================================================================
 def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()

@@ -238,6 +238,10 @@ bool tryGetNvmlIpcDomainHash(uint64_t& ipcDomainHash) {
       fabricInfo.status != NVML_SUCCESS) {
     return false;
   }
+  const char emptyClusterUuid[NVML_GPU_FABRIC_UUID_LEN] = {};
+  if (std::memcmp(fabricInfo.clusterUuid, emptyClusterUuid, sizeof(emptyClusterUuid)) == 0) {
+    return false;
+  }
 
   ipcDomainHash = getFabricHash(fabricInfo);
   return true;
