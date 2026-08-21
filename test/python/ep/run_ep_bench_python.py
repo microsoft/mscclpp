@@ -165,8 +165,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
-        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
+        help="capture dispatch and combine as one CUDA graph and replay it in the timed loop.",
     )
     p.add_argument(
         "--iters-per-graph",
@@ -357,28 +356,26 @@ def torch_profiler_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, graph_group_size=1):
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None, on_fail=None, graph_group_size=1):
     """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
     (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
     replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
-    ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
-    given, runs before each replay (e.g. a host MPI barrier that cannot live inside
-    the graph). ``graph_group_size`` dispatch->combine iterations are captured inside
-    the single graph so one replay runs them all -- this amortizes launch overhead
-    and keeps the spin-waiting dispatch/combine kernels from being inflated by
-    per-replay launch skew (reported times are divided back to per-iteration by the
-    caller). Capture is best-effort: on any exception on_fail() is invoked (to let
-    the backend reset its state) and None is returned so the caller keeps the eager
-    path."""
+    ops (no CPU sync, no host collective) that go inside the graph.
+    ``graph_group_size`` dispatch->combine iterations are captured inside the single
+    graph so one replay runs them all -- this amortizes launch overhead and keeps the
+    spin-waiting dispatch/combine kernels from being inflated by per-replay launch
+    skew (reported times are divided back to per-iteration by the caller). Capture is
+    best-effort: on any exception on_fail() is invoked (to let the backend reset its
+    state) and None is returned so the caller keeps the eager path."""
     try:
         if prime:
-            if pre_replay is not None:
-                pre_replay()
+            if pre_capture is not None:
+                pre_capture()
             dispatch_op()
             combine_op()
             torch.cuda.synchronize()
-        if pre_replay is not None:
-            pre_replay()
+        if pre_capture is not None:
+            pre_capture()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             for _ in range(graph_group_size):
@@ -391,8 +388,6 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
         return None
 
     def replay_dispatch():
-        if pre_replay is not None:
-            pre_replay()
         graph.replay()
         return None
 
@@ -669,12 +664,12 @@ def main() -> None:
         backend_barrier = ops.get("barrier")
 
         # CUDA-graph capture is owned HERE, not in the backends: a backend that
-        # supports it hands back a capture spec (capture-safe dispatch/combine ops,
-        # an optional pre-replay barrier, and an on-capture-failure reset). Capturing
-        # dispatch+combine as ONE graph means a single replay runs both phases, so
-        # the skew-free separate kineto pass can no longer isolate combine -- force
-        # the PAIRED single pass (EP_KINETO_SEPARATE=0) so per-phase kernel time is
-        # still attributed by kernel name. If capture fails, keep the eager ops.
+        # supports it hands back capture-safe dispatch/combine ops and an optional
+        # on-capture-failure reset. Capturing dispatch+combine as ONE graph means a
+        # single replay runs both phases, so the skew-free separate kineto pass can
+        # no longer isolate combine -- force the PAIRED single pass
+        # (EP_KINETO_SEPARATE=0) so per-phase kernel time is still attributed by
+        # kernel name. If capture fails, keep the eager ops.
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -682,7 +677,7 @@ def main() -> None:
             graphed = _capture_paired_graph(
                 spec["dispatch"],
                 spec["combine"],
-                pre_replay=spec.get("pre_replay"),
+                pre_capture=spec.get("pre_capture"),
                 on_fail=spec.get("on_fail"),
                 graph_group_size=max(1, args.iters_per_graph),
             )

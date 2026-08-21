@@ -146,7 +146,6 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": lambda: _dispatch(torch.cuda.current_stream().cuda_stream),
             "combine": lambda: _combine(torch.cuda.current_stream().cuda_stream),
-            "pre_replay": None,
             "on_fail": None,
         }
 

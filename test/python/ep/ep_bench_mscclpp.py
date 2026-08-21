@@ -190,7 +190,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": _graph_dispatch,
             "combine": _graph_combine,
-            "pre_replay": None,
             "on_fail": None,
         }
 

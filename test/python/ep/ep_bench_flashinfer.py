@@ -121,13 +121,12 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         comm.Barrier()
         moe.combine(combine_payload, num_tokens)
 
-    # Capture-safe ops for the harness's single-graph capture. FlashInfer's
-    # dispatch/combine each need an MPI host barrier to align ranks, but an MPI
-    # barrier cannot live inside a CUDA graph -- so the captured ops are barrier-free
-    # and the harness runs the barrier BEFORE each replay (pre_replay). Capture is
-    # best-effort: FlashInfer's stateful phase / in-kernel peer spin may not be
-    # graph-capturable on every build, so on_fail rebuilds the (possibly mid-phase)
-    # communicator and the harness keeps the eager barrier+launch path.
+    # Capture-safe ops for the harness's single-graph capture. FlashInfer needs
+    # host-side rank alignment while the graph is primed and captured, but the
+    # captured communication kernels provide peer-readiness synchronization during
+    # replay. Keeping the barrier out of replay avoids charging host synchronization
+    # to the timed dispatch interval. Capture remains best-effort: on_fail rebuilds
+    # the possibly mid-phase communicator and keeps the eager barrier+launch path.
     graph_spec = None
     if args.cuda_graph:
 
@@ -148,7 +147,7 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": _dispatch,
             "combine": _combine,
-            "pre_replay": comm.Barrier,
+            "pre_capture": comm.Barrier,
             "on_fail": _rebuild,
         }
 
