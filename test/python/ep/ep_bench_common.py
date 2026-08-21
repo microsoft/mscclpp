@@ -159,6 +159,31 @@ def _mpi_stats(comm, avg: float, mn: float, mx: float, num_ranks: int):
 
 
 # ----------------------------------------------------------------------------
+# Kineto kernel-name parsing. Each backend module owns a `parse_kineto_kernels`
+# that maps a torch.profiler key_averages() table to (dispatch_us, combine_us)
+# using that library's own kernel names; they delegate the summation here so the
+# only per-library knowledge in each backend is the kernel-name substrings.
+# ----------------------------------------------------------------------------
+def sum_matching_kernel_us(key_averages, substrs):
+    """Sum each DISTINCT matching kernel's average-per-launch, so single-kernel
+    backends yield that kernel's avg and multi-kernel backends yield their
+    per-iteration SUM (scope-matched). ``substrs`` is an iterable of lowercase-
+    insensitive name substrings; matching strips C++ template arguments so a
+    combine kernel templated on DispatchLayout (e.g. combineKernel<..,
+    DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch' bucket
+    (and vice-versa) -- the dispatch/combine word always precedes the first '<'."""
+    total_us = 0.0
+    matched = False
+    subs = tuple(s.lower() for s in substrs)
+    for e in key_averages:
+        name = e.key.split("<", 1)[0].lower()
+        if any(s in name for s in subs) and int(e.count) > 0:
+            total_us += float(e.self_device_time_total) / int(e.count)
+            matched = True
+    return total_us if matched else 0.0
+
+
+# ----------------------------------------------------------------------------
 # Routing inputs — shared by both backends so the comparison is apples-to-apples.
 # BF16 tokens + top-k routing setup.
 # ----------------------------------------------------------------------------

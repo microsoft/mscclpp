@@ -6,6 +6,18 @@ from __future__ import annotations
 import gc
 import torch
 
+from ep_bench_common import sum_matching_kernel_us
+
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for NCCL-EP,
+    which runs a single dispatch kernel and a single combine kernel with the
+    phase word in each function name."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
+
 
 # ============================================================================
 # Backend: NVIDIA NCCL-EP (nccl.ep Group/Handle).
@@ -114,52 +126,40 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     def _combine(stream):
         ep_handle.combine(combine_inputs, combine_outputs, config=combine_config, stream=stream)
 
-    graphs = []
+    # NCCL-EP dispatch/combine are a PAIRED collective (combine consumes the peer
+    # data produced by the matching dispatch). The op closures below re-fetch the
+    # current stream so they are capture-safe: NCCL-EP takes an explicit stream
+    # pointer, and under CUDA-graph capture the harness runs them on the graph's
+    # capture stream (the cached stream_ptr would launch off-capture and break it).
+    def dispatch_fn():
+        _dispatch(torch.cuda.current_stream().cuda_stream)
+        return None
 
+    def combine_fn(_dout):
+        _combine(torch.cuda.current_stream().cuda_stream)
+
+    # Capturable at any scale; hand the same capture-safe ops to the harness, which
+    # owns the single-graph capture. When captured, main() times the paired kineto
+    # pass so per-phase kernel time is still attributed by kernel name.
+    graph_spec = None
     if args.cuda_graph:
-        # NCCL-EP dispatch/combine are a PAIRED collective (combine consumes the
-        # peer data produced by the matching dispatch); main() forces the paired
-        # kineto pass (EP_KINETO_SEPARATE=0) so combine follows dispatch instead of
-        # spinning on a stale peer receive. Capture dispatch+combine in a SINGLE
-        # graph: the kineto collector still attributes per-phase kernel time by
-        # kernel name, so one replay per iteration keeps the breakdown.
-        # Prime once so any lazy JIT / autotune settles before capture.
-        _dispatch(stream_ptr)
-        _combine(stream_ptr)
-        torch.cuda.synchronize()
-
-        # Capture on the graph's capture stream: NCCL-EP takes an explicit stream
-        # pointer, so it must be re-fetched inside the capture context (the default
-        # stream_ptr would launch off the capture stream and break capture).
-        g_all = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_all):
-            s = torch.cuda.current_stream().cuda_stream
-            _dispatch(s)
-            _combine(s)
-        graphs = [g_all]
-
-        def dispatch_fn():
-            g_all.replay()
-            return None
-
-        def combine_fn(_dout):
-            pass  # both phases already ran inside the combined graph replay
-
-    else:
-
-        def dispatch_fn():
-            _dispatch(stream_ptr)
-            return None
-
-        def combine_fn(_dout):
-            _combine(stream_ptr)
+        graph_spec = {
+            "dispatch": lambda: _dispatch(torch.cuda.current_stream().cuda_stream),
+            "combine": lambda: _combine(torch.cuda.current_stream().cuda_stream),
+            "on_fail": None,
+        }
 
     def teardown():
-        graphs.clear()  # drop graph refs before the handle they captured is destroyed
         ep_handle.destroy()
         ep_group.destroy()
         ncomm.destroy()
         gc.collect()
         torch.cuda.synchronize()
 
-    return dispatch_fn, combine_fn, teardown
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": None,
+        "graph": graph_spec,
+    }

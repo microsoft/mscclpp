@@ -7,7 +7,23 @@ import gc
 import os
 import torch
 
-from ep_bench_common import simulated_gemm_output, validate_combine_output_mpi
+from ep_bench_common import (
+    simulated_gemm_output,
+    validate_combine_output_mpi,
+    sum_matching_kernel_us,
+)
+
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for mscclpp
+    LL, which runs a single dispatch kernel and a single combine kernel with the
+    phase word in each function name. Template-arg stripping in the shared helper
+    matters here because the combine kernel is templated on DispatchLayout
+    (combineKernel<.., RANK_MAJOR>)."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
 
 
 # ============================================================================
@@ -145,76 +161,47 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "grp": ep_group,
     }
 
+    # Eager ops (also the fallback if the harness graph capture fails). dispatch
+    # returns (dispatch_out, handle); combine consumes them.
+    def dispatch_fn():
+        return _dispatch()
+
+    def combine_fn(dout):
+        dispatch_out, handle = dout
+        _combine(dispatch_out, handle)
+
+    # Capture-safe ops for the harness's single-graph capture: dispatch+combine run
+    # as ONE graph (one replay does both, so combine_fn becomes a no-op), matching
+    # the NCCL-EP / DeepEP path and how a real serving stack replays a fused MoE
+    # step. Per-kernel kineto times are unaffected by the single vs two-graph
+    # choice; only the host-level per-phase split changes (combine host timer folds
+    # into dispatch). combine consumes the dispatch output produced in the same
+    # capture, shared via the _cap holder.
+    graph_spec = None
     if args.cuda_graph:
-        if args.graph_group_size > 1:
-            prime_out, prime_handle = _dispatch()
-            _combine(prime_out, prime_handle)
-            torch.cuda.synchronize()
-            grouped_graph = torch.cuda.CUDAGraph()
-            grouped_outputs = []
-            with torch.cuda.graph(grouped_graph):
-                for sample_x, sample_topk_idx, sample_topk_weights, _ in input_samples:
-                    dispatch_out, handle = moe_comm.dispatch(
-                        sample_x,
-                        sample_topk_idx,
-                        sample_topk_weights,
-                        output_buffer=output_buffer,
-                    )
-                    _combine(dispatch_out, handle)
-                    grouped_outputs.append((dispatch_out, handle))
-            state["graphs"] = (grouped_graph,)
-            state["grouped_outputs"] = grouped_outputs
+        _cap = {}
 
-            def dispatch_fn():
-                grouped_graph.replay()
-                return None
+        def _graph_dispatch():
+            _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
-            def combine_fn(_dout):
-                pass
+        def _graph_combine():
+            moe_comm.combine(simulated_gemm_output(_cap["out"]), _cap["handle"], out=out)
 
-            def teardown():
-                state.clear()
-                gc.collect()
-                torch.cuda.synchronize()
-
-            return dispatch_fn, combine_fn, teardown
-
-        # Prime once, then capture dispatch and combine as two separate CUDA graphs (rather than a
-        # single graph wrapping a dispatch()+combine() loop). The shared timed loop replays and
-        # times each phase independently so the kineto collector can attribute per-phase
-        # dispatch-vs-combine kernel time; a single combined graph would fuse both phases into one
-        # replay and lose that per-phase breakdown, which is the primary output of this benchmark.
-        prime_out, prime_handle = _dispatch()
-        _combine(prime_out, prime_handle)
-        torch.cuda.synchronize()
-
-        g_dispatch = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_dispatch):
-            g_dispatch_out, g_handle = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
-        g_combine = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(g_combine):
-            _combine(g_dispatch_out, g_handle)
-        state["graphs"] = (g_dispatch, g_combine)
-
-        def dispatch_fn():
-            g_dispatch.replay()
-            return (g_dispatch_out, g_handle)
-
-        def combine_fn(dout):
-            g_combine.replay()
-
-    else:
-
-        def dispatch_fn():
-            return _dispatch()
-
-        def combine_fn(dout):
-            dispatch_out, handle = dout
-            _combine(dispatch_out, handle)
+        graph_spec = {
+            "dispatch": _graph_dispatch,
+            "combine": _graph_combine,
+            "on_fail": None,
+        }
 
     def teardown():
         state.clear()
         gc.collect()
         torch.cuda.synchronize()
 
-    return dispatch_fn, combine_fn, teardown
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": None,
+        "graph": graph_spec,
+    }

@@ -109,11 +109,7 @@ launch command that sets all of this.
 from __future__ import annotations
 
 import argparse
-import ctypes
-import glob
 import os
-import subprocess
-import time
 
 import torch
 
@@ -123,11 +119,12 @@ from ep_bench_common import (
     make_inputs,
     _init_torch_nccl,
     _mpi_stats,
+    sum_matching_kernel_us,
 )
-from ep_bench_mscclpp import setup_mscclpp
-from ep_bench_nccl import setup_nccl
-from ep_bench_deepep import setup_deepep
-from ep_bench_flashinfer import setup_flashinfer
+from ep_bench_mscclpp import setup_mscclpp, parse_kineto_kernels as mscclpp_parse_kineto
+from ep_bench_nccl import setup_nccl, parse_kineto_kernels as nccl_parse_kineto
+from ep_bench_deepep import setup_deepep, parse_kineto_kernels as deepep_parse_kineto
+from ep_bench_flashinfer import setup_flashinfer, parse_kineto_kernels as flashinfer_parse_kineto
 
 
 # ----------------------------------------------------------------------------
@@ -155,7 +152,8 @@ def parse_args() -> argparse.Namespace:
         "--dispatch-dtype",
         choices=("bf16", "fp8_e4m3"),
         default="bf16",
-        help="mscclpp LL dispatch wire format. NCCL-EP path is bf16 only.",
+        help="mscclpp LL dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
+        "benchmark is wired BF16-only (the harness does not plumb NCCL-EP's dispatch scales yet).",
     )
     p.add_argument(
         "--combine-mode",
@@ -167,14 +165,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
-        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
+        help="capture dispatch and combine as one CUDA graph and replay it in the timed loop.",
     )
     p.add_argument(
-        "--graph-group-size",
+        "--iters-per-graph",
+        dest="iters_per_graph",
         type=int,
-        default=1,
-        help="capture this many independently routed dispatch->combine pairs in one CUDA Graph",
+        default=50,
+        help="with --cuda-graph, number of dispatch->combine iterations captured INSIDE one CUDA "
+        "graph (replayed as a unit; default 50). >1 amortizes launch overhead and keeps the "
+        "spin-waiting dispatch/combine kernels from being inflated by per-replay launch skew; "
+        "reported times are per iteration. Automatically treated as 1 without --cuda-graph.",
     )
     p.add_argument(
         "--ep-layout",
@@ -192,14 +193,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="mscclpp: run a one-time combine correctness check before timing.",
     )
-    p.add_argument(
-        "--kernel-timing",
-        action="store_true",
-        help="build/use the in-process CUPTI Activity collector (libcupti_kernel_timer.so) "
-        "for the kernel-only block. Only needed when EP_KERNEL_TIMER=cupti; the default "
-        "kernel timer is torch kineto (EP_KERNEL_TIMER=kineto) with a GPU-side torch NCCL "
-        "barrier (EP_KINETO_BARRIER=nccl), which needs no CUPTI build.",
-    )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
         raise SystemExit("--num-tokens and --num-experts must be positive")
@@ -209,14 +202,17 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
-    if args.graph_group_size <= 0:
-        raise SystemExit("--graph-group-size must be positive")
-    if args.graph_group_size > 1 and not args.cuda_graph:
-        raise SystemExit("--graph-group-size > 1 requires --cuda-graph")
-    if args.graph_group_size > 1 and args.backend not in ("mscclpp", "flashinfer"):
-        raise SystemExit("grouped CUDA Graph timing currently supports mscclpp or flashinfer")
+    if args.iters_per_graph <= 0:
+        raise SystemExit("--iters-per-graph must be positive")
+    if not args.cuda_graph:
+        # Grouping only applies to graph capture; treat as 1 for eager runs so the
+        # non-1 default does not error a plain (non-graph) benchmark.
+        args.iters_per_graph = 1
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
-        raise SystemExit("--dispatch-dtype fp8_e4m3 is only supported by the mscclpp backend; use --backend mscclpp")
+        raise SystemExit(
+            "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
+            "(NCCL-EP supports FP8 but its path here is BF16-only); use --backend mscclpp"
+        )
     return args
 
 
@@ -227,8 +223,16 @@ def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
 
 
-def _kineto_kernel_us(
-    dispatch_fn, combine_fn, comm, num_tests, flush_l2=True, use_barrier=True, barrier=None, mid_barrier=None
+def torch_profiler_kernel_us(
+    dispatch_fn,
+    combine_fn,
+    comm,
+    num_tests,
+    flush_l2=True,
+    use_barrier=True,
+    barrier=None,
+    mid_barrier=None,
+    parse_kernels=None,
 ):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
@@ -256,12 +260,24 @@ def _kineto_kernel_us(
     before it -- exactly like DeepEP's own bench_kineto (which is called once per
     op). This aligns BOTH kernels at entry without ever placing a barrier between
     a paired dispatch->combine (so it is safe for DeepEP multi-node), collapsing
-    the combine recv-spin skew. Set EP_KINETO_SEPARATE=0 for the legacy paired
-    loop."""
+    the combine recv-spin skew. It is the right mode for EAGER runs. Set
+    EP_KINETO_SEPARATE=0 for the paired single-pass loop, which is REQUIRED (not
+    legacy) whenever a backend captures dispatch+combine in ONE CUDA graph: a
+    single replay runs both phases, so the separate pass can no longer isolate
+    combine and the per-phase split must come from the paired pass instead."""
     import torch.profiler as _tp
 
     use_mid = os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
     separate = os.environ.get("EP_KINETO_SEPARATE", "1") == "1"
+    # Backend-specific kineto parse: maps a key_averages() table to
+    # (dispatch_us, combine_us) using that library's kernel names (see
+    # ep_bench_<lib>.parse_kineto_kernels). Fall back to the generic phase-word
+    # split when none is supplied.
+    if parse_kernels is None:
+        parse_kernels = lambda ka: (
+            sum_matching_kernel_us(ka, ("dispatch",)),
+            sum_matching_kernel_us(ka, ("combine",)),
+        )
 
     def _do_barrier():
         if not use_barrier:
@@ -272,32 +288,17 @@ def _kineto_kernel_us(
         else:
             comm.Barrier()  # MPI host barrier (host-only alignment)
 
-    def _parse(ka, substr):
-        # Sum each DISTINCT matching kernel's average-per-launch. Single-kernel
-        # backends (mscclpp, NCCL-EP) yield that kernel's avg; two-kernel DeepEP
-        # (*_impl + *_epilogue) yields their per-iteration SUM (scope-matched).
-        # Case-insensitive so FlashInfer's moeA2ADispatchKernel / moeA2ACombineKernel
-        # (capitalized) match the "dispatch"/"combine" buckets too.
-        total_us = 0.0
-        matched = False
-        sub = substr.lower()
-        for e in ka:
-            # Match on the function name with C++ template arguments stripped, so a
-            # combine kernel templated on DispatchLayout (e.g. combineKernel<..,
-            # DispatchLayout::RANK_MAJOR>) is NOT mis-counted into the 'dispatch'
-            # bucket (and vice-versa). The dispatch/combine word lives in the
-            # function name, which always precedes the first '<'.
-            name = e.key.split("<", 1)[0].lower()
-            if sub in name and int(e.count) > 0:
-                total_us += float(e.self_device_time_total) / int(e.count)
-                matched = True
-        return total_us if matched else 0.0
-
     if separate:
         # ---- Two separate passes, each: [flush; barrier; single op] ----
-        # This mirrors DeepEP bench_kineto called once per op, aligning each
-        # kernel's entry across ranks. No barrier ever sits between a paired
-        # dispatch->combine, so it is safe for DeepEP multi-node.
+        # Generic two-pass timing method (adopted from DeepEP's bench_kineto,
+        # which profiles one op per call): dispatch and combine are each timed in
+        # their own profiled loop with the barrier immediately before the op, so
+        # both kernels enter GPU-aligned across ranks and the combine recv-spin
+        # skew collapses. It applies to every backend -- the dispatch_fn/combine_fn
+        # closures are backend-supplied and this loop has no per-library logic.
+        # Because no barrier is ever placed BETWEEN a paired dispatch->combine, it
+        # is also safe for DeepEP multi-node (a mid-pair collective would corrupt
+        # its symmetric-memory state; see the class docstring).
         def _run_pass(op_fn):
             op_fn()  # warm / auto-tune
             torch.cuda.synchronize()
@@ -316,14 +317,19 @@ def _kineto_kernel_us(
         # Dispatch pass.
         ka_d = _run_pass(dispatch_fn)
         # Combine pass: prime one dispatch to obtain a valid combine input, then
-        # replay combine alone (DeepEP uses its fixed primed handle; mscclpp /
-        # NCCL-EP consume this dout each iteration).
+        # replay combine alone. The primed dout carries whatever state the backend
+        # needs (DeepEP replays its fixed primed handle; mscclpp / NCCL-EP consume
+        # this dout each iteration) -- all via the backend-supplied combine_fn.
         dout = dispatch_fn()
         torch.cuda.synchronize()
         ka_c = _run_pass(lambda: combine_fn(dout))
-        return _parse(ka_d, "dispatch"), _parse(ka_c, "combine")
+        # Dispatch time from the dispatch pass, combine time from the combine pass.
+        return parse_kernels(ka_d)[0], parse_kernels(ka_c)[1]
 
-    # ---- Legacy paired loop (EP_KINETO_SEPARATE=0) ----
+    # ---- Paired single-pass loop (EP_KINETO_SEPARATE=0) ----
+    # Times dispatch and combine in ONE profiled pass over the paired
+    # dispatch->combine loop. REQUIRED for single-graph CUDA-graph backends (one
+    # replay runs both phases, so the separate pass cannot isolate combine).
     _d = dispatch_fn()
     combine_fn(_d)
     torch.cuda.synchronize()
@@ -342,7 +348,53 @@ def _kineto_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
-    return _parse(ka, "dispatch"), _parse(ka, "combine")
+    return parse_kernels(ka)
+
+
+# ============================================================================
+# CUDA-graph capture (owned by the harness, not the backends). Every EP backend
+# replays dispatch+combine as ONE combined graph, so this single helper captures
+# the paired op from any backend; the backend only supplies its capture-safe ops.
+# ============================================================================
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None, on_fail=None, graph_group_size=1):
+    """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
+    (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
+    replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
+    ops (no CPU sync, no host collective) that go inside the graph.
+    ``graph_group_size`` dispatch->combine iterations are captured inside the single
+    graph so one replay runs them all -- this amortizes launch overhead and keeps the
+    spin-waiting dispatch/combine kernels from being inflated by per-replay launch
+    skew (reported times are divided back to per-iteration by the caller). Capture is
+    best-effort: on any exception on_fail() is invoked (to let the backend reset its
+    state) and None is returned so the caller keeps the eager path."""
+    try:
+        if prime:
+            if pre_capture is not None:
+                pre_capture()
+            dispatch_op()
+            combine_op()
+            torch.cuda.synchronize()
+        if pre_capture is not None:
+            pre_capture()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            for _ in range(graph_group_size):
+                dispatch_op()
+                combine_op()
+        torch.cuda.synchronize()
+    except Exception:  # noqa: BLE001 - capturability is an external-library boundary
+        if on_fail is not None:
+            on_fail()
+        return None
+
+    def replay_dispatch():
+        graph.replay()
+        return None
+
+    def replay_combine(_dout):
+        pass  # both phases already ran inside the single-graph replay
+
+    return replay_dispatch, replay_combine, graph
 
 
 def run_backend(
@@ -354,9 +406,10 @@ def run_backend(
     inputs,
     dispatch_fn,
     combine_fn,
-    cupti=None,
     nccl_barrier=None,
     bench_barrier=None,
+    parse_kernels=None,
+    graph_group_size=1,
 ):
     base_inputs = inputs[0] if isinstance(inputs, list) else inputs
     _, _, _, num_valid_selections = base_inputs
@@ -368,56 +421,18 @@ def run_backend(
 
     stream = torch.cuda.current_stream()
 
-    if args.graph_group_size > 1:
-        for _ in range(warmup):
-            dispatch_fn()
-        torch.cuda.synchronize()
-        comm.Barrier()
-
-        starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
-        ends = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
-        for index in range(iters):
-            starts[index].record(stream)
-            dispatch_fn()
-            ends[index].record(stream)
-        torch.cuda.synchronize()
-
-        pair_us = [starts[index].elapsed_time(ends[index]) * 1e3 / args.graph_group_size for index in range(iters)]
-        avg_us, min_us, max_us = (
-            sum(pair_us) / len(pair_us),
-            min(pair_us),
-            max(pair_us),
-        )
-        global_avg, global_min, global_max = _mpi_stats(comm, avg_us, min_us, max_us, num_ranks)
-        if rank == 0:
-            print(f"\n=== Grouped CUDA Graph [{name}] across {num_ranks} ranks ===")
-            print(
-                f"D+C per pair: avg={global_avg:.2f} us, "
-                f"min={global_min:.2f} us, max={global_max:.2f} us "
-                f"(group_size={args.graph_group_size}, replays={iters})"
-            )
-        return
-
     # --- Warmup (paired). ---
     for _ in range(warmup):
         dout = dispatch_fn()
-        stream.synchronize()
         combine_fn(dout)
         stream.synchronize()
         comm.Barrier()
 
-    # Kernel-only timing. Default (EP_KERNEL_TIMER=kineto): DeepEP bench_kineto-style
+    # Kernel-only timing (EP_KERNEL_TIMER=kineto, the default): DeepEP bench_kineto-style
     # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
     # per iteration (EP_KINETO_BARRIER=nccl) to align ranks on-device -- skew-free avg.
-    # EP_KERNEL_TIMER=cupti falls back to the in-process CUPTI collector (start after
-    # warmup, stop after the timed loop -- same window as the host CUDA events).
     use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
-    have_kernel = (cupti is not None) or use_kineto
-    inproc_rc = -1
-    if cupti is not None and not use_kineto:
-        torch.cuda.synchronize()
-        comm.Barrier()
-        inproc_rc = cupti.start()
+    have_kernel = use_kineto
 
     d_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     d_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -439,21 +454,27 @@ def run_backend(
     inproc_ok = False
     if use_kineto:
         comm.Barrier()
-        ck_disp, ck_comb = _kineto_kernel_us(
-            dispatch_fn, combine_fn, comm, iters, barrier=(bench_barrier or nccl_barrier), mid_barrier=nccl_barrier
+        ck_disp, ck_comb = torch_profiler_kernel_us(
+            dispatch_fn,
+            combine_fn,
+            comm,
+            iters,
+            barrier=(bench_barrier or nccl_barrier),
+            mid_barrier=nccl_barrier,
+            parse_kernels=parse_kernels,
         )
-        inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
-    elif cupti is not None and inproc_rc == 0:
-        cupti.stop()
-        comm.Barrier()
-        ck_disp = cupti.avg_us("dispatch")
-        ck_comb = cupti.avg_us("combine")
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
-    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 for i in range(iters)]
-    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 for i in range(iters)]
+    # graph_group_size is the number of dispatch->combine iterations captured in one
+    # graph (the --iters-per-graph arg; 1 when this backend is not graph-captured).
+    # One replay (one dispatch_fn() call) ran them all, so divide the per-replay time
+    # back to per-iteration. Kernel-only kineto is already per-iteration (its
+    # per-launch average divides by the kernel count, which scales with the group).
+    group = max(1, graph_group_size)
+    disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
+    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
+    tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
 
@@ -477,7 +498,7 @@ def run_backend(
     c_tp_all = comm.gather(c_tp, root=0)
     t_tp_all = comm.gather(t_tp, root=0)
 
-    # --- Kernel-only (in-process CUPTI) cross-rank reduction. The LL dispatch
+    # --- Kernel-only (torch kineto) cross-rank reduction. The LL dispatch
     # kernel ends in a cross-rank recv spin-wait, so a lagging rank's device time
     # includes wait skew; the cross-rank MIN (the rank that did not wait) is the
     # representative kernel floor. Combine has little recv-spin and is stable. ---
@@ -522,7 +543,7 @@ def run_backend(
         )
 
         if have_kernel:
-            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)" if use_kineto else "in-process CUPTI Activity API"
+            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
             print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
             if kernel_ok:
                 # Report BOTH min and avg for dispatch and combine. The LL dispatch
@@ -544,7 +565,7 @@ def run_backend(
                     f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
                 )
             else:
-                print("  NOTE: in-process CUPTI captured 0 LL kernels (collector unavailable).")
+                print("  NOTE: kineto captured 0 LL kernels (collector unavailable).")
 
         print(
             f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
@@ -553,89 +574,17 @@ def run_backend(
 
 
 # ----------------------------------------------------------------------------
-# In-process CUPTI kernel timer (pure device time), shared by both backends.
 # ----------------------------------------------------------------------------
-def _cuda_inc_lib():
-    home = os.environ.get("CUDA_HOME", "/usr/local/cuda")
-    inc = os.path.join(home, "include")
-    cands = glob.glob(os.path.join(home, "targets", "*", "lib", "libcupti.so")) + [
-        os.path.join(home, "lib64", "libcupti.so"),
-        os.path.join(home, "lib", "libcupti.so"),
-    ]
-    lib = next((os.path.dirname(c) for c in cands if os.path.exists(c)), os.path.join(home, "lib64"))
-    return inc, lib
-
-
-def _ensure_cupti_lib(comm, local_rank):
-    """Build libcupti_kernel_timer.so next to this file if missing. Only one rank
-    per node attempts to compile, and an O_EXCL lock file guarantees that even
-    across nodes sharing the filesystem only a single compiler runs at a time
-    (the losers wait for the winner's build); everyone then barriers."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    so = os.path.join(here, "libcupti_kernel_timer.so")
-    src = os.path.join(here, "cupti_kernel_timer.cpp")
-    lock = so + ".lock"
-    if not os.path.exists(so) and local_rank == 0 and os.path.exists(src):
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            fd = None
-        if fd is not None:
-            try:
-                if not os.path.exists(so):
-                    inc, lib = _cuda_inc_lib()
-                    subprocess.run(
-                        ["g++", "-O2", "-fPIC", "-shared", src, "-o", so, f"-I{inc}", f"-L{lib}", "-lcupti"],
-                        check=True,
-                    )
-            finally:
-                os.close(fd)
-                try:
-                    os.unlink(lock)
-                except FileNotFoundError:
-                    pass
-        else:
-            # Another builder holds the lock; wait for the .so to appear.
-            for _ in range(600):
-                if os.path.exists(so):
-                    break
-                time.sleep(0.5)
-    comm.Barrier()
-    return so if os.path.exists(so) else None
-
-
-class _InProcCupti:
-    """ctypes wrapper over libcupti_kernel_timer.so -- a faithful analog of
-    ep_bench's CUPTI KernelTimer. start()/stop() bracket the timed loop; the
-    Activity API records per-kernel GPU time (CUPTI_ACTIVITY_KIND_KERNEL, which --
-    unlike CONCURRENT_KERNEL -- captures the cooperative-launch LL kernels), then
-    avg_us('dispatch'/'combine') buckets by mangled-name substring. Both backends'
-    LL kernels are named ``dispatch`` / ``combine``, so the same buckets serve both.
-    kt_start() clears prior stats, so one collector can be reused per backend."""
-
-    def __init__(self, so_path):
-        self.lib = ctypes.CDLL(so_path)
-        self.lib.kt_start.restype = ctypes.c_int
-        self.lib.kt_stop.restype = ctypes.c_int
-        self.lib.kt_get_avg_us.restype = ctypes.c_double
-        self.lib.kt_get_avg_us.argtypes = [ctypes.c_char_p]
-        self.lib.kt_get_count.restype = ctypes.c_long
-        self.lib.kt_get_count.argtypes = [ctypes.c_char_p]
-
-    def start(self):
-        return int(self.lib.kt_start())
-
-    def stop(self):
-        return int(self.lib.kt_stop())
-
-    def avg_us(self, substr):
-        return float(self.lib.kt_get_avg_us(substr.encode()))
-
-    def count(self, substr):
-        return int(self.lib.kt_get_count(substr.encode()))
-
-
+# Backend registry.
+# ----------------------------------------------------------------------------
 _SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
+# Per-backend kineto kernel-name parse, owned by each backend module.
+_PARSE_KINETO = {
+    "mscclpp": mscclpp_parse_kineto,
+    "nccl": nccl_parse_kineto,
+    "deepep": deepep_parse_kineto,
+    "flashinfer": flashinfer_parse_kineto,
+}
 
 
 def main() -> None:
@@ -650,19 +599,17 @@ def main() -> None:
 
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
-    inputs = [
-        make_inputs(
-            args.num_tokens,
-            args.hidden,
-            args.num_topk,
-            args.num_experts,
-            rank,
-            args.seed + sample_index * 1_000_003,
-        )
-        for sample_index in range(args.graph_group_size)
-    ]
-    if args.graph_group_size == 1:
-        inputs = inputs[0]
+    # Single routing input reused for every captured iteration. --iters-per-graph
+    # replays the SAME paired dispatch->combine N times inside one graph to amortize
+    # launch overhead; it does not need N distinct routings.
+    inputs = make_inputs(
+        args.num_tokens,
+        args.hidden,
+        args.num_topk,
+        args.num_experts,
+        rank,
+        args.seed,
+    )
 
     # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
     # (cuda-graph capture toggles it for some backends only -- see the loop).
@@ -685,18 +632,6 @@ def main() -> None:
                 )
             nccl_barrier = None
 
-    cupti = None
-    if args.kernel_timing:
-        so_path = _ensure_cupti_lib(comm, local_rank)
-        if so_path is not None:
-            try:
-                cupti = _InProcCupti(so_path)
-            except OSError as exc:
-                if rank == 0:
-                    print(f"[warn] CUPTI collector unavailable ({exc}); host-observed only", flush=True)
-        elif rank == 0:
-            print("[warn] libcupti_kernel_timer.so missing/unbuilt; host-observed only", flush=True)
-
     # nccl is benchmarked before mscclpp (see module docstring: mscclpp LL init
     # perturbs CUDA state that breaks a later NCCL-EP cooperative launch).
     if args.backend == "all":
@@ -705,37 +640,62 @@ def main() -> None:
         backends = [args.backend]
 
     for name in backends:
-        # Under --cuda-graph, nccl, flashinfer and deepep capture dispatch+combine in
-        # a SINGLE graph, so one replay runs both phases and the skew-free separate
-        # pass (which times combine alone) can no longer isolate combine. Force the
-        # PAIRED kineto pass for those backends so the collector still attributes
-        # per-phase kernel time by kernel name. mscclpp keeps its two separate graphs
-        # (and thus the separate skew-free pass) on the user's default. deepep only
-        # graphs intranode, so setup_deepep sets EP_KINETO_SEPARATE itself when it
-        # actually captures; the nccl/flashinfer force here is unconditional under
-        # --cuda-graph. Restore the snapshot each iteration so a prior backend's
-        # override does not leak in --backend all.
+        # Restore the user's EP_KINETO_SEPARATE each iteration so a prior backend's
+        # override (its own, or the single-graph force below) does not leak across
+        # --backend all. A backend whose kineto pass has a hard requirement (e.g.
+        # FlashInfer's stateful API cannot time combine alone) sets it inside its
+        # own setup; the graph force below is layered on top.
         if _user_kineto_separate is None:
             os.environ.pop("EP_KINETO_SEPARATE", None)
         else:
             os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
-        if args.cuda_graph and (
-            name in ("nccl", "flashinfer") or (name == "mscclpp" and args.ep_layout == "rank_major")
-        ):
-            os.environ["EP_KINETO_SEPARATE"] = "0"
 
         try:
-            _setup_ret = _SETUP[name](args, comm, rank, num_ranks, inputs)
-            if len(_setup_ret) == 4:
-                dispatch_fn, combine_fn, teardown, backend_barrier = _setup_ret
-            else:
-                dispatch_fn, combine_fn, teardown = _setup_ret
-                backend_barrier = None
+            ops = _SETUP[name](args, comm, rank, num_ranks, inputs)
         except Exception as exc:
             if rank == 0:
                 print(f"\n[skip] backend '{name}' setup failed: {type(exc).__name__}: {exc}", flush=True)
             comm.Barrier()
             continue
+
+        dispatch_fn = ops["dispatch"]
+        combine_fn = ops["combine"]
+        teardown = ops["teardown"]
+        backend_barrier = ops.get("barrier")
+
+        # CUDA-graph capture is owned HERE, not in the backends: a backend that
+        # supports it hands back capture-safe dispatch/combine ops and an optional
+        # on-capture-failure reset. Capturing dispatch+combine as ONE graph means a
+        # single replay runs both phases, so the skew-free separate kineto pass can
+        # no longer isolate combine -- force the PAIRED single pass
+        # (EP_KINETO_SEPARATE=0) so per-phase kernel time is still attributed by
+        # kernel name. If capture fails, keep the eager ops.
+        graph = None
+        spec = ops.get("graph")
+        effective_group_size = 1
+        if spec is not None:
+            graphed = _capture_paired_graph(
+                spec["dispatch"],
+                spec["combine"],
+                pre_capture=spec.get("pre_capture"),
+                on_fail=spec.get("on_fail"),
+                graph_group_size=max(1, args.iters_per_graph),
+            )
+            local_ok = graphed is not None
+            all_ok = comm.allreduce(1 if local_ok else 0, op=MPI.MIN)
+            if not all_ok:
+                graphed = None  # keep every rank on the eager path
+            comm.Barrier()
+            if graphed is not None:
+                dispatch_fn, combine_fn, graph = graphed
+                effective_group_size = max(1, args.iters_per_graph)
+                os.environ["EP_KINETO_SEPARATE"] = "0"
+                if rank == 0:
+                    print(
+                        f"[cfg] {name} cuda_graph captured "
+                        f"(single graph; dispatch+combine; iters_per_graph={effective_group_size})",
+                        flush=True,
+                    )
         try:
             run_backend(
                 name,
@@ -746,12 +706,17 @@ def main() -> None:
                 inputs,
                 dispatch_fn,
                 combine_fn,
-                cupti=cupti,
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
+                parse_kernels=_PARSE_KINETO[name],
+                graph_group_size=effective_group_size,
             )
         finally:
             torch.cuda.synchronize()
+            # Drop the replay closures and the captured graph BEFORE teardown frees
+            # the buffers/handles the graph captured.
+            dispatch_fn = combine_fn = None
+            graph = None
             teardown()
             comm.Barrier()
     if os.environ.get("EP_BOOTSTRAP") == "torch":
