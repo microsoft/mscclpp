@@ -112,6 +112,28 @@ class Algorithm {
                              const std::unordered_map<std::string, uintptr_t>& extras = {},
                              DataType accumDtype = DataType::AUTO) = 0;
 
+  /// Prepare and cache an immutable native context before CUDA graph capture.
+  /// DSL algorithms reject this operation.
+  virtual CommResult prepare(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                             bool = false) {
+    return CommResult::CommInvalidUsage;
+  }
+
+  /// Execute only if an exactly matching context was prepared. This method must
+  /// never initialize, allocate, register memory, or communicate on a miss.
+  virtual CommResult executePrepared(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                                     ReduceOp, cudaStream_t, int = 0, int = 0, bool = false,
+                                     const std::unordered_map<std::string, uintptr_t>& = {},
+                                     DataType = DataType::AUTO) {
+    return CommResult::CommInvalidUsage;
+  }
+
+  /// Release one exactly matching prepared context. Returns false on a miss.
+  virtual bool releasePrepared(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                               bool = false) {
+    return false;
+  }
+
   /// Reset the algorithm state, clearing any cached contexts.
   virtual void reset() = 0;
 };
@@ -135,15 +157,22 @@ class AlgorithmBuilder {
 /// the algorithm to cache and reuse contexts for repeated operations with
 /// the same buffers.
 struct AlgorithmCtxKey {
-  void* baseSendBuff;
-  void* baseRecvBuff;
-  size_t baseSendSize;
-  size_t baseRecvSize;
-  int tag;
+  void* baseSendBuff = nullptr;
+  void* baseRecvBuff = nullptr;
+  size_t baseSendSize = 0;
+  size_t baseRecvSize = 0;
+  int tag = 0;
+  uintptr_t communicatorIdentity = 0;
+  int device = -1;
+  size_t elementCount = 0;
+  int dtype = static_cast<int>(DataType::AUTO);
+  bool symmetricMemory = false;
 
   bool operator==(const AlgorithmCtxKey& other) const {
     return baseSendBuff == other.baseSendBuff && baseRecvBuff == other.baseRecvBuff &&
-           baseSendSize == other.baseSendSize && baseRecvSize == other.baseRecvSize && tag == other.tag;
+           baseSendSize == other.baseSendSize && baseRecvSize == other.baseRecvSize && tag == other.tag &&
+           communicatorIdentity == other.communicatorIdentity && device == other.device &&
+           elementCount == other.elementCount && dtype == other.dtype && symmetricMemory == other.symmetricMemory;
   }
 };
 
@@ -160,6 +189,11 @@ struct hash<mscclpp::AlgorithmCtxKey> {
     mscclpp::detail::hashCombine(seed, key.baseSendSize);
     mscclpp::detail::hashCombine(seed, key.baseRecvSize);
     mscclpp::detail::hashCombine(seed, key.tag);
+    mscclpp::detail::hashCombine(seed, key.communicatorIdentity);
+    mscclpp::detail::hashCombine(seed, key.device);
+    mscclpp::detail::hashCombine(seed, key.elementCount);
+    mscclpp::detail::hashCombine(seed, key.dtype);
+    mscclpp::detail::hashCombine(seed, key.symmetricMemory);
     return seed;
   }
 };
@@ -238,6 +272,15 @@ class NativeAlgorithm : public Algorithm {
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                      bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
                      DataType accumDtype = DataType::AUTO) override;
+  CommResult prepare(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                     size_t outputSize, DataType dtype, bool symmetricMemory = false) override;
+  CommResult executePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                             size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks = 0,
+                             int nThreadsPerBlock = 0, bool symmetricMemory = false,
+                             const std::unordered_map<std::string, uintptr_t>& extras = {},
+                             DataType accumDtype = DataType::AUTO) override;
+  bool releasePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                       size_t outputSize, DataType dtype, bool symmetricMemory = false) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -262,6 +305,8 @@ class NativeAlgorithm : public Algorithm {
   Constraint constraint_;
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<void>> contexts_;
 
+  AlgorithmCtxKey makeContextKey(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) const;
   bool initialized_ = false;
 };
 

@@ -86,6 +86,40 @@ void register_algorithm(nb::module_& m) {
               nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0, nb::arg("symmetric_memory") = false,
               nb::arg("extras") = std::unordered_map<std::string, uintptr_t>(),
               nb::arg("accum_dtype") = static_cast<int32_t>(DataType::AUTO))
+          .def(
+              "prepare",
+              [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
+                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                return self.prepare(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
+                                    inputSize, outputSize, dtype, symmetricMemory);
+              },
+              nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
+              nb::arg("dtype"), nb::arg("symmetric_memory") = false)
+          .def(
+              "execute_prepared",
+              [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
+                 size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op, uintptr_t stream, int nBlocks,
+                 int nThreadsPerBlock, bool symmetricMemory, std::unordered_map<std::string, uintptr_t> extras,
+                 int32_t accumDtype) {
+                return self.executePrepared(
+                    comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output), inputSize, outputSize,
+                    dtype, op, reinterpret_cast<cudaStream_t>(stream), nBlocks, nThreadsPerBlock, symmetricMemory,
+                    extras, static_cast<DataType>(accumDtype));
+              },
+              nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
+              nb::arg("dtype"), nb::arg("op") = ReduceOp::NOP, nb::arg("stream") = 0, nb::arg("n_blocks") = 0,
+              nb::arg("n_threads_per_block") = 0, nb::arg("symmetric_memory") = false,
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>(),
+              nb::arg("accum_dtype") = static_cast<int32_t>(DataType::AUTO))
+          .def(
+              "release_prepared",
+              [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
+                 size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+                return self.releasePrepared(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
+                                            inputSize, outputSize, dtype, symmetricMemory);
+              },
+              nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
+              nb::arg("dtype"), nb::arg("symmetric_memory") = false)
           .def("reset", &Algorithm::reset);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")

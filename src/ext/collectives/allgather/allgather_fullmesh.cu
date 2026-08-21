@@ -181,9 +181,14 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
   return ctx;
 }
 
-AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void*, void*, size_t, DataType, bool) {
-  // always return same key, non-zero copy algo
-  return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
+AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
+                                                                size_t outputSize, DataType dtype,
+                                                                bool symmetricMemory) {
+  // Buffer registration and MemoryChannel handles are pointer- and size-specific.
+  // NativeAlgorithm augments this key with communicator/device identity, element
+  // count, dtype, and symmetric-memory mode before cache lookup.
+  return AlgorithmCtxKey{const_cast<void*>(input), output, inputSize, outputSize,
+                         symmetricMemory ? 1 : 0};
 }
 
 std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
@@ -203,7 +208,7 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
              DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
              bool symmetricMemory) {
-        return self->generateAllgatherContextKey(input, output, inputSize, dtype, symmetricMemory);
+        return self->generateAllgatherContextKey(input, output, inputSize, outputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

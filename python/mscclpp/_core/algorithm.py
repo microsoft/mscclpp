@@ -220,6 +220,81 @@ class Algorithm:
             int(accum_dtype),
         )
 
+    def prepare(
+        self,
+        comm: CppCommunicator,
+        input_buffer: int,
+        output_buffer: int,
+        input_size: int,
+        output_size: int,
+        dtype: CppDataType,
+        symmetric_memory: bool = False,
+    ) -> int:
+        """Prepare an exact native buffer context before CUDA graph capture."""
+        return self._algorithm.prepare(
+            comm,
+            int(input_buffer),
+            int(output_buffer),
+            input_size,
+            output_size,
+            dtype,
+            symmetric_memory,
+        )
+
+    def execute_prepared(
+        self,
+        comm: CppCommunicator,
+        input_buffer: int,
+        output_buffer: int,
+        input_size: int,
+        output_size: int,
+        dtype: CppDataType,
+        op: CppReduceOp = CppReduceOp.NOP,
+        stream: int = 0,
+        nblocks: int = 0,
+        nthreads_per_block: int = 0,
+        symmetric_memory: bool = False,
+        extras: Optional[Dict[str, int]] = None,
+        accum_dtype: Optional[CppDataType] = None,
+    ) -> int:
+        """Launch using an exact prepared context; misses fail without setup."""
+        return self._algorithm.execute_prepared(
+            comm,
+            int(input_buffer),
+            int(output_buffer),
+            input_size,
+            output_size,
+            dtype,
+            op,
+            int(stream),
+            nblocks,
+            nthreads_per_block,
+            symmetric_memory,
+            dict(extras) if extras is not None else {},
+            int(accum_dtype if accum_dtype is not None else dtype),
+        )
+
+    def release_prepared(
+        self,
+        comm: CppCommunicator,
+        input_buffer: int,
+        output_buffer: int,
+        input_size: int,
+        output_size: int,
+        dtype: CppDataType,
+        symmetric_memory: bool = False,
+    ) -> bool:
+        """Release one exact prepared context and its registrations/channels."""
+        return self._algorithm.release_prepared(
+            comm,
+            int(input_buffer),
+            int(output_buffer),
+            input_size,
+            output_size,
+            dtype,
+            symmetric_memory,
+        )
+
     def reset(self):
         """Reset the internal state of the algorithm, if applicable."""
         self._algorithm.reset()

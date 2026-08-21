@@ -10,6 +10,29 @@
 
 namespace mscclpp {
 
+namespace {
+size_t dataTypeBytes(DataType dtype) {
+  switch (dtype) {
+    case DataType::FLOAT16:
+    case DataType::BFLOAT16:
+      return 2;
+    case DataType::FLOAT32:
+    case DataType::INT32:
+    case DataType::UINT32:
+      return 4;
+    case DataType::FLOAT8_E4M3FN:
+    case DataType::FLOAT8_E4M3FNUZ:
+    case DataType::FLOAT8_E5M2:
+    case DataType::FLOAT8_E5M2FNUZ:
+    case DataType::UINT8:
+    case DataType::FLOAT8_E4M3B15:
+      return 1;
+    default:
+      return 0;
+  }
+}
+}  // namespace
+
 CollectiveBufferMode CollectiveRequest::bufferMode() const {
   if (inputBuffer == outputBuffer) return CollectiveBufferMode::InPlace;
   if (collective == "allgather") {
@@ -49,7 +72,7 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey ctxKey = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     INFO(ALGO, name_, " context cache MISS (creating new context, this triggers collective setup): rank=",
@@ -65,6 +88,63 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
   }
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
                            nThreadsPerBlock, extras, accumDtype);
+}
+
+AlgorithmCtxKey NativeAlgorithm::makeContextKey(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                                size_t inputSize, size_t outputSize, DataType dtype,
+                                                bool symmetricMemory) const {
+  AlgorithmCtxKey key = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
+  int device = -1;
+  if (cudaGetDevice(&device) != cudaSuccess) device = -1;
+  const size_t elementBytes = dataTypeBytes(dtype);
+  key.communicatorIdentity = reinterpret_cast<uintptr_t>(comm.get());
+  key.device = device;
+  key.elementCount = elementBytes == 0 ? 0 : inputSize / elementBytes;
+  key.dtype = static_cast<int>(dtype);
+  key.symmetricMemory = symmetricMemory;
+  return key;
+}
+
+CommResult NativeAlgorithm::prepare(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                    size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+  if (!comm || (inputSize != 0 && input == nullptr) || (outputSize != 0 && output == nullptr)) {
+    return CommResult::CommInvalidArgument;
+  }
+  if (!initialized_) {
+    initFunc_(comm);
+    initialized_ = true;
+  }
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  if (contexts_.find(key) != contexts_.end()) return CommResult::CommSuccess;
+  if (inputSize == 0) {
+    contexts_.emplace(key, nullptr);
+    return CommResult::CommSuccess;
+  }
+  auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
+  if (!ctx) return CommResult::CommInternalError;
+  contexts_.emplace(key, std::move(ctx));
+  return CommResult::CommSuccess;
+}
+
+CommResult NativeAlgorithm::executePrepared(
+    std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize,
+    DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock, bool symmetricMemory,
+    const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype) {
+  if (!initialized_ || !comm) return CommResult::CommInvalidUsage;
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  auto it = contexts_.find(key);
+  if (it == contexts_.end()) return CommResult::CommInvalidUsage;
+  if (inputSize == 0) return CommResult::CommSuccess;
+  if (accumDtype == DataType::AUTO) accumDtype = dtype;
+  return kernelLaunchFunc_(it->second, input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
+                           nThreadsPerBlock, extras, accumDtype);
+}
+
+bool NativeAlgorithm::releasePrepared(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                      size_t inputSize, size_t outputSize, DataType dtype, bool symmetricMemory) {
+  if (!comm) return false;
+  AlgorithmCtxKey key = makeContextKey(comm, input, output, inputSize, outputSize, dtype, symmetricMemory);
+  return contexts_.erase(key) == 1;
 }
 
 const std::string& NativeAlgorithm::name() const { return name_; }
