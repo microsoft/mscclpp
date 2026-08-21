@@ -96,8 +96,25 @@ function run_py_benchmark()
   -x MSCCLPP_HOME=/root/mscclpp -npernode 8 python3 /root/mscclpp/python/mscclpp_benchmark/allreduce_bench.py
 }
 
+function run_executor_tests()
+{
+  echo "==================Run multi-node executor tests======================"
+  ALGOS_DIR=/root/mscclpp/test/executor-tests/algos
+  PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
+  TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
+  PYTHON_BIN=/root/venv/bin/python3
+
+  echo "Generating execution plans"
+  ${PYTHON_BIN} ${ALGOS_DIR}/multi_node_transfer.py --name multi_node_transfer > ${PLANS_DIR}/multi_node_transfer.json
+  ${PYTHON_BIN} ${ALGOS_DIR}/multi_node_transfer_pkt.py --name multi_node_transfer_pkt > ${PLANS_DIR}/multi_node_transfer_pkt.json
+
+  echo "Running multi-node transfer test with in-place buffers"
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer.json --size 1M --in_place
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
+}
+
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <mscclpp-test/mp-ut/run_pytests/run_py_benchmark>"
+  echo "Usage: $0 <mscclpp-test/mp-ut/run_pytests/run_py_benchmark/executor-tests>"
     exit 1
 fi
 test_name=$1
@@ -117,6 +134,10 @@ case $test_name in
   py-benchmark)
     echo "==================Run python benchmark================================"
     run_py_benchmark
+    ;;
+  executor-tests)
+    echo "==================Run executor tests================================="
+    run_executor_tests
     ;;
   *)
     echo "Unknown test name: $test_name"
