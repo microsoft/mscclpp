@@ -72,19 +72,26 @@ class MoEHighThroughputRuntime : public MoERuntime {
   void* recvPool_ = nullptr;
   std::vector<void*> bufferPtrs_;
   std::vector<void*> recvPoolPtrs_;
-  std::vector<mscclpp::BaseMemoryChannel> barrierChannels_;
+  // Independent semaphore phases prevent count-exchange, payload-dispatch,
+  // and combine kernels from consuming one another's tokens.
+  std::vector<mscclpp::BaseMemoryChannel> countBarrierChannels_;
+  std::vector<mscclpp::BaseMemoryChannel> dispatchBarrierChannels_;
+  std::vector<mscclpp::BaseMemoryChannel> combineBarrierChannels_;
   std::vector<mscclpp::RegisteredMemory> peerMemories_;
   std::vector<mscclpp::RegisteredMemory> recvPoolMemories_;
   void** bufferPtrsGpu_ = nullptr;
   void** recvPoolPtrsGpu_ = nullptr;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> countBarrierChannelHandles_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> dispatchBarrierChannelHandles_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> combineBarrierChannelHandles_;
   int* combineRecvIdxGpu_ = nullptr;
   const float* recvTopkWeights_ = nullptr;
 
-  volatile int* moeRecvCounter_ = nullptr;
-  int* moeRecvCounterMapped_ = nullptr;
-  volatile int* moeRecvExpertCounter_ = nullptr;
-  int* moeRecvExpertCounterMapped_ = nullptr;
+  high_throughput::DispatchCountPublication* countPublication_ = nullptr;
+  high_throughput::DispatchCountPublication* countPublicationMapped_ = nullptr;
+  uint64_t notifyGeneration_ = 0;
+  bool notifyInFlight_ = false;
+  bool notifyPoisoned_ = false;
 };
 
 }  // namespace ep

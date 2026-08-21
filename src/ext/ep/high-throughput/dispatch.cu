@@ -6,8 +6,11 @@
 
 #include <cooperative_groups.h>
 
+#include <mscclpp/atomic_device.hpp>
+
 #include "api.cuh"
 #include "barrier.cuh"
+#include "config.cuh"
 #include "device_helpers.cuh"
 #include "exception.cuh"
 #include "launch.cuh"
@@ -18,8 +21,9 @@ namespace high_throughput {
 namespace detail {
 
 template <int NumRanks>
-__global__ void exchangeDispatchCountsKernel(const int* numTokensPerRank, int* mappedRecvCounter,
-                                             const int* numTokensPerExpert, int* mappedRecvExpertCounters,
+__global__ void exchangeDispatchCountsKernel(const int* numTokensPerRank,
+                                             DispatchCountPublication* mappedPublication,
+                                             uint64_t expectedGeneration, const int* numTokensPerExpert,
                                              int numExperts, int numTokens, int numChannels, const bool* isTokenInRank,
                                              int* channelPrefixMatrix, int* rankPrefixMatrix, int expertAlignment,
                                              void** bufferPtrs, mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels,
@@ -60,23 +64,31 @@ __global__ void exchangeDispatchCountsKernel(const int* numTokensPerRank, int* m
       for (int srcRank = 1; srcRank < NumRanks; ++srcRank) {
         localRankCounts[srcRank * NumRanks + threadId] += localRankCounts[(srcRank - 1) * NumRanks + threadId];
       }
-      if (threadId == rank) *mappedRecvCounter = localRankCounts[(NumRanks - 1) * NumRanks + rank];
-    }
-
-    auto* localExpertCounts = localRankCounts + NumRanks * NumRanks;
-    if (threadId < numExpertsPerRank) {
-      int count = 0;
-#pragma unroll
-      for (int srcRank = 0; srcRank < NumRanks; ++srcRank) {
-        count += localExpertCounts[srcRank * numExpertsPerRank + threadId];
-      }
-      mappedRecvExpertCounters[threadId] = (count + expertAlignment - 1) / expertAlignment * expertAlignment;
     }
     __syncthreads();
 
 #pragma unroll
     for (int index = threadId; index < NumRanks * NumRanks; index += numThreads) {
       rankPrefixMatrix[index] = localRankCounts[index];
+    }
+    __syncthreads();
+
+    // One elected thread publishes a coherent host-visible record. Payload
+    // stores precede the system-scope release publication of the generation.
+    if (threadId == 0) {
+      mappedPublication->numRecvTokens = localRankCounts[(NumRanks - 1) * NumRanks + rank];
+      auto* localExpertCounts = localRankCounts + NumRanks * NumRanks;
+      for (int localExpert = 0; localExpert < numExpertsPerRank; ++localExpert) {
+        int count = 0;
+#pragma unroll
+        for (int srcRank = 0; srcRank < NumRanks; ++srcRank) {
+          count += localExpertCounts[srcRank * numExpertsPerRank + localExpert];
+        }
+        mappedPublication->numRecvTokensPerExpert[localExpert] =
+            (count + expertAlignment - 1) / expertAlignment * expertAlignment;
+      }
+      mscclpp::atomicStore<uint64_t, mscclpp::scopeSystem>(
+          &mappedPublication->generation, expectedGeneration, mscclpp::memoryOrderRelease);
     }
     memory_fence();
     if (threadId < WARP_SIZE) barrier_device<NumRanks>(barrierChannels, rank);
@@ -107,15 +119,15 @@ __global__ void exchangeDispatchCountsKernel(const int* numTokensPerRank, int* m
   }
 }
 
-void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
-                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
-                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                            int expertAlignment, void** bufferPtrs,
+void exchangeDispatchCounts(const int* numTokensPerRank, DispatchCountPublication* mappedPublication,
+                            uint64_t expectedGeneration, int numRanks, const int* numTokensPerExpert,
+                            int numExperts, int numTokens, const bool* isTokenInRank, int* channelPrefixMatrix,
+                            int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
                             int numChannels) {
-#define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                       \
-  LAUNCH_KERNEL(config.get(), exchangeDispatchCountsKernel<ranks>, numTokensPerRank, mappedRecvCounter,          \
-                numTokensPerExpert, mappedRecvExpertCounters, numExperts, numTokens, numChannels, isTokenInRank, \
+#define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                    \
+  LAUNCH_KERNEL(config.get(), exchangeDispatchCountsKernel<ranks>, numTokensPerRank, mappedPublication,       \
+                expectedGeneration, numTokensPerExpert, numExperts, numTokens, numChannels, isTokenInRank,    \
                 channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrs, barrierChannels, rank);      \
   break
 
@@ -308,14 +320,14 @@ void dispatch(int* sendHead, const void* input, const int64_t* topkIdx, const fl
 
 }  // namespace detail
 
-void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
-                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
-                            const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                            int expertAlignment, void** bufferPtrs,
+void exchangeDispatchCounts(const int* numTokensPerRank, DispatchCountPublication* mappedPublication,
+                            uint64_t expectedGeneration, int numRanks, const int* numTokensPerExpert,
+                            int numExperts, int numTokens, const bool* isTokenInRank, int* channelPrefixMatrix,
+                            int* rankPrefixMatrix, int expertAlignment, void** bufferPtrs,
                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,
                             int numChannels) {
-  detail::exchangeDispatchCounts(numTokensPerRank, mappedRecvCounter, numRanks, numTokensPerExpert,
-                                 mappedRecvExpertCounters, numExperts, numTokens, isTokenInRank, channelPrefixMatrix,
+  detail::exchangeDispatchCounts(numTokensPerRank, mappedPublication, expectedGeneration, numRanks,
+                                 numTokensPerExpert, numExperts, numTokens, isTokenInRank, channelPrefixMatrix,
                                  rankPrefixMatrix, expertAlignment, bufferPtrs, barrierChannels, rank, stream,
                                  numChannels);
 }
