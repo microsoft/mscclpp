@@ -107,6 +107,7 @@ class Comm:
         *,
         config_store: "TunedConfigStore | None" = None,
         hardware_profile: HardwareProfile | None = None,
+        collective: str = _ALLREDUCE_COLLECTIVE,
         enable_dsl: bool = False,
         dsl_tbg: Iterable[int] = DEFAULT_DSL_TBG,
         dsl_tpb: Iterable[int] = DEFAULT_DSL_TPB,
@@ -138,18 +139,18 @@ class Comm:
 
         self._dsl_algorithms: set[str] = set()
         if enable_dsl:
-            self._compile_dsl_algorithms(dsl_tbg, dsl_tpb)
+            self._compile_dsl_algorithms(collective, dsl_tbg, dsl_tpb)
 
-    def _compile_dsl_algorithms(self, tbg_values: Iterable[int], tpb_values: Iterable[int]) -> None:
-        """Compile DSL allreduce variants and register them alongside the native algorithms.
+    def _compile_dsl_algorithms(
+        self, collective: str, tbg_values: Iterable[int], tpb_values: Iterable[int]
+    ) -> None:
+        """Compile the multi-node DSL variants for ``collective`` and register them alongside the natives.
 
         Each (thread_block_group_size, num_threads_per_block) pair is a separate compiled plan, since
         DSL algorithms bake their launch geometry into the plan and ignore the nblocks/nthreads passed
         to execute(). The variant name must encode both values: the plan cache key does not include
         them, so variants sharing a name would silently resolve to the same cached plan.
         """
-        from mscclpp.default_algos import allreduce_multi_nodes
-        from mscclpp.language.collectives import AllReduce
         from mscclpp.language.utils import AlgoSpec
 
         world_size = self._comm_group.nranks
@@ -160,11 +161,34 @@ class Comm:
         if n_nodes < 2:
             return
 
+        if collective == _ALLREDUCE_COLLECTIVE:
+            from mscclpp.default_algos import allreduce_multi_nodes
+            from mscclpp.language.collectives import AllReduce
+
+            builder = allreduce_multi_nodes
+            collective_op = AllReduce(world_size, 1, True)
+            name_prefix = "dsl_allreduce"
+            tags: dict = {}
+            # allreduce_multi_nodes lays out its thread block groups from this value.
+            pass_thread_block_group_size = True
+        elif collective == _ALLGATHER_COLLECTIVE:
+            from mscclpp.default_algos import allgather_multi_nodes
+            from mscclpp.language.collectives import AllGather
+
+            builder = allgather_multi_nodes
+            collective_op = AllGather(world_size, 1, True)
+            name_prefix = "dsl_allgather"
+            tags = {"default": 1}
+            # allgather_multi_nodes derives its geometry from the spec alone.
+            pass_thread_block_group_size = False
+        else:
+            return
+
         for tbg in tbg_values:
             for tpb in tpb_values:
                 spec = AlgoSpec(
-                    name=f"dsl_allreduce_{n_nodes}node_{tbg}TBG_{tpb}TPB",
-                    collective=AllReduce(world_size, 1, True),
+                    name=f"{name_prefix}_{n_nodes}node_{tbg}TBG_{tpb}TPB",
+                    collective=collective_op,
                     nranks_per_node=nranks_per_node,
                     world_size=world_size,
                     in_place=True,
@@ -176,11 +200,11 @@ class Comm:
                     use_double_scratch_buffer=True,
                     min_message_size=tbg * (1 << 10),
                     max_message_size=8 << 20,
+                    tags=tags,
                 )
+                compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
                 try:
-                    algorithm = self._mscclpp.compile(
-                        allreduce_multi_nodes, spec, self._rank, thread_block_group_size=tbg
-                    )
+                    algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
                 except Exception as exc:
                     logger.warning("Skipping DSL variant %s: %s: %s", spec.name, type(exc).__name__, exc)
                     continue

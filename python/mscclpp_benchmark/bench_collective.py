@@ -81,6 +81,10 @@ class CandidateSpec:
     supported_skus: tuple[str, ...] | None = None
     requires_nvls: bool = False
     requires_symmetric_memory: bool = False
+    # Native algorithms use all-pairs CUDA-IPC and only work within a single node; they hang if
+    # tuned on a multi-node job. Only algorithms that explicitly opt in are considered when the
+    # world spans more than one node.
+    supports_multi_node: bool = False
     # None means "use the tuner's global sweep"; an explicit tuple overrides it, which DSL
     # algorithms need since they bake their launch geometry into the plan and ignore nblocks/nthreads.
     candidate_nblocks: tuple[int, ...] | None = None
@@ -267,6 +271,7 @@ def _dsl_candidate_specs(comm: Comm, collective: str) -> tuple[CandidateSpec, ..
                 max_message_size=max_message_size,
                 candidate_nblocks=(0,),
                 candidate_nthreads=(0,),
+                supports_multi_node=True,
             )
         )
     return tuple(specs)
@@ -278,11 +283,18 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
     seen: set[str] = set()
     symmetric_memory = case.symmetric_memory
     profile = getattr(comm, "hardware_profile", None)
+    comm_group = comm.comm_group
+    nranks = getattr(comm_group, "nranks", 1) or 1
+    nranks_per_node = getattr(comm_group, "nranks_per_node", nranks) or nranks
+    n_nodes = nranks // nranks_per_node if nranks_per_node else 1
     filtered_out = False
     for candidate in (
         *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
         *_dsl_candidate_specs(comm, case.collective),
     ):
+        if n_nodes > 1 and not candidate.supports_multi_node:
+            filtered_out = True
+            continue
         if not _candidate_supports_profile(candidate, profile):
             filtered_out = True
             continue
@@ -572,6 +584,7 @@ def main(argv: list[str] | None = None) -> None:
         config_store=config_store,
         hardware_profile=hardware_profile,
         scratch_buffer_size=args.scratch_buffer_size,
+        collective=args.collective,
         enable_dsl=args.enable_dsl,
         dsl_tbg=dsl_tbg,
         dsl_tpb=dsl_tpb,
