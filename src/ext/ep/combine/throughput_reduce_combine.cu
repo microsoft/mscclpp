@@ -37,7 +37,7 @@ namespace ep {
 
 template <int NumRanks, int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    tokenMajorReduceCombineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+    throughputReduceCombineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
                                   int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
                                   int64_t metadataSlotBytes, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
@@ -184,7 +184,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
 }
 
 template <int NumRanks, int MaxContributors, int NumWarps>
-int maxCooperativeBlocks(size_t dynamicSharedBytes) {
+int maxCooperativeThroughputCombineBlocks(size_t dynamicSharedBytes) {
   static int cachedDevice = -1;
   static size_t cachedSharedBytes = 0;
   static int cachedMaxBlocks = 0;
@@ -194,7 +194,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   if (device != cachedDevice || dynamicSharedBytes != cachedSharedBytes) {
     int blocksPerSm;
     int numSms;
-    auto kernel = tokenMajorReduceCombineKernel<NumRanks, MaxContributors, NumWarps>;
+    auto kernel = throughputReduceCombineKernel<NumRanks, MaxContributors, NumWarps>;
     CUDA_CHECK(
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumWarps * WARP_SIZE, dynamicSharedBytes));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
@@ -205,7 +205,7 @@ int maxCooperativeBlocks(size_t dynamicSharedBytes) {
   return cachedMaxBlocks;
 }
 
-void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+void throughputReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
                              int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
                              int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
                              cudaStream_t stream) {
@@ -222,13 +222,14 @@ void tokenMajorReduceCombine(void* output, float* outputTopkWeights, const int* 
 
 #define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
   {                                                                                                                    \
-    auto kernel = tokenMajorReduceCombineKernel<ranks, maxContributors, numWarps>;                                     \
+    auto kernel = throughputReduceCombineKernel<ranks, maxContributors, numWarps>;                                     \
     const size_t sharedBytes =                                                                                         \
         static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
         static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
     CUDA_CHECK(                                                                                                        \
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));     \
-    EP_HOST_ASSERT((numBlocks <= maxCooperativeBlocks<ranks, maxContributors, numWarps>(sharedBytes)));                \
+    EP_HOST_ASSERT(                                                                                                    \
+        (numBlocks <= maxCooperativeThroughputCombineBlocks<ranks, maxContributors, numWarps>(sharedBytes)));          \
     LaunchConfig config(numBlocks, numWarps* WARP_SIZE, sharedBytes, stream, true);                                    \
     LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
                   hidden, numTopk, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes,                     \

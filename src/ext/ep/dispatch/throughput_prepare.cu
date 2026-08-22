@@ -4,7 +4,7 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// Token-major throughput routing-count construction.
+// Throughput routing-count construction.
 
 #include "exception.hpp"
 #include "kernels.hpp"
@@ -15,7 +15,7 @@ namespace ep {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
 __global__ void __launch_bounds__(NumThreads, 1)
-    prepareTokenMajorKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+    prepareThroughputKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
                             int numTokens, int numTopk, int numExperts, const DeviceContext* context) {
   const int blockId = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
@@ -89,7 +89,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
   }
 }
 
-void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
                        int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
@@ -98,7 +98,7 @@ void tokenMajorPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
                         (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream);
-  LAUNCH_KERNEL(config.get(), (prepareTokenMajorKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,
+  LAUNCH_KERNEL(config.get(), (prepareThroughputKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,
                 numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
                 context.devicePtr_);
 }

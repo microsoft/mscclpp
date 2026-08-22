@@ -147,13 +147,13 @@ src/ext/ep/
 │   ├── common.cuh
 │   ├── expert_major_dispatch.cu
 │   ├── rank_major_dispatch.cu
-│   ├── token_major_prepare.cu
-│   └── token_major_dispatch.cu
+│   ├── throughput_prepare.cu
+│   └── throughput_dispatch.cu
 ├── combine/
 │   ├── common.cuh
 │   ├── rank_local_reduce_combine.cu
 │   ├── direct_send_combine.cu
-│   └── token_major_reduce_combine.cu
+│   └── throughput_reduce_combine.cu
 ├── include/
 │   ├── config.hpp
 │   ├── device_context.hpp

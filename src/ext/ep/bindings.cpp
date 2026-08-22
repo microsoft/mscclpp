@@ -139,11 +139,11 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("num_topk"), nb::arg("max_tokens_per_rank"), nb::arg("num_experts"), nb::arg("dispatch_layout"),
           nb::arg("dispatch_data_type"), nb::arg("mode"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
       .def(
-          "token_major_prepare",
+          "throughput_prepare",
           [](mscclpp::ep::MoERuntime& self, uintptr_t num_tokens_per_rank_ptr, uintptr_t num_tokens_per_expert_ptr,
              uintptr_t is_token_in_rank_ptr, uintptr_t topk_idx_ptr, int num_tokens, int num_topk, int num_experts,
              uintptr_t stream_ptr) {
-            self.tokenMajorPrepare(reinterpret_cast<int*>(ptr(num_tokens_per_rank_ptr)),
+            self.throughputPrepare(reinterpret_cast<int*>(ptr(num_tokens_per_rank_ptr)),
                                    reinterpret_cast<int*>(ptr(num_tokens_per_expert_ptr)),
                                    reinterpret_cast<bool*>(ptr(is_token_in_rank_ptr)),
                                    reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)), num_tokens, num_topk,
@@ -152,21 +152,21 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("num_tokens_per_rank_ptr"), nb::arg("num_tokens_per_expert_ptr"), nb::arg("is_token_in_rank_ptr"),
           nb::arg("topk_idx_ptr"), nb::arg("num_tokens"), nb::arg("num_topk"), nb::arg("num_experts"),
           nb::arg("stream_ptr"))
-      .def("token_major_num_channels", [](const mscclpp::ep::MoERuntime& self,
-                                          int x_element_size) { return self.tokenMajorNumChannels(x_element_size); })
-      .def("token_major_resolve_recv_buffer",
+      .def("throughput_num_channels", [](const mscclpp::ep::MoERuntime& self,
+                                         int x_element_size) { return self.throughputNumChannels(x_element_size); })
+      .def("throughput_resolve_recv_buffer",
            [](const mscclpp::ep::MoERuntime& self, int num_tokens, int num_recv_tokens, int hidden,
               int x_element_size) -> uintptr_t {
              return reinterpret_cast<uintptr_t>(
-                 self.tokenMajorResolveRecvBuffer(num_tokens, num_recv_tokens, hidden, x_element_size));
+                 self.throughputResolveRecvBuffer(num_tokens, num_recv_tokens, hidden, x_element_size));
            })
       .def(
-          "token_major_notify",
+          "throughput_notify",
           [](mscclpp::ep::MoERuntime& self, uintptr_t rank_prefix_matrix_ptr, uintptr_t channel_prefix_matrix_ptr,
              uintptr_t num_recv_tokens_per_expert_ptr, uintptr_t num_tokens_per_rank_ptr,
              uintptr_t num_tokens_per_expert_ptr, uintptr_t is_token_in_rank_ptr, int num_tokens, int num_experts,
              int x_element_size, int expert_alignment, uintptr_t stream_ptr) {
-            return self.tokenMajorNotify(reinterpret_cast<int*>(ptr(rank_prefix_matrix_ptr)),
+            return self.throughputNotify(reinterpret_cast<int*>(ptr(rank_prefix_matrix_ptr)),
                                          reinterpret_cast<int*>(ptr(channel_prefix_matrix_ptr)),
                                          reinterpret_cast<int*>(ptr(num_recv_tokens_per_expert_ptr)),
                                          reinterpret_cast<const int*>(ptr(num_tokens_per_rank_ptr)),

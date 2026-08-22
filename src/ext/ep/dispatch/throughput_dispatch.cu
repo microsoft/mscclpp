@@ -16,7 +16,7 @@ namespace mscclpp {
 namespace ep {
 
 template <int NumRanks>
-__global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, const int* numTokensPerExpert,
+__global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, const int* numTokensPerExpert,
                                                int numExperts, int numTokens, int numChannels,
                                                const bool* isTokenInRank, int* channelPrefixMatrix,
                                                int* rankPrefixMatrix, int expertAlignment,
@@ -105,11 +105,11 @@ __global__ void exchangeTokenMajorCountsKernel(const int* numTokensPerRank, cons
   }
 }
 
-void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
+void throughputExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
                               const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
                               int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                             \
-  LAUNCH_KERNEL(config.get(), exchangeTokenMajorCountsKernel<ranks>, numTokensPerRank, numTokensPerExpert, numExperts, \
+  LAUNCH_KERNEL(config.get(), exchangeThroughputCountsKernel<ranks>, numTokensPerRank, numTokensPerExpert, numExperts, \
                 numTokens, numChannels, isTokenInRank, channelPrefixMatrix, rankPrefixMatrix, expertAlignment,         \
                 context.devicePtr_);                                                                                   \
   break
@@ -125,7 +125,7 @@ void tokenMajorExchangeCounts(const int* numTokensPerRank, const int* numTokensP
 }
 
 template <int NumRanks>
-__global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix, const DeviceContext* context) {
+__global__ void publishCachedThroughputPrefixKernel(const int* rankPrefixMatrix, const DeviceContext* context) {
   if (threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
   __syncthreads();
 
@@ -141,9 +141,9 @@ __global__ void publishCachedTokenMajorPrefixKernel(const int* rankPrefixMatrix,
   if (threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
 }
 
-void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
+void throughputPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
 #define CACHED_NOTIFY_DISPATCH_LAUNCH_CASE(ranks)                                                                \
-  LAUNCH_KERNEL(config.get(), publishCachedTokenMajorPrefixKernel<ranks>, rankPrefixMatrix, context.devicePtr_); \
+  LAUNCH_KERNEL(config.get(), publishCachedThroughputPrefixKernel<ranks>, rankPrefixMatrix, context.devicePtr_); \
   break
 
   LaunchConfig config(1, 128, 0, stream);
@@ -153,7 +153,7 @@ void tokenMajorPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceCont
 
 template <int NumRanks, int NumThreads, DispatchLayout Layout>
 __global__ void __launch_bounds__(NumThreads, 1)
-    tokenMajorDispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
+    throughputDispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
                              const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
                              int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts,
                              int numScales, int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales,
@@ -252,7 +252,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
 }
 
 template <int NumRanks, int NumThreads, DispatchLayout Layout>
-int maxCooperativeTokenMajorBlocks() {
+int maxCooperativeThroughputDispatchBlocks() {
   static int cachedDevice = -1;
   static int cachedMaxBlocks = 0;
 
@@ -261,7 +261,7 @@ int maxCooperativeTokenMajorBlocks() {
   if (device != cachedDevice) {
     int blocksPerSm;
     int numSms;
-    auto kernel = tokenMajorDispatchKernel<NumRanks, NumThreads, Layout>;
+    auto kernel = throughputDispatchKernel<NumRanks, NumThreads, Layout>;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumThreads, 0));
     CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
     cachedDevice = device;
@@ -270,7 +270,7 @@ int maxCooperativeTokenMajorBlocks() {
   return cachedMaxBlocks;
 }
 
-void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+void throughputDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
                         const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
                         int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
                         int64_t* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
@@ -285,8 +285,8 @@ void tokenMajorDispatch(int* sendHead, const void* input, const int64_t* topkIdx
                  metadataSlotBytes);
 
 #define DISPATCH_LAUNCH_CASE_LAYOUT(ranks, Layout)                                                         \
-  EP_HOST_ASSERT((numBlocks <= maxCooperativeTokenMajorBlocks<ranks, NumThreads, Layout>()));              \
-  LAUNCH_KERNEL(config.get(), (tokenMajorDispatchKernel<ranks, NumThreads, Layout>), sendHead,             \
+  EP_HOST_ASSERT((numBlocks <= maxCooperativeThroughputDispatchBlocks<ranks, NumThreads, Layout>()));      \
+  LAUNCH_KERNEL(config.get(), (throughputDispatchKernel<ranks, NumThreads, Layout>), sendHead,             \
                 reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales, isTokenInRank,    \
                 channelPrefixMatrix, numTokens, numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, \
                 recvTopkIdx, recvTopkWeights, recvXScales, recvPoolHeaderBytes, recvPoolMetadataOffset,    \

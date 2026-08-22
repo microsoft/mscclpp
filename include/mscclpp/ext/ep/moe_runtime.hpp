@@ -101,17 +101,17 @@ class MoERuntime {
   ///
   /// Computes per-rank counts, per-expert counts, and token-to-rank membership
   /// on @p stream without moving token payloads.
-  void tokenMajorPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
+  void throughputPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
                          int numTokens, int numTopk, int numExperts, cudaStream_t stream);
   /// Return the throughput-mode communication channel count.
-  int tokenMajorNumChannels(int xElementSize) const;
+  int throughputNumChannels(int xElementSize) const;
   /// Resolve the runtime-owned throughput receive buffer.
-  void* tokenMajorResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
+  void* throughputResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
   /// Exchange throughput routing counts and return the receive-token count.
   ///
   /// This host-synchronizing metadata phase must precede throughput dispatch
   /// when cached routing metadata is unavailable.
-  int tokenMajorNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
+  int throughputNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
                        const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
                        int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
 
