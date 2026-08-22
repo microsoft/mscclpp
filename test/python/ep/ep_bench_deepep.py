@@ -1,0 +1,189 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+from __future__ import annotations
+
+import gc
+import os
+import torch
+
+from ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
+
+
+def parse_kineto_kernels(key_averages):
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for DeepEP
+    V2. Its low-latency path runs a dispatch_impl kernel + a copy epilogue and a
+    combine_impl kernel + a reduce epilogue; every one carries the phase word in
+    its function name, so a case-insensitive substring match sums each phase."""
+    return (
+        sum_matching_kernel_us(key_averages, ("dispatch",)),
+        sum_matching_kernel_us(key_averages, ("combine",)),
+    )
+
+
+# ============================================================================
+# Backend: DeepEP V2 (deepseek-ai/DeepEP, unified ElasticBuffer).
+# ============================================================================
+def setup_deepep(args, comm, rank, num_ranks, inputs):
+    """DeepEP V2 dispatch/combine via `deep_ep.ElasticBuffer`, wired
+    the same way as the mscclpp / NCCL-EP backends: return (dispatch_fn,
+    combine_fn, teardown). DeepEP needs a torch.distributed NCCL group (reused
+    from `_ensure_torch_dist`) and, for a same-rack NVLink run, `EP_DISABLE_GIN=1`.
+    The dispatch handle (routing) is fixed for the run, so we dispatch once to
+    obtain the handle + combine input and then replay dispatch/combine in the
+    timed loop -- dispatch_impl(+copy) and combine_impl(+reduce) are what the
+    kineto timer buckets by the "dispatch"/"combine" substrings."""
+    import deep_ep
+
+    os.environ.setdefault("EP_DISABLE_GIN", "1")
+    group = _ensure_torch_dist(comm, rank, num_ranks)
+
+    x, topk_idx, topk_weights, _ = inputs
+    num_tokens, hidden = args.num_tokens, args.hidden
+    num_experts, num_topk = args.num_experts, args.num_topk
+    if args.ep_layout == "token_major":
+        raise ValueError("DeepEP ElasticBuffer supports rank_major or expert_major layout")
+
+    if rank == 0:
+        print(
+            f"[cfg] backend=deepep ElasticBuffer num_sms={args.num_sms} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
+            f"warmup={args.num_warmup} iters={args.num_iters}",
+            flush=True,
+        )
+
+    buffer = deep_ep.ElasticBuffer(
+        group,
+        num_max_tokens_per_rank=num_tokens,
+        hidden=hidden,
+        allow_hybrid_mode=0,  # NVLink-only bench (same-rack MNNVL, EP_DISABLE_GIN=1); hybrid RDMA+NVLink tier unused
+        allow_multiple_reduction=1,
+        explicitly_destroy=True,
+    )
+
+    # Received-token layout: rank_major (plain, do_expand=False -- the deepep default)
+    # or expert_major (do_expand=True -- the expanding layout, one slot per expert per
+    # token). When --ep-layout is omitted, the plain rank-major layout is kept.
+    do_expand = args.ep_layout == "expert_major"
+    if rank == 0:
+        _lay = "expert_major (do_expand)" if do_expand else "rank_major (plain)"
+        print(f"[cfg] deepep ep_layout={args.ep_layout or 'default'} -> {_lay}", flush=True)
+
+    # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
+    dispatch_args = dict(
+        x=x,
+        topk_idx=topk_idx,
+        topk_weights=topk_weights,
+        num_experts=num_experts,
+        num_max_tokens_per_rank=num_tokens,
+        do_cpu_sync=True,
+        do_expand=do_expand,
+        do_zero_padding=do_expand,
+        num_sms=args.num_sms,
+    )
+
+    # Prime once to obtain the handle (routing) and the received-token count so we
+    # can size the combine input. Build a realistic BF16 combine input in the
+    # received layout (the role of `simulated_gemm_output`): random values only in
+    # the valid received-token slots, matching test_ep.py's `input_for_combine`.
+    #
+    # NOTE: the PLAIN (rank-major) path uses the per-expert combine; the expanded
+    # (expert-major) path runs DeepEP's reduce/expand combine, which processes more
+    # rows in the reduce epilogue (measured more expensive on this uniform workload:
+    # 1n 74 vs 46, 4n 188 vs 136, 8n 199 vs 120 us). Both are exercised via --ep-layout.
+    recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(**dispatch_args)
+    recv_x_bf16 = recv_x[0] if isinstance(recv_x, (tuple, list)) else recv_x
+    input_for_combine = torch.empty_like(recv_x_bf16, dtype=torch.bfloat16)
+    input_for_combine.normal_(0.0, 0.1)
+    if not do_expand:
+        # Plain layout: zero the invalid received-token slots (rank-major padding).
+        num_recv_tokens = int(handle.psum_num_recv_tokens_per_scaleup_rank[-1].item())
+        if num_recv_tokens < input_for_combine.shape[0]:
+            input_for_combine[num_recv_tokens:] = 0
+
+    combine_args = dict(
+        x=input_for_combine,
+        topk_weights=recv_topk_weights,
+        handle=handle,
+    )
+
+    # DeepEP native GPU barrier (comm-stream, sequential) -- aligns its dispatch/
+    # combine recv-spin far more tightly than a generic all_reduce; this is what
+    # DeepEP's own test_ep.py uses for kineto profiling.
+    def deepep_barrier():
+        buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
+
+    # DeepEP V2 (ElasticBuffer) CUDA-graph capture is limited by TRANSPORT, not node
+    # count. On the all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain)
+    # the dispatch/combine kernels stay on-stream and ARE graph-capturable at any node
+    # count -- verified capturing at 1/2/4 nodes on a GB200 NVL72. The RDMA/IB
+    # scale-out path uses NCCL GIN (GPU-Initiated Networking; on this stack backed by
+    # GDAKI / DOCA GPUNetIO -- not the legacy NVSHMEM/IBGDA Buffer path), and in our
+    # testing that path is not graph-capturable, so we gate capture on EP_DISABLE_GIN
+    # and run the GIN scale-out path eagerly. The on-stream blocker is the dispatch
+    # CPU sync that reads exact received-token counts (elastic.py do_cpu_sync=True); the
+    # cached dispatch below forces do_cpu_sync=False, which is why the NVLink path is
+    # capture-safe.
+    gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
+    deepep_can_graph = args.cuda_graph and gin_disabled
+
+    if args.cuda_graph and not deepep_can_graph and rank == 0:
+        print(
+            "[cfg] deepep cuda_graph requested but disabled: RDMA/IB scale-out (GIN) is "
+            "not graph-capturable (symmetric-memory); set EP_DISABLE_GIN=1 for the "
+            "NVLink/MNNVL path, or run eager dispatch/combine",
+            flush=True,
+        )
+
+    def combine_fn(_dout):
+        buffer.combine(**combine_args)
+
+    graph_spec = None
+    if deepep_can_graph:
+        if rank == 0:
+            print("[cfg] deepep cuda_graph=True (single graph, cached dispatch, do_cpu_sync=False)", flush=True)
+        # The non-cached dispatch above did a CPU sync to size the layout; that is
+        # illegal inside a CUDA graph. Use the CACHED dispatch instead: pass the
+        # primed handle (topk_idx reused from it), which forces do_cpu_sync=False
+        # and skips the host-side count read, leaving a pure on-stream kernel launch
+        # -- capture-safe, and also runnable eagerly if the harness capture fails.
+        cached_dispatch_args = dict(
+            x=x,
+            handle=handle,
+            num_experts=num_experts,
+            num_max_tokens_per_rank=num_tokens,
+            num_sms=args.num_sms,
+        )
+
+        def dispatch_fn():
+            buffer.dispatch(**cached_dispatch_args)
+            return None
+
+        # Capture-safe ops handed to the harness (it owns the graph capture).
+        graph_spec = {
+            "dispatch": lambda: buffer.dispatch(**cached_dispatch_args),
+            "combine": lambda: buffer.combine(**combine_args),
+            "on_fail": None,
+        }
+    else:
+
+        def dispatch_fn():
+            buffer.dispatch(**dispatch_args)
+            return None
+
+    def teardown():
+        try:
+            buffer.destroy()
+        except Exception:
+            pass
+        gc.collect()
+        torch.cuda.synchronize()
+
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": deepep_barrier,
+        "graph": graph_spec,
+    }
