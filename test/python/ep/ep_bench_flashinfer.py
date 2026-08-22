@@ -46,14 +46,15 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
 
     if rank == 0:
         print(
-            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) requested_mode={args.mode} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
-        if args.ep_layout == "expert_major":
+        if args.ep_layout in ("expert_major", "token_major"):
             print(
-                "[cfg] flashinfer ep_layout=expert_major requested but unsupported: "
+                f"[cfg] flashinfer ep_layout={args.ep_layout} requested but unsupported: "
                 "MoeAlltoAll dispatch is fixed rank-major [ep_size, tokens, hidden]; "
                 "keeping rank_major (expert grouping is a downstream model op, not part of the A2A)",
                 flush=True,

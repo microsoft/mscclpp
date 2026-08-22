@@ -22,7 +22,7 @@ from mscclpp.ep.types import (
     DispatchOutputInfo,
     MoECommunicatorConfig,
     QuantConfig,
-    _TokenMajorCombineContext,
+    _ThroughputCombineContext,
 )
 from mscclpp.ep.utils import (
     current_stream_ptr as _stream_ptr,
@@ -67,8 +67,8 @@ class ThroughputContext(Context):
         self.max_hidden_bytes = max_hidden_bytes
         self.enable_overlap = config.enable_overlap
 
-        if self.output_layout != DispatchLayout.TOKEN_MAJOR:
-            raise NotImplementedError("THROUGHPUT mode currently supports only DispatchLayout.TOKEN_MAJOR")
+        if self.output_layout not in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR):
+            raise NotImplementedError("THROUGHPUT mode supports TOKEN_MAJOR or RANK_MAJOR output")
         if config.invalid_token_expert_id is not None:
             raise ValueError("invalid_token_expert_id is only supported in latency mode")
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
@@ -93,6 +93,7 @@ class ThroughputRuntime(Runtime):
         cpp_runtime = create_moe_runtime(
             context.comm.communicator,
             context.mode,
+            max_tokens_per_rank=context.max_tokens_per_rank,
             max_hidden_bytes=context.max_hidden_bytes,
             num_blocks=context.num_blocks,
             output_layout=context.output_layout,
@@ -145,7 +146,7 @@ class ThroughputRuntime(Runtime):
                     rank_prefix_matrix,
                     _,
                     send_head,
-                ) = self._dispatch_token_major(
+                ) = self._dispatch_throughput(
                     input,
                     None,
                     None,
@@ -166,7 +167,7 @@ class ThroughputRuntime(Runtime):
                 recv_topk_idx = cache["recv_topk_idx"]
                 recv_topk_weights = cache["recv_topk_weights"]
                 num_recv_tokens_per_expert_list = cache["num_recv_tokens_per_expert_list"]
-                combine_context = _TokenMajorCombineContext(
+                combine_context = _ThroughputCombineContext(
                     recv_topk_weights=recv_topk_weights,
                     send_head=send_head,
                 )
@@ -181,7 +182,7 @@ class ThroughputRuntime(Runtime):
                     rank_prefix_matrix,
                     channel_prefix_matrix,
                     send_head,
-                ) = self._dispatch_token_major(
+                ) = self._dispatch_throughput(
                     input,
                     None,
                     topk_ids,
@@ -194,7 +195,7 @@ class ThroughputRuntime(Runtime):
                     None,
                     mode_context.expert_alignment,
                 )
-                combine_context = _TokenMajorCombineContext(
+                combine_context = _ThroughputCombineContext(
                     recv_topk_weights=recv_topk_weights,
                     send_head=send_head,
                 )
@@ -217,10 +218,17 @@ class ThroughputRuntime(Runtime):
                     "weights_ptr": 0 if implicit_weights else weights.data_ptr(),
                     "weights_version": 0 if implicit_weights else weights._version,
                 }
+            recv_tokens_per_rank = None
+            if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+                recv_prefix = rank_prefix_matrix[:, mode_context.rank]
+                recv_tokens_per_rank = torch.diff(
+                    recv_prefix, prepend=torch.zeros((1,), dtype=recv_prefix.dtype, device=recv_prefix.device)
+                )
             output_info = DispatchOutputInfo(
                 layout=DispatchLayoutInfo(
                     kind=mode_context.output_layout,
                     num_tokens_per_expert=num_recv_tokens_per_expert_list,
+                    num_tokens_per_rank=recv_tokens_per_rank,
                 ),
                 quant=None,
             )
@@ -291,7 +299,7 @@ class ThroughputRuntime(Runtime):
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, mode_context.group_size), dtype=torch.bool, device="cuda")
 
-        self.cpp_runtime.token_major_prepare(
+        self.cpp_runtime.prepare(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -303,7 +311,7 @@ class ThroughputRuntime(Runtime):
         )
         return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank
 
-    def _dispatch_token_major(
+    def _dispatch_throughput(
         self,
         x: torch.Tensor,
         x_scales: Optional[torch.Tensor],
@@ -317,13 +325,13 @@ class ThroughputRuntime(Runtime):
         cached_channel_prefix_matrix: Optional[torch.Tensor],
         expert_alignment: int,
     ):
-        """Run token-major throughput dispatch and return combine metadata."""
+        """Run throughput dispatch and return combine metadata."""
         mode_context = self.context
         assert x.dim() == 2 and x.is_contiguous()
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = self.cpp_runtime.token_major_num_channels(x_element_size)
+        num_channels = mode_context.num_blocks
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -348,7 +356,7 @@ class ThroughputRuntime(Runtime):
                 (mode_context.group_size, num_channels), dtype=torch.int32, device="cuda"
             )
             num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
-            num_recv_tokens = self.cpp_runtime.token_major_notify(
+            num_recv_tokens = self.cpp_runtime.notify(
                 _ptr(rank_prefix_matrix),
                 _ptr(channel_prefix_matrix),
                 _ptr(num_recv_per_expert_host),
@@ -363,8 +371,11 @@ class ThroughputRuntime(Runtime):
             )
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
 
+        if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+            num_recv_tokens = mode_context.group_size * mode_context.max_tokens_per_rank
+
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
-        recv_x = self._allocate_recv(num_tokens, num_recv_tokens, hidden, x_element_size)
+        recv_x = self._allocate_recv(num_recv_tokens, hidden)
         send_head = torch.empty((num_tokens, mode_context.group_size), dtype=torch.int32, device="cuda")
         recv_topk_idx = (
             torch.empty((num_recv_tokens, num_topk), dtype=torch.int64, device="cuda") if topk_idx is not None else None
@@ -416,16 +427,14 @@ class ThroughputRuntime(Runtime):
 
     def _allocate_recv(
         self,
-        num_tokens: int,
         num_recv_tokens: int,
         hidden: int,
-        x_element_size: int,
     ) -> torch.Tensor:
         """Return this rank's direct receive-pool view."""
         mode_context = self.context
-        pool_ptr = self.cpp_runtime.token_major_resolve_recv_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
+        pool_ptr = self.cpp_runtime.dispatch_output_buffer_ptr()
         if pool_ptr == 0:
-            raise RuntimeError("token-major throughput receive-pool capacity exceeded")
+            raise RuntimeError("throughput receive-pool capacity exceeded")
         _, recv_x = tensor_from_pointer(
             pool_ptr,
             (num_recv_tokens, hidden),
@@ -476,7 +485,7 @@ class ThroughputRuntime(Runtime):
 
     def _validate_combine(self, expert_output, handle) -> None:
         mode_context = self.context
-        if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _TokenMajorCombineContext):
+        if not isinstance(handle, DispatchHandle) or not isinstance(handle._context, _ThroughputCombineContext):
             raise TypeError("handle must be a DispatchHandle returned by dispatch")
         if expert_output.dim() != 2 or not expert_output.is_contiguous():
             raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")

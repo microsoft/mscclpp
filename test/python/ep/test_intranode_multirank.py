@@ -101,6 +101,11 @@ def main():
 
     # Token payload = rank id (cast to bf16) so we can check correctness
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
+    layout_name = os.environ.get("MSCCLPP_EP_OUTPUT_LAYOUT", "token_major")
+    output_layout = {
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+        "rank_major": ep.DispatchLayout.RANK_MAJOR,
+    }[layout_name]
 
     moe = ep.MoECommunicator(
         comm=ep_group,
@@ -109,12 +114,12 @@ def main():
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.THROUGHPUT,
-        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
+        output_layout=output_layout,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk}",
+            f"num_experts={num_experts} num_topk={num_topk} output_layout={layout_name}",
             flush=True,
         )
     print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
@@ -151,6 +156,17 @@ def main():
     assert dispatch_out.layout.num_tokens_per_expert is not None
     actual_counts = [int(count) for count in dispatch_out.layout.num_tokens_per_expert]
     assert actual_counts == [int(count) for count in expected_counts]
+    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+        all_rank_counts = torch.empty((num_ranks, num_ranks), dtype=num_tokens_per_rank.dtype, device="cuda")
+        dist.all_gather_into_tensor(all_rank_counts, num_tokens_per_rank, group=group)
+        expected_rank_counts = all_rank_counts[:, rank].cpu()
+        assert dispatch_out.layout.num_tokens_per_rank is not None
+        torch.testing.assert_close(dispatch_out.layout.num_tokens_per_rank.cpu(), expected_rank_counts)
+        for source_rank, count in enumerate(expected_rank_counts.tolist()):
+            row_begin = source_rank * num_tokens
+            block = recv_x[row_begin : row_begin + count]
+            if block.numel():
+                assert torch.all(block == source_rank)
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
 
@@ -237,7 +253,7 @@ def main():
         topk=bench_num_topk,
         max_tokens_per_rank=bench_tokens,
         mode=ep.MoEMode.THROUGHPUT,
-        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
+        output_layout=output_layout,
     )
     assert moe.is_available()
 

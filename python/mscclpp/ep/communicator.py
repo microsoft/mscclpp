@@ -46,7 +46,7 @@ class MoECommunicator:
 
     `mode=MoEMode.LATENCY` selects the latency algorithms (EXPERT_MAJOR by
     default); `mode=MoEMode.THROUGHPUT` selects bounded-resource throughput
-    algorithms (TOKEN_MAJOR).
+    algorithms (TOKEN_MAJOR by default, with RANK_MAJOR available explicitly).
     """
 
     def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:

@@ -57,7 +57,8 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch tuning
+    # Total communication blocks. LATENCY includes two reserved scheduler/control
+    # blocks; THROUGHPUT uses every block as a communication worker.
     num_blocks: Optional[int] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
@@ -131,8 +132,8 @@ class _RankMajorCombineContext:
 
 
 @dataclass
-class _TokenMajorCombineContext:
-    """Combine context for token-major throughput output."""
+class _ThroughputCombineContext:
+    """Combine context for throughput output."""
 
     recv_topk_weights: Optional[torch.Tensor]
     send_head: torch.Tensor
@@ -141,7 +142,7 @@ class _TokenMajorCombineContext:
 _CombineContext = Union[
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
-    _TokenMajorCombineContext,
+    _ThroughputCombineContext,
 ]
 
 

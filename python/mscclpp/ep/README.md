@@ -145,7 +145,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_blocks` | communication block count; mode-specific default when unset |
+| `num_blocks` | total communication block count; LATENCY includes two reserved scheduler/control blocks, while THROUGHPUT uses all blocks as workers; mode-specific default when unset |
 | `dispatch_config`, `combine_config` | context-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 
@@ -191,7 +191,7 @@ Use `DispatchLayout` instead of string literals for this field:
 |---|---|
 | `DispatchLayout.TOKEN_MAJOR` | Throughput: `[total_recv_tokens, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
-| `DispatchLayout.RANK_MAJOR` | Latency: `[world_size * max_tokens_per_rank, hidden]` |
+| `DispatchLayout.RANK_MAJOR` | Latency or throughput: `[world_size * max_tokens_per_rank, hidden]` |
 
 ## MoECommunicator methods
 
@@ -546,9 +546,9 @@ buffer instead of allocating it internally.
 `dispatch` should return MLP-ready tokens. The MLP should not run another
 token-major to expert-major permutation unless it uses a custom adapter.
 
-### Throughput token-major layout
+### Throughput layouts
 
-Throughput algorithms use `DispatchLayout.TOKEN_MAJOR`:
+Throughput algorithms default to `DispatchLayout.TOKEN_MAJOR`:
 
 ```python
 dispatch_out.tokens  # [total_recv_tokens, H]
@@ -558,6 +558,17 @@ Each row represents one `(source token, destination rank)` and is accompanied by
 `dispatch_out.topk_ids`, `dispatch_out.weights`, and source-token metadata. A
 token routed to multiple experts on the same destination rank is transferred
 only once.
+
+Throughput also supports fixed-stride `DispatchLayout.RANK_MAJOR`:
+
+```python
+dispatch_out.tokens  # [world_size * max_tokens_per_rank, H]
+```
+
+Source rank `r` owns rows
+`r * max_tokens_per_rank : (r + 1) * max_tokens_per_rank`. Only the first
+`dispatch_out.layout.num_tokens_per_rank[r]` rows in each block are valid;
+padding rows are unspecified and must not be consumed.
 
 ### Latency output layouts
 

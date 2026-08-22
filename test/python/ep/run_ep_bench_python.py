@@ -128,11 +128,11 @@ from ep_bench_flashinfer import setup_flashinfer, parse_kineto_kernels as flashi
 
 
 # ----------------------------------------------------------------------------
-# CLI — mirrors ep_bench.cu's getopt flags for the LL path, plus --backend.
+# CLI — shared workload and backend/mode selection.
 # ----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Unified low-latency EP benchmark (mscclpp + NCCL-EP Python APIs)",
+        description="Unified EP benchmark across Python backends",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -140,6 +140,20 @@ def parse_args() -> argparse.Namespace:
         choices=["mscclpp", "nccl", "deepep", "flashinfer", "all"],
         default="all",
         help="which backend(s) to benchmark in this run (all runs nccl, mscclpp, deepep, flashinfer)",
+    )
+    p.add_argument(
+        "--mode",
+        choices=("latency", "throughput"),
+        default="latency",
+        help="algorithm family for backends with an explicit mode (MSCCL++ and NCCL-EP). "
+        "DeepEP V2 uses one ElasticBuffer path and is tuned with --num-sms.",
+    )
+    p.add_argument(
+        "--num-sms",
+        type=int,
+        default=0,
+        help="Communication SM/block budget. DeepEP interprets it as SMs; MSCCL++ maps it to the total "
+        "communication block count, including reserved scheduler/control blocks. 0 uses backend defaults.",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
@@ -152,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--dispatch-dtype",
         choices=("bf16", "fp8_e4m3"),
         default="bf16",
-        help="mscclpp LL dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
+        help="MSCCL++ latency dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
         "benchmark is wired BF16-only (the harness does not plumb NCCL-EP's dispatch scales yet).",
     )
     p.add_argument(
@@ -160,7 +174,7 @@ def parse_args() -> argparse.Namespace:
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
         default="rank_local_reduce",
-        help="mscclpp LL combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
+        help="MSCCL++ latency combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
     )
     p.add_argument(
         "--cuda-graph",
@@ -179,13 +193,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["rank_major", "expert_major"],
+        choices=["token_major", "rank_major", "expert_major"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
-        "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
-        "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
-        "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
-        "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
+        "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
+        "DeepEP=rank_major, FlashInfer=rank_major). "
+        "The explicit value is applied where supported: NCCL-EP and DeepEP accept rank_major/expert_major; "
+        "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
+        "FlashInfer is rank-major only; unsupported requests are "
         "noted and the backend's default layout is kept.",
     )
     p.add_argument(
@@ -202,6 +217,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
+    if args.num_sms < 0:
+        raise SystemExit("--num-sms must be non-negative")
     if args.iters_per_graph <= 0:
         raise SystemExit("--iters-per-graph must be positive")
     if not args.cuda_graph:
@@ -213,6 +230,8 @@ def parse_args() -> argparse.Namespace:
             "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
             "(NCCL-EP supports FP8 but its path here is BF16-only); use --backend mscclpp"
         )
+    if args.dispatch_dtype == "fp8_e4m3" and args.mode != "latency":
+        raise SystemExit("MSCCL++ throughput mode currently supports BF16 dispatch only")
     return args
 
 
@@ -473,7 +492,7 @@ def run_backend(
     # per-launch average divides by the kernel count, which scales with the group).
     group = max(1, graph_group_size)
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
+    comb_us = [max(c_start[i].elapsed_time(c_end[i]) * 1e3 / group, 1e-3) for i in range(iters)]
     tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
@@ -524,7 +543,7 @@ def run_backend(
         c_lo, c_lo_r, c_hi, c_hi_r = minmax_rank(c_tp_all)
         t_lo, t_lo_r, t_hi, t_hi_r = minmax_rank(t_tp_all)
 
-        print(f"\n=== Summary [{name}] (Low Latency, across {num_ranks} ranks) ===")
+        print(f"\n=== Summary [{name}] ({args.mode.title()}, across {num_ranks} ranks) ===")
         print("\n--- Host-observed performance ---")
         print(f"Dispatch (BF16):  avg={g_d_avg:.2f} us, min={g_d_min:.2f} us, max={g_d_max:.2f} us")
         print(
@@ -565,7 +584,7 @@ def run_backend(
                     f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
                 )
             else:
-                print("  NOTE: kineto captured 0 LL kernels (collector unavailable).")
+                print("  NOTE: kineto captured 0 EP kernels (collector unavailable).")
 
         print(
             f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
@@ -577,7 +596,12 @@ def run_backend(
 # ----------------------------------------------------------------------------
 # Backend registry.
 # ----------------------------------------------------------------------------
-_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
+_SETUP = {
+    "mscclpp": setup_mscclpp,
+    "nccl": setup_nccl,
+    "deepep": setup_deepep,
+    "flashinfer": setup_flashinfer,
+}
 # Per-backend kineto kernel-name parse, owned by each backend module.
 _PARSE_KINETO = {
     "mscclpp": mscclpp_parse_kineto,

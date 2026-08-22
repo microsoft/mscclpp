@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import gc
-import os
 import torch
 
 from ep_bench_common import (
@@ -26,11 +25,16 @@ def parse_kineto_kernels(key_averages):
     )
 
 
+def _make_comm_group(comm):
+    from mscclpp import CommGroup
+
+    return CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm)
+
+
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
-def setup_mscclpp(args, comm, rank, num_ranks, inputs):
-    from mscclpp import CommGroup
+def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     import mscclpp.ep as ep
 
     input_samples = inputs if isinstance(inputs, list) else [inputs]
@@ -38,26 +42,25 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
+    num_blocks = args.num_sms or 130
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
         print(
             f"[cfg] backend=mscclpp algorithm=LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
-            f"warmup={args.num_warmup} iters={args.num_iters} num_rdma_bytes={num_rdma_bytes}",
+            f"num_blocks={num_blocks} warmup={args.num_warmup} iters={args.num_iters} "
+            f"num_rdma_bytes={num_rdma_bytes}",
             flush=True,
         )
 
-    bootstrap = os.environ.get("EP_MSCCLPP_BOOTSTRAP")
-    ep_group = (
-        CommGroup(interfaceIpPortTrio=bootstrap, rank=rank, size=num_ranks)
-        if bootstrap
-        else (CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm))
-    )
+    ep_group = _make_comm_group(comm)
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
+    if args.ep_layout == "token_major":
+        raise ValueError("MSCCL++ latency mode supports expert_major or rank_major layout")
     rank_major = args.ep_layout == "rank_major"
     if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError("rank-major output requires rank_local_reduce combine")
@@ -74,6 +77,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LATENCY,
+        num_blocks=args.num_sms or None,
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
@@ -205,3 +209,114 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "barrier": None,
         "graph": graph_spec,
     }
+
+
+# ============================================================================
+# Backend: mscclpp EP throughput mode.
+# ============================================================================
+def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
+    import mscclpp.ep as ep
+
+    x, topk_idx, topk_weights, _ = inputs
+    num_tokens, hidden = args.num_tokens, args.hidden
+    num_experts, num_topk = args.num_experts, args.num_topk
+    num_blocks = args.num_sms or 20
+    if args.ep_layout == "expert_major":
+        raise ValueError("MSCCL++ throughput mode supports token_major or rank_major layout")
+    output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
+
+    if rank == 0:
+        print(
+            f"[cfg] backend=mscclpp algorithm=THROUGHPUT layout={output_layout} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} top_k={num_topk} num_blocks={num_blocks} "
+            f"warmup={args.num_warmup} iters={args.num_iters}",
+            flush=True,
+        )
+
+    ep_group = _make_comm_group(comm)
+    moe_comm = ep.MoECommunicator(
+        comm=ep_group,
+        num_experts=num_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode=ep.MoEMode.THROUGHPUT,
+        num_blocks=args.num_sms or None,
+        output_layout=output_layout,
+    )
+    assert moe_comm.is_available()
+
+    if args.validate:
+        dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
+        got = moe_comm.combine(simulated_gemm_output(dispatch_out), handle)
+        torch.cuda.synchronize()
+        assert torch.isfinite(got).all().item(), "mscclpp throughput combine produced NaN/Inf"
+        if output_layout == ep.DispatchLayout.RANK_MAJOR:
+            ref_comm = ep.MoECommunicator(
+                comm=ep_group,
+                num_experts=num_experts,
+                hidden_size=hidden,
+                topk=num_topk,
+                max_tokens_per_rank=num_tokens,
+                mode=ep.MoEMode.THROUGHPUT,
+                num_blocks=args.num_sms or None,
+                output_layout=ep.DispatchLayout.TOKEN_MAJOR,
+            )
+            ref_dispatch_out, ref_handle = ref_comm.dispatch(x, topk_idx, topk_weights)
+            ref = ref_comm.combine(simulated_gemm_output(ref_dispatch_out), ref_handle)
+            torch.cuda.synchronize()
+            diff = validate_combine_output_mpi(got, ref, comm, exact=True)
+            if rank == 0:
+                print(f"[validate] mscclpp throughput rank-major bit-exact max|diff|={diff:.4e}", flush=True)
+        elif rank == 0:
+            print("[validate] mscclpp throughput token-major combine finite OK", flush=True)
+
+    initial_handle = moe_comm.dispatch(x, topk_idx, topk_weights)[1]
+
+    def dispatch_fn():
+        return moe_comm.dispatch(x, topk_idx, topk_weights, previous_handle=initial_handle)
+
+    def combine_fn(dout):
+        dispatch_out, handle = dout
+        moe_comm.combine(dispatch_out.tokens, handle)
+
+    graph_spec = None
+    if args.cuda_graph:
+        captured = {}
+
+        def graph_dispatch():
+            captured["out"], captured["handle"] = moe_comm.dispatch(
+                x, topk_idx, topk_weights, previous_handle=initial_handle
+            )
+
+        def graph_combine():
+            moe_comm.combine(captured["out"].tokens, captured["handle"])
+
+        graph_spec = {
+            "dispatch": graph_dispatch,
+            "combine": graph_combine,
+            "on_fail": None,
+        }
+
+    state = {"moe": moe_comm, "grp": ep_group}
+
+    def teardown():
+        state.clear()
+        gc.collect()
+        torch.cuda.synchronize()
+
+    return {
+        "dispatch": dispatch_fn,
+        "combine": combine_fn,
+        "teardown": teardown,
+        "barrier": None,
+        "graph": graph_spec,
+    }
+
+
+def setup_mscclpp(args, comm, rank, num_ranks, inputs):
+    """Set up the MSCCL++ backend selected by ``--mode``."""
+    if args.mode == "latency":
+        return _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs)
+    return _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs)
