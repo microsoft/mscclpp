@@ -42,7 +42,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    num_blocks = 130 if args.num_blocks is None else args.num_blocks
+    num_blocks = args.num_sms or 130
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
@@ -77,7 +77,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LATENCY,
-        num_blocks=args.num_blocks,
+        num_blocks=args.num_sms or None,
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
@@ -220,7 +220,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
     x, topk_idx, topk_weights, _ = inputs
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
-    num_blocks = 20 if args.num_blocks is None else args.num_blocks
+    num_blocks = args.num_sms or 20
     if args.ep_layout == "expert_major":
         raise ValueError("MSCCL++ throughput mode supports token_major or rank_major layout")
     output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
@@ -242,7 +242,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.THROUGHPUT,
-        num_blocks=args.num_blocks,
+        num_blocks=args.num_sms or None,
         output_layout=output_layout,
     )
     assert moe_comm.is_available()
@@ -260,7 +260,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
                 topk=num_topk,
                 max_tokens_per_rank=num_tokens,
                 mode=ep.MoEMode.THROUGHPUT,
-                num_blocks=args.num_blocks,
+                num_blocks=args.num_sms or None,
                 output_layout=ep.DispatchLayout.TOKEN_MAJOR,
             )
             ref_dispatch_out, ref_handle = ref_comm.dispatch(x, topk_idx, topk_weights)
