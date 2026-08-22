@@ -154,6 +154,12 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="DeepEP communication SM count (0 lets ElasticBuffer choose automatically).",
     )
+    p.add_argument(
+        "--num-blocks",
+        type=int,
+        default=None,
+        help="MSCCL++ communication block count override. Defaults to 130 in latency mode and 20 in throughput mode.",
+    )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
     p.add_argument("-k", "--num-topk", type=int, default=8, help="top-k experts per token")
@@ -218,6 +224,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
     if args.num_sms < 0:
         raise SystemExit("--num-sms must be non-negative")
+    if args.num_blocks is not None and args.num_blocks <= 0:
+        raise SystemExit("--num-blocks must be positive")
     if args.iters_per_graph <= 0:
         raise SystemExit("--iters-per-graph must be positive")
     if not args.cuda_graph:

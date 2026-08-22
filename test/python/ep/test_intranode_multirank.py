@@ -114,7 +114,6 @@ def main():
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.THROUGHPUT,
-        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
         output_layout=output_layout,
     )
     if rank == 0:
@@ -254,7 +253,6 @@ def main():
         topk=bench_num_topk,
         max_tokens_per_rank=bench_tokens,
         mode=ep.MoEMode.THROUGHPUT,
-        num_blocks=int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", "20")),
         output_layout=output_layout,
     )
     assert moe.is_available()
