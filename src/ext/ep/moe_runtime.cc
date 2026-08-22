@@ -31,9 +31,9 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
-      throughputContext_ =
-          std::make_unique<ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                              maxHiddenBytes, RecvPoolConfig(numBlocks));
+      throughputContext_ = std::make_unique<ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_,
+                                                               numRanksPerIpcDomain_, maxTokensPerRank, maxHiddenBytes,
+                                                               outputLayout, RecvPoolConfig(numBlocks));
       available_ = throughputContext_->available_;
       break;
     default:
@@ -58,6 +58,28 @@ void MoERuntime::initialize() {
     case MoEMode::THROUGHPUT:
       throughputContext_->initialize();
       return;
+    default:
+      throw std::invalid_argument("Unsupported MoE runtime mode");
+  }
+}
+
+void* MoERuntime::dispatchOutputBuffer() const {
+  switch (mode_) {
+    case MoEMode::LATENCY: {
+      const auto& context = *latencyContext_;
+      EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
+                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                                  context.combineMode_)
+          .dispatchOutputBuffer_;
+    }
+    case MoEMode::THROUGHPUT: {
+      const auto& context = *throughputContext_;
+      EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+      if (!context.collectiveDirectReady_) return nullptr;
+      return static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) +
+             RecvPoolConfig::recvPoolHeaderBytes(context.numRanks_);
+    }
     default:
       throw std::invalid_argument("Unsupported MoE runtime mode");
   }

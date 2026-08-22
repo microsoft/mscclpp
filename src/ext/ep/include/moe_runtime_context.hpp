@@ -59,7 +59,8 @@ struct LatencyContext {
 
 struct ThroughputContext {
   ThroughputContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
-                    int numRanksPerIpcDomain, int64_t maxHiddenBytes, const RecvPoolConfig& config);
+                    int numRanksPerIpcDomain, int maxTokensPerRank, int64_t maxHiddenBytes, DispatchLayout outputLayout,
+                    const RecvPoolConfig& config);
   ~ThroughputContext() noexcept(false);
 
  private:
@@ -75,7 +76,9 @@ struct ThroughputContext {
   int numRanksPerIpcDomain_;
   bool available_ = false;
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
+  int maxTokensPerRank_;
   int64_t maxHiddenBytes_;
+  DispatchLayout outputLayout_;
   size_t controlBufferBytes_ = 0;
   size_t symmetricBufferBytes_ = 0;
   size_t recvPoolBytes_ = 0;

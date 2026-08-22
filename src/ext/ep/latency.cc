@@ -145,15 +145,6 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
       .rankMajorTopkWeightsBuffer_;
 }
 
-void* MoERuntime::dispatchOutputBuffer() const {
-  requireMode(MoEMode::LATENCY);
-  const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
-      .dispatchOutputBuffer_;
-}
-
 void* MoERuntime::combineInputBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;

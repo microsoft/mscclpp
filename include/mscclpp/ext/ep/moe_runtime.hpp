@@ -30,13 +30,13 @@ class MoERuntime {
   /// communicator buffers are deferred until initialize().
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
-  /// @param maxTokensPerRank Fixed latency-mode token capacity.
+  /// @param maxTokensPerRank Fixed per-rank token capacity.
   /// @param hidden Hidden dimension for latency-mode buffers.
   /// @param numExperts Global expert count.
   /// @param numTopk Number of routed experts per token.
   /// @param maxHiddenBytes Maximum throughput-mode bytes per token row.
   /// @param numBlocks Communication block budget.
-  /// @param outputLayout Latency-mode dispatch output layout.
+  /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, int64_t maxHiddenBytes, int numBlocks,
@@ -97,23 +97,19 @@ class MoERuntime {
   /// @throws std::invalid_argument If the request type does not match mode().
   void combine(const CombineRequest& request);
 
-  /// Build throughput-mode token routing metadata.
+  /// Build token routing metadata.
   ///
   /// Computes per-rank counts, per-expert counts, and token-to-rank membership
   /// on @p stream without moving token payloads.
-  void throughputPrepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
-                         int numTokens, int numTopk, int numExperts, cudaStream_t stream);
-  /// Return the throughput-mode communication channel count.
-  int throughputNumChannels(int xElementSize) const;
-  /// Resolve the runtime-owned throughput receive buffer.
-  void* throughputResolveRecvBuffer(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
-  /// Exchange throughput routing counts and return the receive-token count.
+  void prepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
+               int numTokens, int numTopk, int numExperts, cudaStream_t stream);
+  /// Exchange routing counts and return the receive-token count.
   ///
   /// This host-synchronizing metadata phase must precede throughput dispatch
   /// when cached routing metadata is unavailable.
-  int throughputNotify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert,
-                       const int* numTokensPerRank, const int* numTokensPerExpert, const bool* isTokenInRank,
-                       int numTokens, int numExperts, int xElementSize, int expertAlignment, cudaStream_t stream);
+  int notify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert, const int* numTokensPerRank,
+             const int* numTokensPerExpert, const bool* isTokenInRank, int numTokens, int numExperts, int xElementSize,
+             int expertAlignment, cudaStream_t stream);
 
  private:
   void requireMode(MoEMode expected) const;

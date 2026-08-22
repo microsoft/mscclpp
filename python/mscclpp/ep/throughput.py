@@ -93,6 +93,7 @@ class ThroughputRuntime(Runtime):
         cpp_runtime = create_moe_runtime(
             context.comm.communicator,
             context.mode,
+            max_tokens_per_rank=context.max_tokens_per_rank,
             max_hidden_bytes=context.max_hidden_bytes,
             num_blocks=context.num_blocks,
             output_layout=context.output_layout,
@@ -298,7 +299,7 @@ class ThroughputRuntime(Runtime):
         num_tokens_per_expert = torch.empty((num_experts,), dtype=torch.int32, device="cuda")
         is_token_in_rank = torch.empty((num_tokens, mode_context.group_size), dtype=torch.bool, device="cuda")
 
-        self.cpp_runtime.throughput_prepare(
+        self.cpp_runtime.prepare(
             _ptr(num_tokens_per_rank),
             _ptr(num_tokens_per_expert),
             _ptr(is_token_in_rank),
@@ -330,7 +331,7 @@ class ThroughputRuntime(Runtime):
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = self.cpp_runtime.throughput_num_channels(x_element_size)
+        num_channels = mode_context.num_blocks
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -355,7 +356,7 @@ class ThroughputRuntime(Runtime):
                 (mode_context.group_size, num_channels), dtype=torch.int32, device="cuda"
             )
             num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
-            num_recv_tokens = self.cpp_runtime.throughput_notify(
+            num_recv_tokens = self.cpp_runtime.notify(
                 _ptr(rank_prefix_matrix),
                 _ptr(channel_prefix_matrix),
                 _ptr(num_recv_per_expert_host),
@@ -374,7 +375,7 @@ class ThroughputRuntime(Runtime):
             num_recv_tokens = mode_context.group_size * mode_context.max_tokens_per_rank
 
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
-        recv_x = self._allocate_recv(num_tokens, num_recv_tokens, hidden, x_element_size)
+        recv_x = self._allocate_recv(num_recv_tokens, hidden)
         send_head = torch.empty((num_tokens, mode_context.group_size), dtype=torch.int32, device="cuda")
         recv_topk_idx = (
             torch.empty((num_recv_tokens, num_topk), dtype=torch.int64, device="cuda") if topk_idx is not None else None
@@ -411,8 +412,6 @@ class ThroughputRuntime(Runtime):
             x_element_size,
             num_recv_tokens,
             cached_mode,
-            mode_context.output_layout,
-            mode_context.max_tokens_per_rank,
             _stream_ptr(),
         )
         return (
@@ -428,14 +427,12 @@ class ThroughputRuntime(Runtime):
 
     def _allocate_recv(
         self,
-        num_tokens: int,
         num_recv_tokens: int,
         hidden: int,
-        x_element_size: int,
     ) -> torch.Tensor:
         """Return this rank's direct receive-pool view."""
         mode_context = self.context
-        pool_ptr = self.cpp_runtime.throughput_resolve_recv_buffer(num_tokens, num_recv_tokens, hidden, x_element_size)
+        pool_ptr = self.cpp_runtime.dispatch_output_buffer_ptr()
         if pool_ptr == 0:
             raise RuntimeError("throughput receive-pool capacity exceeded")
         _, recv_x = tensor_from_pointer(
