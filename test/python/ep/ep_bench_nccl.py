@@ -30,10 +30,23 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
+    if args.ep_layout == "token_major":
+        raise ValueError("NCCL-EP supports expert_major or rank_major layout")
+    if args.mode == "latency":
+        algorithm = nccl_ep.Algorithm.LOW_LATENCY
+    else:
+        algorithm = getattr(
+            nccl_ep.Algorithm,
+            "THROUGHPUT",
+            getattr(nccl_ep.Algorithm, "HIGH_THROUGHPUT", None),
+        )
+        if algorithm is None:
+            raise RuntimeError("installed NCCL-EP does not expose a throughput algorithm")
+    algorithm_name = getattr(algorithm, "name", str(algorithm))
 
     if rank == 0:
         print(
-            f"[cfg] backend=nccl algorithm=LOW_LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=nccl algorithm={algorithm_name} num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
@@ -45,7 +58,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     ncomm = nccl_core.Communicator.init(nranks=num_ranks, rank=rank, unique_id=uid)
 
     config = nccl_ep.GroupConfig(
-        algorithm=nccl_ep.Algorithm.LOW_LATENCY,
+        algorithm=algorithm,
         num_experts=num_experts,
         max_dispatch_tokens_per_rank=num_tokens,
         max_recv_tokens_per_rank=num_tokens * num_ranks,
@@ -142,12 +155,14 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     # owns the single-graph capture. When captured, main() times the paired kineto
     # pass so per-phase kernel time is still attributed by kernel name.
     graph_spec = None
-    if args.cuda_graph:
+    if args.cuda_graph and args.mode == "latency":
         graph_spec = {
             "dispatch": lambda: _dispatch(torch.cuda.current_stream().cuda_stream),
             "combine": lambda: _combine(torch.cuda.current_stream().cuda_stream),
             "on_fail": None,
         }
+    elif args.cuda_graph and rank == 0:
+        print("[cfg] nccl throughput cuda_graph is not enabled in this benchmark; using eager mode", flush=True)
 
     def teardown():
         ep_handle.destroy()

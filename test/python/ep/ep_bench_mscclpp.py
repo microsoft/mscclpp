@@ -29,7 +29,7 @@ def parse_kineto_kernels(key_averages):
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
-def setup_mscclpp(args, comm, rank, num_ranks, inputs):
+def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
@@ -58,6 +58,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
+    if args.ep_layout == "token_major":
+        raise ValueError("MSCCL++ latency mode supports expert_major or rank_major layout")
     rank_major = args.ep_layout == "rank_major"
     if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError("rank-major output requires rank_local_reduce combine")
@@ -210,7 +212,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 # ============================================================================
 # Backend: mscclpp EP throughput mode.
 # ============================================================================
-def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
+def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
@@ -218,11 +220,13 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_blocks = int(os.environ.get("MSCCLPP_EP_NUM_BLOCKS", os.environ.get("MSCCLPP_EP_NUM_SMS", "20")))
+    if args.ep_layout == "expert_major":
+        raise ValueError("MSCCL++ throughput mode supports token_major or rank_major layout")
     output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
 
     if rank == 0:
         print(
-            f"[cfg] backend=mscclpp-ht algorithm=THROUGHPUT layout={output_layout} "
+            f"[cfg] backend=mscclpp algorithm=THROUGHPUT layout={output_layout} "
             f"num_ranks={num_ranks} tokens/rank={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} top_k={num_topk} num_blocks={num_blocks} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
@@ -251,7 +255,7 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
         dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
         got = moe_comm.combine(simulated_gemm_output(dispatch_out), handle)
         torch.cuda.synchronize()
-        assert torch.isfinite(got).all().item(), "mscclpp-ht combine produced NaN/Inf"
+        assert torch.isfinite(got).all().item(), "mscclpp throughput combine produced NaN/Inf"
         if output_layout == ep.DispatchLayout.RANK_MAJOR:
             ref_comm = ep.MoECommunicator(
                 comm=ep_group,
@@ -268,9 +272,9 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
             torch.cuda.synchronize()
             diff = validate_combine_output_mpi(got, ref, comm, exact=True)
             if rank == 0:
-                print(f"[validate] mscclpp-ht rank-major bit-exact max|diff|={diff:.4e}", flush=True)
+                print(f"[validate] mscclpp throughput rank-major bit-exact max|diff|={diff:.4e}", flush=True)
         elif rank == 0:
-            print("[validate] mscclpp-ht token-major combine finite OK", flush=True)
+            print("[validate] mscclpp throughput token-major combine finite OK", flush=True)
 
     initial_handle = moe_comm.dispatch(x, topk_idx, topk_weights)[1]
 
@@ -313,3 +317,10 @@ def setup_mscclpp_ht(args, comm, rank, num_ranks, inputs):
         "barrier": None,
         "graph": graph_spec,
     }
+
+
+def setup_mscclpp(args, comm, rank, num_ranks, inputs):
+    """Set up the MSCCL++ backend selected by ``--mode``."""
+    if args.mode == "latency":
+        return _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs)
+    return _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs)
