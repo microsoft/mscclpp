@@ -26,11 +26,16 @@ def parse_kineto_kernels(key_averages):
     )
 
 
+def _make_comm_group(comm):
+    from mscclpp import CommGroup
+
+    return CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm)
+
+
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
 def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
-    from mscclpp import CommGroup
     import mscclpp.ep as ep
 
     input_samples = inputs if isinstance(inputs, list) else [inputs]
@@ -48,12 +53,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             flush=True,
         )
 
-    bootstrap = os.environ.get("EP_MSCCLPP_BOOTSTRAP")
-    ep_group = (
-        CommGroup(interfaceIpPortTrio=bootstrap, rank=rank, size=num_ranks)
-        if bootstrap
-        else (CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm))
-    )
+    ep_group = _make_comm_group(comm)
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
@@ -213,7 +213,6 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
 # Backend: mscclpp EP throughput mode.
 # ============================================================================
 def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
-    from mscclpp import CommGroup
     import mscclpp.ep as ep
 
     x, topk_idx, topk_weights, _ = inputs
@@ -233,12 +232,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
             flush=True,
         )
 
-    bootstrap = os.environ.get("EP_MSCCLPP_BOOTSTRAP")
-    ep_group = (
-        CommGroup(interfaceIpPortTrio=bootstrap, rank=rank, size=num_ranks)
-        if bootstrap
-        else (CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm))
-    )
+    ep_group = _make_comm_group(comm)
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
