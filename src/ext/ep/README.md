@@ -101,7 +101,7 @@ The persistent throughput configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_blocks` | Maximum throughput communication block budget |
+| `num_blocks` | Total communication block count. Throughput uses all blocks as workers; latency includes two reserved scheduler/control blocks. |
 
 ## Build
 

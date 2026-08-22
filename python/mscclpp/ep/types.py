@@ -57,7 +57,8 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch tuning
+    # Total communication blocks. LATENCY includes two reserved scheduler/control
+    # blocks; THROUGHPUT uses every block as a communication worker.
     num_blocks: Optional[int] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False

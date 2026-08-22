@@ -145,7 +145,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_blocks` | communication block count; mode-specific default when unset |
+| `num_blocks` | total communication block count; LATENCY includes two reserved scheduler/control blocks, while THROUGHPUT uses all blocks as workers; mode-specific default when unset |
 | `dispatch_config`, `combine_config` | context-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 

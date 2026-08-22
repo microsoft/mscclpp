@@ -35,7 +35,9 @@ class MoERuntime {
   /// @param numExperts Global expert count.
   /// @param numTopk Number of routed experts per token.
   /// @param maxHiddenBytes Maximum throughput-mode bytes per token row.
-  /// @param numBlocks Communication block budget.
+  /// @param numBlocks Total communication block count. LATENCY includes its two
+  /// reserved scheduler/control blocks in this value; THROUGHPUT uses all blocks
+  /// as communication workers.
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
