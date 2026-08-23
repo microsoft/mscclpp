@@ -17,6 +17,9 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 
+// Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
+inline constexpr int GpuNetIoStagingSlots = 32768;
+
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
@@ -164,6 +167,16 @@ struct LatencyStorageLayout {
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
+  // GPU-initiated networking (GPUNetIO) inter-domain staging, appended after the
+  // existing regions so their offsets are unchanged. Always reserved so the
+  // layout is uniform regardless of whether the backend is compiled in/enabled.
+  //   - gpuNetIoStagingBuffer_: serialized ring of GpuNetIoStagingSlots slots.
+  //   - gpuNetIoFlagsBuffer_: per-source-rank dispatch completion flags.
+  //   - gpuNetIoCombineFlagsBuffer_: independent per-peer-rank combine flags.
+  void* gpuNetIoStagingBuffer_ = nullptr;
+  void* gpuNetIoFlagsBuffer_ = nullptr;
+  void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  size_t gpuNetIoSlotStride_ = 0;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                        int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
@@ -193,8 +206,21 @@ struct LatencyStorageLayout {
                                                                  : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+    const size_t baseBytes = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
+                             (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+
+    // GPUNetIO region sizing, appended after the existing regions. Always
+    // reserved so the layout is uniform regardless of backend enablement.
+    gpuNetIoSlotStride_ = configAlign<size_t>(
+        static_cast<size_t>(hidden) * sizeof(Bf16) + static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
+        BufferAlignmentBytes);
+    const size_t gpuNetIoStagingBytes =
+        configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
+    const size_t gpuNetIoFlagsBytes =
+        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
+    // Two independent flag arrays (dispatch payload-arrival + combine barrier).
+    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + 2 * gpuNetIoFlagsBytes;
+    totalBytes_ = baseBytes + gpuNetIoRegionBytes;
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -204,6 +230,10 @@ struct LatencyStorageLayout {
       dispatchOutputBuffer_ =
           rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
       combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      auto* gpuNetIoBase = base + baseBytes;
+      gpuNetIoStagingBuffer_ = gpuNetIoBase;
+      gpuNetIoFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes;
+      gpuNetIoCombineFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
     }
   }
 };
