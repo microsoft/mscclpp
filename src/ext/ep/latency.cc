@@ -4,13 +4,22 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <future>
+#include <string>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 
 #include "exception.hpp"
 #include "kernels.hpp"
 #include "moe_runtime_context.hpp"
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/utils.hpp>
+
+#include "host/gpu_net_io_service.hpp"
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {
 namespace ep {
@@ -40,8 +49,23 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
+  numNvlRanks_ = numNvlRanks;
+  // Optional override to shrink the IPC/NVLink domain (e.g. to the physical node)
+  // so cross-physical-node traffic is served by GPUNetIO instead of MNNVL IPC.
+  if (const char* e = std::getenv("MSCCLPP_EP_IPC_DOMAIN_SIZE")) {
+    const int forced = std::atoi(e);
+    if (forced >= 1 && forced <= numRanks_ && numRanks_ % forced == 0) numRanksPerIpcDomain_ = forced;
+  }
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = numRanksPerIpcDomain_ >= numRanks_;
+#if defined(MSCCLPP_USE_GPUNETIO)
+  // Cross-domain GPUNetIO makes the runtime available even when the IPC domain
+  // does not span all ranks, provided the backend is explicitly enabled.
+  if (numRanksPerIpcDomain_ < numRanks_) {
+    const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
+    if (enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) available_ = true;
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 }
 
 LatencyContext::~LatencyContext() noexcept(false) {
@@ -123,6 +147,53 @@ void LatencyContext::initialize() {
                     .deviceId_ = deviceId_,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  // Bring up the GPU-initiated networking service for peers outside this rank's
+  // NVLink/IPC domain (opt-in via MSCCLPP_EP_ENABLE_GPUNETIO). Publishes the
+  // device context + symmetric staging/flags regions onto deviceContext_.
+  const bool crossDomain = ipcDomainSize < numRanks_;
+  const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
+  if (crossDomain && enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
+    std::string hca;
+    if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+      hca = h;
+    } else {
+      hca = mscclpp::getIBDeviceName(mscclpp::Transport::IB0);
+    }
+    auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
+    svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
+    gpuNetIoService_ = svc;
+    deviceContext_.gpuNetIo_ = svc->deviceContext();
+    LatencyStorageLayout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
+                                outputLayout_, combineMode_);
+    deviceContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
+    deviceContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
+    deviceContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
+    deviceContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+  // Host-side topology dump (opt-in via MSCCLPP_EP_DEBUG_TOPO): nvlinkPeerMap[r]
+  // ='1' => peer r is NVLink/IPC-mapped; '0' => cross-domain (served via GPUNetIO).
+  if (std::getenv("MSCCLPP_EP_DEBUG_TOPO") != nullptr) {
+    std::string nvmap(static_cast<size_t>(numRanks_), '0');
+    for (int r = 0; r < numRanks_; ++r) {
+      if (r == rank_ || peerMappedBufferBases_[r] != nullptr) nvmap[r] = '1';
+    }
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const int ginOn = (gpuNetIoService_ != nullptr) ? 1 : 0;
+#else
+    const int ginOn = 0;
+#endif
+    std::fprintf(stderr,
+                 "[EPTOPO] rank=%d numRanks=%d nRanksPerIpcDomain=%d numNvlRanks=%d crossDomain=%d ginOn=%d "
+                 "available=%d nvlinkPeerMap=%s\n",
+                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_,
+                 (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0, ginOn, available_ ? 1 : 0, nvmap.c_str());
+    std::fflush(stderr);
+  }
+
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }

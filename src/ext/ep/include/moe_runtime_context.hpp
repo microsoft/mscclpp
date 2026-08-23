@@ -18,6 +18,10 @@
 #include "recv_pool.hpp"
 
 namespace mscclpp {
+
+// Forward declaration; full definition in the GPUNetIO host service header.
+class GpuNetIoService;
+
 namespace ep {
 
 // Mode-specific contexts owned by MoERuntime.
@@ -35,6 +39,7 @@ struct LatencyContext {
   int rank_;
   int numRanks_;
   int numRanksPerIpcDomain_;
+  int numNvlRanks_ = 0;
   bool available_ = false;
   int deviceId_;
   int maxTokensPerRank_;
@@ -55,6 +60,7 @@ struct LatencyContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  std::shared_ptr<mscclpp::GpuNetIoService> gpuNetIoService_;
 };
 
 struct ThroughputContext {
