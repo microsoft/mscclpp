@@ -149,12 +149,15 @@ struct WorkspaceView {
   // flag poll target, never reset) and persisted per-source recv counts (read by
   // the combine PUSH sender after the recvBuffer count packet is cleared).
   uint64_t* dispatchArrivedBaseline_;
+  uint64_t* combineArrivedBaseline_;
   int* dispatchRecvCounts_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
     // 8-byte-aligned field first (workspace base is allocation-aligned).
     dispatchArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
+    combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
     cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
     dispatchRecvCounts_ = cursor;
     cursor += nRanks;
@@ -181,6 +184,7 @@ struct WorkspaceView {
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
     return static_cast<size_t>(nRanks) * sizeof(uint64_t) +   // dispatchArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(uint64_t) +   // combineArrivedBaseline_
            static_cast<size_t>(nRanks) * sizeof(int) +        // dispatchRecvCounts_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_

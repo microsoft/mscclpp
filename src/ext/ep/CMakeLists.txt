@@ -93,7 +93,7 @@ if(MSCCLPP_USE_GPUNETIO)
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # The low-latency combine kernel RDMA-reads (gin->get) remote expert outputs
     # for cross-domain peers.
-    set_source_files_properties(combine/direct_send_combine.cu PROPERTIES
+    set_source_files_properties(combine/direct_send_combine.cu combine/rank_local_reduce_combine.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
 endif()
