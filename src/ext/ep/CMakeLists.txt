@@ -83,17 +83,17 @@ endif()
 # Scope both to the host runtime translation unit (ll_runtime.cc) so the EP CUDA
 # device TUs are unaffected (they only forward-declare GpuNetIoDeviceContext).
 if(MSCCLPP_USE_GPUNETIO)
-    set_source_files_properties(ll_runtime.cc PROPERTIES
+    set_source_files_properties(latency.cc PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # The low-latency dispatch kernel issues the inter-domain GPUNetIO sends, so it
     # needs the device context definition + the vendored DOCA device headers.
-    set_source_files_properties(low_latency/dispatch.cu PROPERTIES
+    set_source_files_properties(dispatch/rank_major_dispatch.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # The low-latency combine kernel RDMA-reads (gin->get) remote expert outputs
     # for cross-domain peers.
-    set_source_files_properties(low_latency/combine.cu PROPERTIES
+    set_source_files_properties(combine/direct_send_combine.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
 endif()
