@@ -11,6 +11,10 @@
 #include "exception.hpp"
 #include "kernels.hpp"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/port_channel_gpunetio_device.hpp>
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 namespace mscclpp {
 namespace ep {
 
@@ -94,6 +98,115 @@ MSCCLPP_DEVICE_INLINE void completeRankMajorTokenStore(WorkspaceView& workspaceV
       workspaceView.dispatchRankPayloadCompletions_ + destinationRank, 1, mscclpp::memoryOrderRelease);
 }
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+// NVLink-only metadata store: identical to sendRankMajorMetadata but skips leaders
+// whose destination is cross-domain (their metadata travels with the GPUNetIO send).
+MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(const TransportView& transport, int* outputTopkIdx,
+                                                      float* outputTopkWeights,
+                                                      const int64_t* __restrict__ topkIndices,
+                                                      const float* __restrict__ topkWeights,
+                                                      const RankMajorRoute& route, int tokenIdx, int nTopk,
+                                                      int nLocalExperts, int maxTokensPerRank, int invalidTokenExpertId,
+                                                      bool skipCrossDomain) {
+  const int laneId = get_lane_id();
+  const int candidateExpert =
+      laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
+  const float candidateWeight =
+      laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
+  unsigned int leaderMask = __ballot_sync(0xffffffff, route.dstRank >= 0 && route.isLeader);
+  while (leaderMask != 0) {
+    const int leaderLane = __ffs(leaderMask) - 1;
+    const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
+    const int destinationSlot = __shfl_sync(0xffffffff, route.destinationSlot, leaderLane);
+    leaderMask &= leaderMask - 1;
+    if (skipCrossDomain && !transport.isNvlinkPeer(destinationRank)) continue;
+    if (laneId < nTopk) {
+      auto* destinationTopkIdx = reinterpret_cast<int*>(transport.mappedBuffer(outputTopkIdx, destinationRank));
+      auto* destinationTopkWeights =
+          reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
+      const size_t outputIdx =
+          (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
+      const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
+      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
+      destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
+    }
+  }
+  __syncwarp();
+}
+
+// Cross-domain rank-major send: stages token+metadata in this rank's GPUNetIO
+// staging ring, then RDMA-writes token/ids to the peer's rank-major buffers and
+// fuses the weights put with a per-source completion-flag signal. Re-derived for
+// the new layout: staging ring slots [nRanks, GpuNetIoStagingSlots) (slots
+// [0,nRanks) reserved for count packets); remote destinations addressed via the
+// passed-in symmetric output/outputTopkIdx/outputTopkWeights bases.
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport, void* output, int* outputTopkIdx,
+                                                 float* outputTopkWeights, const RankMajorRoute& route,
+                                                 const int64_t* __restrict__ topkIndices,
+                                                 const float* __restrict__ topkWeights, void* stagedToken, int tokenIdx,
+                                                 int nTopk, int nLocalExperts, int maxTokensPerRank, int nRanks,
+                                                 int invalidTokenExpertId, int ringSlotBase) {
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  const int laneId = get_lane_id();
+  auto* gin = transport.gpuNetIo_;
+  const size_t slotStride = transport.gpuNetIoSlotStride_;
+  auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
+
+  const int candidateExpert = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
+  const float candidateWeight =
+      laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
+
+  unsigned int leaderMask = __ballot_sync(0xffffffff, route.dstRank >= 0 && route.isLeader);
+  int ringSlot = ringSlotBase;
+  while (leaderMask != 0) {
+    const int leaderLane = __ffs(leaderMask) - 1;
+    const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
+    const int destinationSlot = __shfl_sync(0xffffffff, route.destinationSlot, leaderLane);
+    leaderMask &= leaderMask - 1;
+    if (transport.isNvlinkPeer(destinationRank) || destinationSlot < 0) continue;
+
+    const int payloadSlots = GpuNetIoStagingSlots - nRanks;
+    auto* slot = stagingBase + static_cast<size_t>(nRanks + ringSlot % payloadSlots) * slotStride;
+    auto* slotIds = reinterpret_cast<int*>(slot + HiddenBytes);
+    auto* slotWeights = reinterpret_cast<float*>(slot + HiddenBytes + static_cast<size_t>(nTopk) * sizeof(int));
+
+    if (laneId == leaderLane) {
+      const auto* src = reinterpret_cast<const uint4*>(stagedToken);
+      auto* dst = reinterpret_cast<uint4*>(slot);
+      constexpr int NumVec = static_cast<int>(HiddenBytes / sizeof(uint4));
+      for (int i = 0; i < NumVec; ++i) dst[i] = src[i];
+    }
+    if (laneId < nTopk) {
+      const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
+      slotIds[laneId] = isLocal ? candidateExpert : invalidTokenExpertId;
+      slotWeights[laneId] = isLocal ? candidateWeight : 0.0f;
+    }
+    __syncwarp();
+    __threadfence();
+    __syncwarp();
+
+    if (laneId == leaderLane) {
+      const size_t rowBase = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
+      auto* remoteToken = reinterpret_cast<uint8_t*>(output) + rowBase * HiddenBytes;
+      auto* remoteIds = reinterpret_cast<uint8_t*>(outputTopkIdx) + rowBase * nTopk * sizeof(int);
+      auto* remoteWeights = reinterpret_cast<uint8_t*>(outputTopkWeights) + rowBase * nTopk * sizeof(float);
+      auto* remoteFlag = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) +
+                         static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
+      gin->put(destinationRank, transport.symmetricOffset(remoteToken), transport.symmetricOffset(slot), HiddenBytes);
+      gin->put(destinationRank, transport.symmetricOffset(remoteIds), transport.symmetricOffset(slotIds),
+               static_cast<size_t>(nTopk) * sizeof(int));
+      gin->putWithSignal(destinationRank, transport.symmetricOffset(remoteWeights),
+                         transport.symmetricOffset(slotWeights), static_cast<size_t>(nTopk) * sizeof(float),
+                         transport.symmetricOffset(remoteFlag), /*signalValue=*/1);
+      gin->flush(destinationRank);
+    }
+    __syncwarp();
+    ringSlot += 1;
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                                      const void* inputTokens, int nExperts, int nRanks,
@@ -142,6 +255,29 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     __syncwarp();
     mscclpp::bulkFence();
     const int completionRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const bool crossDomain = transport.gpuNetIo_ != nullptr;
+    // NVLink token store only for NVLink-mapped destinations; cross-domain
+    // destinations travel via the warp-cooperative GPUNetIO send below.
+    if (completionRank >= 0 && (!crossDomain || transport.isNvlinkPeer(completionRank))) {
+      issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
+                                       route.dstRank);
+    }
+    if (crossDomain) {
+      // Payload ring base within [nRanks, GpuNetIoStagingSlots); [0,nRanks) are counts.
+      const int ringSlotBase =
+          ((static_cast<int>(blockIdx.x) * DispatchMaxNWarpGroups + warpGroupId) * nTopk) %
+          (GpuNetIoStagingSlots - nRanks);
+      sendRankMajorGpuNetIo<Hidden>(transport, output, outputTopkIdx, outputTopkWeights, route, topkIndices,
+                                    topkWeights, stagedToken, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, nRanks,
+                                    invalidTokenExpertId, ringSlotBase);
+    }
+    const int nvlinkCompletionRank =
+        (completionRank >= 0 && (!crossDomain || transport.isNvlinkPeer(completionRank))) ? completionRank : -1;
+    sendRankMajorMetadataNvlink(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx,
+                                nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId, crossDomain);
+    completeRankMajorTokenStore(workspaceView, nvlinkCompletionRank);
+#else
     if (completionRank >= 0) {
       issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
                                        route.dstRank);
@@ -149,6 +285,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
     completeRankMajorTokenStore(workspaceView, completionRank);
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
 }
@@ -386,6 +523,27 @@ MSCCLPP_DEVICE_INLINE void writeRankMajorCounts(const TransportView& transport, 
                                                 void* recvBuffer, uint32_t epoch) {
   const int threadId = static_cast<int>(threadIdx.x);
   for (int dstRank = threadId; dstRank < nRanks; dstRank += blockDim.x) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    // Cross-domain: build the count LL8Packet in this rank's reserved GPUNetIO
+    // staging slot for dstRank (slots [0,nRanks) reserved for counts, disjoint from
+    // the payload ring [nRanks, GpuNetIoStagingSlots)), then RDMA-put it into the
+    // peer's base rank-count slot [rank_]. Re-derived for the new layout: the
+    // destination is the base position [rank_] (matching the recv read), unrelocated.
+    if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(dstRank)) {
+      auto* gin = transport.gpuNetIo_;
+      auto* scratch = reinterpret_cast<mscclpp::LL8Packet*>(
+          reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_) +
+          static_cast<size_t>(dstRank) * transport.gpuNetIoSlotStride_);
+      scratch->write(static_cast<uint32_t>(rankTokenCounts[dstRank]), epoch);
+      __threadfence();
+      auto* remotePacket =
+          reinterpret_cast<uint8_t*>(recvBuffer) + static_cast<size_t>(transport.rank_) * sizeof(mscclpp::LL8Packet);
+      gin->put(dstRank, transport.symmetricOffset(remotePacket), transport.symmetricOffset(scratch),
+               sizeof(mscclpp::LL8Packet));
+      gin->flush(dstRank);
+      continue;
+    }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
     auto* destinationPackets = reinterpret_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, dstRank));
     destinationPackets[transport.rank_].write(static_cast<uint32_t>(rankTokenCounts[dstRank]), epoch);
   }
@@ -396,6 +554,16 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
   const int threadId = static_cast<int>(threadIdx.x);
   for (int dstRank = threadId; dstRank < nRanks; dstRank += blockDim.x) {
     const int expectedPayloadCount = rankTokenCounts[dstRank];
+#if defined(MSCCLPP_USE_GPUNETIO)
+    // Cross-domain destinations carry their own fused put+signal per token, so they
+    // never touch the NVLink completion counter -- skip the wait/signal but still
+    // reset this dst's per-epoch slot counters.
+    if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(dstRank)) {
+      workspaceView.dispatchRankPayloadSlots_[dstRank] = 0;
+      workspaceView.dispatchRankPayloadCompletions_[dstRank] = 0;
+      continue;
+    }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
     if (expectedPayloadCount > 0) {
       while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspaceView.dispatchRankPayloadCompletions_ + dstRank,
                                                             mscclpp::memoryOrderAcquire) != expectedPayloadCount);
@@ -553,8 +721,27 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
                                                            mscclpp::memoryOrderRelease);
     }
 
+    if (sourceRank < nRanks) {
+      // Persist the per-source recv count for the combine PUSH sender; the LL8
+      // count packet in recvBuffer is cleared before combine runs.
+      workspaceView.dispatchRecvCounts_[sourceRank] = nRankTokens;
+    }
     if (sourceRank < nRanks && nRankTokens > 0) {
-      if (transport.isSelf(sourceRank)) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+      // Cross-domain source: payloads arrived via GPUNetIO, which bumps this rank's
+      // per-source completion flag once per token. The flag is a monotonic counter
+      // never reset (resetting would race the remote NIC atomic-add of a later
+      // epoch and drop a signal); each receiver tracks its own cumulative baseline.
+      if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+        auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);
+        const uint64_t target =
+            workspaceView.dispatchArrivedBaseline_[sourceRank] + static_cast<uint64_t>(nRankTokens);
+        while (flags[sourceRank] < target) {
+        }
+        workspaceView.dispatchArrivedBaseline_[sourceRank] = target;
+      } else
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+          if (transport.isSelf(sourceRank)) {
         workspaceView.dispatchLocalPayloadReady_->acquire();
       } else {
         transport.baseMemoryChannels_[sourceRank].wait(-1);
