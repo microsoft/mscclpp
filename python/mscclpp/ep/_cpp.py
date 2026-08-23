@@ -4,13 +4,7 @@
 
 from __future__ import annotations
 
-try:
-    import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
-except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "mscclpp_ep_cpp is not available. Build mscclpp with "
-        "-DMSCCLPP_BUILD_EXT_EP=ON or install with `pip install .[ep]`."
-    ) from exc
+from mscclpp import mscclpp_ep_cpp as _cpp
 
 DispatchLayout = _cpp.DispatchLayout
 MoEMode = _cpp.MoEMode
@@ -18,4 +12,3 @@ CombineMode = _cpp.CombineMode
 DispatchDataType = _cpp.DispatchDataType
 MoERuntime = _cpp.MoERuntime
 create_moe_runtime = _cpp.create_moe_runtime
-Config = getattr(_cpp, "Config", None)

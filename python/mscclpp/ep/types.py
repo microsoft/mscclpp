@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 
 # Quantization metadata.
 
@@ -19,7 +19,7 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 class QuantConfig:
     """Quantization metadata associated with an activation tensor.
 
-    Low-latency FP8 dispatch returns ``block_scales`` with the activation's
+    Latency FP8 dispatch returns ``block_scales`` with the activation's
     leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
     uses FP32 scales per 128 elements.
     """
@@ -49,21 +49,21 @@ class MoECommunicatorConfig:
     max_tokens_per_rank: int = 0
 
     # Runtime mode and output layout
-    mode: MoEMode = MoEMode.LOW_LATENCY
+    mode: MoEMode = MoEMode.LATENCY
     output_layout: Optional[DispatchLayout] = None
-    # LL rank-major sentinel; None resolves to num_experts.
+    # Latency rank-major sentinel; None resolves to num_experts.
     invalid_token_expert_id: Optional[int] = None
 
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch tuning
-    num_sms: int = 20
-    low_latency_num_blocks: int = 130
-    low_latency_combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
+    # Total communication blocks. LATENCY includes two reserved scheduler/control
+    # blocks; THROUGHPUT uses every block as a communication worker.
+    num_blocks: Optional[int] = None
+    combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
-    # HT-only buffer/launch tuning (advanced)
+    # Throughput receive-pool tuning (advanced)
     expert_alignment: int = 1
 
 
@@ -101,13 +101,14 @@ class DispatchOutput:
     layout: DispatchLayoutInfo
     topk_ids: Optional[torch.Tensor] = None
     weights: Optional[torch.Tensor] = None
+    combine_input_buffer: Optional[torch.Tensor] = None
 
 
-# Combine-side context. These objects are layout-specific and opaque to the MLP.
+# Private combine-side context.
 
 
 @dataclass
-class ExpertMajorCombineContext:
+class _ExpertMajorCombineContext:
     """Combine context for expert-major dispatch output."""
 
     topk_ids: torch.Tensor
@@ -120,7 +121,7 @@ class ExpertMajorCombineContext:
 
 
 @dataclass
-class RankMajorCombineContext:
+class _RankMajorCombineContext:
     """Combine context for fixed-stride rank-major output."""
 
     topk_ids: torch.Tensor
@@ -131,17 +132,17 @@ class RankMajorCombineContext:
 
 
 @dataclass
-class HighThroughputCombineContext:
-    """Combine context for high-throughput dispatch output."""
+class _ThroughputCombineContext:
+    """Combine context for throughput output."""
 
     recv_topk_weights: Optional[torch.Tensor]
     send_head: torch.Tensor
 
 
-CombineContext = Union[
-    ExpertMajorCombineContext,
-    RankMajorCombineContext,
-    HighThroughputCombineContext,
+_CombineContext = Union[
+    _ExpertMajorCombineContext,
+    _RankMajorCombineContext,
+    _ThroughputCombineContext,
 ]
 
 
@@ -150,24 +151,11 @@ CombineContext = Union[
 
 @dataclass
 class DispatchHandle:
-    """Base opaque dispatch metadata consumed by :meth:`MoECommunicator.combine`."""
+    """Opaque dispatch metadata consumed by :meth:`MoECommunicator.combine`."""
 
     output_info: DispatchOutputInfo
-
-
-@dataclass
-class ExpertMajorDispatchHandle(DispatchHandle):
-    combine_context: ExpertMajorCombineContext
-
-
-@dataclass
-class RankMajorDispatchHandle(DispatchHandle):
-    combine_context: RankMajorCombineContext
-
-
-@dataclass
-class HighThroughputDispatchHandle(DispatchHandle):
-    combine_context: HighThroughputCombineContext
+    _context: _CombineContext
+    _dispatch_cache: Optional[dict[str, Any]] = None
 
 
 # Optional async/overlap configuration.
@@ -195,7 +183,7 @@ class BlockOverlapConfig:
 
 
 @dataclass
-class CommOverlapConfig:
+class OverlapConfig:
     """Mutually exclusive operation-level or block-level overlap configuration."""
 
     operation: Optional[OperationOverlapConfig] = None

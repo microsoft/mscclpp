@@ -1,43 +1,54 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
 The EP extension is a torch-free nanobind module for MoE dispatch and combine.
-It exposes a single `MoERuntime` whose `MoEMode` selects one of two backends:
+It exposes one concrete `MoERuntime` and one persistent `DeviceContext*` shared
+by dispatch and combine kernels.
 
-- **Low latency (LL)**: `MoELowLatencyRuntime` (`ll_runtime.cc` plus
-  `low_latency/{dispatch,combine}.cu`), reached through the `ll_*` methods.
-  Uses ~128 SMs and expects to own the GPU while it runs.
-- **High throughput (HT)**: `MoEHighThroughputRuntime` (`ht_runtime.cc` plus the
-  CUDA sources under `high-throughput/`), reached through the `ht_*` methods.
-  Defaults to 20 SMs so dispatch/combine can overlap with expert GEMMs.
+`MoEMode` selects a runtime context and algorithm family:
 
-Both derive from the abstract `MoERuntime` (`runtime_base.hpp`), which owns the
-shared rank-topology detection and availability reporting.
-`createMoERuntime(...)` constructs the requested implementation and returns a
-`std::shared_ptr<MoERuntime>`; calling the other mode's methods raises.
+- **`LATENCY`** algorithms use broad GPU resources to minimize standalone
+  dispatch/combine latency.
+- **`THROUGHPUT`** algorithms use a bounded SM budget so communication can run
+  concurrently with expert compute.
+
+Mode-specific contexts are allocated conditionally; selecting one family does
+not allocate the other family's buffers.
+
+The Python call path is:
+
+```text
+MoECommunicator -> LatencyRuntime / ThroughputRuntime -> MoERuntime
+                          |
+                 passive mode context
+```
+
+The context is a passive holder for mode-specific configuration, tensors, and
+metadata. `Runtime` owns dispatch/combine and all mode-specific execution
+helpers. There is no separate backend or strategy object.
 
 ## Status
 
 | Feature | Status |
 |---|---|
-| LL dispatch/combine | Validated on Hopper and newer GPUs |
-| HT dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
-| HT RDMA/IB fallback | Not supported |
-| Python frontend | `mscclpp.ep.MoECommunicator` selects LL or HT with `MoEMode` |
+| Latency dispatch/combine | Validated on Hopper and newer GPUs |
+| Throughput dispatch/combine | Supports 2, 4, 8, or 16 ranks in one GPU IPC/NVL fabric domain |
+| Throughput RDMA/IB fallback | Not supported |
+| Python frontend | `mscclpp.ep.MoECommunicator` selects latency or throughput algorithms with `MoEMode` |
 | ROCm | Not supported |
 
 ## Runtime architecture
 
-### Low latency
+### Latency algorithms
 
-LL allocates CUDA physical symmetric memory and maps peer buffers through the
+The latency context allocates CUDA physical symmetric memory and maps peer buffers through the
 existing `mscclpp::Communicator`. Payloads use direct peer mappings;
 `BaseMemoryChannel` handles are used only for synchronization.
 
-The optimized LL backend is available when all participating ranks belong to
+The latency algorithms are available when all participating ranks belong to
 one detected GPU IPC domain. That domain may span hosts when CUDA fabric handles
 and the required fabric services are available.
 
-LL dispatch supports two user-visible layouts:
+Latency dispatch supports two user-visible layouts:
 
 - `EXPERT_MAJOR`: one row per `(token, local expert)`.
 - `RANK_MAJOR`: fixed-stride rows grouped by source rank. Tokens are written
@@ -46,15 +57,15 @@ LL dispatch supports two user-visible layouts:
   from registered remote MoE output or push completed rank partials into
   source-local scratch and progressively reduce ready ranks.
 
-LL quantized dispatch supports E4M3 payloads with FP32 scales per 128 hidden
+Quantized latency dispatch supports E4M3 payloads with FP32 scales per 128 hidden
 elements (`FP8_E4M3`).
 
-### High throughput
+### Throughput algorithms
 
-HT follows the same direct-mapping resource model:
+The throughput context follows the same direct-mapping model:
 
 1. Python passes the existing `mscclpp::Communicator` into
-   `MoERuntime` with `MoEMode::HIGH_THROUGHPUT`.
+   `MoERuntime` with `MoEMode::THROUGHPUT`.
 2. Each rank allocates a small symmetric control/FIFO region plus a CUDA physical
    internal receive pool. The pool provides stable peer mappings before the
    data-dependent receive count is known; Python later exposes its exact-size
@@ -64,11 +75,11 @@ HT follows the same direct-mapping resource model:
 4. Dispatch and combine launch directly on the caller's CUDA stream.
 
 The detected GPU IPC domain may span multiple hosts, such as an NVL fabric
-domain with CUDA fabric handles. HT does not create a private bootstrap, proxy
+domain with CUDA fabric handles. The throughput path does not create a private bootstrap, proxy
 service, RDMA channel, NVLS multicast object, or private communication stream,
 and it has no RDMA/IB fallback outside that domain.
 
-The HT dispatch API remains two-phase because the receive token count is data
+The throughput dispatch API remains two-phase because the receive token count is data
 dependent:
 
 1. The notify phase exchanges counts and produces prefix matrices.
@@ -77,20 +88,20 @@ dependent:
 
 Cached dispatch reuses the previous receive count and prefix matrices.
 
-## HT data path
+## Throughput data path
 
-HT has one direct path. Every dispatch block writes hidden rows and routing
+The throughput family has one direct path. Every dispatch block writes hidden rows and routing
 metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
 There is no ring algorithm or runtime fallback. Set the communication block
-budget through the `num_sms` API configuration.
+budget through the `num_blocks` API configuration.
 
-The persistent HT configuration contains only:
+The persistent throughput configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_sms` | Maximum HT communication block budget |
+| `num_blocks` | Total communication block count. Throughput uses all blocks as workers; latency includes two reserved scheduler/control blocks. |
 
 ## Build
 
@@ -118,32 +129,48 @@ Available CMake options:
 | Variable | Default | Meaning |
 |---|---:|---|
 | `MSCCLPP_BUILD_EXT_EP` | `ON` | Build the EP extension |
-| `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT` | `OFF` | Use a shorter kernel spin timeout |
 
 ## Source layout
 
 ```text
 src/ext/ep/
 ├── bindings.cpp
-├── moe_runtime.{cc,hpp}
-├── ll_runtime.{cc,hpp}
-├── ht_runtime.{cc,hpp}
-├── runtime_base.hpp
-├── high-throughput/
-│   ├── config.cuh
-│   ├── counts.cu
-│   ├── dispatch.cu
-│   └── combine.cu
+├── moe_runtime.cc
+├── latency.cc
+├── throughput.cc
+├── common/
+│   ├── device_helpers.cuh
+│   ├── latency.cuh
+│   ├── overlap_barrier.cuh
+│   └── quantization.cuh
+├── dispatch/
+│   ├── common.cuh
+│   ├── expert_major_dispatch.cu
+│   ├── rank_major_dispatch.cu
+│   ├── throughput_prepare.cu
+│   └── throughput_dispatch.cu
+├── combine/
+│   ├── common.cuh
+│   ├── rank_local_reduce_combine.cu
+│   ├── direct_send_combine.cu
+│   └── throughput_reduce_combine.cu
 ├── include/
-└── low_latency/
-    ├── config.cuh
-    ├── dispatch.cu
-    └── combine.cu
+│   ├── config.hpp
+│   ├── device_context.hpp
+│   ├── exception.hpp
+│   ├── kernels.hpp
+│   ├── launch.hpp
+│   ├── moe_runtime_context.hpp
+│   └── recv_pool.hpp
+
+include/mscclpp/ext/ep/
+├── moe_runtime.hpp
+└── types.hpp
 ```
 
 ## Validation
 
-Build the extension, then run the single-node HT test:
+Build the extension, then run the single-node throughput test:
 
 ```bash
 HWLOC_COMPONENTS=-gl \
@@ -152,11 +179,11 @@ torchrun --standalone --nproc_per_node=8 \
     test/python/ep/test_intranode_multirank.py
 ```
 
-The LL validation remains:
+The latency validation remains:
 
 ```bash
 HWLOC_COMPONENTS=-gl \
 LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
 torchrun --standalone --nproc_per_node=8 \
-    test/python/ep/test_low_latency_multirank.py
+    test/python/ep/test_latency_multirank.py
 ```

@@ -46,14 +46,15 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
 
     if rank == 0:
         print(
-            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=flashinfer MoeAlltoAll(MNNVL) requested_mode={args.mode} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
-        if args.ep_layout == "expert_major":
+        if args.ep_layout in ("expert_major", "token_major"):
             print(
-                "[cfg] flashinfer ep_layout=expert_major requested but unsupported: "
+                f"[cfg] flashinfer ep_layout={args.ep_layout} requested but unsupported: "
                 "MoeAlltoAll dispatch is fixed rank-major [ep_size, tokens, hidden]; "
                 "keeping rank_major (expert grouping is a downstream model op, not part of the A2A)",
                 flush=True,
@@ -121,13 +122,12 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         comm.Barrier()
         moe.combine(combine_payload, num_tokens)
 
-    # Capture-safe ops for the harness's single-graph capture. FlashInfer's
-    # dispatch/combine each need an MPI host barrier to align ranks, but an MPI
-    # barrier cannot live inside a CUDA graph -- so the captured ops are barrier-free
-    # and the harness runs the barrier BEFORE each replay (pre_replay). Capture is
-    # best-effort: FlashInfer's stateful phase / in-kernel peer spin may not be
-    # graph-capturable on every build, so on_fail rebuilds the (possibly mid-phase)
-    # communicator and the harness keeps the eager barrier+launch path.
+    # Capture-safe ops for the harness's single-graph capture. FlashInfer needs
+    # host-side rank alignment while the graph is primed and captured, but the
+    # captured communication kernels provide peer-readiness synchronization during
+    # replay. Keeping the barrier out of replay avoids charging host synchronization
+    # to the timed dispatch interval. Capture remains best-effort: on_fail rebuilds
+    # the possibly mid-phase communicator and keeps the eager barrier+launch path.
     graph_spec = None
     if args.cuda_graph:
 
@@ -148,7 +148,7 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": _dispatch,
             "combine": _combine,
-            "pre_replay": comm.Barrier,
+            "pre_capture": comm.Barrier,
             "on_fail": _rebuild,
         }
 

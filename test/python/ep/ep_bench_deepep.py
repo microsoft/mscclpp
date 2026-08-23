@@ -22,10 +22,10 @@ def parse_kineto_kernels(key_averages):
 
 
 # ============================================================================
-# Backend: DeepEP V2 (deepseek-ai/DeepEP, ElasticBuffer low-latency).
+# Backend: DeepEP V2 (deepseek-ai/DeepEP, unified ElasticBuffer).
 # ============================================================================
 def setup_deepep(args, comm, rank, num_ranks, inputs):
-    """DeepEP V2 low-latency dispatch/combine via `deep_ep.ElasticBuffer`, wired
+    """DeepEP V2 dispatch/combine via `deep_ep.ElasticBuffer`, wired
     the same way as the mscclpp / NCCL-EP backends: return (dispatch_fn,
     combine_fn, teardown). DeepEP needs a torch.distributed NCCL group (reused
     from `_ensure_torch_dist`) and, for a same-rack NVLink run, `EP_DISABLE_GIN=1`.
@@ -41,10 +41,13 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     x, topk_idx, topk_weights, _ = inputs
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
+    if args.ep_layout == "token_major":
+        raise ValueError("DeepEP ElasticBuffer supports rank_major or expert_major layout")
 
     if rank == 0:
         print(
-            f"[cfg] backend=deepep ElasticBuffer(LOW_LATENCY) num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=deepep ElasticBuffer num_sms={args.num_sms} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
@@ -77,6 +80,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         do_cpu_sync=True,
         do_expand=do_expand,
         do_zero_padding=do_expand,
+        num_sms=args.num_sms,
     )
 
     # Prime once to obtain the handle (routing) and the received-token count so we
@@ -149,6 +153,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
             handle=handle,
             num_experts=num_experts,
             num_max_tokens_per_rank=num_tokens,
+            num_sms=args.num_sms,
         )
 
         def dispatch_fn():
@@ -159,7 +164,6 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         graph_spec = {
             "dispatch": lambda: buffer.dispatch(**cached_dispatch_args),
             "combine": lambda: buffer.combine(**combine_args),
-            "pre_replay": None,
             "on_fail": None,
         }
     else:

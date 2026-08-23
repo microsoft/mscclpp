@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-"""Unified in-process low-latency (LL) EP benchmark that drives BOTH backends'
+"""Unified in-process latency EP benchmark that drives both libraries'
 Python APIs directly, inside the *same* measurement flow:
 
 * **mscclpp EP**   — ``mscclpp.ep.MoECommunicator.dispatch`` / ``.combine``.
 * **NVIDIA NCCL-EP** — ``nccl.ep.Group`` / ``nccl.ep.Handle.dispatch`` / ``.combine``
   (the ``nccl4py`` Pythonic bindings for ``libnccl_ep.so``).
 
-This is a Python port of ``mscclpp_ep_bench.cu`` that additionally understands the
-NCCL-EP Python API. Unlike ``run_ep_bench.py`` (which shells out to a separate
-per-backend process for each measurement), this script calls each backend's Python
-API *in one process* through a single shared paired-benchmark loop, so the two are
-timed with byte-for-byte the same methodology:
+This script calls each backend's Python API in one process through a shared
+paired-benchmark loop, so both are timed with the same methodology:
 
 * **Paired** ``dispatch -> combine`` per iteration, with no per-iteration
   ``stream.synchronize()`` or cross-rank barrier inside the timed loop -- the
@@ -24,12 +21,12 @@ timed with byte-for-byte the same methodology:
   ``bytes = num_valid_selections * hidden * 2`` (BF16) for both dispatch and combine.
 * **Cross-rank reduction** identical to ``printLowLatencyResults``.
 * **Output** mirrors the ``=== Summary (Low Latency, across N ranks) ===`` block so a
-  run can be diffed directly against ``ep_bench`` / ``mscclpp_ep_bench.cu``.
+  run can be diffed directly against NCCL-EP ``ep_bench``.
 
 Bootstrap: MPI (mpi4py + mpirun)
 --------------------------------
 Both backends share an MPI ``COMM_WORLD`` bootstrap (the same mechanism the C++
-``mscclpp_ep_bench`` and NCCL-EP ``ep_test.py`` use), *not* torch.distributed:
+NCCL-EP ``ep_test.py`` uses, *not* torch.distributed:
 
 * mscclpp wraps the MPI communicator with ``CommGroup(mpi_comm=MPI.COMM_WORLD)``.
 * NCCL-EP builds a ``nccl.core.Communicator`` from a unique id broadcast over MPI.
@@ -131,11 +128,11 @@ from ep_bench_flashinfer import setup_flashinfer, parse_kineto_kernels as flashi
 
 
 # ----------------------------------------------------------------------------
-# CLI — mirrors ep_bench.cu's getopt flags for the LL path, plus --backend.
+# CLI — shared workload and backend/mode selection.
 # ----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Unified low-latency EP benchmark (mscclpp + NCCL-EP Python APIs)",
+        description="Unified EP benchmark across Python backends",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -143,6 +140,20 @@ def parse_args() -> argparse.Namespace:
         choices=["mscclpp", "nccl", "deepep", "flashinfer", "all"],
         default="all",
         help="which backend(s) to benchmark in this run (all runs nccl, mscclpp, deepep, flashinfer)",
+    )
+    p.add_argument(
+        "--mode",
+        choices=("latency", "throughput"),
+        default="latency",
+        help="algorithm family for backends with an explicit mode (MSCCL++ and NCCL-EP). "
+        "DeepEP V2 uses one ElasticBuffer path and is tuned with --num-sms.",
+    )
+    p.add_argument(
+        "--num-sms",
+        type=int,
+        default=0,
+        help="Communication SM/block budget. DeepEP interprets it as SMs; MSCCL++ maps it to the total "
+        "communication block count, including reserved scheduler/control blocks. 0 uses backend defaults.",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
@@ -155,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--dispatch-dtype",
         choices=("bf16", "fp8_e4m3"),
         default="bf16",
-        help="mscclpp LL dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
+        help="MSCCL++ latency dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
         "benchmark is wired BF16-only (the harness does not plumb NCCL-EP's dispatch scales yet).",
     )
     p.add_argument(
@@ -163,13 +174,12 @@ def parse_args() -> argparse.Namespace:
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
         default="rank_local_reduce",
-        help="mscclpp LL combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
+        help="MSCCL++ latency combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
     )
     p.add_argument(
         "--cuda-graph",
         action="store_true",
-        help="capture dispatch and combine as CUDA graphs and replay them in the timed loop "
-        "(mscclpp, nccl, deepep cached path; flashinfer captures kernels with the MPI barrier kept outside).",
+        help="capture dispatch and combine as one CUDA graph and replay it in the timed loop.",
     )
     p.add_argument(
         "--iters-per-graph",
@@ -183,13 +193,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["rank_major", "expert_major"],
+        choices=["token_major", "rank_major", "expert_major"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
-        "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
-        "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
-        "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
-        "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
+        "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
+        "DeepEP=rank_major, FlashInfer=rank_major). "
+        "The explicit value is applied where supported: NCCL-EP and DeepEP accept rank_major/expert_major; "
+        "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
+        "FlashInfer is rank-major only; unsupported requests are "
         "noted and the backend's default layout is kept.",
     )
     p.add_argument(
@@ -206,6 +217,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
+    if args.num_sms < 0:
+        raise SystemExit("--num-sms must be non-negative")
     if args.iters_per_graph <= 0:
         raise SystemExit("--iters-per-graph must be positive")
     if not args.cuda_graph:
@@ -217,11 +230,13 @@ def parse_args() -> argparse.Namespace:
             "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
             "(NCCL-EP supports FP8 but its path here is BF16-only); use --backend mscclpp"
         )
+    if args.dispatch_dtype == "fp8_e4m3" and args.mode != "latency":
+        raise SystemExit("MSCCL++ throughput mode currently supports BF16 dispatch only")
     return args
 
 
 # ============================================================================
-# Shared paired benchmark + summary (mirrors mscclpp_ep_bench.cu / ep_bench).
+# Shared paired benchmark + summary (mirrors NCCL-EP ep_bench).
 # ============================================================================
 def _flush_l2_cache():
     torch.empty(int(256e6 // 4), dtype=torch.int, device="cuda").zero_()
@@ -360,28 +375,26 @@ def torch_profiler_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, on_fail=None, graph_group_size=1):
+def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None, on_fail=None, graph_group_size=1):
     """Capture a paired dispatch->combine into ONE torch.cuda.CUDAGraph and return
     (replay_dispatch, replay_combine, graph). One replay runs BOTH phases, so
     replay_combine is a no-op. dispatch_op/combine_op are the backend's capture-safe
-    ops (no CPU sync, no host collective) that go inside the graph; pre_replay, if
-    given, runs before each replay (e.g. a host MPI barrier that cannot live inside
-    the graph). ``graph_group_size`` dispatch->combine iterations are captured inside
-    the single graph so one replay runs them all -- this amortizes launch overhead
-    and keeps the spin-waiting dispatch/combine kernels from being inflated by
-    per-replay launch skew (reported times are divided back to per-iteration by the
-    caller). Capture is best-effort: on any exception on_fail() is invoked (to let
-    the backend reset its state) and None is returned so the caller keeps the eager
-    path."""
+    ops (no CPU sync, no host collective) that go inside the graph.
+    ``graph_group_size`` dispatch->combine iterations are captured inside the single
+    graph so one replay runs them all -- this amortizes launch overhead and keeps the
+    spin-waiting dispatch/combine kernels from being inflated by per-replay launch
+    skew (reported times are divided back to per-iteration by the caller). Capture is
+    best-effort: on any exception on_fail() is invoked (to let the backend reset its
+    state) and None is returned so the caller keeps the eager path."""
     try:
         if prime:
-            if pre_replay is not None:
-                pre_replay()
+            if pre_capture is not None:
+                pre_capture()
             dispatch_op()
             combine_op()
             torch.cuda.synchronize()
-        if pre_replay is not None:
-            pre_replay()
+        if pre_capture is not None:
+            pre_capture()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph):
             for _ in range(graph_group_size):
@@ -394,8 +407,6 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_replay=None, 
         return None
 
     def replay_dispatch():
-        if pre_replay is not None:
-            pre_replay()
         graph.replay()
         return None
 
@@ -481,7 +492,7 @@ def run_backend(
     # per-launch average divides by the kernel count, which scales with the group).
     group = max(1, graph_group_size)
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 / group for i in range(iters)]
-    comb_us = [c_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
+    comb_us = [max(c_start[i].elapsed_time(c_end[i]) * 1e3 / group, 1e-3) for i in range(iters)]
     tot_us = [d_start[i].elapsed_time(c_end[i]) * 1e3 / group for i in range(iters)]
     if iters > 1:
         disp_us, comb_us, tot_us = disp_us[1:], comb_us[1:], tot_us[1:]
@@ -532,7 +543,7 @@ def run_backend(
         c_lo, c_lo_r, c_hi, c_hi_r = minmax_rank(c_tp_all)
         t_lo, t_lo_r, t_hi, t_hi_r = minmax_rank(t_tp_all)
 
-        print(f"\n=== Summary [{name}] (Low Latency, across {num_ranks} ranks) ===")
+        print(f"\n=== Summary [{name}] ({args.mode.title()}, across {num_ranks} ranks) ===")
         print("\n--- Host-observed performance ---")
         print(f"Dispatch (BF16):  avg={g_d_avg:.2f} us, min={g_d_min:.2f} us, max={g_d_max:.2f} us")
         print(
@@ -573,7 +584,7 @@ def run_backend(
                     f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
                 )
             else:
-                print("  NOTE: kineto captured 0 LL kernels (collector unavailable).")
+                print("  NOTE: kineto captured 0 EP kernels (collector unavailable).")
 
         print(
             f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
@@ -585,7 +596,12 @@ def run_backend(
 # ----------------------------------------------------------------------------
 # Backend registry.
 # ----------------------------------------------------------------------------
-_SETUP = {"mscclpp": setup_mscclpp, "nccl": setup_nccl, "deepep": setup_deepep, "flashinfer": setup_flashinfer}
+_SETUP = {
+    "mscclpp": setup_mscclpp,
+    "nccl": setup_nccl,
+    "deepep": setup_deepep,
+    "flashinfer": setup_flashinfer,
+}
 # Per-backend kineto kernel-name parse, owned by each backend module.
 _PARSE_KINETO = {
     "mscclpp": mscclpp_parse_kineto,
@@ -672,12 +688,12 @@ def main() -> None:
         backend_barrier = ops.get("barrier")
 
         # CUDA-graph capture is owned HERE, not in the backends: a backend that
-        # supports it hands back a capture spec (capture-safe dispatch/combine ops,
-        # an optional pre-replay barrier, and an on-capture-failure reset). Capturing
-        # dispatch+combine as ONE graph means a single replay runs both phases, so
-        # the skew-free separate kineto pass can no longer isolate combine -- force
-        # the PAIRED single pass (EP_KINETO_SEPARATE=0) so per-phase kernel time is
-        # still attributed by kernel name. If capture fails, keep the eager ops.
+        # supports it hands back capture-safe dispatch/combine ops and an optional
+        # on-capture-failure reset. Capturing dispatch+combine as ONE graph means a
+        # single replay runs both phases, so the skew-free separate kineto pass can
+        # no longer isolate combine -- force the PAIRED single pass
+        # (EP_KINETO_SEPARATE=0) so per-phase kernel time is still attributed by
+        # kernel name. If capture fails, keep the eager ops.
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -685,7 +701,7 @@ def main() -> None:
             graphed = _capture_paired_graph(
                 spec["dispatch"],
                 spec["combine"],
-                pre_replay=spec.get("pre_replay"),
+                pre_capture=spec.get("pre_capture"),
                 on_fail=spec.get("on_fail"),
                 graph_group_size=max(1, args.iters_per_graph),
             )
