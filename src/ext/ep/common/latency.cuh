@@ -37,14 +37,35 @@ struct TransportView {
   void* const* peerMappedBufferBases_;
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
+  int numRanks_;
+  // GPU-initiated networking (GPUNetIO) cross-domain resources. gpuNetIo_ is null
+  // unless the backend is active for this rank; peers with a null mapped-buffer
+  // base (see isNvlinkPeer) are served over GPUNetIO instead of NVLink/IPC.
+  mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
+  void* gpuNetIoStagingBuffer_;
+  void* gpuNetIoFlagsBuffer_;
+  void* gpuNetIoCombineFlagsBuffer_;
+  size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
         peerMappedBufferBases_(context->peerBufferBases_),
         baseMemoryChannels_(context->channels_),
-        rank_(context->rank_) {}
+        rank_(context->rank_),
+        numRanks_(context->numRanks_),
+        gpuNetIo_(context->gpuNetIo_),
+        gpuNetIoStagingBuffer_(context->gpuNetIoStagingBuffer_),
+        gpuNetIoFlagsBuffer_(context->gpuNetIoFlagsBuffer_),
+        gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
+        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  // A peer is NVLink/IPC-reachable if it is self or its symmetric buffer is
+  // directly mapped; otherwise it is a cross-domain peer served over GPUNetIO.
+  MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
+    return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
     if (isSelf(peerRank)) return localBuffer;
