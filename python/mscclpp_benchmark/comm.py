@@ -397,7 +397,7 @@ def _default_tuned_config(
 ) -> TunedConfig:
     if collective == _ALLGATHER_COLLECTIVE:
         available = algorithms_by_collective.get(collective, {})
-        if (symmetric_memory and _mscclpp().is_nvls_supported() and "default_allgather_nvls_zero_copy" in available):
+        if symmetric_memory and _mscclpp().is_nvls_supported() and "default_allgather_nvls_zero_copy" in available:
             return TunedConfig("default_allgather_nvls_zero_copy", symmetric_memory=True)
         return TunedConfig("default_allgather_fullmesh2", symmetric_memory=symmetric_memory)
     available = algorithms_by_collective.get(collective, {})

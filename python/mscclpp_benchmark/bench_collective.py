@@ -191,7 +191,9 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
 
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
-        allgather_candidates = (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
+        allgather_candidates = (
+            CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),
+        )
         if symmetric_memory:
             return (
                 CandidateSpec(
