@@ -6,6 +6,8 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 
@@ -164,13 +166,37 @@ void MoELowLatencyRuntime::setup() {
     commContext_.gpuNetIo_ = svc->deviceContext();
     // Publish the symmetric staging/flags region pointers + slot stride so the
     // device inter-domain path can address them without reconstructing Layout.
-    low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_);
+    low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
+                               outputLayout_ == DispatchLayout::RANK_MAJOR);
     commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
+    commContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
     commContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
     available_ = true;
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+  // Host-side topology dump (opt-in via MSCCLPP_EP_DEBUG_TOPO): reveals whether
+  // the NVLink/IPC (NVSwitch/MNNVL) fabric groups peers as this rank expects.
+  // nvlinkPeerMap[r]='1' => peer r is NVLink/IPC-mapped (direct write); '0' =>
+  // treated as cross-domain (served over IB/GPUNetIO).
+  if (std::getenv("MSCCLPP_EP_DEBUG_TOPO") != nullptr) {
+    std::string nvmap(static_cast<size_t>(numRanks_), '0');
+    for (int r = 0; r < numRanks_; ++r) {
+      if (r == rank_ || peerMappedBufferBases_[r] != nullptr) nvmap[r] = '1';
+    }
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const int ginOn = (gpuNetIoService_ != nullptr) ? 1 : 0;
+#else
+    const int ginOn = 0;
+#endif
+    std::fprintf(stderr,
+                 "[EPTOPO] rank=%d numRanks=%d nRanksPerIpcDomain=%d numNvlRanks=%d crossDomain=%d ginOn=%d "
+                 "available=%d nvlinkPeerMap=%s\n",
+                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_,
+                 (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0, ginOn, available_ ? 1 : 0, nvmap.c_str());
+    std::fflush(stderr);
+  }
 }
 
 void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
@@ -200,6 +226,10 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
   }
 
   ++epoch_;
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    fprintf(stderr, "[EPOCHDBG] rank=%d dispatch epoch=%u numTokens=%d\n", rank_, epoch_, numTokens);
+    fflush(stderr);
+  }
   const low_latency::Workload workload{.epoch_ = epoch_,
                                        .numTokens_ = numTokens,
                                        .hidden_ = hidden,
@@ -236,6 +266,10 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
     EP_HOST_ASSERT(input == allocationLayout.rankMajorExpertOutputBuffer_);
   }
 
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    fprintf(stderr, "[EPOCHDBG] rank=%d combine  epoch=%u\n", rank_, epoch_);
+    fflush(stderr);
+  }
   const low_latency::Workload workload{.epoch_ = epoch_,
                                        .numTokens_ = numTokens,
                                        .hidden_ = hidden,

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -141,7 +142,12 @@ class MoECommunicator:
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
-        return self._backend.combine(expert_output, handle, out=out, stream=stream)
+        if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
+            print(f"[py_comm_combine] enter backend={type(self._backend).__name__}", flush=True)
+        result = self._backend.combine(expert_output, handle, out=out, stream=stream)
+        if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
+            print("[py_comm_combine] exit", flush=True)
+        return result
 
     def get_expert_output_buffer(self) -> torch.Tensor:
         """Return the runtime-owned rank-major MoE output buffer.

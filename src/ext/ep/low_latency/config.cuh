@@ -43,6 +43,7 @@ struct TransportView {
   mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
+  void* gpuNetIoCombineFlagsBuffer_;
   size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
@@ -53,6 +54,7 @@ struct TransportView {
         gpuNetIo_(comm.gpuNetIo_),
         gpuNetIoStagingBuffer_(comm.gpuNetIoStagingBuffer_),
         gpuNetIoFlagsBuffer_(comm.gpuNetIoFlagsBuffer_),
+        gpuNetIoCombineFlagsBuffer_(comm.gpuNetIoCombineFlagsBuffer_),
         gpuNetIoSlotStride_(comm.gpuNetIoSlotStride_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
@@ -142,6 +144,12 @@ struct WorkspaceView {
   uint32_t* combineRankReadyEpochs_;
   uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
+  // Per-peer cumulative arrival counters for the cross-domain (GPUNetIO) path.
+  // Each receiver advances these locally only, so they never race with the NIC
+  // remote atomic-add that increments the symmetric flag buffers.
+  uint64_t* dispatchArrivedBaseline_;
+  uint64_t* combineArrivedBaseline_;
+  int* dispatchRecvCounts_;
   int* rankMajorSendIndices_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
@@ -164,6 +172,15 @@ struct WorkspaceView {
     combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
+    // 64-bit cumulative arrival baselines: align the running cursor up to 8 bytes.
+    cursor = reinterpret_cast<int*>(
+        configAlign<uintptr_t>(reinterpret_cast<uintptr_t>(cursor), alignof(uint64_t)));
+    dispatchArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<int>(static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int)));
+    combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<int>(static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int)));
+    dispatchRecvCounts_ = cursor;
+    cursor += nRanks;
     rankMajorSendIndices_ = cursor;
   }
 
@@ -178,6 +195,9 @@ struct WorkspaceView {
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
            sizeof(uint32_t) +                                                            // combineReadyEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
+           alignof(uint64_t) +                                        // arrival-baseline alignment slack
+           2 * static_cast<size_t>(nRanks) * sizeof(uint64_t) +       // dispatch/combineArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(int) +                // dispatchRecvCounts_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };

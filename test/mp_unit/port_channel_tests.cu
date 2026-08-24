@@ -1201,3 +1201,257 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
   SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 }
+
+// ===========================================================================
+// GPU-initiated networking (GPUNetIO / GDAKI) LL-packet ping-pong.
+//
+// A device-initiated analogue of PacketPingPong (kernelProxyLLPingPong): instead
+// of pushing a ProxyTrigger to a CPU proxy, the sending rank packs its payload
+// into LL packets in its own symmetric buffer and RDMA-writes them straight into
+// the peer's symmetric buffer from the kernel (ctx->put + ctx->tryFlush). The
+// receiver spins on the LL-packet flags (self-synchronizing, no separate signal)
+// and verifies the payload.
+//
+// Both the put-side flush and the receive-side flag wait are BOUNDED: on timeout
+// they record diagnostics into `ret` (iteration, packet index, expected vs.
+// observed flag) and the whole block returns, so an intermittent cross-domain
+// delivery failure surfaces as a test failure instead of a deadlock.
+//
+// Symmetric-buffer layout (identical offsets on every rank):
+//   [0,           pktRegionBytes):  getPktBuf   (the peer RDMA-writes here)
+//   [pktRegionBytes, 2*..):         putPktBuf   (local pack source for our put)
+// `buff` is a separate local (non-symmetric) int scratch used as the pack source.
+// ===========================================================================
+#if defined(MSCCLPP_USE_GPUNETIO)
+template <bool CheckCorrectness>
+__global__ void kernelGpuNetIoLLPingPong(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer, int* buff,
+                                         mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf,
+                                         uint64_t putPktOffset, uint64_t getPktOffset, int nElem, int nTries,
+                                         uint64_t maxSpins, int* ret) {
+  if (rank > 1) return;
+  volatile int* buffPtr = (volatile int*)buff;
+  const int putOffset = (rank == 0) ? 0 : 10000000;
+  const int getOffset = (rank == 0) ? 10000000 : 0;
+  const int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+  const int numThreads = blockDim.x * gridDim.x;
+  const int nPkt = nElem / 2;
+  __shared__ int sAbort;
+
+  for (int i = 0; i < nTries; i++) {
+    const uint64_t flag = (uint64_t)i + 1;
+    if (threadId == 0) sAbort = 0;
+    __syncthreads();
+
+    // rank 0 sends on even i, rank 1 sends on odd i (strict alternation).
+    if ((rank ^ (i & 1)) == 0) {
+      // ---- SEND ----
+      if constexpr (CheckCorrectness) {
+        // Each thread writes its own 8 bytes; copyToPackets packs the same packet
+        // from the same thread, so no barrier is needed before it.
+        for (int j = threadId; j < nPkt; j += numThreads) {
+          buffPtr[2 * j] = putOffset + i + 2 * j;
+          buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
+        }
+      }
+      mscclpp::copyToPackets(putPktBuf, buff, nElem * sizeof(int), threadId, numThreads, flag);
+      __syncthreads();  // thread 0 puts the whole region, so it must see every thread's packets
+      if (threadId == 0) {
+        __threadfence_system();  // make the packed packets visible to the NIC
+        ctx->put(peer, getPktOffset, putPktOffset, (uint64_t)nPkt * sizeof(mscclpp::LLPacket));
+        const int fr = ctx->tryFlush(peer, maxSpins);
+        if (fr != 0) {
+          if (ret != nullptr) {
+            ret[0] = 100;  // local flush failed / timed out
+            ret[1] = i;
+            ret[2] = fr;
+          }
+          sAbort = 1;
+        }
+      }
+      __syncthreads();
+    } else {
+      // ---- RECEIVE ---- bounded, diagnostic unpack (no infinite spin).
+      // `spin` is a per-thread budget shared across all of this thread's packets,
+      // so total work stays bounded even if the whole buffer never arrives.
+      uint64_t spin = 0;
+      for (int j = threadId; j < nPkt; j += numThreads) {
+        uint2 data;
+        bool ready = true;
+        while (getPktBuf[j].readOnce((uint32_t)flag, data)) {
+          if (++spin > maxSpins) {
+            ready = false;
+            break;
+          }
+        }
+        if (!ready) {
+          if (atomicCAS(&sAbort, 0, 1) == 0 && ret != nullptr) {
+            volatile uint32_t* raw = reinterpret_cast<volatile uint32_t*>(&getPktBuf[j]);
+            ret[0] = 200;          // receive timeout: cross-domain delivery miss
+            ret[1] = i;            // iteration
+            ret[2] = j;            // stuck packet index
+            ret[3] = (int)flag;    // expected flag
+            ret[4] = (int)raw[1];  // observed flag1
+            ret[5] = (int)raw[3];  // observed flag2
+          }
+          break;
+        }
+        if constexpr (CheckCorrectness) {
+          if (data.x != (uint32_t)(getOffset + i + 2 * j) || data.y != (uint32_t)(getOffset + i + 2 * j + 1)) {
+            if (atomicCAS(&sAbort, 0, 1) == 0 && ret != nullptr) {
+              ret[0] = 1;  // payload mismatch
+              ret[1] = i;
+              ret[2] = j;
+              ret[3] = (int)data.x;
+              ret[4] = getOffset + i + 2 * j;
+            }
+            break;
+          }
+        }
+      }
+      __syncthreads();
+    }
+    if (sAbort) return;  // uniform across the block after the __syncthreads above
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, GpuNetIoLLPingPong) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  // Size the symmetric buffer for the largest nElem we exercise.
+  const int maxElem = 4 * 1024 * 1024;
+  const size_t maxPkt = (size_t)maxElem / 2;
+  const size_t pktRegionBytes = maxPkt * sizeof(mscclpp::LLPacket);
+  const uint64_t getPktOffset = 0;
+  const uint64_t putPktOffset = pktRegionBytes;
+  const size_t symBytes = pktRegionBytes * 2;
+
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, symBytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, symBytes);
+  } catch (const mscclpp::Error& e) {
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  auto* getPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + getPktOffset);
+  auto* putPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + putPktOffset);
+
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(maxElem).memory();
+
+  const int kRetInts = 8;
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, kRetInts * sizeof(int)));
+
+  const int peer = (rank == 0) ? 1 : 0;
+  const int nTries = 1000;
+  const uint64_t maxSpins = 100000000ULL;
+
+  // The least nElem is 2 for packet ping pong.
+  for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, kRetInts * sizeof(int)));
+    MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));  // clear stale flags between sizes
+    communicator->bootstrap()->barrier();
+
+    kernelGpuNetIoLLPingPong<true><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                               putPktOffset, getPktOffset, nElem, nTries, maxSpins, retDev);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+    int ret[kRetInts];
+    MSCCLPP_CUDATHROW(cudaMemcpy(ret, retDev, sizeof(ret), cudaMemcpyDeviceToHost));
+    // ret[0]: 0 ok, 1 payload mismatch, 100 flush-fail, 200 receive-timeout.
+    if (ret[0] != 0) {
+      FAIL() << "rank " << rank << " nElem " << nElem << " code " << ret[0] << " iter " << ret[1] << " pkt "
+             << ret[2] << " expFlag " << ret[3] << " gotFlag1 " << ret[4] << " gotFlag2 " << ret[5];
+    }
+    communicator->bootstrap()->barrier();
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong perf requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const int nElem = 2;  // single-packet latency ping-pong
+  const size_t pktRegionBytes = ((size_t)nElem / 2) * sizeof(mscclpp::LLPacket);
+  const uint64_t getPktOffset = 0;
+  const uint64_t putPktOffset = 256;  // keep the two regions distinct and aligned
+  const size_t symBytes = putPktOffset + pktRegionBytes;
+
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, symBytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, symBytes);
+  } catch (const mscclpp::Error& e) {
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  auto* getPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + getPktOffset);
+  auto* putPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + putPktOffset);
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
+
+  const int peer = (rank == 0) ? 1 : 0;
+  const int nTries = 100000;
+  const uint64_t maxSpins = 100000000ULL;
+
+  // Warm-up.
+  kernelGpuNetIoLLPingPong<false><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                              putPktOffset, getPktOffset, nElem, nTries, maxSpins, nullptr);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  // Measure latency.
+  mscclpp::Timer timer;
+  kernelGpuNetIoLLPingPong<false><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                              putPktOffset, getPktOffset, nElem, nTries, maxSpins, nullptr);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  if (rank == 0) {
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}

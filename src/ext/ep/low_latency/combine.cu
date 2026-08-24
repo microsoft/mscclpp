@@ -292,25 +292,19 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
 MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks, uint32_t epoch,
                                                        WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
-  if (blockIdx.x == 0 && threadId < nRanks) {
-    const int peerRank = threadId;
-    if (!transport.isSelf(peerRank)) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-      if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(peerRank)) {
-        auto* remoteFlag = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) +
-                           static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
-        transport.gpuNetIo_->atomicAdd(peerRank, transport.symmetricOffset(remoteFlag), 1);
-        transport.gpuNetIo_->flush(peerRank);
-        auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);
-        while (flags[peerRank] < 1) {
-        }
-        flags[peerRank] = 0;
-      } else
-#endif  // defined(MSCCLPP_USE_GPUNETIO)
-      {
-        transport.baseMemoryChannels_[peerRank].relaxedSignal();
-        transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
-      }
+  // NVLink/IPC-domain ordering barrier only. Cross-domain peers are ordered by
+  // the PUSH completion flags (sendRankMajorCombinePush / recvRankMajorCombinePush),
+  // so this barrier signals and waits solely intra-domain peers. Signal-all then
+  // wait-all keeps the semaphore round deadlock-free. For a full-NVLink domain
+  // (no GPUNetIO) every peer is intra-domain, so behaviour is unchanged.
+  if (blockIdx.x == 0 && threadId == 0) {
+    for (int peerRank = 0; peerRank < nRanks; ++peerRank) {
+      if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
+      transport.baseMemoryChannels_[peerRank].relaxedSignal();
+    }
+    for (int peerRank = 0; peerRank < nRanks; ++peerRank) {
+      if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
+      transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
     }
   }
   if (blockIdx.x == 0) {
@@ -495,43 +489,90 @@ MSCCLPP_DEVICE_INLINE int rankMajorSlotForDestination(const int64_t* __restrict_
   return destinationSlot;
 }
 
-// Cross-domain rank-major combine (approach 2). The reduce is a remote *read*
-// (pull) over peers outside this rank's NVLink/IPC domain, which one-sided put
-// cannot express, so each needed remote expert-output row is first RDMA-read
-// (gin->get) into the symmetric staging ring, then reduced from there.
+// Cross-domain rank-major combine PUSH (replaces the gin->get pull). Mirrors the
+// proven dispatch send: this expert-host rank RDMA-writes each of its expert
+// output rows back into the owning (source) rank's combine landing buffer, and
+// fuses a single per-sender completion signal onto the last row via
+// putWithSignal. No RDMA reads and no standalone atomic, so the cross-domain QP
+// only issues writes plus a fused atomic exactly like the reliable dispatch
+// path. One block per source rank (blockIdx == sourceRank), single lane.
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, const void* expertOutput,
-                                                              const int64_t* __restrict__ topkIndices, int nTokens,
-                                                              int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
-                                                              const TransportView& transport,
-                                                              WorkspaceView& workspaceView) {
+MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, int nRanks, int maxTokensPerRank,
+                                                    const TransportView& transport, WorkspaceView& workspaceView) {
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  const int sourceRank = static_cast<int>(blockIdx.x);
+  if (sourceRank >= nRanks || threadIdx.x != 0) return;
+  if (transport.isSelf(sourceRank) || transport.isNvlinkPeer(sourceRank)) return;
+  EP_DEVICE_ASSERT(static_cast<size_t>(nRanks) * maxTokensPerRank <= GpuNetIoStagingSlots);
+
+  // Number of tokens this source rank sent us during dispatch == number of
+  // expert-output rows we owe it back. The dispatch count LL8 packet in the recv
+  // buffer is cleared before combine runs, so use the value dispatchRecvRankMajor
+  // persisted in the workspace (never zeroed between kernels).
+  const int nRowsToOwner = workspaceView.dispatchRecvCounts_[sourceRank];
+  if (nRowsToOwner <= 0) return;
+
+  auto* gin = transport.gpuNetIo_;
+  auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
+  auto* remoteFlag = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
+                     static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
+  for (int slot = 0; slot < nRowsToOwner; ++slot) {
+    const uint64_t srcRowOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
+                                  (static_cast<size_t>(sourceRank) * maxTokensPerRank + slot) * HiddenBytes;
+    // Landing slot on the owner is keyed by (this expert-host rank, slot), which
+    // is exactly what the owner reads back via its rankMajorSendIndices_ slot.
+    auto* landingSlot = stagingBase + static_cast<size_t>(transport.rank_ * maxTokensPerRank + slot) *
+                                          transport.gpuNetIoSlotStride_;
+    const uint64_t dstRowOffset = transport.symmetricOffset(landingSlot);
+    if (slot == nRowsToOwner - 1) {
+      gin->putWithSignal(sourceRank, dstRowOffset, srcRowOffset, HiddenBytes, transport.symmetricOffset(remoteFlag),
+                         /*signalValue=*/1);
+    } else {
+      gin->put(sourceRank, dstRowOffset, srcRowOffset, HiddenBytes);
+    }
+  }
+  gin->flush(sourceRank);
+}
+
+// Cross-domain rank-major combine receive + reduce (PUSH model). Each cross-domain
+// expert host has pushed its expert-output rows into this rank's combine landing
+// buffer and bumped a per-sender completion flag; wait for those flags, then
+// reduce NVLink rows (direct mapped read) and cross-domain rows (from the landing
+// buffer) into the output. No RDMA reads.
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void recvRankMajorCombinePush(void* output, const void* expertOutput,
+                                                    const int64_t* __restrict__ topkIndices, int nTokens, int nTopk,
+                                                    int nExperts, int nRanks, int maxTokensPerRank,
+                                                    const TransportView& transport, WorkspaceView& workspaceView) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   const int threadId = static_cast<int>(threadIdx.x);
   const int nLocalExperts = nExperts / nRanks;
-  auto* gin = transport.gpuNetIo_;
   auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
 
-  for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
-    if (threadId == 0) {
-      for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
-        const int destinationSlot =
-            rankMajorSlotForDestination(topkIndices, workspaceView, tokenIdx, nTopk, nLocalExperts, destinationRank);
-        if (destinationSlot < 0 || transport.isNvlinkPeer(destinationRank)) continue;
-        auto* slot = stagingBase +
-                     static_cast<size_t>((static_cast<int>(blockIdx.x) * nRanks + destinationRank) %
-                                         GpuNetIoStagingSlots) *
-                         transport.gpuNetIoSlotStride_;
-        const uint64_t remoteRowOffset =
-            transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-            (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
-        gin->get(destinationRank, remoteRowOffset, transport.symmetricOffset(slot), HiddenBytes);
+  // Wait for every cross-domain expert host we routed at least one token to.
+  if (blockIdx.x == 0 && threadId == 0) {
+    auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_);
+    for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
+      if (transport.isSelf(destinationRank) || transport.isNvlinkPeer(destinationRank)) continue;
+      bool sendsToRank = false;
+      for (int tokenIdx = 0; tokenIdx < nTokens && !sendsToRank; ++tokenIdx) {
+        if (rankMajorSlotForDestination(topkIndices, workspaceView, tokenIdx, nTopk, nLocalExperts, destinationRank) >=
+            0) {
+          sendsToRank = true;
+        }
       }
+      if (!sendsToRank) continue;
+      const uint64_t target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;
+      while (flags[destinationRank] < target) {
+      }
+      workspaceView.combineArrivedBaseline_[destinationRank] = target;
     }
-    __syncthreads();
+  }
+  workspaceView.combineSyncer_->sync(gridDim.x);
 
+  for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
     for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
       float2 reduced[Bf16PairsPerInt4] = {};
       for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
@@ -545,11 +586,9 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
               (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenInt4;
           packed = source[hiddenIdx];
         } else {
-          auto* slot = stagingBase +
-                       static_cast<size_t>((static_cast<int>(blockIdx.x) * nRanks + destinationRank) %
-                                           GpuNetIoStagingSlots) *
-                           transport.gpuNetIoSlotStride_;
-          packed = reinterpret_cast<const int4*>(slot)[hiddenIdx];
+          auto* landingSlot = stagingBase + static_cast<size_t>(destinationRank * maxTokensPerRank + destinationSlot) *
+                                                transport.gpuNetIoSlotStride_;
+          packed = reinterpret_cast<const int4*>(landingSlot)[hiddenIdx];
         }
         const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
@@ -568,7 +607,6 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsGpuNetIo(void* output, con
       auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * HiddenInt4;
       outputRow[hiddenIdx] = packedOutput;
     }
-    __syncthreads();
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
@@ -719,14 +757,25 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
     static_assert(DispatchType == DispatchDataType::BF16);
 #if defined(MSCCLPP_USE_GPUNETIO)
-    // Cross-domain rank-major combine: reduce remote expert outputs by RDMA-read
-    // (gin->get) rather than the NVLink pull. The NVLink barrier still orders
-    // intra-domain producers; cross-domain ordering relies on the dispatch-epoch
-    // handshake and is pending hardware validation.
+    // Cross-domain rank-major combine: expert hosts PUSH their expert-output rows
+    // back to the owning ranks (one-sided write + fused signal, mirroring the
+    // dispatch send) instead of the receiver RDMA-reading them. The NVLink barrier
+    // still orders intra-domain producers; cross-domain ordering relies on the
+    // per-sender completion flags and is pending hardware validation.
     if (transport.gpuNetIo_ != nullptr) {
-      synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
-      recvRankMajorRemotePartialsGpuNetIo<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
-                                                  maxTokensPerRank, transport, workspaceView);
+      // PUSH-model cross-domain combine: expert hosts write their expert-output
+      // rows back to the owning ranks (mirroring the dispatch send) instead of
+      // the receiver RDMA-reading them, which removes the shared-QP read that
+      // intermittently wedged. The NVLink barrier still orders intra-domain
+      // producers; the start/end pair uses distinct epoch parities so the
+      // cross-block gate advances monotonically. The end barrier keeps a fast
+      // rank from overwriting its expert output while an NVLink peer is still
+      // reading it (cross-domain peers no longer read it at all).
+      synchronizeRankMajorCombine(transport, nRanks, workload.epoch_ * 2, workspaceView);
+      sendRankMajorCombinePush<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView);
+      recvRankMajorCombinePush<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
+                                       maxTokensPerRank, transport, workspaceView);
+      synchronizeRankMajorCombine(transport, nRanks, workload.epoch_ * 2 + 1, workspaceView);
       return;
     }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
