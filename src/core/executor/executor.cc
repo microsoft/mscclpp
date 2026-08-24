@@ -229,11 +229,11 @@ struct Executor::Impl {
             nranksPerIpcDomain};
   }
 
-  const ExecutionContext& setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
-                                                size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
-                                                size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
-                                                std::shared_ptr<ProxyService> proxyService, bool forceExactKey = false,
-                                                DataType contextDtype = DataType::AUTO) {
+  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
+                                         size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
+                                         size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
+                                         std::shared_ptr<ProxyService> proxyService, bool forceExactKey = false,
+                                         DataType contextDtype = DataType::AUTO) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
 
@@ -615,7 +615,7 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  const ExecutionContext& context = this->impl_->setupExecutionContext(
+  ExecutionContext context = this->impl_->setupExecutionContext(
       rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize, offsetIn, offsetOut, sendMemRange,
       recvMemRange, plan, this->impl_->proxyService, false, dataType);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
