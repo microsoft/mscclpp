@@ -11,6 +11,7 @@
 #include <cuda_runtime.h>
 #include <library_types.h>
 
+#include <cstdint>
 #include <mscclpp/memory_channel_device.hpp>
 #include <vector>
 
@@ -40,15 +41,18 @@ enum class DispatchLayout {
 // ===========================================================================
 namespace high_throughput {
 
+struct DispatchCountPublication;
+
 /// Compute per-rank/per-expert routing counts and token-to-rank membership.
 /// This is a sizing phase and is unrelated to the dispatch output layout.
 void computeDispatchCounts(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
                            int numTokens, int numTopk, int numRanks, int numExperts, cudaStream_t stream);
 
 /// Exchange routing counts, build prefix matrices, and publish receive counts.
-/// The host consumes the mapped counters before allocating the dynamic receive view.
-void exchangeDispatchCounts(const int* numTokensPerRank, int* mappedRecvCounter, int numRanks,
-                            const int* numTokensPerExpert, int* mappedRecvExpertCounters, int numExperts, int numTokens,
+/// The host consumes only a publication matching expectedGeneration.
+void exchangeDispatchCounts(const int* numTokensPerRank, DispatchCountPublication* mappedPublication,
+                            uint64_t expectedGeneration, int numRanks,
+                            const int* numTokensPerExpert, int numExperts, int numTokens,
                             const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
                             int expertAlignment, void** bufferPtrs,
                             mscclpp::BaseMemoryChannelDeviceHandle* barrierChannels, int rank, cudaStream_t stream,

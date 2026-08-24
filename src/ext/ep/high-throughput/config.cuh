@@ -12,6 +12,13 @@ namespace mscclpp {
 namespace ep {
 namespace high_throughput {
 
+struct alignas(64) DispatchCountPublication {
+  uint64_t generation;
+  int numRecvTokens;
+  int numRecvTokensPerExpert[1024];
+};
+static_assert(alignof(DispatchCountPublication) >= alignof(uint64_t));
+
 struct Config {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;

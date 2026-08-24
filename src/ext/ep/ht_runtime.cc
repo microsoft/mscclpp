@@ -8,8 +8,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <future>
+#include <limits>
 #include <mscclpp/gpu_utils.hpp>
+#include <sstream>
 #include <stdexcept>
 
 #include "api.cuh"
@@ -47,8 +50,7 @@ MoEHighThroughputRuntime::~MoEHighThroughputRuntime() noexcept(false) {
   CUDA_CHECK(cudaFree(combineRecvIdxGpu_));
   CUDA_CHECK(cudaFree(recvPoolPtrsGpu_));
   CUDA_CHECK(cudaFree(bufferPtrsGpu_));
-  CUDA_CHECK(cudaFreeHost(const_cast<int*>(moeRecvExpertCounter_)));
-  CUDA_CHECK(cudaFreeHost(const_cast<int*>(moeRecvCounter_)));
+  CUDA_CHECK(cudaFreeHost(countPublication_));
 
   recvPoolMemories_.clear();
   peerMemories_.clear();
@@ -71,7 +73,9 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
 
   constexpr int ControlBufferTag = 17;
   constexpr int RecvPoolTag = 18;
-  constexpr int BarrierConnectionTag = 19;
+  constexpr int CountBarrierConnectionTag = 19;
+  constexpr int DispatchBarrierConnectionTag = 20;
+  constexpr int CombineBarrierConnectionTag = 21;
   const auto transport = mscclpp::Transport::CudaIpc;
   const mscclpp::EndpointConfig ipcConfig(transport);
   peerMemories_.resize(numRanks_);
@@ -80,20 +84,28 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
   recvPoolMemories_.resize(numRanks_);
   recvPoolMemories_[rank_] = communicator.registerMemory(recvPool_, recvPoolBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRecvPools(numRanks_);
-  std::vector<std::shared_future<mscclpp::Connection>> barrierConnections(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> countBarrierConnections(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> dispatchBarrierConnections(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> combineBarrierConnections(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer == rank_) continue;
     communicator.sendMemory(peerMemories_[rank_], peer, ControlBufferTag);
     remoteMemories[peer] = communicator.recvMemory(peer, ControlBufferTag);
     communicator.sendMemory(recvPoolMemories_[rank_], peer, RecvPoolTag);
     remoteRecvPools[peer] = communicator.recvMemory(peer, RecvPoolTag);
-    barrierConnections[peer] = communicator.connect(ipcConfig, peer, BarrierConnectionTag);
+    countBarrierConnections[peer] = communicator.connect(ipcConfig, peer, CountBarrierConnectionTag);
+    dispatchBarrierConnections[peer] = communicator.connect(ipcConfig, peer, DispatchBarrierConnectionTag);
+    combineBarrierConnections[peer] = communicator.connect(ipcConfig, peer, CombineBarrierConnectionTag);
   }
 
   bufferPtrs_.resize(numRanks_);
   recvPoolPtrs_.resize(numRanks_);
-  barrierChannels_.reserve(numRanks_ - 1);
-  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles(numRanks_);
+  countBarrierChannels_.reserve(numRanks_ - 1);
+  dispatchBarrierChannels_.reserve(numRanks_ - 1);
+  combineBarrierChannels_.reserve(numRanks_ - 1);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> countBarrierChannelHandles(numRanks_);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> dispatchBarrierChannelHandles(numRanks_);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> combineBarrierChannelHandles(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer != rank_) {
       peerMemories_[peer] = remoteMemories[peer].get();
@@ -103,10 +115,18 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
     bufferPtrs_[peer] = base;
     recvPoolPtrs_[peer] = peer == rank_ ? recvPool_ : recvPoolMemories_[peer].data();
     if (peer != rank_) {
-      auto semaphore =
-          std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator, barrierConnections[peer].get());
-      barrierChannels_.emplace_back(semaphore);
-      barrierChannelHandles[peer] = barrierChannels_.back().deviceHandle();
+      auto countSemaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(
+          communicator, countBarrierConnections[peer].get());
+      auto dispatchSemaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(
+          communicator, dispatchBarrierConnections[peer].get());
+      auto combineSemaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(
+          communicator, combineBarrierConnections[peer].get());
+      countBarrierChannels_.emplace_back(countSemaphore);
+      dispatchBarrierChannels_.emplace_back(dispatchSemaphore);
+      combineBarrierChannels_.emplace_back(combineSemaphore);
+      countBarrierChannelHandles[peer] = countBarrierChannels_.back().deviceHandle();
+      dispatchBarrierChannelHandles[peer] = dispatchBarrierChannels_.back().deviceHandle();
+      combineBarrierChannelHandles[peer] = combineBarrierChannels_.back().deviceHandle();
     }
   }
 
@@ -114,18 +134,24 @@ void MoEHighThroughputRuntime::setup(mscclpp::Communicator& communicator) {
   CUDA_CHECK(cudaMemcpy(bufferPtrsGpu_, bufferPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMalloc(&recvPoolPtrsGpu_, sizeof(void*) * numRanks_));
   CUDA_CHECK(cudaMemcpy(recvPoolPtrsGpu_, recvPoolPtrs_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
-  barrierChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
-  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(barrierChannelHandles_.get(), barrierChannelHandles.data(),
-                                                             numRanks_, cudaMemcpyHostToDevice);
+  countBarrierChannelHandles_ =
+      mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  dispatchBarrierChannelHandles_ =
+      mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  combineBarrierChannelHandles_ =
+      mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      countBarrierChannelHandles_.get(), countBarrierChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      dispatchBarrierChannelHandles_.get(), dispatchBarrierChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      combineBarrierChannelHandles_.get(), combineBarrierChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
   CUDA_CHECK(cudaMalloc(&combineRecvIdxGpu_,
                         sizeof(int) * static_cast<size_t>(high_throughput::Config::RecvPoolMaxTokens) * numRanks_));
-  CUDA_CHECK(cudaMallocHost(&moeRecvCounter_, sizeof(int), cudaHostAllocMapped));
-  CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvCounterMapped_, const_cast<int*>(moeRecvCounter_), 0));
-  CUDA_CHECK(cudaMallocHost(&moeRecvExpertCounter_, sizeof(int) * high_throughput::Config::MaxLocalExperts,
+  CUDA_CHECK(cudaMallocHost(&countPublication_, sizeof(high_throughput::DispatchCountPublication),
                             cudaHostAllocMapped));
-  CUDA_CHECK(cudaHostGetDevicePointer(&moeRecvExpertCounterMapped_, const_cast<int*>(moeRecvExpertCounter_), 0));
-  *moeRecvCounter_ = -1;
-  for (int i = 0; i < high_throughput::Config::MaxLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
+  CUDA_CHECK(cudaHostGetDevicePointer(&countPublicationMapped_, countPublication_, 0));
+  std::memset(countPublication_, 0, sizeof(high_throughput::DispatchCountPublication));
   available_ = true;
 }
 
@@ -176,37 +202,67 @@ int MoEHighThroughputRuntime::notifyDispatch(int* rankPrefixMatrix, int* channel
   EP_HOST_ASSERT(numLocalExperts <= high_throughput::Config::MaxLocalExperts);
 
   const int numChannels = dispatchBlockCount(xElementSize);
-
-  *moeRecvCounter_ = -1;
-  for (int i = 0; i < numLocalExperts; ++i) moeRecvExpertCounter_[i] = -1;
-  high_throughput::exchangeDispatchCounts(numTokensPerRank, moeRecvCounterMapped_, numRanks_, numTokensPerExpert,
-                                          moeRecvExpertCounterMapped_, numExperts, numTokens, isTokenInRank,
-                                          channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrsGpu_,
-                                          barrierChannelHandles_.get(), rank_, stream, numChannels);
-
-  int numRecvTokens = -1;
-  const auto start = std::chrono::high_resolution_clock::now();
-  while (true) {
-    numRecvTokens = static_cast<int>(*moeRecvCounter_);
-    bool ready = numRecvTokens >= 0;
-    for (int i = 0; i < numLocalExperts && ready; ++i) ready &= moeRecvExpertCounter_[i] >= 0;
-    if (ready) break;
-    if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::high_resolution_clock::now() - start).count() >
-        CpuTimeoutSeconds)
-      throw std::runtime_error("DeepEP error: CPU recv timeout");
+  if (notifyPoisoned_) throw std::runtime_error("MSCCL++ HT notify runtime is poisoned");
+  if (notifyInFlight_) throw std::runtime_error("MSCCL++ HT allows one in-flight notify per runtime");
+  if (notifyGeneration_ == std::numeric_limits<uint64_t>::max()) {
+    notifyPoisoned_ = true;
+    throw std::runtime_error("MSCCL++ HT notify generation exhausted; collective quiescent reinit required");
   }
-  for (int i = 0; i < numLocalExperts; ++i) numRecvTokensPerExpert[i] = moeRecvExpertCounter_[i];
 
-  const bool localDirectReady = numTokens >= 0 && numTokens <= high_throughput::Config::RecvPoolMaxTokens &&
-                                numRecvTokens >= 0 && numRecvTokens <= high_throughput::Config::RecvPoolMaxTokens &&
-                                static_cast<size_t>(numRecvTokens) * static_cast<size_t>(maxHiddenBytes_) <=
-                                    high_throughput::Config::recvPoolHiddenBytes(numRanks_);
-  std::vector<int> directReadyByRank(numRanks_, 0);
-  directReadyByRank[rank_] = localDirectReady ? 1 : 0;
-  bootstrap_->allGather(directReadyByRank.data(), sizeof(int));
-  collectiveDirectReady_ =
-      std::all_of(directReadyByRank.begin(), directReadyByRank.end(), [](int ready) { return ready != 0; });
-  return numRecvTokens;
+  const uint64_t expectedGeneration = ++notifyGeneration_;  // generation zero is reserved
+  notifyInFlight_ = true;
+  try {
+    high_throughput::exchangeDispatchCounts(
+        numTokensPerRank, countPublicationMapped_, expectedGeneration, numRanks_, numTokensPerExpert, numExperts,
+        numTokens, isTokenInRank, channelPrefixMatrix, rankPrefixMatrix, expertAlignment, bufferPtrsGpu_,
+        countBarrierChannelHandles_.get(), rank_, stream, numChannels);
+
+    uint64_t observedGeneration = 0;
+    const auto start = std::chrono::high_resolution_clock::now();
+    while (true) {
+      observedGeneration = __atomic_load_n(&countPublication_->generation, __ATOMIC_ACQUIRE);
+      if (observedGeneration == expectedGeneration) break;
+      if (observedGeneration > expectedGeneration) {
+        std::ostringstream message;
+        message << "MSCCL++ HT notify protocol error: expected generation " << expectedGeneration
+                << ", observed future generation " << observedGeneration;
+        throw std::runtime_error(message.str());
+      }
+      if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::high_resolution_clock::now() - start)
+              .count() > CpuTimeoutSeconds) {
+        std::ostringstream message;
+        message << "MSCCL++ HT notify timeout: expected generation " << expectedGeneration
+                << ", observed generation " << observedGeneration;
+        throw std::runtime_error(message.str());
+      }
+    }
+
+    const int numRecvTokens = countPublication_->numRecvTokens;
+    if (numRecvTokens < 0) throw std::runtime_error("MSCCL++ HT published a negative receive count");
+    for (int i = 0; i < numLocalExperts; ++i) {
+      const int count = countPublication_->numRecvTokensPerExpert[i];
+      if (count < 0) throw std::runtime_error("MSCCL++ HT published a negative expert receive count");
+      numRecvTokensPerExpert[i] = count;
+    }
+    notifyInFlight_ = false;
+
+    const bool localDirectReady = numTokens >= 0 && numTokens <= high_throughput::Config::RecvPoolMaxTokens &&
+                                  numRecvTokens >= 0 &&
+                                  numRecvTokens <= high_throughput::Config::RecvPoolMaxTokens &&
+                                  static_cast<size_t>(numRecvTokens) * static_cast<size_t>(maxHiddenBytes_) <=
+                                      high_throughput::Config::recvPoolHiddenBytes(numRanks_);
+    std::vector<int> directReadyByRank(numRanks_, 0);
+    directReadyByRank[rank_] = localDirectReady ? 1 : 0;
+    bootstrap_->allGather(directReadyByRank.data(), sizeof(int));
+    collectiveDirectReady_ =
+        std::all_of(directReadyByRank.begin(), directReadyByRank.end(), [](int ready) { return ready != 0; });
+    return numRecvTokens;
+  } catch (...) {
+    notifyInFlight_ = false;
+    notifyPoisoned_ = true;
+    throw;
+  }
+
 }
 
 void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t* recvTopkIdx, float* recvTopkWeights,
@@ -225,7 +281,9 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   const int numChannels = dispatchBlockCount(xElementSize);
   const int effectiveNumExperts = cachedMode ? 0 : numExperts;
   if (cachedMode) {
-    high_throughput::publishCachedRankPrefix(rankPrefixMatrix, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
+    // Cached prefix publication is part of payload dispatch and intentionally
+    // does not advance count-exchange semaphore phases.
+    high_throughput::publishCachedRankPrefix(rankPrefixMatrix, bufferPtrsGpu_, dispatchBarrierChannelHandles_.get(), rank_,
                                              numRanks_, stream);
   }
 
@@ -244,7 +302,7 @@ void MoEHighThroughputRuntime::dispatch(void* recvX, float* recvXScales, int64_t
   if (recvTopkWeights != nullptr) recvTopkWeights_ = recvTopkWeights;
   high_throughput::dispatch(sendHead, x, topkIdx, topkWeights, xScales, isTokenInRank, channelPrefixMatrix, numTokens,
                             numRecvTokens, hiddenInt4, numTopk, effectiveNumExperts, numScales, recvTopkIdx,
-                            recvTopkWeights, recvXScales, bufferPtrsGpu_, barrierChannelHandles_.get(), rank_,
+                            recvTopkWeights, recvXScales, bufferPtrsGpu_, dispatchBarrierChannelHandles_.get(), rank_,
                             numRanks_, stream, numChannels, recvPoolPtrsGpu_, static_cast<int64_t>(poolHeaderBytes),
                             static_cast<int64_t>(high_throughput::Config::recvPoolMetadataOffset(numRanks_)),
                             high_throughput::Config::RecvPoolMetaBytes, combineRecvIdxGpu_);
@@ -284,7 +342,7 @@ void MoEHighThroughputRuntime::combine(void* combinedX, float* combinedTopkWeigh
 
   const int numBlocks = config_.numSms_;
   high_throughput::combine(combinedX, combinedTopkWeights, sendHead, numOutputTokens, hidden, numTopk, numRanks_,
-                           recvPoolPtrsGpu_, combineRecvIdxGpu_, barrierChannelHandles_.get(), rank_,
+                           recvPoolPtrsGpu_, combineRecvIdxGpu_, combineBarrierChannelHandles_.get(), rank_,
                            static_cast<int64_t>(recvPoolHeaderBytes), static_cast<int64_t>(recvPoolMetadataOffset),
                            high_throughput::Config::RecvPoolMetaBytes, numBlocks, stream);
 }

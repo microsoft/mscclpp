@@ -61,7 +61,7 @@ build-dir = "build/{wheel_tag}"
 metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
 
 [tool.scikit-build.wheel]
-packages = ["python/mscclpp", "python/mscclpp_benchmark"]
+packages = ["python/mscclpp"]
 install-dir = "mscclpp"
 license-files = ["VERSION", "LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
 exclude = ["mscclpp/*.cpp"]

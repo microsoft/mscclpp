@@ -4,6 +4,16 @@
 cmake_minimum_required(VERSION 3.25)
 project(mscclpp LANGUAGES CXX)
 
+# Keep AArch64 stack hardening explicit. On glibc AArch64, guarded shared
+# objects resolve __stack_chk_guard@GLIBC_2.17 from ld-linux-aarch64.so.1.
+# Packaging verification binds that narrowly evidenced dependency to exact
+# role, symbol version, loader origin, ELF identity, and no-PT_INTERP policy.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:-fstack-protector-strong>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fstack-protector-strong>)
+endif()
+
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
 if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
