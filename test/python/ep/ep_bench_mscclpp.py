@@ -66,6 +66,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     if rank_major and dispatch_quant is not None:
         raise ValueError("rank-major output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
+    ll_blocks = int(os.environ.get("MSCCLPP_EP_LL_BLOCKS", "130"))
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -74,6 +75,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
+        low_latency_num_blocks=ll_blocks,
         low_latency_combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
@@ -83,7 +85,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     if rank == 0:
         print(
             f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
-            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} ll_blocks={ll_blocks} "
+            f"cuda_graph={args.cuda_graph}",
             flush=True,
         )
         print(f"[cfg] mscclpp output_layout={args.ep_layout or 'expert_major'}", flush=True)
@@ -106,10 +109,24 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     def _rank_major_weighted_input(dispatch_out):
         assert expert_output is not None
-        expert_output.copy_(simulated_gemm_output(dispatch_out))
-        if dispatch_quant is None:
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[rank_major_input][rank {rank}] enter", flush=True)
+        simulated = simulated_gemm_output(dispatch_out)
+        if debug_combine:
+            print(f"[rank_major_input][rank {rank}] simulated", flush=True)
+        expert_output.copy_(simulated)
+        if debug_combine:
+            print(f"[rank_major_input][rank {rank}] copied", flush=True)
+        if dispatch_quant is None and os.environ.get("MSCCLPP_EP_SKIP_RANK_MAJOR_WEIGHT", "0") != "1":
             local_weight_sum = dispatch_out.weights.masked_fill(dispatch_out.topk_ids == num_experts, 0.0).sum(dim=1)
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] weights summed", flush=True)
             expert_output.mul_(local_weight_sum.to(torch.bfloat16).view(-1, 1))
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] weighted", flush=True)
+        elif debug_combine and dispatch_quant is None:
+            print(f"[rank_major_input][rank {rank}] weighting skipped", flush=True)
         return expert_output
 
     def _combine(dispatch_out, handle):
@@ -178,7 +195,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(dout):
         dispatch_out, handle = dout
+        if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
+            print(f"[combfn][rank {rank}] enter", flush=True)
         _combine(dispatch_out, handle)
+        if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
+            print(f"[combfn][rank {rank}] exit", flush=True)
 
     # Capture-safe ops for the harness's single-graph capture: dispatch+combine run
     # as ONE graph (one replay does both, so combine_fn becomes a no-op), matching

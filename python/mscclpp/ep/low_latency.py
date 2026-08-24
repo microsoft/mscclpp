@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 import torch
@@ -388,27 +389,47 @@ class LowLatencyBackend:
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[py_ll_combine][rank {self.rank}] enter handle={type(handle).__name__}", flush=True)
         self._validate_combine_inputs(expert_output, handle, out)
+        if debug_combine:
+            print(f"[py_ll_combine][rank {self.rank}] validated", flush=True)
         if isinstance(handle, ExpertMajorDispatchHandle):
             context = handle.combine_context
             topk_weights = context.weights
             src_info = context.src_info
             layout_range = context.layout_range
+            if debug_combine:
+                print(f"[py_ll_combine][rank {self.rank}] expert-major context", flush=True)
         elif isinstance(handle, RankMajorDispatchHandle):
             context = handle.combine_context
             active_capacity = context.max_tokens_per_rank
             topk_weights = None
             src_info = None
             layout_range = None
+            if debug_combine:
+                print(
+                    f"[py_ll_combine][rank {self.rank}] rank-major context capacity={active_capacity}",
+                    flush=True,
+                )
         else:
             raise ValueError("DispatchHandle does not contain low-latency combine context")
         if isinstance(handle, ExpertMajorDispatchHandle):
             active_capacity = self.max_tokens_per_rank
         if out is None:
+            if debug_combine:
+                print(f"[py_ll_combine][rank {self.rank}] allocate output", flush=True)
             out = torch.empty(
                 (context.num_tokens, self.hidden_size),
                 dtype=torch.bfloat16,
                 device=expert_output.device,
+            )
+        if debug_combine:
+            print(
+                f"[py_ll_combine][rank {self.rank}] before ll_combine tokens={context.num_tokens} "
+                f"hidden={self.hidden_size} topk={self.topk}",
+                flush=True,
             )
         self._runtime.cpp_runtime.ll_combine(
             expert_output.data_ptr(),
@@ -428,6 +449,8 @@ class LowLatencyBackend:
             self.num_blocks - 2,
             cuda_stream_ptr(stream),
         )
+        if debug_combine:
+            print(f"[py_ll_combine][rank {self.rank}] after ll_combine", flush=True)
         return out
 
     def _get_dispatch_output_tensors(self, output_buffer: torch.Tensor):

@@ -180,8 +180,13 @@ struct Layout {
   //   - gpuNetIoFlagsBuffer_: per-source-rank 64-bit completion flags the remote
   //     sender atomic-adds (fused with the payload put) and the local receiver
   //     polls, replacing the NVLink memory-channel signal for cross-domain peers.
+  //   - gpuNetIoCombineFlagsBuffer_: a second, independent per-peer-rank 64-bit
+  //     flag array used exclusively by the combine barrier. Keeping it separate
+  //     from the dispatch flags ensures the two phases' monotonic signal counts
+  //     never alias on the same counter.
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
+  void* gpuNetIoCombineFlagsBuffer_;
   // Byte stride of one staging-ring slot: one hidden BF16 token row followed by
   // the rank-major top-k id/weight metadata for that token (numTopk each). The
   // inter-domain send stages token+metadata contiguously, RDMA-writes the token
@@ -217,7 +222,8 @@ struct Layout {
         configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
     const size_t gpuNetIoFlagsBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
-    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
+    // Two independent flag arrays (dispatch payload-arrival + combine barrier).
+    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + 2 * gpuNetIoFlagsBytes;
 
     totalBytes_ = 2 * recvBufferBytes_ + gpuNetIoRegionBytes;
 
@@ -232,6 +238,7 @@ struct Layout {
       auto* gpuNetIoBase = base + 2 * recvBufferBytes_;
       gpuNetIoStagingBuffer_ = gpuNetIoBase;
       gpuNetIoFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes;
+      gpuNetIoCombineFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
     }
   }
 };
