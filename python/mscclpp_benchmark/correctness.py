@@ -69,7 +69,7 @@ def check_correctness(
             all_ok = False
             continue
 
-        expected, stats_expected = _expected_outputs(case, comm.nranks, iteration)
+        expected, stats_expected = _expected_outputs(case, comm.nranks, iteration, comm.rank)
         iter_stats = _local_diff_stats(case, case.output, expected, comm.nranks, stats_expected=stats_expected)
         local_ok = _compare_output(case, case.output, expected, comm.nranks)
         all_ok = all_ok and local_ok
@@ -183,7 +183,7 @@ def _stats_values(case: Any, values):
     return values.astype(cp.int64)
 
 
-def _expected_outputs(case: Any, nranks: int, iteration: int):
+def _expected_outputs(case: Any, nranks: int, iteration: int, rank: int = 0):
     if case.collective == "allreduce":
         encoded_inputs = _encoded_rank_inputs(case, nranks, iteration)
         if case.dtype_spec.fp8_format is not None:
@@ -191,10 +191,23 @@ def _expected_outputs(case: Any, nranks: int, iteration: int):
             return _encode_reduced_output(case, stats_expected), stats_expected
         return _encode_reduced_output(case, sum(values.astype(cp.float32) for values in encoded_inputs)), None
 
+    if case.collective == "reducescatter":
+        # Each rank keeps the reduction of its own chunk: output[i] = sum over source ranks of
+        # their full input at this rank's slice.
+        chunk = case.output.size
+        start = rank * chunk
+        encoded_inputs = _encoded_rank_inputs(case, nranks, iteration)
+        if case.dtype_spec.fp8_format is not None:
+            sliced = [values.reshape(-1)[start : start + chunk] for values in encoded_inputs]
+            stats_expected = _expected_fp8_accum_values(case, sliced)
+            return _encode_reduced_output(case, stats_expected), stats_expected
+        reduced = sum(values.astype(cp.float32).reshape(-1)[start : start + chunk] for values in encoded_inputs)
+        return _encode_reduced_output(case, reduced), None
+
     expected = cp.empty_like(case.output)
     chunk = case.input.size
-    for rank, values in enumerate(_encoded_rank_inputs(case, nranks, iteration)):
-        expected[rank * chunk : (rank + 1) * chunk] = values.reshape(-1)
+    for src_rank, values in enumerate(_encoded_rank_inputs(case, nranks, iteration)):
+        expected[src_rank * chunk : (src_rank + 1) * chunk] = values.reshape(-1)
     return expected, None
 
 
@@ -245,7 +258,7 @@ def _mismatch_mask(case: Any, output, expected, nranks: int):
 
 
 def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
-    scale = max(1, nranks) if case.collective == "allreduce" else 1
+    scale = max(1, nranks) if case.collective in ("allreduce", "reducescatter") else 1
     if case.dtype_spec.fp8_format is not None:
         accum_dtype = config_accum_dtype(case)
         if accum_dtype == _mscclpp().DataType.float32:

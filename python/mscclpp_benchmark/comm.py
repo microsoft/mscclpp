@@ -9,6 +9,7 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 _ALLREDUCE_COLLECTIVE = "allreduce"
 _ALLGATHER_COLLECTIVE = "allgather"
+_REDUCESCATTER_COLLECTIVE = "reducescatter"
 DEFAULT_DSL_TBG = (1, 2, 4, 8)
 DEFAULT_DSL_TPB = (256, 512, 768, 1024)
 _mscclpp_module = None
@@ -179,6 +180,16 @@ class Comm:
             tags = {"default": 1}
             # allgather_multi_nodes derives its geometry from the spec alone.
             pass_thread_block_group_size = False
+        elif collective == _REDUCESCATTER_COLLECTIVE:
+            from mscclpp.default_algos import reducescatter_multi_nodes
+            from mscclpp.language.collectives import ReduceScatter
+
+            builder = reducescatter_multi_nodes
+            collective_op = ReduceScatter(world_size, 1, True)
+            name_prefix = "dsl_reducescatter"
+            tags = {}
+            # reducescatter_multi_nodes lays out its thread block groups from this value.
+            pass_thread_block_group_size = True
         else:
             return
 
@@ -349,7 +360,11 @@ class Comm:
             input_size=_nbytes(buffer),
             output_size=_nbytes(output),
             dtype=dtype,
-            op=self._mscclpp.ReduceOp.SUM if collective == _ALLREDUCE_COLLECTIVE else self._mscclpp.ReduceOp.NOP,
+            op=(
+                self._mscclpp.ReduceOp.SUM
+                if collective in (_ALLREDUCE_COLLECTIVE, _REDUCESCATTER_COLLECTIVE)
+                else self._mscclpp.ReduceOp.NOP
+            ),
             stream=_stream_ptr(stream),
             nblocks=config.nblocks or 0,
             nthreads_per_block=config.nthreads or 0,
