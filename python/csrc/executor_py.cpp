@@ -35,5 +35,7 @@ void register_executor(nb::module_& m) {
           },
           nb::arg("rank"), nb::arg("send_buff"), nb::arg("recv_buff"), nb::arg("send_buff_size"),
           nb::arg("recv_buff_size"), nb::arg("data_type"), nb::arg("plan"), nb::arg("stream"),
-          nb::arg("packet_type") = PacketType::LL16);
+          nb::arg("packet_type") = PacketType::LL16)
+      .def("reset", &Executor::reset,
+           "Release cached execution contexts while retaining the communicator and default scratch buffer.");
 }

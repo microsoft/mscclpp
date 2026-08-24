@@ -18,6 +18,7 @@ IB_ENVIRONMENT="${2:-true}"
 PLATFORM="${3:-cuda}"
 CONTAINER_NAME="${4:-mscclpp-test}"
 SGLANG_IMAGE="${5:-lmsysorg/sglang:latest}"
+PILOT="$(echo "${6:-false}" | tr '[:upper:]' '[:lower:]')"
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
@@ -56,14 +57,18 @@ if [ "${PLATFORM}" == "rocm" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
 fi
 
-# Install GDRCopy kernel module on host VMs (CUDA only)
+# Install GDRCopy kernel module on host VMs (CUDA only). Reinstall when the loaded
+# version doesn't match GDRDRV_VERSION — mscclpp's GDRCopy path uses gdr_pin_buffer_v2,
+# which requires gdrdrv 2.5.
 GDRCOPY_VERSION="2.5.2"
+GDRDRV_VERSION="2.5"
 if [ "${PLATFORM}" == "cuda" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "if lsmod | grep -q gdrdrv; then
-      echo 'gdrdrv module already loaded'
-    else
+    "LOADED=\$(cat /sys/module/gdrdrv/version 2>/dev/null || true)
+    echo \"gdrdrv loaded: \${LOADED:-none} (need ${GDRDRV_VERSION})\"
+    if [ \"\${LOADED}\" != \"${GDRDRV_VERSION}\" ]; then
       set -e
+      sudo rmmod gdrdrv 2>/dev/null || true
       sudo apt-get update -y && sudo apt-get install -y build-essential devscripts debhelper check libsubunit-dev fakeroot pkg-config dkms
       cd /tmp && wget -q https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -O gdrcopy.tar.gz
       tar xzf gdrcopy.tar.gz && cd gdrcopy-${GDRCOPY_VERSION}/packages
@@ -97,16 +102,30 @@ else
     LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
   fi
 
+  if [ "${PILOT}" == "true" ] && [ "${PLATFORM}" == "cuda" ]; then
+    LAUNCH_OPTION="${LAUNCH_OPTION} --device /dev/nvidia-caps-imex-channels/channel0"
+  fi
+
+  # The docker-default AppArmor profile triggers a kernel NULL-deref oops in
+  # aa_inet_bind_perm() on the 6.17 azure-nvidia aarch64 kernel used by GB200
+  # nodes. Open MPI's TCP BTL hits it on every bind() during connection setup,
+  # which kills the rank mid-syscall; it is left as a <defunct> zombie and
+  # mpirun then blocks forever on the first cross-node collective. Running the
+  # container unconfined avoids the faulty AppArmor path. This is implied by
+  # --privileged, but is stated explicitly in both branches so the workaround
+  # survives any future change to the privilege flags.
+  SECURITY_OPTION="--security-opt apparmor=unconfined"
+
   if [ "${IB_ENVIRONMENT}" == "true" ]; then
     # InfiniBand: use --privileged for RDMA device access
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
+      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   else
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined ${SECURITY_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   fi

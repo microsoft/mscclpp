@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_KNOWN_GPU_SKUS = ("GB300", "MI300X", "H100", "A100")
+_KNOWN_GPU_SKUS = ("GB300", "GB200", "MI300X", "H100", "A100")
 
 
 @dataclass(frozen=True)

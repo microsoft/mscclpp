@@ -201,7 +201,21 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
 
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
-        return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
+        allgather_candidates = (
+            CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),
+        )
+        if symmetric_memory:
+            return (
+                CandidateSpec(
+                    "default_allgather_nvls_zero_copy",
+                    max_nblocks=32,
+                    supported_skus=("H100", "GB300", "GB200"),
+                    requires_nvls=True,
+                    requires_symmetric_memory=True,
+                ),
+                *allgather_candidates,
+            )
+        return allgather_candidates
     if collective != _ALLREDUCE:
         raise ValueError(f"Unsupported collective: {collective}")
     candidates = (
@@ -209,6 +223,7 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
             "default_allreduce_nvls_packet",
             max_message_size=512 * 1024,
             max_nblocks=16,
+            supported_skus=("H100", "GB300", "GB200"),
             requires_nvls=True,
         ),
         CandidateSpec(
@@ -241,6 +256,7 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
             CandidateSpec(
                 "default_allreduce_nvls_zero_copy",
                 max_nblocks=32,
+                supported_skus=("H100", "GB300", "GB200"),
                 requires_nvls=True,
                 requires_symmetric_memory=True,
             ),
