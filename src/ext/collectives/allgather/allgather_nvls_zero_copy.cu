@@ -140,8 +140,8 @@ CommResult AllgatherNvls::allgatherKernelFunc(const std::shared_ptr<void> ctx_vo
   return CommResult::CommSuccess;
 }
 
-mscclpp::AlgorithmCtxKey AllgatherNvls::generateAllgatherContextKey(const void*, void* output, size_t, mscclpp::DataType,
-                                                                    bool symmetricMemory) {
+mscclpp::AlgorithmCtxKey AllgatherNvls::generateAllgatherContextKey(const void*, void* output, size_t,
+                                                                    mscclpp::DataType, bool symmetricMemory) {
   static int tag = 0;
   symmetricMemory_ = symmetricMemory;
   if (!symmetricMemory_) {
@@ -166,7 +166,8 @@ std::shared_ptr<void> AllgatherNvls::initAllgatherContext(std::shared_ptr<mscclp
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // NVLS multicast channels over the output buffer (each rank stores its chunk to all ranks).
-  ctx->switchChannels = setupNvlsChannels(comm, this->nvlsConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
+  ctx->switchChannels =
+      setupNvlsChannels(comm, this->nvlsConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
