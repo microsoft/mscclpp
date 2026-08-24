@@ -24,6 +24,7 @@ from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedC
 
 _ALLREDUCE = "allreduce"
 _ALLGATHER = "allgather"
+_REDUCESCATTER = "reducescatter"
 _DEFAULT_BATCH_SIZES = (
     1,
     2,
@@ -200,6 +201,10 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
         return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
+    if collective == _REDUCESCATTER:
+        # No native reducescatter algorithms ship in the default collection; only the DSL variants
+        # (synthesized separately) apply, so there are no static specs to list here.
+        return ()
     if collective != _ALLREDUCE:
         raise ValueError(f"Unsupported collective: {collective}")
     candidates = (
@@ -366,9 +371,24 @@ def _make_case(
             symmetric_memory=symmetric_memory,
         )
 
+    if collective == _REDUCESCATTER:
+        # The DSL reducescatter is compiled in-place, so the per-rank output chunk always aliases the
+        # matching slice of the full input buffer (mirrors python/test/executor_test.py build_bufs).
+        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        start = comm_group.my_rank * nelems
+        output = input_buffer[start : start + nelems]
+        return BenchmarkCase(
+            collective=collective,
+            message_size=output.nbytes,
+            total_size=input_buffer.nbytes,
+            input=input_buffer,
+            output=output,
+            dtype_spec=dtype_spec,
+            symmetric_memory=symmetric_memory,
+        )
+
     if collective != _ALLGATHER:
         raise ValueError(f"Unsupported collective: {collective}")
-
     if buffer_mode == "in-place":
         output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
         start = comm_group.my_rank * nelems
@@ -473,7 +493,7 @@ def _busbw_factor(collective: str, nranks: int) -> float:
         return 1.0
     if collective == _ALLREDUCE:
         return 2 * (nranks - 1) / nranks
-    if collective == _ALLGATHER:
+    if collective in (_ALLGATHER, _REDUCESCATTER):
         return (nranks - 1) / nranks
     raise ValueError(f"Unsupported collective: {collective}")
 
@@ -502,7 +522,7 @@ def _format_mismatches(stats: CorrectnessStats | None) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Benchmark MSCCL++ collectives without PyTorch dependencies")
-    parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER), default=_ALLREDUCE)
+    parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER, _REDUCESCATTER), default=_ALLREDUCE)
     parser.add_argument("--d-model", type=int, default=5120)
     parser.add_argument("--dtype", default="float16")
     parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
