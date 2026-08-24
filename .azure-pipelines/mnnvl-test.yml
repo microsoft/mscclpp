@@ -126,7 +126,7 @@ jobs:
   - template: templates/run-remote-task.yml
     parameters:
       name: RunCollectivebenchmarks
-      displayName: Run Collective Benchmarks 
+      displayName: Run Collective Benchmarks
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
         mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
