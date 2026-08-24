@@ -3,7 +3,7 @@ set -e
 
 if [[ $OMPI_COMM_WORLD_RANK == 0 ]]
 then
-  pytest /root/mscclpp/python/test/test_mscclpp.py -x -v
+  pytest /root/mscclpp/python/test/test_mscclpp.py /root/mscclpp/python/test/test_mnnvl_allreduce.py -x -v
 else
-  pytest /root/mscclpp/python/test/test_mscclpp.py -x 2>&1 >/dev/null
+  pytest /root/mscclpp/python/test/test_mscclpp.py /root/mscclpp/python/test/test_mnnvl_allreduce.py -x 2>&1 >/dev/null
 fi
