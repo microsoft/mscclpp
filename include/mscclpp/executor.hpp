@@ -32,6 +32,12 @@ class ExecutionPlan {
   /// Destructor.
   ~ExecutionPlan() = default;
 
+  /// Return the stable source path used to build this execution plan.
+  const std::string& path() const;
+
+  /// Return a stable hash of source identity and execution properties.
+  size_t identityHash() const;
+
   /// Return the human-readable name of the plan.
   const std::string& name() const;
 
@@ -86,6 +92,35 @@ class Executor {
   /// @param packetType Packet type used for low-latency transports (default: LL16).
   void execute(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
                const ExecutionPlan& plan, cudaStream_t stream, PacketType packetType = PacketType::LL16);
+
+  /// Prepare an exact graph-static DSL execution context before capture.
+  bool prepare(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize, DataType dataType,
+               const ExecutionPlan& plan, PacketType packetType = PacketType::LL16);
+
+  /// Launch only an exactly prepared context. A miss returns false before launch.
+  bool executePrepared(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+                       DataType dataType, const ExecutionPlan& plan, cudaStream_t stream,
+                       PacketType packetType = PacketType::LL16);
+
+  /// Launch the sole context of an executor owned by one immutable DSL key.
+  bool executeSolePrepared(int rank, void* sendbuff, void* recvBuff, DataType dataType, cudaStream_t stream,
+                           PacketType packetType = PacketType::LL16);
+
+  /// Release one exact prepared context and all resources owned by it.
+  bool releasePrepared(int rank, void* sendbuff, void* recvBuff, size_t sendBuffSize, size_t recvBuffSize,
+                       DataType dataType, const ExecutionPlan& plan, PacketType packetType = PacketType::LL16);
+
+  /// Release all explicitly prepared contexts without touching legacy lazy contexts.
+  void resetPrepared();
+
+  /// Approximate GPU resource bytes owned by explicitly prepared contexts.
+  size_t preparedResourceBytes() const;
+
+  /// Release cached execution contexts while retaining the communicator and default scratch buffer.
+  ///
+  /// The caller must ensure that no execution is in flight and that all participating ranks reset collectively before
+  /// launching another execution.
+  void reset();
 
  private:
   struct Impl;

@@ -112,6 +112,25 @@ class Algorithm {
                              const std::unordered_map<std::string, uintptr_t>& extras = {},
                              DataType accumDtype = DataType::AUTO) = 0;
 
+  /// Prepare an exact DSL executor context before graph capture.
+  virtual CommResult prepareDsl(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                                std::shared_ptr<Executor>, PacketType = PacketType::LL16) {
+    return CommResult::CommInvalidUsage;
+  }
+
+  /// Launch only an exact prepared DSL executor context.
+  virtual CommResult executePreparedDsl(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                                        std::shared_ptr<Executor>, cudaStream_t,
+                                        PacketType = PacketType::LL16) {
+    return CommResult::CommInvalidUsage;
+  }
+
+  /// Release one exact prepared DSL executor context.
+  virtual bool releasePreparedDsl(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType,
+                                  std::shared_ptr<Executor>, PacketType = PacketType::LL16) {
+    return false;
+  }
+
   /// Reset the algorithm state, clearing any cached contexts.
   virtual void reset() = 0;
 };
@@ -292,15 +311,41 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
                      DataType accumDtype = DataType::AUTO) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;
+  CommResult prepareDsl(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                        size_t outputSize, DataType dtype, std::shared_ptr<Executor> executor,
+                        PacketType packetType = PacketType::LL16) override;
+  CommResult executePreparedDsl(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                size_t inputSize, size_t outputSize, DataType dtype,
+                                std::shared_ptr<Executor> executor, cudaStream_t stream,
+                                PacketType packetType = PacketType::LL16) override;
+  bool releasePreparedDsl(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                          size_t outputSize, DataType dtype, std::shared_ptr<Executor> executor,
+                          PacketType packetType = PacketType::LL16) override;
   void reset() override;
+  size_t preparedContextCount() const;
+  std::vector<uint64_t> preparedContextIds() const;
+  size_t preparedResourceBytes() const;
 
   std::shared_ptr<Algorithm> build() override;
 
  private:
+  struct PreparedDslContext {
+    uint64_t id;
+    std::shared_ptr<ExecutionPlan> plan;
+    std::shared_ptr<Executor> executor;
+  };
+
+  std::string preparedKey(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                          size_t outputSize, DataType dtype, PacketType packetType) const;
+  std::string pointerKey(std::shared_ptr<Communicator> comm, const void* input, void* output) const;
+
   ExecutionPlan plan_;
   std::string id_;
   std::unordered_map<std::string, uint64_t> tags_;
   Constraint constraint_;
+  std::unordered_map<std::string, PreparedDslContext> preparedContexts_;
+  std::unordered_map<std::string, std::string> preparedPointerOwners_;
+  uint64_t nextPreparedContextId_ = 1;
 };
 
 /// Request parameters for selecting and executing a collective operation.

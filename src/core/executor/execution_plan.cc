@@ -689,6 +689,20 @@ void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
 ExecutionPlan::ExecutionPlan(const std::string& planPath, int rank) : impl_(std::make_shared<Impl>(planPath, rank)) {}
 
+const std::string& ExecutionPlan::path() const { return this->impl_->planPath; }
+
+size_t ExecutionPlan::identityHash() const {
+  size_t seed = 42;
+  detail::hashCombine(seed, impl_->planPath);
+  detail::hashCombine(seed, impl_->name);
+  detail::hashCombine(seed, impl_->collective);
+  detail::hashCombine(seed, impl_->rank);
+  detail::hashCombine(seed, impl_->reuseResources);
+  detail::hashCombine(seed, impl_->doubleScratchBuffer);
+  detail::hashCombine(seed, impl_->nThreadsPerBlock);
+  return seed;
+}
+
 const std::string& ExecutionPlan::name() const { return this->impl_->name; }
 
 const std::string& ExecutionPlan::collective() const { return this->impl_->collective; }

@@ -245,8 +245,97 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
 
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
-// TODO: implement this
-void DslAlgorithm::reset() {}
+std::string DslAlgorithm::preparedKey(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                      size_t inputSize, size_t outputSize, DataType dtype,
+                                      PacketType packetType) const {
+  int device = -1;
+  if (cudaGetDevice(&device) != cudaSuccess) device = -1;
+  return std::to_string(reinterpret_cast<uintptr_t>(comm.get())) + ":" + std::to_string(device) + ":" +
+         std::to_string(reinterpret_cast<uintptr_t>(input)) + ":" +
+         std::to_string(reinterpret_cast<uintptr_t>(output)) + ":" + std::to_string(inputSize) + ":" +
+         std::to_string(outputSize) + ":" + std::to_string(static_cast<int>(dtype)) + ":" +
+         std::to_string(static_cast<int>(packetType)) + ":" + std::to_string(comm->bootstrap()->getNranks()) + ":" +
+         std::to_string(comm->bootstrap()->getNranksPerIpcDomain()) + ":" + std::to_string(plan_.identityHash());
+}
+
+std::string DslAlgorithm::pointerKey(std::shared_ptr<Communicator> comm, const void* input, void* output) const {
+  return std::to_string(reinterpret_cast<uintptr_t>(comm.get())) + ":" +
+         std::to_string(reinterpret_cast<uintptr_t>(input)) + ":" +
+         std::to_string(reinterpret_cast<uintptr_t>(output));
+}
+
+CommResult DslAlgorithm::prepareDsl(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                    size_t inputSize, size_t outputSize, DataType dtype,
+                                    [[maybe_unused]] std::shared_ptr<Executor> executor, PacketType packetType) {
+  if (!comm || (inputSize != 0 && input == nullptr) || (outputSize != 0 && output == nullptr))
+    return CommResult::CommInvalidUsage;
+  std::string key = preparedKey(comm, input, output, inputSize, outputSize, dtype, packetType);
+  if (preparedContexts_.find(key) != preparedContexts_.end()) return CommResult::CommSuccess;
+  std::string pointers = pointerKey(comm, input, output);
+  auto owner = preparedPointerOwners_.find(pointers);
+  if (owner != preparedPointerOwners_.end() && owner->second != key) return CommResult::CommInvalidUsage;
+
+  int rank = comm->bootstrap()->getRank();
+  auto contextPlan = std::make_shared<ExecutionPlan>(plan_.path(), rank);
+  auto contextExecutor = std::make_shared<Executor>(comm);
+  if (!contextExecutor->prepare(rank, const_cast<void*>(input), output, inputSize, outputSize, dtype, *contextPlan,
+                                packetType))
+    return CommResult::CommInvalidUsage;
+  preparedPointerOwners_[pointers] = key;
+  preparedContexts_.emplace(
+      key, PreparedDslContext{nextPreparedContextId_++, std::move(contextPlan), std::move(contextExecutor)});
+  return CommResult::CommSuccess;
+}
+
+CommResult DslAlgorithm::executePreparedDsl(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                            size_t inputSize, size_t outputSize, DataType dtype,
+                                            [[maybe_unused]] std::shared_ptr<Executor> executor, cudaStream_t stream,
+                                            PacketType packetType) {
+  if (!comm) return CommResult::CommInvalidUsage;
+  std::string key = preparedKey(comm, input, output, inputSize, outputSize, dtype, packetType);
+  auto context = preparedContexts_.find(key);
+  if (context == preparedContexts_.end()) return CommResult::CommInvalidUsage;
+  return context->second.executor->executeSolePrepared(
+             comm->bootstrap()->getRank(), const_cast<void*>(input), output, dtype, stream, packetType)
+             ? CommResult::CommSuccess
+             : CommResult::CommInvalidUsage;
+}
+
+bool DslAlgorithm::releasePreparedDsl(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                      size_t inputSize, size_t outputSize, DataType dtype,
+                                      [[maybe_unused]] std::shared_ptr<Executor> executor, PacketType packetType) {
+  if (!comm) return false;
+  std::string key = preparedKey(comm, input, output, inputSize, outputSize, dtype, packetType);
+  auto context = preparedContexts_.find(key);
+  if (context == preparedContexts_.end()) return false;
+  comm->bootstrap()->barrier();
+  context->second.executor->resetPrepared();
+  preparedPointerOwners_.erase(pointerKey(comm, input, output));
+  preparedContexts_.erase(context);
+  comm->bootstrap()->barrier();
+  return true;
+}
+
+void DslAlgorithm::reset() {
+  for (auto& context : preparedContexts_) context.second.executor->resetPrepared();
+  preparedContexts_.clear();
+  preparedPointerOwners_.clear();
+}
+
+size_t DslAlgorithm::preparedContextCount() const { return preparedContexts_.size(); }
+
+std::vector<uint64_t> DslAlgorithm::preparedContextIds() const {
+  std::vector<uint64_t> ids;
+  ids.reserve(preparedContexts_.size());
+  for (const auto& context : preparedContexts_) ids.push_back(context.second.id);
+  return ids;
+}
+
+size_t DslAlgorithm::preparedResourceBytes() const {
+  size_t bytes = 0;
+  for (const auto& context : preparedContexts_) bytes += context.second.executor->preparedResourceBytes();
+  return bytes;
+}
 
 static uint32_t* gDefaultFlagBuffer = nullptr;
 static std::weak_ptr<void> gDefaultFlagBufferWeak;

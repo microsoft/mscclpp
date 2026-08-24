@@ -86,6 +86,45 @@ void register_algorithm(nb::module_& m) {
               nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0, nb::arg("symmetric_memory") = false,
               nb::arg("extras") = std::unordered_map<std::string, uintptr_t>(),
               nb::arg("accum_dtype") = static_cast<int32_t>(DataType::AUTO))
+          .def("prepare_dsl", [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input,
+                                  uintptr_t output, size_t inputSize, size_t outputSize, DataType dtype,
+                                  std::shared_ptr<Executor> executor, PacketType packetType) {
+                return self.prepareDsl(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
+                                       inputSize, outputSize, dtype, executor, packetType);
+              }, nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"),
+              nb::arg("output_size"), nb::arg("dtype"), nb::arg("executor"),
+              nb::arg("packet_type") = PacketType::LL16)
+          .def("execute_prepared_dsl", [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input,
+                                           uintptr_t output, size_t inputSize, size_t outputSize, DataType dtype,
+                                           std::shared_ptr<Executor> executor, uintptr_t stream,
+                                           PacketType packetType) {
+                return self.executePreparedDsl(comm, reinterpret_cast<const void*>(input),
+                                               reinterpret_cast<void*>(output), inputSize, outputSize, dtype,
+                                               executor, reinterpret_cast<cudaStream_t>(stream), packetType);
+              }, nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"),
+              nb::arg("output_size"), nb::arg("dtype"), nb::arg("executor"), nb::arg("stream"),
+              nb::arg("packet_type") = PacketType::LL16)
+          .def("release_prepared_dsl", [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input,
+                                           uintptr_t output, size_t inputSize, size_t outputSize, DataType dtype,
+                                           std::shared_ptr<Executor> executor, PacketType packetType) {
+                return self.releasePreparedDsl(comm, reinterpret_cast<const void*>(input),
+                                               reinterpret_cast<void*>(output), inputSize, outputSize, dtype,
+                                               executor, packetType);
+              }, nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"),
+              nb::arg("output_size"), nb::arg("dtype"), nb::arg("executor"),
+              nb::arg("packet_type") = PacketType::LL16)
+          .def_prop_ro("prepared_context_count", [](Algorithm& self) {
+                auto* dsl = dynamic_cast<DslAlgorithm*>(&self);
+                return dsl == nullptr ? size_t{0} : dsl->preparedContextCount();
+              })
+          .def_prop_ro("prepared_context_ids", [](Algorithm& self) {
+                auto* dsl = dynamic_cast<DslAlgorithm*>(&self);
+                return dsl == nullptr ? std::vector<uint64_t>{} : dsl->preparedContextIds();
+              })
+          .def_prop_ro("prepared_resource_bytes", [](Algorithm& self) {
+                auto* dsl = dynamic_cast<DslAlgorithm*>(&self);
+                return dsl == nullptr ? size_t{0} : dsl->preparedResourceBytes();
+              })
           .def("reset", &Algorithm::reset);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")

@@ -51,6 +51,45 @@ struct DeviceExecutionPlanKey {
   }
 };
 
+struct PreparedExecutionKey {
+  int rank;
+  void* sendBuff;
+  void* recvBuff;
+  size_t sendBuffSize;
+  size_t recvBuffSize;
+  int dataType;
+  int packetType;
+  uintptr_t planIdentity;
+  size_t planHash;
+  int worldSize;
+  int ipcDomainSize;
+
+  bool operator==(const PreparedExecutionKey& other) const {
+    return rank == other.rank && sendBuff == other.sendBuff && recvBuff == other.recvBuff &&
+           sendBuffSize == other.sendBuffSize && recvBuffSize == other.recvBuffSize && dataType == other.dataType &&
+           packetType == other.packetType && planIdentity == other.planIdentity && planHash == other.planHash &&
+           worldSize == other.worldSize && ipcDomainSize == other.ipcDomainSize;
+  }
+};
+
+struct PreparedExecutionKeyHash {
+  size_t operator()(const PreparedExecutionKey& key) const {
+    size_t seed = 42;
+    detail::hashCombine(seed, key.rank);
+    detail::hashCombine(seed, key.sendBuff);
+    detail::hashCombine(seed, key.recvBuff);
+    detail::hashCombine(seed, key.sendBuffSize);
+    detail::hashCombine(seed, key.recvBuffSize);
+    detail::hashCombine(seed, key.dataType);
+    detail::hashCombine(seed, key.packetType);
+    detail::hashCombine(seed, key.planIdentity);
+    detail::hashCombine(seed, key.planHash);
+    detail::hashCombine(seed, key.worldSize);
+    detail::hashCombine(seed, key.ipcDomainSize);
+    return seed;
+  }
+};
+
 }  // namespace mscclpp
 
 namespace std {
@@ -144,6 +183,7 @@ struct Executor::Impl {
   std::shared_ptr<char> defaultScratchBuffer;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
+  std::unordered_map<PreparedExecutionKey, ExecutionContextKey, PreparedExecutionKeyHash> preparedContexts;
 
   Impl(std::shared_ptr<Communicator> comm, std::shared_ptr<char> defaultScratchBuffer = nullptr)
       : comm(comm), defaultScratchBuffer(defaultScratchBuffer) {
@@ -153,18 +193,57 @@ struct Executor::Impl {
     this->proxyService = std::make_shared<ProxyService>();
     this->proxyService->startProxy(true);
   }
-  ~Impl() = default;
+  ~Impl() {
+    if (proxyService) proxyService->stopProxy();
+  }
 
-  ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
-                                         size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
-                                         size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
-                                         std::shared_ptr<ProxyService> proxyService) {
+  size_t planHash(const ExecutionPlan& plan) const {
+    size_t seed = 42;
+    detail::hashCombine(seed, plan.impl_->planPath);
+    detail::hashCombine(seed, plan.impl_->name);
+    detail::hashCombine(seed, plan.impl_->collective);
+    detail::hashCombine(seed, plan.impl_->rank);
+    detail::hashCombine(seed, plan.impl_->reuseResources);
+    detail::hashCombine(seed, plan.impl_->doubleScratchBuffer);
+    detail::hashCombine(seed, plan.impl_->nThreadsPerBlock);
+    return seed;
+  }
+
+  size_t preparedResourceBytes() const {
+    size_t bytes = 0;
+    for (const auto& prepared : preparedContexts) {
+      auto context = contexts.find(prepared.second);
+      if (context == contexts.end()) continue;
+      bytes += context->second.scratchBufferSize;
+      for (const auto& plan : context->second.deviceExecutionPlans)
+        bytes += plan.second.size() * sizeof(DeviceExecutionPlan);
+    }
+    return bytes;
+  }
+
+  PreparedExecutionKey preparedKey(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize,
+                                   size_t recvBuffSize, DataType dataType, const ExecutionPlan& plan,
+                                   PacketType packetType) const {
+    return {rank, sendbuff, recvbuff, sendBuffSize, recvBuffSize, static_cast<int>(dataType),
+            static_cast<int>(packetType), reinterpret_cast<uintptr_t>(plan.impl_.get()), planHash(plan), nranks,
+            nranksPerIpcDomain};
+  }
+
+  const ExecutionContext& setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
+                                                size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
+                                                size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
+                                                std::shared_ptr<ProxyService> proxyService, bool forceExactKey = false,
+                                                DataType contextDtype = DataType::AUTO) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
 
     // The plan is not related to any specific input/output message size or memory address
-    if (plan.impl_->reuseResources) {
+    if (plan.impl_->reuseResources && !forceExactKey) {
       key = {nullptr, nullptr, 0, 0, plan.impl_->name};
+    } else if (forceExactKey) {
+      key.plan += "#prepared:" + std::to_string(inputMessageSize) + ":" + std::to_string(outputMessageSize) + ":" +
+                  std::to_string(constSrcOffset) + ":" + std::to_string(constDstOffset) + ":" +
+                  std::to_string(static_cast<int>(contextDtype));
     }
     if (this->contexts.find(key) != this->contexts.end()) {
       auto& devicePlans = this->contexts[key].deviceExecutionPlans;
@@ -536,10 +615,80 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  ExecutionContext context = this->impl_->setupExecutionContext(
+  const ExecutionContext& context = this->impl_->setupExecutionContext(
       rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize, offsetIn, offsetOut, sendMemRange,
-      recvMemRange, plan, this->impl_->proxyService);
+      recvMemRange, plan, this->impl_->proxyService, false, dataType);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
+}
+
+bool Executor::prepare(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
+                       DataType dataType, const ExecutionPlan& plan, PacketType packetType) {
+  auto preparedKey = impl_->preparedKey(rank, sendbuff, recvbuff, sendBuffSize, recvBuffSize, dataType, plan, packetType);
+  if (impl_->preparedContexts.find(preparedKey) != impl_->preparedContexts.end()) return true;
+  if ((sendBuffSize != 0 && sendbuff == nullptr) || (recvBuffSize != 0 && recvbuff == nullptr)) return false;
+
+  CUdeviceptr sendBasePtr = 0, recvBasePtr = 0;
+  size_t sendMemRange = 0, recvMemRange = 0;
+  if (sendBuffSize != 0) MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendMemRange, (CUdeviceptr)sendbuff));
+  if (recvBuffSize != 0) MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvMemRange, (CUdeviceptr)recvbuff));
+  size_t offsetIn = sendBuffSize == 0 ? 0 : (char*)sendbuff - (char*)sendBasePtr;
+  size_t offsetOut = recvBuffSize == 0 ? 0 : (char*)recvbuff - (char*)recvBasePtr;
+
+  impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize, offsetIn,
+                               offsetOut, sendMemRange, recvMemRange, plan, impl_->proxyService, true, dataType);
+  ExecutionContextKey contextKey = {
+      (void*)sendBasePtr, (void*)recvBasePtr, sendMemRange, recvMemRange,
+      plan.impl_->name + "#prepared:" + std::to_string(sendBuffSize) + ":" + std::to_string(recvBuffSize) + ":" +
+          std::to_string(offsetIn) + ":" + std::to_string(offsetOut) + ":" +
+          std::to_string(static_cast<int>(dataType))};
+  impl_->preparedContexts.emplace(preparedKey, std::move(contextKey));
+  return true;
+}
+
+bool Executor::executePrepared(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
+                               DataType dataType, const ExecutionPlan& plan, cudaStream_t stream,
+                               PacketType packetType) {
+  auto key = impl_->preparedKey(rank, sendbuff, recvbuff, sendBuffSize, recvBuffSize, dataType, plan, packetType);
+  auto prepared = impl_->preparedContexts.find(key);
+  if (prepared == impl_->preparedContexts.end()) return false;
+  auto context = impl_->contexts.find(prepared->second);
+  if (context == impl_->contexts.end()) return false;
+  impl_->launchKernel(context->second, rank, sendbuff, recvbuff, dataType, stream, packetType);
+  return true;
+}
+
+bool Executor::executeSolePrepared(int rank, void* sendbuff, void* recvbuff, DataType dataType, cudaStream_t stream,
+                                   PacketType packetType) {
+  if (impl_->preparedContexts.size() != 1) return false;
+  auto prepared = impl_->preparedContexts.begin();
+  auto context = impl_->contexts.find(prepared->second);
+  if (context == impl_->contexts.end()) return false;
+  impl_->launchKernel(context->second, rank, sendbuff, recvbuff, dataType, stream, packetType);
+  return true;
+}
+
+bool Executor::releasePrepared(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize, size_t recvBuffSize,
+                               DataType dataType, const ExecutionPlan& plan, PacketType packetType) {
+  auto key = impl_->preparedKey(rank, sendbuff, recvbuff, sendBuffSize, recvBuffSize, dataType, plan, packetType);
+  auto prepared = impl_->preparedContexts.find(key);
+  if (prepared == impl_->preparedContexts.end()) return false;
+  impl_->contexts.erase(prepared->second);
+  impl_->preparedContexts.erase(prepared);
+  return true;
+}
+
+void Executor::resetPrepared() {
+  for (const auto& entry : impl_->preparedContexts) impl_->contexts.erase(entry.second);
+  impl_->preparedContexts.clear();
+}
+
+size_t Executor::preparedResourceBytes() const { return impl_->preparedResourceBytes(); }
+
+void Executor::reset() {
+  this->impl_->proxyService->stopProxy();
+  this->impl_->contexts.clear();
+  this->impl_->proxyService = std::make_shared<ProxyService>();
+  this->impl_->proxyService->startProxy(true);
 }
 
 Executor::~Executor() = default;

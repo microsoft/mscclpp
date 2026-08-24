@@ -220,6 +220,38 @@ class Algorithm:
             int(accum_dtype),
         )
 
+    def prepare_dsl(self, comm, input_buffer, output_buffer, input_size, output_size, dtype, executor, packet_type):
+        return self._algorithm.prepare_dsl(
+            comm, int(input_buffer), int(output_buffer), input_size, output_size, dtype, executor, packet_type
+        )
+
+    def execute_prepared_dsl(
+        self, comm, input_buffer, output_buffer, input_size, output_size, dtype, executor, stream, packet_type
+    ):
+        return self._algorithm.execute_prepared_dsl(
+            comm, int(input_buffer), int(output_buffer), input_size, output_size, dtype, executor, int(stream),
+            packet_type,
+        )
+
+    def release_prepared_dsl(
+        self, comm, input_buffer, output_buffer, input_size, output_size, dtype, executor, packet_type
+    ):
+        return self._algorithm.release_prepared_dsl(
+            comm, int(input_buffer), int(output_buffer), input_size, output_size, dtype, executor, packet_type
+        )
+
+    @property
+    def prepared_context_count(self):
+        return self._algorithm.prepared_context_count
+
+    @property
+    def prepared_context_ids(self):
+        return self._algorithm.prepared_context_ids
+
+    @property
+    def prepared_resource_bytes(self):
+        return self._algorithm.prepared_resource_bytes
+
     def reset(self):
         """Reset the internal state of the algorithm, if applicable."""
         self._algorithm.reset()
