@@ -26,26 +26,26 @@ pr:
     - '**/*.md'
 
 jobs:
-# - job: IntegrationTestA100
-#   displayName: Integration test A100
-#   strategy:
-#     matrix:
-#       cuda12:
-#         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
-#       cuda13:
-#         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+- job: IntegrationTestA100
+  displayName: Integration test A100
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
-#   pool:
-#     name: msccl-ci
-#   container:
-#     image: $(containerImage)
+  pool:
+    name: msccl-ci
+  container:
+    image: $(containerImage)
 
-#   steps:
-#   - template: templates/integration-test.yml
-#     parameters:
-#       subscription: mscclpp-ci
-#       vmssName: mscclpp-ci
-#       gpuArch: '80'
+  steps:
+  - template: templates/integration-test.yml
+    parameters:
+      subscription: mscclpp-ci
+      vmssName: mscclpp-ci
+      gpuArch: '80'
 
 - job: IntegrationTestH100
   displayName: Integration test H100
