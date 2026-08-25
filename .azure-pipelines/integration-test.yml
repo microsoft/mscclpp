@@ -25,7 +25,7 @@ pr:
     - docs/**
     - '**/*.md'
 
-# jobs:
+jobs:
 # - job: IntegrationTestA100
 #   displayName: Integration test A100
 #   strategy:
