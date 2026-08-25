@@ -153,16 +153,25 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
     if accum_type is None:
         return dtype_spec
 
-    mscclpp = _mscclpp()
     normalized = accum_type.strip().lower().replace("-", "_")
     if normalized in {"native", "same", "auto"}:
-        accum_dtype = dtype_spec.mscclpp_dtype
+        accum_name = dtype_spec.name
     elif normalized in {"float16", "fp16", "half"}:
-        accum_dtype = mscclpp.DataType.float16
+        accum_name = "float16"
     elif normalized in {"float32", "fp32", "float"}:
-        accum_dtype = mscclpp.DataType.float32
+        accum_name = "float32"
     else:
         raise ValueError(f"Unsupported accum type {accum_type!r}; use native, float16, or float32")
+    if dtype_spec.fp8_format is None and accum_name != dtype_spec.name:
+        raise ValueError(f"{dtype_spec.name} supports only native accumulation, got {accum_type!r}")
+
+    mscclpp = _mscclpp()
+    if accum_name == dtype_spec.name:
+        accum_dtype = dtype_spec.mscclpp_dtype
+    elif accum_name == "float16":
+        accum_dtype = mscclpp.DataType.float16
+    elif accum_name == "float32":
+        accum_dtype = mscclpp.DataType.float32
 
     return DTypeSpec(
         name=dtype_spec.name,
@@ -486,7 +495,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER), default=_ALLREDUCE)
     parser.add_argument("--d-model", type=int, default=5120)
     parser.add_argument("--dtype", default="float16")
-    parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
+    parser.add_argument(
+        "--accum-type",
+        help="Accumulation type for reductions: native, or float16/float32 for FP8 inputs",
+    )
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
     parser.add_argument(
         "--buffer-mode",
