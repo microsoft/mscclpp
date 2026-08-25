@@ -200,11 +200,21 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
 
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
-        return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
-    if collective == _REDUCESCATTER:
-        # No native reducescatter algorithms ship in the default collection; only the DSL variants
-        # (synthesized separately) apply, so there are no static specs to list here.
-        return ()
+        allgather_candidates = (
+            CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),
+        )
+        if symmetric_memory:
+            return (
+                CandidateSpec(
+                    "default_allgather_nvls_zero_copy",
+                    max_nblocks=32,
+                    supported_skus=("H100", "GB300", "GB200"),
+                    requires_nvls=True,
+                    requires_symmetric_memory=True,
+                ),
+                *allgather_candidates,
+            )
+        return allgather_candidates
     if collective != _ALLREDUCE:
         raise ValueError(f"Unsupported collective: {collective}")
     candidates = (
