@@ -590,6 +590,9 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(comm);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    workspaceView.executionReceipt_->combines_ += 1;
+  }
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     static_assert(Mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);

@@ -61,6 +61,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   m.doc() = "MSCCL++ Expert-Parallel (MoE dispatch/combine) extension";
 
   nb::module_::import_("mscclpp._mscclpp");
+  m.attr("FP8_DEEPGEMM_ABI") = mscclpp::ep::low_latency::Fp8DeepGemmAbi;
+  m.attr("FP8_DEEPGEMM_SCALE_BLOCK_SIZE") = mscclpp::ep::low_latency::Fp8DeepGemmScaleBlockSize;
+
+  nb::class_<mscclpp::ep::low_latency::ExecutionReceipt>(m, "ExecutionReceipt")
+      .def_ro("dispatches", &mscclpp::ep::low_latency::ExecutionReceipt::dispatches_)
+      .def_ro("fp8_dispatches", &mscclpp::ep::low_latency::ExecutionReceipt::fp8Dispatches_)
+      .def_ro("combines", &mscclpp::ep::low_latency::ExecutionReceipt::combines_)
+      .def_ro("last_dispatch_epoch", &mscclpp::ep::low_latency::ExecutionReceipt::lastDispatchEpoch_)
+      .def_ro("abi_version", &mscclpp::ep::low_latency::ExecutionReceipt::abiVersion_)
+      .def_ro("last_hidden", &mscclpp::ep::low_latency::ExecutionReceipt::lastHidden_)
+      .def_ro("last_scale_block_size", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleBlockSize_)
+      .def_ro("last_dispatch_data_type", &mscclpp::ep::low_latency::ExecutionReceipt::lastDispatchDataType_);
 
   nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
       .value("LOW_LATENCY", mscclpp::ep::MoEMode::LOW_LATENCY)
@@ -91,6 +103,12 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def_prop_ro("mode", &mscclpp::ep::MoERuntime::mode)
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
+      .def(
+          "ll_execution_receipt",
+          [](const mscclpp::ep::MoERuntime& self, uintptr_t streamPtr) {
+            return narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").executionReceipt(stream(streamPtr));
+          },
+          nb::arg("stream_ptr"), "Synchronize the stream and return device-authored LL execution counters.")
       .def("output_topk_ids_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) {
              return reinterpret_cast<uintptr_t>(

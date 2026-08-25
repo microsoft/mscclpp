@@ -87,6 +87,10 @@ void combine(void* output, float* outputTopkWeights, const int* sendHead, int nu
 // ===========================================================================
 namespace low_latency {
 
+/// Native FP8 contract consumed by PR40 and Blackwell DeepGEMM.
+inline constexpr int Fp8DeepGemmAbi = 1;
+inline constexpr int Fp8DeepGemmScaleBlockSize = 128;
+
 /// Number of non-worker blocks in the dispatch grid.
 inline constexpr int DispatchControlBlocks = 2;
 /// Maximum worker blocks used by dispatch or combine.
@@ -108,6 +112,18 @@ enum class DispatchDataType {
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3
+};
+
+/// Device-authored receipt. Counters include CUDA graph replays.
+struct ExecutionReceipt {
+  uint64_t dispatches_;
+  uint64_t fp8Dispatches_;
+  uint64_t combines_;
+  uint32_t lastDispatchEpoch_;
+  int32_t abiVersion_;
+  int32_t lastHidden_;
+  int32_t lastScaleBlockSize_;
+  int32_t lastDispatchDataType_;
 };
 
 /// Per-call low-latency workload dimensions.

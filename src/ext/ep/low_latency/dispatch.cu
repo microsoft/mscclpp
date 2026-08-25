@@ -801,6 +801,14 @@ __global__ __launch_bounds__(DispatchNThreads,
 
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     *workspaceView.dispatchEpoch_ = dispatchEpoch;
+    auto* receipt = workspaceView.executionReceipt_;
+    receipt->dispatches_ += 1;
+    if constexpr (DataType == DispatchDataType::FP8_E4M3) receipt->fp8Dispatches_ += 1;
+    receipt->lastDispatchEpoch_ = dispatchEpoch;
+    receipt->abiVersion_ = Fp8DeepGemmAbi;
+    receipt->lastHidden_ = Hidden;
+    receipt->lastScaleBlockSize_ = ScaleBlockSize;
+    receipt->lastDispatchDataType_ = static_cast<int32_t>(DataType);
   }
 }
 

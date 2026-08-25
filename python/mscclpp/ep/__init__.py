@@ -9,6 +9,7 @@ LL backend; ``mode=MoEMode.HIGH_THROUGHPUT`` runs on the HT backend (GB200 TMA
 direct-gather combine + all-sender dispatch).
 """
 
+from ._cpp import FP8_DEEPGEMM_ABI, FP8_DEEPGEMM_SCALE_BLOCK_SIZE  # noqa: F401
 from .communicator import (  # noqa: F401
     BlockOverlapConfig,
     CommOverlapConfig,
@@ -34,6 +35,8 @@ from .communicator import (  # noqa: F401
 )
 
 __all__ = [
+    "FP8_DEEPGEMM_ABI",
+    "FP8_DEEPGEMM_SCALE_BLOCK_SIZE",
     "BlockOverlapConfig",
     "CommOverlapConfig",
     "CombineContext",

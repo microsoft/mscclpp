@@ -105,6 +105,7 @@ static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
+  ExecutionReceipt* executionReceipt_;
   uint32_t* dispatchEpoch_;
   int* dispatchRankPayloadSlots_;
   int* dispatchRankPayloadCompletions_;
@@ -121,6 +122,8 @@ struct WorkspaceView {
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
+    executionReceipt_ = reinterpret_cast<ExecutionReceipt*>(cursor);
+    cursor += configAlign<size_t>(sizeof(ExecutionReceipt), sizeof(int)) / sizeof(int);
     dispatchEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
@@ -144,12 +147,13 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return sizeof(uint32_t) +                                // dispatchEpoch_
-           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
-           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
-           sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
-           static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
-           static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
+    return configAlign<size_t>(sizeof(ExecutionReceipt), sizeof(int)) +  // executionReceipt_
+           sizeof(uint32_t) +                                            // dispatchEpoch_
+           static_cast<size_t>(nRanks) * sizeof(int) +                   // dispatchRankPayloadSlots_
+           static_cast<size_t>(nRanks) * sizeof(int) +                   // dispatchRankPayloadCompletions_
+           sizeof(mscclpp::DeviceSemaphore) +                            // dispatchLocalPayloadReady_
+           static_cast<size_t>(nExperts) * sizeof(int) +                 // dispatchExpertCopiedCounts_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +              // dispatchRankReadyEpochs_
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_

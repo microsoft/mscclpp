@@ -10,6 +10,16 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr float Fp8E4M3MaxValue = 448.0f;
+inline constexpr float Fp8DeepGemmMinAmax = 1e-4f;
+
+/// Match DeepGEMM's ceil_to_ue8m0 exactly while retaining FP32 metadata.
+MSCCLPP_DEVICE_INLINE float ceilToUe8m0(float value) {
+  const uint32_t bits = __float_as_uint(value);
+  uint32_t exponent = (bits >> 23) & 0xffu;
+  exponent += (bits & 0x7fffffu) != 0;
+  exponent = exponent < 1 ? 1 : (exponent > 254 ? 254 : exponent);
+  return __uint_as_float(exponent << 23);
+}
 
 MSCCLPP_DEVICE_INLINE float maxAbsF32x8(const mscclpp::f32x8& values, float seed) {
   float maxAbs = seed;
@@ -45,22 +55,18 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
                                                                  int laneId) {
   constexpr int NumElements = mscclpp::bf16x8::Size;
   constexpr int NumLanesPerScale = NumElementsPerScale / NumElements;
-  constexpr float Margin = 1e-4f;
-
   EP_STATIC_ASSERT(NumElementsPerScale % NumElements == 0, "Invalid scale vectorization");
   EP_STATIC_ASSERT(NumLanesPerScale > 0 && NumLanesPerScale <= WARP_SIZE, "Invalid lanes per scale");
   EP_STATIC_ASSERT((NumLanesPerScale & (NumLanesPerScale - 1)) == 0, "Lanes per scale must be a power of two");
 
   const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
-  float maxAbs = maxAbsF32x8(values, Margin);
+  float maxAbs = maxAbsF32x8(values, Fp8DeepGemmMinAmax);
 
   maxAbs = laneGroupMax<NumLanesPerScale>(maxAbs, laneId);
-  // DeepGEMM's Blackwell grouped-FP8 ABI consumes UE8M0 scales. Quantizing
-  // with maxAbs/448 and rounding only the reported scale later changes the
-  // represented value by up to 2x. Round the scale first, then use that exact
-  // power-of-two for both payload quantization and metadata. SGLang can losslessly
-  // encode the returned FP32 value as UE8M0.
-  const float scale = exp2f(ceilf(log2f(maxAbs / Fp8E4M3MaxValue)));
+  // DeepGEMM per_token_cast_to_fp8(use_ue8m0=True): clamp amax to 1e-4,
+  // divide by 448, ceil the FP32 exponent, and quantize with that exact scale.
+  // Keeping the power-of-two as FP32 lets DeepGEMM pack it losslessly to UE8M0.
+  const float scale = ceilToUe8m0(maxAbs / Fp8E4M3MaxValue);
   const float quantScale = 1.0f / scale;
   if (laneId % NumLanesPerScale == 0) {
     *scaleOut = scale;

@@ -86,7 +86,7 @@ def parse_args():
         "--hidden",
         type=int,
         default=7168,
-        choices=(4096, 6656, 7168, 8192, 8704, 9216),
+        choices=(4096, 6144, 6656, 7168, 8192, 8704, 9216),
         help="BF16 hidden size compiled into the optimized low-latency kernels",
     )
     parser.add_argument("--num-topk", type=int, default=8)
@@ -154,9 +154,12 @@ def init_dist():
 
 
 def fp8_e4m3_scales(x, scale_block_size):
+    """DeepGEMM per_token_cast_to_fp8(use_ue8m0=True), retaining FP32 scales."""
     blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // scale_block_size, scale_block_size)
-    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
-    return max_abs / 448.0
+    scale = blocks.abs().amax(dim=-1).clamp_min(1e-4) / 448.0
+    bits = scale.view(torch.int32)
+    exponent = ((bits >> 23) & 0xFF) + ((bits & 0x7FFFFF) != 0)
+    return (exponent.clamp(1, 254) << 23).view(torch.float32)
 
 
 def decode_block_scales(scales):
@@ -601,6 +604,11 @@ def main():
         )
         assert dispatch_out.quant.block_scales.shape == expected_scale_shape
         assert dispatch_out.quant.block_scales.dtype == torch.float32
+        assert dispatch_out.quant.block_scales.stride() == (
+            expected_scale_shape[1] * expected_scale_shape[2],
+            1,
+            expected_scale_shape[1],
+        )
         assert all_x is not None
         expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
 
@@ -700,42 +708,60 @@ def main():
         flush=True,
     )
 
+    print(f"[rank {rank}] pre-receipt", flush=True)
+    receipt = moe_comm.execution_receipt()
+    print(f"[rank {rank}] post-receipt dispatches={receipt.dispatches} combines={receipt.combines}", flush=True)
+    assert receipt.abi_version == 1
+    assert receipt.dispatches == 1 and receipt.combines == 1
+    assert receipt.fp8_dispatches == int(dispatch_quant is not None)
+    assert receipt.last_hidden == hidden
+    assert receipt.last_scale_block_size == (scale_block_size if dispatch_quant is not None else 0)
+
     if rank == 0:
         print("PASS", flush=True)
 
     def _graph_capture(dispatch_buffer, combine_out, expert_output=None):
         graph = torch.cuda.CUDAGraph()
-        graph_start = torch.cuda.Event(enable_timing=True, external=True)
-        dispatch_end = torch.cuda.Event(enable_timing=True, external=True)
-        graph_end = torch.cuda.Event(enable_timing=True, external=True)
         torch.cuda.synchronize()
         dist.barrier(group=group)
         with torch.cuda.graph(graph):
-            graph_start.record()
             graph_dout = moe_comm.dispatch(
                 x,
                 topk_idx,
                 topk_weights,
                 output_buffer=dispatch_buffer,
             )
-            dispatch_end.record()
             graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
             if output_layout == ep.DispatchLayout.RANK_MAJOR and expert_output is None:
                 rank_major_expert_output = moe_comm.get_expert_output_buffer()
                 rank_major_expert_output.copy_(graph_expert_output)
                 graph_expert_output = rank_major_expert_output
             graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
-            graph_end.record()
-        return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end
+        return graph, graph_dout, graph_combined_x
 
     def _run_cuda_graph_correctness():
         graph_dispatch_output_buffer = (
             None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer)
         )
         graph_out = torch.empty_like(out)
-        graph, _, graph_combined_x, _, _, _ = _graph_capture(graph_dispatch_output_buffer, graph_out)
+        receipt_before = moe_comm.execution_receipt()
+        print(f"[rank {rank}] graph capture begin", flush=True)
+        graph, _, graph_combined_x = _graph_capture(graph_dispatch_output_buffer, graph_out)
+        print(f"[rank {rank}] graph capture end", flush=True)
+        torch.cuda.synchronize()
+        allocated_after_capture = torch.cuda.memory_allocated()
+        print(f"[rank {rank}] graph replay begin", flush=True)
+        graph.replay()
         graph.replay()
         torch.cuda.synchronize()
+        print(f"[rank {rank}] graph replay end", flush=True)
+        assert torch.cuda.memory_allocated() == allocated_after_capture, "CUDA graph replay allocated device memory"
+        receipt_after = moe_comm.execution_receipt()
+        # Stream capture records but does not execute the kernels. Each replay
+        # must therefore contribute exactly one device-authored receipt.
+        assert receipt_after.dispatches - receipt_before.dispatches == 2
+        assert receipt_after.combines - receipt_before.combines == 2
+        assert receipt_after.fp8_dispatches - receipt_before.fp8_dispatches == 2 * int(dispatch_quant is not None)
 
         _, graph_diff = validate_combine_output(
             graph_combined_x,

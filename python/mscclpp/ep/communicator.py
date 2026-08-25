@@ -141,6 +141,13 @@ class MoECommunicator:
     ) -> torch.Tensor:
         return self._backend.combine(expert_output, handle, out=out, stream=stream)
 
+    def execution_receipt(self, stream: Optional[torch.cuda.Stream] = None):
+        """Return LL kernel execution counters, including graph replays."""
+        getter = getattr(self._backend, "execution_receipt", None)
+        if getter is None:
+            raise RuntimeError("execution receipts are available only in low-latency mode")
+        return getter(stream)
+
     def get_expert_output_buffer(self) -> torch.Tensor:
         """Return the runtime-owned rank-major MoE output buffer.
 

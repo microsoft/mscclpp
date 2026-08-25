@@ -12,6 +12,11 @@ except ImportError as exc:  # pragma: no cover
         "-DMSCCLPP_BUILD_EXT_EP=ON or install with `pip install .[ep]`."
     ) from exc
 
+FP8_DEEPGEMM_ABI = _cpp.FP8_DEEPGEMM_ABI
+FP8_DEEPGEMM_SCALE_BLOCK_SIZE = _cpp.FP8_DEEPGEMM_SCALE_BLOCK_SIZE
+if FP8_DEEPGEMM_ABI != 1 or FP8_DEEPGEMM_SCALE_BLOCK_SIZE != 128:
+    raise ImportError("mscclpp_ep_cpp does not provide the required FP8 DeepGEMM ABI 1")
+
 DispatchLayout = _cpp.DispatchLayout
 MoEMode = _cpp.MoEMode
 CombineMode = _cpp.CombineMode

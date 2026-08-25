@@ -15,6 +15,26 @@
 namespace mscclpp {
 namespace ep {
 
+namespace {
+
+bool isSupportedLowLatencyHidden(int hidden) {
+  switch (hidden) {
+    case 2048:
+    case 4096:
+    case 6144:
+    case 6656:
+    case 7168:
+    case 8192:
+    case 8704:
+    case 9216:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden,
                                            int numExperts, int numTopk)
     : MoERuntime(communicator),
@@ -29,6 +49,8 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
+  EP_HOST_ASSERT(isSupportedLowLatencyHidden(hidden));
+  EP_HOST_ASSERT(hidden % low_latency::Fp8DeepGemmScaleBlockSize == 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
 
@@ -38,6 +60,10 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
 
   CUDA_CHECK(cudaMalloc(&workspace_, workspaceBytes_));
   CUDA_CHECK(cudaMemset(workspace_, 0, workspaceBytes_));
+  low_latency::ExecutionReceipt initialReceipt{};
+  initialReceipt.abiVersion_ = low_latency::Fp8DeepGemmAbi;
+  initialReceipt.lastScaleBlockSize_ = low_latency::Fp8DeepGemmScaleBlockSize;
+  CUDA_CHECK(cudaMemcpy(workspace_, &initialReceipt, sizeof(initialReceipt), cudaMemcpyHostToDevice));
   setup();
 }
 
@@ -65,6 +91,15 @@ void* MoELowLatencyRuntime::outputTokensBuffer() const {
 void* MoELowLatencyRuntime::expertOutputBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_)
       .rankMajorExpertOutputBuffer_;
+}
+
+low_latency::ExecutionReceipt MoELowLatencyRuntime::executionReceipt(cudaStream_t stream) const {
+  EP_HOST_ASSERT(workspace_ != nullptr);
+  CUDA_CHECK(cudaStreamSynchronize(stream));
+  low_latency::ExecutionReceipt receipt{};
+  CUDA_CHECK(cudaMemcpy(&receipt, workspace_, sizeof(receipt), cudaMemcpyDeviceToHost));
+  EP_HOST_ASSERT(receipt.abiVersion_ == low_latency::Fp8DeepGemmAbi);
+  return receipt;
 }
 
 void MoELowLatencyRuntime::setup() {
@@ -135,11 +170,18 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                                     low_latency::DispatchDataType dispatchDataType, int numBlocks,
                                     cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
-  EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
+  EP_HOST_ASSERT(numTokens >= 0 && numTokens <= maxTokensPerRank);
+  EP_HOST_ASSERT(hidden == hidden_ && numTopk == numTopk_ && maxTokensPerRank == maxTokensPerRank_ &&
+                 numExperts == numExperts_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - low_latency::DispatchControlBlocks >= numRanks_ &&
                  numBlocks <= low_latency::MaxDispatchBlocks);
+  if (dispatchDataType == low_latency::DispatchDataType::FP8_E4M3) {
+    EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR);
+    EP_HOST_ASSERT(hidden % low_latency::Fp8DeepGemmScaleBlockSize == 0);
+    EP_HOST_ASSERT(outputScales != nullptr);
+  }
 
   low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
@@ -171,8 +213,15 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
                                    low_latency::DispatchDataType dispatchDataType, low_latency::CombineMode mode,
                                    int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
+  EP_HOST_ASSERT(numTokens >= 0 && numTokens <= maxTokensPerRank);
+  EP_HOST_ASSERT(hidden == hidden_ && numTopk == numTopk_ && maxTokensPerRank == maxTokensPerRank_ &&
+                 numExperts == numExperts_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= low_latency::MaxWorkerBlocks);
+  if (dispatchDataType == low_latency::DispatchDataType::FP8_E4M3) {
+    EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR);
+    EP_HOST_ASSERT(hidden % low_latency::Fp8DeepGemmScaleBlockSize == 0);
+  }
 
   low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));

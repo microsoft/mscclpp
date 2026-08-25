@@ -8,7 +8,15 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, create_moe_runtime
+from ._cpp import (
+    FP8_DEEPGEMM_ABI,
+    FP8_DEEPGEMM_SCALE_BLOCK_SIZE,
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    MoEMode,
+    create_moe_runtime,
+)
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -42,7 +50,7 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
 
 def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
     if data_type == DispatchDataType.FP8_E4M3:
-        return 128
+        return FP8_DEEPGEMM_SCALE_BLOCK_SIZE
     return 0
 
 
@@ -199,6 +207,11 @@ class LowLatencyBackend:
         )
 
         self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
+        if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+            if FP8_DEEPGEMM_ABI != 1:
+                raise RuntimeError("FP8 E4M3 dispatch requires native FP8_DEEPGEMM_ABI=1")
+            if self.hidden_size % FP8_DEEPGEMM_SCALE_BLOCK_SIZE:
+                raise ValueError("FP8 DeepGEMM hidden size must be divisible by 128")
         if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
 
@@ -272,6 +285,17 @@ class LowLatencyBackend:
 
     def is_internode(self) -> bool:
         return self._is_internode
+
+    def execution_receipt(self, stream: Optional[torch.cuda.Stream] = None):
+        """Return device-authored counters after synchronizing ``stream``.
+
+        The counters are incremented by the LL kernels, so CUDA graph replays
+        are included without host callbacks or replay-time allocations.
+        """
+        receipt = self._runtime.cpp_runtime.ll_execution_receipt(cuda_stream_ptr(stream))
+        if receipt.abi_version != FP8_DEEPGEMM_ABI:
+            raise RuntimeError("invalid native FP8 DeepGEMM execution receipt")
+        return receipt
 
     def dispatch(
         self,
@@ -441,6 +465,14 @@ class LowLatencyBackend:
                         device=device,
                     )
                     self._dispatch_scales = scale_storage.transpose(1, 2)
+                    expected_shape = (self.num_local_experts, slots_per_expert, num_scales)
+                    expected_stride = (num_scales * slots_per_expert, 1, slots_per_expert)
+                    if (
+                        self._dispatch_scales.dtype != torch.float32
+                        or tuple(self._dispatch_scales.shape) != expected_shape
+                        or tuple(self._dispatch_scales.stride()) != expected_stride
+                    ):
+                        raise RuntimeError("invalid native FP8 DeepGEMM scale layout")
             elif self.output_layout == DispatchLayout.RANK_MAJOR:
                 self._dispatch_src_info = None
                 assert self._output_topk_ids is not None
