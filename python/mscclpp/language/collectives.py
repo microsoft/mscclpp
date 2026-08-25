@@ -190,10 +190,17 @@ class ReduceScatter(Collective):
             num_ranks (int): The number of ranks participating in the ReduceScatter.
             chunk_factor (int): The size factor for data chunks.
             inplace (bool): Whether the operation should be performed in-place.
+                ReduceScatter only supports in-place mode.
+
+        Raises:
+            ValueError: If ``inplace`` is False, since out-of-place ReduceScatter
+                is not supported.
 
         Example:
-            >>> reduce_scatter = ReduceScatter(num_ranks=4, chunk_factor=1, inplace=False)
+            >>> reduce_scatter = ReduceScatter(num_ranks=4, chunk_factor=1, inplace=True)
         """
+        if not inplace:
+            raise ValueError("ReduceScatter only supports in-place mode.")
         Collective.__init__(self, num_ranks, chunk_factor, inplace)
         self.name = "reducescatter"
 
