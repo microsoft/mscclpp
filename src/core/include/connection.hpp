@@ -195,6 +195,12 @@ class EthernetConnection : public BaseConnection {
   void sendMessage();
   void publishReceiverError(std::exception_ptr error) noexcept;
   void rethrowReceiverError();
+  template <typename Operation>
+  void runWithReceiverErrorCheck(Operation&& operation) {
+    rethrowReceiverError();
+    std::forward<Operation>(operation)();
+    rethrowReceiverError();
+  }
   bool receiveFramePart(void* ptr, int size, bool allowBoundaryEof);
 
  public:
