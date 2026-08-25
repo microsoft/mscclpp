@@ -6,6 +6,7 @@
 
 #include "allgather/allgather_fullmesh.hpp"
 #include "allgather/allgather_fullmesh_2.hpp"
+#include "allgather/allgather_nvls_zero_copy.hpp"
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/allreduce_fullmesh.hpp"
 #include "allreduce/allreduce_nvls_block_pipeline.hpp"
@@ -100,6 +101,8 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
   auto allgatherFullmesh2 = std::make_shared<AllgatherFullmesh2>()->build();
   collection.registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
+  auto allgatherNvls = std::make_shared<AllgatherNvls>()->build();
+  collection.registerAlgorithm(allgatherNvls->collective(), allgatherNvls->name(), allgatherNvls);
   return collection;
 }
 
