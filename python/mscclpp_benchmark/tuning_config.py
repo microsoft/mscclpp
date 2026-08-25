@@ -94,6 +94,7 @@ class TunedConfigStore:
         dtype: str | None = None,
         accum: str | None = None,
     ) -> None:
+        accum = dtype if accum is None else accum
         configs = self._profiles.setdefault(profile, {}).setdefault(collective, [])
         updated = TunedConfigBySize(message_size, config, dtype, accum)
         for index, existing in enumerate(configs):
