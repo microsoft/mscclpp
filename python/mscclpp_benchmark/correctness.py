@@ -254,7 +254,9 @@ def _mismatch_mask(case: Any, output, expected, nranks: int):
 
 
 def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
-    scale = max(1, nranks) if case.collective == "allreduce" else 1
+    if case.collective != "allreduce":
+        return None
+    scale = max(1, nranks)
     if case.dtype_spec.fp8_format is not None:
         accum_dtype = config_accum_dtype(case)
         if accum_dtype == _mscclpp().DataType.float32:
@@ -264,8 +266,6 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
             return (0.0, atol)
         return (0.0, atol * 2)
     if case.dtype_spec.name == "bfloat16":
-        if case.collective == "allgather":
-            return None
         return (1.0e-2, 7.8125e-3 * scale)
     if case.dtype_spec.cupy_dtype == cp.float16:
         return (1.0e-2, 5.0e-4 * scale)

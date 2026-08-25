@@ -43,10 +43,10 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t unitBytesPerWarp = unitBytesPerThread * WARP_SIZE;
     const size_t unitBytes = unitBytesPerWarp * nWarp;
     const size_t nLoop = bytes / unitBytes;
-    constexpr size_t minLocalBytesPerWarp = 16 * WARP_SIZE;
-    const size_t minBytesForCoverage = ((unitBytesPerWarp + nPeer - 1) / nPeer + 15) / 16 * 16;
-    const size_t localBytesPerWarp =
-        (minBytesForCoverage > minLocalBytesPerWarp) ? minBytesForCoverage : minLocalBytesPerWarp;
+    constexpr size_t minLocalCopyBytesPerWarp = 16 * WARP_SIZE;
+    size_t localCopyBytesPerWarp = ((unitBytesPerWarp + nPeer - 1) / nPeer + 15) / 16 * 16;
+    localCopyBytesPerWarp =
+        (localCopyBytesPerWarp > minLocalCopyBytesPerWarp) ? localCopyBytesPerWarp : minLocalCopyBytesPerWarp;
 
     if (nLoop > 0) {
       // First loop unrolling
@@ -60,11 +60,11 @@ __global__ void __launch_bounds__(1024, 1)
         const size_t offsetWithinRank = chunkIdx * unitBytesPerWarp;
         mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                  WARP_SIZE);
-        const size_t localOffset = wid * localBytesPerWarp;
+        const size_t localOffset = wid * localCopyBytesPerWarp;
         if (localOffset < bytesPerGPU) {
-          const size_t localBytes = min(localBytesPerWarp, bytesPerGPU - localOffset);
-          mscclpp::copy<16, true>(src + bytesPerGPU * rank + localOffset + channelOutOffset, buff + localOffset,
-                                  localBytes, lid, WARP_SIZE);
+          const size_t nBytes = min(localCopyBytesPerWarp, bytesPerGPU - localOffset);
+          mscclpp::copy<16, true>(src + bytesPerGPU * rank + localOffset + channelOutOffset, buff + localOffset, nBytes,
+                                  lid, WARP_SIZE);
         }
       } else {
         memChans[peerIdx].put<16, false>(offset + channelOutOffset, unitBytesPerWarp, lid, WARP_SIZE);
@@ -83,9 +83,9 @@ __global__ void __launch_bounds__(1024, 1)
         const size_t offsetWithinRank = chunkIdx * unitBytesPerWarp;
         mscclpp::copy<16, false>(dst + offset + channelOutOffset, buff + offsetWithinRank, unitBytesPerWarp, lid,
                                  WARP_SIZE);
-        const size_t localOffset = gWid * localBytesPerWarp;
+        const size_t localOffset = gWid * localCopyBytesPerWarp;
         if (localOffset < bytesPerGPU) {
-          const size_t localBytes = min(localBytesPerWarp, bytesPerGPU - localOffset);
+          const size_t localBytes = min(localCopyBytesPerWarp, bytesPerGPU - localOffset);
           mscclpp::copy<16, true>(src + bytesPerGPU * rank + localOffset + channelOutOffset, buff + localOffset,
                                   localBytes, lid, WARP_SIZE);
         }
@@ -110,9 +110,9 @@ __global__ void __launch_bounds__(1024, 1)
           char* buff = reinterpret_cast<char*>(sendbuff);
           mscclpp::copy<16, true>(dst + offset + channelOutOffset, buff + offsetWithinRank, remainBytes, lid,
                                   WARP_SIZE);
-          const size_t localOffset = gWid * localBytesPerWarp;
+          const size_t localOffset = gWid * localCopyBytesPerWarp;
           if (localOffset < bytesPerGPU) {
-            const size_t localBytes = min(localBytesPerWarp, bytesPerGPU - localOffset);
+            const size_t localBytes = min(localCopyBytesPerWarp, bytesPerGPU - localOffset);
             mscclpp::copy<16, true>(src + bytesPerGPU * rank + localOffset + channelOutOffset, buff + localOffset,
                                     localBytes, lid, WARP_SIZE);
           }

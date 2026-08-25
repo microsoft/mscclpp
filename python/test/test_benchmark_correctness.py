@@ -6,11 +6,21 @@ from types import SimpleNamespace
 import cupy as cp
 
 from mscclpp_benchmark.correctness import (
+    _comparison_tolerance,
     _decode_bfloat16_array,
     _encode_bfloat16_values,
     _encode_correctness_input,
     _stats_values,
 )
+
+
+def test_allgather_requires_exact_match():
+    case = SimpleNamespace(
+        collective="allgather",
+        dtype_spec=SimpleNamespace(name="float16", fp8_format=None, cupy_dtype=cp.float16),
+    )
+
+    assert _comparison_tolerance(case, 8) is None
 
 
 def test_bfloat16_round_to_nearest_even():
