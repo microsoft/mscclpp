@@ -199,6 +199,10 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
 
 
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
+    if collective == _REDUCESCATTER:
+        # There are no native reducescatter algorithms in the default collection, so the compiled
+        # DSL variants are the only candidates.
+        return ()
     if collective == _ALLGATHER:
         allgather_candidates = (
             CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),
