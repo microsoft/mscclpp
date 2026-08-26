@@ -17,9 +17,14 @@ CudaIpcStream::CudaIpcStream(int deviceId)
     : stream_(std::make_shared<CudaStreamWithFlags>()), deviceId_(deviceId), dirty_(false) {}
 
 void CudaIpcStream::setStreamIfNeeded() {
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
-    stream_->set(cudaStreamNonBlocking);
-  }
+#if defined(MSCCLPP_USE_ROCM)
+  // A proxy-launched ROCm accumulate kernel must not inherit default-stream synchronization:
+  // the caller may be waiting for that kernel from another stream. Keep all operations on this
+  // connection ordered on its dedicated nonblocking stream.
+  if (stream_->empty()) stream_->set(cudaStreamNonBlocking);
+#else
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+#endif  // defined(MSCCLPP_USE_ROCM)
 }
 
 void CudaIpcStream::memcpyD2D(void* dst, const void* src, size_t nbytes) {
