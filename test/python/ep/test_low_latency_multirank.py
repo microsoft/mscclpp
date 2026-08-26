@@ -162,6 +162,14 @@ def fp8_e4m3_scales(x, scale_block_size):
     return (exponent.clamp(1, 254) << 23).view(torch.float32)
 
 
+def deepgemm_scale_handoff_view(scales):
+    """Exercise the dtype view used by SGLang's DeepGEMM UE8M0 handoff."""
+    assert scales.dtype == torch.float32 and scales.is_contiguous()
+    bits = scales.view(torch.int32)
+    assert bits.shape == scales.shape
+    return torch.bitwise_right_shift(bits, 23).to(torch.uint8)
+
+
 def decode_block_scales(scales):
     return scales.float()
 
@@ -606,9 +614,11 @@ def main():
         assert dispatch_out.quant.block_scales.dtype == torch.float32
         assert dispatch_out.quant.block_scales.stride() == (
             expected_scale_shape[1] * expected_scale_shape[2],
+            expected_scale_shape[2],
             1,
-            expected_scale_shape[1],
         )
+        packed_exponents = deepgemm_scale_handoff_view(dispatch_out.quant.block_scales)
+        assert packed_exponents.shape == expected_scale_shape
         assert all_x is not None
         expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
 
@@ -716,6 +726,14 @@ def main():
     assert receipt.fp8_dispatches == int(dispatch_quant is not None)
     assert receipt.last_hidden == hidden
     assert receipt.last_scale_block_size == (scale_block_size if dispatch_quant is not None else 0)
+    if dispatch_quant is not None:
+        num_scales = hidden // scale_block_size
+        assert receipt.last_scale_contiguous == 1
+        assert (
+            receipt.last_scale_stride_expert,
+            receipt.last_scale_stride_token,
+            receipt.last_scale_stride_kblock,
+        ) == (num_ranks * num_tokens * num_scales, num_scales, 1)
 
     if rank == 0:
         print("PASS", flush=True)

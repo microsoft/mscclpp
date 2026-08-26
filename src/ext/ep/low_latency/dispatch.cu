@@ -670,8 +670,11 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
       const int scaleOutputTokenIdx = warpBroadcast(outputTokenIdx, topkLane);
       if (scaleLocalExpertIdx < 0) continue;
       for (int scaleIdx = laneId; scaleIdx < NumScales; scaleIdx += WARP_SIZE) {
-        typedOutputScales[(static_cast<size_t>(scaleLocalExpertIdx) * NumScales + scaleIdx) * nOutputSlotsPerExpert +
-                          scaleOutputTokenIdx] = sourceScales[scaleIdx];
+        // ABI 1 is contiguous [expert, token, k-block]. DeepGEMM's
+        // FP32-to-UE8M0 dtype view requires the final K-block stride to be 1.
+        typedOutputScales[(static_cast<size_t>(scaleLocalExpertIdx) * nOutputSlotsPerExpert + scaleOutputTokenIdx) *
+                              NumScales +
+                          scaleIdx] = sourceScales[scaleIdx];
       }
     }
   }
@@ -809,6 +812,18 @@ __global__ __launch_bounds__(DispatchNThreads,
     receipt->lastHidden_ = Hidden;
     receipt->lastScaleBlockSize_ = ScaleBlockSize;
     receipt->lastDispatchDataType_ = static_cast<int32_t>(DataType);
+    if constexpr (DataType == DispatchDataType::FP8_E4M3) {
+      constexpr uint64_t NumScales = Hidden / ScaleBlockSize;
+      receipt->lastScaleStrideExpert_ = static_cast<uint64_t>(nRanks) * maxTokensPerRank * NumScales;
+      receipt->lastScaleStrideToken_ = NumScales;
+      receipt->lastScaleStrideKBlock_ = 1;
+      receipt->lastScaleContiguous_ = 1;
+    } else {
+      receipt->lastScaleStrideExpert_ = 0;
+      receipt->lastScaleStrideToken_ = 0;
+      receipt->lastScaleStrideKBlock_ = 0;
+      receipt->lastScaleContiguous_ = 0;
+    }
   }
 }
 

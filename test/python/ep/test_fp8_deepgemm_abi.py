@@ -39,7 +39,10 @@ def test_fp8_scale_layout_and_native_calls_fail_closed():
     frontend = _read("python/mscclpp/ep/low_latency.py")
     runtime = _read("src/ext/ep/ll_runtime.cc")
     assert "expected_shape = (self.num_local_experts, slots_per_expert, num_scales)" in frontend
-    assert "expected_stride = (num_scales * slots_per_expert, 1, slots_per_expert)" in frontend
+    dispatch = _read("src/ext/ep/low_latency/dispatch.cu")
+    assert "expected_stride = (slots_per_expert * num_scales, num_scales, 1)" in frontend
+    assert "scaleLocalExpertIdx) * nOutputSlotsPerExpert + scaleOutputTokenIdx" in dispatch
+    assert "receipt->lastScaleStrideKBlock_ = 1" in dispatch
     assert "hidden == hidden_ && numTopk == numTopk_" in runtime
     assert "dispatchLayout == DispatchLayout::EXPERT_MAJOR" in runtime
     assert "outputScales != nullptr" in runtime
@@ -55,3 +58,5 @@ def test_device_receipts_cover_graph_replay_without_host_callbacks():
     assert "receipt->fp8Dispatches_ += 1" in dispatch
     assert "executionReceipt_->combines_ += 1" in combine
     assert "ll_execution_receipt" in frontend
+    assert "receipt.last_scale_stride_kblock" in frontend
+    assert "receipt.last_scale_contiguous" in frontend

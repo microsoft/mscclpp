@@ -124,6 +124,10 @@ struct ExecutionReceipt {
   int32_t lastHidden_;
   int32_t lastScaleBlockSize_;
   int32_t lastDispatchDataType_;
+  uint64_t lastScaleStrideExpert_;
+  uint64_t lastScaleStrideToken_;
+  uint64_t lastScaleStrideKBlock_;
+  int32_t lastScaleContiguous_;
 };
 
 /// Per-call low-latency workload dimensions.

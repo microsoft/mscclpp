@@ -295,6 +295,16 @@ class LowLatencyBackend:
         receipt = self._runtime.cpp_runtime.ll_execution_receipt(cuda_stream_ptr(stream))
         if receipt.abi_version != FP8_DEEPGEMM_ABI:
             raise RuntimeError("invalid native FP8 DeepGEMM execution receipt")
+        if self.dispatch_data_type == DispatchDataType.FP8_E4M3 and receipt.dispatches:
+            num_scales = self.hidden_size // FP8_DEEPGEMM_SCALE_BLOCK_SIZE
+            expected_strides = (self.world_size * self.max_tokens_per_rank * num_scales, num_scales, 1)
+            observed_strides = (
+                receipt.last_scale_stride_expert,
+                receipt.last_scale_stride_token,
+                receipt.last_scale_stride_kblock,
+            )
+            if not receipt.last_scale_contiguous or observed_strides != expected_strides:
+                raise RuntimeError("native FP8 DeepGEMM receipt reports a non-contiguous scale layout")
         return receipt
 
     def dispatch(
@@ -459,14 +469,13 @@ class LowLatencyBackend:
                 scale_block_size = _dispatch_scale_block_size(self.dispatch_data_type)
                 if scale_block_size:
                     num_scales = self.hidden_size // scale_block_size
-                    scale_storage = torch.empty(
-                        (self.num_local_experts, num_scales, slots_per_expert),
+                    self._dispatch_scales = torch.empty(
+                        (self.num_local_experts, slots_per_expert, num_scales),
                         dtype=_dispatch_scale_dtype(self.dispatch_data_type),
                         device=device,
                     )
-                    self._dispatch_scales = scale_storage.transpose(1, 2)
                     expected_shape = (self.num_local_experts, slots_per_expert, num_scales)
-                    expected_stride = (num_scales * slots_per_expert, 1, slots_per_expert)
+                    expected_stride = (slots_per_expert * num_scales, num_scales, 1)
                     if (
                         self._dispatch_scales.dtype != torch.float32
                         or tuple(self._dispatch_scales.shape) != expected_shape

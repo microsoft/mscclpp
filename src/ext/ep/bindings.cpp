@@ -72,7 +72,11 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def_ro("abi_version", &mscclpp::ep::low_latency::ExecutionReceipt::abiVersion_)
       .def_ro("last_hidden", &mscclpp::ep::low_latency::ExecutionReceipt::lastHidden_)
       .def_ro("last_scale_block_size", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleBlockSize_)
-      .def_ro("last_dispatch_data_type", &mscclpp::ep::low_latency::ExecutionReceipt::lastDispatchDataType_);
+      .def_ro("last_dispatch_data_type", &mscclpp::ep::low_latency::ExecutionReceipt::lastDispatchDataType_)
+      .def_ro("last_scale_stride_expert", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleStrideExpert_)
+      .def_ro("last_scale_stride_token", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleStrideToken_)
+      .def_ro("last_scale_stride_kblock", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleStrideKBlock_)
+      .def_ro("last_scale_contiguous", &mscclpp::ep::low_latency::ExecutionReceipt::lastScaleContiguous_);
 
   nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
       .value("LOW_LATENCY", mscclpp::ep::MoEMode::LOW_LATENCY)
