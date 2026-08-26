@@ -241,6 +241,12 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                                        .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
+  // Reset the per-destination payload slot counter (workspace[0..numRanks_)) before
+  // every dispatch: publishDispatchPayloads only clears it for NVLink peers (it
+  // continues past the reset for cross-domain), so it otherwise accumulates across
+  // iterations and overruns the rank-major token buffer under an unthrottled
+  // CUDA-graph replay. Stream-ordered and graph-captured (one tiny memset per call).
+  CUDA_CHECK(cudaMemsetAsync(workspace_, 0, static_cast<size_t>(numRanks_) * sizeof(int), stream));
   low_latency::dispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, commContext_,
                         workspace_, numBlocks, stream);
