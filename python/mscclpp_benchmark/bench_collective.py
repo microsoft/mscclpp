@@ -273,8 +273,8 @@ def _dsl_candidate_specs(comm: Comm, collective: str) -> tuple[CandidateSpec, ..
 
     Unlike the native algorithms, DSL variant names are only known at runtime, so their specs cannot
     be listed statically. Each variant reports its own applicable message size range, which the usual
-    message size filter then applies, and pins the tuner to a single launch config because the plan
-    already bakes in its launch geometry.
+    message size filter then applies against the effective (whole buffer) size, and pins the tuner to
+    a single launch config because the plan already bakes in its launch geometry.
     """
     available = comm.algorithms.get(collective, {})
     specs: list[CandidateSpec] = []
@@ -306,6 +306,7 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
     nranks = getattr(comm_group, "nranks", 1) or 1
     nranks_per_node = getattr(comm_group, "nranks_per_node", nranks) or nranks
     n_nodes = nranks // nranks_per_node if nranks_per_node else 1
+    effective_message_size = _effective_message_size(case.collective, case.message_size, nranks)
     filtered_out = False
     for candidate in (
         *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
@@ -317,7 +318,7 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
         if not _candidate_supports_profile(candidate, profile):
             filtered_out = True
             continue
-        if not _candidate_supports_message_size(candidate, case.message_size):
+        if not _candidate_supports_message_size(candidate, effective_message_size):
             filtered_out = True
             continue
         if candidate.requires_nvls and not _mscclpp().is_nvls_supported():
@@ -345,6 +346,19 @@ def _candidate_supports_profile(candidate: CandidateSpec, profile: HardwareProfi
     if not sku or sku == "UNKNOWN":
         return True
     return sku in candidate.supported_skus
+
+
+def _effective_message_size(collective: str, message_size: int, nranks: int) -> int:
+    """Return the buffer size the executor validates against an algorithm's message size range.
+
+    Mirrors ``matchExecutionPlan`` in ``src/ext/nccl/algorithm_selector.cc`` and
+    ``ExecutionPlan::Impl::checkMessageSize``, which both compare the range against the whole buffer:
+    the output size for allgather and the input size otherwise. For allgather and reducescatter that
+    spans every rank, whereas ``case.message_size`` is only this rank's chunk.
+    """
+    if collective in (_ALLGATHER, _REDUCESCATTER):
+        return message_size * nranks
+    return message_size
 
 
 def _candidate_supports_message_size(candidate: CandidateSpec, message_size: int) -> bool:
