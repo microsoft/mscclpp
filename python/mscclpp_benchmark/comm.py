@@ -212,11 +212,7 @@ class Comm:
                     tags=tags,
                 )
                 compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
-                try:
-                    algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
-                except Exception as exc:
-                    logger.warning("Skipping DSL variant %s: %s: %s", spec.name, type(exc).__name__, exc)
-                    continue
+                algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
                 self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
                 self._dsl_algorithms.add(algorithm.name)
 
