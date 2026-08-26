@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/errors.hpp>
-
 #include <sstream>
 
 #include "../framework.hpp"
