@@ -212,6 +212,7 @@ def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedCon
         for raw_entry in raw_entries:
             if not isinstance(raw_entry, dict):
                 raise ValueError(f"Invalid tuned config entry for {collective}: {raw_entry!r}")
+            dtype = None if raw_entry.get("dtype") is None else str(raw_entry["dtype"])
             configs.append(
                 TunedConfigBySize(
                     message_size=_parse_positive_int(raw_entry.get("message_size"), "message_size"),
@@ -222,8 +223,8 @@ def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedCon
                         symmetric_memory=_optional_bool(raw_entry.get("symmetric_memory", False)),
                         time_us=_optional_float(raw_entry.get("time_us")),
                     ),
-                    dtype=None if raw_entry.get("dtype") is None else str(raw_entry["dtype"]),
-                    accum=None if raw_entry.get("accum") is None else str(raw_entry["accum"]),
+                    dtype=dtype,
+                    accum=dtype if raw_entry.get("accum") is None else str(raw_entry["accum"]),
                 )
             )
         result[str(collective)] = sorted(configs, key=lambda item: item.message_size)

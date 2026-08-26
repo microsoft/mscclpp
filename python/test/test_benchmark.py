@@ -147,3 +147,27 @@ def test_upsert_defaults_accum_to_dtype():
     config = store.select(profile, "allreduce", 1024, dtype="float16")
     assert config is not None
     assert config.algorithm == "fp16"
+
+
+def test_load_defaults_accum_to_dtype():
+    store = TunedConfigStore.from_payload(
+        {
+            "profiles": [
+                {
+                    "collectives": {
+                        "allreduce": [
+                            {
+                                "message_size": 1024,
+                                "algorithm": "fp16",
+                                "dtype": "float16",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    config = store.select(HardwareProfile(), "allreduce", 1024, dtype="float16")
+    assert config is not None
+    assert config.algorithm == "fp16"
