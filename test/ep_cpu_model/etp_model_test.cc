@@ -55,29 +55,72 @@ struct Config {
   EtpRankOrder order = EtpRankOrder::EP_MAJOR;
   EtpReduceMode reduceMode = EtpReduceMode::GROUP_REDUCE_SCATTER;
   EtpDispatchMode dispatchMode = EtpDispatchMode::LEADER_SINGLE_SEND;
+  // FP8-style payload: the token is sent quantized with one scale per
+  // scaleBlockSize hidden elements, and the receiver replicates the scale
+  // vector into the expert-major scale output.
+  bool quantized = false;
+  int scaleBlockSize = 4;
+
+  int numScales() const { return quantized ? hidden / scaleBlockSize : 0; }
 };
 
 // Deterministic routing/input shared by every configuration under test.
 struct Workload {
-  std::vector<std::vector<std::vector<float>>> tokens;   // [rank][token][hidden]
+  std::vector<std::vector<std::vector<float>>> tokens;   // [rank][token][hidden], quantized payload
+  std::vector<std::vector<std::vector<float>>> scales;   // [rank][token][numScales]
+  std::vector<std::vector<std::vector<float>>> dequant;  // [rank][token][hidden], tokens * scales
   std::vector<std::vector<std::vector<int>>> topkIdx;    // [rank][token][topk]
   std::vector<std::vector<std::vector<float>>> weights;  // [rank][token][topk]
   std::vector<std::vector<float>> w1;                    // [expert][intermediate * hidden]
   std::vector<std::vector<float>> w2;                    // [expert][intermediate * hidden]
 };
 
+/// Split a row into (quantized payload, per-block scales) the way FP8 E4M3
+/// dispatch does: one scale per scaleBlockSize elements, payload = value/scale.
+void quantizeRow(const std::vector<float>& row, int scaleBlockSize, std::vector<float>& payload,
+                 std::vector<float>& scales) {
+  const int numScales = static_cast<int>(row.size()) / scaleBlockSize;
+  payload.assign(row.size(), 0.0f);
+  scales.assign(numScales, 1.0f);
+  for (int block = 0; block < numScales; ++block) {
+    float maxAbs = 1e-4f;
+    for (int i = 0; i < scaleBlockSize; ++i) maxAbs = std::max(maxAbs, std::fabs(row[block * scaleBlockSize + i]));
+    const float scale = maxAbs / 8.0f;
+    scales[block] = scale;
+    for (int i = 0; i < scaleBlockSize; ++i) {
+      const int index = block * scaleBlockSize + i;
+      payload[index] = std::round(row[index] / scale);  // integer-valued payload
+    }
+  }
+}
+
 Workload makeWorkload(const Config& config, unsigned seed) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
   Workload workload;
   workload.tokens.resize(config.numRanks);
+  workload.scales.resize(config.numRanks);
+  workload.dequant.resize(config.numRanks);
   workload.topkIdx.resize(config.numRanks);
   workload.weights.resize(config.numRanks);
   for (int rank = 0; rank < config.numRanks; ++rank) {
     for (int token = 0; token < config.tokensPerRank; ++token) {
       std::vector<float> row(config.hidden);
       for (float& value : row) value = uniform(rng);
-      workload.tokens[rank].push_back(row);
+      if (config.quantized) {
+        std::vector<float> payload;
+        std::vector<float> scales;
+        quantizeRow(row, config.scaleBlockSize, payload, scales);
+        std::vector<float> dequantized(config.hidden);
+        for (int i = 0; i < config.hidden; ++i) dequantized[i] = payload[i] * scales[i / config.scaleBlockSize];
+        workload.tokens[rank].push_back(payload);
+        workload.scales[rank].push_back(scales);
+        workload.dequant[rank].push_back(dequantized);
+      } else {
+        workload.tokens[rank].push_back(row);
+        workload.scales[rank].push_back({});
+        workload.dequant[rank].push_back(row);
+      }
 
       std::vector<int> experts(config.numExperts);
       for (int expert = 0; expert < config.numExperts; ++expert) experts[expert] = expert;
@@ -133,7 +176,7 @@ std::vector<std::vector<std::vector<float>>> denseReference(const Config& config
       for (int k = 0; k < config.numTopk; ++k) {
         const int expert = workload.topkIdx[rank][token][k];
         const float weight = workload.weights[rank][token][k];
-        const std::vector<float> value = expertShard(config, workload, expert, workload.tokens[rank][token], 0, 1);
+        const std::vector<float> value = expertShard(config, workload, expert, workload.dequant[rank][token], 0, 1);
         for (int h = 0; h < config.hidden; ++h) combined[h] += weight * value[h];
       }
       out[rank].push_back(combined);
@@ -144,6 +187,7 @@ std::vector<std::vector<std::vector<float>>> denseReference(const Config& config
 
 struct Payload {
   std::vector<float> data;
+  std::vector<float> scales;
   std::vector<int> topkIdx;
   std::vector<float> topkWeights;
   int srcTokenGlobalIdx = -1;
@@ -195,6 +239,7 @@ std::vector<std::vector<std::vector<float>>> runConfig(const Config& config, con
           stats.maxSlot = std::max(stats.maxSlot, slot);
           Payload& payload = recvPayloads[dst][src][slot];
           payload.data = workload.tokens[src][token];
+          payload.scales = workload.scales[src][token];
           payload.topkIdx = workload.topkIdx[src][token];
           payload.topkWeights = workload.weights[src][token];
           payload.srcTokenGlobalIdx = src * maxTokens + token;
@@ -236,6 +281,13 @@ std::vector<std::vector<std::vector<float>>> runConfig(const Config& config, con
       numRanks, std::vector<std::vector<float>>(static_cast<size_t>(numLocalExperts) * slotsPerExpert));
   std::vector<std::vector<int>> expertInputExpert(
       numRanks, std::vector<int>(static_cast<size_t>(numLocalExperts) * slotsPerExpert, -1));
+  // Expert-major scale output, indexed exactly like
+  // dispatchRecvExpertMajorOutput(): (localExpert * numScales + s) * slots + row.
+  const int numScales = config.numScales();
+  std::vector<std::vector<float>> expertInputScales(
+      numRanks, std::vector<float>(static_cast<size_t>(numLocalExperts) * numScales * slotsPerExpert, 0.0f));
+  // (rank, rowOffset) -> (sourceRank, sourceToken), used to check the replication.
+  std::vector<std::map<int, std::pair<int, int>>> rowSource(numRanks);
   // rowOffsets[rank][combineRowOffsetIndex(src, slot, lane)]
   std::vector<std::vector<int>> rowOffsets(
       numRanks, std::vector<int>(static_cast<size_t>(numRanks) * maxTokens * numTopk, -1));
@@ -284,12 +336,28 @@ std::vector<std::vector<std::vector<float>>> runConfig(const Config& config, con
           expertInput[rank][rowOffset] = payload.data;
           expertInputExpert[rank][rowOffset] = expert;
           rowOffsets[rank][offsetIndex] = rowOffset;
+          rowSource[rank][rowOffset] = {src, payload.srcTokenGlobalIdx - src * maxTokens};
+          for (int scaleIdx = 0; scaleIdx < numScales; ++scaleIdx) {
+            const size_t scaleOffset =
+                (static_cast<size_t>(localExpert) * numScales + scaleIdx) * slotsPerExpert + row;
+            if (scaleOffset >= expertInputScales[rank].size()) {
+              std::fprintf(stderr, "scale index overflow: rank=%d offset=%zu\n", rank, scaleOffset);
+              std::abort();
+            }
+            expertInputScales[rank][scaleOffset] = payload.scales[scaleIdx];
+          }
         }
       }
     }
   }
 
   // Every ETP rank of a group must have received exactly the same token set.
+  //
+  // Corollary used by test_latency_multirank.py: a per-rank reconstruction of a
+  // dispatched row exists on exactly etpSize ranks, so summing those
+  // reconstructions across the world counts each row etpSize times unless one
+  // rank per group is selected. Getting that wrong makes the *reference*
+  // etpSize x too large (measured: max diff 474 at ETP=2, 1422 at ETP=4).
   for (int rank = 0; rank < numRanks; ++rank) {
     const int peer = topology.rankOf(topology.epIndex(rank), 0);
     std::multiset<int> mine(receivedTokens[rank].begin(), receivedTokens[rank].end());
@@ -299,15 +367,87 @@ std::vector<std::vector<std::vector<float>>> runConfig(const Config& config, con
       std::abort();
     }
   }
+  for (int src = 0; src < numRanks; ++src) {
+    for (int token = 0; token < config.tokensPerRank; ++token) {
+      const int globalToken = src * maxTokens + token;
+      int holders = 0;
+      for (int rank = 0; rank < numRanks; ++rank) {
+        holders += static_cast<int>(std::count(receivedTokens[rank].begin(), receivedTokens[rank].end(), globalToken));
+      }
+      const std::set<int> groups = [&] {
+        std::set<int> result;
+        for (int k = 0; k < config.numTopk; ++k) {
+          result.insert(maps[src].group(workload.topkIdx[src][token][k]));
+        }
+        return result;
+      }();
+      const int expected = static_cast<int>(groups.size()) * config.etpSize;
+      if (holders != expected) {
+        std::fprintf(stderr, "token %d of rank %d is held by %d ranks, expected %d\n", token, src, holders, expected);
+        std::abort();
+      }
+    }
+  }
+
+  // Every replicated scale must belong to the row's own source token: this is
+  // what a scale vector resolved against the wrong rank would break.
+  for (int rank = 0; rank < numRanks; ++rank) {
+    const ExpertMap& map = maps[rank];
+    for (const auto& entry : rowSource[rank]) {
+      const int row = entry.first;
+      const int localExpert = row / slotsPerExpert;
+      const int rowInExpert = row % slotsPerExpert;
+      const int src = entry.second.first;
+      const int token = entry.second.second;
+      for (int scaleIdx = 0; scaleIdx < numScales; ++scaleIdx) {
+        const size_t scaleOffset =
+            (static_cast<size_t>(localExpert) * numScales + scaleIdx) * slotsPerExpert + rowInExpert;
+        if (expertInputScales[rank][scaleOffset] != workload.scales[src][token][scaleIdx]) {
+          std::fprintf(stderr, "rank %d row %d has the wrong FP8 scale for source %d token %d block %d\n", rank, row,
+                       src, token, scaleIdx);
+          std::abort();
+        }
+      }
+      (void)map;
+    }
+  }
 
   // --- expert compute (ETP-sharded FFN) ------------------------------------
+  // The expert input is dequantized with the replicated per-block scales, so a
+  // mismatched scale vector shows up as a wrong expert output.
   std::vector<std::vector<std::vector<float>>> expertOutput(
       numRanks, std::vector<std::vector<float>>(static_cast<size_t>(numLocalExperts) * slotsPerExpert));
+  std::map<std::pair<int, int>, std::vector<std::vector<float>>> groupDequantized;  // (epIndex, srcTokenGlobalIdx)
   for (int rank = 0; rank < numRanks; ++rank) {
     for (size_t row = 0; row < expertInput[rank].size(); ++row) {
       if (expertInputExpert[rank][row] < 0) continue;
-      expertOutput[rank][row] = expertShard(config, workload, expertInputExpert[rank][row], expertInput[rank][row],
+      std::vector<float> dequantized = expertInput[rank][row];
+      if (numScales > 0) {
+        const int localExpert = static_cast<int>(row) / slotsPerExpert;
+        const int rowInExpert = static_cast<int>(row) % slotsPerExpert;
+        for (int h = 0; h < config.hidden; ++h) {
+          const int scaleIdx = h / config.scaleBlockSize;
+          const size_t scaleOffset =
+              (static_cast<size_t>(localExpert) * numScales + scaleIdx) * slotsPerExpert + rowInExpert;
+          dequantized[h] *= expertInputScales[rank][scaleOffset];
+        }
+      }
+      const auto& source = rowSource[rank].at(static_cast<int>(row));
+      const std::pair<int, int> key{topology.epIndex(rank), source.first * maxTokens + source.second};
+      groupDequantized[key].push_back(dequantized);
+      expertOutput[rank][row] = expertShard(config, workload, expertInputExpert[rank][row], dequantized,
                                             topology.tpIndex(rank), config.etpSize);
+    }
+  }
+
+  // Every ETP rank of a group must dequantize a shared token identically.
+  for (const auto& entry : groupDequantized) {
+    for (size_t i = 1; i < entry.second.size(); ++i) {
+      if (entry.second[i] != entry.second[0]) {
+        std::fprintf(stderr, "EP group %d dequantized source token %d differently across ETP ranks\n",
+                     entry.first.first, entry.first.second);
+        std::abort();
+      }
     }
   }
 
@@ -476,6 +616,10 @@ void checkBufferSizes(const Config& config, const Stats& stats) {
   std::printf("  buffer sizes ok (symmetric %zu B, workspace %zu B)\n", symmetricBytes, workspace);
 }
 
+const char* quantName(bool quantized) { return quantized ? "fp8-style" : "bf16-style"; }
+
+void runMatrix(const Config& baseline);
+
 const char* reduceName(EtpReduceMode mode) {
   switch (mode) {
     case EtpReduceMode::SOURCE_SIDE:
@@ -490,13 +634,24 @@ const char* reduceName(EtpReduceMode mode) {
 }  // namespace
 
 int main() {
-  const Config baseline;  // 16 ranks, ETP=4
+  for (bool quantized : {false, true}) {
+    Config baseline;  // 16 ranks, ETP=4
+    baseline.quantized = quantized;
+    runMatrix(baseline);
+  }
+  std::printf("all ETP model checks passed\n");
+  return 0;
+}
+
+namespace {
+
+void runMatrix(const Config& baseline) {
   const Workload workload = makeWorkload(baseline, 1234u);
 
   Config plain = baseline;
   plain.etpSize = 1;
   Stats plainStats;
-  std::printf("EP=%d ETP=1 (reference run)\n", plain.numRanks);
+  std::printf("[%s] EP=%d ETP=1 (reference run)\n", quantName(baseline.quantized), plain.numRanks);
   const auto plainOutput = runConfig(plain, workload, plainStats);
   checkBufferSizes(plain, plainStats);
   const auto reference = denseReference(plain, workload);
@@ -513,7 +668,8 @@ int main() {
           config.reduceMode = reduceMode;
           config.dispatchMode = dispatchMode;
           if (config.intermediate % etpSize != 0) continue;
-          std::printf("EP=%d ETP=%d order=%s reduce=%s dispatch=%s\n", config.numRanks / etpSize, etpSize,
+          std::printf("[%s] EP=%d ETP=%d order=%s reduce=%s dispatch=%s\n", quantName(config.quantized),
+                      config.numRanks / etpSize, etpSize,
                       order == EtpRankOrder::EP_MAJOR ? "EP_MAJOR" : "TP_MAJOR", reduceName(reduceMode),
                       dispatchMode == EtpDispatchMode::LEADER_SINGLE_SEND ? "LEADER" : "DUPLICATE");
           Stats stats;
@@ -525,6 +681,6 @@ int main() {
       }
     }
   }
-  std::printf("all ETP model checks passed\n");
-  return 0;
 }
+
+}  // namespace

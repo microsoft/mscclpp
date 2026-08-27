@@ -406,13 +406,23 @@ def reconstruct_expert_major_reference(
     dequantized_x,
     group,
     ep_index=None,
+    tp_index=0,
 ):
+    """Rebuild each source token's dispatched (dequantized) payload.
+
+    The per-rank contributions are summed with an all-reduce, so every
+    (source rank, token) row must be written by exactly one rank. Under ETP all
+    ``etp_size`` ranks of an EP group hold the same rows for the same experts,
+    so only ``tp_index == 0`` contributes; otherwise the reference would come
+    out ``etp_size`` times too large.
+    """
     ep_index = rank if ep_index is None else ep_index
     int_mask = (1 << 32) - 1
     first_expert = all_topk_idx.gather(-1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)).squeeze(-1)
     first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
     dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    for local_expert_idx in range(num_local_experts):
+    contributing_local_experts = num_local_experts if tp_index == 0 else 0
+    for local_expert_idx in range(contributing_local_experts):
         expert_id = ep_index * num_local_experts + local_expert_idx
         recv_layout_range = packed_recv_layout_range[local_expert_idx]
         for source_rank in range(num_ranks):
@@ -744,6 +754,7 @@ def main():
                 rank=rank,
                 num_ranks=num_ranks,
                 ep_index=ep_index,
+                tp_index=tp_index,
                 num_tokens=num_tokens,
                 hidden=hidden,
                 num_local_experts=num_local_experts,
