@@ -59,6 +59,15 @@ class MoECommunicatorConfig:
     ep_size: Optional[int] = None
     etp_rank_order: EtpRankOrder = EtpRankOrder.EP_MAJOR
     etp_reduce_mode: EtpReduceMode = EtpReduceMode.GROUP_REDUCE_SCATTER
+    # LEADER_SINGLE_SEND (default) keeps the all-to-all at 1x the token volume
+    # and pulls the missing rows from an ETP peer over NVLink; DUPLICATE_SEND
+    # sends etp_size copies and keeps every receive/combine read local. They
+    # are numerically equivalent. Measured on 16 GB200 GPUs in one NVLink
+    # domain (EP=4/ETP=4, 128 tokens, hidden 7168, top-k 8, 256 experts):
+    # single-send 82.0 us dispatch / 117.7 us combine, duplicate 87.6 / 93.1,
+    # i.e. duplicate_send is ~10% faster end to end intra-domain. Prefer the
+    # default when the all-to-all volume is the scarce resource (any path that
+    # leaves the NVLink domain). One shape only; see IMPLEMENTATION.md.
     etp_dispatch_mode: EtpDispatchMode = EtpDispatchMode.LEADER_SINGLE_SEND
 
     # Model shape and capacity

@@ -34,11 +34,30 @@ enum class EtpReduceMode {
 };
 
 /// How dispatch replicates a routed token across the ETP ranks of an EP group.
+///
+/// The two modes are numerically equivalent; they trade all-to-all volume
+/// against receive-side synchronization:
+///
+/// * LEADER_SINGLE_SEND keeps the all-to-all at 1x the token volume, which is
+///   what matters as soon as any part of it leaves the NVLink domain, but the
+///   receiving ranks must wait for, and read from, an ETP peer.
+/// * DUPLICATE_SEND writes etpSize copies and keeps every receive- and
+///   combine-side read local.
+///
+/// Measured on 16 GB200 GPUs in one NVLink domain (EP=4, ETP=4, 128 tokens,
+/// hidden 7168, top-k 8, 256 experts, medians of 3):
+/// LEADER_SINGLE_SEND 82.0 us dispatch / 117.7 us combine (199.7 total),
+/// DUPLICATE_SEND 87.6 / 93.1 (180.7 total) -- i.e. duplicate-send is ~10 %
+/// faster end to end when the whole world is one NVLink domain, while
+/// single-send is faster on dispatch alone. Pick DUPLICATE_SEND for
+/// domain-local deployments that are combine-bound; keep the default when the
+/// all-to-all volume is the scarce resource. Only one shape has been measured.
 enum class EtpDispatchMode {
   /// Send once to the group member with the sender's tpIndex; peers pull the
-  /// row over NVLink while receiving (design B2).
+  /// row over NVLink while receiving (design B2). Default: 1x a2a volume.
   LEADER_SINGLE_SEND,
   /// Send one copy to every ETP rank of the destination group (design A).
+  /// etpSize x a2a volume, but no peer reads on the receive/combine path.
   DUPLICATE_SEND
 };
 

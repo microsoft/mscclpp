@@ -23,6 +23,10 @@ single-send to the same-`tpIndex` leader (option B), fused peer pull inside `dis
 | `b539c806` | 4 | Combine under ETP: `GROUP_REDUCE_SCATTER` (default, 3-phase) and `SOURCE_SIDE` fallback; `GROUP_NVLS` rejected stub. |
 | `cfee2e95` | 5 | CPU dataflow model, Python multirank test ETP cases, benchmark `--etp*` flags. |
 | `df7283a7` | — | Restore the send-side TMA/atomic overlap for the default path; add nvcc-free check tooling. |
+| `b57a1f39` | — | First IMPLEMENTATION.md. |
+| `5b0b1e37` | post-HW | Unit test uses the repo test framework instead of the unvendored gtest (fixes `-DMSCCLPP_BUILD_TESTS=ON`). |
+| `35a989ff` | post-HW | FP8+ETP fix: the test's FP8 reference double-counted EP-group ranks; CPU model extended to FP8-style scales (§4.3). |
+| this commit | post-HW | Document the measured A-vs-B2 inversion at the API level and refresh the verification status. |
 
 ---
 
@@ -120,6 +124,9 @@ single-send to the same-`tpIndex` leader (option B), fused peer pull inside `dis
 
 ## 3. Why `etpSize == 1` is unchanged
 
+Proven on hardware: this branch at ETP=1 is **bit-exact against the base commit** (max diff 0.0) across
+the 6 base configurations. The algebraic argument below is why.
+
 Every ETP expression degenerates algebraically:
 
 | Expression | `etpSize == 1` |
@@ -151,78 +158,163 @@ Numerics for `etpSize == 1` are untouched: no accumulation order changed.
 
 ---
 
-## 4. Verification performed (and what was *not* possible)
+## 4. Verification status
 
-**No GPU and no `nvcc` on this host** (`nvidia-smi` absent; the PyPI `nvidia-cuda-nvcc-cu12` wheels
-ship only `ptxas`, no compiler driver). Therefore **the CUDA device code has not been compiled**.
-That is the single largest gap in this handoff — treat a clean `nvcc` build as the first GPU-side step.
+### 4.1 Verified on hardware (16x GB200, 4 nodes, one NVLink domain, sm_100a)
 
-What *was* verified:
+Run by the GPU worker; evidence in `/home/changhohwang/one/mscclpp-etp-runs/`
+(`raw/matrix.tsv`, `BASELINE.md`, `ETP-BUILD.md`, `logs/`).
 
-1. **Topology index math** — `test/unit/ep_topology_tests.cc` (gtest, host-only) plus an equivalent
-   standalone run here: EP×ETP is a bijection for both rank orders, the leader of an expert is always
-   in the expert's group and shares the sender's `tpIndex` (so the a2a is a permutation and each
-   group member leads exactly `numRanks/etpSize` sources), expert ownership is group-wide, and
-   `etpSize == 1` reproduces `expert / nLocalExperts`. **Passed.**
-2. **CPU dataflow model** — `test/ep_cpu_model/etp_model_test.cc` replays the kernels' index algebra
-   using the *real* `ExpertMap` / `MoETopology` / `WorkspaceView` / `LatencyStorageLayout` headers for
-   16 ranks and 24 configurations (`etpSize ∈ {2,4,8}` × `{EP_MAJOR, TP_MAJOR}` ×
-   `{GROUP_REDUCE_SCATTER, SOURCE_SIDE}` × `{LEADER_SINGLE_SEND, DUPLICATE_SEND}`), checking:
-   ETP output == `etpSize=1` output == dense single-GPU reference (max abs diff ≤ 1.5e-6 in fp32),
-   every ETP rank of a group receives the same token multiset, and no slot / metadata slot /
-   workspace row-offset / expert-major row escapes its buffer. **Passed** (`all ETP model checks
-   passed`). This model already caught one real bug: `DUPLICATE_SEND + GROUP_REDUCE_SCATTER` staged
-   partials to `tpPeer_` (= self) instead of the group's reduce-scatter leader; fixed by
-   `ExpertMap::groupLeaderFor()`.
-3. **Host syntax/type check** — `tools/host_syntax_check.sh`: `config.hpp`, `expert_map.hpp`,
-   `common/latency.cuh`, `combine/common.cuh` compile clean with `g++ -fsyntax-only`.
-   `dispatch/common.cuh` fails on `mscclpp::to<>` inside the untouched `common/quantization.cuh`
-   (device-only API) — reproduced identically on the unmodified base commit, i.e. pre-existing.
-   Note that device bodies guarded by `MSCCLPP_BULK_AVAILABLE` are compiled *out* in this mode, so
-   this check covers host paths and signatures, not the device bodies.
-4. **Python** — all touched modules parse (`ast.parse`); no runtime execution (torch is not installed
-   here).
-5. **Code review** of every changed site against the report's design.
+| Item | Result |
+|---|---|
+| Compile for sm_100a | clean, zero warnings, zero register spills |
+| Base `feature/ep`, EP=16, 6 configurations | 6/6 pass |
+| This branch at ETP=1 vs base | **bit-exact, max diff 0.0** — the "`etpSize=1` unchanged" claim is proven |
+| ETP=1 performance | dispatch 36.8 µs vs base 38.1, combine 39.4 vs 38.3 — within repeat spread; the +8…+13 register increase costs nothing measurable |
+| EP=4 / ETP=4, BF16 | pass: default, `--etp-reduce-mode source_side`, `--etp-dispatch-mode duplicate_send` |
+| ETP=2 and ETP=8, BF16 | pass |
+| Declared gaps (THROUGHPUT ETP, RANK_MAJOR ETP, DIRECT_SEND ETP) | all rejected cleanly |
+| **FP8 + ETP>1** | **failed** (`max diff=1422.0`) — root-caused as a test-reference bug and fixed, see §4.3; **needs re-validation** |
 
-Unverified (needs a GPU):
-* that the CUDA sources compile at all (see above);
-* every runtime/synchronization property: the third-party visibility of `sender → leader` payload
-  writes observed by a non-leader ETP peer after the sender's `signal()` (guarded by
-  `__threadfence_system()` before the release, mirroring the existing peer-read pattern in
-  `recvRankMajorRemotePartialsTma`), TMA reads of a peer's receive buffer, the extra
-  `exchangeCombineReady` round, shared-memory budgets, occupancy, and performance;
-* BF16 accumulation tolerances of the new group reduction on real data.
+Measured cost of ETP=4 vs EP=16 at the same total token count: dispatch 2.2×,
+combine 3.1×, with per-rank bandwidth up 1.7–1.8× (each rank handles `ETP×` the
+token volume for its group).
+
+### 4.2 Verified without a GPU (this host: no GPU, no `nvcc`)
+
+* **Topology index math** — `test/unit/ep_topology_tests.cc`: EP×ETP is a bijection for both rank
+  orders; the leader of an expert is in the expert's group and shares the sender's `tpIndex`; expert
+  ownership is group-wide; `etpSize == 1` reproduces `expert / nLocalExperts`. (The GPU worker also
+  ran this after the gtest include fix.)
+* **CPU dataflow model** — `test/ep_cpu_model/etp_model_test.cc` replays the kernels' index algebra
+  with the real `ExpertMap` / `MoETopology` / `WorkspaceView` / `LatencyStorageLayout` headers for 16
+  ranks over **48** configurations: `{bf16-style, fp8-style}` × `etpSize ∈ {2,4,8}` ×
+  `{EP_MAJOR, TP_MAJOR}` × `{GROUP_REDUCE_SCATTER, SOURCE_SIDE}` ×
+  `{LEADER_SINGLE_SEND, DUPLICATE_SEND}`. Checks: ETP output == `etpSize=1` output == dense
+  single-GPU reference (≤1.5e-6 fp32); every ETP rank of a group receives the same token multiset;
+  each dispatched token is held by exactly `numGroups * etpSize` ranks; no slot / metadata slot /
+  workspace row-offset / expert-major row escapes its buffer; and, for the FP8-style payload, every
+  replicated scale belongs to its own row's source token and ETP peers dequantize a shared token
+  identically. **Passes.** This model caught the `groupLeaderFor` bug before hardware.
+* **Host syntax/type check** — `tools/host_syntax_check.sh`: `config.hpp`, `expert_map.hpp`,
+  `common/latency.cuh`, `combine/common.cuh` clean. `dispatch/common.cuh` fails only on the
+  device-only `mscclpp::to<>` in the untouched `common/quantization.cuh` — identical on the base
+  commit. Device bodies guarded by `MSCCLPP_BULK_AVAILABLE` are compiled out in this mode.
+
+### 4.3 The FP8 + ETP>1 failure: root cause and fix
+
+Reported as `AssertionError: LL rank-local combine mismatch; max diff=1422.0` for every FP8 run with
+`etpSize > 1`.
+
+**It is a bug in the test's reference, not in the kernels.** `reconstruct_expert_major_reference()`
+(used only on the FP8 path; BF16 compares against `x` directly) rebuilds each source token's
+dispatched payload per rank and sums the per-rank reconstructions with `dist.all_reduce`. Under ETP
+all `etp_size` ranks of an EP group own the same experts and hold the same rows, so each row was
+counted `etp_size` times and the *reference* was `etp_size×` too large.
+
+Evidence:
+
+1. `diff = (etp_size - 1) * max|true|`. Measured 474.0 at ETP=2 and 1422.0 at ETP=4 — exactly 3.0×,
+   which is `(4-1)/(2-1)` with the same `max|true| = 474.0` in both runs (same seed, same routing).
+   No kernel defect produces that exact algebraic signature.
+2. Identical failure value for `source_side` / `group_reduce_scatter` / `duplicate_send`, and BF16
+   passing: all three follow from the defect living in the shared FP8 reference path.
+3. Dispatch validation passes, and it compares the received FP8 block scales at `rtol=1e-6` per rank.
+
+**The reported hypothesis (combine dequantizes group-peer rows with the wrong rank's scales) is
+refuted**: combine never touches scales — its input is the caller's BF16 expert output — and
+`dispatchRecvExpertMajorOutput` replicates the scale vector from the payload it is copying into that
+same rank's own output row, so it cannot pick up a peer's scales. The extended CPU model now covers
+exactly this path (FP8-style payload, replicated scales, dequantization before the expert compute)
+across all 24 ETP configurations and passes.
+
+Fix: only `tp_index == 0` of each EP group contributes to the all-reduced reference (no-op at
+`etp_size == 1`), plus the FP8 coverage in the CPU model. Commit `35a989ff`.
+
+### 4.4 Still unverified
+
+* **FP8 + ETP after the fix** — needs a hardware re-run (`--dispatch-dtype fp8_e4m3 --etp-size 4`).
+* **Shape coverage** — everything above was measured at a single shape: 128 tokens / hidden 7168 /
+  top-k 8 / 256 experts. No token-count, hidden, top-k or expert-count sweep exists.
+* **Backend comparison** — `run_ep_bench_python.py` never ran: the sglang container image lacks
+  `mpi4py`. DeepEP / NCCL / FlashInfer comparisons are unmeasured, as are the `--etp*` benchmark
+  flags themselves.
+* **Internode ETP** — blocked by the missing IB path for EP; these nodes have no IB path for EP either,
+  so the B2 volume argument is untested in the regime where it should matter.
+* **`GROUP_NVLS`** — not implemented.
+* **CUDA-graph capture under ETP** — only exercised at ETP=1.
 
 ---
 
-## 5. Known gaps / TODO
+## 5. Design finding: duplicate-send (option A) beats the fused peer pull (B2) intra-domain
+
+The design report recommends option B2 (single send to the same-`tpIndex` leader plus a fused NVLink
+peer pull) over option A (duplicate send). **The hardware says the opposite for a domain-local world.**
+
+16× GB200, one NVLink domain, EP=4/ETP=4, 128 tokens / hidden 7168 / top-k 8 / 256 experts, medians of
+3 repeats:
+
+| Mode | dispatch µs | combine µs | total µs |
+|---|---|---|---|
+| `LEADER_SINGLE_SEND` (B2, default) | **82.0** | 117.7 | 199.7 |
+| `DUPLICATE_SEND` (A) | 87.6 | **93.1** | **180.7** |
+
+Option A loses 7 % on dispatch (it writes `etpSize×` the bytes) and wins 21 % on combine, for ~10 %
+end to end. The report predicted the two would be roughly equal on intra-node byte count; it did not
+price the receive-side cost of B2.
+
+Likely mechanism, from the code rather than from a profile: under B2 every combine phase-A iteration
+reads the token's top-k weights and `srcTokenGlobalIdx` **from the ETP peer's dispatch receive
+buffer** (`sendRankReducedPartials`, per token, on the critical path), and the receive scheduler waits
+on `etpSize×` more ready epochs. Under A all of that is local. This is a latency effect, not a
+bandwidth effect, which is why it shows up in combine rather than dispatch.
+
+**Recommendation (for Pione to decide, not applied):** keep `LEADER_SINGLE_SEND` as the default.
+Reasons: it is the only mode whose all-to-all volume stays at 1× — decisive the moment any part of the
+a2a leaves the NVLink domain, which is the stated direction of travel; the measurement is a single
+shape on one topology; and the gap looks addressable rather than intrinsic. Concrete follow-up that
+would likely erase most of the 21 %: cache the per-token `srcTokenGlobalIdx` and top-k weights into
+the local workspace during `dispatchRecvWorker` (which already reads them) next to
+`dispatchCombineRowOffsets_`, so combine phase A becomes fully local under B2 too. That is a contained
+change, but it is unvalidatable here, so it is not in this branch.
+
+Meanwhile the tradeoff is now explicit at the API level: the measured numbers and the selection criterion are
+documented on `EtpDispatchMode` (`include/mscclpp/ext/ep/types.hpp`) and on
+`MoECommunicatorConfig.etp_dispatch_mode` (`python/mscclpp/ep/types.py`), and both modes are selectable
+from the tests and the benchmark.
+
+---
+
+## 6. Known gaps / TODO
 
 1. **THROUGHPUT mode has no ETP.** `etpSize > 1` is rejected in `MoERuntime`, `throughput.py`, the
-   benchmark and the intranode test. Only the de-hardcoding (report stage 2) landed there.
+   benchmark and the intranode test (verified rejecting on hardware). Only the de-hardcoding landed there.
 2. **LATENCY `RANK_MAJOR` and `DIRECT_SEND` have no ETP** (report stage 3): rejected by host asserts
-   and by `latency.py`.
-3. **`EtpReduceMode::GROUP_NVLS` is a stub** — rejected at construction. Implementing it needs
+   and by `latency.py` (verified rejecting on hardware).
+3. **`EtpReduceMode::GROUP_NVLS` is a stub** — rejected at construction. Needs
    `connectNvlsCollective(comm, tpPeerRanks, bytes)` per TP group in `LatencyContext::initialize`, a
    `SwitchChannelDeviceHandle` in `DeviceContext`, and `multimem.ld_reduce` in place of the phase-B sum.
-4. **FP8 dispatch under ETP is untested.** The code path is shared with BF16 (scales live in the
-   payload and are replicated by the receiver), so it should work, but the CPU model only covers the
-   BF16 data flow, and the Python ETP case defaults to BF16.
+4. **FP8 + ETP is fixed but not re-validated on hardware** (§4.3). The kernel path is covered by the
+   CPU model; the hardware run is pending.
 5. **ETP requires a fixed `maxTokensPerRank`** between dispatch and combine (asserted), because the
    row-offset workspace array is laid out with the active capacity. Expert-major already forbids a
    per-call capacity override.
-6. **ETP requires the whole world in one IPC domain** (asserted). Internode ETP is blocked by the
-   same missing IB path as internode EP.
+6. **ETP requires the whole world in one IPC domain** (asserted). Internode ETP is blocked by the same
+   missing IB path as internode EP.
 7. **`num_blocks` lower bound is still `world_size + 2`**, not `ep_size + 2`: the receive scheduler
-   still enumerates all `numRanks` sources under design B2, so worker blocks ≥ `numRanks` is still
-   required. The report's suggested relaxation does not apply to B2.
-8. **Dispatch metadata under `DUPLICATE_SEND` costs `etpSize×` slots** (`numRanks * nEPG`), which is
-   reflected in the symmetric buffer size at construction time.
-9. `MoECommunicatorConfig.num_local_experts` / `local_expert_start` are still advisory on the C++
-   side (open question 7 of the report is unresolved); they are now validated against the EP group.
+   still enumerates all `numRanks` sources under design B2, so worker blocks ≥ `numRanks` is required.
+   The report's suggested relaxation does not apply to B2.
+8. **Dispatch metadata under `DUPLICATE_SEND` costs `etpSize×` slots** (`numRanks * nEPG`), reflected
+   in the symmetric buffer size at construction time. Measured peak memory at ETP=4 duplicate_send:
+   ~9.2 GiB per rank at this shape.
+9. **B2 combine reads peer payload metadata per token** — the likely cause of the A-vs-B2 gap (§5) and
+   the recommended follow-up optimization.
+10. `MoECommunicatorConfig.num_local_experts` / `local_expert_start` are still advisory on the C++ side
+    (report open question 7); they are now validated against the EP group.
 
 ---
 
-## 6. Commands for the GPU worker (16 GPUs)
+## 7. Commands for the GPU worker (16 GPUs)
 
 Build (any node with the 16-GPU harness):
 
@@ -230,14 +322,16 @@ Build (any node with the 16-GPU harness):
 cd mscclpp-etp-impl
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=OFF -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j
-# unit tests include the new host-side topology test:
-./build/test/unit_tests --gtest_filter='EpTopology*'
+# unit tests include the host-side topology test (repo framework, not gtest):
+cmake -B build-tests -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_BUILD_EXT_EP=ON
+cmake --build build-tests -j --target unit_tests
+./build-tests/test/unit_tests
 ```
 
 Nvcc-free pre-checks (also runnable anywhere):
 
 ```bash
-CUDA_INCLUDE=/usr/local/cuda/include ./tools/host_syntax_check.sh          # dispatch/common.cuh fails pre-existing, see §4
+CUDA_INCLUDE=/usr/local/cuda/include ./tools/host_syntax_check.sh          # dispatch/common.cuh fails pre-existing, see §4.2
 CUDA_INCLUDE=/usr/local/cuda/include ./test/ep_cpu_model/run_etp_model_test.sh
 ```
 
@@ -262,6 +356,8 @@ MSCCLPP_EP_ETP=4 torchrun --nproc_per_node=16 test/python/ep/test_intranode_mult
 Compare the latency numbers against the `feature/ep` baseline; ETP=1 should be within noise.
 
 ### ETP: EP=4, ETP=4 (the target configuration)
+
+The FP8 case below is the re-validation of the §4.3 fix and is the highest-priority run.
 
 ```bash
 # default: leader single-send + TP-group reduce-scatter
@@ -299,11 +395,12 @@ mpirun -n 16 python test/python/ep/run_ep_bench_python.py --backends mscclpp \
 The A-vs-B comparison of the report (§2.4) is the last two commands: identical results, different
 NVLink traffic shape (single send + peer pull vs `etpSize` writes).
 
-### What to report back
+### What to report back (second round)
 
-* whether `nvcc` compiles the branch cleanly (and any errors — they are unverified here);
-* ETP=1 regression pass/fail plus latency deltas vs the `feature/ep` baseline;
-* ETP=4 correctness (the tests assert `max|got-expected|` bounds and print it);
-* whether `--etp-reduce-mode source_side` and `--etp-dispatch-mode duplicate_send` agree with the
-  default within tolerance;
-* dispatch/combine latency for EP=4/ETP=4 vs EP=16/ETP=1 at equal token counts.
+* **FP8 + ETP=2/4/8 after the fix** — the primary question;
+* that `-DMSCCLPP_BUILD_TESTS=ON` builds and `unit_tests` runs the `EpTopology` cases;
+* that ETP=1 is still bit-exact against the base;
+* any shape sweep that can be afforded (token count, hidden, top-k, expert count) — everything so far
+  is one shape, 128/7168/8/256;
+* if `mpi4py` can be added to the image, `run_ep_bench_python.py` with and without `--etp` for the
+  DeepEP/NCCL/FlashInfer comparison.
