@@ -11,6 +11,7 @@
 
 #include "config.hpp"
 #include "device_helpers.cuh"
+#include "expert_map.hpp"
 #include "kernels.hpp"
 
 namespace mscclpp {
@@ -53,8 +54,16 @@ struct TransportView {
   }
 };
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
-  return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
+/// Size of the dispatch metadata header: one LL8 packet per source rank plus
+/// one per (source, group-local expert) pair. Equals the pre-ETP
+/// `nRanks + nExperts` layout when etpSize == 1.
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int numExpertSlots) {
+  return configAlign<size_t>(static_cast<size_t>(nRanks + numExpertSlots) * sizeof(mscclpp::LL8Packet),
+                             BufferAlignmentBytes);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(const ExpertMap& map) {
+  return dispatchMetadataBytes(map.numRanks(), map.metadataExpertSlots());
 }
 
 template <DispatchDataType DataType>
@@ -118,7 +127,7 @@ struct WorkspaceView {
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
 
-  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
+  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int numExpertCopySlots) {
     auto* cursor = reinterpret_cast<int*>(workspace);
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
@@ -126,7 +135,7 @@ struct WorkspaceView {
     cursor += nRanks;
     dispatchLocalPayloadReady_ = reinterpret_cast<mscclpp::DeviceSemaphore*>(cursor++);
     dispatchExpertCopiedCounts_ = cursor;
-    cursor += nExperts;
+    cursor += numExpertCopySlots;
     dispatchRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
     dispatchRecvTasks_ = reinterpret_cast<RecvTask*>(cursor);
@@ -141,11 +150,18 @@ struct WorkspaceView {
     rankMajorSendIndices_ = cursor;
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
-           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
-           sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
-           static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
+  /// Workspace view constructed from the expert map; `numExpertCopySlots` is
+  /// nRanks * (numExperts / epSize), which is numExperts when etpSize == 1.
+  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, const ExpertMap& map)
+      : WorkspaceView(workspace, map.numRanks(), map.numRanks() * map.numLocalExperts()) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk,
+                                                    int epSize) {
+    const size_t numExpertCopySlots = static_cast<size_t>(nRanks) * (nExperts / epSize);
+    return static_cast<size_t>(nRanks) * sizeof(int) +          // dispatchRankPayloadSlots_
+           static_cast<size_t>(nRanks) * sizeof(int) +          // dispatchRankPayloadCompletions_
+           sizeof(mscclpp::DeviceSemaphore) +                   // dispatchLocalPayloadReady_
+           numExpertCopySlots * sizeof(int) +                   // dispatchExpertCopiedCounts_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
@@ -181,8 +197,9 @@ inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedByte
   return cache.residentBlocks_;
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-  return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);
+MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk,
+                                                 int epSize) {
+  return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk, epSize);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {

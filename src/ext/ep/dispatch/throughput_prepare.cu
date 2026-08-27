@@ -51,12 +51,15 @@ __global__ void __launch_bounds__(NumThreads, 1)
     return;
   }
 
+  // The rank axis of the routing metadata is the all-to-all (EP) axis; with
+  // etpSize == 1 it is the world size, as before.
+  const int epSize = context->topology_.epSize;
   const int expertBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock;
   const int rankBegin = (blockId - expertBlocks) * NumRanksPerBlock;
-  const int rankEnd = min(rankBegin + NumRanksPerBlock, context->numRanks_);
+  const int rankEnd = min(rankBegin + NumRanksPerBlock, epSize);
   if (rankBegin >= rankEnd) return;
 
-  const int expertsPerRank = numExperts / context->numRanks_;
+  const int expertsPerRank = context->topology_.numExpertsPerGroup(numExperts);
   const int rankExpertBegin = rankBegin * expertsPerRank;
   const int rankExpertEnd = rankEnd * expertsPerRank;
 #pragma unroll
@@ -71,7 +74,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
       if (rankExpertBegin <= expert && expert < rankExpertEnd) ++isInRank[expert / expertsPerRank - rankBegin];
     }
 
-    bool* tokenInRank = isTokenInRank + token * context->numRanks_;
+    bool* tokenInRank = isTokenInRank + token * epSize;
 #pragma unroll
     for (int i = 0; rankBegin + i < rankEnd; ++i) {
       tokenInRank[rankBegin + i] = isInRank[i] > 0;
@@ -95,7 +98,7 @@ void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;
   const int numBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock +
-                        (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
+                        (context.topology_.epSize + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream);
   LAUNCH_KERNEL(config.get(), (prepareThroughputKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,

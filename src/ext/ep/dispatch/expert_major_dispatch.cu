@@ -32,8 +32,8 @@ void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, i
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
 
-size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk) {
-  return workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk);
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk, int epSize) {
+  return workspaceBytes(numRanks, numExperts, maxTokensPerRank, numTopk, epSize);
 }
 
 }  // namespace ep

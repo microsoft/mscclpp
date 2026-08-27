@@ -60,7 +60,7 @@ struct Workload {
   DispatchDataType dispatchDataType_;
 };
 
-size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk, int epSize);
 
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,

@@ -32,7 +32,7 @@ __global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, cons
     if (threadId < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
     __syncthreads();
 
-    const int numExpertsPerRank = numExperts / NumRanks;
+    const int numExpertsPerRank = context->topology_.numExpertsPerGroup(numExperts);
     if (threadId < NumRanks) {
       auto* peerRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[threadId]);
       auto* peerExpertCounts = peerRankCounts + NumRanks * NumRanks;
@@ -115,12 +115,14 @@ void throughputExchangeCounts(const int* numTokensPerRank, const int* numTokensP
   break
 
   constexpr int NumThreads = 128;
-  EP_HOST_ASSERT(numExperts % context.numRanks_ == 0);
-  EP_HOST_ASSERT(numExperts / context.numRanks_ <= NumThreads && context.numRanks_ <= NumThreads);
+  const int epSize = context.topology_.epSize;
+  EP_HOST_ASSERT(numExperts % epSize == 0);
+  EP_HOST_ASSERT(numExperts / epSize <= NumThreads && epSize <= NumThreads);
   EP_HOST_ASSERT(numChannels > 0);
 
-  LaunchConfig config(1 + context.numRanks_, NumThreads, 0, stream);
-  SWITCH_RANKS(context.numRanks_, NOTIFY_DISPATCH_LAUNCH_CASE);
+  // Templated on the all-to-all degree (EP), not on the world size.
+  LaunchConfig config(1 + epSize, NumThreads, 0, stream);
+  SWITCH_RANKS(epSize, NOTIFY_DISPATCH_LAUNCH_CASE);
 #undef NOTIFY_DISPATCH_LAUNCH_CASE
 }
 
@@ -147,7 +149,7 @@ void throughputPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceCont
   break
 
   LaunchConfig config(1, 128, 0, stream);
-  SWITCH_RANKS(context.numRanks_, CACHED_NOTIFY_DISPATCH_LAUNCH_CASE);
+  SWITCH_RANKS(context.topology_.epSize, CACHED_NOTIFY_DISPATCH_LAUNCH_CASE);
 #undef CACHED_NOTIFY_DISPATCH_LAUNCH_CASE
 }
 
@@ -166,7 +168,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int dstRank = threadId / threadsPerRank;
   const int rankThreadId = threadId % threadsPerRank;
   const int laneId = threadId % WARP_SIZE;
-  const int expertsPerRank = numExperts / NumRanks;
+  const int expertsPerRank = context->topology_.numExpertsPerGroup(numExperts);
   EP_DEVICE_ASSERT(NumRanks <= WARP_SIZE);
   EP_DEVICE_ASSERT(NumThreads % NumRanks == 0);
 
@@ -301,7 +303,8 @@ void throughputDispatch(int* sendHead, const void* input, const int64_t* topkIdx
   }
 
   LaunchConfig config(numBlocks, NumThreads, 0, stream, true);
-  SWITCH_RANKS(context.numRanks_, DISPATCH_LAUNCH_CASE);
+  // The template parameter is the all-to-all degree (EP), not the world size.
+  SWITCH_RANKS(context.topology_.epSize, DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
 #undef DISPATCH_LAUNCH_CASE_LAYOUT
 }

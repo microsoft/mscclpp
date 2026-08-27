@@ -236,7 +236,8 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const int* 
                   context.devicePtr_);                                                                                 \
   }
 
-  switch (context.numRanks_) {
+  // Keyed on the all-to-all degree (EP); equals the world size when etpSize == 1.
+  switch (context.topology_.epSize) {
     case 2:
       COMBINE_LAUNCH(2, 2, EP_HT_COMBINE_TMA_WARPS);
       break;

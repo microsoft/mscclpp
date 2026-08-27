@@ -192,7 +192,7 @@ void MoERuntime::prepare(int* numTokensPerRank, int* numTokensPerExpert, bool* i
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-  EP_HOST_ASSERT(numExperts > 0 && numExperts % context.numRanks_ == 0);
+  EP_HOST_ASSERT(numExperts > 0 && numExperts % context.topology_.epSize == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   ep::throughputPrepare(topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
                         context.deviceContext_, stream);
@@ -205,8 +205,8 @@ int MoERuntime::notify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* num
   auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.available_);
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-  EP_HOST_ASSERT(numExperts > 0 && numExperts % context.numRanks_ == 0);
-  const int numLocalExperts = numExperts / context.numRanks_;
+  EP_HOST_ASSERT(numExperts > 0 && numExperts % context.topology_.epSize == 0);
+  const int numLocalExperts = context.topology_.numExpertsPerGroup(numExperts);
   EP_HOST_ASSERT(numLocalExperts <= RecvPoolConfig::MaxLocalExperts);
 
   const int numChannels = context.dispatchBlockCount(xElementSize);

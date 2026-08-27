@@ -34,7 +34,7 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
       symmetricBufferBytes_(static_cast<int64_t>(latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts,
                                                                    numTopk, outputLayout, combineMode, topology_,
                                                                    etpReduceMode_, etpDispatchMode_))),
-      workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
+      workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk, topology.epSize)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
@@ -229,7 +229,8 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType};
-  const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
+  const size_t workspaceBytes =
+      workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk, context.topology_.epSize);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
@@ -288,7 +289,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType};
-  const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
+  const size_t workspaceBytes =
+      workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk, context.topology_.epSize);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {
