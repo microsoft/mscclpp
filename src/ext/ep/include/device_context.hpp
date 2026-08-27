@@ -43,6 +43,9 @@ struct DeviceContext {
   EtpReduceMode etpReduceMode_ = EtpReduceMode::GROUP_REDUCE_SCATTER;
   /// Dispatch replication strategy across an EP group.
   EtpDispatchMode etpDispatchMode_ = EtpDispatchMode::LEADER_SINGLE_SEND;
+  /// Symmetric staging buffer for the ETP group reduce-scatter; null unless
+  /// etpSize > 1 with EtpReduceMode::GROUP_REDUCE_SCATTER.
+  void* etpReduceBuffer_ = nullptr;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
 };

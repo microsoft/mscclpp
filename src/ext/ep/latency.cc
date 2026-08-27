@@ -121,6 +121,11 @@ void LatencyContext::initialize() {
   mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
       baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
 
+  const LatencyStorageLayout storageLayout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_,
+                                           numTopk_, outputLayout_, combineMode_, topology_, etpReduceMode_,
+                                           etpDispatchMode_);
+  EP_HOST_ASSERT(storageLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
+
   int maxSharedMemoryPerBlock;
   int numSms;
   CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
@@ -140,7 +145,8 @@ void LatencyContext::initialize() {
                     .numRanks_ = numRanks_,
                     .topology_ = topology_,
                     .etpReduceMode_ = etpReduceMode_,
-                    .etpDispatchMode_ = etpDispatchMode_};
+                    .etpDispatchMode_ = etpDispatchMode_,
+                    .etpReduceBuffer_ = storageLayout.etpReduceBuffer_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }
@@ -207,6 +213,9 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
+  // The dispatch/combine row-offset workspace array is laid out with the active
+  // capacity, so ETP requires dispatch and combine to agree on it.
+  if (context.topology_.isEtpEnabled()) EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_);
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
                                         numExperts, numTopk, context.outputLayout_, context.combineMode_,
@@ -269,6 +278,10 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
+  if (context.topology_.isEtpEnabled() && context.etpReduceMode_ == EtpReduceMode::GROUP_REDUCE_SCATTER) {
+    EP_HOST_ASSERT(context.deviceContext_.etpReduceBuffer_ != nullptr);
+    EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_);
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
                                         numExperts, numTopk, context.outputLayout_, context.combineMode_,

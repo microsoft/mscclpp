@@ -102,22 +102,32 @@ MSCCLPP_DEVICE_INLINE int4 reduceWeightedBf16x8(const void* expertOutput, int ro
   return packedOutput;
 }
 
+/// Sum the partials of one output token.
+///
+/// @p numContributors is 1 unless the ETP group reduction is done on the source
+/// side, in which case all etpSize ranks of a routed group sent a partial.
 template <int HiddenInt4>
 MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffer, int partialRankCandidate, int nTopk,
-                                                    int maxTokensPerRank, int tokenIdx, int hiddenIdx) {
+                                                    int maxTokensPerRank, int tokenIdx, int hiddenIdx,
+                                                    const MoETopology& topology, int numContributors) {
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   float2 reduced[Bf16PairsPerInt4] = {};
   for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
     const int partialRank = warpBroadcast(partialRankCandidate, topkLane);
     if (partialRank < 0) continue;
-    const int4 packed = reinterpret_cast<const int4*>(
-        combineRecvBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
-    const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+    for (int contributor = 0; contributor < numContributors; ++contributor) {
+      const int contributorRank =
+          numContributors == 1 ? partialRank : topology.rankOf(topology.epIndex(partialRank), contributor);
+      const int4 packed = reinterpret_cast<const int4*>(
+          combineRecvBuffer)[(static_cast<size_t>(contributorRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 +
+                             hiddenIdx];
+      const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
-    for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-      const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
-      reduced[pairIdx].x += value.data[0];
-      reduced[pairIdx].y += value.data[1];
+      for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+        const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
+        reduced[pairIdx].x += value.data[0];
+        reduced[pairIdx].y += value.data[1];
+      }
     }
   }
 
@@ -130,7 +140,19 @@ MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffe
   return packedOutput;
 }
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize>
+/// Row index of one contributor inside the ETP group reduce-scatter staging
+/// buffer of the leader that owns @p sourceRank.
+MSCCLPP_DEVICE_INLINE size_t etpStageRow(const ExpertMap& map, int contributorTpIndex, int sourceRank,
+                                         int sourceTokenIdx, int maxTokensPerRank) {
+  const int sourceSlot = contributorTpIndex * map.epSize() + map.topology_.epIndex(sourceRank);
+  return static_cast<size_t>(sourceSlot) * maxTokensPerRank + sourceTokenIdx;
+}
+
+/// Reduce this rank's expert rows for every dispatched token.
+///
+/// @tparam EtpStage when true the reduced row is staged into the ETP leader's
+/// group reduce-scatter buffer instead of being pushed to the token's source.
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, bool EtpStage = false>
 MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, const ExpertMap& map, int nTopk,
                                                    int maxTokensPerRank, void* combineRecvBuffer,
                                                    const void* dispatchRecvBuffer, const TransportView& transport,
@@ -200,6 +222,103 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, con
         mscclpp::bulkFence();
         const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
+        uint8_t* destinationRow;
+        if constexpr (EtpStage) {
+          // combineRecvBuffer aliases the ETP staging buffer in this mode.
+          void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, recvTask.tpPeer_);
+          destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
+                           etpStageRow(map, map.tpIndex_, sourceRank, sourceTokenIdx, maxTokensPerRank) * HiddenBytes;
+        } else {
+          void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
+          destinationRow =
+              reinterpret_cast<uint8_t*>(destinationBuffer) +
+              (static_cast<size_t>(transport.rank_) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
+        }
+        mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
+        mscclpp::bulkStoreCommit();
+      }
+    }
+  }
+  if (tokenIteration > 0 && threadId == 0) mscclpp::bulkStoreWait();
+}
+
+/// ETP group reduce-scatter, second phase: every leader sums the etpSize
+/// staged partials of the sources it owns and pushes one row per token to the
+/// source rank, exactly like the non-ETP combine send.
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize>
+MSCCLPP_DEVICE_INLINE void reduceEtpGroupPartials(const ExpertMap& map, int nTopk, int maxTokensPerRank,
+                                                  void* combineRecvBuffer, const void* etpReduceBuffer,
+                                                  const void* dispatchRecvBuffer, const TransportView& transport,
+                                                  WorkspaceView& workspaceView, uint8_t* sharedMemory) {
+  const int threadId = static_cast<int>(threadIdx.x);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  constexpr int HiddenInt4 = HiddenBytes / sizeof(int4);
+  constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
+  constexpr int ChunksPerThread = (HiddenInt4 + CombineNThreads - 1) / CombineNThreads;
+  const int etpSize = map.etpSize();
+  const size_t dispatchMetadataSize = dispatchMetadataBytes(map);
+  const size_t payloadStride = dispatchPayloadStride<DispatchType>(Hidden, nTopk, ScaleBlockSize);
+  const DispatchPayloadView<DispatchType> payloadView(Hidden, nTopk, ScaleBlockSize);
+  const auto* stagedRows = reinterpret_cast<const int4*>(etpReduceBuffer);
+  auto* outputTiles = sharedMemory;
+
+  int tokenIteration = 0;
+  for (int taskIdx = static_cast<int>(blockIdx.x); taskIdx < *workspaceView.dispatchNumRecvTasks_;
+       taskIdx += static_cast<int>(gridDim.x)) {
+    const RecvTask recvTask = loadRecvTask(workspaceView.dispatchRecvTasks_, taskIdx);
+    const int sourceRank = recvTask.sourceRank_;
+    // Only the leader of a source owns its output rows; its ETP peers staged
+    // their partials into this rank's buffer during the first phase.
+    if (recvTask.tpPeer_ != transport.rank_) continue;
+    const auto* localDispatchRecvBuffer = reinterpret_cast<const uint8_t*>(dispatchRecvBuffer);
+
+    for (int sourceTokenSlot = recvTask.tokenBegin_; sourceTokenSlot < recvTask.tokenEnd_;
+         ++sourceTokenSlot, ++tokenIteration) {
+      const int stage = tokenIteration % CombineNStages;
+      auto* outputTile = reinterpret_cast<int4*>(outputTiles + static_cast<size_t>(stage) * HiddenBytes);
+      const auto* sourcePayload =
+          localDispatchRecvBuffer + dispatchMetadataSize +
+          (static_cast<size_t>(sourceRank) * maxTokensPerRank + sourceTokenSlot) * payloadStride;
+      const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
+      EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
+
+      int4 reduced[ChunksPerThread] = {};
+#pragma unroll
+      for (int chunkIdx = 0; chunkIdx < ChunksPerThread; ++chunkIdx) {
+        const int hiddenIdx = threadId + chunkIdx * CombineNThreads;
+        if (hiddenIdx >= HiddenInt4) continue;
+        float2 accumulator[Bf16PairsPerInt4] = {};
+        for (int contributor = 0; contributor < etpSize; ++contributor) {
+          const size_t row = etpStageRow(map, contributor, sourceRank, sourceTokenIdx, maxTokensPerRank);
+          const int4 packed = stagedRows[row * HiddenInt4 + hiddenIdx];
+          const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+#pragma unroll
+          for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+            const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
+            accumulator[pairIdx].x += value.data[0];
+            accumulator[pairIdx].y += value.data[1];
+          }
+        }
+        auto* outputValues = reinterpret_cast<mscclpp::bf16x2*>(&reduced[chunkIdx]);
+#pragma unroll
+        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(accumulator[pairIdx]));
+        }
+      }
+
+      if (tokenIteration >= CombineNStages && threadId == 0) {
+        mscclpp::bulkStoreWaitSource<CombineNStages - 1>();
+      }
+      if (tokenIteration >= CombineNStages) __syncthreads();
+#pragma unroll
+      for (int chunkIdx = 0; chunkIdx < ChunksPerThread; ++chunkIdx) {
+        const int hiddenIdx = threadId + chunkIdx * CombineNThreads;
+        if (hiddenIdx < HiddenInt4) outputTile[hiddenIdx] = reduced[chunkIdx];
+      }
+      __syncthreads();
+
+      if (threadId == 0) {
+        mscclpp::bulkFence();
         void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
         auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                                (static_cast<size_t>(transport.rank_) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
@@ -500,7 +619,8 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartials(void* output, const void*
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __restrict__ topkIndices, int nTokens,
                                                  int nTopk, const ExpertMap& map, int maxTokensPerRank,
-                                                 const void* combineRecvBuffer, uint8_t* sharedMemory) {
+                                                 const void* combineRecvBuffer, int numContributors,
+                                                 uint8_t* sharedMemory) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = get_lane_id();
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
@@ -524,8 +644,9 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __
     for (int chunkIdx = 0; chunkIdx < ChunksPerThread; ++chunkIdx) {
       const int hiddenIdx = threadId + chunkIdx * CombineNThreads;
       if (hiddenIdx < HiddenInt4) {
-        reduced[chunkIdx] = reduceRankPartialsBf16x8<HiddenInt4>(combineRecvBuffer, partialRank, nTopk,
-                                                                 maxTokensPerRank, tokenIdx, hiddenIdx);
+        reduced[chunkIdx] =
+            reduceRankPartialsBf16x8<HiddenInt4>(combineRecvBuffer, partialRank, nTopk, maxTokensPerRank, tokenIdx,
+                                                 hiddenIdx, map.topology_, numContributors);
       }
     }
     if (tokenIteration >= CombineNStages && threadId == 0) {
@@ -629,9 +750,27 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
                                               transport, workspaceView);
     return;
   } else if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(expertOutput, map, nTopk, maxTokensPerRank,
-                                                                  combineRecvBuffer, dispatchRecvBuffer, transport,
-                                                                  workspaceView, sharedMemory);
+    const bool groupReduceScatter =
+        map.isEtpEnabled() && context->etpReduceMode_ == EtpReduceMode::GROUP_REDUCE_SCATTER;
+    if (groupReduceScatter) {
+      // Phase A: every ETP rank stages its partial into the leader that owns
+      // the token's source rank.
+      sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize, true>(
+          expertOutput, map, nTopk, maxTokensPerRank, context->etpReduceBuffer_, dispatchRecvBuffer, transport,
+          workspaceView, sharedMemory);
+      workspaceView.combineSyncer_->sync(gridDim.x);
+      exchangeCombineReady(transport, nRanks);
+      workspaceView.combineSyncer_->sync(gridDim.x);
+      // Phase B: the leader sums the group's partials and runs the regular
+      // combine all-to-all over the epSize-sized sub-world.
+      reduceEtpGroupPartials<Hidden, DispatchType, ScaleBlockSize>(map, nTopk, maxTokensPerRank, combineRecvBuffer,
+                                                                   context->etpReduceBuffer_, dispatchRecvBuffer,
+                                                                   transport, workspaceView, sharedMemory);
+    } else {
+      sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(expertOutput, map, nTopk, maxTokensPerRank,
+                                                                    combineRecvBuffer, dispatchRecvBuffer, transport,
+                                                                    workspaceView, sharedMemory);
+    }
   } else {
     sendExpertRowsDirect<Hidden>(expertOutput, srcInfo, layoutRange, map, maxTokensPerRank, combineRecvBuffer,
                                  transport, sharedMemory);
@@ -642,8 +781,12 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
   workspaceView.combineSyncer_->sync(gridDim.x);
 
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
+    // SOURCE_SIDE keeps one partial per (ETP rank, token); the group
+    // reduce-scatter already collapsed them to one per EP group leader.
+    const int numContributors =
+        map.isEtpEnabled() && context->etpReduceMode_ == EtpReduceMode::SOURCE_SIDE ? map.etpSize() : 1;
     recvRankLocalPartials<Hidden>(output, topkIndices, nTokens, nTopk, map, maxTokensPerRank, combineRecvBuffer,
-                                  sharedMemory);
+                                  numContributors, sharedMemory);
   } else {
     recvExpertRowsDirect<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineRecvBuffer);
   }
