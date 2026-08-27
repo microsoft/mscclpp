@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <gtest/gtest.h>
-
 #include <mscclpp/ext/ep/types.hpp>
 #include <set>
+
+#include "../framework.hpp"
 
 using mscclpp::ep::EtpRankOrder;
 using mscclpp::ep::MoETopology;
