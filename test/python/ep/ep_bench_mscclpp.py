@@ -41,13 +41,16 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     x, topk_idx, topk_weights, _ = input_samples[0]
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
-    num_local_experts = num_experts // num_ranks
+    etp_size = getattr(args, "etp_size", 1)
+    ep_size = num_ranks // etp_size
+    num_local_experts = num_experts // ep_size
     num_blocks = args.num_sms or 130
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
         print(
-            f"[cfg] backend=mscclpp algorithm=LATENCY num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=mscclpp algorithm=LATENCY num_ranks={num_ranks} ep_size={ep_size} "
+            f"etp_size={etp_size} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"num_blocks={num_blocks} warmup={args.num_warmup} iters={args.num_iters} "
             f"num_rdma_bytes={num_rdma_bytes}",
@@ -65,6 +68,16 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError("rank-major output requires rank_local_reduce combine")
     output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    etp_reduce_mode = {
+        "group_reduce_scatter": ep.EtpReduceMode.GROUP_REDUCE_SCATTER,
+        "source_side": ep.EtpReduceMode.SOURCE_SIDE,
+    }[getattr(args, "etp_reduce_mode", "group_reduce_scatter")]
+    etp_dispatch_mode = {
+        "leader_single_send": ep.EtpDispatchMode.LEADER_SINGLE_SEND,
+        "duplicate_send": ep.EtpDispatchMode.DUPLICATE_SEND,
+    }[getattr(args, "etp_dispatch_mode", "leader_single_send")]
+    if etp_size > 1 and (rank_major or combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE):
+        raise ValueError("--etp > 1 currently requires expert_major layout with rank_local_reduce combine")
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
     if rank_major and dispatch_quant is not None:
         raise ValueError("rank-major output supports BF16 dispatch only")
@@ -82,6 +95,9 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
         quant=dispatch_quant,
+        etp_size=etp_size,
+        etp_reduce_mode=etp_reduce_mode,
+        etp_dispatch_mode=etp_dispatch_mode,
     )
     assert moe_comm.is_available()
     if rank == 0:
@@ -91,6 +107,13 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             flush=True,
         )
         print(f"[cfg] mscclpp output_layout={args.ep_layout or 'expert_major'}", flush=True)
+        if etp_size > 1:
+            print(
+                f"[cfg] mscclpp etp_size={etp_size} ep_size={ep_size} "
+                f"etp_reduce_mode={getattr(args, 'etp_reduce_mode', 'group_reduce_scatter')} "
+                f"etp_dispatch_mode={getattr(args, 'etp_dispatch_mode', 'leader_single_send')}",
+                flush=True,
+            )
 
     # Hoist output tensors out of the timed loop (the communicator owns its
     # src_info/layout_range/count buffers internally).
@@ -123,6 +146,11 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
         validation_input = simulated_gemm_output(v_dispatch_out)
+        if etp_size > 1:
+            # Every ETP rank owns 1 / etp_size of the expert's intermediate dim,
+            # so its simulated partial must be scaled for the group sum to match
+            # the etp_size == 1 result.
+            validation_input = (validation_input.float() / etp_size).to(validation_input.dtype)
         if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
@@ -136,10 +164,10 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
                 # Rank-local reduce rounds each destination rank's partial sum to
                 # BF16 before the cross-rank accumulation.
-                for destination_rank in range(num_ranks):
+                for destination_group in range(ep_size):
                     rank_partial = torch.zeros_like(x, dtype=torch.float32)
                     for j in range(num_topk):
-                        selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] // num_local_experts == destination_rank)
+                        selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] // num_local_experts == destination_group)
                         weight_j = topk_weights[:, j].masked_fill(~selected, 0.0).view(-1, 1)
                         rank_partial = torch.addcmul(rank_partial, x_f, weight_j)
                     expected_f += rank_partial.to(torch.bfloat16).float()
@@ -235,6 +263,8 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
         )
 
     ep_group = _make_comm_group(comm)
+    if getattr(args, "etp_size", 1) > 1:
+        raise ValueError("MSCCL++ throughput mode does not support --etp > 1 yet")
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,

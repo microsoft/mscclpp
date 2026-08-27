@@ -224,8 +224,10 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, con
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
         uint8_t* destinationRow;
         if constexpr (EtpStage) {
-          // combineRecvBuffer aliases the ETP staging buffer in this mode.
-          void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, recvTask.tpPeer_);
+          // combineRecvBuffer aliases the ETP staging buffer in this mode. The
+          // staging target is the group's reduce-scatter leader for this
+          // source, which is the local rank only when it owns that source.
+          void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, map.groupLeaderFor(sourceRank));
           destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                            etpStageRow(map, map.tpIndex_, sourceRank, sourceTokenIdx, maxTokensPerRank) * HiddenBytes;
         } else {
@@ -267,9 +269,13 @@ MSCCLPP_DEVICE_INLINE void reduceEtpGroupPartials(const ExpertMap& map, int nTop
        taskIdx += static_cast<int>(gridDim.x)) {
     const RecvTask recvTask = loadRecvTask(workspaceView.dispatchRecvTasks_, taskIdx);
     const int sourceRank = recvTask.sourceRank_;
-    // Only the leader of a source owns its output rows; its ETP peers staged
-    // their partials into this rank's buffer during the first phase.
-    if (recvTask.tpPeer_ != transport.rank_) continue;
+    // Only the reduce-scatter leader of a source owns its output rows; its ETP
+    // peers staged their partials into this rank's buffer during phase A.
+    if (map.groupLeaderFor(sourceRank) != transport.rank_) continue;
+    // A leader always holds this source's payloads locally (it is the receiving
+    // rank under LEADER_SINGLE_SEND, and every rank has a copy under
+    // DUPLICATE_SEND), so tpPeer_ is the local rank here.
+    EP_DEVICE_ASSERT(recvTask.tpPeer_ == transport.rank_);
     const auto* localDispatchRecvBuffer = reinterpret_cast<const uint8_t*>(dispatchRecvBuffer);
 
     for (int sourceTokenSlot = recvTask.tokenBegin_; sourceTokenSlot < recvTask.tokenEnd_;

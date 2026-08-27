@@ -112,6 +112,24 @@ def parse_args():
         help="Low-latency dispatch output layout",
     )
     parser.add_argument(
+        "--etp-size",
+        type=int,
+        default=int(os.environ.get("MSCCLPP_EP_ETP", "1")),
+        help="Expert-tensor-parallel degree: ranks sharing one expert's weights (default 1)",
+    )
+    parser.add_argument(
+        "--etp-reduce-mode",
+        choices=("group_reduce_scatter", "source_side"),
+        default="group_reduce_scatter",
+        help="Where the ETP partial expert outputs are summed",
+    )
+    parser.add_argument(
+        "--etp-dispatch-mode",
+        choices=("leader_single_send", "duplicate_send"),
+        default="leader_single_send",
+        help="How dispatch replicates a routed token across an EP group",
+    )
+    parser.add_argument(
         "--invalid-token-expert-id",
         type=int,
         default=None,
@@ -170,13 +188,19 @@ def dequantized_dispatch_tokens(dispatch_out):
     return (token_blocks * decoded_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
 
 
-def simulated_gemm_output(dispatch_out):
+def simulated_gemm_output(dispatch_out, etp_size=1):
+    """Model the expert MLP as the identity, scaled by 1 / etp_size.
+
+    Under ETP every rank of an EP group holds one shard of the expert's
+    intermediate dimension and produces a partial sum; the group's partials must
+    add up to the etp_size == 1 result, which the 1 / etp_size factor emulates.
+    """
     tokens = dequantized_dispatch_tokens(dispatch_out)
     if dispatch_out.topk_ids is None:
-        return tokens
+        return tokens if etp_size == 1 else (tokens.float() / etp_size).to(torch.bfloat16)
     assert dispatch_out.weights is not None
     output = torch.zeros_like(tokens, dtype=torch.float32)
-    tokens_f = tokens.float()
+    tokens_f = tokens.float() / etp_size
     for topk_idx in range(dispatch_out.topk_ids.size(1)):
         local_weight = dispatch_out.weights[:, topk_idx].masked_fill(dispatch_out.topk_ids[:, topk_idx] < 0, 0.0)
         output = torch.addcmul(output, tokens_f, local_weight.view(-1, 1))
@@ -192,11 +216,12 @@ def simulated_rank_major_route_output(dispatch_out):
     return (tokens.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
 
 
-def stage_simulated_gemm_output(dispatch_out):
+def stage_simulated_gemm_output(dispatch_out, etp_size=1):
     """Build simulated GEMM output in the runtime-owned buffer when required."""
     combine_input = dispatch_out.combine_input_buffer
     if combine_input is None:
-        return simulated_gemm_output(dispatch_out)
+        return simulated_gemm_output(dispatch_out, etp_size)
+    assert etp_size == 1, "rank-major combine input does not support etp_size > 1 yet"
     combine_input.copy_(
         simulated_rank_major_route_output(dispatch_out)
         if combine_input.dim() == 3
@@ -230,6 +255,7 @@ def validate_expert_major_dispatch(
     num_ranks,
     hidden,
     num_local_experts,
+    ep_index=None,
     dispatch_quant,
     dispatch_out,
     handle,
@@ -240,9 +266,10 @@ def validate_expert_major_dispatch(
     all_x,
     expected_scales,
 ):
+    ep_index = rank if ep_index is None else ep_index
     int_mask = (1 << 32) - 1
     for local_expert_idx in range(num_local_experts):
-        expert_id = rank * num_local_experts + local_expert_idx
+        expert_id = ep_index * num_local_experts + local_expert_idx
         recv_count = int(packed_recv_count[local_expert_idx].item())
         expected_count = int((all_topk_idx == expert_id).sum().item())
         recv_layout_range = packed_recv_layout_range[local_expert_idx]
@@ -378,13 +405,15 @@ def reconstruct_expert_major_reference(
     handle,
     dequantized_x,
     group,
+    ep_index=None,
 ):
+    ep_index = rank if ep_index is None else ep_index
     int_mask = (1 << 32) - 1
     first_expert = all_topk_idx.gather(-1, (all_topk_idx >= 0).to(torch.int32).argmax(dim=-1, keepdim=True)).squeeze(-1)
     first_expert.masked_fill_(~(all_topk_idx >= 0).any(dim=-1), -1)
     dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
     for local_expert_idx in range(num_local_experts):
-        expert_id = rank * num_local_experts + local_expert_idx
+        expert_id = ep_index * num_local_experts + local_expert_idx
         recv_layout_range = packed_recv_layout_range[local_expert_idx]
         for source_rank in range(num_ranks):
             packed_range = int(recv_layout_range[source_rank].item())
@@ -450,22 +479,26 @@ def expected_direct_send_output(reference_x, topk_idx, topk_weights):
     return expected.to(torch.bfloat16)
 
 
-def expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts):
+def expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts, etp_size=1):
     """Reference for RANK_LOCAL_REDUCE combine, which rounds every destination
-    rank's partial sum to BF16 before the cross-rank accumulation. Applies to
-    both output layouts: the reduction model depends on the combine mode, not
-    on the dispatch layout."""
+    EP group's partial sum to BF16 before the cross-group accumulation. Applies
+    to both output layouts: the reduction model depends on the combine mode, not
+    on the dispatch layout. With etp_size > 1 one destination is one EP group of
+    etp_size ranks, each contributing 1 / etp_size of the partial."""
+    ep_size = num_ranks // etp_size
     expected = torch.zeros_like(reference_x, dtype=torch.float32)
     reference_x_f = reference_x.float()
-    for destination_rank in range(num_ranks):
-        rank_partial = torch.zeros_like(reference_x, dtype=torch.float32)
+    for destination_group in range(ep_size):
+        group_partial = torch.zeros_like(reference_x, dtype=torch.float32)
         for topk_slot in range(topk_idx.size(1)):
-            selected = (topk_idx[:, topk_slot] >= 0) & (topk_idx[:, topk_slot] // num_local_experts == destination_rank)
+            selected = (topk_idx[:, topk_slot] >= 0) & (
+                topk_idx[:, topk_slot] // num_local_experts == destination_group
+            )
             weight = (
                 selected.float() if topk_weights is None else topk_weights[:, topk_slot].masked_fill(~selected, 0.0)
             ).view(-1, 1)
-            rank_partial = torch.addcmul(rank_partial, reference_x_f, weight)
-        expected += rank_partial.to(torch.bfloat16).float()
+            group_partial = torch.addcmul(group_partial, reference_x_f, weight)
+        expected += group_partial.to(torch.bfloat16).float()
     return expected.to(torch.bfloat16)
 
 
@@ -489,8 +522,24 @@ def main():
     num_topk = args.num_topk
     num_experts = args.num_experts
     invalid_token_expert_id = num_experts if args.invalid_token_expert_id is None else args.invalid_token_expert_id
-    assert num_experts % num_ranks == 0
-    num_local_experts = num_experts // num_ranks
+    etp_size = args.etp_size
+    assert etp_size >= 1 and num_ranks % etp_size == 0, "world size must be divisible by --etp-size"
+    ep_size = num_ranks // etp_size
+    ep_index = rank // etp_size
+    tp_index = rank % etp_size
+    assert num_experts % ep_size == 0
+    num_local_experts = num_experts // ep_size
+    etp_reduce_mode = {
+        "group_reduce_scatter": ep.EtpReduceMode.GROUP_REDUCE_SCATTER,
+        "source_side": ep.EtpReduceMode.SOURCE_SIDE,
+    }[args.etp_reduce_mode]
+    etp_dispatch_mode = {
+        "leader_single_send": ep.EtpDispatchMode.LEADER_SINGLE_SEND,
+        "duplicate_send": ep.EtpDispatchMode.DUPLICATE_SEND,
+    }[args.etp_dispatch_mode]
+    if etp_size > 1:
+        assert args.output_layout == "expert_major", "etp_size > 1 currently requires --output-layout expert_major"
+        assert args.combine_mode == "rank_local_reduce", "etp_size > 1 currently requires rank_local_reduce combine"
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
@@ -554,12 +603,16 @@ def main():
         output_layout=output_layout,
         invalid_token_expert_id=invalid_token_expert_id,
         quant=dispatch_quant,
+        etp_size=etp_size,
+        etp_reduce_mode=etp_reduce_mode,
+        etp_dispatch_mode=etp_dispatch_mode,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} num_topk={num_topk} dispatch_dtype={args.dispatch_dtype} "
-            f"output_layout={args.output_layout}",
+            f"output_layout={args.output_layout} ep_size={ep_size} etp_size={etp_size} "
+            f"etp_reduce_mode={args.etp_reduce_mode} etp_dispatch_mode={args.etp_dispatch_mode}",
             flush=True,
         )
     print(
@@ -568,6 +621,9 @@ def main():
         flush=True,
     )
     assert moe_comm.is_available()
+    assert moe_comm.ep_size == ep_size and moe_comm.etp_size == etp_size
+    assert moe_comm.ep_index == ep_index and moe_comm.tp_index == tp_index
+    assert moe_comm.num_local_experts == num_local_experts
     assert not moe_comm.is_initialized()
     assert moe_comm._context.dispatch_output_buffer is None
 
@@ -643,6 +699,7 @@ def main():
         validate_expert_major_dispatch(
             rank=rank,
             num_ranks=num_ranks,
+            ep_index=ep_index,
             hidden=hidden,
             num_local_experts=num_local_experts,
             dispatch_quant=dispatch_quant,
@@ -678,7 +735,7 @@ def main():
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
     # returns sum(x * weight) across experts.
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
-    simulated_gemm_x = stage_simulated_gemm_output(dispatch_out)
+    simulated_gemm_x = stage_simulated_gemm_output(dispatch_out, etp_size)
     reference_x = x
     if dispatch_quant is not None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
@@ -686,6 +743,7 @@ def main():
             reference_x = reconstruct_expert_major_reference(
                 rank=rank,
                 num_ranks=num_ranks,
+                ep_index=ep_index,
                 num_tokens=num_tokens,
                 hidden=hidden,
                 num_local_experts=num_local_experts,
@@ -717,7 +775,9 @@ def main():
     if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
         expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
     elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
-        expected = expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
+        expected = expected_rank_local_reduce_output(
+            reference_x, topk_idx, topk_weights, num_ranks, num_local_experts, etp_size
+        )
     else:
         expected = expected_direct_send_output(reference_x, topk_idx, topk_weights)
     local_diff, _ = validate_combine_output(
@@ -751,7 +811,9 @@ def main():
                 output_buffer=dispatch_buffer,
             )
             dispatch_end.record()
-            graph_expert_output = stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+            graph_expert_output = (
+                stage_simulated_gemm_output(graph_dout[0], etp_size) if expert_output is None else expert_output
+            )
             graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
             graph_end.record()
         return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end

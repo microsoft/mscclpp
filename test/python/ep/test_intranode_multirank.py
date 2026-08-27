@@ -107,6 +107,28 @@ def main():
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
     }[layout_name]
 
+    # THROUGHPUT mode is EP-only for now: ETP must be rejected with a clear
+    # error instead of silently mis-routing. Requesting it is part of the test.
+    etp_size = int(os.environ.get("MSCCLPP_EP_ETP", "1"))
+    if etp_size > 1:
+        rejected = False
+        try:
+            ep.MoECommunicator(
+                comm=ep_group,
+                num_experts=num_experts,
+                hidden_size=hidden,
+                topk=num_topk,
+                max_tokens_per_rank=num_tokens,
+                mode=ep.MoEMode.THROUGHPUT,
+                output_layout=output_layout,
+                etp_size=etp_size,
+            )
+        except NotImplementedError:
+            rejected = True
+        assert rejected, "THROUGHPUT mode must reject etp_size > 1 until ETP lands there"
+        if rank == 0:
+            print(f"[cfg] THROUGHPUT correctly rejected etp_size={etp_size}", flush=True)
+
     moe = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -115,6 +137,7 @@ def main():
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.THROUGHPUT,
         output_layout=output_layout,
+        etp_size=1,
     )
     if rank == 0:
         print(
@@ -124,6 +147,8 @@ def main():
         )
     print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
     assert moe.is_available()
+    # The all-to-all degree is the EP size, which equals the world size here.
+    assert moe.ep_size == num_ranks and moe.etp_size == 1
     assert not moe.is_initialized()
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(num_ranks)))
     expected_internode = num_ranks > local_world_size

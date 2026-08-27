@@ -98,6 +98,17 @@ struct ExpertMap {
   /// etpSize == 1, or with DUPLICATE_SEND, this is always the local rank.
   MSCCLPP_HOST_DEVICE_INLINE int sourcePeer(int sourceRank) const {
     if (duplicateSend() || !isEtpEnabled()) return rank_;
+    return groupLeaderFor(sourceRank);
+  }
+  /// Rank of this rank's EP group that owns the combine output of tokens
+  /// coming from @p sourceRank.
+  ///
+  /// This is the reduce-scatter partition of the (source, token) space across
+  /// the ETP group and is independent of how dispatch replicated the rows, so
+  /// it must not be confused with sourcePeer(): with DUPLICATE_SEND every rank
+  /// holds every payload locally but the group still reduces onto one leader.
+  MSCCLPP_HOST_DEVICE_INLINE int groupLeaderFor(int sourceRank) const {
+    if (!isEtpEnabled()) return rank_;
     return topology_.rankOf(epIndex_, topology_.tpIndex(sourceRank));
   }
   /// Rank in @p destinationRank's group that actually receives this rank's

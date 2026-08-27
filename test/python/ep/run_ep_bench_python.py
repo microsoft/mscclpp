@@ -208,11 +208,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="mscclpp: run a one-time combine correctness check before timing.",
     )
+    p.add_argument(
+        "--etp",
+        "--etp-size",
+        dest="etp_size",
+        type=int,
+        default=1,
+        help="mscclpp latency: expert-tensor-parallel degree. ranks sharing one expert's weights. "
+        "ep_size = num_ranks // etp. 1 (default) is plain expert parallelism. Other backends "
+        "ignore it (they have no ETP mode).",
+    )
+    p.add_argument(
+        "--etp-reduce-mode",
+        choices=("group_reduce_scatter", "source_side"),
+        default="group_reduce_scatter",
+        help="mscclpp latency: where the ETP partial expert outputs are summed.",
+    )
+    p.add_argument(
+        "--etp-dispatch-mode",
+        choices=("leader_single_send", "duplicate_send"),
+        default="leader_single_send",
+        help="mscclpp latency: how dispatch replicates a routed token across an EP group "
+        "(leader_single_send = single send + NVLink peer pull; duplicate_send = one copy per rank).",
+    )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
         raise SystemExit("--num-tokens and --num-experts must be positive")
     if args.num_topk <= 0 or args.num_topk > args.num_experts:
         raise SystemExit("--num-topk must be in [1, num-experts]")
+    if args.etp_size <= 0:
+        raise SystemExit("--etp must be positive")
     if args.hidden <= 0:
         raise SystemExit("--hidden must be positive")
     if args.num_warmup < 0 or args.num_iters <= 0:
@@ -622,7 +647,9 @@ def main() -> None:
         import faulthandler
 
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
-    assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
+    assert num_ranks % args.etp_size == 0, "num_ranks must be divisible by --etp"
+    ep_size = num_ranks // args.etp_size
+    assert args.num_experts % ep_size == 0, "num_experts must be divisible by ep_size (num_ranks // --etp)"
     # Single routing input reused for every captured iteration. --iters-per-graph
     # replays the SAME paired dispatch->combine N times inside one graph to amortize
     # launch overhead; it does not need N distinct routings.
