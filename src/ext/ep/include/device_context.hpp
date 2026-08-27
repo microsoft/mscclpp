@@ -3,6 +3,7 @@
 #ifndef MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 #define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
+#include <mscclpp/ext/ep/types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
 namespace mscclpp {
@@ -36,6 +37,12 @@ struct DeviceContext {
   int rank_;
   /// Number of ranks.
   int numRanks_;
+  /// EP x ETP rank grid. etpSize == 1 reproduces plain expert parallelism.
+  MoETopology topology_;
+  /// Placement of the ETP partial-output reduction.
+  EtpReduceMode etpReduceMode_ = EtpReduceMode::GROUP_REDUCE_SCATTER;
+  /// Dispatch replication strategy across an EP group.
+  EtpDispatchMode etpDispatchMode_ = EtpDispatchMode::LEADER_SINGLE_SEND;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
 };

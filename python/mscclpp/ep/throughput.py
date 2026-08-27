@@ -71,12 +71,20 @@ class ThroughputContext(Context):
             raise NotImplementedError("THROUGHPUT mode supports TOKEN_MAJOR or RANK_MAJOR output")
         if config.invalid_token_expert_id is not None:
             raise ValueError("invalid_token_expert_id is only supported in latency mode")
+        if config.etp_size != 1:
+            raise NotImplementedError("THROUGHPUT mode does not support etp_size > 1 yet")
+        self.ep_size = self.world_size
+        self.etp_size = 1
+        self.ep_index = self.rank
+        self.tp_index = 0
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
             world_size=self.world_size,
             rank=self.rank,
             num_local_experts=config.num_local_experts,
             local_expert_start=config.local_expert_start,
+            ep_size=self.ep_size,
+            ep_index=self.ep_index,
         )
         if config.quant is not None:
             raise NotImplementedError("throughput quantized dispatch (scales) is not implemented yet")

@@ -135,23 +135,40 @@ struct PayloadView {
   }
 };
 
-MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet),
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExpertSlots) {
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExpertSlots) * sizeof(mscclpp::LL8Packet),
                              BufferAlignmentBytes);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExpertSlots, int maxTokensPerRank,
                                                              int numTopk) {
   const size_t numEntries = static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk;
-  return configAlign<size_t>(rankMajorTopkIdsOffset(numRanks, numExperts) + numEntries * sizeof(int),
+  return configAlign<size_t>(rankMajorTopkIdsOffset(numRanks, numExpertSlots) + numEntries * sizeof(int),
                              BufferAlignmentBytes);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExperts, int maxTokensPerRank,
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpertSlots, int maxTokensPerRank,
                                                        int numTopk) {
   const size_t numEntries = static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk;
   return configAlign<size_t>(
-      rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
+      rankMajorTopkWeightsOffset(numRanks, numExpertSlots, maxTokensPerRank, numTopk) + numEntries * sizeof(float),
+      128);
+}
+
+/// Number of per-(source, group-local expert) count slots in the dispatch
+/// metadata header. With etpSize == 1 this is exactly numExperts.
+MSCCLPP_HOST_DEVICE_INLINE int dispatchMetadataExpertSlots(const MoETopology& topology, int numExperts,
+                                                           EtpDispatchMode dispatchMode) {
+  const int numExpertsPerGroup = topology.numExpertsPerGroup(numExperts);
+  const int numSources = dispatchMode == EtpDispatchMode::DUPLICATE_SEND ? topology.numRanks : topology.epSize;
+  return numSources * numExpertsPerGroup;
+}
+
+/// Number of rows staged for the ETP group reduce-scatter, or 0 when unused.
+MSCCLPP_HOST_DEVICE_INLINE int etpReduceRows(const MoETopology& topology, EtpReduceMode reduceMode,
+                                             int maxTokensPerRank) {
+  if (!topology.isEtpEnabled() || reduceMode != EtpReduceMode::GROUP_REDUCE_SCATTER) return 0;
+  return topology.numRanks * maxTokensPerRank;
 }
 
 struct LatencyStorageLayout {
@@ -159,31 +176,38 @@ struct LatencyStorageLayout {
   size_t dispatchRecvBufferBytes_;
   size_t combineRecvBufferBytes_;
   size_t dispatchOutputBytes_;
+  size_t etpReduceBufferBytes_ = 0;
   void* dispatchRecvBuffer_ = nullptr;
   void* combineRecvBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
+  void* etpReduceBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
+                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
+                       const MoETopology& topology = MoETopology(),
+                       EtpReduceMode etpReduceMode = EtpReduceMode::GROUP_REDUCE_SCATTER,
+                       EtpDispatchMode etpDispatchMode = EtpDispatchMode::LEADER_SINGLE_SEND) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
+    const int numExpertSlots = dispatchMetadataExpertSlots(topology, numExperts, etpDispatchMode);
+    const int numLocalExperts = topology.numExpertsPerGroup(numExperts);
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
+        configAlign<size_t>(static_cast<size_t>(numRanks + numExpertSlots) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t dispatchPayloadStride =
         configAlign<size_t>(std::max(bf16Payload.numBytes_, fp8Payload128.numBytes_), BufferAlignmentBytes);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
-    const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+    const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExpertSlots, maxTokensPerRank, numTopk);
     const size_t rankMajorDispatchOutputBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
-        static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+        static_cast<size_t>(numLocalExperts) * numRanks * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
@@ -193,26 +217,35 @@ struct LatencyStorageLayout {
                                                                  : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
+    etpReduceBufferBytes_ = configAlign<size_t>(
+        static_cast<size_t>(etpReduceRows(topology, etpReduceMode, maxTokensPerRank)) * hidden * sizeof(Bf16),
+        BufferAlignmentBytes);
     totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes)) +
+                  etpReduceBufferBytes_;
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
-      rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
-      rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+      rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExpertSlots);
+      rankMajorTopkWeightsBuffer_ =
+          base + rankMajorTopkWeightsOffset(numRanks, numExpertSlots, maxTokensPerRank, numTopk);
       dispatchOutputBuffer_ =
           rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
       combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      if (etpReduceBufferBytes_ > 0) etpReduceBuffer_ = base + totalBytes_ - etpReduceBufferBytes_;
     }
   }
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode) {
-  const auto numBytes =
-      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
-          .totalBytes_;
+                                 DispatchLayout outputLayout, CombineMode combineMode,
+                                 const MoETopology& topology = MoETopology(),
+                                 EtpReduceMode etpReduceMode = EtpReduceMode::GROUP_REDUCE_SCATTER,
+                                 EtpDispatchMode etpDispatchMode = EtpDispatchMode::LEADER_SINGLE_SEND) {
+  const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
+                                             outputLayout, combineMode, topology, etpReduceMode, etpDispatchMode)
+                            .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 

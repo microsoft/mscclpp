@@ -49,15 +49,35 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("BF16", mscclpp::ep::DispatchDataType::BF16)
       .value("FP8_E4M3", mscclpp::ep::DispatchDataType::FP8_E4M3);
 
+  nb::enum_<mscclpp::ep::EtpRankOrder>(m, "EtpRankOrder")
+      .value("EP_MAJOR", mscclpp::ep::EtpRankOrder::EP_MAJOR)
+      .value("TP_MAJOR", mscclpp::ep::EtpRankOrder::TP_MAJOR);
+
+  nb::enum_<mscclpp::ep::EtpReduceMode>(m, "EtpReduceMode")
+      .value("SOURCE_SIDE", mscclpp::ep::EtpReduceMode::SOURCE_SIDE)
+      .value("GROUP_REDUCE_SCATTER", mscclpp::ep::EtpReduceMode::GROUP_REDUCE_SCATTER)
+      .value("GROUP_NVLS", mscclpp::ep::EtpReduceMode::GROUP_NVLS);
+
+  nb::enum_<mscclpp::ep::EtpDispatchMode>(m, "EtpDispatchMode")
+      .value("LEADER_SINGLE_SEND", mscclpp::ep::EtpDispatchMode::LEADER_SINGLE_SEND)
+      .value("DUPLICATE_SEND", mscclpp::ep::EtpDispatchMode::DUPLICATE_SEND);
+
   m.def("create_moe_runtime", &mscclpp::ep::createMoERuntime, nb::arg("comm"), nb::arg("mode"),
         nb::arg("max_tokens_per_rank") = 0, nb::arg("hidden") = 0, nb::arg("num_experts") = 0, nb::arg("num_topk") = 0,
         nb::arg("max_hidden_bytes") = 0, nb::arg("num_blocks") = 20,
         nb::arg("output_layout") = mscclpp::ep::DispatchLayout::EXPERT_MAJOR,
-        nb::arg("combine_mode") = mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE,
+        nb::arg("combine_mode") = mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE, nb::arg("etp_size") = 1,
+        nb::arg("etp_rank_order") = mscclpp::ep::EtpRankOrder::EP_MAJOR,
+        nb::arg("etp_reduce_mode") = mscclpp::ep::EtpReduceMode::GROUP_REDUCE_SCATTER,
+        nb::arg("etp_dispatch_mode") = mscclpp::ep::EtpDispatchMode::LEADER_SINGLE_SEND,
         "Create the MoE backend selected by mode; returns a shared MoERuntime handle.");
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
       .def_prop_ro("mode", &mscclpp::ep::MoERuntime::mode)
+      .def_prop_ro("ep_size", &mscclpp::ep::MoERuntime::epSize)
+      .def_prop_ro("etp_size", &mscclpp::ep::MoERuntime::etpSize)
+      .def_prop_ro("ep_index", &mscclpp::ep::MoERuntime::epIndex)
+      .def_prop_ro("tp_index", &mscclpp::ep::MoERuntime::tpIndex)
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
       .def("initialize", &mscclpp::ep::MoERuntime::initialize)

@@ -10,7 +10,15 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep._cpp import (
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    EtpDispatchMode,
+    EtpRankOrder,
+    EtpReduceMode,
+    MoEMode,
+)
 
 # Quantization metadata.
 
@@ -42,6 +50,16 @@ class MoECommunicatorConfig:
     num_experts: int = 0
     num_local_experts: Optional[int] = None
     local_expert_start: Optional[int] = None
+
+    # Expert-tensor-parallel (ETP) topology. ``etp_size`` ranks share one
+    # expert's weights (sharded along the FFN intermediate dimension) and
+    # ``ep_size = world_size // etp_size`` groups own disjoint expert sets.
+    # ``etp_size=1`` is the plain expert-parallel layout.
+    etp_size: int = 1
+    ep_size: Optional[int] = None
+    etp_rank_order: EtpRankOrder = EtpRankOrder.EP_MAJOR
+    etp_reduce_mode: EtpReduceMode = EtpReduceMode.GROUP_REDUCE_SCATTER
+    etp_dispatch_mode: EtpDispatchMode = EtpDispatchMode.LEADER_SINGLE_SEND
 
     # Model shape and capacity
     hidden_size: int = 0

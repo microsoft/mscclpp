@@ -25,11 +25,13 @@ constexpr auto ReceiveCountTimeout = std::chrono::seconds(100);
 
 ThroughputContext::ThroughputContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
                                      int numRanksPerIpcDomain, int maxTokensPerRank, int64_t maxHiddenBytes,
-                                     DispatchLayout outputLayout, const RecvPoolConfig& config)
+                                     DispatchLayout outputLayout, const RecvPoolConfig& config,
+                                     const MoETopology& topology)
     : rank_(rank),
       numRanks_(numRanks),
       numNvlRanks_(numNvlRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
+      topology_(topology),
       bootstrap_(communicator.bootstrap()),
       maxTokensPerRank_(maxTokensPerRank),
       maxHiddenBytes_(maxHiddenBytes),
@@ -40,8 +42,11 @@ ThroughputContext::ThroughputContext(mscclpp::Communicator& communicator, int ra
   EP_HOST_ASSERT(outputLayout_ == DispatchLayout::TOKEN_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR);
   if (outputLayout_ == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(maxTokensPerRank_ > 0);
 
-  if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_)
-    return;
+  EP_HOST_ASSERT(topology_.numRanks == numRanks_);
+  // THROUGHPUT kernels are templated on the all-to-all degree, which is the EP
+  // size; with etpSize == 1 this is the world size as before.
+  const int a2aRanks = topology_.epSize;
+  if ((a2aRanks != 2 && a2aRanks != 4 && a2aRanks != 8 && a2aRanks != 16) || numRanksPerIpcDomain_ < numRanks_) return;
 
   controlBufferBytes_ = config_.controlBufferBytes(numRanks_);
   symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
@@ -161,7 +166,8 @@ void ThroughputContext::initialize() {
                     .numSms_ = numSms,
                     .deviceId_ = deviceId,
                     .rank_ = rank_,
-                    .numRanks_ = numRanks_};
+                    .numRanks_ = numRanks_,
+                    .topology_ = topology_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }

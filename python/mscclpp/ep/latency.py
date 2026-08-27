@@ -8,7 +8,14 @@ from typing import Optional
 
 import torch
 
-from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, create_moe_runtime
+from mscclpp.ep._cpp import (
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    EtpReduceMode,
+    MoEMode,
+    create_moe_runtime,
+)
 from mscclpp.ep.context import Context
 from mscclpp.ep.runtime import Runtime, requires_initialized
 from mscclpp.ep.types import (
@@ -26,6 +33,7 @@ from mscclpp.ep.utils import (
     cuda_stream_ptr,
     dispatch_scale_block_size,
     dispatch_scale_dtype,
+    resolve_etp_topology,
     resolve_expert_placement,
     resolve_dispatch_data_type,
     tensor_from_pointer,
@@ -64,15 +72,38 @@ class LatencyContext(Context):
         )
         self.enable_overlap = config.enable_overlap
 
+        (
+            self.ep_size,
+            self.etp_size,
+            self.ep_index,
+            self.tp_index,
+        ) = resolve_etp_topology(
+            world_size=self.world_size,
+            rank=self.rank,
+            etp_size=config.etp_size,
+            ep_size=config.ep_size,
+            order=config.etp_rank_order,
+        )
+        self.etp_rank_order = config.etp_rank_order
+        self.etp_reduce_mode = config.etp_reduce_mode
+        self.etp_dispatch_mode = config.etp_dispatch_mode
+
         if self.output_layout not in (
             DispatchLayout.EXPERT_MAJOR,
             DispatchLayout.RANK_MAJOR,
         ):
             raise NotImplementedError("unsupported latency output layout")
-        if self.num_experts % self.world_size != 0:
-            raise ValueError("latency mode requires num_experts divisible by world_size")
+        if self.num_experts % self.ep_size != 0:
+            raise ValueError("latency mode requires num_experts divisible by ep_size")
         if not self.world_size + 2 <= self.num_blocks <= 130:
             raise ValueError("num_blocks must be between world_size + 2 and 130 in latency mode")
+        if self.etp_size > 1:
+            if self.output_layout != DispatchLayout.EXPERT_MAJOR:
+                raise NotImplementedError("etp_size > 1 currently requires EXPERT_MAJOR dispatch output")
+            if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
+                raise NotImplementedError("etp_size > 1 currently requires RANK_LOCAL_REDUCE combine")
+            if self.etp_reduce_mode == EtpReduceMode.GROUP_NVLS:
+                raise NotImplementedError("EtpReduceMode.GROUP_NVLS is not implemented yet")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.invalid_token_expert_id) is not int:
@@ -96,6 +127,8 @@ class LatencyContext(Context):
             rank=self.rank,
             num_local_experts=config.num_local_experts,
             local_expert_start=config.local_expert_start,
+            ep_size=self.ep_size,
+            ep_index=self.ep_index,
         )
 
         self.dispatch_data_type = resolve_dispatch_data_type(config.quant)
@@ -135,6 +168,10 @@ class LatencyRuntime(Runtime):
             num_blocks=context.num_blocks,
             output_layout=context.output_layout,
             combine_mode=context.combine_mode,
+            etp_size=context.etp_size,
+            etp_rank_order=context.etp_rank_order,
+            etp_reduce_mode=context.etp_reduce_mode,
+            etp_dispatch_mode=context.etp_dispatch_mode,
         )
         super().__init__(context, cpp_runtime)
 

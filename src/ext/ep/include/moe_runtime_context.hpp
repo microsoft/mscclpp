@@ -24,7 +24,9 @@ namespace ep {
 struct LatencyContext {
   LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks, int numRanksPerIpcDomain,
                  int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                 CombineMode combineMode);
+                 CombineMode combineMode, const MoETopology& topology = MoETopology(),
+                 EtpReduceMode etpReduceMode = EtpReduceMode::GROUP_REDUCE_SCATTER,
+                 EtpDispatchMode etpDispatchMode = EtpDispatchMode::LEADER_SINGLE_SEND);
   ~LatencyContext() noexcept(false);
 
  private:
@@ -43,6 +45,9 @@ struct LatencyContext {
   int numTopk_;
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
+  MoETopology topology_;
+  EtpReduceMode etpReduceMode_ = EtpReduceMode::GROUP_REDUCE_SCATTER;
+  EtpDispatchMode etpDispatchMode_ = EtpDispatchMode::LEADER_SINGLE_SEND;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 0;
@@ -60,7 +65,7 @@ struct LatencyContext {
 struct ThroughputContext {
   ThroughputContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
                     int numRanksPerIpcDomain, int maxTokensPerRank, int64_t maxHiddenBytes, DispatchLayout outputLayout,
-                    const RecvPoolConfig& config);
+                    const RecvPoolConfig& config, const MoETopology& topology = MoETopology());
   ~ThroughputContext() noexcept(false);
 
  private:
@@ -74,6 +79,7 @@ struct ThroughputContext {
   int numRanks_;
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
+  MoETopology topology_;
   bool available_ = false;
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
   int maxTokensPerRank_;

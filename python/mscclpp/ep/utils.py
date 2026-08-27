@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from mscclpp.ep._cpp import DispatchDataType
+from mscclpp.ep._cpp import DispatchDataType, EtpRankOrder
 from mscclpp.ep.types import QuantConfig
 
 
@@ -185,6 +185,33 @@ def exclusive_cumsum(counts: Union[torch.Tensor, List[int]]) -> torch.Tensor:
     return torch.tensor(offsets, dtype=torch.int64)
 
 
+def resolve_etp_topology(
+    *,
+    world_size: int,
+    rank: int,
+    etp_size: int,
+    ep_size: Optional[int] = None,
+    order: EtpRankOrder = EtpRankOrder.EP_MAJOR,
+) -> Tuple[int, int, int, int]:
+    """Resolve ``(ep_size, etp_size, ep_index, tp_index)`` for ``rank``.
+
+    ``etp_size`` ranks share one expert's weights. The default ``EP_MAJOR``
+    order numbers ranks as ``rank = ep_index * etp_size + tp_index``.
+    """
+    if type(etp_size) is not int or etp_size <= 0:
+        raise ValueError("etp_size must be a positive int")
+    if world_size % etp_size != 0:
+        raise ValueError("world_size must be divisible by etp_size")
+    derived_ep_size = world_size // etp_size
+    if ep_size is not None and ep_size != derived_ep_size:
+        raise ValueError(f"ep_size={ep_size} is inconsistent with world_size={world_size} and etp_size={etp_size}")
+    if order == EtpRankOrder.EP_MAJOR:
+        ep_index, tp_index = divmod(rank, etp_size)
+    else:
+        tp_index, ep_index = divmod(rank, derived_ep_size)
+    return derived_ep_size, etp_size, ep_index, tp_index
+
+
 def resolve_expert_placement(
     *,
     num_experts: int,
@@ -192,13 +219,22 @@ def resolve_expert_placement(
     rank: int,
     num_local_experts: Optional[int],
     local_expert_start: Optional[int],
+    ep_size: Optional[int] = None,
+    ep_index: Optional[int] = None,
 ) -> Tuple[int, int]:
+    """Resolve ``(num_local_experts, local_expert_start)`` for this rank.
+
+    Placement is keyed on the expert-parallel group, not the world: with
+    ``etp_size > 1`` every rank of an EP group owns the same expert slice.
+    """
+    group_size = world_size if ep_size is None else ep_size
+    group_index = rank if ep_index is None else ep_index
     if num_local_experts is None:
-        if num_experts % world_size != 0:
-            raise ValueError("num_experts must be divisible by world_size for even contiguous placement")
-        num_local_experts = num_experts // world_size
-    if num_local_experts * world_size != num_experts:
+        if num_experts % group_size != 0:
+            raise ValueError("num_experts must be divisible by ep_size for even contiguous placement")
+        num_local_experts = num_experts // group_size
+    if num_local_experts * group_size != num_experts:
         raise NotImplementedError("only even contiguous expert placement is currently supported")
     if local_expert_start is None:
-        local_expert_start = rank * num_local_experts
+        local_expert_start = group_index * num_local_experts
     return num_local_experts, local_expert_start

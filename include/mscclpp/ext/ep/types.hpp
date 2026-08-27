@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <mscclpp/device.hpp>
 #include <utility>
 #include <variant>
 
@@ -13,6 +14,91 @@ namespace mscclpp {
 namespace ep {
 
 class MoERuntime;
+
+/// Rank layout of the 2D expert-parallel x expert-tensor-parallel grid.
+enum class EtpRankOrder {
+  /// rank = epIndex * etpSize + tpIndex (TP group contiguous, default).
+  EP_MAJOR,
+  /// rank = tpIndex * epSize + epIndex (EP group contiguous).
+  TP_MAJOR
+};
+
+/// Where partial expert outputs are summed when etpSize > 1.
+enum class EtpReduceMode {
+  /// Every ETP rank pushes its own partial to the token's source rank.
+  SOURCE_SIDE,
+  /// The TP group reduce-scatters partials onto the per-source leader first.
+  GROUP_REDUCE_SCATTER,
+  /// Reserved for an NVLS multimem.ld_reduce group reduction (not implemented).
+  GROUP_NVLS
+};
+
+/// How dispatch replicates a routed token across the ETP ranks of an EP group.
+enum class EtpDispatchMode {
+  /// Send once to the group member with the sender's tpIndex; peers pull the
+  /// row over NVLink while receiving (design B2).
+  LEADER_SINGLE_SEND,
+  /// Send one copy to every ETP rank of the destination group (design A).
+  DUPLICATE_SEND
+};
+
+/// Rank layout of the expert-parallel x expert-tensor-parallel grid.
+///
+/// Each expert is owned by one EP group of @ref etpSize ranks; the expert's
+/// weights are tensor-sharded across those ranks. `numRanks == epSize *
+/// etpSize`. `etpSize == 1` reproduces the plain expert-parallel layout where
+/// rank == expert-shard owner.
+struct MoETopology {
+  /// Total rank count.
+  int numRanks = 1;
+  /// Number of expert-parallel groups.
+  int epSize = 1;
+  /// Number of ranks sharing one expert's weights.
+  int etpSize = 1;
+  /// Rank numbering convention.
+  EtpRankOrder order = EtpRankOrder::EP_MAJOR;
+
+  MoETopology() = default;
+  /// Build a topology from the world size and the ETP degree.
+  MSCCLPP_HOST_DEVICE_INLINE MoETopology(int numRanks_, int etpSize_, EtpRankOrder order_ = EtpRankOrder::EP_MAJOR)
+      : numRanks(numRanks_), epSize(etpSize_ > 0 ? numRanks_ / etpSize_ : numRanks_), etpSize(etpSize_), order(order_) {}
+
+  /// Return whether more than one rank shares an expert.
+  MSCCLPP_HOST_DEVICE_INLINE bool isEtpEnabled() const { return etpSize > 1; }
+  /// Return the expert-parallel group index of @p rank.
+  MSCCLPP_HOST_DEVICE_INLINE int epIndex(int rank) const {
+    return order == EtpRankOrder::EP_MAJOR ? rank / etpSize : rank % epSize;
+  }
+  /// Return the tensor-parallel index of @p rank inside its EP group.
+  MSCCLPP_HOST_DEVICE_INLINE int tpIndex(int rank) const {
+    return order == EtpRankOrder::EP_MAJOR ? rank % etpSize : rank / epSize;
+  }
+  /// Return the rank at grid position (@p ep, @p tp).
+  MSCCLPP_HOST_DEVICE_INLINE int rankOf(int ep, int tp) const {
+    return order == EtpRankOrder::EP_MAJOR ? ep * etpSize + tp : tp * epSize + ep;
+  }
+
+  /// Return the number of experts owned by one EP group.
+  MSCCLPP_HOST_DEVICE_INLINE int numExpertsPerGroup(int numExperts) const { return numExperts / epSize; }
+  /// Return the EP group that owns @p expert, or -1 for an invalid expert.
+  MSCCLPP_HOST_DEVICE_INLINE int expertGroup(int expert, int numExpertsPerGroup_) const {
+    return expert < 0 ? -1 : expert / numExpertsPerGroup_;
+  }
+  /// Return the group-local index of @p expert, or -1 for an invalid expert.
+  MSCCLPP_HOST_DEVICE_INLINE int localExpert(int expert, int numExpertsPerGroup_) const {
+    return expert < 0 ? -1 : expert % numExpertsPerGroup_;
+  }
+  /// Return the rank of the group that owns @p expert whose tpIndex equals
+  /// @p tpIndexOfSender; with etpSize == 1 this is the owning rank itself.
+  MSCCLPP_HOST_DEVICE_INLINE int leaderRank(int expert, int numExpertsPerGroup_, int tpIndexOfSender) const {
+    const int group = expertGroup(expert, numExpertsPerGroup_);
+    return group < 0 ? -1 : rankOf(group, tpIndexOfSender);
+  }
+  /// Return whether @p expert belongs to the group of @p rank.
+  MSCCLPP_HOST_DEVICE_INLINE bool ownsExpert(int rank, int expert, int numExpertsPerGroup_) const {
+    return expert >= 0 && expertGroup(expert, numExpertsPerGroup_) == epIndex(rank);
+  }
+};
 
 /// Expert-parallel runtime mode.
 enum class MoEMode {

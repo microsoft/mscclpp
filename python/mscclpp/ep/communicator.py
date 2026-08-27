@@ -8,7 +8,15 @@ from typing import Any, Optional, Tuple
 
 import torch
 
-from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from mscclpp.ep._cpp import (
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    EtpDispatchMode,
+    EtpRankOrder,
+    EtpReduceMode,
+    MoEMode,
+)
 from mscclpp.ep.context import create_context
 from mscclpp.ep.runtime import Runtime
 from mscclpp.ep.types import (
@@ -25,6 +33,9 @@ from mscclpp.ep.types import (
 
 __all__ = [
     "OverlapConfig",
+    "EtpDispatchMode",
+    "EtpRankOrder",
+    "EtpReduceMode",
     "BlockOverlapConfig",
     "CombineMode",
     "DispatchHandle",
@@ -124,6 +135,26 @@ class MoECommunicator:
     @property
     def local_expert_start(self) -> int:
         return self._context.local_expert_start
+
+    @property
+    def ep_size(self) -> int:
+        """Number of expert-parallel groups."""
+        return self._context.ep_size
+
+    @property
+    def etp_size(self) -> int:
+        """Number of ranks sharing one expert's weights."""
+        return self._context.etp_size
+
+    @property
+    def ep_index(self) -> int:
+        """This rank's expert-parallel group index."""
+        return self._context.ep_index
+
+    @property
+    def tp_index(self) -> int:
+        """This rank's tensor-parallel index inside its EP group."""
+        return self._context.tp_index
 
     def is_available(self) -> bool:
         return self._runtime.is_available()

@@ -18,4 +18,5 @@ target_sources(unit_tests PRIVATE
     local_channel_tests.cu
     gpu_ipc_mem_tests.cc
     bulk_tests.cu
+    ep_topology_tests.cc
 )

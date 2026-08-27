@@ -17,7 +17,8 @@ namespace ep {
 
 LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
                                int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
-                               DispatchLayout outputLayout, CombineMode combineMode)
+                               DispatchLayout outputLayout, CombineMode combineMode, const MoETopology& topology,
+                               EtpReduceMode etpReduceMode, EtpDispatchMode etpDispatchMode)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -27,16 +28,30 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
       numTopk_(numTopk),
       outputLayout_(outputLayout),
       combineMode_(combineMode),
-      symmetricBufferBytes_(static_cast<int64_t>(
-          latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode))),
+      topology_(topology),
+      etpReduceMode_(etpReduceMode),
+      etpDispatchMode_(etpDispatchMode),
+      symmetricBufferBytes_(static_cast<int64_t>(latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts,
+                                                                   numTopk, outputLayout, combineMode, topology_,
+                                                                   etpReduceMode_, etpDispatchMode_))),
       workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
-  EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(topology_.numRanks == numRanks_);
+  EP_HOST_ASSERT(topology_.epSize > 0 && topology_.epSize * topology_.etpSize == numRanks_);
+  EP_HOST_ASSERT(numExperts > 0 && numExperts % topology_.epSize == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
+  if (topology_.isEtpEnabled()) {
+    // Stage 3/4 of the ETP rollout: expert-major + rank-local reduce only.
+    EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR &&
+                   "etpSize > 1 currently requires EXPERT_MAJOR dispatch");
+    EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE &&
+                   "etpSize > 1 currently requires RANK_LOCAL_REDUCE combine");
+    EP_HOST_ASSERT(etpReduceMode_ != EtpReduceMode::GROUP_NVLS && "GROUP_NVLS is not implemented yet");
+  }
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
@@ -122,7 +137,10 @@ void LatencyContext::initialize() {
                     .numSms_ = numSms,
                     .deviceId_ = deviceId_,
                     .rank_ = rank_,
-                    .numRanks_ = numRanks_};
+                    .numRanks_ = numRanks_,
+                    .topology_ = topology_,
+                    .etpReduceMode_ = etpReduceMode_,
+                    .etpDispatchMode_ = etpDispatchMode_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }
@@ -132,7 +150,8 @@ void* MoERuntime::outputTopkIdsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.topology_, context.etpReduceMode_, context.etpDispatchMode_)
       .rankMajorTopkIdsBuffer_;
 }
 
@@ -141,7 +160,8 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.topology_, context.etpReduceMode_, context.etpDispatchMode_)
       .rankMajorTopkWeightsBuffer_;
 }
 
@@ -151,7 +171,8 @@ void* MoERuntime::combineInputBuffer() const {
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.topology_, context.etpReduceMode_, context.etpDispatchMode_)
       .combineRecvBuffer_;
 }
 
@@ -182,13 +203,14 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= context.maxTokensPerRank_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
-  EP_HOST_ASSERT(numExperts % context.numRanks_ == 0);
+  EP_HOST_ASSERT(numExperts % context.topology_.epSize == 0);
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+                                        numExperts, numTopk, context.outputLayout_, context.combineMode_,
+                                        context.topology_, context.etpReduceMode_, context.etpDispatchMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
@@ -242,13 +264,14 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(context.available_);
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= context.maxTokensPerRank_);
-  EP_HOST_ASSERT(numExperts % context.numRanks_ == 0);
+  EP_HOST_ASSERT(numExperts % context.topology_.epSize == 0);
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+                                        numExperts, numTopk, context.outputLayout_, context.combineMode_,
+                                        context.topology_, context.etpReduceMode_, context.etpDispatchMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
