@@ -20,7 +20,6 @@ from mscclpp._mscclpp import (
     CppTransportFlags,
 )
 import numpy as np
-import pickle
 
 from mscclpp.utils import is_torch_tensor
 
@@ -54,14 +53,12 @@ class CommGroup:
                 import torch
                 import torch.distributed as dist
 
-                if rank == 0:
-                    uniq_id_global = uniq_id
-                    pickled_data = pickle.dumps(uniq_id)
-                    data_tensor = torch.frombuffer(bytearray(pickled_data), dtype=torch.uint8).clone()
-                else:
-                    data_tensor = torch.zeros(256, dtype=torch.uint8)
-                dist.broadcast(data_tensor, group=torch_group, group_src=0)
-                uniq_id_global = pickle.loads(data_tensor.numpy().tobytes())
+                backend = str(dist.get_backend(torch_group)).lower()
+                device = torch.device("cuda", torch.cuda.current_device()) if "nccl" in backend else torch.device("cpu")
+                object_list = [uniq_id]
+                group_root = dist.get_global_rank(torch_group, 0)
+                dist.broadcast_object_list(object_list, src=group_root, group=torch_group, device=device)
+                uniq_id_global = object_list[0]
             self.bootstrap.initialize(uniq_id_global)
         elif not interfaceIpPortTrio == "":
             assert rank >= 0 and size >= 1
