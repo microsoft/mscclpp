@@ -18,8 +18,7 @@
 //      every index the model produces.
 //
 // Build (needs only CUDA headers, no GPU and no nvcc):
-//   g++ -std=c++17 -I include -I src/ext/ep/include -I src/ext/ep \
-//       -I $CUDA_INCLUDE test/ep_cpu_model/etp_model_test.cc -o etp_model_test
+//   CUDA_INCLUDE=/usr/local/cuda/include ./test/ep_cpu_model/run_etp_model_test.sh
 
 #include <algorithm>
 #include <cassert>

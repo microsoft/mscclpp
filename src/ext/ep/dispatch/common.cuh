@@ -265,18 +265,26 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, const Exper
     }
     stageDispatchPayloadMetadata<DispatchDataType::BF16>(payloadView, stagedPayload, topkIndices, topkWeights, tokenIdx,
                                                          nTopk, maxTokensPerRank, rank, laneId);
+    // Reserve the first copy's slots while the payload TMA load is in flight,
+    // exactly as before ETP; extra copies only exist with DUPLICATE_SEND.
+    reserveDispatchPayloadSlots<DispatchDataType::BF16>(payloadView, stagedPayload, destinationSlots, workspaceView,
+                                                        nTopk, map, 0, maxTokensPerRank, laneId);
     if (laneId == 0) bulkBarrier->wait(sendBulkPhase);
     __syncwarp();
     mscclpp::bulkFence();
-    for (int copyIdx = 0; copyIdx < nSendCopies; ++copyIdx) {
+    sendStagedDispatchPayload<DispatchDataType::BF16>(payloadView, stagedPayload, destinationSlots, workspaceView,
+                                                      nTopk, map, 0, maxTokensPerRank, metadataBytes, payloadStride,
+                                                      recvBuffer, transport, laneId);
+    for (int copyIdx = 1; copyIdx < nSendCopies; ++copyIdx) {
+      __syncwarp();
       reserveDispatchPayloadSlots<DispatchDataType::BF16>(payloadView, stagedPayload, destinationSlots, workspaceView,
                                                           nTopk, map, copyIdx, maxTokensPerRank, laneId);
       __syncwarp();
       sendStagedDispatchPayload<DispatchDataType::BF16>(payloadView, stagedPayload, destinationSlots, workspaceView,
                                                         nTopk, map, copyIdx, maxTokensPerRank, metadataBytes,
                                                         payloadStride, recvBuffer, transport, laneId);
-      __syncwarp();
     }
+    __syncwarp();
   }
 }
 
@@ -323,6 +331,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, const Expert
     if (subWarpId == 0) {
       stageDispatchPayloadMetadata<DataType>(payloadView, stagedPayload, topkIndices, topkWeights, tokenIdx, nTopk,
                                              maxTokensPerRank, rank, laneId);
+      reserveDispatchPayloadSlots<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, nTopk, map, 0,
+                                            maxTokensPerRank, laneId);
     }
     for (int inputIdx = groupThreadId; inputIdx < HiddenVectors; inputIdx += groupThreadCount) {
       outputData[inputIdx] = quantizeBf16x8ToFp8E4M3<ScaleBlockSize>(
@@ -332,14 +342,17 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, const Expert
 
     if (subWarpId == 0) {
       mscclpp::bulkFence();
-      for (int copyIdx = 0; copyIdx < nSendCopies; ++copyIdx) {
+      sendStagedDispatchPayload<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, nTopk, map, 0,
+                                          maxTokensPerRank, metadataBytes, payloadStride, recvBuffer, transport,
+                                          laneId);
+      for (int copyIdx = 1; copyIdx < nSendCopies; ++copyIdx) {
+        __syncwarp();
         reserveDispatchPayloadSlots<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, nTopk, map,
                                               copyIdx, maxTokensPerRank, laneId);
         __syncwarp();
         sendStagedDispatchPayload<DataType>(payloadView, stagedPayload, destinationSlots, workspaceView, nTopk, map,
                                             copyIdx, maxTokensPerRank, metadataBytes, payloadStride, recvBuffer,
                                             transport, laneId);
-        __syncwarp();
       }
     }
     syncNamedBarrier(groupBarrierId, groupThreadCount);

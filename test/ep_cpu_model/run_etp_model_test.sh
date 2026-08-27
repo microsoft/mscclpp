@@ -12,5 +12,6 @@ for dir in ${EXTRA_INCLUDE_DIRS:-}; do extra+=("-I${dir}"); done
 g++ -std=c++17 -O1 -Wall \
   -I "${root}/include" -I "${root}/src/ext/ep/include" -I "${root}/src/ext/ep" \
   -I "${cuda_include}" "${extra[@]}" \
+  -include "${root}/tools/host_syntax_shim.hpp" \
   "${here}/etp_model_test.cc" -o "${out}"
 "${out}"
