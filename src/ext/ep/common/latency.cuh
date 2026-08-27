@@ -109,6 +109,11 @@ struct RecvTask {
   int sourceRank_;
   int tokenBegin_;
   int tokenEnd_;
+  /// Rank whose dispatch receive buffer holds sourceRank_'s payloads. With
+  /// etpSize == 1 (or DUPLICATE_SEND) this is always the local rank; under
+  /// LEADER_SINGLE_SEND it is the ETP peer that received the rows, which the
+  /// receive worker reads over NVLink (design B2, fused pull).
+  int tpPeer_;
 };
 static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
@@ -125,9 +130,14 @@ struct WorkspaceView {
   uint32_t* combineRankReadyEpochs_;
   uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
+  /// Per (source rank, source slot, top-k lane) expert-output row offset
+  /// produced by dispatch and consumed by combine. Rank-private because ETP
+  /// peers place the same token at different rows of their own output.
+  int* dispatchCombineRowOffsets_;
   int* rankMajorSendIndices_;
 
-  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int numExpertCopySlots) {
+  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int numExpertCopySlots, int maxTokensPerRank,
+                                           int nTopk) {
     auto* cursor = reinterpret_cast<int*>(workspace);
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
@@ -147,13 +157,21 @@ struct WorkspaceView {
     combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
+    dispatchCombineRowOffsets_ = cursor;
+    cursor += static_cast<size_t>(nRanks) * maxTokensPerRank * nTopk;
     rankMajorSendIndices_ = cursor;
   }
 
   /// Workspace view constructed from the expert map; `numExpertCopySlots` is
   /// nRanks * (numExperts / epSize), which is numExperts when etpSize == 1.
-  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, const ExpertMap& map)
-      : WorkspaceView(workspace, map.numRanks(), map.numRanks() * map.numLocalExperts()) {}
+  MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, const ExpertMap& map, int maxTokensPerRank, int nTopk)
+      : WorkspaceView(workspace, map.numRanks(), map.numRanks() * map.numLocalExperts(), maxTokensPerRank, nTopk) {}
+
+  /// Index of the combine row-offset slot of one dispatched payload lane.
+  MSCCLPP_HOST_DEVICE_INLINE static size_t combineRowOffsetIndex(int sourceRank, int sourceSlot, int nTopk,
+                                                                 int maxTokensPerRank, int topkLane) {
+    return (static_cast<size_t>(sourceRank) * maxTokensPerRank + sourceSlot) * nTopk + topkLane;
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk,
                                                     int epSize) {
@@ -168,7 +186,8 @@ struct WorkspaceView {
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
            sizeof(uint32_t) +                                                            // combineReadyEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
-           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
+           static_cast<size_t>(nRanks) * maxTokensPerRank * nTopk * sizeof(int) +  // dispatchCombineRowOffsets_
+           static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);            // rankMajorSendIndices_
   }
 };
 

@@ -69,6 +69,7 @@ MSCCLPP_DEVICE_INLINE RecvTask loadRecvTask(const RecvTask* tasks, int taskIdx) 
   task.sourceRank_ = warpBroadcast(task.sourceRank_, 0);
   task.tokenBegin_ = warpBroadcast(task.tokenBegin_, 0);
   task.tokenEnd_ = warpBroadcast(task.tokenEnd_, 0);
+  task.tpPeer_ = warpBroadcast(task.tpPeer_, 0);
   return task;
 }
 
@@ -155,15 +156,23 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, con
        taskIdx += static_cast<int>(gridDim.x)) {
     const RecvTask recvTask = loadRecvTask(workspaceView.dispatchRecvTasks_, taskIdx);
     const int sourceRank = recvTask.sourceRank_;
+    // The payload rows of this source live in the ETP peer that received them;
+    // with etpSize == 1 that is the local dispatch receive buffer.
+    const auto* peerDispatchRecvBuffer = reinterpret_cast<const uint8_t*>(
+        transport.mappedBuffer(const_cast<void*>(dispatchRecvBuffer), recvTask.tpPeer_));
 
     for (int sourceTokenSlot = recvTask.tokenBegin_; sourceTokenSlot < recvTask.tokenEnd_;
          ++sourceTokenSlot, ++tokenIteration) {
       const int stage = tokenIteration % CombineNStages;
       auto* outputTile = reinterpret_cast<int4*>(outputTiles + static_cast<size_t>(stage) * HiddenBytes);
       const auto* sourcePayload =
-          reinterpret_cast<const uint8_t*>(dispatchRecvBuffer) + dispatchMetadataSize +
+          peerDispatchRecvBuffer + dispatchMetadataSize +
           (static_cast<size_t>(sourceRank) * maxTokensPerRank + sourceTokenSlot) * payloadStride;
-      const int rowOffset = laneId < nTopk ? payloadView.topKIndices(sourcePayload)[laneId] : -1;
+      const int rowOffset =
+          laneId < nTopk
+              ? workspaceView.dispatchCombineRowOffsets_[WorkspaceView::combineRowOffsetIndex(
+                    sourceRank, sourceTokenSlot, nTopk, maxTokensPerRank, laneId)]
+              : -1;
       const float weight = laneId < nTopk ? payloadView.topKValues(sourcePayload)[laneId] : 0.0f;
       if (rowOffset >= 0) EP_DEVICE_ASSERT(rowOffset < nExpertOutputRows);
 
@@ -600,7 +609,7 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(context);
   const ExpertMap map(context, nExperts);
-  WorkspaceView workspaceView(context->workspace_, map);
+  WorkspaceView workspaceView(context->workspace_, map, maxTokensPerRank, nTopk);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE || Mode == CombineMode::DIRECT_SEND);
