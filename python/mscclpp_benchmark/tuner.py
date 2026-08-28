@@ -47,9 +47,7 @@ class OfflineTuner:
             return None
         for algorithm, candidate_spec in candidates:
             nblocks_values = (
-                self.candidate_nblocks
-                if candidate_spec.candidate_nblocks is None
-                else candidate_spec.candidate_nblocks
+                self.candidate_nblocks if candidate_spec.candidate_nblocks is None else candidate_spec.candidate_nblocks
             )
             nthreads_values = (
                 self.candidate_nthreads
