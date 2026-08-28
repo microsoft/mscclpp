@@ -78,7 +78,8 @@ class MoECommunicatorConfig:
     # THROUGHPUT: dispatch/combine blocks; defaults to (20, 20)
     # Counts are total grid sizes.
     # A single value uses the mode-specific relation for both operations.
-    num_blocks: Optional[int | tuple[int, int]] = None
+    # Either tuple entry may be None to use its mode default.
+    num_blocks: Optional[int | tuple[Optional[int], Optional[int]]] = None
 
     # Overlap
     enable_overlap: bool = False
@@ -148,7 +149,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
+| `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently, and `None` uses that entry's mode default. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
 | `dispatch_config`, `combine_config` | context-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 
