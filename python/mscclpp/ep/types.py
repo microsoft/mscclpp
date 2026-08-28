@@ -58,7 +58,7 @@ class MoECommunicatorConfig:
     quant: Optional[QuantConfig] = None
 
     # Launch tuning. Accepts one count or a (dispatch, combine) pair.
-    # Both values are total grid sizes, including any control blocks.
+    # Both values are total grid sizes.
     num_blocks: Optional[Union[int, Tuple[int, int]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False

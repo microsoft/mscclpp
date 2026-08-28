@@ -185,7 +185,7 @@ struct LatencyCombineRequest {
   DispatchDataType dispatchDataType;
   /// Combine algorithm.
   CombineMode combineMode;
-  /// Combine grid block count, including any control blocks.
+  /// Combine grid block count.
   int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;

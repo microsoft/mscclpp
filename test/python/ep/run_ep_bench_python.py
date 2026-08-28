@@ -153,7 +153,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Communication SM/block budget. DeepEP interprets it as SMs; MSCCL++ maps it to the total "
-        "communication block count, including reserved scheduler/control blocks. 0 uses backend defaults.",
+        "communication block count. 0 uses backend defaults.",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
