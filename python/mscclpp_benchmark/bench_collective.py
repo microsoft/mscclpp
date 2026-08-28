@@ -25,6 +25,9 @@ from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedC
 _ALLREDUCE = "allreduce"
 _ALLGATHER = "allgather"
 _REDUCESCATTER = "reducescatter"
+# CLI buffer-mode names mapped to the CppCollectiveBufferMode enum members exposed by
+# python/csrc/algorithm.cpp.
+_BUFFER_MODE_NAMES = {"in-place": "IN_PLACE", "out-of-place": "OUT_OF_PLACE"}
 _DEFAULT_BATCH_SIZES = (
     1,
     2,
@@ -101,6 +104,7 @@ class BenchmarkCase:
     output: cp.ndarray
     dtype_spec: DTypeSpec
     symmetric_memory: bool = False
+    buffer_mode: str = "in-place"
 
 
 def _device_name() -> str:
@@ -305,14 +309,14 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
     comm_group = comm.comm_group
     nranks = getattr(comm_group, "nranks", 1) or 1
     nranks_per_node = getattr(comm_group, "nranks_per_node", nranks) or nranks
-    n_nodes = nranks // nranks_per_node if nranks_per_node else 1
+    multi_node = nranks > nranks_per_node
     effective_message_size = _effective_message_size(case.collective, case.message_size, nranks)
     filtered_out = False
     for candidate in (
         *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
         *_dsl_candidate_specs(comm, case.collective),
     ):
-        if n_nodes > 1 and not candidate.supports_multi_node:
+        if multi_node and not candidate.supports_multi_node:
             filtered_out = True
             continue
         if not _candidate_supports_profile(candidate, profile):
@@ -329,6 +333,9 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
             continue
         algorithm = available.get(candidate.algorithm)
         if algorithm is None or algorithm.name in seen:
+            continue
+        if not _algorithm_supports_buffer_mode(algorithm, case.buffer_mode):
+            filtered_out = True
             continue
         seen.add(algorithm.name)
         candidates.append((algorithm, candidate))
@@ -359,6 +366,21 @@ def _effective_message_size(collective: str, message_size: int, nranks: int) -> 
     if collective in (_ALLGATHER, _REDUCESCATTER):
         return message_size * nranks
     return message_size
+
+
+def _algorithm_supports_buffer_mode(algorithm: Any, buffer_mode: str) -> bool:
+    """Whether ``algorithm`` can run against buffers laid out in ``buffer_mode``.
+
+    Mirrors the ``bufferModeMatch`` test in ``src/ext/nccl/algorithm_selector.cc``: an algorithm
+    declaring ``ANY`` accepts either layout, otherwise the modes must match. The benchmark resolves
+    algorithms by name instead of going through that selector, so nothing else enforces this. Native
+    algorithms are registered without an explicit mode and therefore report ``ANY``.
+    """
+    mode = getattr(algorithm, "buffer_mode", None)
+    if mode is None:
+        return True
+    name = getattr(mode, "name", None) or str(mode).rsplit(".", 1)[-1]
+    return name in ("ANY", _BUFFER_MODE_NAMES.get(buffer_mode))
 
 
 def _candidate_supports_message_size(candidate: CandidateSpec, message_size: int) -> bool:
@@ -397,6 +419,7 @@ def _make_case(
             output=output,
             dtype_spec=dtype_spec,
             symmetric_memory=symmetric_memory,
+            buffer_mode=buffer_mode,
         )
 
     if collective == _REDUCESCATTER:
@@ -413,6 +436,7 @@ def _make_case(
             output=output,
             dtype_spec=dtype_spec,
             symmetric_memory=symmetric_memory,
+            buffer_mode="in-place",
         )
 
     if collective != _ALLGATHER:
@@ -433,6 +457,7 @@ def _make_case(
         output=output,
         dtype_spec=dtype_spec,
         symmetric_memory=symmetric_memory,
+        buffer_mode=buffer_mode,
     )
 
 
@@ -634,6 +659,7 @@ def main(argv: list[str] | None = None) -> None:
         scratch_buffer_size=args.scratch_buffer_size,
         collective=args.collective,
         enable_dsl=args.enable_dsl,
+        buffer_mode=args.buffer_mode,
         dsl_tbg=dsl_tbg,
         dsl_tpb=dsl_tpb,
     )
