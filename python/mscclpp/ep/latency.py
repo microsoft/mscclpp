@@ -28,6 +28,7 @@ from mscclpp.ep.utils import (
     dispatch_scale_dtype,
     resolve_expert_placement,
     resolve_dispatch_data_type,
+    resolve_num_blocks,
     tensor_from_pointer,
 )
 
@@ -42,7 +43,11 @@ class LatencyContext(Context):
         output_layout = config.output_layout
         if output_layout is None:
             output_layout = DispatchLayout.EXPERT_MAJOR
-        num_blocks = 130 if config.num_blocks is None else config.num_blocks
+        dispatch_blocks, combine_blocks = resolve_num_blocks(
+            config.num_blocks,
+            default=(130, 128),
+            scalar_combine_offset=-2,
+        )
 
         self.comm = comm
         self.rank = comm.my_rank
@@ -57,7 +62,8 @@ class LatencyContext(Context):
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_blocks = num_blocks
+        self.dispatch_blocks = dispatch_blocks
+        self.combine_blocks = combine_blocks
         self.combine_mode = config.combine_mode
         self.invalid_token_expert_id = (
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
@@ -71,8 +77,10 @@ class LatencyContext(Context):
             raise NotImplementedError("unsupported latency output layout")
         if self.num_experts % self.world_size != 0:
             raise ValueError("latency mode requires num_experts divisible by world_size")
-        if not self.world_size + 2 <= self.num_blocks <= 130:
-            raise ValueError("num_blocks must be between world_size + 2 and 130 in latency mode")
+        if not self.world_size + 2 <= dispatch_blocks <= 130:
+            raise ValueError("dispatch block count must be between world_size + 2 and 130 in latency mode")
+        if not 0 < combine_blocks <= 128:
+            raise ValueError("combine block count must be between 1 and 128 in latency mode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.invalid_token_expert_id) is not int:
@@ -132,7 +140,6 @@ class LatencyRuntime(Runtime):
             hidden=context.hidden_size,
             num_experts=context.num_experts,
             num_topk=context.topk,
-            num_blocks=context.num_blocks,
             output_layout=context.output_layout,
             combine_mode=context.combine_mode,
         )
@@ -188,7 +195,7 @@ class LatencyRuntime(Runtime):
             mode_context.invalid_token_expert_id,
             mode_context.output_layout,
             mode_context.dispatch_data_type,
-            mode_context.num_blocks,
+            mode_context.dispatch_blocks,
             cuda_stream_ptr(stream),
         )
         output_quant = (
@@ -299,7 +306,7 @@ class LatencyRuntime(Runtime):
             mode_context.output_layout,
             mode_context.dispatch_data_type,
             mode_context.combine_mode,
-            mode_context.num_blocks - 2,
+            mode_context.combine_blocks,
             cuda_stream_ptr(stream),
         )
         return out

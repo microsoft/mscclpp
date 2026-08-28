@@ -12,7 +12,7 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
-                       int numExperts, int numTopk, int64_t maxHiddenBytes, int numBlocks, DispatchLayout outputLayout,
+                       int numExperts, int numTopk, int64_t maxHiddenBytes, DispatchLayout outputLayout,
                        CombineMode combineMode)
     : bootstrap_(communicator.bootstrap()),
       mode_(mode),
@@ -31,9 +31,9 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
-      throughputContext_ = std::make_unique<ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_,
-                                                               numRanksPerIpcDomain_, maxTokensPerRank, maxHiddenBytes,
-                                                               outputLayout, RecvPoolConfig(numBlocks));
+      throughputContext_ =
+          std::make_unique<ThroughputContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
+                                              maxTokensPerRank, maxHiddenBytes, outputLayout);
       available_ = throughputContext_->available_;
       break;
     default:
@@ -133,9 +133,9 @@ void MoERuntime::combine(const CombineRequest& request) {
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numBlocks, DispatchLayout outputLayout, CombineMode combineMode) {
+                                             DispatchLayout outputLayout, CombineMode combineMode) {
   return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, maxHiddenBytes,
-                                      numBlocks, outputLayout, combineMode);
+                                      outputLayout, combineMode);
 }
 
 }  // namespace ep

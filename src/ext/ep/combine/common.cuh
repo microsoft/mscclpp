@@ -661,12 +661,12 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout>();
   const size_t sharedBytes = combineSharedBytes<Hidden, Mode, Layout>(nLocalExperts, workload.numTopk_);
   const bool useRankMajorTma = Layout == DispatchLayout::RANK_MAJOR && workload.numTopk_ <= RankMajorTmaMaxNTopk;
-  const int launchBlocks = numBlocks + (useRankMajorTma ? 1 : 0);
+  EP_HOST_ASSERT(!useRankMajorTma || numBlocks > 1);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
-  EP_HOST_ASSERT(residentBlocks >= launchBlocks);
+  EP_HOST_ASSERT(residentBlocks >= numBlocks);
 
-  combineFunc<<<dim3(launchBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
+  combineFunc<<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context.devicePtr_);
   CUDA_CHECK(cudaGetLastError());

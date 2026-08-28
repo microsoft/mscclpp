@@ -74,8 +74,11 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch resources; defaults to 130 for LATENCY and 20 for THROUGHPUT
-    num_blocks: Optional[int] = None
+    # LATENCY: dispatch blocks or (dispatch, combine); defaults to (130, 128)
+    # THROUGHPUT: dispatch/combine blocks; defaults to (20, 20)
+    # Counts are total grid sizes, including any control blocks.
+    # A single value uses the mode-specific relation for both operations.
+    num_blocks: Optional[int | tuple[int, int]] = None
 
     # Overlap
     enable_overlap: bool = False
@@ -145,7 +148,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_blocks` | total communication block count; LATENCY includes two reserved scheduler/control blocks, while THROUGHPUT uses all blocks as workers; mode-specific default when unset |
+| `num_blocks` | Total dispatch/combine grid sizes, including control blocks. A pair configures them independently. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
 | `dispatch_config`, `combine_config` | context-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 

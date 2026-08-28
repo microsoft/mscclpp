@@ -137,6 +137,8 @@ struct ThroughputDispatchRequest {
   int numRecvTokens;
   /// Whether cached routing metadata is reused.
   bool cachedMode;
+  /// Dispatch grid block count.
+  int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
 };
@@ -183,7 +185,7 @@ struct LatencyCombineRequest {
   DispatchDataType dispatchDataType;
   /// Combine algorithm.
   CombineMode combineMode;
-  /// Combine worker block count.
+  /// Combine grid block count, including any control blocks.
   int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
@@ -211,6 +213,8 @@ struct ThroughputCombineRequest {
   int numTopk;
   /// Input element size in bytes.
   int inputElementSize;
+  /// Combine grid block count.
+  int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
 };

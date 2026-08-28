@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import torch
 import mscclpp
@@ -57,9 +57,9 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Total communication blocks. LATENCY includes two reserved scheduler/control
-    # blocks; THROUGHPUT uses every block as a communication worker.
-    num_blocks: Optional[int] = None
+    # Launch tuning. Accepts one count or a (dispatch, combine) pair.
+    # Both values are total grid sizes, including any control blocks.
+    num_blocks: Optional[Union[int, Tuple[int, int]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 

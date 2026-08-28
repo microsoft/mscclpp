@@ -59,15 +59,14 @@ struct LatencyContext {
 
 struct ThroughputContext {
   ThroughputContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
-                    int numRanksPerIpcDomain, int maxTokensPerRank, int64_t maxHiddenBytes, DispatchLayout outputLayout,
-                    const RecvPoolConfig& config);
+                    int numRanksPerIpcDomain, int maxTokensPerRank, int64_t maxHiddenBytes,
+                    DispatchLayout outputLayout);
   ~ThroughputContext() noexcept(false);
 
  private:
   friend class MoERuntime;
 
   void initialize();
-  int dispatchBlockCount(int xElementSize) const;
   bool canUseDirectRecvPool(int numTokens, int numRecvTokens, int hidden, int xElementSize) const;
 
   int rank_;
@@ -86,7 +85,6 @@ struct ThroughputContext {
   bool dispatchReady_ = false;
   bool dispatchMetadataReady_ = false;
   bool collectiveDirectReady_ = false;
-  RecvPoolConfig config_;
   mscclpp::Communicator* communicator_ = nullptr;
   void* symmetricBuffer_ = nullptr;
   void* recvPool_ = nullptr;

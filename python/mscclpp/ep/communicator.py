@@ -110,8 +110,9 @@ class MoECommunicator:
         return self._context.max_tokens_per_rank
 
     @property
-    def num_blocks(self) -> int:
-        return self._context.num_blocks
+    def num_blocks(self) -> Tuple[int, int]:
+        """Return the resolved ``(dispatch, combine)`` block counts."""
+        return self._context.dispatch_blocks, self._context.combine_blocks
 
     @property
     def enable_overlap(self) -> bool:
