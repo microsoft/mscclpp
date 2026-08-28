@@ -14,6 +14,26 @@ from mscclpp.ep._cpp import DispatchDataType
 from mscclpp.ep.types import QuantConfig
 
 
+def resolve_num_blocks(
+    num_blocks: Optional[Union[int, Tuple[int, int]]],
+    *,
+    default: Tuple[int, int],
+    scalar_combine_offset: int,
+) -> Tuple[int, int]:
+    """Resolve one block count or a ``(dispatch, combine)`` pair."""
+    if num_blocks is None:
+        return default
+    if type(num_blocks) is int:
+        return num_blocks, num_blocks + scalar_combine_offset
+    if not isinstance(num_blocks, tuple):
+        raise TypeError("num_blocks must be an int or a (dispatch, combine) tuple")
+    if len(num_blocks) != 2:
+        raise ValueError("num_blocks tuple must contain exactly (dispatch, combine)")
+    if any(type(value) is not int for value in num_blocks):
+        raise TypeError("num_blocks tuple values must be ints")
+    return num_blocks
+
+
 def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
     """Resolve dispatch storage type from optional quantization metadata."""
     if quant is None:

@@ -98,7 +98,14 @@ def parse_args():
         default="bf16",
         help="Wire format for low-latency dispatch",
     )
-    parser.add_argument("--num-blocks", type=int, default=130)
+    parser.add_argument(
+        "--num-blocks",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="N",
+        help="Dispatch block count, optionally followed by the total combine block count",
+    )
     parser.add_argument(
         "--combine-mode",
         "--optimized-combine-mode",
@@ -130,7 +137,15 @@ def parse_args():
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
     parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.num_blocks is not None:
+        if len(args.num_blocks) == 1:
+            args.num_blocks = args.num_blocks[0]
+        elif len(args.num_blocks) == 2:
+            args.num_blocks = tuple(args.num_blocks)
+        else:
+            parser.error("--num-blocks accepts one value or a dispatch/combine pair")
+    return args
 
 
 def init_dist():
@@ -559,7 +574,7 @@ def main():
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} num_topk={num_topk} dispatch_dtype={args.dispatch_dtype} "
-            f"output_layout={args.output_layout}",
+            f"output_layout={args.output_layout} num_blocks={moe_comm.num_blocks}",
             flush=True,
         )
     print(
