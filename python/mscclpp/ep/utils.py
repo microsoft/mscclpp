@@ -15,7 +15,7 @@ from mscclpp.ep.types import QuantConfig
 
 
 def resolve_num_blocks(
-    num_blocks: Optional[Union[int, Tuple[int, int]]],
+    num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]],
     *,
     default: Tuple[int, int],
     scalar_combine_offset: int,
@@ -29,9 +29,11 @@ def resolve_num_blocks(
         raise TypeError("num_blocks must be an int or a (dispatch, combine) tuple")
     if len(num_blocks) != 2:
         raise ValueError("num_blocks tuple must contain exactly (dispatch, combine)")
-    if any(type(value) is not int for value in num_blocks):
-        raise TypeError("num_blocks tuple values must be ints")
-    return num_blocks
+    if any(value is not None and type(value) is not int for value in num_blocks):
+        raise TypeError("num_blocks tuple values must be ints or None")
+    dispatch_blocks = default[0] if num_blocks[0] is None else num_blocks[0]
+    combine_blocks = default[1] if num_blocks[1] is None else num_blocks[1]
+    return dispatch_blocks, combine_blocks
 
 
 def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
