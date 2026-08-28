@@ -68,6 +68,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
       .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
+      .value("KI_RAGGED", mscclpp::ep::DispatchLayout::KI_RAGGED)
       .value("TOKEN_MAJOR", mscclpp::ep::DispatchLayout::TOKEN_MAJOR)
       .value("RANK_MAJOR", mscclpp::ep::DispatchLayout::RANK_MAJOR);
 
@@ -76,6 +77,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", mscclpp::ep::low_latency::CombineMode::DIRECT_SEND);
   nb::enum_<mscclpp::ep::low_latency::DispatchDataType>(m, "DispatchDataType")
       .value("BF16", mscclpp::ep::low_latency::DispatchDataType::BF16)
+      .value("FP16", mscclpp::ep::low_latency::DispatchDataType::FP16)
       .value("FP8_E4M3", mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3);
 
   nb::class_<mscclpp::ep::high_throughput::Config>(m, "Config")
@@ -116,6 +118,11 @@ NB_MODULE(mscclpp_ep_cpp, m) {
            [](const mscclpp::ep::MoERuntime& self) {
              return reinterpret_cast<uintptr_t>(
                  narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").tokenMajorTokenBuffer());
+           })
+      .def("ki_ragged_token_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(
+                 narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY").kiRaggedTokenBuffer());
            })
       .def(
           "ll_dispatch",

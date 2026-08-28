@@ -3,7 +3,6 @@
 #pragma once
 
 #include <cstdint>
-#include <mscclpp/bulk_device.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
@@ -54,8 +53,19 @@ struct TransportView {
   }
 };
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchCountMetadataBytes(int nRanks, int nExperts) {
   return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSourceInfoOffset(int nRanks, int nExperts) {
+  return dispatchCountMetadataBytes(nRanks, nExperts);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts, int maxTokensPerRank) {
+  return configAlign<size_t>(
+      dispatchSourceInfoOffset(nRanks, nExperts) +
+          static_cast<size_t>(nRanks) * maxTokensPerRank * sizeof(mscclpp::LL8Packet),
+      BufferAlignmentBytes);
 }
 
 template <DispatchDataType DataType>
@@ -64,6 +74,12 @@ struct DispatchDataTypeTraits;
 template <>
 struct DispatchDataTypeTraits<DispatchDataType::BF16> {
   using ElementType = Bf16;
+  using ScaleType = void;
+};
+
+template <>
+struct DispatchDataTypeTraits<DispatchDataType::FP16> {
+  using ElementType = __half;
   using ScaleType = void;
 };
 
@@ -83,7 +99,8 @@ template <DispatchDataType DataType>
 using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP16 ||
+         dataType == DispatchDataType::FP8_E4M3;
 }
 
 template <DispatchDataType DataType>
@@ -106,6 +123,7 @@ static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
+  uint32_t* dispatchEpoch_;
   int* dispatchRankPayloadSlots_;
   int* dispatchRankPayloadCompletions_;
   mscclpp::DeviceSemaphore* dispatchLocalPayloadReady_;
@@ -117,10 +135,14 @@ struct WorkspaceView {
   uint32_t* combineRankReadyEpochs_;
   uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
+  int* dispatchRouteCounts_;
+  int* dispatchRouteCountsDone_;
+  uint32_t* dispatchRouteCountsReadyEpoch_;
   int* rankMajorSendIndices_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
+    dispatchEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
     dispatchRankPayloadCompletions_ = cursor;
@@ -139,11 +161,16 @@ struct WorkspaceView {
     combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
+    dispatchRouteCounts_ = cursor;
+    cursor += nRanks + nExperts;
+    dispatchRouteCountsDone_ = cursor++;
+    dispatchRouteCountsReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     rankMajorSendIndices_ = cursor;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
+    return sizeof(uint32_t) +                                // dispatchEpoch_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
            static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
@@ -153,6 +180,9 @@ struct WorkspaceView {
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
            sizeof(uint32_t) +                                                            // combineReadyEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
+           static_cast<size_t>(nRanks + nExperts) * sizeof(int) +                        // dispatchRouteCounts_
+           sizeof(int) +                                                                 // dispatchRouteCountsDone_
+           sizeof(uint32_t) +                                                            // dispatchRouteCountsReadyEpoch_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
@@ -189,36 +219,42 @@ MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int m
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
   const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
-  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
+  const int nAggregatedCompletionSlots = DispatchMaxNWarpGroups * nRanks;
+  return configAlign<size_t>(static_cast<size_t>(nSlots + nAggregatedCompletionSlots) * sizeof(int),
+                             BufferAlignmentBytes);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSendTmaBytes(int nTopk) {
-  return DispatchMaxNWarpGroups *
-         (dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize) + sizeof(mscclpp::BulkBarrier));
+  return DispatchMaxNWarpGroups * (dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize) + sizeof(uint64_t));
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int tmaWorkerCountForTileBytes(size_t tileBytes, int maxWorkers) {
+  const size_t workerBytes = tileBytes + sizeof(uint64_t);
+  const int nWorkers = static_cast<int>((OptimizedDynamicSharedMemoryBytes - TmaWorkerControlBytes) / workerBytes);
+  return nWorkers < maxWorkers ? nWorkers : maxWorkers;
 }
 
 template <int Hidden, typename ElementType, int MaxWorkers>
 MSCCLPP_HOST_DEVICE_INLINE constexpr int tmaWorkerCount() {
   static_assert(Hidden % 128 == 0);
-  constexpr size_t workerBytes = static_cast<size_t>(Hidden) * sizeof(ElementType) + sizeof(mscclpp::BulkBarrier);
-  constexpr int nWorkers = static_cast<int>((OptimizedDynamicSharedMemoryBytes - TmaWorkerControlBytes) / workerBytes);
+  constexpr size_t tileBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
+  constexpr int nWorkers = tmaWorkerCountForTileBytes(tileBytes, MaxWorkers);
   return nWorkers < MaxWorkers ? nWorkers : MaxWorkers;
 }
 
-template <int Hidden, DispatchDataType DataType>
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
-  using ElementType = DispatchElementType<DataType>;
-  constexpr int NWorkers = tmaWorkerCount<Hidden, ElementType, DispatchMaxNRecvTmaWorkers>();
-  constexpr size_t tileBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes(int nTopk) {
+  const size_t tileBytes = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
+  const int nWorkers = tmaWorkerCountForTileBytes(tileBytes, DispatchMaxNRecvTmaWorkers);
+  return static_cast<size_t>(nWorkers) * (tileBytes + sizeof(uint64_t));
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
   const size_t controlBytes = dispatchSharedControlBytes(nRanks);
   const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

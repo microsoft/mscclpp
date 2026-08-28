@@ -186,6 +186,7 @@ Use `DispatchLayout` instead of string literals for this field:
 |---|---|
 | `DispatchLayout.TOKEN_MAJOR` | HT: `[total_recv_tokens, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
+| `DispatchLayout.KI_RAGGED` | LL: compact expert-grouped `[world_size * max_tokens_per_rank * topk, hidden]`; valid rows are `sum(layout.num_tokens_per_expert)` |
 | `DispatchLayout.RANK_MAJOR` | LL: `[world_size * max_tokens_per_rank, hidden]` |
 
 ## MoECommunicator methods

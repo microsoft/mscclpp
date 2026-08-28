@@ -14,6 +14,7 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
+static_assert(sizeof(mscclpp::LL8Packet) == sizeof(uint64_t));
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -173,13 +174,16 @@ struct Layout {
   void* rankMajorTokenBuffer_;
   void* rankMajorExpertOutputBuffer_;
   void* tokenMajorTokenBuffer_;
+  void* kiRaggedTokenBuffer_;
 
   Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
          bool rankMajor = false) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
-    const size_t dispatchMetadataBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t dispatchMetadataBytes = configAlign<size_t>(
+        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes) +
+            static_cast<size_t>(numRanks) * maxTokensPerRank * sizeof(uint64_t),
+        BufferAlignmentBytes);
     const size_t dispatchPayloadStride =
         configAlign<size_t>(std::max(bf16Payload.numBytes_, fp8Payload128.numBytes_), BufferAlignmentBytes);
     const size_t dispatchBufferBytes =
@@ -192,11 +196,13 @@ struct Layout {
     const size_t tokenMajorTokenBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t tokenMajorDispatchBufferBytes = tokenMajorTokenOffsetBytes + tokenMajorTokenBytes;
+    const size_t kiRaggedTokenOffsetBytes = configAlign<size_t>(dispatchBufferBytes, BufferAlignmentBytes);
+    const size_t kiRaggedDispatchBufferBytes = kiRaggedTokenOffsetBytes + tokenMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t recvBufferBytes =
         rankMajor ? std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, rankMajorTokenBytes})
                   : std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
-                              combineBufferBytes});
+                              kiRaggedDispatchBufferBytes, combineBufferBytes});
     recvBufferBytes_ = configAlign<size_t>(recvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = 2 * recvBufferBytes_;
 
@@ -209,6 +215,7 @@ struct Layout {
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       rankMajorExpertOutputBuffer_ = combineRecvBuffer_;
       tokenMajorTokenBuffer_ = base + tokenMajorTokenOffsetBytes;
+      kiRaggedTokenBuffer_ = base + kiRaggedTokenOffsetBytes;
     }
   }
 };

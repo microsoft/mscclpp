@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 import torch
@@ -35,6 +36,10 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
         raise TypeError("quant.format must be a DispatchDataType")
     if quant_format is None:
         raise ValueError("quant.format is required")
+    if quant_format == DispatchDataType.FP16:
+        if quant.block_scales is not None:
+            raise ValueError("FP16 dispatch does not use block scales")
+        return quant_format
     if quant_format != DispatchDataType.FP8_E4M3:
         raise ValueError("unsupported low-latency quantization format")
     if quant.block_scales is not None:
@@ -52,6 +57,32 @@ def _dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float32
     raise ValueError("BF16 dispatch does not have block scales")
+
+
+def _dispatch_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    if data_type == DispatchDataType.BF16:
+        return torch.bfloat16
+    if data_type == DispatchDataType.FP16:
+        return torch.float16
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float8_e4m3fn
+    raise ValueError(f"unsupported dispatch data type: {data_type}")
+
+
+def _dispatch_tensor_typestr(data_type: DispatchDataType) -> str:
+    if data_type == DispatchDataType.BF16:
+        return "<u2"
+    if data_type == DispatchDataType.FP16:
+        return "<f2"
+    if data_type == DispatchDataType.FP8_E4M3:
+        return "|u1"
+    raise ValueError(f"unsupported dispatch data type: {data_type}")
+
+
+def _combine_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    if data_type == DispatchDataType.FP16:
+        return torch.float16
+    return torch.bfloat16
 
 
 class _CudaBufferView:
@@ -92,6 +123,21 @@ def _bf16_tensor_from_pointer(
 ) -> tuple[_CudaBufferView, torch.Tensor]:
     buffer_view = _CudaBufferView(pointer, shape, "<u2", owner)
     tensor = torch.as_tensor(buffer_view, device=device).view(torch.bfloat16)
+    tensor._mscclpp_owner = owner
+    return buffer_view, tensor
+
+
+def _dispatch_tensor_from_pointer(
+    pointer: int,
+    shape: tuple[int, ...],
+    data_type: DispatchDataType,
+    device: torch.device,
+    owner: Any,
+) -> tuple[_CudaBufferView, torch.Tensor]:
+    buffer_view = _CudaBufferView(pointer, shape, _dispatch_tensor_typestr(data_type), owner)
+    tensor = torch.as_tensor(buffer_view, device=device)
+    if data_type == DispatchDataType.BF16:
+        tensor = tensor.view(torch.bfloat16)
     tensor._mscclpp_owner = owner
     return buffer_view, tensor
 
@@ -173,6 +219,7 @@ class LowLatencyBackend:
 
         if self.output_layout not in (
             DispatchLayout.EXPERT_MAJOR,
+            DispatchLayout.KI_RAGGED,
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
         ):
@@ -199,6 +246,11 @@ class LowLatencyBackend:
                 raise ValueError("TOKEN_MAJOR output requires RANK_LOCAL_REDUCE combine")
             if self.enable_overlap:
                 raise NotImplementedError("TOKEN_MAJOR output does not support overlapping calls yet")
+        if self.output_layout == DispatchLayout.KI_RAGGED:
+            if self.combine_mode != CombineMode.DIRECT_SEND:
+                raise ValueError("KI_RAGGED output requires DIRECT_SEND combine")
+            if self.enable_overlap:
+                raise NotImplementedError("KI_RAGGED output does not support overlapping calls yet")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -213,6 +265,11 @@ class LowLatencyBackend:
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
         if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("TOKEN_MAJOR output currently supports BF16 dispatch only")
+        if self.output_layout == DispatchLayout.KI_RAGGED and self.dispatch_data_type not in (
+            DispatchDataType.BF16,
+            DispatchDataType.FP16,
+        ):
+            raise NotImplementedError("KI_RAGGED output currently supports BF16 or FP16 dispatch only")
 
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -314,6 +371,15 @@ class LowLatencyBackend:
             # Token-major combine reads per-slot expert outputs in-place from the
             # token buffer (identity when no GEMM is applied before combine).
             self.token_major_expert_output_buffer = self._token_major_tokens
+        elif self.output_layout == DispatchLayout.KI_RAGGED:
+            token_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
+            self._token_major_token_owner, self._token_major_tokens = _dispatch_tensor_from_pointer(
+                self._runtime.cpp_runtime.ki_ragged_token_buffer_ptr(),
+                token_shape,
+                self.dispatch_data_type,
+                self.device,
+                self._runtime,
+            )
 
     def _resolve_runtime_max_tokens_per_rank(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
         resolved = self.max_tokens_per_rank if runtime_max_tokens_per_rank is None else runtime_max_tokens_per_rank
@@ -351,6 +417,9 @@ class LowLatencyBackend:
         out_buf, scales, src_info, recv_topk_ids, recv_weights, layout_range, count = self._get_dispatch_output_tensors(
             output_buffer
         )
+        if os.environ.get("MSCCLPP_EP_DEBUG_LAYOUT") == "1" and self.output_layout == DispatchLayout.KI_RAGGED:
+            assert src_info is not None
+            src_info.fill_(-1)
         self._runtime.cpp_runtime.ll_dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
@@ -373,15 +442,13 @@ class LowLatencyBackend:
             self.num_blocks,
             cuda_stream_ptr(stream),
         )
-        output_quant = (
-            None
-            if scales is None
-            else QuantConfig(
+        output_quant = None
+        if self.dispatch_data_type != DispatchDataType.BF16:
+            output_quant = QuantConfig(
                 format=self.dispatch_data_type,
                 block_scales=scales,
             )
-        )
-        if self.output_layout == DispatchLayout.EXPERT_MAJOR:
+        if self.output_layout in (DispatchLayout.EXPERT_MAJOR, DispatchLayout.KI_RAGGED):
             layout_info = DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_expert=count)
         elif self.output_layout == DispatchLayout.RANK_MAJOR:
             layout_info = DispatchLayoutInfo(
@@ -403,7 +470,7 @@ class LowLatencyBackend:
             topk_ids=recv_topk_ids,
             weights=recv_weights,
         )
-        if self.output_layout == DispatchLayout.EXPERT_MAJOR:
+        if self.output_layout in (DispatchLayout.EXPERT_MAJOR, DispatchLayout.KI_RAGGED):
             assert layout_range is not None
             assert src_info is not None
             handle: DispatchHandle = ExpertMajorDispatchHandle(
@@ -477,7 +544,7 @@ class LowLatencyBackend:
         if out is None:
             out = torch.empty(
                 (context.num_tokens, self.hidden_size),
-                dtype=torch.bfloat16,
+                dtype=_combine_tensor_dtype(self.dispatch_data_type),
                 device=expert_output.device,
             )
         self._runtime.cpp_runtime.ll_combine(
@@ -528,6 +595,18 @@ class LowLatencyBackend:
                         device=device,
                     )
                     self._dispatch_scales = scale_storage.transpose(1, 2)
+            elif self.output_layout == DispatchLayout.KI_RAGGED:
+                self._dispatch_src_info = torch.empty(
+                    (self.world_size * self.max_tokens_per_rank * self.topk,),
+                    dtype=torch.int32,
+                    device=device,
+                )
+                self._dispatch_layout_range = torch.empty(
+                    (self.num_local_experts, self.world_size),
+                    dtype=torch.int64,
+                    device=device,
+                )
+                self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
             elif self.output_layout == DispatchLayout.RANK_MAJOR:
                 self._dispatch_src_info = None
                 assert self._output_topk_ids is not None
@@ -550,7 +629,7 @@ class LowLatencyBackend:
         if self.output_layout == DispatchLayout.RANK_MAJOR:
             assert self._output_tokens is not None
             output_buffer = self._output_tokens
-        elif self.output_layout == DispatchLayout.TOKEN_MAJOR:
+        elif self.output_layout in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.KI_RAGGED):
             assert self._token_major_tokens is not None
             output_buffer = self._token_major_tokens
         return (
@@ -567,6 +646,7 @@ class LowLatencyBackend:
         if output_buffer is None and self.output_layout not in (
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
+            DispatchLayout.KI_RAGGED,
         ):
             raise ValueError("output_buffer is required for low-latency dispatch")
         if quant is not None:
@@ -575,8 +655,9 @@ class LowLatencyBackend:
             )
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
-        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
+        expected_input_dtype = _dispatch_tensor_dtype(self.dispatch_data_type)
+        if input.device.type != "cuda" or input.dtype != expected_input_dtype:
+            raise ValueError(f"low-latency dispatch input must be a CUDA {expected_input_dtype} tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
         if input.size(0) > active_capacity:
@@ -601,6 +682,8 @@ class LowLatencyBackend:
                 slots_per_expert,
                 self.hidden_size,
             )
+        elif self.output_layout == DispatchLayout.KI_RAGGED:
+            expected_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
         elif self.output_layout == DispatchLayout.RANK_MAJOR:
             expected_shape = (
                 self.world_size * self.max_tokens_per_rank,
@@ -616,15 +699,15 @@ class LowLatencyBackend:
                 if output_buffer.data_ptr() != self._output_tokens.data_ptr():
                     raise ValueError("RANK_MAJOR output uses the runtime-owned registered token buffer")
             return
-        if self.output_layout == DispatchLayout.TOKEN_MAJOR:
+        if self.output_layout in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.KI_RAGGED):
             if output_buffer is not None:
                 assert self._token_major_tokens is not None
                 if output_buffer.data_ptr() != self._token_major_tokens.data_ptr():
-                    raise ValueError("TOKEN_MAJOR output uses the runtime-owned registered token buffer")
+                    raise ValueError(f"{self.output_layout} output uses the runtime-owned registered token buffer")
             return
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
-        expected_dtype = torch.bfloat16 if self.dispatch_data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
+        expected_dtype = _dispatch_tensor_dtype(self.dispatch_data_type)
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
@@ -654,6 +737,8 @@ class LowLatencyBackend:
                 slots_per_expert,
                 self.hidden_size,
             )
+        elif handle.output_info.layout.kind == DispatchLayout.KI_RAGGED:
+            expected_shape = (self.world_size * self.max_tokens_per_rank * self.topk, self.hidden_size)
         elif handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
             expected_shape = (
                 self.world_size * active_capacity,
@@ -667,13 +752,14 @@ class LowLatencyBackend:
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype != torch.bfloat16:
-            raise ValueError("expert_output must be BF16")
+        expected_dtype = _combine_tensor_dtype(self.dispatch_data_type)
+        if expert_output.dtype != expected_dtype:
+            raise ValueError(f"expert_output must be {expected_dtype}")
         if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
             assert self.expert_output_buffer is not None
             if expert_output.data_ptr() != self.expert_output_buffer.data_ptr():
                 raise ValueError("RANK_MAJOR combine requires the runtime-owned registered expert output buffer")
         if out is not None:
             expected_out_shape = (context.num_tokens, self.hidden_size)
-            if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
-                raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
+            if tuple(out.shape) != expected_out_shape or out.dtype != expected_dtype or not out.is_contiguous():
+                raise ValueError(f"out must be a contiguous {expected_dtype} tensor with shape {expected_out_shape}")

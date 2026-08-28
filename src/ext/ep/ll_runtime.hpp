@@ -32,6 +32,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   void* outputTokensBuffer() const;
   void* expertOutputBuffer() const;
   void* tokenMajorTokenBuffer() const;
+  void* kiRaggedTokenBuffer() const;
 
   void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
@@ -56,6 +57,9 @@ class MoELowLatencyRuntime : public MoERuntime {
   uint32_t epoch_ = 0;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
+  bool debugProgressEnabled_ = false;
+  uint64_t* debugProgressHost_ = nullptr;
+  uint64_t* debugProgressDevice_ = nullptr;
   low_latency::CommContext commContext_{};
 
   mscclpp::Communicator* communicator_ = nullptr;

@@ -29,6 +29,8 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
   EXPERT_MAJOR,
+  /// Compact expert-major rows: [sum(num_tokens_per_expert), hidden], grouped by local expert.
+  KI_RAGGED,
   /// Token-major rows: [num_recv_tokens, hidden]. High throughput only.
   TOKEN_MAJOR,
   /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
@@ -102,8 +104,26 @@ enum class CombineMode {
 enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
+  /// Unquantized FP16 payload.
+  FP16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3
+};
+
+/// Optional profiling mode for low-latency expert-major dispatch.
+enum class DispatchProfileMode {
+  /// Run the full dispatch kernel.
+  DISABLED,
+  /// Send payloads, publish rank counts/signals, and consume payload-ready waits without expert-count metadata.
+  SEND_NOTIFY_RANK_COUNTS,
+  /// Send payloads, publish counts/signals, and consume payload-ready waits without expert layout or recv workers.
+  SEND_NOTIFY_RANK_WAIT,
+  /// Also build expert-major layout/counts, but skip recv workers.
+  SEND_NOTIFY_LAYOUT,
+  /// Run recv workers but skip the final output-token TMA stores.
+  SKIP_OUTPUT_STORE,
+  /// Reuse rank/expert route counts produced by send workers instead of rescanning routes in notify.
+  SEND_COUNTS_FROM_SEND
 };
 
 /// Per-call low-latency workload dimensions.
@@ -126,6 +146,10 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Optional profile-only phase-skipping mode.
+  DispatchProfileMode dispatchProfileMode_;
+  /// Optional host-mapped debug progress counters.
+  uint64_t* debugProgress_;
 };
 
 /// Persistent communication resources shared by low-latency operations.

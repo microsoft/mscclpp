@@ -94,6 +94,9 @@ class DispatchOutput:
 
     ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
     reused by every dispatch. Clone any result that must outlive the next call.
+    ``KI_RAGGED`` tensors are compact expert-grouped rows with capacity
+    ``world_size * max_tokens_per_rank * topk``; valid rows are described by
+    ``layout.num_tokens_per_expert``.
     """
 
     tokens: torch.Tensor
