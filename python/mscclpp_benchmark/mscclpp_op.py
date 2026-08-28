@@ -503,7 +503,7 @@ class MscclppAllReduce6:
             self.group.my_rank,
             self.group.nranks,
             ctypes.c_size_t(self.memory.size),
-            self.vector_size,
+            ctypes.c_size_t(self.vector_size),
         )
 
     def auto_tune(self):
