@@ -39,7 +39,7 @@ MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
 template <typename T, typename AccumT = T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
                                                       int tid, int nThreads) {
-#if defined(__FP8_TYPES_EXIST__) && !defined(MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED)
+#if defined(__FP8_TYPES_EXIST__) && !MSCCLPP_DEVICE_FP8_MULTIMEM_SUPPORTED
   if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
     MSCCLPP_ASSERT_DEVICE(false, "FP8 NVLS multimem reduction is not supported on this architecture");
     return;
