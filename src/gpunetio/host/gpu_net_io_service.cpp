@@ -7,6 +7,7 @@
 #include <endian.h>
 #include <infiniband/verbs.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -79,6 +80,7 @@ struct GpuNetIoService::Impl {
   struct doca_gpu* gpuDev = nullptr;
   int portNum = 1;
   int gidIndex = 0;
+  int numQpsPerPeer = 1;  // MSCCLPP_EP_GPUNETIO_QPS_PER_PEER (>= 1)
 
   // One high-level QP per remote rank (self entry is null).
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
@@ -237,8 +239,19 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   MSCCLPP_CUDA_THROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), s.cudaDeviceId));
   MSCCLPP_DOCA_THROW(doca_gpu_create(pciBusId, &s.gpuDev));
 
-  // 3. Create one high-level GDAKI QP per remote rank (skip self).
-  s.qpHl.assign(s.worldSize, nullptr);
+  // 3. Create numQpsPerPeer high-level GDAKI QPs per remote rank (skip self).
+  //    Spreading a peer's WQEs across multiple send queues lets the NIC drain
+  //    them in parallel. K comes from MSCCLPP_EP_GPUNETIO_QPS_PER_PEER (>= 1).
+  {
+    int k = 1;
+    if (const char* env = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER")) {
+      k = std::atoi(env);
+      if (k < 1) k = 1;
+    }
+    s.numQpsPerPeer = k;
+  }
+  const int nQp = s.numQpsPerPeer;
+  s.qpHl.assign(static_cast<size_t>(s.worldSize) * nQp, nullptr);
   struct doca_gpu_verbs_qp_init_attr_hl initAttr;
   std::memset(&initAttr, 0, sizeof(initAttr));
   initAttr.gpu_dev = s.gpuDev;
@@ -248,33 +261,39 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   initAttr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_qp_hl(&initAttr, &s.qpHl[r]));
+    for (int k = 0; k < nQp; ++k) {
+      MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_qp_hl(&initAttr, &s.qpHl[static_cast<size_t>(r) * nQp + k]));
+    }
   }
 
   // 4. Exchange QP info (all-gather) and connect INIT -> RTR -> RTS.
-  std::vector<QpExchangeInfo> qpInfo(s.worldSize);
+  const size_t rowLen = static_cast<size_t>(s.worldSize) * nQp;  // QPs this rank publishes
+  std::vector<QpExchangeInfo> qpInfo(rowLen);
   std::memset(qpInfo.data(), 0, qpInfo.size() * sizeof(QpExchangeInfo));
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    QpExchangeInfo& info = qpInfo[r];
-    info.qpn = doca_verbs_qp_get_qpn(s.qpHl[r]->qp);
-    info.gidIndex = static_cast<uint16_t>(s.gidIndex);
-    s.queryLocalPort(info);
-    s.queryLocalGid(info.gid);
+    for (int k = 0; k < nQp; ++k) {
+      QpExchangeInfo& info = qpInfo[static_cast<size_t>(r) * nQp + k];
+      info.qpn = doca_verbs_qp_get_qpn(s.qpHl[static_cast<size_t>(r) * nQp + k]->qp);
+      info.gidIndex = static_cast<uint16_t>(s.gidIndex);
+      s.queryLocalPort(info);
+      s.queryLocalGid(info.gid);
+    }
   }
-  // Each rank publishes, for every peer, the QP that targets that peer. The
-  // all-gather delivers a [worldSize][worldSize] table; entry [src][dst] is the
-  // QP on src that talks to dst. We read column `rank` to get each peer's QP to us.
-  std::vector<QpExchangeInfo> qpAll(static_cast<size_t>(s.worldSize) * s.worldSize);
-  std::memcpy(&qpAll[static_cast<size_t>(s.rank) * s.worldSize], qpInfo.data(),
-              qpInfo.size() * sizeof(QpExchangeInfo));
-  s.bootstrap->allGather(qpAll.data(), static_cast<int>(s.worldSize * sizeof(QpExchangeInfo)));
+  // Each rank publishes, for every peer, its nQp QPs targeting that peer. The
+  // all-gather delivers a [worldSize][worldSize*nQp] table; entry [src][dst*nQp+k]
+  // is src's k-th QP that talks to dst. We read [r][rank*nQp+k] to pair k<->k.
+  std::vector<QpExchangeInfo> qpAll(static_cast<size_t>(s.worldSize) * rowLen);
+  std::memcpy(&qpAll[static_cast<size_t>(s.rank) * rowLen], qpInfo.data(), qpInfo.size() * sizeof(QpExchangeInfo));
+  s.bootstrap->allGather(qpAll.data(), static_cast<int>(rowLen * sizeof(QpExchangeInfo)));
 
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    // Remote peer r's QP that targets this rank.
-    const QpExchangeInfo& remote = qpAll[static_cast<size_t>(r) * s.worldSize + s.rank];
-    s.connectQp(s.qpHl[r], remote);
+    for (int k = 0; k < nQp; ++k) {
+      // Remote peer r's k-th QP that targets this rank.
+      const QpExchangeInfo& remote = qpAll[static_cast<size_t>(r) * rowLen + static_cast<size_t>(s.rank) * nQp + k];
+      s.connectQp(s.qpHl[static_cast<size_t>(r) * nQp + k], remote);
+    }
   }
 
   bool needsCpuProxy = false;
@@ -293,9 +312,9 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
     }
   }
 
-  // 5. Flatten the per-peer device QPs into a GPU array.
-  MSCCLPP_DOCA_THROW(
-      doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(s.worldSize), &s.qpFlatGpu));
+  // 5. Flatten the per-peer device QPs into a GPU array (peer-major: peer*nQp+k).
+  MSCCLPP_DOCA_THROW(doca_gpu_verbs_qp_flat_list_create_hl(
+      s.qpHl.data(), static_cast<uint32_t>(s.qpHl.size()), &s.qpFlatGpu));
 
   // 6. Exchange rkeys + symmetric base addresses.
   std::vector<MemExchangeInfo> memAll(s.worldSize);
@@ -326,6 +345,7 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   ctxHost.lkey = s.mr->getLkey();
   ctxHost.localBase = reinterpret_cast<uintptr_t>(symmetricBuffer);
   ctxHost.numPeers = s.worldSize;
+  ctxHost.numQpsPerPeer = s.numQpsPerPeer;
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
   MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
 }

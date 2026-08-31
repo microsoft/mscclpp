@@ -22,6 +22,15 @@ inline constexpr size_t BufferAlignmentBytes = 128;
 // token puts through it, trading a little latency for a bounded footprint.
 inline constexpr int GpuNetIoStagingSlots = 32768;
 
+// Upper bound used to reserve per-source, per-QP combine completion flags.
+inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
+
+// Batch size for draining kernel-initiated GPUNetIO sends. The cross-domain
+// dispatch pass keeps puts in flight and flushes (waits on completions) only
+// every this many tokens instead of once per token, so the RDMAs pipeline
+// instead of serializing one network round-trip per token.
+inline constexpr int GpuNetIoFlushInterval = 128;
+
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
@@ -180,10 +189,9 @@ struct Layout {
   //   - gpuNetIoFlagsBuffer_: per-source-rank 64-bit completion flags the remote
   //     sender atomic-adds (fused with the payload put) and the local receiver
   //     polls, replacing the NVLink memory-channel signal for cross-domain peers.
-  //   - gpuNetIoCombineFlagsBuffer_: a second, independent per-peer-rank 64-bit
-  //     flag array used exclusively by the combine barrier. Keeping it separate
-  //     from the dispatch flags ensures the two phases' monotonic signal counts
-  //     never alias on the same counter.
+  //   - gpuNetIoCombineFlagsBuffer_: per-source-rank, per-QP 64-bit flags used
+  //     exclusively by combine completion. One ordered marker on every payload
+  //     QP proves all of that QP's writes have landed.
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
   void* gpuNetIoCombineFlagsBuffer_;
@@ -222,8 +230,9 @@ struct Layout {
         configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
     const size_t gpuNetIoFlagsBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
-    // Two independent flag arrays (dispatch payload-arrival + combine barrier).
-    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + 2 * gpuNetIoFlagsBytes;
+    const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
+        static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
 
     totalBytes_ = 2 * recvBufferBytes_ + gpuNetIoRegionBytes;
 

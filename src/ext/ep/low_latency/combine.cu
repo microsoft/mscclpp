@@ -489,49 +489,95 @@ MSCCLPP_DEVICE_INLINE int rankMajorSlotForDestination(const int64_t* __restrict_
   return destinationSlot;
 }
 
-// Cross-domain rank-major combine PUSH (replaces the gin->get pull). Mirrors the
-// proven dispatch send: this expert-host rank RDMA-writes each of its expert
-// output rows back into the owning (source) rank's combine landing buffer, and
-// fuses a single per-sender completion signal onto the last row via
-// putWithSignal. No RDMA reads and no standalone atomic, so the cross-domain QP
-// only issues writes plus a fused atomic exactly like the reliable dispatch
-// path. One block per source rank (blockIdx == sourceRank), single lane.
+// Cross-domain rank-major combine PUSH (replaces the gin->get pull). This
+// expert-host rank RDMA-writes each of its expert-output rows back into the
+// owning (source) rank's combine landing buffer. Multi-block: EVERY block pushes
+// a strided slice of EVERY cross-domain owner's rows (across the peer's QPs),
+// instead of one block per owner which serialised each owner's ~128 rows on a
+// single queue. Each block flushes its qpIndex before a grid barrier so all rows
+// have COMPLETED; block 0 then posts the single per-owner completion atomic
+// (flag semantics unchanged: +1 per owner, so the receiver is untouched).
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, int nRanks, int maxTokensPerRank,
-                                                    const TransportView& transport, WorkspaceView& workspaceView) {
+                                                    const TransportView& transport, WorkspaceView& workspaceView,
+                                                    [[maybe_unused]] uint32_t epoch) {
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  const int sourceRank = static_cast<int>(blockIdx.x);
-  if (sourceRank >= nRanks || threadIdx.x != 0) return;
-  if (transport.isSelf(sourceRank) || transport.isNvlinkPeer(sourceRank)) return;
   EP_DEVICE_ASSERT(static_cast<size_t>(nRanks) * maxTokensPerRank <= GpuNetIoStagingSlots);
-
-  // Number of tokens this source rank sent us during dispatch == number of
-  // expert-output rows we owe it back. The dispatch count LL8 packet in the recv
-  // buffer is cleared before combine runs, so use the value dispatchRecvRankMajor
-  // persisted in the workspace (never zeroed between kernels).
-  const int nRowsToOwner = workspaceView.dispatchRecvCounts_[sourceRank];
-  if (nRowsToOwner <= 0) return;
 
   auto* gin = transport.gpuNetIo_;
   auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
-  auto* remoteFlag = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
-                     static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
-  for (int slot = 0; slot < nRowsToOwner; ++slot) {
-    const uint64_t srcRowOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-                                  (static_cast<size_t>(sourceRank) * maxTokensPerRank + slot) * HiddenBytes;
-    // Landing slot on the owner is keyed by (this expert-host rank, slot), which
-    // is exactly what the owner reads back via its rankMajorSendIndices_ slot.
-    auto* landingSlot = stagingBase + static_cast<size_t>(transport.rank_ * maxTokensPerRank + slot) *
-                                          transport.gpuNetIoSlotStride_;
-    const uint64_t dstRowOffset = transport.symmetricOffset(landingSlot);
-    if (slot == nRowsToOwner - 1) {
-      gin->putWithSignal(sourceRank, dstRowOffset, srcRowOffset, HiddenBytes, transport.symmetricOffset(remoteFlag),
-                         /*signalValue=*/1);
-    } else {
-      gin->put(sourceRank, dstRowOffset, srcRowOffset, HiddenBytes);
+  const int nQp = gin->numQpsPerPeer;
+  EP_DEVICE_ASSERT(nQp <= GpuNetIoMaxQpsPerPeer);
+  const int qpIndex = static_cast<int>(blockIdx.x) % nQp;
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _p0 = clock64();
+#endif
+
+  // Rows spread across blocks first (blockIdx), then threads within a block, so
+  // the ~128 rows/owner fan out over the SMs instead of one block.
+  for (int owner = 0; owner < nRanks; ++owner) {
+    if (transport.isSelf(owner) || transport.isNvlinkPeer(owner)) continue;
+    const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];
+    for (int slot = static_cast<int>(blockIdx.x) + static_cast<int>(threadIdx.x) * static_cast<int>(gridDim.x);
+         slot < nRowsToOwner; slot += static_cast<int>(gridDim.x) * static_cast<int>(blockDim.x)) {
+      const uint64_t srcRowOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
+                                    (static_cast<size_t>(owner) * maxTokensPerRank + slot) * HiddenBytes;
+      // Landing slot on the owner is keyed by (this expert-host rank, slot), which
+      // is exactly what the owner reads back via its rankMajorSendIndices_ slot.
+      auto* landingSlot = stagingBase + static_cast<size_t>(transport.rank_ * maxTokensPerRank + slot) *
+                                            transport.gpuNetIoSlotStride_;
+      gin->put(owner, transport.symmetricOffset(landingSlot), srcRowOffset, HiddenBytes, qpIndex);
     }
   }
-  gin->flush(sourceRank);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _p1 = clock64();
+#endif
+  // Grid barrier: every block's rows to every owner have now been posted (their
+  // WQE tickets are reserved on the per-(owner,qp) send queues).
+  workspaceView.combineSyncer_->sync(gridDim.x);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _p2 = clock64();
+#endif
+  // One block per owner posts one completion marker on every payload QP. Each
+  // marker is ordered after that QP's writes, so the receiver can start once all
+  // per-QP flags arrive without waiting for sender-side CQ completion.
+  const int owner = static_cast<int>(blockIdx.x);
+  if (owner < nRanks && !transport.isSelf(owner) && !transport.isNvlinkPeer(owner) &&
+      workspaceView.dispatchRecvCounts_[owner] > 0 && threadIdx.x == 0) {
+    auto* remoteFlags = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineFlagsBuffer_);
+    for (int k = 0; k < nQp; ++k) {
+      auto* remoteFlag = remoteFlags +
+                         (static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer + k) * sizeof(uint64_t);
+      gin->atomicAdd(owner, transport.symmetricOffset(remoteFlag), 1, k);
+    }
+  }
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _p3 = clock64();
+  const int _owner = static_cast<int>(blockIdx.x);
+  if (threadIdx.x == 0 && _owner < nRanks && !transport.isNvlinkPeer(_owner)) {
+    printf("[GINTIME-CMBPUSH-MARK] r=%d owner=%d ep=%u rows=%d post_cyc=%lld bar_cyc=%lld marker_cyc=%lld\n",
+           transport.rank_, _owner, epoch, workspaceView.dispatchRecvCounts_[_owner], _p1 - _p0, _p2 - _p1,
+           _p3 - _p2);
+  }
+#endif
+}
+
+MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePush(int nRanks, const TransportView& transport,
+                                                     WorkspaceView& workspaceView,
+                                                     [[maybe_unused]] uint32_t epoch) {
+  auto* gin = transport.gpuNetIo_;
+  const int owner = static_cast<int>(blockIdx.x);
+  if (owner >= nRanks || transport.isSelf(owner) || transport.isNvlinkPeer(owner) ||
+      workspaceView.dispatchRecvCounts_[owner] <= 0 || threadIdx.x != 0)
+    return;
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _d0 = clock64();
+#endif
+  for (int k = 0; k < gin->numQpsPerPeer; ++k) gin->flush(owner, k);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  printf("[GINTIME-CMBTAIL] r=%d owner=%d ep=%u rows=%d drain_cyc=%lld\n", transport.rank_, owner, epoch,
+         workspaceView.dispatchRecvCounts_[owner], clock64() - _d0);
+#endif
 }
 
 // Cross-domain rank-major combine receive + reduce (PUSH model). Each cross-domain
@@ -550,6 +596,11 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorCombinePush(void* output, const void* ex
   const int threadId = static_cast<int>(threadIdx.x);
   const int nLocalExperts = nExperts / nRanks;
   auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);
+  const int nQp = transport.gpuNetIo_->numQpsPerPeer;
+  EP_DEVICE_ASSERT(nQp <= GpuNetIoMaxQpsPerPeer);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _r0 = clock64();
+#endif
 
   // Wait for every cross-domain expert host we routed at least one token to.
   if (blockIdx.x == 0 && threadId == 0) {
@@ -565,12 +616,21 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorCombinePush(void* output, const void* ex
       }
       if (!sendsToRank) continue;
       const uint64_t target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;
-      while (flags[destinationRank] < target) {
+      const size_t flagBase = static_cast<size_t>(destinationRank) * GpuNetIoMaxQpsPerPeer;
+      for (int k = 0; k < nQp; ++k) {
+        while (flags[flagBase + k] < target) {
+        }
       }
       workspaceView.combineArrivedBaseline_[destinationRank] = target;
     }
   }
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _r1 = clock64();
+#endif
   workspaceView.combineSyncer_->sync(gridDim.x);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  const long long _r2 = clock64();
+#endif
 
   for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
     for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
@@ -608,6 +668,17 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorCombinePush(void* output, const void* ex
       outputRow[hiddenIdx] = packedOutput;
     }
   }
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+  // Split the recv: flag-wait (block 0 only) / grid barrier (absorbs the wait
+  // imbalance) / reduce (gather+accumulate). Sampled on block 0 (shows the flag
+  // wait) plus a spread of worker blocks (show the reduce).
+  if (threadIdx.x == 0) {
+    const int _blk = static_cast<int>(blockIdx.x);
+    if (_blk == 0 || _blk == 1 || _blk == static_cast<int>(gridDim.x) / 2 || _blk == static_cast<int>(gridDim.x) - 1)
+      printf("[GINTIME-CMBRECV] r=%d blk=%d wait_cyc=%lld bar_cyc=%lld reduce_cyc=%lld\n", transport.rank_, _blk,
+             _r1 - _r0, _r2 - _r1, clock64() - _r2);
+  }
+#endif
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
@@ -771,11 +842,40 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(
       // cross-block gate advances monotonically. The end barrier keeps a fast
       // rank from overwriting its expert output while an NVLink peer is still
       // reading it (cross-domain peers no longer read it at all).
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      const long long _c0 = clock64();
+#endif
       synchronizeRankMajorCombine(transport, nRanks, workload.epoch_ * 2, workspaceView);
-      sendRankMajorCombinePush<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      const long long _c1 = clock64();
+#endif
+      sendRankMajorCombinePush<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView,
+                                       workload.epoch_);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      const long long _c2 = clock64();
+#endif
       recvRankMajorCombinePush<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                        maxTokensPerRank, transport, workspaceView);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      const long long _c3 = clock64();
+#endif
+      drainRankMajorCombinePush(nRanks, transport, workspaceView, workload.epoch_);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      const long long _c4 = clock64();
+#endif
       synchronizeRankMajorCombine(transport, nRanks, workload.epoch_ * 2 + 1, workspaceView);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+      // push posts rows and per-QP markers; drain reclaims outgoing CQs after
+      // receive/reduce; sync1 is the final NVLink ordering barrier.
+      if (static_cast<int>(threadIdx.x) == 0) {
+        const int _blk = static_cast<int>(blockIdx.x);
+        const int _nb = static_cast<int>(gridDim.x);
+        if (_blk == 0 || _blk == 1 || _blk == _nb / 2 || _blk == _nb - 1)
+          printf("[GINTIME-CMB] r=%d ep=%u blk=%d sync0_cyc=%lld push_cyc=%lld recv_cyc=%lld drain_cyc=%lld sync1_cyc=%lld\n",
+                 transport.rank_, workload.epoch_, _blk, _c1 - _c0, _c2 - _c1, _c3 - _c2, _c4 - _c3,
+                 clock64() - _c4);
+      }
+#endif
       return;
     }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <cstdint>
+#include <cstdlib>
 #include <mscclpp/concurrency_device.hpp>
 
 #include "gdr.hpp"
@@ -1448,6 +1449,101 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
 
   if (rank == 0) {
     ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+// GPUNetIO multi-QP burst-throughput perf test (device-initiated). Sweep K via
+// MSCCLPP_EP_GPUNETIO_QPS_PER_PEER (read here AND by the GpuNetIoService).
+#if defined(MSCCLPP_USE_GPUNETIO)
+// One thread per QP; each pipelines nPuts writes of bytesPerQp on its own QP,
+// to a distinct remote region, then drains that QP. rank 1 does nothing (the
+// writes land one-sided into its symmetric buffer).
+__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer,
+                                               uint64_t bytesPerQp, int nPuts, int numQps) {
+  const int q = threadIdx.x;
+  if (q >= numQps || rank != 0) return;
+  const uint64_t off = static_cast<uint64_t>(q) * bytesPerQp;  // distinct region per QP
+  for (int i = 0; i < nPuts; i++) {
+    ctx->put(peer, off, off, bytesPerQp, /*qpIndex=*/q);
+  }
+  ctx->flush(peer, /*qpIndex=*/q);
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo multi-QP bandwidth requires exactly 2 ranks";
+    return;
+  }
+
+  // K is read from the same env the GpuNetIoService uses to create the QPs, so
+  // the kernel's QP count matches the service's.
+  int numQps = 1;
+  if (const char* e = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER")) {
+    numQps = std::atoi(e);
+    if (numQps < 1) numQps = 1;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const uint64_t maxBytesPerQp = 8ULL * 1024 * 1024;  // 8 MB region per QP
+  const size_t symBytes = static_cast<size_t>(numQps) * maxBytesPerQp;
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, symBytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, symBytes);
+  } catch (const mscclpp::Error& e) {
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  communicator->bootstrap()->barrier();
+  const int peer = (rank == 0) ? 1 : 0;
+  const int nPuts = 256;  // pipeline depth per QP (keep < sq_nwqe = 1024)
+  const std::string qpLabel = std::to_string(numQps) + " QP" + (numQps > 1 ? "s" : "");
+
+  const uint64_t testSizes[] = {256ULL, 16ULL * 1024, 256ULL * 1024, 1024ULL * 1024,
+                                4ULL * 1024 * 1024, maxBytesPerQp};
+  for (uint64_t bytesPerQp : testSizes) {
+    // Warm-up.
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(svc->deviceContext(), rank, peer, bytesPerQp, 10, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+
+    // Measure.
+    mscclpp::Timer timer;
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(svc->deviceContext(), rank, peer, bytesPerQp, nPuts, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    const double elapsedUs = timer.elapsed();
+    communicator->bootstrap()->barrier();
+
+    if (rank == 0) {
+      const double totalBytes = static_cast<double>(bytesPerQp) * nPuts * numQps;
+      const double aggGbps = totalBytes / elapsedUs * 1e-3;   // bytes/us -> GB/s
+      const double usPerPut = elapsedUs / nPuts;              // per-put (pipelined, per QP)
+      std::string sizeLabel;
+      if (bytesPerQp >= 1024ULL * 1024) sizeLabel = std::to_string(bytesPerQp / (1024ULL * 1024)) + " MB";
+      else if (bytesPerQp >= 1024ULL) sizeLabel = std::to_string(bytesPerQp / 1024ULL) + " KB";
+      else sizeLabel = std::to_string(bytesPerQp) + " B";
+      ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") aggregate", aggGbps, "GB/s");
+      ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") per-put", usPerPut, "us");
+    }
   }
 
   MSCCLPP_CUDATHROW(cudaFree(symBuf));
