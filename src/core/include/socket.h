@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <sys/socket.h>
 
+#include <atomic>
+
 namespace mscclpp {
 
 #define MAX_IFS 16
@@ -42,6 +44,13 @@ enum SocketState {
   SocketStateNum = 11
 };
 
+enum class SocketRecvResult {
+  Success,
+  Closed,
+  Truncated,
+  LocalShutdown,
+};
+
 enum SocketType {
   SocketTypeUnknown = 0,
   SocketTypeBootstrap = 1,
@@ -69,7 +78,11 @@ class Socket {
   void accept(const Socket* listenSocket, int64_t timeout = -1);
   void send(void* ptr, int size);
   void recv(void* ptr, int size);
-  void recvUntilEnd(void* ptr, int size, int* closed);
+  SocketRecvResult recvUntilEnd(void* ptr, int size, const std::atomic<bool>* localShutdown = nullptr);
+  /// Wake operations blocked on this socket without releasing its file descriptor.
+  /// The descriptor remains valid until close(), so callers can safely join threads
+  /// unblocked by this method before closing the socket.
+  void shutdown() noexcept;
   void close();
 
   int getFd() const { return fd_; }
