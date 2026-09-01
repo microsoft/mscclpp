@@ -89,6 +89,19 @@ const TransportFlags AllIBTransports = Transport::IB0 | Transport::IB1 | Transpo
 
 const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc | Transport::Ethernet;
 
+std::ostream& operator<<(std::ostream& os, const TransportFlags& transportFlags) {
+  os << '{';
+  const char* delimiter = "";
+  for (size_t i = 0; i < static_cast<size_t>(Transport::NumTransports); i++) {
+    auto transport = static_cast<Transport>(i);
+    if (transportFlags.has(transport)) {
+      os << delimiter << transport;
+      delimiter = ", ";
+    }
+  }
+  return os << '}';
+}
+
 std::ostream& operator<<(std::ostream& os, const Transport& transport) {
   static const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3",
                                                "IB4", "IB5", "IB6", "IB7", "ETH", "NUM"};
