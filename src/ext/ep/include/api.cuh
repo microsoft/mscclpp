@@ -166,6 +166,8 @@ struct CommContext {
   /// Symmetric per-peer-rank combine-barrier flag array base, kept separate from
   /// gpuNetIoFlagsBuffer_ so dispatch and combine signal counts never alias.
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  /// Symmetric payload-only combine landing rows, null unless active.
+  void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Byte stride of one staging-ring slot (token + top-k metadata).
   size_t gpuNetIoSlotStride_ = 0;
 };

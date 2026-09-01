@@ -192,9 +192,13 @@ struct Layout {
   //   - gpuNetIoCombineFlagsBuffer_: per-source-rank, per-QP 64-bit flags used
   //     exclusively by combine completion. One ordered marker on every payload
   //     QP proves all of that QP's writes have landed.
+  //   - gpuNetIoCombineLandingBuffer_: payload-only rank-major combine landing
+  //     rows, with no top-k metadata padding, so returned rows for one source
+  //     rank are contiguous and can be sent with larger GPUNetIO writes.
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
   void* gpuNetIoCombineFlagsBuffer_;
+  void* gpuNetIoCombineLandingBuffer_;
   // Byte stride of one staging-ring slot: one hidden BF16 token row followed by
   // the rank-major top-k id/weight metadata for that token (numTopk each). The
   // inter-domain send stages token+metadata contiguously, RDMA-writes the token
@@ -232,7 +236,10 @@ struct Layout {
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
         static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
-    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
+    const size_t gpuNetIoCombineLandingBytes = configAlign<size_t>(
+        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16), BufferAlignmentBytes);
+    const size_t gpuNetIoRegionBytes =
+        gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
 
     totalBytes_ = 2 * recvBufferBytes_ + gpuNetIoRegionBytes;
 
@@ -248,6 +255,8 @@ struct Layout {
       gpuNetIoStagingBuffer_ = gpuNetIoBase;
       gpuNetIoFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes;
       gpuNetIoCombineFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
+      gpuNetIoCombineLandingBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes +
+                                      gpuNetIoCombineFlagsBytes;
     }
   }
 };
