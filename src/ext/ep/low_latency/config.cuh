@@ -44,6 +44,7 @@ struct TransportView {
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
   void* gpuNetIoCombineFlagsBuffer_;
+  void* gpuNetIoCombineLandingBuffer_;
   size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const CommContext& comm)
@@ -55,6 +56,7 @@ struct TransportView {
         gpuNetIoStagingBuffer_(comm.gpuNetIoStagingBuffer_),
         gpuNetIoFlagsBuffer_(comm.gpuNetIoFlagsBuffer_),
         gpuNetIoCombineFlagsBuffer_(comm.gpuNetIoCombineFlagsBuffer_),
+        gpuNetIoCombineLandingBuffer_(comm.gpuNetIoCombineLandingBuffer_),
         gpuNetIoSlotStride_(comm.gpuNetIoSlotStride_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }

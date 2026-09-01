@@ -171,6 +171,7 @@ void MoELowLatencyRuntime::setup() {
     commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
     commContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
+    commContext_.gpuNetIoCombineLandingBuffer_ = layout.gpuNetIoCombineLandingBuffer_;
     commContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
     available_ = true;
   }
