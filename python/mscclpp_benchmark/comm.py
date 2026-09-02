@@ -180,7 +180,15 @@ class Comm:
         accum_dtype: Any | None = None,
         symmetric_memory: bool = False,
     ) -> TunedConfig:
-        tuned_config = self._config_store.select(self._hardware_profile, collective, _nbytes(buffer))
+        selection_dtype = dtype_override if dtype_override is not None else _dtype(buffer)
+        selection_accum = accum_dtype if accum_dtype is not None else selection_dtype
+        tuned_config = self._config_store.select(
+            self._hardware_profile,
+            collective,
+            _nbytes(buffer),
+            dtype=_dtype_name(selection_dtype),
+            accum=_dtype_name(selection_accum),
+        )
         if tuned_config is not None and tuned_config.algorithm in self._algorithms_by_collective.get(collective, {}):
             return tuned_config
 
