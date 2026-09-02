@@ -202,6 +202,62 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
     return values
 
 
+_SIZE_UNITS = {
+    "": 1,
+    "b": 1,
+    "k": 1 << 10,
+    "kb": 1 << 10,
+    "kib": 1 << 10,
+    "m": 1 << 20,
+    "mb": 1 << 20,
+    "mib": 1 << 20,
+    "g": 1 << 30,
+    "gb": 1 << 30,
+    "gib": 1 << 30,
+}
+
+
+def _parse_size(raw: str) -> int:
+    text = raw.strip().lower()
+    digits = len(text)
+    while digits > 0 and not text[digits - 1].isdigit():
+        digits -= 1
+    number, unit = text[:digits], text[digits:]
+    if not number:
+        raise ValueError(f"Expected a size like '16KiB' or '8MiB', got {raw!r}")
+    multiplier = _SIZE_UNITS.get(unit)
+    if multiplier is None:
+        raise ValueError(f"Unknown size unit {unit!r} in {raw!r}; expected one of B, KiB, MiB, GiB")
+    value = int(number) * multiplier
+    if value <= 0:
+        raise ValueError(f"Sizes must be positive, got {raw!r}")
+    return value
+
+
+def _parse_size_list(raw: str) -> tuple[int, ...]:
+    values = tuple(sorted({_parse_size(item) for item in raw.split(",") if item.strip()}))
+    if not values:
+        raise ValueError(f"Expected a comma-separated list of sizes, got {raw!r}")
+    return values
+
+
+def _nelems_for_total_size(collective: str, total_bytes: int, itemsize: int, nranks: int) -> int:
+    """Return the per-rank ``nelems`` that makes ``_make_case`` allocate ``total_bytes`` in total.
+
+    ``_make_case`` allocates ``nelems * nranks`` elements for allgather and reducescatter but only
+    ``nelems`` for allreduce, so the same total maps to a different ``nelems`` per collective. This
+    is what lets every collective be swept over an identical set of total sizes.
+    """
+    divisor = itemsize if collective == _ALLREDUCE else itemsize * nranks
+    if total_bytes % divisor != 0:
+        detail = "dtype itemsize" if collective == _ALLREDUCE else f"dtype itemsize x {nranks} ranks"
+        raise ValueError(
+            f"--total-sizes value {_human_size(total_bytes)} is not achievable for {collective}: "
+            f"it must be a multiple of {divisor} bytes ({detail})"
+        )
+    return total_bytes // divisor
+
+
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _REDUCESCATTER:
         # There are no native reducescatter algorithms in the default collection, so the compiled
@@ -581,6 +637,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
     parser.add_argument(
+        "--total-sizes",
+        help="Comma-separated total collective buffer sizes (e.g. '16KiB,1MiB,8MiB'). Sweeps by the "
+        "total size every rank sees rather than by batch, so different collectives can be compared "
+        "at identical totals. Mutually exclusive with --batch-sizes/--d-model.",
+    )
+    parser.add_argument(
         "--buffer-mode",
         choices=("in-place", "out-of-place"),
         default="in-place",
@@ -625,6 +687,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
     if args.warmup < 0 or args.tune_warmup < 0:
         raise ValueError("warmup counts must be non-negative")
+    if args.total_sizes is not None and args.batch_sizes is not None:
+        raise ValueError("--total-sizes and --batch-sizes are mutually exclusive")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -651,6 +715,22 @@ def main(argv: list[str] | None = None) -> None:
     comm_group = _mscclpp().CommGroup(MPI.COMM_WORLD)
     setattr(comm_group, "_mpi_comm", MPI.COMM_WORLD)
     hardware_profile = _detect_hardware_profile(comm_group.nranks)
+    # Each sweep point is a (label, nelems) pair so the size column can report whichever knob drove
+    # it. --total-sizes needs comm_group.nranks, so it is resolved here rather than with the other
+    # argument parsing above.
+    if args.total_sizes is not None:
+        size_column = "nelems"
+        itemsize = int(cp.dtype(dtype_spec.cupy_dtype).itemsize)
+        sweep_points = [
+            (str(nelems), nelems)
+            for nelems in (
+                _nelems_for_total_size(args.collective, total, itemsize, comm_group.nranks)
+                for total in _parse_size_list(args.total_sizes)
+            )
+        ]
+    else:
+        size_column = "batch"
+        sweep_points = [(str(batch_size), batch_size * args.d_model) for batch_size in batch_sizes]
     config_store = TunedConfigStore.load_path(args.config_path) if args.config_path else TunedConfigStore.empty()
     comm = Comm(
         comm_group,
@@ -684,8 +764,7 @@ def main(argv: list[str] | None = None) -> None:
                 flush=True,
             )
 
-        for batch_size in batch_sizes:
-            nelems = batch_size * args.d_model
+        for size_label, nelems in sweep_points:
             case = _make_case(
                 collective=args.collective,
                 nelems=nelems,
@@ -708,8 +787,8 @@ def main(argv: list[str] | None = None) -> None:
                 comm.reset(config)
                 if correctness != "PASS":
                     raise RuntimeError(
-                        f"Correctness failed for batch_size={batch_size}, message_size={case.message_size}, "
-                        f"config={config}"
+                        f"Correctness failed for {size_column}={size_label}, "
+                        f"message_size={case.message_size}, config={config}"
                     )
 
             time_us = _measure_case(
@@ -726,7 +805,7 @@ def main(argv: list[str] | None = None) -> None:
             busbw = algbw * _busbw_factor(args.collective, comm_group.nranks)
             rows.append(
                 [
-                    str(batch_size),
+                    size_label,
                     _human_size(case.message_size),
                     _human_size(case.total_size),
                     config.algorithm,
@@ -757,7 +836,7 @@ def main(argv: list[str] | None = None) -> None:
                 "\n"
                 + _format_table(
                     [
-                        "batch",
+                        size_column,
                         "msg",
                         "total",
                         "algorithm",

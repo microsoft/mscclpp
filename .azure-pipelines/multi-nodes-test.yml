@@ -100,7 +100,8 @@ jobs:
           -x PYTHONPATH=/root/mscclpp/python \
           python3 -m mscclpp_benchmark.bench_collective \
             --collective allreduce --autotune --enable-dsl --buffer-mode in-place \
-            --d-model 5120 --batch-sizes 8,16,32 --dsl-tbg 1,2 --dsl-tpb 512,1024
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2 --dsl-tpb 512,1024
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -117,7 +118,8 @@ jobs:
           -x PYTHONPATH=/root/mscclpp/python \
           python3 -m mscclpp_benchmark.bench_collective \
             --collective allgather --autotune --enable-dsl --buffer-mode in-place \
-            --d-model 5120 --batch-sizes 8,16,32 --dsl-tbg 1,2 --dsl-tpb 512,1024
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2 --dsl-tpb 512,1024
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -134,7 +136,8 @@ jobs:
           -x PYTHONPATH=/root/mscclpp/python \
           python3 -m mscclpp_benchmark.bench_collective \
             --collective reducescatter --autotune --enable-dsl --buffer-mode in-place \
-            --d-model 5120 --batch-sizes 8,16,32 --dsl-tbg 1,2 --dsl-tpb 512,1024
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2 --dsl-tpb 512,1024
 
   - template: templates/run-remote-task.yml
     parameters:
