@@ -50,14 +50,11 @@ class CommGroup:
 
                 uniq_id_global = mpi_comm.bcast(uniq_id, 0)
             else:
-                import torch
                 import torch.distributed as dist
 
-                backend = str(dist.get_backend(torch_group)).lower()
-                device = torch.device("cuda", torch.cuda.current_device()) if "nccl" in backend else torch.device("cpu")
                 object_list = [uniq_id]
                 group_root = dist.get_global_rank(torch_group, 0)
-                dist.broadcast_object_list(object_list, src=group_root, group=torch_group, device=device)
+                dist.broadcast_object_list(object_list, src=group_root, group=torch_group)
                 uniq_id_global = object_list[0]
             self.bootstrap.initialize(uniq_id_global)
         elif not interfaceIpPortTrio == "":

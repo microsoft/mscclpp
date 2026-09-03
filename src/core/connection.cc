@@ -21,6 +21,14 @@
 
 namespace mscclpp {
 
+template <typename... Args>
+static void warnNoexcept(Args&&... args) noexcept {
+  try {
+    WARN(CONN, std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+
 static void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
   if (!mem.transports().has(transport)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
@@ -585,18 +593,41 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const E
   // Starting Thread to Receive Messages
   int deviceId = -1;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  threadRecvMessages_ = std::thread([deviceId, this]() {
-    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
-    this->recvMessages();
+  threadRecvMessages_ = std::thread([deviceId, this]() noexcept {
+    try {
+      MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+      this->recvMessages();
+    } catch (const std::exception& e) {
+      publishReceiverError(std::current_exception());
+      warnNoexcept("Ethernet receive thread stopped with an error: ", e.what());
+    } catch (...) {
+      publishReceiverError(std::current_exception());
+      warnNoexcept("Ethernet receive thread stopped with an unknown error");
+    }
   });
 
   INFO(CONN, "Ethernet connection created");
 }
 
-EthernetConnection::~EthernetConnection() {
-  sendSocket_->close();
-  recvSocket_->close();
-  threadRecvMessages_.join();
+EthernetConnection::~EthernetConnection() noexcept {
+  stopping_.store(true, std::memory_order_release);
+
+  // Keep both descriptors reserved until the receiver is known to be done.
+  // shutdown wakes socket operations; join then establishes that close cannot
+  // race recv or allow the receiver to observe a recycled descriptor number.
+  if (recvSocket_) recvSocket_->shutdown();
+  if (sendSocket_) sendSocket_->shutdown();
+  try {
+    if (threadRecvMessages_.joinable()) threadRecvMessages_.join();
+  } catch (const std::exception& e) {
+    warnNoexcept("Failed to join Ethernet receive thread during teardown: ", e.what());
+    std::terminate();
+  } catch (...) {
+    warnNoexcept("Failed to join Ethernet receive thread during teardown");
+    std::terminate();
+  }
+  if (recvSocket_) recvSocket_->close();
+  if (sendSocket_) sendSocket_->close();
 }
 
 Transport EthernetConnection::transport() const { return Transport::Ethernet; }
@@ -605,39 +636,43 @@ Transport EthernetConnection::remoteTransport() const { return Transport::Ethern
 
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {
+  char* srcPtr;
+  char* dstPtr;
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  // Validating Transport Protocol
-  validateTransport(dst, remoteTransport(), dstOffset, size);
-  validateTransport(src, transport(), srcOffset, size);
+    // Validating Transport Protocol
+    validateTransport(dst, remoteTransport(), dstOffset, size);
+    validateTransport(src, transport(), srcOffset, size);
 
-  // Initializing Variables
-  char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
-  char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
-  uint64_t sentDataSize = 0;
-  uint64_t headerSize = 0;
+    // Initializing Variables
+    srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
+    dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
+    uint64_t sentDataSize = 0;
+    uint64_t headerSize = 0;
 
-  // Copying Meta Data to Send Buffer
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + headerSize / sizeof(char));
-  headerSize += sizeof(dstPtr);
-  char* sizeBytes = reinterpret_cast<char*>(&size);
-  std::copy(sizeBytes, sizeBytes + sizeof(size), sendBuffer_.data() + headerSize / sizeof(char));
-  headerSize += sizeof(size);
+    // Copying Meta Data to Send Buffer
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + headerSize / sizeof(char));
+    headerSize += sizeof(dstPtr);
+    char* sizeBytes = reinterpret_cast<char*>(&size);
+    std::copy(sizeBytes, sizeBytes + sizeof(size), sendBuffer_.data() + headerSize / sizeof(char));
+    headerSize += sizeof(size);
 
-  // Getting Data From GPU and Sending Message
-  while (sentDataSize < size) {
-    uint64_t dataSize =
-        std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
-    uint64_t messageSize = dataSize + headerSize;
-    mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)), dataSize,
-                       cudaMemcpyDeviceToHost);
-    sendSocket_->send(sendBuffer_.data(), messageSize);
-    sentDataSize += messageSize;
-    headerSize = 0;
-  }
+    // Getting Data From GPU and Sending Message
+    while (sentDataSize < size) {
+      uint64_t dataSize =
+          std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
+      uint64_t messageSize = dataSize + headerSize;
+      mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)),
+                         dataSize, cudaMemcpyDeviceToHost);
+      sendSocket_->send(sendBuffer_.data(), messageSize);
+      sentDataSize += messageSize;
+      headerSize = 0;
+    }
+  });
 
   INFO(CONN, "EthernetConnection write: from ", srcPtr, " to ", dstPtr, ", size ", size);
 
@@ -647,33 +682,37 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
 }
 
 void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
+  uint64_t oldValue;
+  uint64_t* dstPtr;
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  // Validating Transport Protocol
-  validateTransport(dst, remoteTransport());
+    // Validating Transport Protocol
+    validateTransport(dst, remoteTransport());
 
-  // Initializing Variables
-  uint64_t oldValue = *src;
-  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
-  uint64_t dataSize = sizeof(uint64_t);
-  uint64_t messageSize = 0;
-  *src = newValue;
+    // Initializing Variables
+    oldValue = *src;
+    dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+    uint64_t dataSize = sizeof(uint64_t);
+    uint64_t messageSize = 0;
+    *src = newValue;
 
-  // Copying Data to Send Buffer
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += sizeof(dstPtr);
-  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
-  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += sizeof(dataSize);
-  char* dataBytes = reinterpret_cast<char*>(src);
-  std::copy(dataBytes, dataBytes + dataSize, sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += dataSize;
+    // Copying Data to Send Buffer
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += sizeof(dstPtr);
+    char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+    std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += sizeof(dataSize);
+    char* dataBytes = reinterpret_cast<char*>(src);
+    std::copy(dataBytes, dataBytes + dataSize, sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += dataSize;
 
-  // Sending Message
-  sendSocket_->send(sendBuffer_.data(), messageSize);
+    // Sending Message
+    sendSocket_->send(sendBuffer_.data(), messageSize);
+  });
 
   INFO(CONN, "EthernetConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
@@ -684,42 +723,76 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
 }
 
 void EthernetConnection::flush(int64_t) {
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  INFO(CONN, "EthernetConnection flushing connection");
+    INFO(CONN, "EthernetConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_EXIT)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+  });
+}
+
+void EthernetConnection::publishReceiverError(std::exception_ptr error) noexcept {
+  try {
+    std::lock_guard<std::mutex> lock(receiverErrorMutex_);
+    if (!receiverError_) receiverError_ = error;
+  } catch (...) {
+    // std::mutex::lock can only fail for a broken runtime.  The receive thread
+    // must still not leak an exception through std::thread's entry point.
+  }
+}
+
+void EthernetConnection::rethrowReceiverError() {
+  std::exception_ptr error;
+  {
+    std::lock_guard<std::mutex> lock(receiverErrorMutex_);
+    error = receiverError_;
+  }
+  if (error) std::rethrow_exception(error);
+}
+
+bool EthernetConnection::receiveFramePart(void* ptr, int size, bool allowBoundaryEof) {
+  SocketRecvResult result = recvSocket_->recvUntilEnd(ptr, size, &stopping_);
+  if (result == SocketRecvResult::Success) return true;
+  if (result == SocketRecvResult::LocalShutdown) return false;
+  if (result == SocketRecvResult::Closed && allowBoundaryEof) return false;
+
+  THROW(CONN, Error, ErrorCode::RemoteError,
+        result == SocketRecvResult::Truncated ? "Ethernet peer closed in the middle of a frame"
+                                              : "Ethernet peer closed before completing a frame");
 }
 
 void EthernetConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
-  validateTransport(dst, remoteTransport());
+  runWithReceiverErrorCheck([&]() {
+    validateTransport(dst, remoteTransport());
 
-  // Use the same wire format as write(): [dstPtr(8B)] [size(8B)] [data(size B)]
-  // Set the MSB of size to signal atomicAdd to the receiver.
-  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
-  constexpr uint64_t atomicAddFlag = uint64_t{1} << uint64_t{63};
-  uint64_t dataSize = sizeof(uint64_t) | atomicAddFlag;
-  uint64_t messageSize = 0;
+    // Use the same wire format as write(): [dstPtr(8B)] [size(8B)] [data(size B)]
+    // Set the MSB of size to signal atomicAdd to the receiver.
+    uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+    constexpr uint64_t atomicAddFlag = uint64_t{1} << uint64_t{63};
+    uint64_t dataSize = sizeof(uint64_t) | atomicAddFlag;
+    uint64_t messageSize = 0;
 
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(dstPtr);
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(dstPtr);
 
-  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
-  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(dataSize);
+    char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+    std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(dataSize);
 
-  char* valueBytes = reinterpret_cast<char*>(&value);
-  std::copy(valueBytes, valueBytes + sizeof(value), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(value);
+    char* valueBytes = reinterpret_cast<char*>(&value);
+    std::copy(valueBytes, valueBytes + sizeof(value), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(value);
 
-  sendSocket_->send(sendBuffer_.data(), messageSize);
+    sendSocket_->send(sendBuffer_.data(), messageSize);
 
-  INFO(CONN, "EthernetConnection atomicAdd: dst ", dstPtr, ", value ", value);
+    INFO(CONN, "EthernetConnection atomicAdd: dst ", dstPtr, ", value ", value);
+  });
 }
 
 void EthernetConnection::recvMessages() {
@@ -727,23 +800,19 @@ void EthernetConnection::recvMessages() {
   char* ptr;
   uint64_t size;
   uint64_t recvSize;
-  int closed = 0;
-  bool received = true;
   constexpr uint64_t atomicAddFlag = uint64_t{1} << uint64_t{63};
 
   // Receiving Messages Until Connection is Closed
-  while (recvSocket_->getState() != SocketStateClosed) {
+  while (!stopping_.load(std::memory_order_acquire)) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_META_ENTRY)
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_META_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
     // Receiving Data Address
-    if (closed == 0) recvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
-    received &= !closed;
+    if (!receiveFramePart(&ptr, sizeof(char*), true)) return;
 
     // Receiving data size (MSB may indicate atomicAdd)
-    if (closed == 0) recvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
-    received &= !closed;
+    if (!receiveFramePart(&size, sizeof(uint64_t), false)) return;
 
     bool isAtomicAdd = (size & atomicAddFlag) != 0;
     if (isAtomicAdd) {
@@ -758,27 +827,23 @@ void EthernetConnection::recvMessages() {
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_DATA_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
-    if (isAtomicAdd && received && size == sizeof(int64_t)) {
+    if (isAtomicAdd && size == sizeof(int64_t)) {
       // Atomic add: receive the value, read-modify-write on GPU memory
       int64_t addValue;
-      recvSocket_->recvUntilEnd(&addValue, sizeof(int64_t), &closed);
-      received &= !closed;
-      if (received) {
-        int64_t current;
-        mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(int64_t), cudaMemcpyDeviceToHost);
-        current += addValue;
-        mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(int64_t), cudaMemcpyHostToDevice);
-      }
+      if (!receiveFramePart(&addValue, sizeof(int64_t), false)) return;
+
+      int64_t current;
+      mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(int64_t), cudaMemcpyDeviceToHost);
+      current += addValue;
+      mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(int64_t), cudaMemcpyHostToDevice);
     } else {
       // Regular write: receive data and copy to GPU
       recvSize = 0;
-      while (recvSize < size && closed == 0) {
+      while (recvSize < size) {
         uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
-        recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
-        received &= !closed;
+        if (!receiveFramePart(recvBuffer_.data(), messageSize, false)) return;
 
-        if (received)
-          mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
+        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
         recvSize += messageSize;
       }
     }

@@ -981,6 +981,12 @@ DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
 template <class T>
 using PacketPayload = typename T::Payload;
 
+/// Convert TransportFlags to string and output to stream.
+/// @param os Output stream.
+/// @param transportFlags Input transport flags.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const TransportFlags& transportFlags);
+
 /// Convert Transport to string and output to stream.
 /// @param os Output stream.
 /// @param transport Input transport.
