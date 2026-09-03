@@ -167,13 +167,14 @@ inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedByte
                            KernelConfigCache& cache) {
   if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
     cudaFuncAttributes attributes;
-    CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
     EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
                    static_cast<size_t>(context.maxSharedMemoryPerBlock_));
-    CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                    static_cast<int>(dynamicSharedBytes)));
+    MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                           static_cast<int>(dynamicSharedBytes)));
     int blocksPerSm;
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
+    MSCCLPP_CUDATHROW(
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
     cache.deviceId_ = context.deviceId_;
     cache.dynamicSharedBytes_ = dynamicSharedBytes;
     cache.residentBlocks_ = blocksPerSm * context.numSms_;

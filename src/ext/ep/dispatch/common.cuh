@@ -830,7 +830,7 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   kernel<<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIdx,
       topkWeights, input, workload, recvBuffer, context.devicePtr_);
-  CUDA_CHECK(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
 template <int Hidden, DispatchLayout Layout, typename KernelSelector>

@@ -5,7 +5,7 @@
 
 #include <exception>
 #include <mscclpp/assert_device.hpp>
-#include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <string>
 
 #ifndef EP_STATIC_ASSERT
@@ -23,16 +23,6 @@ class EPException : public std::exception {
 
   const char* what() const noexcept override { return message.c_str(); }
 };
-
-#ifndef CUDA_CHECK
-#define CUDA_CHECK(cmd)                                                     \
-  do {                                                                      \
-    cudaError_t e = (cmd);                                                  \
-    if (e != cudaSuccess) {                                                 \
-      throw EPException("CUDA", __FILE__, __LINE__, cudaGetErrorString(e)); \
-    }                                                                       \
-  } while (0)
-#endif
 
 #ifndef EP_HOST_ASSERT
 #define EP_HOST_ASSERT(cond)                                     \

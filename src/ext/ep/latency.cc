@@ -38,17 +38,17 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
 
-  CUDA_CHECK(cudaGetDevice(&deviceId_));
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = numRanksPerIpcDomain_ >= numRanks_;
 }
 
 LatencyContext::~LatencyContext() noexcept(false) {
-  CUDA_CHECK(cudaDeviceSynchronize());
-  if (deviceContext_.devicePtr_ != nullptr) CUDA_CHECK(cudaFree(deviceContext_.devicePtr_));
-  if (peerMappedBufferBasesGpu_ != nullptr) CUDA_CHECK(cudaFree(peerMappedBufferBasesGpu_));
-  if (workspace_ != nullptr) CUDA_CHECK(cudaFree(workspace_));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
+  if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
+  if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
   if (symmetricBuffer_ != nullptr) {
     mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
   }
@@ -108,8 +108,9 @@ void LatencyContext::initialize() {
 
   int maxSharedMemoryPerBlock;
   int numSms;
-  CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
-  CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
+  MSCCLPP_CUDATHROW(
+      cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
   deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),

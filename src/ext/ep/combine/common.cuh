@@ -669,7 +669,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   combineFunc<<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context.devicePtr_);
-  CUDA_CHECK(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
 template <CombineMode Mode, int Hidden, typename KernelSelector>
