@@ -14,3 +14,8 @@ target_sources(mp_unit_tests PRIVATE
     switch_channel_perf_tests.cu
     executor_tests.cc
 )
+
+if(TARGET mscclpp_ep)
+    target_sources(mp_unit_tests PRIVATE ep_tests.cu)
+    target_link_libraries(mp_unit_tests mscclpp_ep)
+endif()
