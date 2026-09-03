@@ -20,11 +20,11 @@ namespace mscclpp {
 namespace ep {
 
 // Mode-specific contexts owned by MoERuntime.
-struct LatencyContext {
-  LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks, int numRanksPerIpcDomain,
-                 int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                 CombineMode combineMode);
-  ~LatencyContext() noexcept(false);
+struct LatencyRuntimeContext {
+  LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
+                        int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
+                        DispatchLayout outputLayout, CombineMode combineMode);
+  ~LatencyRuntimeContext() noexcept(false);
 
  private:
   friend class MoERuntime;
@@ -57,7 +57,7 @@ struct LatencyContext {
 };
 
 // Reserve the unified runtime object layout for the follow-up throughput implementation.
-struct ThroughputContext {};
+struct ThroughputRuntimeContext {};
 
 }  // namespace ep
 }  // namespace mscclpp

@@ -12,8 +12,8 @@
 
 namespace mscclpp {
 namespace ep {
-struct LatencyContext;
-struct ThroughputContext;
+struct LatencyRuntimeContext;
+struct ThroughputRuntimeContext;
 /// Unified host runtime for expert-parallel dispatch and combine.
 ///
 /// One runtime owns the communication buffers and synchronization state for the
@@ -71,7 +71,7 @@ class MoERuntime {
   void* outputTopkWeightsBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
   void* dispatchOutputBuffer() const;
-  /// Return the runtime-owned rank-major combine input buffer.
+  /// Return the runtime-owned combine input buffer.
   void* combineInputBuffer() const;
 
   /// Dispatch tokens using the configured runtime mode.
@@ -103,8 +103,8 @@ class MoERuntime {
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
-  std::unique_ptr<LatencyContext> latencyContext_;
-  std::unique_ptr<ThroughputContext> throughputContext_;
+  std::unique_ptr<LatencyRuntimeContext> latencyContext_;
+  std::unique_ptr<ThroughputRuntimeContext> throughputContext_;
 };
 
 /// Create the unified MoE runtime selected by @p mode.

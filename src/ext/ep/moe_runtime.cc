@@ -26,8 +26,8 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     throw std::invalid_argument("This build only supports MoEMode::LATENCY");
   }
   latencyContext_ =
-      std::make_unique<LatencyContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                       maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
+      std::make_unique<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
+                                              maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
   available_ = latencyContext_->available_;
 }
 

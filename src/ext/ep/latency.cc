@@ -15,9 +15,10 @@
 namespace mscclpp {
 namespace ep {
 
-LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
-                               int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
-                               DispatchLayout outputLayout, CombineMode combineMode)
+LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
+                                             int numNvlRanks, int numRanksPerIpcDomain, int maxTokensPerRank,
+                                             int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
+                                             CombineMode combineMode)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -43,7 +44,7 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
   available_ = numRanksPerIpcDomain_ >= numRanks_;
 }
 
-LatencyContext::~LatencyContext() noexcept(false) {
+LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
@@ -53,7 +54,7 @@ LatencyContext::~LatencyContext() noexcept(false) {
   }
 }
 
-void LatencyContext::initialize() {
+void LatencyRuntimeContext::initialize() {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
