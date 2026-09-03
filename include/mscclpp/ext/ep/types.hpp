@@ -95,59 +95,14 @@ struct LatencyDispatchRequest {
   cudaStream_t stream;
 };
 
-/// Arguments for throughput-mode dispatch.
-struct ThroughputDispatchRequest {
-  /// Token receive buffer.
-  void* recvX;
-  /// Optional received scale output.
-  float* recvXScales;
-  /// Optional received top-k expert IDs.
-  int64_t* recvTopkIdx;
-  /// Optional received top-k weights.
-  float* recvTopkWeights;
-  /// Per-token routing state consumed by combine.
-  int* sendHead;
-  /// Input token payload.
-  const void* input;
-  /// Optional input scales.
-  const float* inputScales;
-  /// Optional input top-k expert IDs.
-  const int64_t* topkIdx;
-  /// Optional input top-k weights.
-  const float* topkWeights;
-  /// Token-to-destination-rank membership.
-  const bool* isTokenInRank;
-  /// Per-source-rank token prefixes.
-  const int* rankPrefixMatrix;
-  /// Per-channel token prefixes.
-  const int* channelPrefixMatrix;
-  /// Number of input tokens.
-  int numTokens;
-  /// Hidden dimension.
-  int hidden;
-  /// Number of routed experts per token.
-  int numTopk;
-  /// Number of scales per token.
-  int numScales;
-  /// Global expert count, or zero when cached metadata is reused.
-  int numExperts;
-  /// Input element size in bytes.
-  int inputElementSize;
-  /// Number of received tokens.
-  int numRecvTokens;
-  /// Whether cached routing metadata is reused.
-  bool cachedMode;
-  /// Dispatch grid block count.
-  int numBlocks;
-  /// CUDA stream used for the operation.
-  cudaStream_t stream;
-};
+/// Reserved request type for throughput-mode dispatch.
+struct ThroughputDispatchRequest {};
 
 /// Mode-specific dispatch request.
 struct DispatchRequest {
   /// Construct a latency dispatch request.
   explicit DispatchRequest(LatencyDispatchRequest request) : value_(std::move(request)) {}
-  /// Construct a throughput dispatch request.
+  /// Construct a reserved throughput dispatch request.
   explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
 
  private:
@@ -191,39 +146,14 @@ struct LatencyCombineRequest {
   cudaStream_t stream;
 };
 
-/// Arguments for throughput-mode combine.
-struct ThroughputCombineRequest {
-  /// Combined token output.
-  void* output;
-  /// Optional combined top-k weights.
-  float* outputTopkWeights;
-  /// Local expert output.
-  const void* input;
-  /// Optional local top-k weights.
-  const float* topkWeights;
-  /// Routing state returned by throughput dispatch.
-  const int* sendHead;
-  /// Number of local expert-output rows.
-  int numInputTokens;
-  /// Number of combined output tokens.
-  int numOutputTokens;
-  /// Hidden dimension.
-  int hidden;
-  /// Number of routed experts per token.
-  int numTopk;
-  /// Input element size in bytes.
-  int inputElementSize;
-  /// Combine grid block count.
-  int numBlocks;
-  /// CUDA stream used for the operation.
-  cudaStream_t stream;
-};
+/// Reserved request type for throughput-mode combine.
+struct ThroughputCombineRequest {};
 
 /// Mode-specific combine request.
 struct CombineRequest {
   /// Construct a latency combine request.
   explicit CombineRequest(LatencyCombineRequest request) : value_(std::move(request)) {}
-  /// Construct a throughput combine request.
+  /// Construct a reserved throughput combine request.
   explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
 
  private:

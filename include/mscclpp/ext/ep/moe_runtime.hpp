@@ -76,39 +76,20 @@ class MoERuntime {
 
   /// Dispatch tokens using the configured runtime mode.
   ///
-  /// @p request must contain the request type matching mode(): a
-  /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
-  /// THROUGHPUT. Output buffers remain owned by the caller unless obtained
-  /// through a runtime buffer accessor.
+  /// ThroughputDispatchRequest is reserved for a follow-up implementation.
+  /// Output buffers remain owned by the caller unless obtained through a runtime buffer accessor.
   /// @param request Dispatch inputs, outputs, dimensions, and CUDA stream.
-  /// @throws std::invalid_argument If the request type does not match mode().
+  /// @throws std::invalid_argument If @p request is not a latency request.
   void dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
   ///
   /// A combine request must follow its matching dispatch so the runtime can
-  /// reuse routing metadata and synchronization epochs. @p request must contain
-  /// a LatencyCombineRequest for LATENCY or a ThroughputCombineRequest for
-  /// THROUGHPUT.
+  /// reuse routing metadata and synchronization epochs. ThroughputCombineRequest
+  /// is reserved for a follow-up implementation.
   /// @param request Combine inputs, outputs, dimensions, and CUDA stream.
-  /// @throws std::invalid_argument If the request type does not match mode().
+  /// @throws std::invalid_argument If @p request is not a latency request.
   void combine(const CombineRequest& request);
-
-  /// Build token routing metadata.
-  ///
-  /// Computes per-rank counts, per-expert counts, and token-to-rank membership
-  /// on @p stream without moving token payloads.
-  /// @throws std::runtime_error Throughput mode is not available in this build.
-  void prepare(int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank, const int64_t* topkIdx,
-               int numTokens, int numTopk, int numExperts, cudaStream_t stream);
-  /// Exchange routing counts and return the receive-token count.
-  ///
-  /// This host-synchronizing metadata phase must precede throughput dispatch
-  /// when cached routing metadata is unavailable.
-  /// @throws std::runtime_error Throughput mode is not available in this build.
-  int notify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert, const int* numTokensPerRank,
-             const int* numTokensPerExpert, const bool* isTokenInRank, int numTokens, int numExperts,
-             int expertAlignment, int numBlocks, cudaStream_t stream);
 
  private:
   void requireMode(MoEMode expected) const;

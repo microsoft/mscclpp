@@ -11,14 +11,6 @@
 namespace mscclpp {
 namespace ep {
 
-namespace {
-
-[[noreturn]] void throwThroughputUnavailable() {
-  throw std::runtime_error("MoEMode::THROUGHPUT is not available in this build");
-}
-
-}  // namespace
-
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
                        int numExperts, int numTopk, int64_t, DispatchLayout outputLayout, CombineMode combineMode)
     : bootstrap_(communicator.bootstrap()),
@@ -66,7 +58,7 @@ void MoERuntime::dispatch(const DispatchRequest& request) {
   requireMode(MoEMode::LATENCY);
   const auto* latencyRequest = std::get_if<LatencyDispatchRequest>(&request.value_);
   if (latencyRequest == nullptr) {
-    throw std::invalid_argument("Latency runtime requires a latency dispatch request");
+    throw std::invalid_argument("Throughput dispatch is not available in this build");
   }
   launchLatencyDispatch(*latencyRequest);
 }
@@ -75,17 +67,9 @@ void MoERuntime::combine(const CombineRequest& request) {
   requireMode(MoEMode::LATENCY);
   const auto* latencyRequest = std::get_if<LatencyCombineRequest>(&request.value_);
   if (latencyRequest == nullptr) {
-    throw std::invalid_argument("Latency runtime requires a latency combine request");
+    throw std::invalid_argument("Throughput combine is not available in this build");
   }
   launchLatencyCombine(*latencyRequest);
-}
-
-void MoERuntime::prepare(int*, int*, bool*, const int64_t*, int, int, int, cudaStream_t) {
-  throwThroughputUnavailable();
-}
-
-int MoERuntime::notify(int*, int*, int*, const int*, const int*, const bool*, int, int, int, int, cudaStream_t) {
-  throwThroughputUnavailable();
 }
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
