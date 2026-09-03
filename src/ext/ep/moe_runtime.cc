@@ -12,7 +12,7 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
-                       int numExperts, int numTopk, int64_t, DispatchLayout outputLayout, CombineMode combineMode)
+                       int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
     : bootstrap_(communicator.bootstrap()),
       mode_(mode),
       rank_(bootstrap_->getRank()),
@@ -73,10 +73,10 @@ void MoERuntime::combine(const CombineRequest& request) {
 }
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
-                                             int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             DispatchLayout outputLayout, CombineMode combineMode) {
-  return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, maxHiddenBytes,
-                                      outputLayout, combineMode);
+                                             int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
+                                             CombineMode combineMode) {
+  return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, outputLayout,
+                                      combineMode);
 }
 
 }  // namespace ep

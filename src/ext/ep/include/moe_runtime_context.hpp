@@ -48,7 +48,7 @@ struct LatencyContext {
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};
-  mscclpp::Communicator* communicator_ = nullptr;
+  mscclpp::Communicator& communicator_;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
   void** peerMappedBufferBasesGpu_ = nullptr;

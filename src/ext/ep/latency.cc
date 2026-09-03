@@ -30,8 +30,7 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
       symmetricBufferBytes_(static_cast<int64_t>(
           latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode))),
       workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
-      communicator_(&communicator) {
-  EP_HOST_ASSERT(communicator_ != nullptr);
+      communicator_(communicator) {
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
@@ -57,7 +56,6 @@ LatencyContext::~LatencyContext() noexcept(false) {
 void LatencyContext::initialize() {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
-  EP_HOST_ASSERT(communicator_ != nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
 
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
@@ -75,14 +73,14 @@ void LatencyContext::initialize() {
 
   constexpr int IpcTag = 1;
   peerBufferMemories_.resize(numRanks_);
-  peerBufferMemories_[rank_] = communicator_->registerMemory(symmetricBuffer_, symmetricBufferBytes_, ipcTransport);
+  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, ipcTransport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isMappedPeer(r)) continue;
-    communicator_->sendMemory(peerBufferMemories_[rank_], r, IpcTag);
-    remoteFutures[r] = communicator_->recvMemory(r, IpcTag);
-    connectionFutures[r] = communicator_->connect(ipcConfig, r, IpcTag);
+    communicator_.sendMemory(peerBufferMemories_[rank_], r, IpcTag);
+    remoteFutures[r] = communicator_.recvMemory(r, IpcTag);
+    connectionFutures[r] = communicator_.connect(ipcConfig, r, IpcTag);
   }
 
   peerMappedBufferBases_.assign(numRanks_, nullptr);
@@ -92,8 +90,7 @@ void LatencyContext::initialize() {
     if (!isMappedPeer(r)) continue;
     peerBufferMemories_[r] = remoteFutures[r].get();
     peerMappedBufferBases_[r] = peerBufferMemories_[r].data();
-    auto semaphore =
-        std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator_, connectionFutures[r].get());
+    auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connectionFutures[r].get());
     baseMemoryChannels_.emplace_back(semaphore);
     baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
   }
@@ -127,6 +124,7 @@ void LatencyContext::initialize() {
 void* MoERuntime::outputTopkIdsBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
                               context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
@@ -136,6 +134,7 @@ void* MoERuntime::outputTopkIdsBuffer() const {
 void* MoERuntime::outputTopkWeightsBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
                               context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
@@ -270,8 +269,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                                  context.deviceContext_, numBlocks, stream);
     } else {
       EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-      rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                   combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
+      rankMajorGatherReduceCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
+                                   context.deviceContext_, numBlocks, stream);
     }
   } else if (mode == CombineMode::DIRECT_SEND) {
     expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,

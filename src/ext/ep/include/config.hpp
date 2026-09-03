@@ -156,9 +156,6 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
-  size_t dispatchRecvBufferBytes_;
-  size_t combineRecvBufferBytes_;
-  size_t dispatchOutputBytes_;
   void* dispatchRecvBuffer_ = nullptr;
   void* combineRecvBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
@@ -185,25 +182,25 @@ struct LatencyStorageLayout {
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
-    dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
+    const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
+        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
     const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
                                           : rankMajorLocalReduce ? 0
-                                                                 : dispatchOutputBytes_;
-    dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
-    combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+                                                                 : dispatchOutputBytes;
+    const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
+    const size_t alignedCombineRecvBufferBytes = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
+    totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineRecvBufferBytes +
+                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      dispatchOutputBuffer_ =
-          rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
-      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
+                                        : base + alignedDispatchRecvBufferBytes + alignedCombineRecvBufferBytes;
+      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
     }
   }
 };
