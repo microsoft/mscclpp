@@ -141,14 +141,14 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     if (laneId == 0) bulkBarrier->wait(sendBulkPhase);
     __syncwarp();
     mscclpp::bulkFence();
-    const int completionRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
-    if (completionRank >= 0) {
+    const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
+    if (dstRank >= 0) {
       issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
-                                       route.dstRank);
+                                       dstRank);
     }
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
-    completeRankMajorTokenStore(workspaceView, completionRank);
+    completeRankMajorTokenStore(workspaceView, dstRank);
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
 }
