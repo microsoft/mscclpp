@@ -50,8 +50,6 @@ class MoERuntime {
   MoEMode mode() const { return mode_; }
   /// Return whether the selected mode supports the detected topology.
   bool isAvailable() const { return available_; }
-  /// Return whether the runtime is available across more than one node.
-  bool isInternodeAvailable() const { return available_ && numRanks_ > numNvlRanks_; }
   /// Collectively initialize deferred runtime resources.
   ///
   /// All ranks must call this method exactly once and in the same order. The
