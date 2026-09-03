@@ -49,7 +49,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadata(const TransportView& transport,
                                                  const float* __restrict__ topkWeights, const RankMajorRoute& route,
                                                  int tokenIdx, int nTopk, int nLocalExperts, int maxTokensPerRank,
                                                  int invalidTokenExpertId) {
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int candidateExpert =
       laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
   const float candidateWeight =
@@ -105,7 +105,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
   const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
   const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
@@ -210,7 +210,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(const void* inputTokens, int nExpert
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
   const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nWorkerBlocks);
   const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
@@ -270,7 +270,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendFp8(const void* inputTokens, int nExperts
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nWorkerBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
   const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nWorkerBlocks);
   const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
@@ -330,7 +330,7 @@ MSCCLPP_DEVICE_INLINE void countDispatchRoutes(DispatchCountView counts, const i
                                                int nTokens, int nTopk, int nRanks, int nExperts) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int nLocalExperts = nExperts / nRanks;
   for (int rankIdx = threadId; rankIdx < nRanks; rankIdx += blockDim.x) counts.rankTokenCounts_[rankIdx] = 0;
   for (int expertIdx = threadId; expertIdx < nExperts; expertIdx += blockDim.x)
@@ -351,7 +351,7 @@ MSCCLPP_DEVICE_INLINE void countRankMajorRoutes(int* rankTokenCounts, const int6
                                                 int nTokens, int nTopk, int nRanks, int nExperts) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int nLocalExperts = nExperts / nRanks;
   for (int rankIdx = threadId; rankIdx < nRanks; rankIdx += blockDim.x) rankTokenCounts[rankIdx] = 0;
   __syncthreads();
@@ -479,7 +479,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
                                                  void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
   const int nLocalExperts = nExperts / nRanks;
@@ -643,7 +643,7 @@ MSCCLPP_DEVICE_INLINE bool dispatchRecvExpertMajorOutput(
   using OutputType = DispatchElementType<DataType>;
   constexpr size_t OutputBytes = static_cast<size_t>(Hidden) * sizeof(OutputType);
   constexpr int NumScales = DataType == DispatchDataType::BF16 ? 0 : Hidden / ScaleBlockSize;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   const int nOutputSlotsPerExpert = nRanks * maxTokensPerRank;
   int outputTokenIdx = -1;
   int combineInputOffset = -1;
@@ -703,7 +703,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, void* outputScales, 
 #endif
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
-  const int laneId = get_lane_id();
+  const int laneId = getLaneId();
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   RecvTask task;
   if (!acquireRecvTask(task, workspaceView, epoch, sharedMem)) return;
@@ -892,7 +892,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
-  EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= WARP_SIZE);
+  EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
   EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
   EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);

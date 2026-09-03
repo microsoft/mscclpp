@@ -17,6 +17,7 @@ namespace ep {
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+inline constexpr int MaxNumTopk = 8;
 
 struct Workload {
   /// Host-assigned epoch shared by the matching dispatch and combine calls.

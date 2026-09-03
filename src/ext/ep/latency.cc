@@ -35,7 +35,7 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
-  EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
+  EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
 
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
