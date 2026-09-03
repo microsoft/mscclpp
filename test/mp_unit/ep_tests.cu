@@ -31,7 +31,7 @@ constexpr int PerfTokens = 32;
 constexpr int PerfHidden = 7168;
 constexpr int NumWarmups = 10;
 constexpr int PairsPerGraph = 50;
-constexpr int NumGraphReplays = 20;
+constexpr int NumGraphReplays = 100;
 constexpr int Threads = 256;
 
 class CudaStream {
