@@ -591,6 +591,14 @@ dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
+Latency `DispatchLayout.TOKEN_MAJOR` exposes one row per routed token/top-k lane:
+
+```python
+dispatch_out.tokens     # [world_size * max_tokens_per_rank * K, H]
+dispatch_out.topk_ids   # [world_size * max_tokens_per_rank * K]
+dispatch_out.weights    # [world_size * max_tokens_per_rank * K]
+```
+
 Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
 final receive buffers and exposed as zero-copy Torch tensors.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
