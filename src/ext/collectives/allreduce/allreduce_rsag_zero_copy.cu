@@ -144,7 +144,8 @@ struct AllreduceRsAgZeroCopyAdapter {
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4, 8, 16, or 32, got: ", nRanksPerIpcDomain);
+      WARN(ALGO,
+           "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4, 8, 16, or 32, got: ", nRanksPerIpcDomain);
       return cudaErrorInvalidValue;
     }
     return cudaGetLastError();

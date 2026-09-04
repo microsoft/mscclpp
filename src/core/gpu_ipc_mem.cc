@@ -68,11 +68,10 @@ struct FabricMappingKey {
   char handle[64];
   size_t baseSize;
   int deviceId;
-  CUcontext context;
 
   bool operator==(const FabricMappingKey& other) const {
     return std::memcmp(handle, other.handle, sizeof(handle)) == 0 && baseSize == other.baseSize &&
-           deviceId == other.deviceId && context == other.context;
+           deviceId == other.deviceId;
   }
 };
 
@@ -81,7 +80,6 @@ struct FabricMappingKeyHash {
     size_t seed = std::hash<std::string_view>{}(std::string_view(key.handle, sizeof(key.handle)));
     detail::hashCombine(seed, key.baseSize);
     detail::hashCombine(seed, key.deviceId);
-    detail::hashCombine(seed, key.context);
     return seed;
   }
 };
@@ -103,7 +101,7 @@ class FabricMapping {
              errorString == nullptr ? "unknown CUDA error" : errorString);
       }
     }
-    if (reserved_) {
+    if (base_ != 0) {
       CUresult result = cuMemAddressFree(base_, size_);
       if (result != CUDA_SUCCESS) {
         const char* errorString = nullptr;
@@ -117,7 +115,6 @@ class FabricMapping {
   void map(CUmemGenericAllocationHandle allocHandle, size_t size, size_t alignment, int deviceId) {
     size_ = size;
     MSCCLPP_CUTHROW(cuMemAddressReserve(&base_, size_, alignment, 0, 0));
-    reserved_ = true;
     MSCCLPP_CUTHROW(cuMemMap(base_, size_, 0, allocHandle, 0));
     mapped_ = true;
 
@@ -134,7 +131,6 @@ class FabricMapping {
   std::shared_ptr<GpuIpcMem> owner_;
   CUdeviceptr base_ = 0;
   size_t size_ = 0;
-  bool reserved_ = false;
   bool mapped_ = false;
 };
 
@@ -554,14 +550,10 @@ std::shared_ptr<void> GpuIpcMem::map() {
 
 #if !defined(MSCCLPP_DEVICE_HIP)
   if (type_ == GpuIpcMemHandle::Type::Fabric) {
-    CUcontext context;
-    MSCCLPP_CUTHROW(cuCtxGetCurrent(&context));
-
     FabricMappingKey key = {};
     std::memcpy(key.handle, handle_.fabric.handle, sizeof(key.handle));
     key.baseSize = handle_.baseSize;
     key.deviceId = deviceId;
-    key.context = context;
 
     std::lock_guard<std::mutex> lock(fabricMappingCacheMutex);
     auto it = fabricMappingCache.find(key);
@@ -571,13 +563,6 @@ std::shared_ptr<void> GpuIpcMem::map() {
         return std::shared_ptr<void>(mapping, mapping->data(handle_.offsetFromBase));
       }
       fabricMappingCache.erase(it);
-    }
-    for (auto cacheIt = fabricMappingCache.begin(); cacheIt != fabricMappingCache.end();) {
-      if (cacheIt->second.expired()) {
-        cacheIt = fabricMappingCache.erase(cacheIt);
-      } else {
-        ++cacheIt;
-      }
     }
 
     auto mapping = std::make_shared<FabricMapping>(shared_from_this());

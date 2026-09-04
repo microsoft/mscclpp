@@ -87,8 +87,7 @@ class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
 
   ~GpuIpcMem();
 
-  /// Map the imported GPU memory for access. Live CUDA Fabric mappings for the same allocation and
-  /// CUDA context are reused.
+  /// Map the imported GPU memory for access. Live CUDA Fabric mappings for the same allocation and device are reused.
   /// @return A shared_ptr to the mapped memory. When all references are released,
   ///         the memory is automatically unmapped.
   std::shared_ptr<void> map();
