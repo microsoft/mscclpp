@@ -198,15 +198,14 @@ struct LatencyStorageLayout {
         static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     const size_t tokenMajorDispatchBufferBytes = tokenMajorTokenOffsetBytes + tokenMajorDispatchOutputBytes;
-    dispatchOutputBytes_ = rankMajor              ? rankMajorDispatchOutputBytes
-                           : tokenMajor           ? tokenMajorDispatchOutputBytes
-                                                  : expertMajorDispatchOutputBytes;
-    const size_t dispatchRecvBufferBytes =
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
-                  dispatchOutputBytes_});
-    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
+    dispatchOutputBytes_ = rankMajor    ? rankMajorDispatchOutputBytes
+                           : tokenMajor ? tokenMajorDispatchOutputBytes
+                                        : expertMajorDispatchOutputBytes;
+    const size_t dispatchRecvBufferBytes = std::max(
+        {dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes, dispatchOutputBytes_});
+    const size_t combineRecvBufferBytes = rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes
                                           : (rankMajorLocalReduce || tokenMajorLocalReduce) ? 0
-                                                                 : dispatchOutputBytes_;
+                                                                                            : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +

@@ -109,8 +109,8 @@ MSCCLPP_DEVICE_INLINE void flushAggregatedDispatchCompletions(WorkspaceView& wor
   for (int dstRank = laneId; dstRank < nRanks; dstRank += WARP_SIZE) {
     const int nCompleted = completionCounts[dstRank];
     if (nCompleted > 0) {
-      (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
-          workspaceView.dispatchRankPayloadCompletions_ + dstRank, nCompleted, mscclpp::memoryOrderRelease);
+      (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(workspaceView.dispatchRankPayloadCompletions_ + dstRank,
+                                                               nCompleted, mscclpp::memoryOrderRelease);
     }
   }
 }
@@ -198,8 +198,7 @@ MSCCLPP_DEVICE_INLINE void countTokenMajorRoutes(int* rankTokenCounts, const int
 
 MSCCLPP_DEVICE_INLINE void dispatchTokenMajorNotify(const TransportView& transport, int nExperts, int nRanks,
                                                     const int64_t* __restrict__ topkIndices, int nTokens, int nTopk,
-                                                    void* recvBuffer, void* workspace, uint32_t epoch,
-                                                    int* sharedMem) {
+                                                    void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   auto* rankTokenCounts = sharedMem;
   countTokenMajorRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);

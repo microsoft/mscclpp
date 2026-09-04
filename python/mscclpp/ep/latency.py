@@ -422,10 +422,14 @@ class LatencyRuntime(Runtime):
         )
         if type(resolved) is not int or not 0 < resolved <= mode_context.max_tokens_per_rank:
             raise ValueError("runtime_max_tokens_per_rank must be positive and not exceed max_tokens_per_rank")
-        if mode_context.output_layout not in (
-            DispatchLayout.RANK_MAJOR,
-            DispatchLayout.TOKEN_MAJOR,
-        ) and resolved != mode_context.max_tokens_per_rank:
+        if (
+            mode_context.output_layout
+            not in (
+                DispatchLayout.RANK_MAJOR,
+                DispatchLayout.TOKEN_MAJOR,
+            )
+            and resolved != mode_context.max_tokens_per_rank
+        ):
             raise ValueError("runtime_max_tokens_per_rank is only supported by rank-major dispatch")
         return resolved
 
@@ -607,7 +611,9 @@ class LatencyRuntime(Runtime):
         if handle.output_info.layout.kind in (DispatchLayout.RANK_MAJOR, DispatchLayout.TOKEN_MAJOR):
             assert mode_context.combine_input_buffer is not None
             if expert_output.data_ptr() != mode_context.combine_input_buffer.data_ptr():
-                raise ValueError(f"{handle.output_info.layout.kind} combine requires the runtime-owned combine input buffer")
+                raise ValueError(
+                    f"{handle.output_info.layout.kind} combine requires the runtime-owned combine input buffer"
+                )
         if out is not None:
             expected_out_shape = (context.num_tokens, mode_context.hidden_size)
             if tuple(out.shape) != expected_out_shape or out.dtype != expected_dtype or not out.is_contiguous():

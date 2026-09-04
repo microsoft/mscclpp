@@ -940,8 +940,7 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
                  workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR ||
-        workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
+    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR || workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
       EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
     }
   } else {
