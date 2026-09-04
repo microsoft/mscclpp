@@ -1,0 +1,46 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+[build-system]
+requires = [
+    "scikit-build-core>=0.10.0",
+    "setuptools-scm[toml]>=8",
+    "pybind11",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mscclpp-torchcomms"
+dynamic = ["version"]
+description = "TorchComms backend for MSCCL++"
+requires-python = ">=3.8"
+dependencies = [
+    "mscclpp",
+    "torch",
+]
+
+[tool.setuptools_scm]
+root = "../.."
+write_to = "python/mscclpp/_version.py"
+version_scheme = "no-guess-dev"
+
+[tool.scikit-build]
+cmake.version = ">=3.25.0"
+cmake.build-type = "Release"
+cmake.source-dir = "../.."
+cmake.targets = ["_comms_mscclpp"]
+build-dir = "build/{wheel_tag}"
+metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
+# Only install the torchcomm component — skip mscclpp headers/libs from the root CMake.
+install.components = ["torchcomm"]
+
+[tool.scikit-build.wheel]
+packages = ["python/mscclpp_torchcomms"]
+install-dir = "mscclpp_torchcomms"
+license-files = ["../../LICENSE"]
+exclude = ["mscclpp_torchcomms/*.cpp", "mscclpp_torchcomms/csrc/*"]
+
+[tool.scikit-build.cmake.define]
+MSCCLPP_BUILD_PYTHON_BINDINGS = "OFF"
+MSCCLPP_BUILD_TESTS = "OFF"
+MSCCLPP_BUILD_EXT_TORCHCOMMS = "ON"
