@@ -9,6 +9,7 @@
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 #include <mutex>
+#include <string_view>
 #include <unordered_map>
 
 #include "logger.hpp"
@@ -61,6 +62,85 @@ struct PosixFdEntry {
 
 static std::unordered_map<CUmemGenericAllocationHandle, PosixFdEntry> posixFdMap;
 static std::mutex posixFdMapMutex;
+
+#if !defined(MSCCLPP_DEVICE_HIP)
+struct FabricMappingKey {
+  char handle[64];
+  size_t baseSize;
+  int deviceId;
+  CUcontext context;
+
+  bool operator==(const FabricMappingKey& other) const {
+    return std::memcmp(handle, other.handle, sizeof(handle)) == 0 && baseSize == other.baseSize &&
+           deviceId == other.deviceId && context == other.context;
+  }
+};
+
+struct FabricMappingKeyHash {
+  size_t operator()(const FabricMappingKey& key) const {
+    size_t seed = std::hash<std::string_view>{}(std::string_view(key.handle, sizeof(key.handle)));
+    detail::hashCombine(seed, key.baseSize);
+    detail::hashCombine(seed, key.deviceId);
+    detail::hashCombine(seed, key.context);
+    return seed;
+  }
+};
+
+class FabricMapping {
+ public:
+  explicit FabricMapping(std::shared_ptr<GpuIpcMem> owner) : owner_(std::move(owner)) {}
+
+  FabricMapping(const FabricMapping&) = delete;
+  FabricMapping& operator=(const FabricMapping&) = delete;
+
+  ~FabricMapping() {
+    if (mapped_) {
+      CUresult result = cuMemUnmap(base_, size_);
+      if (result != CUDA_SUCCESS) {
+        const char* errorString = nullptr;
+        (void)cuGetErrorString(result, &errorString);
+        WARN(GPU, "Failed to unmap CUDA Fabric memory at pointer ", (void*)base_, ": ",
+             errorString == nullptr ? "unknown CUDA error" : errorString);
+      }
+    }
+    if (reserved_) {
+      CUresult result = cuMemAddressFree(base_, size_);
+      if (result != CUDA_SUCCESS) {
+        const char* errorString = nullptr;
+        (void)cuGetErrorString(result, &errorString);
+        WARN(GPU, "Failed to free CUDA Fabric address at pointer ", (void*)base_, ": ",
+             errorString == nullptr ? "unknown CUDA error" : errorString);
+      }
+    }
+  }
+
+  void map(CUmemGenericAllocationHandle allocHandle, size_t size, size_t alignment, int deviceId) {
+    size_ = size;
+    MSCCLPP_CUTHROW(cuMemAddressReserve(&base_, size_, alignment, 0, 0));
+    reserved_ = true;
+    MSCCLPP_CUTHROW(cuMemMap(base_, size_, 0, allocHandle, 0));
+    mapped_ = true;
+
+    CUmemAccessDesc accessDesc = {};
+    accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    accessDesc.location.id = deviceId;
+    accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    MSCCLPP_CUTHROW(cuMemSetAccess(base_, size_, &accessDesc, 1));
+  }
+
+  void* data(size_t offset) const { return reinterpret_cast<void*>(base_ + offset); }
+
+ private:
+  std::shared_ptr<GpuIpcMem> owner_;
+  CUdeviceptr base_ = 0;
+  size_t size_ = 0;
+  bool reserved_ = false;
+  bool mapped_ = false;
+};
+
+static std::unordered_map<FabricMappingKey, std::weak_ptr<FabricMapping>, FabricMappingKeyHash> fabricMappingCache;
+static std::mutex fabricMappingCacheMutex;
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 
 static int acquireFdFromHandle(CUdeviceptr basePtr, CUmemGenericAllocationHandle allocHandle) {
   std::lock_guard<std::mutex> lock(posixFdMapMutex);
@@ -465,44 +545,82 @@ std::shared_ptr<void> GpuIpcMem::map() {
   int deviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
 
-  CUdeviceptr base;
   size_t minGran;
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = deviceId;
   MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&minGran, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
-  MSCCLPP_CUTHROW(cuMemAddressReserve(&base, handle_.baseSize, minGran, 0, 0));
-  MSCCLPP_CUTHROW(cuMemMap(base, handle_.baseSize, 0, allocHandle_, 0));
 
-  CUmemAccessDesc accessDesc = {};
-  accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  accessDesc.location.id = deviceId;
-  accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  MSCCLPP_CUTHROW(cuMemSetAccess(base, handle_.baseSize, &accessDesc, 1));
+#if !defined(MSCCLPP_DEVICE_HIP)
+  if (type_ == GpuIpcMemHandle::Type::Fabric) {
+    CUcontext context;
+    MSCCLPP_CUTHROW(cuCtxGetCurrent(&context));
 
-  void* basePtr = (void*)base;
-  size_t baseSize = handle_.baseSize;
-  void* dataPtr = static_cast<void*>(static_cast<char*>(basePtr) + handle_.offsetFromBase);
+    FabricMappingKey key = {};
+    std::memcpy(key.handle, handle_.fabric.handle, sizeof(key.handle));
+    key.baseSize = handle_.baseSize;
+    key.deviceId = deviceId;
+    key.context = context;
 
-  // Return shared_ptr with deleter that unmaps and frees memory
-  return std::shared_ptr<void>(dataPtr, [self = shared_from_this(), basePtr, baseSize](void*) {
-    CUresult res;
-    const char* errStr;
-
-    res = cuMemUnmap((CUdeviceptr)basePtr, baseSize);
-    if (res != CUDA_SUCCESS) {
-      (void)cuGetErrorString(res, &errStr);
-      WARN(GPU, "Failed to unmap CUDA memory at pointer ", basePtr, ": ", errStr);
+    std::lock_guard<std::mutex> lock(fabricMappingCacheMutex);
+    auto it = fabricMappingCache.find(key);
+    if (it != fabricMappingCache.end()) {
+      auto mapping = it->second.lock();
+      if (mapping) {
+        return std::shared_ptr<void>(mapping, mapping->data(handle_.offsetFromBase));
+      }
+      fabricMappingCache.erase(it);
+    }
+    for (auto cacheIt = fabricMappingCache.begin(); cacheIt != fabricMappingCache.end();) {
+      if (cacheIt->second.expired()) {
+        cacheIt = fabricMappingCache.erase(cacheIt);
+      } else {
+        ++cacheIt;
+      }
     }
 
-    res = cuMemAddressFree((CUdeviceptr)basePtr, baseSize);
-    if (res != CUDA_SUCCESS) {
-      (void)cuGetErrorString(res, &errStr);
-      WARN(GPU, "Failed to free CUDA memory at pointer ", basePtr, ": ", errStr);
-    }
-    // self release will trigger ~GpuIpcMem() which releases allocHandle_
-  });
+    auto mapping = std::make_shared<FabricMapping>(shared_from_this());
+    mapping->map(allocHandle_, handle_.baseSize, minGran, deviceId);
+    fabricMappingCache.emplace(key, mapping);
+    return std::shared_ptr<void>(mapping, mapping->data(handle_.offsetFromBase));
+  }
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
+
+  if (type_ == GpuIpcMemHandle::Type::PosixFd) {
+    CUdeviceptr base;
+    MSCCLPP_CUTHROW(cuMemAddressReserve(&base, handle_.baseSize, minGran, 0, 0));
+    MSCCLPP_CUTHROW(cuMemMap(base, handle_.baseSize, 0, allocHandle_, 0));
+
+    CUmemAccessDesc accessDesc = {};
+    accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    accessDesc.location.id = deviceId;
+    accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    MSCCLPP_CUTHROW(cuMemSetAccess(base, handle_.baseSize, &accessDesc, 1));
+
+    void* basePtr = (void*)base;
+    size_t baseSize = handle_.baseSize;
+    void* dataPtr = static_cast<void*>(static_cast<char*>(basePtr) + handle_.offsetFromBase);
+
+    return std::shared_ptr<void>(dataPtr, [self = shared_from_this(), basePtr, baseSize](void*) {
+      CUresult res;
+      const char* errStr;
+
+      res = cuMemUnmap((CUdeviceptr)basePtr, baseSize);
+      if (res != CUDA_SUCCESS) {
+        (void)cuGetErrorString(res, &errStr);
+        WARN(GPU, "Failed to unmap CUDA memory at pointer ", basePtr, ": ", errStr);
+      }
+
+      res = cuMemAddressFree((CUdeviceptr)basePtr, baseSize);
+      if (res != CUDA_SUCCESS) {
+        (void)cuGetErrorString(res, &errStr);
+        WARN(GPU, "Failed to free CUDA memory at pointer ", basePtr, ": ", errStr);
+      }
+    });
+  }
+
+  THROW(GPU, Error, ErrorCode::InternalError, "Unsupported GpuIpcMem mapping type: ", type_);
 }
 
 std::shared_ptr<void> GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] size_t mcOffset,
