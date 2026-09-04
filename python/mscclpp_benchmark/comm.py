@@ -296,7 +296,15 @@ class Comm:
         # reducescatter takes a whole-buffer input but a per-rank chunk as its message. Falling back
         # to the buffer size would query reducescatter entries nranks times too large.
         lookup_size = _nbytes(buffer) if message_size is None else message_size
-        tuned_config = self._config_store.select(self._hardware_profile, collective, lookup_size)
+        selection_dtype = dtype_override if dtype_override is not None else _dtype(buffer)
+        selection_accum = accum_dtype if accum_dtype is not None else selection_dtype
+        tuned_config = self._config_store.select(
+            self._hardware_profile,
+            collective,
+            lookup_size,
+            dtype=_dtype_name(selection_dtype),
+            accum=_dtype_name(selection_accum),
+        )
         if tuned_config is not None and tuned_config.algorithm in self._algorithms_by_collective.get(collective, {}):
             return tuned_config
 

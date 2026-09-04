@@ -152,6 +152,8 @@ def _encode_correctness_input(case: Any, values):
     if case.dtype_spec.fp8_format is not None:
         # FP8 buffers are stored as uint8 raw bytes, so a normal astype(uint8) cast would not produce FP8 bits.
         return _encode_fp8_values(case.dtype_spec.fp8_format, values)
+    if case.dtype_spec.name == "bfloat16":
+        return _encode_bfloat16_values(values)
     return values.astype(case.dtype_spec.cupy_dtype)
 
 
@@ -178,6 +180,8 @@ def _stats_values(case: Any, values):
     # Convert storage buffers into numeric values before computing max/mean diff.
     if case.dtype_spec.fp8_format is not None:
         return _decode_fp8_array(case.dtype_spec.fp8_format, values)
+    if case.dtype_spec.name == "bfloat16":
+        return _decode_bfloat16_array(values)
     if cp.issubdtype(values.dtype, cp.floating):
         return values.astype(cp.float64)
     return values.astype(cp.int64)
@@ -188,6 +192,9 @@ def _expected_outputs(case: Any, nranks: int, iteration: int, rank: int = 0):
         encoded_inputs = _encoded_rank_inputs(case, nranks, iteration)
         if case.dtype_spec.fp8_format is not None:
             stats_expected = _expected_fp8_accum_values(case, encoded_inputs)
+            return _encode_reduced_output(case, stats_expected), stats_expected
+        if case.dtype_spec.name == "bfloat16":
+            stats_expected = sum(_decode_bfloat16_array(values) for values in encoded_inputs)
             return _encode_reduced_output(case, stats_expected), stats_expected
         return _encode_reduced_output(case, sum(values.astype(cp.float32) for values in encoded_inputs)), None
 
@@ -242,6 +249,8 @@ def _expected_fp8_accum_values(case: Any, encoded_inputs: list[Any]):
 def _encode_reduced_output(case: Any, values):
     if case.dtype_spec.fp8_format is not None:
         return _encode_fp8_values(case.dtype_spec.fp8_format, values)
+    if case.dtype_spec.name == "bfloat16":
+        return _encode_bfloat16_values(values)
     return values.astype(case.output.dtype)
 
 
@@ -258,7 +267,11 @@ def _mismatch_mask(case: Any, output, expected, nranks: int):
 
 
 def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
-    scale = max(1, nranks) if case.collective in ("allreduce", "reducescatter") else 1
+    # Only reducing collectives accumulate error; pure data movement (e.g. allgather) must
+    # match exactly. ReduceScatter reduces across all ranks, so it scales like allreduce.
+    if case.collective not in ("allreduce", "reducescatter"):
+        return None
+    scale = max(1, nranks)
     if case.dtype_spec.fp8_format is not None:
         accum_dtype = config_accum_dtype(case)
         if accum_dtype == _mscclpp().DataType.float32:
@@ -267,6 +280,8 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
         if accum_dtype == _mscclpp().DataType.float16:
             return (0.0, atol)
         return (0.0, atol * 2)
+    if case.dtype_spec.name == "bfloat16":
+        return (1.0e-2, 7.8125e-3 * scale)
     if case.dtype_spec.cupy_dtype == cp.float16:
         return (1.0e-2, 5.0e-4 * scale)
     if case.dtype_spec.cupy_dtype == cp.float32:
@@ -277,6 +292,19 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
 _FP8_TABLES: dict[str, list[tuple[int, float]]] = {}
 _FP8_LOOKUP_CACHE: dict[str, tuple[Any, Any]] = {}
 _FP8_SPACING_CACHE: dict[tuple[str, float], float] = {}
+
+
+def _encode_bfloat16_values(values):
+    values = values.astype(cp.float32)
+    bits = values.view(cp.uint32)
+    rounding_bias = cp.uint32(0x7FFF) + ((bits >> cp.uint32(16)) & cp.uint32(1))
+    encoded = ((bits + rounding_bias) >> cp.uint32(16)).astype(cp.uint16)
+    nan_bits = ((bits >> cp.uint32(16)) | cp.uint32(0x40)).astype(cp.uint16)
+    return cp.where(cp.isnan(values), nan_bits, encoded)
+
+
+def _decode_bfloat16_array(values):
+    return (values.astype(cp.uint32) << cp.uint32(16)).view(cp.float32)
 
 
 def _encode_fp8_values(fp8_format: str, values):

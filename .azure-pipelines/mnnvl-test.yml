@@ -18,18 +18,6 @@ parameters:
 - name: vmssName
   type: string
   default: 'mnnvl'   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
-- name: hostEntries
-  type: string
-  default: |
-    10.0.5.145 DSM121082302011
-    10.0.5.150 DSM121082302014
-    10.0.5.177 DSM121082301013
-    10.0.5.225 DSM121082301032
-# Subnet (or interface name) passed to Open MPI's btl_tcp_if_include so every
-# rank selects the routable interface matching the node IPs in hostEntries.
-- name: mpiTcpIfInclude
-  type: string
-  default: '10.0.5.0/24'
 
 variables:
   - group: mscclpp
@@ -49,45 +37,35 @@ jobs:
   steps:
   - task: Bash@3
     displayName: Node connectivity check
+    env:
+      NODE_IP1: $(GB200-IP1)
+      NODE_IP2: $(GB200-IP2)
+      NODE_IP3: $(GB200-IP3)
+      NODE_IP4: $(GB200-IP4)
     inputs:
       targetType: 'inline'
       script: |
-        set -x
+        set -u
         echo "Agent egress IP:"; curl -s -m 5 ifconfig.me; echo
-        while IFS= read -r line; do
-          ip=$(awk 'NF>=1{print $1}' <<< "$line")
+        for ip in "$NODE_IP1" "$NODE_IP2" "$NODE_IP3" "$NODE_IP4"; do
           [ -z "$ip" ] && continue
           timeout 10 bash -c "cat < /dev/null > /dev/tcp/${ip}/22" \
             && echo "${ip}:22 OPEN" || echo "${ip}:22 UNREACHABLE"
-        done <<< "${{ parameters.hostEntries }}"
-
-  - task: Bash@3
-    displayName: Add HostEntry
-    inputs:
-      targetType: 'inline'
-      script: |
-        while IFS= read -r line; do
-          [ -z "$line" ] && continue
-          if ! grep -qxF "$line" /etc/hosts; then
-            echo "Adding to /etc/hosts: $line"
-            echo "$line" | sudo tee -a /etc/hosts
-          else
-            echo "Entry already exists: $line"
-          fi
-        done <<< "${{ parameters.hostEntries }}"
+        done
 
   - task: Bash@3
     displayName: Generate deploy files
+    env:
+      NODE_IP1: $(GB200-IP1)
+      NODE_IP2: $(GB200-IP2)
     inputs:
       targetType: 'inline'
       script: |
-        set -e
+        set -eu
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
-        # First NVLink pair (2 nodes) from hostEntries; use $1 (the IP) so the
-        # names resolve inside the container too (the DSM hostnames are only in
-        # the agent's /etc/hosts). Bump to more nodes by parsing further lines.
-        NODE0=$(awk 'NF>=2{print $1; exit}'           <<< "${{ parameters.hostEntries }}")
-        NODE1=$(awk 'NF>=2{c++} c==2{print $1; exit}' <<< "${{ parameters.hostEntries }}")
+        # First NVLink pair (2 nodes)
+        NODE0="${NODE_IP1}"
+        NODE1="${NODE_IP2}"
 
         echo "Host ${NODE0}
           Port 22345
@@ -121,7 +99,7 @@ jobs:
       headNode: $(headNode)
       hostfile: $(System.DefaultWorkingDirectory)/test/deploy/hostfile
       gpuArch: '100a'
-      mpiTcpIfInclude: ${{ parameters.mpiTcpIfInclude }}
+      mpiTcpIfInclude: $(GB200-MPI-TCP-IF-INCLUDE)
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -129,12 +107,12 @@ jobs:
       displayName: Run Collective Benchmarks
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host $(headNode) --user azhpcuser'
       remoteScript: |
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include $(GB200-MPI-TCP-IF-INCLUDE) -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float16 --symmetric-memory
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include $(GB200-MPI-TCP-IF-INCLUDE) -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float16 --symmetric-memory
-        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include ${{ parameters.mpiTcpIfInclude }} -np 8 -npernode 4 \
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include $(GB200-MPI-TCP-IF-INCLUDE) -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float16 --symmetric-memory --buffer-mode out-of-place

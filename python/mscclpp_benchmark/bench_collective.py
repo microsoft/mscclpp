@@ -124,6 +124,8 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     normalized = dtype_name.strip().lower().replace("-", "_")
     if normalized in {"float16", "fp16", "half"}:
         return DTypeSpec("float16", cp.float16, mscclpp.DataType.float16)
+    if normalized in {"bfloat16", "bf16"}:
+        return DTypeSpec("bfloat16", cp.uint16, mscclpp.DataType.bfloat16)
     if normalized in {"float32", "fp32", "float"}:
         return DTypeSpec("float32", cp.float32, mscclpp.DataType.float32)
     if normalized in {"int32", "i32"}:
@@ -155,7 +157,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
             fp8_format="e4m3b15",
         )
     raise ValueError(
-        f"Unsupported dtype {dtype_name!r}; use float16, float32, int32, uint8, "
+        f"Unsupported dtype {dtype_name!r}; use float16, bfloat16, float32, int32, uint8, "
         "float8_e4m3fn, float8_e4m3fnuz, or float8_e4m3b15"
     )
 
@@ -164,16 +166,25 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
     if accum_type is None:
         return dtype_spec
 
-    mscclpp = _mscclpp()
     normalized = accum_type.strip().lower().replace("-", "_")
     if normalized in {"native", "same", "auto"}:
-        accum_dtype = dtype_spec.mscclpp_dtype
+        accum_name = dtype_spec.name
     elif normalized in {"float16", "fp16", "half"}:
-        accum_dtype = mscclpp.DataType.float16
+        accum_name = "float16"
     elif normalized in {"float32", "fp32", "float"}:
-        accum_dtype = mscclpp.DataType.float32
+        accum_name = "float32"
     else:
         raise ValueError(f"Unsupported accum type {accum_type!r}; use native, float16, or float32")
+    if dtype_spec.fp8_format is None and accum_name != dtype_spec.name:
+        raise ValueError(f"{dtype_spec.name} supports only native accumulation, got {accum_type!r}")
+
+    mscclpp = _mscclpp()
+    if accum_name == dtype_spec.name:
+        accum_dtype = dtype_spec.mscclpp_dtype
+    elif accum_name == "float16":
+        accum_dtype = mscclpp.DataType.float16
+    elif accum_name == "float32":
+        accum_dtype = mscclpp.DataType.float32
 
     return DTypeSpec(
         name=dtype_spec.name,
@@ -182,6 +193,17 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
         accum_dtype=accum_dtype,
         fp8_format=dtype_spec.fp8_format,
     )
+
+
+def _accum_dtype_name(dtype_spec: DTypeSpec) -> str:
+    accum_dtype = dtype_spec.accum_dtype
+    if accum_dtype is None or accum_dtype == dtype_spec.mscclpp_dtype:
+        return dtype_spec.name
+    if accum_dtype == _mscclpp().DataType.float16:
+        return "float16"
+    if accum_dtype == _mscclpp().DataType.float32:
+        return "float32"
+    raise ValueError(f"Unsupported accumulation data type: {accum_dtype}")
 
 
 def _human_size(size: int) -> str:
@@ -634,7 +656,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER, _REDUCESCATTER), default=_ALLREDUCE)
     parser.add_argument("--d-model", type=int, default=5120)
     parser.add_argument("--dtype", default="float16")
-    parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
+    parser.add_argument(
+        "--accum-type",
+        help="Accumulation type for reductions: native, or float16/float32 for FP8 inputs",
+    )
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
     parser.add_argument(
         "--total-sizes",
@@ -777,7 +802,16 @@ def main(argv: list[str] | None = None) -> None:
             if config is None:
                 continue
             if args.autotune:
-                config_store.upsert(hardware_profile, args.collective, case.message_size, config)
+                dtype = dtype_spec.name if args.collective == _ALLREDUCE else None
+                accum = _accum_dtype_name(dtype_spec) if dtype is not None else None
+                config_store.upsert(
+                    hardware_profile,
+                    args.collective,
+                    case.message_size,
+                    config,
+                    dtype=dtype,
+                    accum=accum,
+                )
 
             correctness = "SKIP"
             correctness_stats: CorrectnessStats | None = None

@@ -28,10 +28,12 @@ class TunedConfig:
     time_us: float | None = None
 
 
-@dataclass(order=True, frozen=True)
+@dataclass(frozen=True)
 class TunedConfigBySize:
     message_size: int
     config: TunedConfig
+    dtype: str | None = None
+    accum: str | None = None
 
 
 class TunedConfigStore:
@@ -60,21 +62,47 @@ class TunedConfigStore:
             profiles[profile] = _configs_by_collective_from_payload(raw_profile.get("collectives", {}))
         return cls(profiles)
 
-    def select(self, profile: HardwareProfile, collective: str, message_size: int) -> TunedConfig | None:
+    def select(
+        self,
+        profile: HardwareProfile,
+        collective: str,
+        message_size: int,
+        *,
+        dtype: str | None = None,
+        accum: str | None = None,
+    ) -> TunedConfig | None:
+        selection_accum = dtype if accum is None else accum
         for _, configs_by_collective in _matching_profiles(self._profiles, profile):
-            config = _select_config(configs_by_collective, collective, message_size)
+            config = _select_config(
+                configs_by_collective,
+                collective,
+                message_size,
+                dtype=dtype,
+                accum=selection_accum,
+            )
             if config is not None:
                 return config
         return None
 
-    def upsert(self, profile: HardwareProfile, collective: str, message_size: int, config: TunedConfig) -> None:
+    def upsert(
+        self,
+        profile: HardwareProfile,
+        collective: str,
+        message_size: int,
+        config: TunedConfig,
+        *,
+        dtype: str | None = None,
+        accum: str | None = None,
+    ) -> None:
+        accum = dtype if accum is None else accum
         configs = self._profiles.setdefault(profile, {}).setdefault(collective, [])
+        updated = TunedConfigBySize(message_size, config, dtype, accum)
         for index, existing in enumerate(configs):
-            if existing.message_size == message_size:
-                configs[index] = TunedConfigBySize(message_size, config)
+            if existing.message_size == message_size and existing.dtype == dtype and existing.accum == accum:
+                configs[index] = updated
                 break
         else:
-            configs.append(TunedConfigBySize(message_size, config))
+            configs.append(updated)
         configs.sort(key=lambda item: item.message_size)
 
     def write_path(self, path: str | Path) -> None:
@@ -85,7 +113,9 @@ class TunedConfigStore:
         ):
             collectives: dict[str, list[dict[str, Any]]] = {}
             for collective, configs in sorted(configs_by_collective.items()):
-                collectives[collective] = [_config_entry_payload(item) for item in sorted(configs)]
+                collectives[collective] = [
+                    _config_entry_payload(item) for item in sorted(configs, key=lambda item: item.message_size)
+                ]
             profile_payload: dict[str, Any] = {}
             if profile.sku is not None:
                 profile_payload["sku"] = profile.sku
@@ -143,18 +173,29 @@ def _profile_match_specificity(profile: HardwareProfile, runtime_profile: Hardwa
 
 
 def _select_config(
-    configs_by_collective: dict[str, list[TunedConfigBySize]], collective: str, message_size: int
+    configs_by_collective: dict[str, list[TunedConfigBySize]],
+    collective: str,
+    message_size: int,
+    *,
+    dtype: str | None,
+    accum: str | None,
 ) -> TunedConfig | None:
     configs = configs_by_collective.get(collective, [])
     if not configs:
         return None
-    sizes = [item.message_size for item in configs]
+    key = (dtype, accum)
+    selected = [item for item in configs if (item.dtype, item.accum) == key]
+    if not selected and key != (None, None):
+        selected = [item for item in configs if item.dtype is None and item.accum is None]
+    if not selected:
+        return None
+    sizes = [item.message_size for item in selected]
     index = bisect_left(sizes, message_size)
     if index == len(sizes):
-        return configs[-1].config
+        return selected[-1].config
     if sizes[index] == message_size or index == 0:
-        return configs[index].config
-    return configs[index - 1].config
+        return selected[index].config
+    return selected[index - 1].config
 
 
 def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedConfigBySize]]:
@@ -171,6 +212,7 @@ def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedCon
         for raw_entry in raw_entries:
             if not isinstance(raw_entry, dict):
                 raise ValueError(f"Invalid tuned config entry for {collective}: {raw_entry!r}")
+            dtype = None if raw_entry.get("dtype") is None else str(raw_entry["dtype"])
             configs.append(
                 TunedConfigBySize(
                     message_size=_parse_positive_int(raw_entry.get("message_size"), "message_size"),
@@ -181,14 +223,20 @@ def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedCon
                         symmetric_memory=_optional_bool(raw_entry.get("symmetric_memory", False)),
                         time_us=_optional_float(raw_entry.get("time_us")),
                     ),
+                    dtype=dtype,
+                    accum=dtype if raw_entry.get("accum") is None else str(raw_entry["accum"]),
                 )
             )
-        result[str(collective)] = sorted(configs)
+        result[str(collective)] = sorted(configs, key=lambda item: item.message_size)
     return result
 
 
 def _config_entry_payload(item: TunedConfigBySize) -> dict[str, Any]:
     payload: dict[str, Any] = {"message_size": item.message_size, "algorithm": item.config.algorithm}
+    if item.dtype is not None:
+        payload["dtype"] = item.dtype
+    if item.accum is not None:
+        payload["accum"] = item.accum
     if item.config.nblocks is not None:
         payload["nblocks"] = item.config.nblocks
     if item.config.nthreads is not None:

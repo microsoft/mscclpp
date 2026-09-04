@@ -15,6 +15,8 @@ std::string errorToString(enum ErrorCode error) {
       return "SystemError";
     case ErrorCode::InternalError:
       return "InternalError";
+    case ErrorCode::RemoteError:
+      return "RemoteError";
     case ErrorCode::InvalidUsage:
       return "InvalidUsage";
     case ErrorCode::Timeout:
@@ -26,6 +28,11 @@ std::string errorToString(enum ErrorCode error) {
     default:
       return "UnknownError";
   }
+}
+
+std::ostream& operator<<(std::ostream& os, const ErrorCode& errorCode) {
+  os << errorToString(errorCode);
+  return os;
 }
 
 BaseError::BaseError(const std::string& message, int errorCode)
