@@ -170,14 +170,12 @@ struct LatencyStorageLayout {
   void* rankMajorTopkWeightsBuffer_ = nullptr;
   void* rankMajorTokenBuffer_ = nullptr;
   void* tokenMajorTokenBuffer_ = nullptr;
-  void* kiRaggedTokenBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                        int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool tokenMajor = outputLayout == DispatchLayout::TOKEN_MAJOR;
-    const bool kiRagged = outputLayout == DispatchLayout::KI_RAGGED;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
     const bool tokenMajorLocalReduce = tokenMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
@@ -200,22 +198,19 @@ struct LatencyStorageLayout {
         static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     const size_t tokenMajorDispatchBufferBytes = tokenMajorTokenOffsetBytes + tokenMajorDispatchOutputBytes;
-    const size_t kiRaggedTokenOffsetBytes = configAlign<size_t>(dispatchBufferBytes, BufferAlignmentBytes);
-    const size_t kiRaggedDispatchBufferBytes = kiRaggedTokenOffsetBytes + tokenMajorDispatchOutputBytes;
     dispatchOutputBytes_ = rankMajor              ? rankMajorDispatchOutputBytes
-                           : (tokenMajor || kiRagged) ? tokenMajorDispatchOutputBytes
-                                                      : expertMajorDispatchOutputBytes;
+                           : tokenMajor           ? tokenMajorDispatchOutputBytes
+                                                  : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes,
-                  kiRaggedDispatchBufferBytes, dispatchOutputBytes_});
+                  dispatchOutputBytes_});
     const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
                                           : (rankMajorLocalReduce || tokenMajorLocalReduce) ? 0
                                                                  : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
     totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  ((rankMajor || tokenMajor || kiRagged) ? 0
-                                                         : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+                  ((rankMajor || tokenMajor) ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -224,10 +219,8 @@ struct LatencyStorageLayout {
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       tokenMajorTokenBuffer_ = base + tokenMajorTokenOffsetBytes;
-      kiRaggedTokenBuffer_ = base + kiRaggedTokenOffsetBytes;
       dispatchOutputBuffer_ = rankMajor    ? rankMajorTokenBuffer_
                               : tokenMajor ? tokenMajorTokenBuffer_
-                              : kiRagged   ? kiRaggedTokenBuffer_
                                            : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
       combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
     }

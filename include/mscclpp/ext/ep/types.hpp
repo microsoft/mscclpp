@@ -26,8 +26,6 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// Rows grouped by local expert.
   EXPERT_MAJOR,
-  /// Compact expert-grouped rows for KI ragged matmul input.
-  KI_RAGGED,
   /// Dynamically sized token-major rows used by throughput mode.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
