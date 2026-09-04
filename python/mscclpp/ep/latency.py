@@ -384,7 +384,11 @@ class LatencyRuntime(Runtime):
         if context.output_layout not in (DispatchLayout.RANK_MAJOR, DispatchLayout.TOKEN_MAJOR):
             return
 
-        metadata_shape = (context.world_size * context.max_tokens_per_rank, context.topk)
+        metadata_shape = (
+            (context.world_size * context.max_tokens_per_rank * context.topk,)
+            if context.output_layout == DispatchLayout.TOKEN_MAJOR
+            else (context.world_size * context.max_tokens_per_rank, context.topk)
+        )
         context._output_topk_ids_owner, context._output_topk_ids = tensor_from_pointer(
             self.cpp_runtime.output_topk_ids_buffer_ptr(),
             metadata_shape,
