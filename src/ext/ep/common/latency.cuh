@@ -67,6 +67,12 @@ struct DispatchDataTypeTraits<DispatchDataType::BF16> {
 };
 
 template <>
+struct DispatchDataTypeTraits<DispatchDataType::FP16> {
+  using ElementType = __half;
+  using ScaleType = void;
+};
+
+template <>
 struct DispatchDataTypeTraits<DispatchDataType::FP8_E4M3> {
   using ElementType = Fp8E4M3;
   using ScaleType = float;
@@ -82,7 +88,8 @@ template <DispatchDataType DataType>
 using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP16 ||
+         dataType == DispatchDataType::FP8_E4M3;
 }
 
 template <DispatchDataType DataType>
@@ -94,6 +101,11 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk, i
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
   return nTokens <= nBlocks ? DispatchNWarps
                             : (nTokens <= 2 * nBlocks ? DispatchNWarps / 2 : DispatchMinNWarpsPerGroup);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
+  constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
+  return nRanks > NSendSlots ? nRanks : NSendSlots;
 }
 
 struct RecvTask {
@@ -188,7 +200,9 @@ MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int m
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
   const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
-  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
+  const int nAggregatedCompletionSlots = DispatchMaxNWarpGroups * nRanks;
+  return configAlign<size_t>(static_cast<size_t>(nSlots + nAggregatedCompletionSlots) * sizeof(int),
+                             BufferAlignmentBytes);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>

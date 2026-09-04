@@ -95,6 +95,9 @@ class DispatchOutput:
 
     ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
     reused by every dispatch. Clone any result that must outlive the next call.
+    ``KI_RAGGED`` tensors are compact expert-grouped rows with capacity
+    ``world_size * max_tokens_per_rank * topk``; valid rows are described by
+    ``layout.num_tokens_per_expert``.
     """
 
     tokens: torch.Tensor
@@ -133,6 +136,18 @@ class _RankMajorCombineContext:
 
 
 @dataclass
+class _TokenMajorCombineContext:
+    """Combine context for fixed-stride token-major output."""
+
+    topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    max_tokens_per_rank: int
+
+
+@dataclass
 class _ThroughputCombineContext:
     """Combine context for throughput output."""
 
@@ -143,6 +158,7 @@ class _ThroughputCombineContext:
 _CombineContext = Union[
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
+    _TokenMajorCombineContext,
     _ThroughputCombineContext,
 ]
 

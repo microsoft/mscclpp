@@ -39,6 +39,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
       .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
+      .value("KI_RAGGED", mscclpp::ep::DispatchLayout::KI_RAGGED)
       .value("TOKEN_MAJOR", mscclpp::ep::DispatchLayout::TOKEN_MAJOR)
       .value("RANK_MAJOR", mscclpp::ep::DispatchLayout::RANK_MAJOR);
 
@@ -47,6 +48,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", mscclpp::ep::CombineMode::DIRECT_SEND);
   nb::enum_<mscclpp::ep::DispatchDataType>(m, "DispatchDataType")
       .value("BF16", mscclpp::ep::DispatchDataType::BF16)
+      .value("FP16", mscclpp::ep::DispatchDataType::FP16)
       .value("FP8_E4M3", mscclpp::ep::DispatchDataType::FP8_E4M3);
 
   m.def("create_moe_runtime", &mscclpp::ep::createMoERuntime, nb::arg("comm"), nb::arg("mode"),
