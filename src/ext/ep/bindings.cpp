@@ -47,6 +47,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", mscclpp::ep::CombineMode::DIRECT_SEND);
   nb::enum_<mscclpp::ep::DispatchDataType>(m, "DispatchDataType")
       .value("BF16", mscclpp::ep::DispatchDataType::BF16)
+      .value("FP16", mscclpp::ep::DispatchDataType::FP16)
       .value("FP8_E4M3", mscclpp::ep::DispatchDataType::FP8_E4M3);
 
   m.def("create_moe_runtime", &mscclpp::ep::createMoERuntime, nb::arg("comm"), nb::arg("mode"),

@@ -59,15 +59,19 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
-    if args.ep_layout == "token_major":
-        raise ValueError("MSCCL++ latency mode supports expert_major or rank_major layout")
-    rank_major = args.ep_layout == "rank_major"
-    if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
-        raise ValueError("rank-major output requires rank_local_reduce combine")
-    output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    requested_layout = args.ep_layout or "expert_major"
+    rank_major = requested_layout == "rank_major"
+    token_major = requested_layout == "token_major"
+    if (rank_major or token_major) and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise ValueError(f"{requested_layout} output requires rank_local_reduce combine")
+    output_layout = {
+        "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
+        "rank_major": ep.DispatchLayout.RANK_MAJOR,
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+    }[requested_layout]
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if rank_major and dispatch_quant is not None:
-        raise ValueError("rank-major output supports BF16 dispatch only")
+    if (rank_major or token_major) and dispatch_quant is not None:
+        raise ValueError(f"{requested_layout} output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
@@ -90,13 +94,13 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
             flush=True,
         )
-        print(f"[cfg] mscclpp output_layout={args.ep_layout or 'expert_major'}", flush=True)
+        print(f"[cfg] mscclpp output_layout={requested_layout}", flush=True)
 
     # Hoist output tensors out of the timed loop (the communicator owns its
     # src_info/layout_range/count buffers internally).
     output_buffer = (
         None
-        if rank_major
+        if rank_major or token_major
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
     expert_output_initialized = False

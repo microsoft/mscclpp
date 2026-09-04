@@ -47,6 +47,8 @@ enum class CombineMode {
 enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
+  /// Unquantized FP16 payload.
+  FP16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3
 };

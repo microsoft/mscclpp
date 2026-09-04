@@ -36,7 +36,8 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
+                 outputLayout == DispatchLayout::TOKEN_MAJOR);
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
@@ -195,6 +196,10 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+  } else if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
   ++context.epoch_;
@@ -213,6 +218,10 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
                       input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
                       stream);
+  } else if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    tokenMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
+                       input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
+                       stream);
   } else {
     expertMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_,
@@ -254,6 +263,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
+  } else if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(input == allocationLayout.dispatchOutputBuffer_);
   }
 
   const Workload workload{.epoch_ = context.epoch_,
@@ -276,6 +287,10 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
       rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
                                    combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
     }
+  } else if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
+    tokenMajorGatherReduceCombine(output, input, topkIdx, topkWeights, workload, combineRecvBuffer, dispatchRecvBuffer,
+                                  context.deviceContext_, numBlocks, stream);
   } else if (mode == CombineMode::DIRECT_SEND) {
     expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                                  dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);

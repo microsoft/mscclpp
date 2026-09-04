@@ -199,7 +199,7 @@ def parse_args() -> argparse.Namespace:
         "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
         "DeepEP=rank_major, FlashInfer=rank_major). "
         "The explicit value is applied where supported: NCCL-EP and DeepEP accept rank_major/expert_major; "
-        "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
+        "MSCCL++ latency accepts expert_major/rank_major/token_major and throughput accepts rank_major/token_major. "
         "FlashInfer is rank-major only; unsupported requests are "
         "noted and the backend's default layout is kept.",
     )
