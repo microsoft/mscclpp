@@ -119,7 +119,7 @@ jobs:
           python3 -m mscclpp_benchmark.bench_collective \
             --collective allgather --autotune --enable-dsl --buffer-mode in-place \
             --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
-            --dsl-tbg 1,2 --dsl-tpb 512,1024
+            --dsl-tbg 1,2,4,8,16 --dsl-tpb 256,512,1024
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -137,7 +137,7 @@ jobs:
           python3 -m mscclpp_benchmark.bench_collective \
             --collective reducescatter --autotune --enable-dsl --buffer-mode in-place \
             --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
-            --dsl-tbg 1,2 --dsl-tpb 512,1024
+            --dsl-tbg 1,2,4,8,16 --dsl-tpb 256,512,1024
 
   - template: templates/run-remote-task.yml
     parameters:
