@@ -87,12 +87,57 @@ jobs:
 
   - template: templates/run-remote-task.yml
     parameters:
-      name: RunMscclppTest
-      displayName: Run multi-nodes mscclpp-test
+      name: RunBenchCollectiveAllreduceTest
+      displayName: Run multi-nodes bench_collective DSL allreduce
       continueOnError: true
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
+        set -e
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          -x PYTHONPATH=/root/mscclpp/python \
+          python3 -m mscclpp_benchmark.bench_collective \
+            --collective allreduce --autotune --enable-dsl --buffer-mode in-place \
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2,4,8,16 --dsl-tpb 256,512,1024
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunBenchCollectiveAllgatherTest
+      displayName: Run multi-nodes bench_collective DSL allgather
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        set -e
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          -x PYTHONPATH=/root/mscclpp/python \
+          python3 -m mscclpp_benchmark.bench_collective \
+            --collective allgather --autotune --enable-dsl --buffer-mode in-place \
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2,4,8,16 --dsl-tpb 256,512,1024
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunBenchCollectiveReduceScatterTest
+      displayName: Run multi-nodes bench_collective DSL reducescatter
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        set -e
+        mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi \
+          -mca btl_tcp_if_include eth0 -np 16 -npernode 8 \
+          -x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x MSCCLPP_HOME=/root/mscclpp \
+          -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x PATH=$PATH \
+          -x PYTHONPATH=/root/mscclpp/python \
+          python3 -m mscclpp_benchmark.bench_collective \
+            --collective reducescatter --autotune --enable-dsl --buffer-mode in-place \
+            --total-sizes 16KiB,32KiB,64KiB,128KiB,256KiB,512KiB,1MiB,2MiB,4MiB,8MiB \
+            --dsl-tbg 1,2,4,8,16 --dsl-tpb 256,512,1024
 
   - template: templates/run-remote-task.yml
     parameters:

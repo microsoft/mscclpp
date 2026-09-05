@@ -12,7 +12,7 @@ from mpi4py import MPI
 
 _mscclpp_module = None
 
-from mscclpp_benchmark.comm import Comm
+from mscclpp_benchmark.comm import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, Comm
 from mscclpp_benchmark.correctness import (
     CorrectnessStats,
     check_correctness as _check_correctness,
@@ -24,6 +24,10 @@ from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedC
 
 _ALLREDUCE = "allreduce"
 _ALLGATHER = "allgather"
+_REDUCESCATTER = "reducescatter"
+# CLI buffer-mode names mapped to the CppCollectiveBufferMode enum members exposed by
+# python/csrc/algorithm.cpp.
+_BUFFER_MODE_NAMES = {"in-place": "IN_PLACE", "out-of-place": "OUT_OF_PLACE"}
 _DEFAULT_BATCH_SIZES = (
     1,
     2,
@@ -81,6 +85,14 @@ class CandidateSpec:
     supported_skus: tuple[str, ...] | None = None
     requires_nvls: bool = False
     requires_symmetric_memory: bool = False
+    # Native algorithms use all-pairs CUDA-IPC and only work within a single node; they hang if
+    # tuned on a multi-node job. Only algorithms that explicitly opt in are considered when the
+    # world spans more than one node.
+    supports_multi_node: bool = False
+    # None means "use the tuner's global sweep"; an explicit tuple overrides it, which DSL
+    # algorithms need since they bake their launch geometry into the plan and ignore nblocks/nthreads.
+    candidate_nblocks: tuple[int, ...] | None = None
+    candidate_nthreads: tuple[int, ...] | None = None
 
 
 @dataclass
@@ -92,6 +104,7 @@ class BenchmarkCase:
     output: cp.ndarray
     dtype_spec: DTypeSpec
     symmetric_memory: bool = False
+    buffer_mode: str = "in-place"
 
 
 def _device_name() -> str:
@@ -211,7 +224,67 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
     return values
 
 
+_SIZE_UNITS = {
+    "": 1,
+    "b": 1,
+    "k": 1 << 10,
+    "kb": 1 << 10,
+    "kib": 1 << 10,
+    "m": 1 << 20,
+    "mb": 1 << 20,
+    "mib": 1 << 20,
+    "g": 1 << 30,
+    "gb": 1 << 30,
+    "gib": 1 << 30,
+}
+
+
+def _parse_size(raw: str) -> int:
+    text = raw.strip().lower()
+    digits = len(text)
+    while digits > 0 and not text[digits - 1].isdigit():
+        digits -= 1
+    number, unit = text[:digits], text[digits:]
+    if not number:
+        raise ValueError(f"Expected a size like '16KiB' or '8MiB', got {raw!r}")
+    multiplier = _SIZE_UNITS.get(unit)
+    if multiplier is None:
+        raise ValueError(f"Unknown size unit {unit!r} in {raw!r}; expected one of B, KiB, MiB, GiB")
+    value = int(number) * multiplier
+    if value <= 0:
+        raise ValueError(f"Sizes must be positive, got {raw!r}")
+    return value
+
+
+def _parse_size_list(raw: str) -> tuple[int, ...]:
+    values = tuple(sorted({_parse_size(item) for item in raw.split(",") if item.strip()}))
+    if not values:
+        raise ValueError(f"Expected a comma-separated list of sizes, got {raw!r}")
+    return values
+
+
+def _nelems_for_total_size(collective: str, total_bytes: int, itemsize: int, nranks: int) -> int:
+    """Return the per-rank ``nelems`` that makes ``_make_case`` allocate ``total_bytes`` in total.
+
+    ``_make_case`` allocates ``nelems * nranks`` elements for allgather and reducescatter but only
+    ``nelems`` for allreduce, so the same total maps to a different ``nelems`` per collective. This
+    is what lets every collective be swept over an identical set of total sizes.
+    """
+    divisor = itemsize if collective == _ALLREDUCE else itemsize * nranks
+    if total_bytes % divisor != 0:
+        detail = "dtype itemsize" if collective == _ALLREDUCE else f"dtype itemsize x {nranks} ranks"
+        raise ValueError(
+            f"--total-sizes value {_human_size(total_bytes)} is not achievable for {collective}: "
+            f"it must be a multiple of {divisor} bytes ({detail})"
+        )
+    return total_bytes // divisor
+
+
 def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
+    if collective == _REDUCESCATTER:
+        # There are no native reducescatter algorithms in the default collection, so the compiled
+        # DSL variants are the only candidates.
+        return ()
     if collective == _ALLGATHER:
         allgather_candidates = (
             CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),
@@ -277,18 +350,57 @@ def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tupl
     return candidates
 
 
+def _dsl_candidate_specs(comm: Comm, collective: str) -> tuple[CandidateSpec, ...]:
+    """Synthesize candidate specs for the DSL algorithms compiled by Comm.
+
+    Unlike the native algorithms, DSL variant names are only known at runtime, so their specs cannot
+    be listed statically. Each variant reports its own applicable message size range, which the usual
+    message size filter then applies against the effective (whole buffer) size, and pins the tuner to
+    a single launch config because the plan already bakes in its launch geometry.
+    """
+    available = comm.algorithms.get(collective, {})
+    specs: list[CandidateSpec] = []
+    for name in sorted(getattr(comm, "dsl_algorithms", ())):
+        algorithm = available.get(name)
+        if algorithm is None:
+            continue
+        min_message_size, max_message_size = algorithm.message_size_range
+        specs.append(
+            CandidateSpec(
+                name,
+                min_message_size=min_message_size,
+                max_message_size=max_message_size,
+                candidate_nblocks=(0,),
+                candidate_nthreads=(0,),
+                supports_multi_node=True,
+            )
+        )
+    return tuple(specs)
+
+
 def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, CandidateSpec]]:
     available = comm.algorithms.get(case.collective, {})
     candidates: list[tuple[Any, CandidateSpec]] = []
     seen: set[str] = set()
     symmetric_memory = case.symmetric_memory
     profile = getattr(comm, "hardware_profile", None)
+    comm_group = comm.comm_group
+    nranks = getattr(comm_group, "nranks", 1) or 1
+    nranks_per_node = getattr(comm_group, "nranks_per_node", nranks) or nranks
+    multi_node = nranks > nranks_per_node
+    effective_message_size = _effective_message_size(case.collective, case.message_size, nranks)
     filtered_out = False
-    for candidate in _candidate_specs(case.collective, symmetric_memory=symmetric_memory):
+    for candidate in (
+        *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
+        *_dsl_candidate_specs(comm, case.collective),
+    ):
+        if multi_node and not candidate.supports_multi_node:
+            filtered_out = True
+            continue
         if not _candidate_supports_profile(candidate, profile):
             filtered_out = True
             continue
-        if not _candidate_supports_message_size(candidate, case.message_size):
+        if not _candidate_supports_message_size(candidate, effective_message_size):
             filtered_out = True
             continue
         if candidate.requires_nvls and not _mscclpp().is_nvls_supported():
@@ -299,6 +411,9 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
             continue
         algorithm = available.get(candidate.algorithm)
         if algorithm is None or algorithm.name in seen:
+            continue
+        if not _algorithm_supports_buffer_mode(algorithm, case.buffer_mode):
+            filtered_out = True
             continue
         seen.add(algorithm.name)
         candidates.append((algorithm, candidate))
@@ -316,6 +431,34 @@ def _candidate_supports_profile(candidate: CandidateSpec, profile: HardwareProfi
     if not sku or sku == "UNKNOWN":
         return True
     return sku in candidate.supported_skus
+
+
+def _effective_message_size(collective: str, message_size: int, nranks: int) -> int:
+    """Return the buffer size the executor validates against an algorithm's message size range.
+
+    Mirrors ``matchExecutionPlan`` in ``src/ext/nccl/algorithm_selector.cc`` and
+    ``ExecutionPlan::Impl::checkMessageSize``, which both compare the range against the whole buffer:
+    the output size for allgather and the input size otherwise. For allgather and reducescatter that
+    spans every rank, whereas ``case.message_size`` is only this rank's chunk.
+    """
+    if collective in (_ALLGATHER, _REDUCESCATTER):
+        return message_size * nranks
+    return message_size
+
+
+def _algorithm_supports_buffer_mode(algorithm: Any, buffer_mode: str) -> bool:
+    """Whether ``algorithm`` can run against buffers laid out in ``buffer_mode``.
+
+    Mirrors the ``bufferModeMatch`` test in ``src/ext/nccl/algorithm_selector.cc``: an algorithm
+    declaring ``ANY`` accepts either layout, otherwise the modes must match. The benchmark resolves
+    algorithms by name instead of going through that selector, so nothing else enforces this. Native
+    algorithms are registered without an explicit mode and therefore report ``ANY``.
+    """
+    mode = getattr(algorithm, "buffer_mode", None)
+    if mode is None:
+        return True
+    name = getattr(mode, "name", None) or str(mode).rsplit(".", 1)[-1]
+    return name in ("ANY", _BUFFER_MODE_NAMES.get(buffer_mode))
 
 
 def _candidate_supports_message_size(candidate: CandidateSpec, message_size: int) -> bool:
@@ -354,11 +497,28 @@ def _make_case(
             output=output,
             dtype_spec=dtype_spec,
             symmetric_memory=symmetric_memory,
+            buffer_mode=buffer_mode,
+        )
+
+    if collective == _REDUCESCATTER:
+        # The DSL reducescatter is compiled in-place, so the per-rank output chunk always aliases the
+        # matching slice of the full input buffer (mirrors python/test/executor_test.py build_bufs).
+        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        start = comm_group.my_rank * nelems
+        output = input_buffer[start : start + nelems]
+        return BenchmarkCase(
+            collective=collective,
+            message_size=output.nbytes,
+            total_size=input_buffer.nbytes,
+            input=input_buffer,
+            output=output,
+            dtype_spec=dtype_spec,
+            symmetric_memory=symmetric_memory,
+            buffer_mode="in-place",
         )
 
     if collective != _ALLGATHER:
         raise ValueError(f"Unsupported collective: {collective}")
-
     if buffer_mode == "in-place":
         output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
         start = comm_group.my_rank * nelems
@@ -375,6 +535,7 @@ def _make_case(
         output=output,
         dtype_spec=dtype_spec,
         symmetric_memory=symmetric_memory,
+        buffer_mode=buffer_mode,
     )
 
 
@@ -463,7 +624,7 @@ def _busbw_factor(collective: str, nranks: int) -> float:
         return 1.0
     if collective == _ALLREDUCE:
         return 2 * (nranks - 1) / nranks
-    if collective == _ALLGATHER:
+    if collective in (_ALLGATHER, _REDUCESCATTER):
         return (nranks - 1) / nranks
     raise ValueError(f"Unsupported collective: {collective}")
 
@@ -492,7 +653,7 @@ def _format_mismatches(stats: CorrectnessStats | None) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Benchmark MSCCL++ collectives without PyTorch dependencies")
-    parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER), default=_ALLREDUCE)
+    parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER, _REDUCESCATTER), default=_ALLREDUCE)
     parser.add_argument("--d-model", type=int, default=5120)
     parser.add_argument("--dtype", default="float16")
     parser.add_argument(
@@ -500,6 +661,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Accumulation type for reductions: native, or float16/float32 for FP8 inputs",
     )
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
+    parser.add_argument(
+        "--total-sizes",
+        help="Comma-separated total collective buffer sizes (e.g. '16KiB,1MiB,8MiB'). Sweeps by the "
+        "total size every rank sees rather than by batch, so different collectives can be compared "
+        "at identical totals. Mutually exclusive with --batch-sizes/--d-model.",
+    )
     parser.add_argument(
         "--buffer-mode",
         choices=("in-place", "out-of-place"),
@@ -520,6 +687,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tune-iterations", type=int, default=20)
     parser.add_argument("--candidate-nblocks", help="Comma-separated nblocks tuning candidates")
     parser.add_argument("--candidate-nthreads", help="Comma-separated nthreads tuning candidates")
+    parser.add_argument(
+        "--enable-dsl",
+        action="store_true",
+        help="Compile DSL algorithm variants and tune them alongside the native algorithms",
+    )
+    parser.add_argument("--dsl-tbg", help="Comma-separated DSL thread_block_group_size candidates")
+    parser.add_argument("--dsl-tpb", help="Comma-separated DSL num_threads_per_block candidates")
     parser.add_argument("--symmetric-memory", action="store_true")
     return parser
 
@@ -538,6 +712,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{name.replace('_', '-')} must be positive")
     if args.warmup < 0 or args.tune_warmup < 0:
         raise ValueError("warmup counts must be non-negative")
+    if args.total_sizes is not None and args.batch_sizes is not None:
+        raise ValueError("--total-sizes and --batch-sizes are mutually exclusive")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -558,16 +734,39 @@ def main(argv: list[str] | None = None) -> None:
     batch_sizes = _parse_int_list(args.batch_sizes, _DEFAULT_BATCH_SIZES)
     candidate_nblocks = _parse_int_list(args.candidate_nblocks, _DEFAULT_CANDIDATE_NBLOCKS)
     candidate_nthreads = _parse_int_list(args.candidate_nthreads, _DEFAULT_CANDIDATE_NTHREADS)
+    dsl_tbg = _parse_int_list(args.dsl_tbg, DEFAULT_DSL_TBG)
+    dsl_tpb = _parse_int_list(args.dsl_tpb, DEFAULT_DSL_TPB)
 
     comm_group = _mscclpp().CommGroup(MPI.COMM_WORLD)
     setattr(comm_group, "_mpi_comm", MPI.COMM_WORLD)
     hardware_profile = _detect_hardware_profile(comm_group.nranks)
+    # Each sweep point is a (label, nelems) pair so the size column can report whichever knob drove
+    # it. --total-sizes needs comm_group.nranks, so it is resolved here rather than with the other
+    # argument parsing above.
+    if args.total_sizes is not None:
+        size_column = "nelems"
+        itemsize = int(cp.dtype(dtype_spec.cupy_dtype).itemsize)
+        sweep_points = [
+            (str(nelems), nelems)
+            for nelems in (
+                _nelems_for_total_size(args.collective, total, itemsize, comm_group.nranks)
+                for total in _parse_size_list(args.total_sizes)
+            )
+        ]
+    else:
+        size_column = "batch"
+        sweep_points = [(str(batch_size), batch_size * args.d_model) for batch_size in batch_sizes]
     config_store = TunedConfigStore.load_path(args.config_path) if args.config_path else TunedConfigStore.empty()
     comm = Comm(
         comm_group,
         config_store=config_store,
         hardware_profile=hardware_profile,
         scratch_buffer_size=args.scratch_buffer_size,
+        collective=args.collective,
+        enable_dsl=args.enable_dsl,
+        buffer_mode=args.buffer_mode,
+        dsl_tbg=dsl_tbg,
+        dsl_tpb=dsl_tpb,
     )
     tuner = OfflineTuner(
         comm,
@@ -590,8 +789,7 @@ def main(argv: list[str] | None = None) -> None:
                 flush=True,
             )
 
-        for batch_size in batch_sizes:
-            nelems = batch_size * args.d_model
+        for size_label, nelems in sweep_points:
             case = _make_case(
                 collective=args.collective,
                 nelems=nelems,
@@ -623,8 +821,8 @@ def main(argv: list[str] | None = None) -> None:
                 comm.reset(config)
                 if correctness != "PASS":
                     raise RuntimeError(
-                        f"Correctness failed for batch_size={batch_size}, message_size={case.message_size}, "
-                        f"config={config}"
+                        f"Correctness failed for {size_column}={size_label}, "
+                        f"message_size={case.message_size}, config={config}"
                     )
 
             time_us = _measure_case(
@@ -641,7 +839,7 @@ def main(argv: list[str] | None = None) -> None:
             busbw = algbw * _busbw_factor(args.collective, comm_group.nranks)
             rows.append(
                 [
-                    str(batch_size),
+                    size_label,
                     _human_size(case.message_size),
                     _human_size(case.total_size),
                     config.algorithm,
@@ -672,7 +870,7 @@ def main(argv: list[str] | None = None) -> None:
                 "\n"
                 + _format_table(
                     [
-                        "batch",
+                        size_column,
                         "msg",
                         "total",
                         "algorithm",
