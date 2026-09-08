@@ -133,8 +133,8 @@ class _RankMajorCombineContext:
 
 
 @dataclass
-class _TokenMajorCombineContext:
-    """Combine context for fixed-stride token-major output."""
+class _RankMajorTopkExpandedCombineContext:
+    """Combine context for fixed-stride source-rank/top-k-expanded output."""
 
     topk_ids: torch.Tensor
     weights: Optional[torch.Tensor]
@@ -155,7 +155,7 @@ class _ThroughputCombineContext:
 _CombineContext = Union[
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
-    _TokenMajorCombineContext,
+    _RankMajorTopkExpandedCombineContext,
     _ThroughputCombineContext,
 ]
 
