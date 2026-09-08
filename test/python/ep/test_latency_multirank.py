@@ -9,10 +9,10 @@ Launch with (intra-node, 8 GPUs):
     torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --output-layout rank_major
-    # Token-major output:
+    # Rank-major-top-k-expanded output:
     torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
-        --output-layout token_major
+        --output-layout rank_major_topk_expanded
     # Optional CUDA graph smoke/benchmark:
     torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
@@ -118,7 +118,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-layout",
-        choices=("expert_major", "rank_major", "token_major"),
+        choices=("expert_major", "rank_major", "rank_major_topk_expanded"),
         default="expert_major",
         help="Low-latency dispatch output layout",
     )
@@ -215,6 +215,10 @@ def simulated_rank_major_route_output(dispatch_out):
 
 def stage_simulated_gemm_output(dispatch_out):
     """Build simulated GEMM output in the runtime-owned buffer when required."""
+    import mscclpp.ep as ep
+
+    if dispatch_out.layout.kind == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+        return dispatch_out.tokens
     combine_input = dispatch_out.combine_input_buffer
     if combine_input is None:
         return simulated_gemm_output(dispatch_out)
@@ -323,7 +327,7 @@ def validate_expert_major_dispatch(
             )
 
 
-def validate_runtime_owned_dispatch(
+def validate_rank_major_topk_expanded_dispatch(
     *,
     rank,
     num_ranks,
@@ -331,82 +335,37 @@ def validate_runtime_owned_dispatch(
     num_topk,
     num_local_experts,
     dispatch_out,
-    handle,
     packed_recv_count,
     all_topk_idx,
     all_topk_weights,
     all_x,
     invalid_token_expert_id,
-    token_major,
 ):
     assert all_x is not None
     assert dispatch_out.topk_ids is not None
     assert dispatch_out.weights is not None
-    assert dispatch_out.layout.offsets is None
-    if token_major:
-        assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens * num_topk,)
-        assert dispatch_out.weights.shape == (num_ranks * num_tokens * num_topk,)
-    else:
-        assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
-        assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
+    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens * num_topk,)
+    assert dispatch_out.weights.shape == (num_ranks * num_tokens * num_topk,)
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts
 
     for source_rank in range(num_ranks):
-        recv_count = int(packed_recv_count[source_rank].item())
-        rows_per_source = num_tokens * num_topk if token_major else num_tokens
-        row_begin = source_rank * rows_per_source
-        row_end = row_begin + recv_count
-        block_end = row_begin + rows_per_source
-        source_routing = all_topk_idx[source_rank]
-        local_route_mask = (source_routing >= local_expert_begin) & (source_routing < local_expert_end)
-        expected_source_tokens = local_route_mask.any(dim=1).nonzero().flatten()
-        expected_rows = int(local_route_mask.sum().item()) if token_major else int(expected_source_tokens.numel())
-        assert recv_count == expected_rows
-        if token_major:
-            actual_topk_ids = dispatch_out.topk_ids[row_begin:block_end]
-            actual_weights = dispatch_out.weights[row_begin:block_end]
-            expected_output_ids = torch.where(
-                local_route_mask,
-                source_routing,
-                torch.full_like(source_routing, invalid_token_expert_id),
-            ).flatten()
-            expected_weights = torch.where(
-                local_route_mask,
-                all_topk_weights[source_rank],
-                torch.zeros_like(all_topk_weights[source_rank]),
-            ).flatten()
-            assert torch.equal(actual_topk_ids, expected_output_ids.to(torch.int32))
-            torch.testing.assert_close(actual_weights, expected_weights)
-            if recv_count:
-                actual_tokens = dispatch_out.tokens[row_begin:block_end].view(num_tokens, num_topk, -1)
-                expected_tokens = all_x[source_rank].unsqueeze(1).expand(-1, num_topk, -1)
-                assert torch.equal(actual_tokens[local_route_mask], expected_tokens[local_route_mask])
-            continue
-        if recv_count:
-            actual_source_tokens = decode_token_ids(dispatch_out.tokens[row_begin:row_end])
-            actual_topk_ids = dispatch_out.topk_ids[row_begin:row_end]
-            actual_weights = dispatch_out.weights[row_begin:row_end]
-            assert torch.equal(torch.sort(actual_source_tokens).values, expected_source_tokens)
-            expected_global_ids = all_topk_idx[source_rank, actual_source_tokens]
-            local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
-            expected_output_ids = torch.where(
-                local_mask,
-                expected_global_ids,
-                torch.full_like(expected_global_ids, invalid_token_expert_id),
-            )
-            expected_weights = torch.where(
-                local_mask,
-                all_topk_weights[source_rank, actual_source_tokens],
-                torch.zeros_like(actual_weights),
-            )
-            expected_tokens = all_x[source_rank, actual_source_tokens]
-            actual_tokens = dispatch_out.tokens[row_begin:row_end]
-            assert torch.equal(actual_topk_ids, expected_output_ids.to(torch.int32))
-            torch.testing.assert_close(actual_weights, expected_weights)
-            assert torch.equal(actual_tokens, expected_tokens)
-        assert torch.all(dispatch_out.topk_ids[row_end:block_end] == invalid_token_expert_id)
-        assert torch.all(dispatch_out.weights[row_end:block_end] == 0)
+        expected_local_routes = (all_topk_idx[source_rank] >= local_expert_begin) & (
+            all_topk_idx[source_rank] < local_expert_end
+        )
+        assert int(packed_recv_count[source_rank].item()) == int(expected_local_routes.sum().item())
+        row_base = source_rank * num_tokens * num_topk
+        for token_idx in range(num_tokens):
+            for topk_slot in range(num_topk):
+                route_idx = row_base + token_idx * num_topk + topk_slot
+                expert = int(all_topk_idx[source_rank, token_idx, topk_slot].item())
+                expected_local = local_expert_begin <= expert < local_expert_end
+                expected_id = expert if expected_local else invalid_token_expert_id
+                expected_weight = all_topk_weights[source_rank, token_idx, topk_slot] if expected_local else 0.0
+                assert int(dispatch_out.topk_ids[route_idx].item()) == expected_id
+                torch.testing.assert_close(dispatch_out.weights[route_idx], expected_weight)
+                if expected_local:
+                    assert torch.equal(dispatch_out.tokens[route_idx], all_x[source_rank, token_idx])
 
 
 def reconstruct_expert_major_reference(
@@ -541,9 +500,9 @@ def main():
     output_layout = {
         "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
-        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
+        "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[args.output_layout]
-    if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.TOKEN_MAJOR):
+    if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
         assert combine_mode in (
             ep.CombineMode.RANK_LOCAL_REDUCE,
         ), "runtime-owned output layouts require rank-local-reduce combine"
@@ -622,12 +581,15 @@ def main():
     print(f"[rank {rank}] pre-dispatch", flush=True)
 
     # --- Dispatch ---
-    if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
-        dispatch_output_shape = (num_local_experts, num_ranks * num_tokens, hidden)
-    elif output_layout == ep.DispatchLayout.TOKEN_MAJOR:
-        dispatch_output_shape = (num_ranks * num_tokens * num_topk, hidden)
-    else:
-        dispatch_output_shape = (num_ranks * num_tokens, hidden)
+    dispatch_output_shape = (
+        (num_local_experts, num_ranks * num_tokens, hidden)
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+        else (
+            (num_ranks * num_tokens * num_topk, hidden)
+            if output_layout == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+            else (num_ranks * num_tokens, hidden)
+        )
+    )
     assert moe_comm._context.dispatch_output_buffer is dispatch_output_buffer
     dispatch_out, handle = moe_comm.dispatch(
         x,
@@ -638,7 +600,7 @@ def main():
     assert dispatch_out.tokens.data_ptr() == dispatch_output_buffer.data_ptr()
     assert tuple(dispatch_out.tokens.shape) == dispatch_output_shape
     assert dispatch_out.tokens.dtype == dispatch_dtype
-    if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.TOKEN_MAJOR):
+    if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
         assert dispatch_out.combine_input_buffer is not None
         if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
             assert dispatch_out.combine_input_buffer.data_ptr() == dispatch_out.tokens.data_ptr()
@@ -665,7 +627,10 @@ def main():
     dist.all_gather_into_tensor(all_topk_weights, local_topk_weights, group=group)
     all_x = None
     expected_scales = None
-    if dispatch_quant is not None or output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.TOKEN_MAJOR):
+    if dispatch_quant is not None or output_layout in (
+        ep.DispatchLayout.RANK_MAJOR,
+        ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
+    ):
         all_x = torch.empty((num_ranks, num_tokens, hidden), dtype=x.dtype, device="cuda")
         dist.all_gather_into_tensor(all_x, x, group=group)
     if dispatch_quant is not None:
@@ -700,21 +665,35 @@ def main():
             expected_scales=expected_scales,
         )
     else:
-        validate_runtime_owned_dispatch(
-            rank=rank,
-            num_ranks=num_ranks,
-            num_tokens=num_tokens,
-            num_topk=num_topk,
-            num_local_experts=num_local_experts,
-            dispatch_out=dispatch_out,
-            handle=handle,
-            packed_recv_count=packed_recv_count,
-            all_topk_idx=all_topk_idx,
-            all_topk_weights=all_topk_weights,
-            all_x=all_x,
-            invalid_token_expert_id=invalid_token_expert_id,
-            token_major=output_layout == ep.DispatchLayout.TOKEN_MAJOR,
-        )
+        if output_layout == ep.DispatchLayout.RANK_MAJOR:
+            validate_rank_major_dispatch(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                num_topk=num_topk,
+                num_local_experts=num_local_experts,
+                dispatch_out=dispatch_out,
+                handle=handle,
+                packed_recv_count=packed_recv_count,
+                all_topk_idx=all_topk_idx,
+                all_topk_weights=all_topk_weights,
+                all_x=all_x,
+                invalid_token_expert_id=invalid_token_expert_id,
+            )
+        else:
+            validate_rank_major_topk_expanded_dispatch(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                num_topk=num_topk,
+                num_local_experts=num_local_experts,
+                dispatch_out=dispatch_out,
+                packed_recv_count=packed_recv_count,
+                all_topk_idx=all_topk_idx,
+                all_topk_weights=all_topk_weights,
+                all_x=all_x,
+                invalid_token_expert_id=invalid_token_expert_id,
+            )
 
     if rank == 0:
         print(f"[dispatch] OK (ranks={num_ranks})", flush=True)
@@ -804,7 +783,7 @@ def main():
     def _run_cuda_graph_correctness():
         graph_dispatch_output_buffer = (
             dispatch_output_buffer
-            if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.TOKEN_MAJOR)
+            if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
             else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
         )
         graph_out = torch.empty_like(out)
@@ -838,7 +817,7 @@ def main():
     iters = args.bench_iters
     bench_dispatch_output_buffer = (
         dispatch_output_buffer
-        if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.TOKEN_MAJOR)
+        if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
         else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
     )
 

@@ -193,13 +193,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["token_major", "rank_major", "expert_major"],
+        choices=["token_major", "rank_major", "rank_major_topk_expanded", "expert_major"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
         "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
         "DeepEP=rank_major, FlashInfer=rank_major). "
         "The explicit value is applied where supported: NCCL-EP and DeepEP accept rank_major/expert_major; "
-        "MSCCL++ latency accepts expert_major/rank_major/token_major and throughput accepts rank_major/token_major. "
+        "MSCCL++ latency accepts expert_major/rank_major/rank_major_topk_expanded and throughput accepts "
+        "rank_major/token_major. "
         "FlashInfer is rank-major only; unsupported requests are "
         "noted and the backend's default layout is kept.",
     )

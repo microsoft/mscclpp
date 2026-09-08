@@ -67,12 +67,6 @@ struct DispatchDataTypeTraits<DispatchDataType::BF16> {
 };
 
 template <>
-struct DispatchDataTypeTraits<DispatchDataType::FP16> {
-  using ElementType = __half;
-  using ScaleType = void;
-};
-
-template <>
 struct DispatchDataTypeTraits<DispatchDataType::FP8_E4M3> {
   using ElementType = Fp8E4M3;
   using ScaleType = float;
@@ -88,8 +82,7 @@ template <DispatchDataType DataType>
 using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP16 ||
-         dataType == DispatchDataType::FP8_E4M3;
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
 }
 
 template <DispatchDataType DataType>

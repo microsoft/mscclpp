@@ -41,7 +41,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     x, topk_idx, topk_weights, _ = inputs
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
-    if args.ep_layout == "token_major":
+    if args.ep_layout in ("token_major", "rank_major_topk_expanded"):
         raise ValueError("DeepEP ElasticBuffer supports rank_major or expert_major layout")
 
     if rank == 0:

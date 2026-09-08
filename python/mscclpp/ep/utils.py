@@ -46,10 +46,6 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
         raise TypeError("quant.format must be a DispatchDataType")
     if quant_format is None:
         raise ValueError("quant.format is required")
-    if quant_format == DispatchDataType.FP16:
-        if quant.block_scales is not None:
-            raise ValueError("FP16 dispatch does not use block scales")
-        return quant_format
     if quant_format != DispatchDataType.FP8_E4M3:
         raise ValueError("unsupported dispatch quantization format")
     if quant.block_scales is not None:
@@ -75,8 +71,6 @@ def dispatch_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the tensor dtype for a dispatch payload format."""
     if data_type == DispatchDataType.BF16:
         return torch.bfloat16
-    if data_type == DispatchDataType.FP16:
-        return torch.float16
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float8_e4m3fn
     raise ValueError(f"unsupported dispatch data type: {data_type}")
@@ -84,8 +78,6 @@ def dispatch_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
 
 def combine_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the tensor dtype expected by latency combine."""
-    if data_type == DispatchDataType.FP16:
-        return torch.float16
     return torch.bfloat16
 
 

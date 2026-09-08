@@ -52,7 +52,7 @@ def setup_flashinfer(args, comm, rank, num_ranks, inputs):
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
-        if args.ep_layout in ("expert_major", "token_major"):
+        if args.ep_layout in ("expert_major", "token_major", "rank_major_topk_expanded"):
             print(
                 f"[cfg] flashinfer ep_layout={args.ep_layout} requested but unsupported: "
                 "MoeAlltoAll dispatch is fixed rank-major [ep_size, tokens, hidden]; "

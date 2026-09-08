@@ -33,27 +33,27 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(DispatchNThreads, 1) void tokenMajorDispatchKernel(
+__global__ __launch_bounds__(DispatchNThreads, 1) void rankMajorTopkExpandedDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
     int64_t* outputLayout, int* outputCount, const int64_t* topkIndices, const float* topkWeights,
     const void* inputTokens, Workload workload, void* recvBuffer, const DeviceContext* context) {
-  dispatchBody<Hidden, DataType, ScaleBlockSize, DispatchLayout::TOKEN_MAJOR>(
+  dispatchBody<Hidden, DataType, ScaleBlockSize, DispatchLayout::RANK_MAJOR_TOPK_EXPANDED>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIndices,
       topkWeights, inputTokens, workload, recvBuffer, context);
 }
 
-struct TokenMajorDispatchKernelSelector {
+struct RankMajorTopkExpandedDispatchKernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return tokenMajorDispatchKernel<Hidden, DataType, ScaleBlockSize>;
+    return rankMajorTopkExpandedDispatchKernel<Hidden, DataType, ScaleBlockSize>;
   }
 };
 
-void tokenMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  dispatchAlgorithm<DispatchLayout::TOKEN_MAJOR, TokenMajorDispatchKernelSelector>(
+void rankMajorTopkExpandedDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                                   const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                                   void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  dispatchAlgorithm<DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, RankMajorTopkExpandedDispatchKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }

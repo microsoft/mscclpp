@@ -41,7 +41,7 @@ MSCCLPP_HOST_DEVICE_INLINE int directSendWorkerCount(int nLocalExperts) {
 
 template <int Hidden, CombineMode Mode, DispatchLayout Layout>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts, int nTopk) {
-  if constexpr (Layout == DispatchLayout::TOKEN_MAJOR) {
+  if constexpr (Layout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     if (nTopk <= RankMajorTmaMaxNTopk) {
       constexpr size_t RowsBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * Hidden * sizeof(Bf16);
       constexpr size_t BarrierBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * sizeof(mscclpp::BulkBarrier);
@@ -535,11 +535,12 @@ MSCCLPP_DEVICE_INLINE int4 reduceRemoteTokenPartialsBf16x8(const void* expertOut
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvTokenMajorRemotePartials(void* output, const void* expertOutput,
-                                                        const int64_t* __restrict__ topkIndices,
-                                                        const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                                        int nExperts, int nRanks, int maxTokensPerRank,
-                                                        const TransportView& transport) {
+MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartials(void* output, const void* expertOutput,
+                                                                   const int64_t* __restrict__ topkIndices,
+                                                                   const float* __restrict__ topkWeights, int nTokens,
+                                                                   int nTopk, int nExperts, int nRanks,
+                                                                   int maxTokensPerRank,
+                                                                   const TransportView& transport) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -562,14 +563,12 @@ MSCCLPP_DEVICE_INLINE void recvTokenMajorRemotePartials(void* output, const void
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvTokenMajorRemotePartialsTma(void* output, const void* expertOutput,
-                                                           const int64_t* __restrict__ topkIndices,
-                                                           const float* __restrict__ topkWeights, int nTokens,
-                                                           int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
-                                                           uint32_t epoch, const TransportView& transport,
-                                                           WorkspaceView& workspaceView, uint8_t* sharedMemory) {
+MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartialsTma(
+    void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
+    const float* __restrict__ topkWeights, int nTokens, int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
+    uint32_t epoch, const TransportView& transport, WorkspaceView& workspaceView, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
-  static_assert(__CUDA_ARCH__ >= 900, "TMA token-major combine requires SM90 or newer");
+  static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major-topk-expanded combine requires SM90 or newer");
 #endif
   static_assert(Hidden % (sizeof(int4) / sizeof(Bf16)) == 0);
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
@@ -789,7 +788,7 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     recvRankMajorRemotePartials<Hidden, Mode>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                               maxTokensPerRank, transport, workspaceView);
     return;
-  } else if constexpr (Layout == DispatchLayout::TOKEN_MAJOR) {
+  } else if constexpr (Layout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE);
     static_assert(DispatchType == DispatchDataType::BF16);
     if (nTopk <= RankMajorTmaMaxNTopk) {
@@ -797,15 +796,15 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
       if (blockIdx.x == 0) {
         publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
       } else {
-        recvTokenMajorRemotePartialsTma<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens, nTopk,
-                                                nExperts, nRanks, maxTokensPerRank, epoch, transport, workspaceView,
-                                                sharedMemory);
+        recvRankMajorTopkExpandedRemotePartialsTma<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens,
+                                                           nTopk, nExperts, nRanks, maxTokensPerRank, epoch, transport,
+                                                           workspaceView, sharedMemory);
       }
       return;
     }
     synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
-    recvTokenMajorRemotePartials<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens, nTopk, nExperts,
-                                         nRanks, maxTokensPerRank, transport);
+    recvRankMajorTopkExpandedRemotePartials<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens, nTopk,
+                                                    nExperts, nRanks, maxTokensPerRank, transport);
     return;
   } else if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
     sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(
@@ -847,14 +846,15 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout>();
   const size_t sharedBytes = combineSharedBytes<Hidden, Mode, Layout>(nLocalExperts, workload.numTopk_);
   const bool useRankMajorTma = Layout == DispatchLayout::RANK_MAJOR && workload.numTopk_ <= RankMajorTmaMaxNTopk;
-  const bool useTokenMajorTma = Layout == DispatchLayout::TOKEN_MAJOR && workload.numTopk_ <= RankMajorTmaMaxNTopk;
-  const int launchBlocks = numBlocks + ((useRankMajorTma || useTokenMajorTma) ? 1 : 0);
-  EP_HOST_ASSERT(!(useRankMajorTma || useTokenMajorTma) || launchBlocks > 1);
+  const bool useRankMajorTopkExpandedTma =
+      Layout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && workload.numTopk_ <= RankMajorTmaMaxNTopk;
+  const bool useTmaControlBlock = useRankMajorTma || useRankMajorTopkExpandedTma;
+  EP_HOST_ASSERT(!useTmaControlBlock || numBlocks > 1);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
-  EP_HOST_ASSERT(residentBlocks >= launchBlocks);
+  EP_HOST_ASSERT(residentBlocks >= numBlocks);
 
-  combineFunc<<<dim3(launchBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
+  combineFunc<<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context.devicePtr_);
   CUDA_CHECK(cudaGetLastError());
@@ -871,10 +871,10 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
         context, numBlocks, stream);
   }
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
+    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
       EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
       return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::BF16, 0,
-                               DispatchLayout::TOKEN_MAJOR, KernelSelector>(
+                               DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, KernelSelector>(
           output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
           dispatchRecvBuffer, context, numBlocks, stream);
     }
@@ -937,10 +937,11 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE || Mode == CombineMode::DIRECT_SEND);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR ||
-                 workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR);
+                 workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR || workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
+    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+        workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
       EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
     }
   } else {
