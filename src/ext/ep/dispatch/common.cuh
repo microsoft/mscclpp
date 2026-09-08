@@ -122,6 +122,65 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
                                                    int nRanks, WorkspaceView workspaceView);
 
 template <int Hidden>
+struct RankMajorSendState {
+  int laneId_;
+  int warpGroupId_;
+  int tokenStride_;
+  int firstTokenIdx_;
+  uint8_t* stagedToken_;
+  mscclpp::BulkBarrier* bulkBarrier_;
+  uint32_t bulkPhase_;
+};
+
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE bool initRankMajorSendState(RankMajorSendState<Hidden>& state, int nTokens, int nTopk,
+                                                  int nRanks, int nPayloadBlocks, int* sharedMem) {
+  if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return false;
+
+  const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
+  const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
+  const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
+  const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
+  const int subWarpId = warpId % nWarpsPerGroup;
+  if (subWarpId != 0) return false;
+
+  const size_t sharedTokenStride = dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0);
+  auto* sharedTokenBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
+  auto* bulkBarriers =
+      reinterpret_cast<mscclpp::BulkBarrier*>(sharedTokenBase + DispatchMaxNWarpGroups * sharedTokenStride);
+
+  state.laneId_ = get_lane_id();
+  state.warpGroupId_ = warpId / nWarpsPerGroup;
+  state.tokenStride_ = nPayloadBlocks * nWarpGroups;
+  state.firstTokenIdx_ = senderBlockIdx * nWarpGroups + state.warpGroupId_;
+  state.stagedToken_ = sharedTokenBase + static_cast<size_t>(state.warpGroupId_) * sharedTokenStride;
+  state.bulkBarrier_ = bulkBarriers + state.warpGroupId_;
+  state.bulkPhase_ = 0;
+  if (state.firstTokenIdx_ < nTokens && state.laneId_ == 0) state.bulkBarrier_->init();
+  return true;
+}
+
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void stageRankMajorBf16Token(const void* inputTokens, int tokenIdx,
+                                                   RankMajorSendState<Hidden>& state) {
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
+  const auto* inputData =
+      reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
+  if (state.laneId_ == 0) {
+    state.bulkBarrier_->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
+    mscclpp::bulkLoad(state.stagedToken_, inputData, static_cast<uint32_t>(HiddenBytes), *state.bulkBarrier_);
+  }
+}
+
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void waitRankMajorBf16Token(RankMajorSendState<Hidden>& state) {
+  if (state.laneId_ == 0) state.bulkBarrier_->wait(state.bulkPhase_);
+  __syncwarp();
+  mscclpp::bulkFence();
+}
+
+template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                                      const void* inputTokens, int nExperts, int nRanks,
                                                      const int64_t* __restrict__ topkIndices,
@@ -129,54 +188,27 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
                                                      int invalidTokenExpertId, int maxTokensPerRank,
                                                      const TransportView& transport, void* workspace,
                                                      int nPayloadBlocks, int* sharedMem) {
-  if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return;
+  RankMajorSendState<Hidden> sendState;
+  if (!initRankMajorSendState(sendState, nTokens, nTopk, nRanks, nPayloadBlocks, sharedMem)) return;
 
-  const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const int laneId = get_lane_id();
-  const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
-  const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
-  const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
-  const int warpGroupId = warpId / nWarpsPerGroup;
-  const int subWarpId = warpId % nWarpsPerGroup;
-  if (subWarpId != 0) return;
-
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
+  const int laneId = sendState.laneId_;
   const int nLocalExperts = nExperts / nRanks;
-  const size_t sharedTokenStride = dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0);
-  auto* sharedTokenBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
-  auto* sendBulkBarriers =
-      reinterpret_cast<mscclpp::BulkBarrier*>(sharedTokenBase + DispatchMaxNWarpGroups * sharedTokenStride);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
 
-  auto* stagedToken = sharedTokenBase + static_cast<size_t>(warpGroupId) * sharedTokenStride;
-  auto* bulkBarrier = sendBulkBarriers + warpGroupId;
-  const int tokenStride = nPayloadBlocks * nWarpGroups;
-  const int firstTokenIdx = senderBlockIdx * nWarpGroups + warpGroupId;
-  uint32_t sendBulkPhase = 0;
-  if (firstTokenIdx < nTokens && laneId == 0) bulkBarrier->init();
-
-  for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += tokenStride) {
-    const auto* inputData =
-        reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
-    if (laneId == 0) {
-      bulkBarrier->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
-      mscclpp::bulkLoad(stagedToken, inputData, static_cast<uint32_t>(HiddenBytes), *bulkBarrier);
-    }
+  for (int tokenIdx = sendState.firstTokenIdx_; tokenIdx < nTokens; tokenIdx += sendState.tokenStride_) {
+    stageRankMajorBf16Token(inputTokens, tokenIdx, sendState);
     const RankMajorRoute route =
         prepareRankMajorRoute(workspaceView, topkIndices, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
-    if (laneId == 0) bulkBarrier->wait(sendBulkPhase);
-    __syncwarp();
-    mscclpp::bulkFence();
+    waitRankMajorBf16Token(sendState);
     const int completionRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
     if (completionRank >= 0) {
-      issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
+      issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, sendState.stagedToken_,
                                        route.dstRank);
     }
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
     completeRankMajorTokenStore(workspaceView, completionRank);
-    if (tokenIdx + tokenStride < nTokens) __syncwarp();
+    if (tokenIdx + sendState.tokenStride_ < nTokens) __syncwarp();
   }
 }
 
@@ -255,54 +287,28 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
     const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights, int nTokens, int nTopk,
     int invalidTokenExpertId, int maxTokensPerRank, const TransportView& transport, void* workspace, int nPayloadBlocks,
     int* sharedMem) {
-  if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return;
+  RankMajorSendState<Hidden> sendState;
+  if (!initRankMajorSendState(sendState, nTokens, nTopk, nRanks, nPayloadBlocks, sharedMem)) return;
 
-  const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const int laneId = get_lane_id();
-  const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
-  const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
-  const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
-  const int warpGroupId = warpId / nWarpsPerGroup;
-  const int subWarpId = warpId % nWarpsPerGroup;
-  if (subWarpId != 0) return;
-
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
+  const int laneId = sendState.laneId_;
   const int nLocalExperts = nExperts / nRanks;
-  const size_t sharedTokenStride = dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0);
-  auto* sharedTokenBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
-  auto* bulkBarriers =
-      reinterpret_cast<mscclpp::BulkBarrier*>(sharedTokenBase + DispatchMaxNWarpGroups * sharedTokenStride);
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
-  auto* completionCounts = aggregatedDispatchCompletionCounts(sharedMem, nRanks, warpGroupId);
+  auto* completionCounts = aggregatedDispatchCompletionCounts(sharedMem, nRanks, sendState.warpGroupId_);
 
-  auto* stagedToken = sharedTokenBase + static_cast<size_t>(warpGroupId) * sharedTokenStride;
-  auto* bulkBarrier = bulkBarriers + warpGroupId;
-  const int tokenStride = nPayloadBlocks * nWarpGroups;
-  const int firstTokenIdx = senderBlockIdx * nWarpGroups + warpGroupId;
-  uint32_t sendBulkPhase = 0;
-  if (firstTokenIdx < nTokens && laneId == 0) bulkBarrier->init();
   initAggregatedDispatchCompletions(completionCounts, nRanks, laneId);
 
-  for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += tokenStride) {
-    const auto* inputData =
-        reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
-    if (laneId == 0) {
-      bulkBarrier->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
-      mscclpp::bulkLoad(stagedToken, inputData, static_cast<uint32_t>(HiddenBytes), *bulkBarrier);
-    }
-
+  for (int tokenIdx = sendState.firstTokenIdx_; tokenIdx < nTokens; tokenIdx += sendState.tokenStride_) {
+    stageRankMajorBf16Token(inputTokens, tokenIdx, sendState);
     const int expert = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
     const int dstRank = expert >= 0 ? expert / nLocalExperts : -1;
     const float weight =
         laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
     const size_t destIndex = (static_cast<size_t>(transport.rank_) * maxTokensPerRank + tokenIdx) * nTopk + laneId;
 
-    if (laneId == 0) bulkBarrier->wait(sendBulkPhase);
-    __syncwarp();
-    mscclpp::bulkFence();
+    waitRankMajorBf16Token(sendState);
 
     if (laneId < nTopk) {
+      // Publish invalid metadata to non-destination ranks before the route completion is counted.
       for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
         const bool isLocal = destinationRank == dstRank;
         sendRankMajorTopkExpandedMetadata(transport, outputTopkIdx, outputTopkWeights, destinationRank, destIndex,
@@ -311,7 +317,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
     }
 
     if (dstRank >= 0) {
-      issueRankMajorTopkExpandedTokenStore<Hidden>(output, transport, dstRank, destIndex, stagedToken);
+      issueRankMajorTopkExpandedTokenStore<Hidden>(output, transport, dstRank, destIndex, sendState.stagedToken_);
       mscclpp::bulkStoreWait();
       atomicAdd_block(completionCounts + dstRank, 1);
     }
