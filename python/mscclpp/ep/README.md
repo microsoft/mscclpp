@@ -464,7 +464,7 @@ Requirements:
 | Shape | `[T, H]`, token-major |
 | Layout | contiguous row-major |
 | Device | CUDA tensor |
-| dtype | BF16, FP16, FP8, NVFP4, or another supported activation dtype |
+| dtype | BF16, or another supported activation dtype |
 | Ordering | original local token order; not expert sorted |
 
 The user should not expand `input` by top-k and should not convert it to
@@ -496,16 +496,17 @@ combine to reduce the `K` expert results for each token back to `[T, H]`.
 
 ### `quant`
 
-`quant` contains activation quantization metadata for `input`. It should be
-`None` for BF16/FP16 input. `quant.format` defines the tensor representation
-and scale layout.
+`quant` contains activation quantization metadata for dispatch output. It should
+be `None` for BF16 dispatch. `quant.format` defines the wire/output
+representation and scale layout; latency FP8 dispatch currently consumes BF16
+input and emits FP8 output.
 
 Examples:
 
 | Format | `input` | `quant.block_scales` |
 |---|---|---|
-| BF16/FP16 | `[T, H]` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
+| BF16 | `[T, H]` BF16 | `None` |
+| FP8 E4M3 | `[T, H]` BF16 input, FP8 output | `[T, H / 128]` |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
