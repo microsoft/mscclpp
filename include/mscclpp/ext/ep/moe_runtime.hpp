@@ -36,11 +36,14 @@ class MoERuntime {
   /// @param numTopk Number of routed experts per token.
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
-  /// @throws std::invalid_argument If @p mode is not MoEMode::LATENCY.
+  /// @throws EPException For an unsupported mode or invalid configuration.
   /// @warning @p communicator must remain alive until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
+  /// Release owned resources without explicitly synchronizing user streams.
+  /// The caller must ensure all local and peer GPU work using these resources,
+  /// including graph replays, has completed before destruction.
   ~MoERuntime() noexcept(false);
 
   MoERuntime(const MoERuntime&) = delete;
@@ -78,22 +81,30 @@ class MoERuntime {
   ///
   /// ThroughputDispatchRequest is reserved for a follow-up implementation.
   /// Output buffers remain owned by the caller unless obtained through a runtime buffer accessor.
+  /// Hidden size, expert count, top-k count, and output layout come from the runtime.
+  /// Token count and active capacity may vary between dispatches, with
+  /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
   /// @param request Dispatch inputs, outputs, dimensions, and CUDA stream.
-  /// @throws std::invalid_argument If @p request is not a latency request.
-  void dispatch(const DispatchRequest& request);
+  /// @return A non-owning handle identifying this dispatch. A successful new
+  /// dispatch invalidates prior handles; a rejected request does not.
+  /// @throws EPException If @p request is not a valid latency request.
+  DispatchHandle dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
   ///
-  /// A combine request must follow its matching dispatch so the runtime can
-  /// reuse routing metadata and synchronization epochs. ThroughputCombineRequest
-  /// is reserved for a follow-up implementation.
-  /// @param request Combine inputs, outputs, dimensions, and CUDA stream.
-  /// @throws std::invalid_argument If @p request is not a latency request.
+  /// The request's handle supplies routing metadata, token count, active capacity,
+  /// format, and epoch. Fixed dimensions, layout, and algorithm come from the runtime.
+  /// Handle ownership and freshness are checked when enqueuing or capturing
+  /// combine, not when replaying a graph. Device metadata is not validated on the host.
+  /// ThroughputCombineRequest is reserved for a follow-up implementation.
+  /// @param request Expert inputs, outputs, dispatch handle, block count, and CUDA stream.
+  /// @throws EPException If @p request is invalid or its handle is empty, expired,
+  /// stale, or belongs to another runtime.
   void combine(const CombineRequest& request);
 
  private:
   void requireMode(MoEMode expected) const;
-  void launchLatencyDispatch(const LatencyDispatchRequest& request);
+  DispatchHandle launchLatencyDispatch(const LatencyDispatchRequest& request);
   void launchLatencyCombine(const LatencyCombineRequest& request);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
@@ -103,8 +114,8 @@ class MoERuntime {
   int numNvlRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
-  std::unique_ptr<LatencyRuntimeContext> latencyContext_;
-  std::unique_ptr<ThroughputRuntimeContext> throughputContext_;
+  std::shared_ptr<LatencyRuntimeContext> latencyContext_;
+  std::shared_ptr<ThroughputRuntimeContext> throughputContext_;
 };
 
 /// Create the unified MoE runtime selected by @p mode.

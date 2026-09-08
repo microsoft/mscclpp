@@ -4,17 +4,20 @@
 #include <mpi.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <numeric>
+#include <random>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "exception.hpp"
 #include "mp_unit_tests.hpp"
 
 namespace {
@@ -23,7 +26,7 @@ using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 
 constexpr int NumRanks = 8;
-constexpr int NumExperts = 8;
+constexpr int NumExperts = 16 * NumRanks;
 constexpr int NumTopk = 8;
 constexpr int CorrectnessTokens = 8;
 constexpr int CorrectnessHidden = 4096;
@@ -77,16 +80,16 @@ class CudaGraph {
 };
 
 struct TestBuffers {
-  TestBuffers(int numTokens, int hidden)
+  TestBuffers(int numTokens, int hidden, int numExperts = NumExperts)
       : input(static_cast<size_t>(numTokens) * hidden),
         output(static_cast<size_t>(numTokens) * hidden),
-        expertOutput(static_cast<size_t>(NumRanks) * numTokens * hidden),
+        expertOutput(static_cast<size_t>(numExperts) * numTokens * hidden),
         topkIdx(static_cast<size_t>(numTokens) * NumTopk),
         topkWeights(static_cast<size_t>(numTokens) * NumTopk),
-        outputScales(static_cast<size_t>(NumRanks) * numTokens * hidden / 128),
-        srcInfo(static_cast<size_t>(NumRanks) * numTokens),
-        layoutRange(NumRanks),
-        outputCount(NumRanks) {}
+        outputScales(static_cast<size_t>(numExperts) * numTokens * hidden / 128),
+        srcInfo(static_cast<size_t>(numExperts) * numTokens),
+        layoutRange(numExperts),
+        outputCount(std::max(NumRanks, numExperts / NumRanks)) {}
 
   mscclpp::GpuBuffer<Bf16> input;
   mscclpp::GpuBuffer<Bf16> output;
@@ -99,8 +102,17 @@ struct TestBuffers {
   mscclpp::GpuBuffer<int> outputCount;
 };
 
-__global__ void initializeInputs(Bf16* input, int64_t* topkIdx, float* topkWeights, int rank, int numTokens,
-                                 int hidden) {
+std::array<int, NumTopk> routedExperts(int rank, int token, int numExperts) {
+  std::vector<int> experts(numExperts);
+  std::iota(experts.begin(), experts.end(), 0);
+  std::seed_seq seed{42, rank, token};
+  std::mt19937 random(seed);
+  std::array<int, NumTopk> routes;
+  std::sample(experts.begin(), experts.end(), routes.begin(), NumTopk, random);
+  return routes;
+}
+
+__global__ void initializeInputs(Bf16* input, float* topkWeights, int rank, int numTokens, int hidden) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   const size_t inputElements = static_cast<size_t>(numTokens) * hidden;
@@ -111,7 +123,6 @@ __global__ void initializeInputs(Bf16* input, int64_t* topkIdx, float* topkWeigh
 
   const size_t routingElements = static_cast<size_t>(numTokens) * NumTopk;
   for (size_t index = thread; index < routingElements; index += stride) {
-    topkIdx[index] = static_cast<int64_t>(index % NumTopk);
     topkWeights[index] = 1.0f / NumTopk;
   }
 }
@@ -123,20 +134,25 @@ MSCCLPP_DEVICE_INLINE float fp8ToFloat(Fp8E4M3 value) {
   return mscclpp::to<mscclpp::f32x2>(packed).data[0];
 }
 
-__global__ void dequantizeExpertMajor(Bf16* output, const Fp8E4M3* input, const float* scales, int rows, int hidden) {
+__global__ void dequantizeExpertMajor(Bf16* output, const Fp8E4M3* input, const float* scales, int rowsPerExpert,
+                                      int numLocalExperts, int hidden) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
-  const size_t elements = static_cast<size_t>(rows) * hidden;
+  const size_t elements = static_cast<size_t>(numLocalExperts) * rowsPerExpert * hidden;
   for (size_t index = thread; index < elements; index += stride) {
     const int row = static_cast<int>(index / hidden);
     const int hiddenIndex = static_cast<int>(index % hidden);
-    const float scale = scales[static_cast<size_t>(hiddenIndex / 128) * rows + row];
+    const size_t scaleIndex =
+        (static_cast<size_t>(row / rowsPerExpert) * (hidden / 128) + hiddenIndex / 128) * rowsPerExpert +
+        row % rowsPerExpert;
+    const float scale = scales[scaleIndex];
     output[index] = static_cast<Bf16>(fp8ToFloat(input[index]) * scale);
   }
 }
 
 __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, const int* topkIdx,
-                                           const float* topkWeights, int rank, int rows, int hidden, bool directSend) {
+                                           const float* topkWeights, int rank, int rows, int hidden, bool directSend,
+                                           int numExperts) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? static_cast<size_t>(NumTopk) : size_t{1});
@@ -147,12 +163,14 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, cons
     const int row = static_cast<int>(directSend ? routeIndex / NumTopk : routeIndex);
     float localWeight = 0.0f;
     if (directSend) {
-      if (topkIdx[static_cast<size_t>(row) * NumTopk + topkLane] == rank) {
+      const int expert = topkIdx[static_cast<size_t>(row) * NumTopk + topkLane];
+      if (expert >= 0 && expert < numExperts && expert / (numExperts / NumRanks) == rank) {
         localWeight = topkWeights[static_cast<size_t>(row) * NumTopk + topkLane];
       }
     } else {
       for (int lane = 0; lane < NumTopk; ++lane) {
-        if (topkIdx[static_cast<size_t>(row) * NumTopk + lane] == rank) {
+        const int expert = topkIdx[static_cast<size_t>(row) * NumTopk + lane];
+        if (expert >= 0 && expert < numExperts && expert / (numExperts / NumRanks) == rank) {
           localWeight += topkWeights[static_cast<size_t>(row) * NumTopk + lane];
         }
       }
@@ -166,10 +184,18 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, cons
 
 int numBlocks(size_t elements) { return static_cast<int>(std::min<size_t>((elements + Threads - 1) / Threads, 4096)); }
 
-void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hidden, cudaStream_t stream) {
+void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hidden, cudaStream_t stream,
+                           int numExperts = NumExperts) {
+  std::vector<int64_t> topkIdx(static_cast<size_t>(numTokens) * NumTopk);
+  for (int token = 0; token < numTokens; ++token) {
+    const auto experts = routedExperts(rank, token, numExperts);
+    std::copy(experts.begin(), experts.end(), topkIdx.begin() + static_cast<size_t>(token) * NumTopk);
+  }
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(buffers.topkIdx.data(), topkIdx.data(), topkIdx.size() * sizeof(int64_t),
+                                    cudaMemcpyHostToDevice, stream));
   const size_t elements = std::max(static_cast<size_t>(numTokens) * hidden, static_cast<size_t>(numTokens) * NumTopk);
-  initializeInputs<<<numBlocks(elements), Threads, 0, stream>>>(buffers.input.data(), buffers.topkIdx.data(),
-                                                                buffers.topkWeights.data(), rank, numTokens, hidden);
+  initializeInputs<<<numBlocks(elements), Threads, 0, stream>>>(buffers.input.data(), buffers.topkWeights.data(), rank,
+                                                                numTokens, hidden);
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.output.data(), 0, buffers.output.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.expertOutput.data(), 0, buffers.expertOutput.bytes(), stream));
@@ -177,6 +203,8 @@ void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hi
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.srcInfo.data(), 0, buffers.srcInfo.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.layoutRange.data(), 0, buffers.layoutRange.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.outputCount.data(), 0, buffers.outputCount.bytes(), stream));
+  // Finish the host routing copy before its source vector is destroyed.
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
 
 std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMode combineMode,
@@ -188,12 +216,11 @@ std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMod
   return std::string(layoutName) + "/" + combineName + "/" + dataTypeName;
 }
 
-std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden, float tolerance,
-                        float expectedMultiplier = 1.0f) {
+std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden, float tolerance) {
   std::vector<Bf16> hostOutput(static_cast<size_t>(numTokens) * hidden);
   MSCCLPP_CUDATHROW(cudaMemcpy(hostOutput.data(), output, hostOutput.size() * sizeof(Bf16), cudaMemcpyDeviceToHost));
   for (int token = 0; token < numTokens; ++token) {
-    const float expected = static_cast<float>((rank * numTokens + token) * NumTopk) * expectedMultiplier;
+    const float expected = static_cast<float>((rank * numTokens + token) * NumTopk);
     for (int hiddenIndex = 0; hiddenIndex < hidden; ++hiddenIndex) {
       const float actual = static_cast<float>(hostOutput[static_cast<size_t>(token) * hidden + hiddenIndex]);
       if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance) {
@@ -207,15 +234,30 @@ std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden,
   return {};
 }
 
-std::string checkCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout, int numTokens) {
-  const int countSize = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR ? 1 : NumRanks;
+std::string checkCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout, int numTokens, int rank,
+                        int numExperts) {
+  const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
+  const int numLocalExperts = numExperts / NumRanks;
+  const int countSize = expertMajor ? numLocalExperts : NumRanks;
   std::vector<int> hostCount(countSize);
   MSCCLPP_CUDATHROW(cudaMemcpy(hostCount.data(), outputCount, hostCount.size() * sizeof(int), cudaMemcpyDeviceToHost));
-  const int expected = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR ? NumRanks * numTokens : numTokens;
+  std::vector<int> expected(countSize, 0);
+  for (int source = 0; source < NumRanks; ++source) {
+    for (int token = 0; token < numTokens; ++token) {
+      bool received = false;
+      for (int expert : routedExperts(source, token, numExperts)) {
+        if (expert / numLocalExperts == rank) {
+          if (expertMajor) ++expected[expert % numLocalExperts];
+          received = true;
+        }
+      }
+      if (!expertMajor && received) ++expected[source];
+    }
+  }
   for (int index = 0; index < countSize; ++index) {
-    if (hostCount[index] != expected) {
+    if (hostCount[index] != expected[index]) {
       std::ostringstream error;
-      error << "output count " << index << ": expected " << expected << ", got " << hostCount[index];
+      error << "output count " << index << ": expected " << expected[index] << ", got " << hostCount[index];
       return error.str();
     }
   }
@@ -233,9 +275,10 @@ void assertCollectiveSuccess(const std::string& localError, const std::string& l
 
 std::unique_ptr<mscclpp::ep::MoERuntime> createRuntime(mscclpp::Communicator& communicator, int numTokens, int hidden,
                                                        mscclpp::ep::DispatchLayout layout,
-                                                       mscclpp::ep::CombineMode combineMode) {
+                                                       mscclpp::ep::CombineMode combineMode,
+                                                       int numExperts = NumExperts) {
   return std::make_unique<mscclpp::ep::MoERuntime>(communicator, mscclpp::ep::MoEMode::LATENCY, numTokens, hidden,
-                                                   NumExperts, NumTopk, layout, combineMode);
+                                                   numExperts, NumTopk, layout, combineMode);
 }
 
 void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
@@ -257,7 +300,7 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
 
   auto* outputTopkIdx = expertMajor ? nullptr : static_cast<int*>(runtime->outputTopkIdsBuffer());
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
-  runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
+  const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
       .output = dispatchOutput,
       .outputScales = fp8 ? buffers.outputScales.data() : nullptr,
       .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
@@ -269,12 +312,8 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
       .topkIdx = buffers.topkIdx.data(),
       .topkWeights = buffers.topkWeights.data(),
       .numTokens = CorrectnessTokens,
-      .hidden = CorrectnessHidden,
-      .numTopk = NumTopk,
       .maxTokensPerRank = CorrectnessTokens,
-      .numExperts = NumExperts,
       .invalidTokenExpertId = NumExperts,
-      .dispatchLayout = layout,
       .dispatchDataType = dataType,
       .numBlocks = dispatchBlocks,
       .stream = stream,
@@ -283,10 +322,11 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
   const void* expertOutput = dispatchOutput;
   if (fp8) {
     const int rows = NumRanks * CorrectnessTokens;
-    const size_t elements = static_cast<size_t>(rows) * CorrectnessHidden;
+    const int numLocalExperts = NumExperts / NumRanks;
+    const size_t elements = static_cast<size_t>(numLocalExperts) * rows * CorrectnessHidden;
     dequantizeExpertMajor<<<numBlocks(elements), Threads, 0, stream>>>(
         buffers.expertOutput.data(), static_cast<const Fp8E4M3*>(dispatchOutput), buffers.outputScales.data(), rows,
-        CorrectnessHidden);
+        numLocalExperts, CorrectnessHidden);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = buffers.expertOutput.data();
   } else if (!expertMajor) {
@@ -296,7 +336,7 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
     const size_t elements = static_cast<size_t>(rows) * CorrectnessHidden * (directSend ? NumTopk : 1);
     stageRankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
         combineInput, static_cast<const Bf16*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows,
-        CorrectnessHidden, directSend);
+        CorrectnessHidden, directSend, NumExperts);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = combineInput;
   }
@@ -304,24 +344,13 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
   runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::LatencyCombineRequest{
       .output = buffers.output.data(),
       .input = expertOutput,
-      .topkIdx = buffers.topkIdx.data(),
-      .topkWeights = expertMajor ? buffers.topkWeights.data() : nullptr,
-      .srcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
-      .layoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
-      .numTokens = CorrectnessTokens,
-      .hidden = CorrectnessHidden,
-      .numTopk = NumTopk,
-      .maxTokensPerRank = CorrectnessTokens,
-      .numExperts = NumExperts,
-      .dispatchLayout = layout,
-      .dispatchDataType = dataType,
-      .combineMode = combineMode,
+      .handle = handle,
       .numBlocks = combineBlocks,
       .stream = stream,
   }});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  std::string error = checkCounts(buffers.outputCount.data(), layout, CorrectnessTokens);
+  std::string error = checkCounts(buffers.outputCount.data(), layout, CorrectnessTokens, rank, NumExperts);
   if (error.empty()) {
     error = checkOutput(buffers.output.data(), rank, CorrectnessTokens, CorrectnessHidden, fp8 ? 1.0f : 0.0f);
   }
@@ -349,7 +378,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
 
   auto dispatch = [&]() {
-    runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
+    return runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
         .output = dispatchOutput,
         .outputScales = nullptr,
         .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
@@ -361,46 +390,37 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
         .topkIdx = buffers.topkIdx.data(),
         .topkWeights = buffers.topkWeights.data(),
         .numTokens = PerfTokens,
-        .hidden = PerfHidden,
-        .numTopk = NumTopk,
         .maxTokensPerRank = PerfTokens,
-        .numExperts = NumExperts,
         .invalidTokenExpertId = NumExperts,
-        .dispatchLayout = layout,
         .dispatchDataType = mscclpp::ep::DispatchDataType::BF16,
         .numBlocks = dispatchBlocks,
         .stream = stream,
     }});
   };
-  auto combine = [&]() {
+  auto combine = [&](const mscclpp::ep::DispatchHandle& handle) {
     runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::LatencyCombineRequest{
         .output = buffers.output.data(),
         .input = combineInput,
-        .topkIdx = buffers.topkIdx.data(),
-        .topkWeights = expertMajor ? buffers.topkWeights.data() : nullptr,
-        .srcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
-        .layoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
-        .numTokens = PerfTokens,
-        .hidden = PerfHidden,
-        .numTopk = NumTopk,
-        .maxTokensPerRank = PerfTokens,
-        .numExperts = NumExperts,
-        .dispatchLayout = layout,
-        .dispatchDataType = mscclpp::ep::DispatchDataType::BF16,
-        .combineMode = mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE,
+        .handle = handle,
         .numBlocks = combineBlocks,
         .stream = stream,
     }});
   };
   auto dispatchCombine = [&]() {
-    dispatch();
-    combine();
+    const auto handle = dispatch();
+    if (!expertMajor) {
+      const int rows = NumRanks * PerfTokens;
+      const size_t elements = static_cast<size_t>(rows) * PerfHidden;
+      stageRankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+          static_cast<Bf16*>(combineInput), static_cast<const Bf16*>(dispatchOutput), outputTopkIdx, outputTopkWeights,
+          rank, rows, PerfHidden, false, NumExperts);
+      MSCCLPP_CUDATHROW(cudaGetLastError());
+    }
+    combine(handle);
   };
-  const float expectedMultiplier = expertMajor ? 1.0f : static_cast<float>(NumTopk);
-
   for (int iteration = 0; iteration < NumWarmups; ++iteration) dispatchCombine();
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f, expectedMultiplier),
+  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f),
                           perfLabel + " warmup");
 
   CudaGraph graph;
@@ -424,7 +444,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
   MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedMs, start, end));
   MSCCLPP_CUDATHROW(cudaEventDestroy(start));
   MSCCLPP_CUDATHROW(cudaEventDestroy(end));
-  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f, expectedMultiplier),
+  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f),
                           perfLabel + " replay");
 
   const double localMicroseconds = static_cast<double>(elapsedMs) * 1000.0 / (NumGraphReplays * PairsPerGraph);
@@ -476,7 +496,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   try {
     auto unsupported = std::make_unique<mscclpp::ep::MoERuntime>(
         *communicator, mscclpp::ep::MoEMode::THROUGHPUT, CorrectnessTokens, CorrectnessHidden, NumExperts, NumTopk);
-  } catch (const std::invalid_argument&) {
+  } catch (const EPException&) {
     rejectedThroughput = true;
   }
   ASSERT_TRUE(rejectedThroughput);
@@ -500,7 +520,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   bool rejectedDispatch = false;
   try {
     runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{}});
-  } catch (const std::invalid_argument&) {
+  } catch (const EPException&) {
     rejectedDispatch = true;
   }
   ASSERT_TRUE(rejectedDispatch);
@@ -508,7 +528,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   bool rejectedCombine = false;
   try {
     runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::ThroughputCombineRequest{}});
-  } catch (const std::invalid_argument&) {
+  } catch (const EPException&) {
     rejectedCombine = true;
   }
   ASSERT_TRUE(rejectedCombine);
@@ -536,5 +556,5 @@ PERF_TEST(MoERuntimeTest, GraphDispatchCombine32Tokens) {
 
 PERF_TEST(MoERuntimeTest, GraphRankMajorDispatchCombine32Tokens) {
   runGraphPerformance(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
-                      mscclpp::ep::DispatchLayout::RANK_MAJOR, "rank-major 32 tokens/rank graph D+C");
+                      mscclpp::ep::DispatchLayout::RANK_MAJOR, "rank-major 32 tokens/rank graph D+weighted staging+C");
 }

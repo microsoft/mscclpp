@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
-#include <stdexcept>
 
 #include "exception.hpp"
 #include "moe_runtime_context.hpp"
@@ -23,10 +22,10 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
   EP_HOST_ASSERT(numNvlRanks_ > 0);
 
   if (mode_ != MoEMode::LATENCY) {
-    throw std::invalid_argument("This build only supports MoEMode::LATENCY");
+    EP_THROW("This build only supports MoEMode::LATENCY");
   }
   latencyContext_ =
-      std::make_unique<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
+      std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
                                               maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
   available_ = latencyContext_->available_;
 }
@@ -35,8 +34,8 @@ MoERuntime::~MoERuntime() noexcept(false) = default;
 
 void MoERuntime::requireMode(MoEMode expected) const {
   if (mode_ != expected) {
-    throw std::runtime_error(expected == MoEMode::LATENCY ? "MoE runtime was not created with MoEMode::LATENCY"
-                                                          : "MoE runtime was not created with MoEMode::THROUGHPUT");
+    EP_THROW(expected == MoEMode::LATENCY ? "MoE runtime was not created with MoEMode::LATENCY"
+                                          : "MoE runtime was not created with MoEMode::THROUGHPUT");
   }
 }
 
@@ -54,20 +53,20 @@ void* MoERuntime::dispatchOutputBuffer() const {
       .dispatchOutputBuffer_;
 }
 
-void MoERuntime::dispatch(const DispatchRequest& request) {
+DispatchHandle MoERuntime::dispatch(const DispatchRequest& request) {
   requireMode(MoEMode::LATENCY);
   const auto* latencyRequest = std::get_if<LatencyDispatchRequest>(&request.value_);
   if (latencyRequest == nullptr) {
-    throw std::invalid_argument("Throughput dispatch is not available in this build");
+    EP_THROW("Throughput dispatch is not available in this build");
   }
-  launchLatencyDispatch(*latencyRequest);
+  return launchLatencyDispatch(*latencyRequest);
 }
 
 void MoERuntime::combine(const CombineRequest& request) {
   requireMode(MoEMode::LATENCY);
   const auto* latencyRequest = std::get_if<LatencyCombineRequest>(&request.value_);
   if (latencyRequest == nullptr) {
-    throw std::invalid_argument("Throughput combine is not available in this build");
+    EP_THROW("Throughput combine is not available in this build");
   }
   launchLatencyCombine(*latencyRequest);
 }

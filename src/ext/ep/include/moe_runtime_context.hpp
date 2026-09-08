@@ -11,6 +11,7 @@
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <utility>
 #include <vector>
 
 #include "config.hpp"
@@ -18,6 +19,29 @@
 
 namespace mscclpp {
 namespace ep {
+
+struct DispatchHandle::Impl {
+  Impl(std::weak_ptr<void> owner, uint32_t epoch, const LatencyDispatchRequest& request)
+      : owner_(std::move(owner)),
+        epoch_(epoch),
+        topkIdx_(request.topkIdx),
+        topkWeights_(request.topkWeights),
+        srcInfo_(request.outputSrcInfo),
+        layoutRange_(request.outputLayoutRange),
+        numTokens_(request.numTokens),
+        maxTokensPerRank_(request.maxTokensPerRank),
+        dispatchDataType_(request.dispatchDataType) {}
+
+  std::weak_ptr<void> owner_;
+  uint32_t epoch_;
+  const int64_t* topkIdx_;
+  const float* topkWeights_;
+  const int* srcInfo_;
+  const int64_t* layoutRange_;
+  int numTokens_;
+  int maxTokensPerRank_;
+  DispatchDataType dispatchDataType_;
+};
 
 // Mode-specific contexts owned by MoERuntime.
 struct LatencyRuntimeContext {

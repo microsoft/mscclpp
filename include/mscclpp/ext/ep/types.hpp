@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <variant>
 
@@ -73,20 +74,18 @@ struct LatencyDispatchRequest {
   const int64_t* topkIdx;
   /// Optional input top-k weights.
   const float* topkWeights;
-  /// Number of input tokens.
+  /// Number of input tokens, in [0, maxTokensPerRank].
   int numTokens;
-  /// Hidden dimension.
-  int hidden;
-  /// Number of routed experts per token.
-  int numTopk;
-  /// Active per-rank token capacity.
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
   int maxTokensPerRank;
-  /// Global expert count.
-  int numExperts;
-  /// Expert ID used for invalid rank-major entries.
-  int invalidTokenExpertId;
-  /// Requested dispatch output layout.
-  DispatchLayout dispatchLayout;
+  /// Sentinel written to rank-major padding and non-local expert entries.
+  /// Defaults to -1.
+  /// Here numExperts is the runtime's configured global expert count.
+  /// Must be outside [0, numExperts): use a negative int (e.g., -1) or an
+  /// int >= numExperts (e.g., numExperts). All ranks must use the same sentinel.
+  /// This is an output sentinel; input topkIdx entries must still be valid
+  /// global expert IDs or negative values for dropped routes.
+  int invalidTokenExpertId = -1;
   /// Requested dispatch payload format.
   DispatchDataType dispatchDataType;
   /// Dispatch grid block count.
@@ -110,36 +109,31 @@ struct DispatchRequest {
   std::variant<LatencyDispatchRequest, ThroughputDispatchRequest> value_;
 };
 
+/// Opaque metadata returned by a successful dispatch.
+///
+/// A handle borrows the dispatch's routing buffers and runtime resources.
+class DispatchHandle {
+ public:
+  /// Construct an empty handle. Passing it to combine raises EPException.
+  DispatchHandle() = default;
+
+ private:
+  friend class MoERuntime;
+
+  struct Impl;
+  explicit DispatchHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+
+  std::shared_ptr<const Impl> impl_;
+};
+
 /// Arguments for latency-mode combine.
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
   /// Local expert output.
   const void* input;
-  /// Input top-k expert IDs.
-  const int64_t* topkIdx;
-  /// Optional input top-k weights.
-  const float* topkWeights;
-  /// Optional source-token metadata.
-  const int* srcInfo;
-  /// Optional packed layout metadata.
-  const int64_t* layoutRange;
-  /// Number of output tokens.
-  int numTokens;
-  /// Hidden dimension.
-  int hidden;
-  /// Number of routed experts per token.
-  int numTopk;
-  /// Active per-rank token capacity.
-  int maxTokensPerRank;
-  /// Global expert count.
-  int numExperts;
-  /// Dispatch input layout.
-  DispatchLayout dispatchLayout;
-  /// Dispatch payload format.
-  DispatchDataType dispatchDataType;
-  /// Combine algorithm.
-  CombineMode combineMode;
+  /// Handle returned by the matching dispatch.
+  DispatchHandle handle;
   /// Combine grid block count.
   int numBlocks;
   /// CUDA stream used for the operation.

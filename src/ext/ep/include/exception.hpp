@@ -24,6 +24,10 @@ class EPException : public std::exception {
   const char* what() const noexcept override { return message.c_str(); }
 };
 
+#ifndef EP_THROW
+#define EP_THROW(error) throw EPException("InvalidUsage", __FILE__, __LINE__, (error))
+#endif
+
 #ifndef EP_HOST_ASSERT
 #define EP_HOST_ASSERT(cond)                                     \
   do {                                                           \

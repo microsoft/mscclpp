@@ -17,5 +17,6 @@ target_sources(mp_unit_tests PRIVATE
 
 if(TARGET mscclpp_ep)
     target_sources(mp_unit_tests PRIVATE ep_tests.cu)
+    target_include_directories(mp_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
     target_link_libraries(mp_unit_tests mscclpp_ep)
 endif()

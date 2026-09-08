@@ -19,6 +19,11 @@ inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
 inline constexpr int MaxNumTopk = 8;
 
+inline constexpr bool isSupportedHidden(int hidden) {
+  return hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 ||
+         hidden == 9216;
+}
+
 struct Workload {
   /// Host-assigned epoch shared by the matching dispatch and combine calls.
   uint32_t epoch_;
