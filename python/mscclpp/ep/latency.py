@@ -501,9 +501,8 @@ class LatencyRuntime(Runtime):
             )
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
-        expected_input_dtype = dispatch_tensor_dtype(mode_context.dispatch_data_type)
-        if input.device.type != "cuda" or input.dtype != expected_input_dtype:
-            raise ValueError(f"latency dispatch input must be a CUDA {expected_input_dtype} tensor")
+        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
+            raise ValueError("latency dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != mode_context.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {mode_context.hidden_size}")
         if input.size(0) > active_capacity:
