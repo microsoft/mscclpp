@@ -201,8 +201,10 @@ struct LatencyStorageLayout {
     dispatchOutputBytes_ = rankMajor    ? rankMajorDispatchOutputBytes
                            : tokenMajor ? tokenMajorDispatchOutputBytes
                                         : expertMajorDispatchOutputBytes;
-    const size_t dispatchRecvBufferBytes = std::max(
-        {dispatchBufferBytes, rankMajorDispatchBufferBytes, tokenMajorDispatchBufferBytes, dispatchOutputBytes_});
+    const size_t selectedLayoutDispatchBufferBytes =
+        rankMajor ? rankMajorDispatchBufferBytes
+                  : (tokenMajor ? tokenMajorDispatchBufferBytes : dispatchOutputBytes_);
+    const size_t dispatchRecvBufferBytes = std::max(dispatchBufferBytes, selectedLayoutDispatchBufferBytes);
     const size_t combineRecvBufferBytes = rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes
                                           : (rankMajorLocalReduce || tokenMajorLocalReduce) ? 0
                                                                                             : dispatchOutputBytes_;
