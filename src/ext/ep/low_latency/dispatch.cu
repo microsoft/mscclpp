@@ -148,9 +148,9 @@ MSCCLPP_DEVICE_INLINE void completeRankMajorTokenStore(WorkspaceView& workspaceV
 // such destination the leader stages the token + top-k metadata into one
 // symmetric staging-ring slot (a GPUNetIO put must source from registered
 // memory), then RDMA-writes the token to the peer rank-major token slot and the
-// metadata to the peer id/weight buffers as UNSIGNALED puts. The completion flag
-// is bumped once per destination by a batched atomic-add(count) posted from the
-// dispatch kernel after a grid barrier, not per token.
+// metadata to the peer id/weight buffers. After a grid-wide posting barrier,
+// the notify block appends one ordered marker to each QP, not per token, and
+// drains those queues concurrently with receiver work in the other blocks.
 //
 // Called by all lanes of the warp; only lanes with laneId < nTopk carry metadata.
 template <int Hidden>
@@ -185,8 +185,8 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
     // Per-destination-expert QP (mirrors NCCL/DeepEP dst_expert_local_idx): route
     // each cross-domain token onto the QP owned by its destination local expert so
     // the NIC drains different experts' streams in parallel with no head-of-line
-    // blocking. The block records every (peer, qp) it touches in usedQpMask so a
-    // single block-level flush-only-used pass drains just those QPs before the barrier.
+    // blocking. Retain the legacy usedQpMask bookkeeping to isolate this protocol
+    // change; completion now uses the fixed all-QP marker set.
     const int qpIndex = (leaderExpert >= 0 ? leaderExpert % nLocalExperts : 0) % gin->numQpsPerPeer;
     if (laneId == leaderLane)
       atomicOr(reinterpret_cast<unsigned long long*>(&usedQpMask[destinationRank]), 1ull << qpIndex);
@@ -379,8 +379,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
-  // Cross-domain payload puts stay in flight; a single block-level flush-only-used
-  // pass in the kernel drains just the touched QPs (usedQpMask) before the grid barrier.
+  // Cross-domain payload puts stay in flight through the grid posting barrier.
+  // The notify block posts all-QP markers, then drains while other blocks receive.
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
   {
     long long s = tcyc[0], f = tcyc[1], p = tcyc[2], n = tcyc[3];
@@ -649,10 +649,9 @@ MSCCLPP_DEVICE_INLINE void writeRankMajorCounts(const TransportView& transport, 
       auto* remotePacket = reinterpret_cast<uint8_t*>(recvBuffer) + static_cast<size_t>(nRanks + transport.rank_) * sizeof(mscclpp::LL8Packet);
       gin->put(dstRank, transport.symmetricOffset(remotePacket), transport.symmetricOffset(scratch),
                sizeof(mscclpp::LL8Packet), static_cast<int>(blockIdx.x) % gin->numQpsPerPeer);
-      // Intentionally NOT flushed here. This count put rides the same per-block QP
-      // (blockIdx % numQpsPerPeer) that the notify block flushes AFTER the grid
-      // barrier in dispatchKernel, which drains it and frees the staging slot well
-      // before the next dispatch's writeRankMajorCounts overwrites it. Delivery is
+      // Intentionally NOT flushed here. The notify block marks and drains every
+      // QP AFTER the grid posting barrier, including this blockIdx % numQpsPerPeer
+      // count QP, before the next dispatch overwrites its staging slot. Delivery is
       // self-synchronizing (the receiver spins on the LL8Packet epoch flag), so it
       // does not need our flush. Flushing here would drain that QP -- shared with
       // the workers' per-expert payload puts -- forcing the notify block to wait on
@@ -671,9 +670,8 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
   for (int dstRank = threadId; dstRank < nRanks; dstRank += blockDim.x) {
     const int expectedPayloadCount = rankTokenCounts[dstRank];
 #if defined(MSCCLPP_USE_GPUNETIO)
-    // Cross-domain destinations are served entirely by the GPUNetIO send path,
-    // which carries its own per-token completion signal (fused put+signal). They
-    // never touch the NVLink completion counter, so skip the wait/signal here.
+    // Cross-domain destinations use ordered per-QP markers after the grid posting
+    // barrier. They never touch the NVLink completion counter, so skip this wait.
     if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(dstRank)) continue;
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
     if (expectedPayloadCount > 0) {
@@ -933,8 +931,9 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvRankMajor(int* outputTopkIdx, float* outp
         // atomic-add (pktdata that scales with epoch would indicate this).
         auto* base = reinterpret_cast<uint8_t*>(transport.symmetricBufferBase_);
         const long recvOff = reinterpret_cast<uint8_t*>(&rankTokenCounts[sourceRank]) - base;
-        auto* flagsP = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) + sourceRank * sizeof(uint64_t);
-        auto* cflagsP = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineFlagsBuffer_) + sourceRank * sizeof(uint64_t);
+        const size_t sourceFlagOffset = static_cast<size_t>(sourceRank) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t);
+        auto* flagsP = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) + sourceFlagOffset;
+        auto* cflagsP = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineFlagsBuffer_) + sourceFlagOffset;
         printf("[GINDIAG]   rank=%d recvOff=%ld flagsOff=%ld flags[src]=%llu cflagsOff=%ld cflags[src]=%llu\n",
                transport.rank_, recvOff, static_cast<long>(flagsP - base),
                static_cast<unsigned long long>(*reinterpret_cast<volatile uint64_t*>(flagsP)),
@@ -967,24 +966,29 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvRankMajor(int* outputTopkIdx, float* outp
     // packet in recvBuffer is cleared before combine runs, the workspace is not.
     workspaceView.dispatchRecvCounts_[sourceRank] = nRankTokens;
   }
-  if (threadIdx.x == 0 && nRankTokens > 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    // Cross-domain source: the payload arrived via GPUNetIO, which bumps this
-    // rank's per-source completion flag once per token. The flag is a monotonic
-    // cumulative counter that is never reset -- resetting it would race with the
-    // remote NIC atomic-add of a later epoch and drop a signal, hanging a future
-    // iteration. Instead each receiver tracks its own cumulative baseline (touched
-    // by a single thread: one block per source rank), so the wait target grows by
-    // this epoch's token count and no writer ever races the flag.
-    if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(sourceRank)) {
-      auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);
-      const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + static_cast<uint64_t>(nRankTokens);
-      while (flags[sourceRank] < target) {
+  if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+    // A fixed marker set is sent every invocation, even for zero-token sources.
+    // Test each QP separately: a fast QP reaching a later generation cannot stand
+    // in for a late QP. The local baseline must not depend on the captured epoch,
+    // which can repeat across CUDA-graph launches.
+    const int nQp = transport.gpuNetIo_->numQpsPerPeer;
+    EP_DEVICE_ASSERT(nQp > 0 && nQp <= GpuNetIoMaxQpsPerPeer);
+    const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + 1;
+    auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_) +
+                  static_cast<size_t>(sourceRank) * GpuNetIoMaxQpsPerPeer;
+    for (int q = static_cast<int>(threadIdx.x); q < nQp; q += static_cast<int>(blockDim.x)) {
+      while (flags[q] < target) {
       }
-      workspaceView.dispatchArrivedBaseline_[sourceRank] = target;
-      return;
     }
+    // Every polling thread has consumed the old baseline and all markers have
+    // arrived before the single writer advances it. This branch is block-uniform.
+    __syncthreads();
+    if (threadIdx.x == 0) workspaceView.dispatchArrivedBaseline_[sourceRank] = target;
+    return;
+  }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
+  if (threadIdx.x == 0 && nRankTokens > 0) {
     if (transport.isSelf(sourceRank)) {
       workspaceView.dispatchLocalPayloadReady_->acquire();
     } else {
@@ -1146,7 +1150,7 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif
 #if defined(MSCCLPP_USE_GPUNETIO)
   // Per-block bitmask of cross-domain QPs this block posts to (one uint64 per peer,
-  // bit q => QP q used). The block-level flush-only-used pass below drains just these.
+  // bit q => QP q used). Retain send bookkeeping to isolate the completion change.
   __shared__ uint64_t sDispatchUsedQpMask[64];
   uint64_t* usedQpMask = sDispatchUsedQpMask;
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
@@ -1176,39 +1180,15 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-  // Batched cross-domain completion signal. The rank-major send posts payloads as
-  // UNSIGNALED writes spread across each peer's QPs, and every worker flushes its
-  // qpIndex (payloads complete) before this grid barrier. The barrier therefore
-  // guarantees all payloads have LANDED, so the notify block posts ONE
-  // atomic-add(count) per cross-domain destination (replacing one signaled put per
-  // token) and the receiver's flag advances only after every token has arrived --
-  // no cross-QP RC ordering is needed because the payloads are already complete.
+  // Remote completion, not local payload CQ completion, gates receive readiness.
+  // The grid barrier proves all payload/count WQEs have been submitted (not yet
+  // delivered). One ordered marker per (peer, QP) then proves that QP's delivery.
+  // The notify block posts ALL markers before draining ANY queues, while distinct
+  // receiver blocks wait for incoming markers and prepare their metadata tails.
   // All dispatch blocks are co-resident (EP_HOST_ASSERT residentBlocks >=
   // numBlocks), so the grid barrier cannot deadlock.
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     if (transport.gpuNetIo_ != nullptr) {
-      {
-        // Flush-only-used: drain just the (peer, qp) pairs this block posted to,
-        // once each, cooperatively across the block -- not every warp flushing all
-        // nRanks*numQpsPerPeer. Removes the idle-QP flush tax that capped useful QP
-        // parallelism at scale. flush(peer,qp) drains all warps' tickets on that QP.
-        auto* ginDrain = transport.gpuNetIo_;
-        const int nQp = ginDrain->numQpsPerPeer;
-#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
-        const long long _tf0 = clock64();
-#endif
-        __syncthreads();
-        for (int idx = static_cast<int>(threadIdx.x); idx < nRanks * nQp; idx += static_cast<int>(blockDim.x)) {
-          const int peer = idx / nQp;
-          const int q = idx % nQp;
-          if (transport.isNvlinkPeer(peer)) continue;
-          if (usedQpMask[peer] & (1ull << q)) ginDrain->flush(peer, q);
-        }
-        __syncthreads();
-#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
-        tFlushCyc = clock64() - _tf0;
-#endif
-      }
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
       const long long _tb0 = clock64();
 #endif
@@ -1218,20 +1198,36 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif
       if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
         auto* gin = transport.gpuNetIo_;
-        const int qpIndex = static_cast<int>(blockIdx.x) % gin->numQpsPerPeer;
-        auto* flagsSelf = reinterpret_cast<uint8_t*>(transport.gpuNetIoFlagsBuffer_) +
-                          static_cast<size_t>(transport.rank_) * sizeof(uint64_t);
-        const uint64_t flagOffset = transport.symmetricOffset(flagsSelf);
-        // sharedMem[dst] still holds rankTokenCounts (per-destination send count)
-        // published by dispatchRankMajorNotify in this same block; the grid
-        // barrier only issues __syncthreads + global spins and never clobbers it.
-        for (int dst = static_cast<int>(threadIdx.x); dst < nRanks; dst += static_cast<int>(blockDim.x)) {
+        const int nQp = gin->numQpsPerPeer;
+        EP_DEVICE_ASSERT(nQp > 0 && nQp <= GpuNetIoMaxQpsPerPeer);
+        auto* flagsSelf = reinterpret_cast<uint64_t*>(transport.gpuNetIoFlagsBuffer_) +
+                          static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
+        // Fixed all-QP generations avoid exchanging a global used-QP bitmap.
+        // Include empty queues and zero-token peers so every receiver advances
+        // exactly once, and the count QP is always included in the drain set.
+        for (int idx = static_cast<int>(threadIdx.x); idx < nRanks * nQp; idx += static_cast<int>(blockDim.x)) {
+          const int dst = idx / nQp;
+          const int q = idx % nQp;
           if (transport.isNvlinkPeer(dst)) continue;
-          const int count = sharedMem[dst];
-          if (count > 0) gin->atomicAdd(dst, flagOffset, count, qpIndex);
+          gin->atomicAdd(dst, transport.symmetricOffset(flagsSelf + q), 1, q);
         }
         __syncthreads();
-        if (threadIdx.x == 0) flushAllCrossDomain(transport, nRanks, qpIndex);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+        const long long _tf0 = clock64();
+#endif
+        // The notify block has no receive role (nWorkerBlocks >= nRanks). Its
+        // parallel drains overlap receiver blocks, but MUST finish before kernel
+        // return to reclaim SQ/CQ entries and protect payload/count staging reuse.
+        for (int idx = static_cast<int>(threadIdx.x); idx < nRanks * nQp; idx += static_cast<int>(blockDim.x)) {
+          const int dst = idx / nQp;
+          const int q = idx % nQp;
+          if (transport.isNvlinkPeer(dst)) continue;
+          gin->flush(dst, q);
+        }
+        __syncthreads();
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+        tFlushCyc = clock64() - _tf0;
+#endif
       }
     }
   }
@@ -1261,10 +1257,10 @@ __global__ __launch_bounds__(DispatchNThreads,
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     const int _blk = static_cast<int>(blockIdx.x);
-    // Sample a recv-only block (0), a spread of worker blocks (their arrival =
-    // send+flush exposes the barrier imbalance) and the notify straggler
-    // (nWorkerBlocks+1). `ep` lets the parser drop warm-up iterations so the
-    // barrier-wait / notify / recv split is measured in steady state.
+    // Sample block 0, sender blocks, and the notify block (nWorkerBlocks+1).
+    // flush_cyc now measures only the notify block's deferred all-QP drain;
+    // worker flush_cyc is zero. Barrier and receive waits overlap that drain,
+    // so these per-block fields are not additive kernel phase durations.
     const bool _rep = _blk == 0 || _blk == 1 || _blk == nWorkerBlocks / 2 || _blk == nWorkerBlocks ||
                       _blk == nWorkerBlocks + 1;
     if (threadIdx.x == 0 && _rep)

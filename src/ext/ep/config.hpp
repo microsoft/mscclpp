@@ -233,7 +233,7 @@ struct Layout {
     const size_t gpuNetIoStagingBytes =
         configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
     const size_t gpuNetIoFlagsBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
+      configAlign<size_t>(static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
         static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineLandingBytes = configAlign<size_t>(

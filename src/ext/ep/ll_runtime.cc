@@ -153,12 +153,13 @@ void MoELowLatencyRuntime::setup() {
   const bool crossDomain = ipcDomainSize < numRanks_;
   const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
   if (crossDomain && enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
-    // HCA selection: explicit override via env, else the IB0 transport's device.
+    // Explicit HCA settings override topology discovery. With neither set, the
+    // service assigns active HCAs across local GPUs using PCI/NUMA affinity.
     std::string hca;
-    if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+    if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCAS")) {
       hca = h;
-    } else {
-      hca = mscclpp::getIBDeviceName(mscclpp::Transport::IB0);
+    } else if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+      hca = h;
     }
     auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
     svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
@@ -194,8 +195,8 @@ void MoELowLatencyRuntime::setup() {
     std::fprintf(stderr,
                  "[EPTOPO] rank=%d numRanks=%d nRanksPerIpcDomain=%d numNvlRanks=%d crossDomain=%d ginOn=%d "
                  "available=%d nvlinkPeerMap=%s\n",
-                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_,
-                 (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0, ginOn, available_ ? 1 : 0, nvmap.c_str());
+                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_, (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0,
+                 ginOn, available_ ? 1 : 0, nvmap.c_str());
     std::fflush(stderr);
   }
 }
