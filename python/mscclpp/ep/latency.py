@@ -558,7 +558,8 @@ class LatencyRuntime(Runtime):
     def _validate_combine(self, expert_output, handle, out) -> None:
         mode_context = self.context
         if not isinstance(handle, DispatchHandle) or not isinstance(
-            handle._context, (_ExpertMajorCombineContext, _RankMajorCombineContext, _RankMajorTopkExpandedCombineContext)
+            handle._context,
+            (_ExpertMajorCombineContext, _RankMajorCombineContext, _RankMajorTopkExpandedCombineContext),
         ):
             raise ValueError("DispatchHandle does not contain latency combine context")
         context = handle._context

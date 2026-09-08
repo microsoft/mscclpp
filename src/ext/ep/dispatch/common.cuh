@@ -133,8 +133,8 @@ struct RankMajorSendState {
 };
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE bool initRankMajorSendState(RankMajorSendState<Hidden>& state, int nTokens, int nTopk,
-                                                  int nRanks, int nPayloadBlocks, int* sharedMem) {
+MSCCLPP_DEVICE_INLINE bool initRankMajorSendState(RankMajorSendState<Hidden>& state, int nTokens, int nTopk, int nRanks,
+                                                  int nPayloadBlocks, int* sharedMem) {
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return false;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -202,8 +202,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorBf16(void* output, int* outputTo
     waitRankMajorBf16Token(sendState);
     const int completionRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
     if (completionRank >= 0) {
-      issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, sendState.stagedToken_,
-                                       route.dstRank);
+      issueRankMajorTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank,
+                                       sendState.stagedToken_, route.dstRank);
     }
     sendRankMajorMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
                           nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
@@ -236,8 +236,7 @@ MSCCLPP_DEVICE_INLINE void invalidateRankMajorTopkExpandedPadding(const Transpor
   const int metadataEntriesPerRank = maxTokensPerRank * nTopk;
   for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
     auto* destinationTopkIdx = reinterpret_cast<int*>(transport.mappedBuffer(outputTopkIdx, destinationRank));
-    auto* destinationTopkWeights =
-        reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
+    auto* destinationTopkWeights = reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
     for (int metadataIdx = nTokens * nTopk + static_cast<int>(threadIdx.x); metadataIdx < metadataEntriesPerRank;
          metadataIdx += static_cast<int>(blockDim.x)) {
       const size_t outputIdx = static_cast<size_t>(transport.rank_) * metadataEntriesPerRank + metadataIdx;
@@ -248,10 +247,12 @@ MSCCLPP_DEVICE_INLINE void invalidateRankMajorTopkExpandedPadding(const Transpor
   __syncthreads();
 }
 
-MSCCLPP_DEVICE_INLINE void dispatchRankMajorTopkExpandedNotify(
-    const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights, int nExperts, int nRanks,
-    const int64_t* __restrict__ topkIndices, int nTokens, int nTopk, int maxTokensPerRank, int invalidTokenExpertId,
-    void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
+MSCCLPP_DEVICE_INLINE void dispatchRankMajorTopkExpandedNotify(const TransportView& transport, int* outputTopkIdx,
+                                                               float* outputTopkWeights, int nExperts, int nRanks,
+                                                               const int64_t* __restrict__ topkIndices, int nTokens,
+                                                               int nTopk, int maxTokensPerRank,
+                                                               int invalidTokenExpertId, void* recvBuffer,
+                                                               void* workspace, uint32_t epoch, int* sharedMem) {
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   auto* rankTokenCounts = sharedMem;
   countRankMajorTopkExpandedRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
@@ -334,10 +335,9 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpanded(
     uint32_t epoch, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    dispatchSendRankMajorTopkExpandedBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts,
-                                                  nRanks, topkIndices, topkWeights, nTokens, nTopk,
-                                                  invalidTokenExpertId, maxTokensPerRank, transport, workspace,
-                                                  nWorkerBlocks, sharedMem);
+    dispatchSendRankMajorTopkExpandedBf16<Hidden>(
+        output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
+        nTopk, invalidTokenExpertId, maxTokensPerRank, transport, workspace, nWorkerBlocks, sharedMem);
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
     dispatchRankMajorTopkExpandedNotify(transport, outputTopkIdx, outputTopkWeights, nExperts, nRanks, topkIndices,
                                         nTokens, nTopk, maxTokensPerRank, invalidTokenExpertId, recvBuffer, workspace,
@@ -1002,10 +1002,9 @@ MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* o
                                   recvBuffer, context->workspace_, epoch, sharedMem);
   } else if constexpr (Layout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     static_assert(DataType == DispatchDataType::BF16);
-    dispatchSendRankMajorTopkExpanded<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, transport,
-                                              nExperts, nRanks, topkIndices, topkWeights, nTokens, nTopk,
-                                              invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_,
-                                              epoch, sharedMem);
+    dispatchSendRankMajorTopkExpanded<Hidden>(
+        output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
+        nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch, sharedMem);
   } else {
     dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
                                                    nTokens, nTopk, maxTokensPerRank, recvBuffer, context->workspace_,

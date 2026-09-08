@@ -50,10 +50,9 @@ struct RankMajorTopkExpandedDispatchKernelSelector {
 };
 
 void rankMajorTopkExpandedDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
-                                   const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                   const Workload& workload, void* recvBuffer, const DeviceContext& context,
-                                   int numBlocks, cudaStream_t stream) {
+                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                                   const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                                   void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   dispatchAlgorithm<DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, RankMajorTopkExpandedDispatchKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);

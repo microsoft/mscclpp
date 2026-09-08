@@ -73,10 +73,9 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void rankMajorTopkExpandedDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount,
-                                   const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                   const Workload& workload, void* recvBuffer, const DeviceContext& context,
-                                   int numBlocks, cudaStream_t stream);
+                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                                   const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                                   void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorLocalReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                                    const int* srcInfo, const int64_t* layoutRange, const Workload& workload,

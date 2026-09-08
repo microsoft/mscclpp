@@ -201,7 +201,7 @@ struct LatencyStorageLayout {
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     const size_t rankMajorTopkExpandedDispatchBufferBytes =
         rankMajorTopkExpandedTokenOffsetBytes + rankMajorTopkExpandedDispatchOutputBytes;
-    dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes
+    dispatchOutputBytes_ = rankMajor               ? rankMajorDispatchOutputBytes
                            : rankMajorTopkExpanded ? rankMajorTopkExpandedDispatchOutputBytes
                                                    : expertMajorDispatchOutputBytes;
     const size_t selectedLayoutDispatchBufferBytes =
@@ -214,9 +214,9 @@ struct LatencyStorageLayout {
                                               : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  ((rankMajor || rankMajorTopkExpanded) ? 0
-                                                        : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+    totalBytes_ =
+        dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
+        ((rankMajor || rankMajorTopkExpanded) ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -225,7 +225,7 @@ struct LatencyStorageLayout {
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       rankMajorTopkExpandedTokenBuffer_ = base + rankMajorTopkExpandedTokenOffsetBytes;
-      dispatchOutputBuffer_ = rankMajor ? rankMajorTokenBuffer_
+      dispatchOutputBuffer_ = rankMajor               ? rankMajorTokenBuffer_
                               : rankMajorTopkExpanded ? rankMajorTopkExpandedTokenBuffer_
                                                       : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
       combineRecvBuffer_ = (rankMajorLocalReduce || rankMajorTopkExpandedLocalReduce) ? dispatchOutputBuffer_

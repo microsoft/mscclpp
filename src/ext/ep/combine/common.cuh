@@ -535,10 +535,12 @@ MSCCLPP_DEVICE_INLINE int4 reduceRemoteTokenPartialsBf16x8(const void* expertOut
 }
 
 template <int Hidden>
-MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartials(
-    void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
-    const float* __restrict__ topkWeights, int nTokens, int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
-    const TransportView& transport) {
+MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartials(void* output, const void* expertOutput,
+                                                                   const int64_t* __restrict__ topkIndices,
+                                                                   const float* __restrict__ topkWeights, int nTokens,
+                                                                   int nTopk, int nExperts, int nRanks,
+                                                                   int maxTokensPerRank,
+                                                                   const TransportView& transport) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
   const int threadId = static_cast<int>(threadIdx.x);

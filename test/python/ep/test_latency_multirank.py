@@ -408,8 +408,8 @@ def validate_rank_major_topk_expanded_dispatch(
     local_expert_end = local_expert_begin + num_local_experts
 
     for source_rank in range(num_ranks):
-        expected_local_routes = (
-            (all_topk_idx[source_rank] >= local_expert_begin) & (all_topk_idx[source_rank] < local_expert_end)
+        expected_local_routes = (all_topk_idx[source_rank] >= local_expert_begin) & (
+            all_topk_idx[source_rank] < local_expert_end
         )
         assert int(packed_recv_count[source_rank].item()) == int(expected_local_routes.sum().item())
         row_base = source_rank * num_tokens * num_topk
