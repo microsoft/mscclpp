@@ -7,11 +7,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string>
-#include <vector>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/port_channel_gpunetio_device.hpp>
+#include <string>
 
 namespace mscclpp {
 
@@ -23,7 +21,7 @@ namespace mscclpp {
 /// data path), then publishes a `GpuNetIoDeviceContext` to GPU memory.
 ///
 /// Usage (all ranks, symmetric):
-///   GpuNetIoService svc(bootstrap, ibDeviceName, cudaDeviceId);
+///   GpuNetIoService svc(bootstrap, ibDeviceNames, cudaDeviceId);
 ///   svc.setup(symmetricBuffer, symmetricBytes);
 ///   auto* ctx = svc.deviceContext();   // device pointer for the channel handle
 ///
@@ -32,17 +30,21 @@ namespace mscclpp {
 class GpuNetIoService {
  public:
   /// @param bootstrap Bootstrap used for the QP-info / rkey all-gather.
-  /// @param ibDeviceName Name of the IB device to use (e.g. "mlx5_0").
+  /// @param ibDeviceNames Comma-separated IB devices to use (e.g.
+  /// "mlx5_0,mlx5_1"). Logical QPs are striped across the devices in order.
+  /// An empty string enables automatic PCI/NUMA-aware assignment across the
+  /// active HCAs and GPU ranks on each node.
   /// @param cudaDeviceId CUDA device ordinal that owns the symmetric buffer.
-  GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName, int cudaDeviceId);
+  GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceNames, int cudaDeviceId);
 
   ~GpuNetIoService();
 
   GpuNetIoService(const GpuNetIoService&) = delete;
   GpuNetIoService& operator=(const GpuNetIoService&) = delete;
 
-  /// Register the symmetric buffer, create + connect one GDAKI QP per remote
-  /// rank, exchange rkeys / base addresses, and build the device context.
+  /// Register the symmetric buffer on every configured HCA, create + connect
+  /// GDAKI QPs per remote rank, exchange rkeys / base addresses, and build the
+  /// device context.
   /// Idempotent guard: must be called exactly once.
   /// @param symmetricBuffer Device pointer to this rank's symmetric buffer.
   /// @param bytes Size of the symmetric buffer.

@@ -18,14 +18,16 @@ namespace mscclpp {
 ///
 /// All remote addressing uses the same symmetric-memory model as the rest of
 /// EP: a MemoryId selects a peer's registered symmetric buffer, and offsets are
-/// identical on every rank. `qps`, `rkeys`, and `peerBase` are indexed by peer
-/// rank; `lkey`/`localBase` describe this rank's registered buffer.
+/// identical on every rank. Logical QP q uses HCA q%numHcas; the buffer is
+/// registered independently on every HCA, so local and remote keys are selected
+/// with the same mapping.
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
   /// headers; the implementation reinterprets it.
   void* qps;
-  /// Per-peer remote keys (network byte order), device array of length numPeers.
+  /// Per-HCA, per-peer remote keys (network byte order), laid out
+  /// [hca][peer].
   const uint32_t* rkeys;
   /// Per-peer remote symmetric-buffer base addresses, device array.
   const uintptr_t* peerBase;
@@ -37,8 +39,13 @@ struct GpuNetIoDeviceContext {
   int numPeers;
   /// Number of QPs per peer (>= 1). The `qps` array is laid out peer-major: the
   /// queue pair for (peer, q) lives at index peer*numQpsPerPeer + q. Spreading a
-  /// peer's WQEs across q parallelises the NIC send-queue drain.
+  /// peer's WQEs across q parallelises the NIC send-queue drain and, when
+  /// numHcas > 1, stripes q across HCAs.
   int numQpsPerPeer;
+  /// Number of HCA connections. Logical QP q uses HCA q%numHcas.
+  int numHcas;
+  /// Per-HCA local memory-region keys, device array of length numHcas.
+  const uint32_t* lkeys;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
