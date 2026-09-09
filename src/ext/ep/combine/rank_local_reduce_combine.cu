@@ -53,5 +53,14 @@ void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
+void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx,
+                                              const float* topkWeights, const Workload& workload, void* recvBuffer,
+                                              void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
+                                              cudaStream_t stream) {
+  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  runRankLocalReduce(output, input, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer,
+                     context, numBlocks, stream);
+}
+
 }  // namespace ep
 }  // namespace mscclpp

@@ -31,6 +31,12 @@ def _make_comm_group(comm):
     return CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm)
 
 
+def _simulated_latency_expert_output(dispatch_out, ep):
+    if dispatch_out.layout.kind == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+        return dispatch_out.tokens
+    return simulated_gemm_output(dispatch_out)
+
+
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
@@ -59,15 +65,21 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
     }[args.combine_mode]
-    if args.ep_layout == "token_major":
-        raise ValueError("MSCCL++ latency mode supports expert_major or rank_major layout")
-    rank_major = args.ep_layout == "rank_major"
-    if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
-        raise ValueError("rank-major output requires rank_local_reduce combine")
-    output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    requested_layout = args.ep_layout or "expert_major"
+    rank_major = requested_layout == "rank_major"
+    rank_major_topk_expanded = requested_layout == "rank_major_topk_expanded"
+    if requested_layout == "token_major":
+        raise ValueError("MSCCL++ latency TOKEN_MAJOR was renamed to rank_major_topk_expanded")
+    if (rank_major or rank_major_topk_expanded) and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+        raise ValueError(f"{requested_layout} output requires rank_local_reduce combine")
+    output_layout = {
+        "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
+        "rank_major": ep.DispatchLayout.RANK_MAJOR,
+        "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
+    }[requested_layout]
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if rank_major and dispatch_quant is not None:
-        raise ValueError("rank-major output supports BF16 dispatch only")
+    if (rank_major or rank_major_topk_expanded) and dispatch_quant is not None:
+        raise ValueError(f"{requested_layout} output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
@@ -90,13 +102,13 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
             flush=True,
         )
-        print(f"[cfg] mscclpp output_layout={args.ep_layout or 'expert_major'}", flush=True)
+        print(f"[cfg] mscclpp output_layout={requested_layout}", flush=True)
 
     # Hoist output tensors out of the timed loop (the communicator owns its
     # src_info/layout_range/count buffers internally).
     output_buffer = (
         None
-        if rank_major
+        if rank_major or rank_major_topk_expanded
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
     expert_output_initialized = False
@@ -122,11 +134,12 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
-        validation_input = simulated_gemm_output(v_dispatch_out)
+        validation_input = _simulated_latency_expert_output(v_dispatch_out, ep)
         if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
-            v_dispatch_out.combine_input_buffer.copy_(validation_input)
+            if v_dispatch_out.combine_input_buffer.data_ptr() != validation_input.data_ptr():
+                v_dispatch_out.combine_input_buffer.copy_(validation_input)
             validation_input = v_dispatch_out.combine_input_buffer
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
@@ -189,7 +202,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
         def _graph_combine():
-            moe_comm.combine(simulated_gemm_output(_cap["out"]), _cap["handle"], out=out)
+            moe_comm.combine(_simulated_latency_expert_output(_cap["out"], ep), _cap["handle"], out=out)
 
         graph_spec = {
             "dispatch": _graph_dispatch,

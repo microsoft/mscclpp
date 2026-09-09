@@ -64,7 +64,21 @@ def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the scale dtype for a quantized dispatch format."""
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float32
-    raise ValueError("BF16 dispatch does not have block scales")
+    raise ValueError(f"{data_type} dispatch does not have block scales")
+
+
+def dispatch_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the tensor dtype for a dispatch payload format."""
+    if data_type == DispatchDataType.BF16:
+        return torch.bfloat16
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float8_e4m3fn
+    raise ValueError(f"unsupported dispatch data type: {data_type}")
+
+
+def combine_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the tensor dtype expected by latency combine."""
+    return torch.bfloat16
 
 
 def send_bytes(comm: Any, payload: bytes, peer: int, tag: int) -> None:
@@ -173,6 +187,7 @@ def tensor_from_pointer(
     """Create a zero-copy tensor view over runtime-owned CUDA memory."""
     storage_types = {
         torch.bfloat16: "<u2",
+        torch.float16: "<f2",
         torch.float8_e4m3fn: "|u1",
         torch.int32: "<i4",
         torch.float32: "<f4",

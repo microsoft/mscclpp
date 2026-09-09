@@ -96,6 +96,11 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int
                             : (nTokens <= 2 * nBlocks ? DispatchNWarps / 2 : DispatchMinNWarpsPerGroup);
 }
 
+MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
+  constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
+  return nRanks > NSendSlots ? nRanks : NSendSlots;
+}
+
 struct RecvTask {
   int sourceRank_;
   int tokenBegin_;
@@ -188,7 +193,9 @@ MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int m
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
   const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
-  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
+  const int nAggregatedCompletionSlots = DispatchMaxNWarpGroups * nRanks;
+  return configAlign<size_t>(static_cast<size_t>(nSlots + nAggregatedCompletionSlots) * sizeof(int),
+                             BufferAlignmentBytes);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>

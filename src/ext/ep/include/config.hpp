@@ -154,6 +154,11 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkExpandedTokenOffset(int numRanks, int numExperts, int maxTokensPerRank,
+                                                                   int numTopk) {
+  return rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+}
+
 struct LatencyStorageLayout {
   size_t totalBytes_;
   size_t dispatchRecvBufferBytes_;
@@ -163,13 +168,18 @@ struct LatencyStorageLayout {
   void* combineRecvBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
+  void* rankMajorTokenBuffer_ = nullptr;
+  void* rankMajorTopkExpandedTokenBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                        int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
+    const bool rankMajorTopkExpanded = outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
+    const bool rankMajorTopkExpandedLocalReduce =
+        rankMajorTopkExpanded && combineMode == CombineMode::RANK_LOCAL_REDUCE;
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -184,26 +194,42 @@ struct LatencyStorageLayout {
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankMajorTopkExpandedTokenOffsetBytes =
+        rankMajorTopkExpandedTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+    const size_t rankMajorTopkExpandedDispatchOutputBytes =
+        static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
-    dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
-    const size_t dispatchRecvBufferBytes =
-        std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes_});
-    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                          : rankMajorLocalReduce ? 0
-                                                                 : dispatchOutputBytes_;
+    const size_t rankMajorTopkExpandedDispatchBufferBytes =
+        rankMajorTopkExpandedTokenOffsetBytes + rankMajorTopkExpandedDispatchOutputBytes;
+    dispatchOutputBytes_ = rankMajor               ? rankMajorDispatchOutputBytes
+                           : rankMajorTopkExpanded ? rankMajorTopkExpandedDispatchOutputBytes
+                                                   : expertMajorDispatchOutputBytes;
+    const size_t selectedLayoutDispatchBufferBytes =
+        rankMajor ? rankMajorDispatchBufferBytes
+                  : (rankMajorTopkExpanded ? rankMajorTopkExpandedDispatchBufferBytes : dispatchOutputBytes_);
+    const size_t dispatchRecvBufferBytes = std::max(dispatchBufferBytes, selectedLayoutDispatchBufferBytes);
+    const size_t combineRecvBufferBytes = rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes
+                                          : (rankMajorLocalReduce || rankMajorTopkExpandedLocalReduce)
+                                              ? 0
+                                              : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-                  (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+    totalBytes_ =
+        dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
+        ((rankMajor || rankMajorTopkExpanded) ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      dispatchOutputBuffer_ =
-          rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
-      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
+      rankMajorTopkExpandedTokenBuffer_ = base + rankMajorTopkExpandedTokenOffsetBytes;
+      dispatchOutputBuffer_ = rankMajor               ? rankMajorTokenBuffer_
+                              : rankMajorTopkExpanded ? rankMajorTopkExpandedTokenBuffer_
+                                                      : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
+      combineRecvBuffer_ = (rankMajorLocalReduce || rankMajorTopkExpandedLocalReduce) ? dispatchOutputBuffer_
+                                                                                      : base + dispatchRecvBufferBytes_;
     }
   }
 };
