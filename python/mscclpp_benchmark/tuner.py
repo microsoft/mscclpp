@@ -46,10 +46,18 @@ class OfflineTuner:
                 )
             return None
         for algorithm, candidate_spec in candidates:
-            for nblocks in self.candidate_nblocks:
+            nblocks_values = (
+                self.candidate_nblocks if candidate_spec.candidate_nblocks is None else candidate_spec.candidate_nblocks
+            )
+            nthreads_values = (
+                self.candidate_nthreads
+                if candidate_spec.candidate_nthreads is None
+                else candidate_spec.candidate_nthreads
+            )
+            for nblocks in nblocks_values:
                 if candidate_spec.max_nblocks is not None and nblocks > candidate_spec.max_nblocks:
                     continue
-                for nthreads in self.candidate_nthreads:
+                for nthreads in nthreads_values:
                     config = TunedConfig(
                         algorithm=algorithm.name,
                         nblocks=nblocks,

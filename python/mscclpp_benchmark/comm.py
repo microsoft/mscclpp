@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 _ALLREDUCE_COLLECTIVE = "allreduce"
 _ALLGATHER_COLLECTIVE = "allgather"
+_REDUCESCATTER_COLLECTIVE = "reducescatter"
+DEFAULT_DSL_TBG = (1, 2, 4, 8)
+DEFAULT_DSL_TPB = (256, 512, 768, 1024)
 _mscclpp_module = None
 
 from mscclpp_benchmark.gpu import current_device, device_name, set_device
@@ -105,6 +108,11 @@ class Comm:
         *,
         config_store: "TunedConfigStore | None" = None,
         hardware_profile: HardwareProfile | None = None,
+        collective: str = _ALLREDUCE_COLLECTIVE,
+        enable_dsl: bool = False,
+        buffer_mode: str = "in-place",
+        dsl_tbg: Iterable[int] = DEFAULT_DSL_TBG,
+        dsl_tpb: Iterable[int] = DEFAULT_DSL_TPB,
     ) -> None:
         self._comm_group = comm_group
         self._mpi_comm = getattr(comm_group, "_mpi_comm", None)
@@ -113,6 +121,9 @@ class Comm:
         _ensure_device()
         self._mscclpp = _mscclpp()
         self._scratch_buffer = self._mscclpp.RawGpuBuffer(scratch_buffer_size)
+        # DSL algorithms execute through the Executor and fail without one; native algorithms
+        # ignore it, so it is safe to pass unconditionally in run().
+        self._executor = self._mscclpp.Executor(comm_group.communicator)
         self._config_store = TunedConfigStore.empty() if config_store is None else config_store
         self._hardware_profile = (
             _detect_hardware_profile(scale=self._scale()) if hardware_profile is None else hardware_profile
@@ -127,6 +138,99 @@ class Comm:
         self._algorithms_by_collective: dict[str, dict[str, Any]] = {}
         for algorithm in algorithms:
             self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
+
+        self._dsl_algorithms: set[str] = set()
+        if enable_dsl:
+            self._compile_dsl_algorithms(collective, dsl_tbg, dsl_tpb, in_place=buffer_mode == "in-place")
+
+    def _compile_dsl_algorithms(
+        self,
+        collective: str,
+        tbg_values: Iterable[int],
+        tpb_values: Iterable[int],
+        *,
+        in_place: bool = True,
+    ) -> None:
+        """Compile the multi-node DSL variants for ``collective`` and register them alongside the natives.
+
+        Each (thread_block_group_size, num_threads_per_block) pair is a separate compiled plan, since
+        DSL algorithms bake their launch geometry into the plan and ignore the nblocks/nthreads passed
+        to execute(). The variant name must encode those values and the buffer mode: the plan cache
+        key includes none of them, so variants sharing a name would silently resolve to the same
+        cached plan.
+
+        Only allgather_multi_nodes has an out-of-place form; the allreduce and reducescatter builders
+        reduce into the input buffer, so nothing is compiled for them when ``in_place`` is False.
+        """
+        from mscclpp.language.utils import AlgoSpec
+
+        world_size = self._comm_group.nranks
+        nranks_per_node = self._comm_group.nranks_per_node
+        if nranks_per_node <= 0 or world_size % nranks_per_node != 0:
+            return
+        n_nodes = world_size // nranks_per_node
+        if n_nodes < 2:
+            return
+
+        if collective == _ALLREDUCE_COLLECTIVE:
+            if not in_place:
+                return
+            from mscclpp.default_algos import allreduce_multi_nodes
+            from mscclpp.language.collectives import AllReduce
+
+            builder = allreduce_multi_nodes
+            collective_op = AllReduce(world_size, 1, True)
+            name_prefix = "dsl_allreduce"
+            tags: dict = {}
+            # allreduce_multi_nodes lays out its thread block groups from this value.
+            pass_thread_block_group_size = True
+        elif collective == _ALLGATHER_COLLECTIVE:
+            from mscclpp.default_algos import allgather_multi_nodes
+            from mscclpp.language.collectives import AllGather
+
+            builder = allgather_multi_nodes
+            collective_op = AllGather(world_size, 1, in_place)
+            name_prefix = "dsl_allgather"
+            tags = {"default": 1}
+            # allgather_multi_nodes derives its geometry from the spec alone.
+            pass_thread_block_group_size = False
+        elif collective == _REDUCESCATTER_COLLECTIVE:
+            if not in_place:
+                return
+            from mscclpp.default_algos import reducescatter_multi_nodes
+            from mscclpp.language.collectives import ReduceScatter
+
+            builder = reducescatter_multi_nodes
+            collective_op = ReduceScatter(world_size, 1, True)
+            name_prefix = "dsl_reducescatter"
+            tags = {}
+            # reducescatter_multi_nodes lays out its thread block groups from this value.
+            pass_thread_block_group_size = True
+        else:
+            return
+
+        for tbg in tbg_values:
+            for tpb in tpb_values:
+                spec = AlgoSpec(
+                    name=f"{name_prefix}_{n_nodes}node_{tbg}TBG_{tpb}TPB_{'ip' if in_place else 'oop'}",
+                    collective=collective_op,
+                    nranks_per_node=nranks_per_node,
+                    world_size=world_size,
+                    in_place=in_place,
+                    instances=1,
+                    protocol="LL",
+                    auto_sync=False,
+                    num_threads_per_block=tpb,
+                    reuse_resources=True,
+                    use_double_scratch_buffer=True,
+                    min_message_size=tbg * (1 << 10),
+                    max_message_size=8 << 20,
+                    tags=tags,
+                )
+                compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
+                algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
+                self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
+                self._dsl_algorithms.add(algorithm.name)
 
     @property
     def comm_group(self) -> Any:
@@ -143,6 +247,11 @@ class Comm:
     @property
     def algorithms(self) -> dict[str, dict[str, Any]]:
         return self._algorithms_by_collective
+
+    @property
+    def dsl_algorithms(self) -> set[str]:
+        """Names of the compiled DSL algorithms, which ignore the tuner's nblocks/nthreads sweep."""
+        return self._dsl_algorithms
 
     @property
     def hardware_profile(self) -> HardwareProfile:
@@ -166,6 +275,7 @@ class Comm:
         return self._resolve_config(
             case.collective,
             case.input,
+            message_size=getattr(case, "message_size", None),
             dtype_override=dtype_override,
             accum_dtype=accum_dtype,
             symmetric_memory=symmetric_memory,
@@ -176,16 +286,22 @@ class Comm:
         collective: str,
         buffer: Any,
         *,
+        message_size: int | None = None,
         dtype_override: Any | None = None,
         accum_dtype: Any | None = None,
         symmetric_memory: bool = False,
     ) -> TunedConfig:
+        # Tuned configs are keyed by the per-rank message size the benchmark reports and writes with
+        # (BenchmarkCase.message_size), which is not the input buffer size for every collective:
+        # reducescatter takes a whole-buffer input but a per-rank chunk as its message. Falling back
+        # to the buffer size would query reducescatter entries nranks times too large.
+        lookup_size = _nbytes(buffer) if message_size is None else message_size
         selection_dtype = dtype_override if dtype_override is not None else _dtype(buffer)
         selection_accum = accum_dtype if accum_dtype is not None else selection_dtype
         tuned_config = self._config_store.select(
             self._hardware_profile,
             collective,
-            _nbytes(buffer),
+            lookup_size,
             dtype=_dtype_name(selection_dtype),
             accum=_dtype_name(selection_accum),
         )
@@ -214,12 +330,23 @@ class Comm:
                     warning_key[2],
                     dim,
                 )
-        return _default_tuned_config(
+        default_config = _default_tuned_config(
             collective,
-            _nbytes(buffer),
+            lookup_size,
             self._algorithms_by_collective,
             symmetric_memory=symmetric_memory,
         )
+        # The tuner falls back here when every candidate fails, which bypasses the multi-node filter
+        # in _candidate_algorithms. Only the compiled DSL plans work across nodes; the native
+        # algorithms _default_tuned_config prefers are single-node CUDA-IPC and would hang.
+        if self._comm_group.nranks > self._comm_group.nranks_per_node:
+            if default_config.algorithm not in self._dsl_algorithms:
+                raise RuntimeError(
+                    f"No multi-node algorithm is available for {collective}: "
+                    f"'{default_config.algorithm}' is single-node only. Re-run with --enable-dsl so "
+                    "a multi-node plan is compiled, or supply a tuned config that names one."
+                )
+        return default_config
 
     def run(
         self,
@@ -237,6 +364,7 @@ class Comm:
             raise RuntimeError("Cannot use a closed MSCCL++ comm")
 
         raise_on_error = True
+        case_message_size: int | None = None
         if hasattr(buffer, "input") and hasattr(buffer, "output") and hasattr(buffer, "dtype_spec"):
             case = buffer
             buffer = case.input
@@ -245,6 +373,7 @@ class Comm:
             dtype_override = case.dtype_spec.mscclpp_dtype
             accum_dtype = case.dtype_spec.accum_dtype or dtype_override
             symmetric_memory = symmetric_memory or bool(getattr(case, "symmetric_memory", False))
+            case_message_size = getattr(case, "message_size", None)
             raise_on_error = False
 
         if collective not in self._algorithms_by_collective:
@@ -254,6 +383,7 @@ class Comm:
             config = self._resolve_config(
                 collective,
                 buffer,
+                message_size=case_message_size,
                 dtype_override=dtype_override,
                 accum_dtype=accum_dtype,
                 symmetric_memory=symmetric_memory,
@@ -265,12 +395,17 @@ class Comm:
         accum = accum_dtype if accum_dtype is not None else dtype
         ret = algorithm.execute(
             comm=self._comm_group.communicator,
+            executor=self._executor,
             input_buffer=_data_ptr(buffer),
             output_buffer=_data_ptr(output),
             input_size=_nbytes(buffer),
             output_size=_nbytes(output),
             dtype=dtype,
-            op=self._mscclpp.ReduceOp.SUM if collective == _ALLREDUCE_COLLECTIVE else self._mscclpp.ReduceOp.NOP,
+            op=(
+                self._mscclpp.ReduceOp.SUM
+                if collective in (_ALLREDUCE_COLLECTIVE, _REDUCESCATTER_COLLECTIVE)
+                else self._mscclpp.ReduceOp.NOP
+            ),
             stream=_stream_ptr(stream),
             nblocks=config.nblocks or 0,
             nthreads_per_block=config.nthreads or 0,
@@ -295,6 +430,7 @@ class Comm:
     def close(self) -> None:
         self.reset()
         self._algorithms_by_collective = {}
+        self._executor = None
         self._scratch_buffer = None
         self._closed = True
         self._mscclpp.ext.AlgorithmCollectionBuilder.reset()
