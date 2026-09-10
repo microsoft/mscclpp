@@ -2,11 +2,9 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/core.hpp>
+#include <sstream>
 
 #include "../framework.hpp"
-
-// TODO: TransportFlags needs operator<< for EXPECT_EQ to work
-// Using ASSERT_TRUE with manual comparisons as workaround
 
 class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
  protected:
@@ -20,12 +18,25 @@ class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
   std::shared_ptr<mscclpp::Communicator> comm;
 };
 
+TEST(TransportFlagsTest, OutputStream) {
+  auto toString = [](const mscclpp::TransportFlags& transportFlags) {
+    std::ostringstream os;
+    os << transportFlags;
+    return os.str();
+  };
+
+  EXPECT_EQ(toString(mscclpp::NoTransports), std::string("{}"));
+  EXPECT_EQ(toString(mscclpp::Transport::CudaIpc), std::string("{IPC}"));
+  EXPECT_EQ(toString(mscclpp::Transport::CudaIpc | mscclpp::Transport::IB0 | mscclpp::Transport::Ethernet),
+            std::string("{IPC, IB0, ETH}"));
+}
+
 TEST(LocalCommunicatorTest, RegisterMemory) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
   EXPECT_EQ(memory.size(), sizeof(dummy));
-  ASSERT_TRUE(memory.transports() == mscclpp::NoTransports);
+  EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
 }
 
 TEST(LocalCommunicatorTest, SendMemoryToSelf) {
@@ -36,5 +47,5 @@ TEST(LocalCommunicatorTest, SendMemoryToSelf) {
   auto sameMemory = memoryFuture.get();
   EXPECT_EQ(sameMemory.data(), memory.data());
   EXPECT_EQ(sameMemory.size(), memory.size());
-  ASSERT_TRUE(sameMemory.transports() == memory.transports());
+  EXPECT_EQ(sameMemory.transports(), memory.transports());
 }

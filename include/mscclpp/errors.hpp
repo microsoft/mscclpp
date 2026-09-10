@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_ERRORS_HPP_
 #define MSCCLPP_ERRORS_HPP_
 
+#include <iosfwd>
 #include <stdexcept>
 
 namespace mscclpp {
@@ -24,6 +25,12 @@ enum class ErrorCode {
 /// @param error The error code to convert.
 /// @return The string representation of the error code.
 std::string errorToString(enum ErrorCode error);
+
+/// Convert ErrorCode to string and output to stream.
+/// @param os Output stream.
+/// @param errorCode Input error code.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const ErrorCode& errorCode);
 
 /// Base class for all errors thrown by MSCCL++.
 class BaseError : public std::runtime_error {

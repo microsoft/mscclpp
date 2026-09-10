@@ -106,7 +106,7 @@ TEST(BootstrapTest, TimeoutWithId) {
     // Set bootstrap timeout to 1 second
     bootstrap->initialize(id, 1);
   } catch (const mscclpp::Error& e) {
-    ASSERT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::Timeout);
+    ASSERT_EQ(e.getErrorCode(), mscclpp::ErrorCode::Timeout);
   }
 
   // Timeout should be sligtly greater than 1 second

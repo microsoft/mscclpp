@@ -157,6 +157,6 @@ TEST(FifoTest, RejectsNonPowerOfTwoSize) {
     mscclpp::Fifo fifo(500);
     FAIL() << "Expected a non-power-of-two FIFO size to throw";
   } catch (const mscclpp::Error& e) {
-    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+    EXPECT_EQ(e.getErrorCode(), mscclpp::ErrorCode::InvalidUsage);
   }
 }

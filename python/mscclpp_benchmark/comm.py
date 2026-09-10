@@ -180,7 +180,15 @@ class Comm:
         accum_dtype: Any | None = None,
         symmetric_memory: bool = False,
     ) -> TunedConfig:
-        tuned_config = self._config_store.select(self._hardware_profile, collective, _nbytes(buffer))
+        selection_dtype = dtype_override if dtype_override is not None else _dtype(buffer)
+        selection_accum = accum_dtype if accum_dtype is not None else selection_dtype
+        tuned_config = self._config_store.select(
+            self._hardware_profile,
+            collective,
+            _nbytes(buffer),
+            dtype=_dtype_name(selection_dtype),
+            accum=_dtype_name(selection_accum),
+        )
         if tuned_config is not None and tuned_config.algorithm in self._algorithms_by_collective.get(collective, {}):
             return tuned_config
 
@@ -396,6 +404,9 @@ def _default_tuned_config(
     symmetric_memory: bool = False,
 ) -> TunedConfig:
     if collective == _ALLGATHER_COLLECTIVE:
+        available = algorithms_by_collective.get(collective, {})
+        if symmetric_memory and _mscclpp().is_nvls_supported() and "default_allgather_nvls_zero_copy" in available:
+            return TunedConfig("default_allgather_nvls_zero_copy", symmetric_memory=True)
         return TunedConfig("default_allgather_fullmesh2", symmetric_memory=symmetric_memory)
     available = algorithms_by_collective.get(collective, {})
     if symmetric_memory and _mscclpp().is_nvls_supported() and "default_allreduce_nvls_zero_copy" in available:

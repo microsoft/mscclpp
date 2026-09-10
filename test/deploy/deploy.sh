@@ -97,9 +97,13 @@ else
     "sudo docker pull ${CONTAINERIMAGE}"
 
   # Set GPU passthrough flags based on platform
-  LAUNCH_OPTION="--gpus=all --device /dev/nvidia-caps-imex-channels/channel0"
+  LAUNCH_OPTION="--gpus=all"
   if [ "${PLATFORM}" == "rocm" ]; then
     LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
+  fi
+
+  if [ "${PILOT}" == "true" ] && [ "${PLATFORM}" == "cuda" ]; then
+    LAUNCH_OPTION="${LAUNCH_OPTION} --device /dev/nvidia-caps-imex-channels/channel0"
   fi
 
   # The docker-default AppArmor profile triggers a kernel NULL-deref oops in

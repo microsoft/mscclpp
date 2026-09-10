@@ -673,42 +673,44 @@ Transport EthernetConnection::remoteTransport() const { return Transport::Ethern
 
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {
-  rethrowReceiverError();
+  char* srcPtr;
+  char* dstPtr;
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  // Validating Transport Protocol
-  validateTransport(dst, remoteTransport(), dstOffset, size);
-  validateTransport(src, transport(), srcOffset, size);
+    // Validating Transport Protocol
+    validateTransport(dst, remoteTransport(), dstOffset, size);
+    validateTransport(src, transport(), srcOffset, size);
 
-  // Initializing Variables
-  char* srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
-  char* dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
-  uint64_t sentDataSize = 0;
-  uint64_t headerSize = 0;
+    // Initializing Variables
+    srcPtr = reinterpret_cast<char*>(src.data()) + srcOffset / sizeof(char);
+    dstPtr = reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset / sizeof(char);
+    uint64_t sentDataSize = 0;
+    uint64_t headerSize = 0;
 
-  // Copying Meta Data to Send Buffer
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + headerSize / sizeof(char));
-  headerSize += sizeof(dstPtr);
-  char* sizeBytes = reinterpret_cast<char*>(&size);
-  std::copy(sizeBytes, sizeBytes + sizeof(size), sendBuffer_.data() + headerSize / sizeof(char));
-  headerSize += sizeof(size);
+    // Copying Meta Data to Send Buffer
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + headerSize / sizeof(char));
+    headerSize += sizeof(dstPtr);
+    char* sizeBytes = reinterpret_cast<char*>(&size);
+    std::copy(sizeBytes, sizeBytes + sizeof(size), sendBuffer_.data() + headerSize / sizeof(char));
+    headerSize += sizeof(size);
 
-  // Getting Data From GPU and Sending Message
-  while (sentDataSize < size) {
-    uint64_t dataSize =
-        std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
-    uint64_t messageSize = dataSize + headerSize;
-    mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)), dataSize,
-                       cudaMemcpyDeviceToHost);
-    sendSocket_->send(sendBuffer_.data(), messageSize);
-    sentDataSize += messageSize;
-    headerSize = 0;
-  }
+    // Getting Data From GPU and Sending Message
+    while (sentDataSize < size) {
+      uint64_t dataSize =
+          std::min(sendBufferSize_ - headerSize / sizeof(char), (size - sentDataSize) / sizeof(char)) * sizeof(char);
+      uint64_t messageSize = dataSize + headerSize;
+      mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)),
+                         dataSize, cudaMemcpyDeviceToHost);
+      sendSocket_->send(sendBuffer_.data(), messageSize);
+      sentDataSize += messageSize;
+      headerSize = 0;
+    }
+  });
 
-  rethrowReceiverError();
   INFO(CONN, "EthernetConnection write: from ", srcPtr, " to ", dstPtr, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_EXIT)
@@ -717,36 +719,38 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
 }
 
 void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) {
-  rethrowReceiverError();
+  uint64_t oldValue;
+  uint64_t* dstPtr;
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  // Validating Transport Protocol
-  validateTransport(dst, remoteTransport());
+    // Validating Transport Protocol
+    validateTransport(dst, remoteTransport());
 
-  // Initializing Variables
-  uint64_t oldValue = *src;
-  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
-  uint64_t dataSize = sizeof(uint64_t);
-  uint64_t messageSize = 0;
-  *src = newValue;
+    // Initializing Variables
+    oldValue = *src;
+    dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+    uint64_t dataSize = sizeof(uint64_t);
+    uint64_t messageSize = 0;
+    *src = newValue;
 
-  // Copying Data to Send Buffer
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += sizeof(dstPtr);
-  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
-  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += sizeof(dataSize);
-  char* dataBytes = reinterpret_cast<char*>(src);
-  std::copy(dataBytes, dataBytes + dataSize, sendBuffer_.data() + messageSize / sizeof(char));
-  messageSize += dataSize;
+    // Copying Data to Send Buffer
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += sizeof(dstPtr);
+    char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+    std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += sizeof(dataSize);
+    char* dataBytes = reinterpret_cast<char*>(src);
+    std::copy(dataBytes, dataBytes + dataSize, sendBuffer_.data() + messageSize / sizeof(char));
+    messageSize += dataSize;
 
-  // Sending Message
-  sendSocket_->send(sendBuffer_.data(), messageSize);
+    // Sending Message
+    sendSocket_->send(sendBuffer_.data(), messageSize);
+  });
 
-  rethrowReceiverError();
   INFO(CONN, "EthernetConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
@@ -756,17 +760,17 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
 }
 
 void EthernetConnection::flush(int64_t) {
-  rethrowReceiverError();
+  runWithReceiverErrorCheck([&]() {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  INFO(CONN, "EthernetConnection flushing connection");
+    INFO(CONN, "EthernetConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_EXIT)
-  NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
+    NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
-  rethrowReceiverError();
+  });
 }
 
 void EthernetConnection::publishReceiverError(std::exception_ptr error) noexcept {
@@ -807,31 +811,34 @@ static std::mutex& accumulateMutex() {
 }
 
 void EthernetConnection::accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
-  validateTransport(dst, remoteTransport());
-  validateAccumulateBounds(dst, dstOffset);
-  validateAccumulateAlignment(reinterpret_cast<uintptr_t>(dst.originalDataPtr()), dstOffset);
+  uint64_t* dstPtr;
+  runWithReceiverErrorCheck([&]() {
+    validateTransport(dst, remoteTransport());
+    validateAccumulateBounds(dst, dstOffset);
+    validateAccumulateAlignment(reinterpret_cast<uintptr_t>(dst.originalDataPtr()), dstOffset);
 
-  // Wire format matches write(): [dstPtr(8B)] [size(8B)] [data(size B)]. The MSB of size marks
-  // the message as an accumulate.
-  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
-  constexpr uint64_t accumulateFlag = uint64_t{1} << uint64_t{63};
-  uint64_t dataSize = sizeof(uint64_t) | accumulateFlag;
-  uint64_t messageSize = 0;
+    // Wire format matches write(): [dstPtr(8B)] [size(8B)] [data(size B)]. The MSB of size marks
+    // the message as an accumulate.
+    dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+    constexpr uint64_t accumulateFlag = uint64_t{1} << uint64_t{63};
+    uint64_t dataSize = sizeof(uint64_t) | accumulateFlag;
+    uint64_t messageSize = 0;
 
-  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
-  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(dstPtr);
+    char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+    std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(dstPtr);
 
-  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
-  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(dataSize);
+    char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+    std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(dataSize);
 
-  uint64_t addValue = static_cast<uint64_t>(value);
-  char* valueBytes = reinterpret_cast<char*>(&addValue);
-  std::copy(valueBytes, valueBytes + sizeof(addValue), sendBuffer_.data() + messageSize);
-  messageSize += sizeof(addValue);
+    uint64_t addValue = static_cast<uint64_t>(value);
+    char* valueBytes = reinterpret_cast<char*>(&addValue);
+    std::copy(valueBytes, valueBytes + sizeof(addValue), sendBuffer_.data() + messageSize);
+    messageSize += sizeof(addValue);
 
-  sendSocket_->send(sendBuffer_.data(), messageSize);
+    sendSocket_->send(sendBuffer_.data(), messageSize);
+  });
 
   INFO(CONN, "EthernetConnection accumulate: dst ", dstPtr, ", value ", value);
 }
