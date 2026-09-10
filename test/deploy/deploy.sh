@@ -10,6 +10,10 @@
 #   sglang_image    : Docker image used for the SGLang test container
 #                     (default: lmsysorg/sglang:latest). Only used when
 #                     container_name is "sglang-mscclpp-test".
+#
+# Environment:
+#   MSCCLPP_PRUNE_DANGLING_IMAGES: Set to "true" to remove unused, untagged
+#     images created more than 24 hours ago on the remote hosts before pulling.
 
 set -ex
 
@@ -59,6 +63,24 @@ if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   '
 fi
 
+# Remove any leftover container from a previous run (e.g. when the VMSS is not
+# deallocated between runs) so the `docker run --name` below does not conflict.
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
+
+if [ "${MSCCLPP_PRUNE_DANGLING_IMAGES:-false}" == "true" ]; then
+  parallel-ssh -i -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" '
+    set -e
+    hostname
+    echo "=== Filesystem capacity before image cleanup ==="
+    df -h
+    echo "=== Removing unused, untagged images created more than 24 hours ago ==="
+    sudo docker image prune --force --filter "until=24h"
+    echo "=== Filesystem capacity after image cleanup ==="
+    df -h
+  '
+fi
+
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
@@ -91,11 +113,6 @@ if [ "${PLATFORM}" == "cuda" ]; then
       rm -rf /tmp/gdrcopy.tar.gz /tmp/gdrcopy-${GDRCOPY_VERSION}
     fi"
 fi
-
-# Remove any leftover container from a previous run (e.g. when the VMSS is not
-# deallocated between runs) so the `docker run --name` below does not conflict.
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   # force to pull the latest image
