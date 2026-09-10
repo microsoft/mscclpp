@@ -102,6 +102,7 @@ __all__ = [
     "AlgorithmCollection",
     "CommGroup",
     "GpuBuffer",
+    "GpuBufferPool",
     "GpuBufferGranularity",
 ]
 
