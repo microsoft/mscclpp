@@ -367,6 +367,7 @@ def validate_rank_major_topk_expanded_dispatch(
                 if expected_local:
                     assert torch.equal(dispatch_out.tokens[route_idx], all_x[source_rank, token_idx])
 
+
 def reconstruct_expert_major_reference(
     *,
     rank,
