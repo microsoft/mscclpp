@@ -30,6 +30,19 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementBytes(DispatchDataType dispatchDataType) {
+  return dispatchDataType == DispatchDataType::BF16 ? static_cast<int>(sizeof(Bf16))
+                                                    : static_cast<int>(sizeof(Fp8E4M3));
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchScaleBlockSize(DispatchDataType dispatchDataType) {
+  return dispatchDataType == DispatchDataType::FP8_E4M3 ? 128 : 0;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNumScales(DispatchDataType dispatchDataType, int hidden) {
+  return dispatchDataType == DispatchDataType::FP8_E4M3 ? hidden / dispatchScaleBlockSize(dispatchDataType) : 0;
+}
+
 // Rank-deduplicated dispatch payload layout:
 //
 //   [data: DataType[hidden]]
@@ -211,6 +224,40 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
       LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
           .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
+}
+
+struct ThroughputStorageLayout {
+  size_t totalBytes_;
+  int* numTokensPerRank_ = nullptr;
+  int* numTokensPerExpert_ = nullptr;
+  bool* isTokenInRank_ = nullptr;
+  int* rankPrefixMatrix_ = nullptr;
+  int* channelPrefixMatrix_ = nullptr;
+  int* sendHead_ = nullptr;
+
+  ThroughputStorageLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
+    size_t offset = 0;
+    auto place = [&](size_t bytes, size_t alignment) -> void* {
+      offset = configAlign<size_t>(offset, alignment);
+      void* ptr = workspace == nullptr ? nullptr : reinterpret_cast<uint8_t*>(workspace) + offset;
+      offset += bytes;
+      return ptr;
+    };
+
+    numTokensPerRank_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
+    numTokensPerExpert_ = static_cast<int*>(place(static_cast<size_t>(numExperts) * sizeof(int), alignof(int)));
+    isTokenInRank_ =
+        static_cast<bool*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(bool), alignof(bool)));
+    rankPrefixMatrix_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * numRanks * sizeof(int), alignof(int)));
+    channelPrefixMatrix_ =
+        static_cast<int*>(place(static_cast<size_t>(numRanks) * maxChannels * sizeof(int), alignof(int)));
+    sendHead_ = static_cast<int*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(int), alignof(int)));
+    totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
+  }
+};
+
+inline size_t throughputStorageSize(int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
+  return ThroughputStorageLayout(nullptr, maxTokensPerRank, numRanks, numExperts, maxChannels).totalBytes_;
 }
 
 }  // namespace ep

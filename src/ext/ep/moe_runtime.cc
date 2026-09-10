@@ -21,13 +21,22 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
   EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
   EP_HOST_ASSERT(numNvlRanks_ > 0);
 
-  if (mode_ != MoEMode::LATENCY) {
-    EP_THROW("This build only supports MoEMode::LATENCY");
+  switch (mode_) {
+    case MoEMode::LATENCY:
+      latencyContext_ = std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_,
+                                                                numRanksPerIpcDomain_, maxTokensPerRank, hidden,
+                                                                numExperts, numTopk, outputLayout, combineMode);
+      available_ = latencyContext_->available_;
+      break;
+    case MoEMode::THROUGHPUT:
+      throughputContext_ = std::make_shared<ThroughputRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_,
+                                                                      numRanksPerIpcDomain_, maxTokensPerRank, hidden,
+                                                                      numExperts, numTopk, outputLayout);
+      available_ = throughputContext_->available_;
+      break;
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
   }
-  latencyContext_ =
-      std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                              maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
-  available_ = latencyContext_->available_;
 }
 
 MoERuntime::~MoERuntime() noexcept(false) = default;
@@ -40,35 +49,81 @@ void MoERuntime::requireMode(MoEMode expected) const {
 }
 
 void MoERuntime::initialize() {
-  requireMode(MoEMode::LATENCY);
-  latencyContext_->initialize();
+  switch (mode_) {
+    case MoEMode::LATENCY:
+      latencyContext_->initialize();
+      return;
+    case MoEMode::THROUGHPUT:
+      throughputContext_->initialize();
+      return;
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
+  }
 }
 
 void* MoERuntime::dispatchOutputBuffer() const {
-  requireMode(MoEMode::LATENCY);
-  const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
-      .dispatchOutputBuffer_;
+  switch (mode_) {
+    case MoEMode::LATENCY: {
+      const auto& context = *latencyContext_;
+      EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
+                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                                  context.combineMode_)
+          .dispatchOutputBuffer_;
+    }
+    case MoEMode::THROUGHPUT: {
+      const auto& context = *throughputContext_;
+      EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+      return static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) +
+             RecvPoolConfig::recvPoolHeaderBytes(context.numRanks_);
+    }
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
+  }
 }
 
 DispatchHandle MoERuntime::dispatch(const DispatchRequest& request) {
-  requireMode(MoEMode::LATENCY);
-  const auto* latencyRequest = std::get_if<LatencyDispatchRequest>(&request.value_);
-  if (latencyRequest == nullptr) {
-    EP_THROW("Throughput dispatch is not available in this build");
+  switch (mode_) {
+    case MoEMode::LATENCY: {
+      const auto* latencyRequest = std::get_if<LatencyDispatchRequest>(&request.value_);
+      if (latencyRequest == nullptr) {
+        EP_THROW("Latency runtime requires a latency dispatch request");
+      }
+      return launchLatencyDispatch(*latencyRequest);
+    }
+    case MoEMode::THROUGHPUT: {
+      const auto* throughputRequest = std::get_if<ThroughputDispatchRequest>(&request.value_);
+      if (throughputRequest == nullptr) {
+        EP_THROW("Throughput runtime requires a throughput dispatch request");
+      }
+      return launchThroughputDispatch(*throughputRequest);
+    }
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
   }
-  return launchLatencyDispatch(*latencyRequest);
 }
 
 void MoERuntime::combine(const CombineRequest& request) {
-  requireMode(MoEMode::LATENCY);
-  const auto* latencyRequest = std::get_if<LatencyCombineRequest>(&request.value_);
-  if (latencyRequest == nullptr) {
-    EP_THROW("Throughput combine is not available in this build");
+  switch (mode_) {
+    case MoEMode::LATENCY: {
+      const auto* latencyRequest = std::get_if<LatencyCombineRequest>(&request.value_);
+      if (latencyRequest == nullptr) {
+        EP_THROW("Latency runtime requires a latency combine request");
+      }
+      launchLatencyCombine(*latencyRequest);
+      return;
+    }
+    case MoEMode::THROUGHPUT: {
+      const auto* throughputRequest = std::get_if<ThroughputCombineRequest>(&request.value_);
+      if (throughputRequest == nullptr) {
+        EP_THROW("Throughput runtime requires a throughput combine request");
+      }
+      launchThroughputCombine(*throughputRequest);
+      return;
+    }
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
   }
-  launchLatencyCombine(*latencyRequest);
 }
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,

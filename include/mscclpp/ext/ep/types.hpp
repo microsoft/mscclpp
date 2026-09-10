@@ -97,14 +97,50 @@ struct LatencyDispatchRequest {
   cudaStream_t stream;
 };
 
-/// Reserved request type for throughput-mode dispatch.
-struct ThroughputDispatchRequest {};
+/// Arguments for throughput-mode dispatch.
+///
+/// The caller must keep all input buffers valid until dispatch has been
+/// enqueued. The returned DispatchHandle must stay alive until the matching
+/// combine has been enqueued.
+struct ThroughputDispatchRequest {
+  /// Dispatch output buffer.
+  ///
+  /// This may alias MoERuntime::dispatchOutputBuffer() to use the runtime-owned
+  /// receive pool directly.
+  void* output;
+  /// Optional dispatch scale output.
+  void* outputScales;
+  /// Optional dispatched local-expert IDs.
+  int* outputTopkIdx;
+  /// Optional dispatched top-k weights.
+  float* outputTopkWeights;
+  /// Per-expert or per-rank output counts.
+  int* outputCount;
+  /// Input token payload.
+  const void* input;
+  /// Optional input scale factors.
+  const float* inputScales;
+  /// Input top-k expert IDs.
+  const int64_t* topkIdx;
+  /// Optional input top-k weights.
+  const float* topkWeights;
+  /// Number of input tokens, in [0, maxTokensPerRank].
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  int maxTokensPerRank;
+  /// Requested dispatch payload format.
+  DispatchDataType dispatchDataType;
+  /// Dispatch grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+};
 
 /// Mode-specific dispatch request.
 struct DispatchRequest {
   /// Construct a latency dispatch request.
   explicit DispatchRequest(LatencyDispatchRequest request) : value_(std::move(request)) {}
-  /// Construct a reserved throughput dispatch request.
+  /// Construct a throughput dispatch request.
   explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
 
  private:
@@ -143,14 +179,27 @@ struct LatencyCombineRequest {
   cudaStream_t stream;
 };
 
-/// Reserved request type for throughput-mode combine.
-struct ThroughputCombineRequest {};
+/// Arguments for throughput-mode combine.
+struct ThroughputCombineRequest {
+  /// Combined token output.
+  void* output;
+  /// Optional combined top-k weights.
+  float* outputTopkWeights;
+  /// Local expert output.
+  const void* input;
+  /// Handle returned by the matching dispatch.
+  DispatchHandle handle;
+  /// Combine grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+};
 
 /// Mode-specific combine request.
 struct CombineRequest {
   /// Construct a latency combine request.
   explicit CombineRequest(LatencyCombineRequest request) : value_(std::move(request)) {}
-  /// Construct a reserved throughput combine request.
+  /// Construct a throughput combine request.
   explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
 
  private:

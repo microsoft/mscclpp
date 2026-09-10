@@ -492,14 +492,14 @@ class MoERuntimeTest : public CommunicatorTestBase {
 };
 
 TEST(MoERuntimeTest, InitializationAndModeValidation) {
-  bool rejectedThroughput = false;
-  try {
-    auto unsupported = std::make_unique<mscclpp::ep::MoERuntime>(
-        *communicator, mscclpp::ep::MoEMode::THROUGHPUT, CorrectnessTokens, CorrectnessHidden, NumExperts, NumTopk);
-  } catch (const EPException&) {
-    rejectedThroughput = true;
-  }
-  ASSERT_TRUE(rejectedThroughput);
+  auto throughputRuntime = std::make_unique<mscclpp::ep::MoERuntime>(*communicator, mscclpp::ep::MoEMode::THROUGHPUT,
+                                                                     CorrectnessTokens, CorrectnessHidden, NumExperts,
+                                                                     NumTopk, mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
+  ASSERT_TRUE(throughputRuntime->mode() == mscclpp::ep::MoEMode::THROUGHPUT);
+  ASSERT_TRUE(throughputRuntime->isAvailable());
+  throughputRuntime->initialize();
+  ASSERT_NE(throughputRuntime->dispatchOutputBuffer(), nullptr);
+  ASSERT_NE(throughputRuntime->combineInputBuffer(), nullptr);
 
   auto runtime = createRuntime(*communicator, CorrectnessTokens, CorrectnessHidden,
                                mscclpp::ep::DispatchLayout::RANK_MAJOR, mscclpp::ep::CombineMode::DIRECT_SEND);
@@ -533,6 +533,24 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   }
   ASSERT_TRUE(rejectedCombine);
 
+  bool rejectedLatencyDispatch = false;
+  try {
+    throughputRuntime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{}});
+  } catch (const EPException&) {
+    rejectedLatencyDispatch = true;
+  }
+  ASSERT_TRUE(rejectedLatencyDispatch);
+
+  bool rejectedLatencyCombine = false;
+  try {
+    throughputRuntime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::LatencyCombineRequest{}});
+  } catch (const EPException&) {
+    rejectedLatencyCombine = true;
+  }
+  ASSERT_TRUE(rejectedLatencyCombine);
+
+  communicator->bootstrap()->barrier();
+  throughputRuntime.reset();
   communicator->bootstrap()->barrier();
   runtime.reset();
   communicator->bootstrap()->barrier();

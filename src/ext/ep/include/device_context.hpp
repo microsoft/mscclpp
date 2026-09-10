@@ -14,10 +14,18 @@ struct DeviceContext {
   void* localBufferBase_;
   /// Peer-mapped control or symmetric-buffer bases.
   void* const* peerBufferBases_;
+  /// Optional peer-mapped payload-pool bases.
+  void* const* peerPayloadBases_;
   /// Peer synchronization channels.
   mscclpp::BaseMemoryChannelDeviceHandle* channels_;
   /// Optional algorithm workspace.
   void* workspace_;
+  /// Optional token/rank receive indices used by throughput combine.
+  int* combineRecvIdx_;
+  /// Optional mapped receive count used by throughput preparation.
+  int* mappedRecvCounter_;
+  /// Optional mapped per-expert receive counts used by throughput preparation.
+  int* mappedRecvExpertCounters_;
   /// Maximum dynamic shared memory available to one block.
   int maxSharedMemoryPerBlock_;
   /// Number of SMs on the device.

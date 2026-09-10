@@ -14,12 +14,13 @@ namespace mscclpp {
 namespace ep {
 struct LatencyRuntimeContext;
 struct ThroughputRuntimeContext;
+
 /// Unified host runtime for expert-parallel dispatch and combine.
 ///
 /// One runtime owns the communication buffers and synchronization state for the
-/// selected mode. This library initially implements LATENCY with fixed-capacity
-/// expert-major or rank-major layouts. The THROUGHPUT API is reserved for a
-/// follow-up implementation and is rejected at runtime.
+/// selected mode. LATENCY uses fixed-capacity expert-major or rank-major
+/// layouts. THROUGHPUT uses a receive pool exposed as compact token-major or
+/// fixed-stride rank-major rows.
 /// Operations are asynchronous with respect to the host and execute on the
 /// CUDA stream supplied by each request.
 class MoERuntime {
@@ -31,7 +32,7 @@ class MoERuntime {
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
-  /// @param hidden Hidden dimension for latency-mode buffers.
+  /// @param hidden Hidden dimension used by both modes.
   /// @param numExperts Global expert count.
   /// @param numTopk Number of routed experts per token.
   /// @param outputLayout Dispatch output layout.
@@ -79,33 +80,37 @@ class MoERuntime {
 
   /// Dispatch tokens using the configured runtime mode.
   ///
-  /// ThroughputDispatchRequest is reserved for a follow-up implementation.
-  /// Output buffers remain owned by the caller unless obtained through a runtime buffer accessor.
-  /// Hidden size, expert count, top-k count, and output layout come from the runtime.
-  /// Token count and active capacity may vary between dispatches, with
+  /// @p request must contain the request type matching mode(): a
+  /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
+  /// THROUGHPUT. Output buffers remain owned by the caller unless obtained
+  /// through a runtime buffer accessor. Hidden size, expert count, top-k count,
+  /// and output layout come from the runtime. Token count and active capacity
+  /// may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
-  /// @param request Dispatch inputs, outputs, dimensions, and CUDA stream.
+  /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. A successful new
   /// dispatch invalidates prior handles; a rejected request does not.
-  /// @throws EPException If @p request is not a valid latency request.
+  /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
   ///
-  /// The request's handle supplies routing metadata, token count, active capacity,
-  /// format, and epoch. Fixed dimensions, layout, and algorithm come from the runtime.
-  /// Handle ownership and freshness are checked when enqueuing or capturing
-  /// combine, not when replaying a graph. Device metadata is not validated on the host.
-  /// ThroughputCombineRequest is reserved for a follow-up implementation.
+  /// The request's handle supplies routing metadata, token count, active
+  /// capacity, and epoch. Fixed dimensions, layout, and algorithm come from the
+  /// runtime. Handle ownership and freshness are checked when enqueuing or
+  /// capturing combine, not when replaying a graph. Device metadata is not
+  /// validated on the host.
   /// @param request Expert inputs, outputs, dispatch handle, block count, and CUDA stream.
-  /// @throws EPException If @p request is invalid or its handle is empty, expired,
-  /// stale, or belongs to another runtime.
+  /// @throws EPException If @p request is invalid or its handle is empty,
+  /// expired, stale, or belongs to another runtime.
   void combine(const CombineRequest& request);
 
  private:
   void requireMode(MoEMode expected) const;
   DispatchHandle launchLatencyDispatch(const LatencyDispatchRequest& request);
+  DispatchHandle launchThroughputDispatch(const ThroughputDispatchRequest& request);
   void launchLatencyCombine(const LatencyCombineRequest& request);
+  void launchThroughputCombine(const ThroughputCombineRequest& request);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
   MoEMode mode_;

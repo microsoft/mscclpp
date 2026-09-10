@@ -14,6 +14,27 @@
 namespace mscclpp {
 namespace ep {
 
+void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
+                       int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream);
+
+void throughputExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
+                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
+                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels);
+
+void throughputPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream);
+
+void throughputDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
+                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
+                        int* outputTopkIdx, float* outputTopkWeights, float* outputScales, int numBlocks,
+                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
+                        DispatchLayout layout, int maxTokensPerRank, const DeviceContext& context, cudaStream_t stream);
+
+void throughputReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
+                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
+                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
+                             cudaStream_t stream);
+
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
