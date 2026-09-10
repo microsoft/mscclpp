@@ -40,7 +40,9 @@ enum class DispatchLayout {
   /// Token-major rows: [num_recv_tokens, hidden]. High throughput only.
   TOKEN_MAJOR,
   /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
-  RANK_MAJOR
+  RANK_MAJOR,
+  /// Fixed [source rank, source token, top-k slot, hidden] rows with flat expert IDs and weights.
+  RANK_MAJOR_TOPK_EXPANDED
 };
 
 // ===========================================================================

@@ -62,6 +62,7 @@ set(EP_SOURCES
     bindings.cpp
     low_latency/dispatch.cu
     low_latency/combine.cu
+    low_latency/topk_expanded.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
     high-throughput/counts.cu
@@ -152,7 +153,7 @@ if(MSCCLPP_USE_GPUNETIO)
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # The low-latency combine kernel RDMA-reads (gin->get) remote expert outputs
     # for cross-domain peers.
-    set_source_files_properties(low_latency/combine.cu PROPERTIES
+    set_source_files_properties(low_latency/combine.cu low_latency/topk_expanded.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
 endif()

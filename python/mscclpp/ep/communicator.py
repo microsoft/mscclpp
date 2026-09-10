@@ -29,6 +29,8 @@ from .types import (
     QuantConfig,
     RankMajorDispatchHandle,
     RankMajorCombineContext,
+    RankMajorTopkExpandedDispatchHandle,
+    RankMajorTopkExpandedCombineContext,
 )
 
 __all__ = [
@@ -53,6 +55,8 @@ __all__ = [
     "QuantConfig",
     "RankMajorDispatchHandle",
     "RankMajorCombineContext",
+    "RankMajorTopkExpandedDispatchHandle",
+    "RankMajorTopkExpandedCombineContext",
 ]
 
 
@@ -155,10 +159,18 @@ class MoECommunicator:
         This aliases runtime memory that every combine reuses; it is not a fresh
         allocation per call. Fill it before each combine and copy out anything
         that must outlive the next call.
+
+        ``RANK_MAJOR`` retains its pre-reduced per-rank result contract.
+        ``RANK_MAJOR_TOPK_EXPANDED`` returns a BF16 tensor shaped
+        ``[world_size * max_tokens_per_rank * topk, hidden_size]``. Fill each
+        active row with one unweighted expert result; combine applies the
+        original source weights. No compaction or local pre-reduction is used.
         """
         buffer = getattr(self._backend, "expert_output_buffer", None)
         if buffer is None:
-            raise RuntimeError("expert output buffer is only available for RANK_MAJOR low-latency mode")
+            raise RuntimeError(
+                "expert output buffer is only available for RANK_MAJOR or RANK_MAJOR_TOPK_EXPANDED low-latency mode"
+            )
         return buffer
 
     def dispatch_async(self, *args, **kwargs):
@@ -176,6 +188,8 @@ class MoECommunicator:
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
+        if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            raise NotImplementedError("RANK_MAJOR_TOPK_EXPANDED output does not support overlapping calls yet")
         return CommOverlapConfig(operation=OperationOverlapConfig())
 
 

@@ -29,7 +29,29 @@ def parse_kineto_kernels(key_averages):
 # ============================================================================
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
+def _topk_expanded_reference(x, topk_idx, topk_weights, num_experts):
+    """Identity-expert reference: original weights applied once at the source in FP32.
+
+    Select live rows before reading payloads: even NaN payloads in invalid or
+    zero-weight slots must not enter the reduction via NaN * 0.
+    """
+    expected = torch.zeros_like(x, dtype=torch.float32)
+    for j in range(topk_idx.shape[1]):
+        valid = (topk_idx[:, j] >= 0) & (topk_idx[:, j] < num_experts) & (topk_weights[:, j] != 0)
+        expected[valid] = torch.addcmul(expected[valid], x[valid].float(), topk_weights[valid, j].float().view(-1, 1))
+    return expected
+
+
 def setup_mscclpp(args, comm, rank, num_ranks, inputs):
+    topk_expanded = args.ep_layout == "rank_major_topk_expanded"
+    if topk_expanded:
+        if args.dispatch_dtype != "bf16":
+            raise ValueError("rank_major_topk_expanded requires BF16 dispatch")
+        if args.combine_mode != "rank_local_reduce":
+            raise ValueError("rank_major_topk_expanded requires rank_local_reduce combine")
+        if not 1 <= args.num_topk <= 9:
+            raise ValueError("rank_major_topk_expanded requires top-k in [1, 9]")
+
     from mscclpp import CommGroup
     import mscclpp.ep as ep
 
@@ -62,6 +84,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError("rank-major output requires rank_local_reduce combine")
     output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    if topk_expanded:
+        output_layout = ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
     if rank_major and dispatch_quant is not None:
         raise ValueError("rank-major output supports BF16 dispatch only")
@@ -95,10 +119,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     # src_info/layout_range/count buffers internally).
     output_buffer = (
         None
-        if rank_major
+        if rank_major or topk_expanded
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
-    expert_output = moe_comm.get_expert_output_buffer() if rank_major else None
+    expert_output = moe_comm.get_expert_output_buffer() if rank_major or topk_expanded else None
     if expert_output is not None:
         expert_output.normal_()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
@@ -106,6 +130,15 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     def _dispatch():
         # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
+
+    def _topk_expanded_input(dispatch_out):
+        # Identity simulated MLP / validation only: one UNWEIGHTED BF16 expert
+        # result at (source_rank * num_tokens + source_token) * num_topk + slot.
+        # Combine must read registered expert storage, never dispatch storage.
+        # Invalid slots may contain NaNs; combine skips them before loading.
+        assert expert_output is not None
+        expert_output.copy_(dispatch_out.tokens)
+        return expert_output
 
     def _rank_major_weighted_input(dispatch_out):
         assert expert_output is not None
@@ -132,9 +165,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     def _combine(dispatch_out, handle):
         # Rank-major combine consumes the runtime-owned registered expert-output buffer.
         combine_input = (
-            _rank_major_weighted_input(dispatch_out)
-            if expert_output is not None
-            else simulated_gemm_output(dispatch_out)
+            _topk_expanded_input(dispatch_out)
+            if topk_expanded
+            else (
+                _rank_major_weighted_input(dispatch_out)
+                if expert_output is not None
+                else simulated_gemm_output(dispatch_out)
+            )
         )
         moe_comm.combine(combine_input, handle, out=out)
 
@@ -144,15 +181,24 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         torch.cuda.synchronize()
         v_out = torch.empty_like(out)
         validation_input = (
-            _rank_major_weighted_input(v_dispatch_out)
-            if expert_output is not None
-            else simulated_gemm_output(v_dispatch_out)
+            _topk_expanded_input(v_dispatch_out)
+            if topk_expanded
+            else (
+                _rank_major_weighted_input(v_dispatch_out)
+                if expert_output is not None
+                else simulated_gemm_output(v_dispatch_out)
+            )
         )
         torch.cuda.synchronize()
         comm.Barrier()
         moe_comm.combine(validation_input, v_handle, out=v_out)
         torch.cuda.synchronize()
-        if dispatch_quant is None:
+        if topk_expanded:
+            expected_f = _topk_expanded_reference(x, topk_idx, topk_weights, num_experts)
+            gdiff = validate_combine_output_mpi(v_out, expected_f.to(torch.bfloat16), comm, exact=False)
+            if rank == 0:
+                print(f"[validate] mscclpp combine OK max|got-expected|={gdiff:.4e}", flush=True)
+        elif dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
             x_f = x.float()
             if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
@@ -217,9 +263,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
         def _graph_combine():
             graph_input = (
-                _rank_major_weighted_input(_cap["out"])
-                if expert_output is not None
-                else simulated_gemm_output(_cap["out"])
+                _topk_expanded_input(_cap["out"])
+                if topk_expanded
+                else (
+                    _rank_major_weighted_input(_cap["out"])
+                    if expert_output is not None
+                    else simulated_gemm_output(_cap["out"])
+                )
             )
             moe_comm.combine(graph_input, _cap["handle"], out=out)
 
