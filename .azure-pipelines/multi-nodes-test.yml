@@ -24,6 +24,9 @@ parameters:
     10.0.0.5 mscclpp-h100-multinode-ci000000
     10.0.0.4 mscclpp-h100-multinode-ci000001
 
+variables:
+  system.debug: 'true'
+
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test

@@ -21,6 +21,8 @@ parameters:
 
 variables:
   - group: mscclpp
+  - name: system.debug
+    value: 'true'
 
 jobs:
 - job: MultiNodesTest

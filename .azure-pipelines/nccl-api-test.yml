@@ -25,6 +25,9 @@ pr:
       - docs/**
       - '**/*.md'
 
+variables:
+  system.debug: 'true'
+
 jobs:
 - job: NcclTestA100
   displayName: Run MSCCLPP over NCCL Test (A100)

@@ -60,6 +60,9 @@ parameters:
   type: string
   default: lmsysorg/sglang:latest-cu129
 
+variables:
+  system.debug: 'true'
+
 jobs:
 - job: SGLangTestMultiNode
   displayName: SGLang Test Multi Node
