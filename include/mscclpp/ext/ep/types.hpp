@@ -53,6 +53,9 @@ enum class DispatchDataType {
 };
 
 /// Arguments for latency-mode dispatch.
+///
+/// The caller must keep all buffers referenced by this struct (inputs and
+/// outputs) valid until the corresponding combine operation has finished.
 struct LatencyDispatchRequest {
   /// Dispatch output buffer.
   void* output;
