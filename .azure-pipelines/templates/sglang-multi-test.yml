@@ -5,7 +5,7 @@
 # nodes (via run-remote-task.yml + the SSH config / hostfile produced by the
 # caller pipeline). Steps:
 #   1. Build and install MSCCL++ on each node.
-#   2. Install a (currently forked) SGLang on each node, replacing any
+#   2. Install official upstream SGLang on each node, replacing any
 #      pre-baked copy from the base image.
 #   3. Run a 2-node sglang.bench_one_batch smoke test with MSCCL++ enabled.
 #   4. Run the MSCCL++ all-reduce micro-benchmark via torchrun across both
@@ -22,16 +22,13 @@ parameters:
   default: 'sglang-mscclpp-test'
 
 steps:
-# TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
-# Tracking: the fork below (`caiomcbr/sglang` @ caiorocha/mscclpp) is a personal
-# branch and should not remain a long-term CI dependency.
 - template: run-remote-task.yml
   parameters:
     name: InstallSGLang
     displayName: Install SGLang
     runRemoteArgs: '--container ${{ parameters.containerName }} --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
     remoteScript: |
-      git clone -b main https://github.com/caiomcbr/sglang.git
+      git clone -b main https://github.com/sgl-project/sglang.git
       cd sglang/python
       pip install -e .
 
