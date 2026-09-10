@@ -55,6 +55,8 @@ steps:
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
+      # Avoid the checkout's top-level benchmark directory shadowing sglang.benchmark.
+      cd sglang/python
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 8 --enable-mscclpp
 
 # Depends on the `sglang/` source tree cloned by the InstallSGLang step above
