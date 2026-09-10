@@ -55,10 +55,6 @@ parameters:
   default: |
     10.0.0.5 mscclpp-h100-multinode-ci000000
     10.0.0.4 mscclpp-h100-multinode-ci000001
-# Docker image used for the SGLang test container on the GPU nodes.
-- name: sglangImage
-  type: string
-  default: lmsysorg/sglang:latest-cu129
 
 variables:
   system.debug: 'true'
@@ -70,8 +66,10 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+        sglangImage: lmsysorg/sglang:latest-cu129
       cuda13:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        sglangImage: lmsysorg/sglang:latest-cu130
   pool:
     name: mscclpp-multi-node
   container:
@@ -130,7 +128,7 @@ jobs:
       gpuArch: '90'
       deployArgs: 'multi-node-test true cuda'
       containerName: 'sglang-mscclpp-test'
-      sglangImage: ${{ parameters.sglangImage }}
+      sglangImage: $(sglangImage)
 
   # Run the SGLang multi-node tests across the two GPU nodes.
   - template: templates/sglang-multi-test.yml
