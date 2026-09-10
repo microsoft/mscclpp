@@ -182,6 +182,19 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, cons
   }
 }
 
+__global__ void stageThroughputExpertOutput(Bf16* output, const Bf16* input, const float* rowWeights, int rows,
+                                            int hidden) {
+  const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+  const size_t elements = static_cast<size_t>(rows) * hidden;
+  for (size_t index = thread; index < elements; index += stride) {
+    const int row = static_cast<int>(index / hidden);
+    const float weight = rowWeights[row];
+    output[index] =
+        weight == 0.0f ? static_cast<Bf16>(0.0f) : static_cast<Bf16>(static_cast<float>(input[index]) * weight);
+  }
+}
+
 int numBlocks(size_t elements) { return static_cast<int>(std::min<size_t>((elements + Threads - 1) / Threads, 4096)); }
 
 void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hidden, cudaStream_t stream,
@@ -273,12 +286,83 @@ void assertCollectiveSuccess(const std::string& localError, const std::string& l
   }
 }
 
+struct ThroughputExpectation {
+  std::vector<float> rowWeights;
+  std::vector<int> outputCount;
+  int numRecvTokens = 0;
+  int totalRows = 0;
+};
+
+ThroughputExpectation makeThroughputExpectation(mscclpp::ep::DispatchLayout layout, int rank, int numTokens,
+                                                int numExperts) {
+  const int numLocalExperts = numExperts / NumRanks;
+  ThroughputExpectation expectation;
+  if (layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR) {
+    expectation.outputCount.assign(numLocalExperts, 0);
+    expectation.rowWeights.reserve(static_cast<size_t>(NumRanks) * numTokens);
+  } else {
+    expectation.outputCount.assign(NumRanks, 0);
+    expectation.rowWeights.assign(static_cast<size_t>(NumRanks) * numTokens, 0.0f);
+  }
+
+  std::vector<int> rankOffsets(NumRanks, 0);
+  for (int source = 0; source < NumRanks; ++source) {
+    for (int token = 0; token < numTokens; ++token) {
+      float localWeight = 0.0f;
+      for (int expert : routedExperts(source, token, numExperts)) {
+        if (expert >= 0 && expert < numExperts && expert / numLocalExperts == rank) {
+          localWeight += 1.0f / NumTopk;
+          if (layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR) {
+            ++expectation.outputCount[expert % numLocalExperts];
+          }
+        }
+      }
+      if (localWeight == 0.0f) continue;
+      if (layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR) {
+        expectation.rowWeights.push_back(localWeight);
+      } else {
+        expectation.rowWeights[static_cast<size_t>(source) * numTokens + rankOffsets[source]] = localWeight;
+        ++expectation.outputCount[source];
+        ++rankOffsets[source];
+      }
+      ++expectation.numRecvTokens;
+    }
+  }
+  expectation.totalRows = layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR
+                              ? expectation.numRecvTokens
+                              : static_cast<int>(expectation.rowWeights.size());
+  return expectation;
+}
+
+std::string checkThroughputCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout, int rank, int numTokens,
+                                  int numExperts) {
+  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, numTokens, numExperts);
+  std::vector<int> hostCount(expectation.outputCount.size());
+  MSCCLPP_CUDATHROW(cudaMemcpy(hostCount.data(), outputCount, hostCount.size() * sizeof(int), cudaMemcpyDeviceToHost));
+  for (size_t index = 0; index < hostCount.size(); ++index) {
+    if (hostCount[index] != expectation.outputCount[index]) {
+      std::ostringstream error;
+      error << "throughput output count " << index << ": expected " << expectation.outputCount[index] << ", got "
+            << hostCount[index];
+      return error.str();
+    }
+  }
+  return {};
+}
+
 std::unique_ptr<mscclpp::ep::MoERuntime> createRuntime(mscclpp::Communicator& communicator, int numTokens, int hidden,
                                                        mscclpp::ep::DispatchLayout layout,
                                                        mscclpp::ep::CombineMode combineMode,
                                                        int numExperts = NumExperts) {
   return std::make_unique<mscclpp::ep::MoERuntime>(communicator, mscclpp::ep::MoEMode::LATENCY, numTokens, hidden,
                                                    numExperts, NumTopk, layout, combineMode);
+}
+
+std::unique_ptr<mscclpp::ep::MoERuntime> createThroughputRuntime(mscclpp::Communicator& communicator, int numTokens,
+                                                                 int hidden, mscclpp::ep::DispatchLayout layout,
+                                                                 int numExperts = NumExperts) {
+  return std::make_unique<mscclpp::ep::MoERuntime>(communicator, mscclpp::ep::MoEMode::THROUGHPUT, numTokens, hidden,
+                                                   numExperts, NumTopk, layout);
 }
 
 void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
@@ -353,6 +437,74 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
   std::string error = checkCounts(buffers.outputCount.data(), layout, CorrectnessTokens, rank, NumExperts);
   if (error.empty()) {
     error = checkOutput(buffers.output.data(), rank, CorrectnessTokens, CorrectnessHidden, fp8 ? 1.0f : 0.0f);
+  }
+  assertCollectiveSuccess(error, label);
+
+  communicator.bootstrap()->barrier();
+  runtime.reset();
+  communicator.bootstrap()->barrier();
+}
+
+void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
+                                  mscclpp::ep::DispatchLayout layout) {
+  const char* layoutName = layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR ? "token-major" : "rank-major";
+  const std::string label = std::string("throughput/") + layoutName + "/bf16";
+  auto runtime = createThroughputRuntime(communicator, CorrectnessTokens, CorrectnessHidden, layout);
+  ASSERT_TRUE(runtime->isAvailable());
+  runtime->initialize();
+
+  CudaStream stream;
+  TestBuffers buffers(CorrectnessTokens, CorrectnessHidden);
+  initializeTestBuffers(buffers, rank, CorrectnessTokens, CorrectnessHidden, stream);
+
+  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, CorrectnessTokens, NumExperts);
+  mscclpp::GpuBuffer<float> rowWeights(expectation.totalRows > 0 ? static_cast<size_t>(expectation.totalRows) : 1);
+  if (expectation.totalRows > 0) {
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(rowWeights.data(), expectation.rowWeights.data(),
+                                      sizeof(float) * static_cast<size_t>(expectation.totalRows),
+                                      cudaMemcpyHostToDevice, stream));
+  }
+
+  void* dispatchOutput = runtime->dispatchOutputBuffer();
+  const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{
+      .output = dispatchOutput,
+      .outputScales = nullptr,
+      .outputTopkIdx = nullptr,
+      .outputTopkWeights = nullptr,
+      .outputCount = buffers.outputCount.data(),
+      .input = buffers.input.data(),
+      .inputScales = nullptr,
+      .topkIdx = buffers.topkIdx.data(),
+      .topkWeights = buffers.topkWeights.data(),
+      .numTokens = CorrectnessTokens,
+      .maxTokensPerRank = CorrectnessTokens,
+      .dispatchDataType = mscclpp::ep::DispatchDataType::BF16,
+      .numBlocks = dispatchBlocks,
+      .stream = stream,
+  }});
+
+  auto* combineInput = static_cast<Bf16*>(runtime->combineInputBuffer());
+  if (expectation.totalRows > 0) {
+    const size_t elements = static_cast<size_t>(expectation.totalRows) * CorrectnessHidden;
+    stageThroughputExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+        combineInput, static_cast<const Bf16*>(dispatchOutput), rowWeights.data(), expectation.totalRows,
+        CorrectnessHidden);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+  }
+
+  runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::ThroughputCombineRequest{
+      .output = buffers.output.data(),
+      .outputTopkWeights = nullptr,
+      .input = combineInput,
+      .handle = handle,
+      .numBlocks = combineBlocks,
+      .stream = stream,
+  }});
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+  std::string error = checkThroughputCounts(buffers.outputCount.data(), layout, rank, CorrectnessTokens, NumExperts);
+  if (error.empty()) {
+    error = checkOutput(buffers.output.data(), rank, CorrectnessTokens, CorrectnessHidden, 0.0f);
   }
   assertCollectiveSuccess(error, label);
 
@@ -565,6 +717,13 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
     runCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
                        mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode, mscclpp::ep::DispatchDataType::BF16);
   }
+}
+
+TEST(MoERuntimeTest, ThroughputDispatchCombineCorrectness) {
+  runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
+                               mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
+  runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
+                               mscclpp::ep::DispatchLayout::RANK_MAJOR);
 }
 
 PERF_TEST(MoERuntimeTest, GraphDispatchCombine32Tokens) {
