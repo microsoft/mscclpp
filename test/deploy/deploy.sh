@@ -46,6 +46,19 @@ while true; do
 done
 set -e
 
+if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
+  parallel-ssh -i -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" '
+    set -e
+    hostname
+    echo "=== Filesystem capacity ==="
+    df -h
+    echo "=== Filesystem inode usage ==="
+    df -i
+    echo "=== Docker storage usage ==="
+    sudo docker system df -v
+  '
+fi
+
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
