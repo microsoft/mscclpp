@@ -8,7 +8,6 @@
 
 #include "exception.hpp"
 #include "kernels.hpp"
-#include "launch.hpp"
 
 namespace mscclpp {
 namespace ep {
@@ -97,10 +96,9 @@ void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTo
   const int numBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock +
                         (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
-  LaunchConfig config(numBlocks, NumThreads, 0, stream);
-  LAUNCH_KERNEL(config.get(), (prepareThroughputKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>), topkIdx,
-                numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts,
-                context.devicePtr_);
+  prepareThroughputKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock><<<numBlocks, NumThreads, 0, stream>>>(
+      topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts, context.devicePtr_);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
 }  // namespace ep

@@ -9,7 +9,6 @@
 #include "common/device_helpers.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
-#include "launch.hpp"
 #include "recv_pool.hpp"
 
 namespace mscclpp {
@@ -34,13 +33,14 @@ namespace ep {
 #define EP_HT_COMBINE_TMA_WIDE_MAX_BLOCKS 24
 #endif
 
-template <int NumRanks, int MaxContributors, int NumWarps>
+template <int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     throughputReduceCombineKernel(int4* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
                                   int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
                                   int64_t metadataSlotBytes, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
-  static_assert(MaxContributors <= NumRanks);
+  const int numRanks = context->numRanks_;
+  EP_DEVICE_ASSERT(MaxContributors <= numRanks);
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
   constexpr int NumStages = EP_HT_COMBINE_TMA_STAGES;
   constexpr int ChunkBytes = ChunkInt4 * static_cast<int>(sizeof(int4));
@@ -61,7 +61,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   };
   uint32_t barrierPhases[NumStages] = {};
 
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier<NumRanks>(context->channels_, context->rank_);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
   cooperative_groups::this_grid().sync();
   if (laneId == 0) {
 #pragma unroll
@@ -78,10 +78,10 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     int contributorRanks[MaxContributors];
     int contributorSlots[MaxContributors];
     int numContributors = 0;
-    for (int rankBase = 0; rankBase < NumRanks; rankBase += WARP_SIZE) {
+    for (int rankBase = 0; rankBase < numRanks; rankBase += WARP_SIZE) {
       const int peerRank = rankBase + laneId;
-      const bool contributes = peerRank < NumRanks && sendHead[static_cast<int64_t>(token) * NumRanks + peerRank] >= 0;
-      const int slot = contributes ? context->combineRecvIdx_[static_cast<int64_t>(token) * NumRanks + peerRank] : 0;
+      const bool contributes = peerRank < numRanks && sendHead[static_cast<int64_t>(token) * numRanks + peerRank] >= 0;
+      const int slot = contributes ? context->combineRecvIdx_[static_cast<int64_t>(token) * numRanks + peerRank] : 0;
       unsigned contributors = __ballot_sync(0xffffffffu, contributes);
       while (contributors != 0u) {
         const int sourceLane = __ffs(static_cast<int>(contributors)) - 1;
@@ -182,7 +182,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
-template <int NumRanks, int MaxContributors, int NumWarps>
+template <int MaxContributors, int NumWarps>
 int maxCooperativeThroughputCombineBlocks(size_t dynamicSharedBytes) {
   static int cachedDevice = -1;
   static size_t cachedSharedBytes = 0;
@@ -193,7 +193,7 @@ int maxCooperativeThroughputCombineBlocks(size_t dynamicSharedBytes) {
   if (device != cachedDevice || dynamicSharedBytes != cachedSharedBytes) {
     int blocksPerSm;
     int numSms;
-    auto kernel = throughputReduceCombineKernel<NumRanks, MaxContributors, NumWarps>;
+    auto kernel = throughputReduceCombineKernel<MaxContributors, NumWarps>;
     MSCCLPP_CUDATHROW(
         cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumWarps * WARP_SIZE, dynamicSharedBytes));
     MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
@@ -219,53 +219,55 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const int* 
   constexpr int ChunkInt4 = EP_HT_COMBINE_TMA_CHUNK_INT4;
   const bool useWideKernel = numBlocks <= EP_HT_COMBINE_TMA_WIDE_MAX_BLOCKS;
 
-#define COMBINE_LAUNCH(ranks, maxContributors, numWarps)                                                               \
-  {                                                                                                                    \
-    auto kernel = throughputReduceCombineKernel<ranks, maxContributors, numWarps>;                                     \
-    const size_t sharedBytes =                                                                                         \
-        static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                       \
-        static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                      \
-    MSCCLPP_CUDATHROW(                                                                                                 \
-        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));     \
-    EP_HOST_ASSERT(                                                                                                    \
-        (numBlocks <= maxCooperativeThroughputCombineBlocks<ranks, maxContributors, numWarps>(sharedBytes)));          \
-    LaunchConfig config(numBlocks, numWarps* WARP_SIZE, sharedBytes, stream, true);                                    \
-    LAUNCH_KERNEL(config.get(), kernel, reinterpret_cast<int4*>(output), outputTopkWeights, sendHead, numOutputTokens, \
-                  hidden, numTopk, recvPoolHeaderBytes, recvPoolMetadataOffset, metadataSlotBytes,                     \
-                  context.devicePtr_);                                                                                 \
+#define COMBINE_LAUNCH(maxContributors, numWarps)                                                                  \
+  {                                                                                                                \
+    auto kernel = throughputReduceCombineKernel<maxContributors, numWarps>;                                        \
+    const size_t sharedBytes =                                                                                     \
+        static_cast<size_t>(numWarps) * NumStages * maxContributors * ChunkInt4 * sizeof(int4) +                   \
+        static_cast<size_t>(numWarps) * NumStages * sizeof(mscclpp::BulkBarrier);                                  \
+    MSCCLPP_CUDATHROW(                                                                                             \
+        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes))); \
+    EP_HOST_ASSERT((numBlocks <= maxCooperativeThroughputCombineBlocks<maxContributors, numWarps>(sharedBytes)));  \
+    cudaLaunchAttribute attribute{};                                                                               \
+    attribute.id = cudaLaunchAttributeCooperative;                                                                 \
+    attribute.val.cooperative = 1;                                                                                 \
+    cudaLaunchConfig_t config{dim3(numBlocks), dim3(numWarps * WARP_SIZE), sharedBytes, stream, &attribute, 1};    \
+    MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, reinterpret_cast<int4*>(output), outputTopkWeights,      \
+                                         sendHead, numOutputTokens, hidden, numTopk, recvPoolHeaderBytes,          \
+                                         recvPoolMetadataOffset, metadataSlotBytes, context.devicePtr_));          \
   }
 
   switch (context.numRanks_) {
     case 2:
-      COMBINE_LAUNCH(2, 2, EP_HT_COMBINE_TMA_WARPS);
+      COMBINE_LAUNCH(2, EP_HT_COMBINE_TMA_WARPS);
       break;
     case 4:
       if (numTopk <= 2)
-        COMBINE_LAUNCH(4, 2, EP_HT_COMBINE_TMA_WARPS)
+        COMBINE_LAUNCH(2, EP_HT_COMBINE_TMA_WARPS)
       else
-        COMBINE_LAUNCH(4, 4, EP_HT_COMBINE_TMA_WARPS)
+        COMBINE_LAUNCH(4, EP_HT_COMBINE_TMA_WARPS)
       break;
     case 8:
       if (numTopk <= 4) {
-        COMBINE_LAUNCH(8, 4, EP_HT_COMBINE_TMA_WARPS)
+        COMBINE_LAUNCH(4, EP_HT_COMBINE_TMA_WARPS)
       } else if (useWideKernel) {
-        COMBINE_LAUNCH(8, 8, EP_HT_COMBINE_TMA_WARPS_WIDE)
+        COMBINE_LAUNCH(8, EP_HT_COMBINE_TMA_WARPS_WIDE)
       } else {
-        COMBINE_LAUNCH(8, 8, EP_HT_COMBINE_TMA_WARPS_NARROW)
+        COMBINE_LAUNCH(8, EP_HT_COMBINE_TMA_WARPS_NARROW)
       }
       break;
     case 16:
       if (numTopk <= 4) {
-        COMBINE_LAUNCH(16, 4, EP_HT_COMBINE_TMA_WARPS)
+        COMBINE_LAUNCH(4, EP_HT_COMBINE_TMA_WARPS)
       } else if (numTopk <= 8) {
         if (useWideKernel)
-          COMBINE_LAUNCH(16, 8, EP_HT_COMBINE_TMA_WARPS_WIDE)
+          COMBINE_LAUNCH(8, EP_HT_COMBINE_TMA_WARPS_WIDE)
         else
-          COMBINE_LAUNCH(16, 8, EP_HT_COMBINE_TMA_WARPS_NARROW)
+          COMBINE_LAUNCH(8, EP_HT_COMBINE_TMA_WARPS_NARROW)
       } else if (numTopk <= 12) {
-        COMBINE_LAUNCH(16, 12, 9);
+        COMBINE_LAUNCH(12, 9);
       } else {
-        COMBINE_LAUNCH(16, 16, 7);
+        COMBINE_LAUNCH(16, 7);
       }
       break;
     default:

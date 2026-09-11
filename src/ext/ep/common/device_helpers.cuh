@@ -71,13 +71,12 @@ MSCCLPP_DEVICE_INLINE int getLaneId() {
   return laneId;
 }
 
-template <int NumRanks>
-__forceinline__ __device__ void barrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
+MSCCLPP_DEVICE_INLINE void barrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
   constexpr int64_t MaxSpinCount = 100'000'000;
   const int laneId = getLaneId();
-  EP_DEVICE_ASSERT(NumRanks <= WARP_SIZE);
+  EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= WARP_SIZE);
 
-  if (laneId < NumRanks && laneId != rank) {
+  if (laneId < numRanks && laneId != rank) {
     channels[laneId].signal();
     channels[laneId].wait(MaxSpinCount);
   }
