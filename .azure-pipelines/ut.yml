@@ -27,9 +27,6 @@ pr:
       - docs/**
       - '**/*.md'
 
-variables:
-  system.debug: 'true'
-
 jobs:
 - job: UnitTestA100
   timeoutInMinutes: 40

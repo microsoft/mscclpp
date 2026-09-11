@@ -25,9 +25,6 @@ pr:
     - docs/**
     - '**/*.md'
 
-variables:
-  system.debug: 'true'
-
 jobs:
 - job: IntegrationTestA100
   displayName: Integration test A100

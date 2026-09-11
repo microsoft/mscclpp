@@ -27,9 +27,6 @@ pr:
       - docs/**
       - '**/*.md'
 
-variables:
-  system.debug: 'true'
-
 jobs:
 - job: CodeCoverageA100
   timeoutInMinutes: 40

@@ -25,9 +25,6 @@ pr:
       - docs/**
       - '**/*.md'
 
-variables:
-  system.debug: 'true'
-
 jobs:
 - job: RcclTestMI300X
   displayName: Run MSCCLPP over RCCL Test (MI300X)
