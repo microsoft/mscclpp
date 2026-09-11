@@ -32,7 +32,7 @@ class MoERuntime {
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
-  /// @param hidden Hidden dimension used by both modes.
+  /// @param hidden Hidden dimension.
   /// @param numExperts Global expert count.
   /// @param numTopk Number of routed experts per token.
   /// @param outputLayout Dispatch output layout.

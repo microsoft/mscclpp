@@ -7,7 +7,6 @@
 #include <mscclpp/bulk_device.hpp>
 
 #include "common/device_helpers.cuh"
-#include "common/overlap_barrier.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
 #include "launch.hpp"
@@ -62,7 +61,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   };
   uint32_t barrierPhases[NumStages] = {};
 
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) overlapBarrier<NumRanks>(context->channels_, context->rank_);
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier<NumRanks>(context->channels_, context->rank_);
   cooperative_groups::this_grid().sync();
   if (laneId == 0) {
 #pragma unroll

@@ -3,6 +3,8 @@
 #ifndef MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 #define MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 
+#include <mscclpp/memory_channel_device.hpp>
+
 #include "exception.hpp"
 
 #ifndef WARP_SIZE
@@ -67,6 +69,19 @@ MSCCLPP_DEVICE_INLINE int getLaneId() {
   int laneId;
   asm("mov.s32 %0, %laneid;" : "=r"(laneId));
   return laneId;
+}
+
+template <int NumRanks>
+__forceinline__ __device__ void barrier(mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank) {
+  constexpr int64_t MaxSpinCount = 100'000'000;
+  const int laneId = getLaneId();
+  EP_DEVICE_ASSERT(NumRanks <= WARP_SIZE);
+
+  if (laneId < NumRanks && laneId != rank) {
+    channels[laneId].signal();
+    channels[laneId].wait(MaxSpinCount);
+  }
+  __syncwarp();
 }
 
 }  // namespace ep
