@@ -549,9 +549,10 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartials(void* output,
 
   for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
     const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-    const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
     const float weight =
         laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
+    const bool validExpert = globalExpertIdx >= 0 && globalExpertIdx < nExperts;
+    const int destinationRank = validExpert && weight != 0.0f ? globalExpertIdx / nLocalExperts : -1;
 
     for (int hiddenIdx = threadId; hiddenIdx < HiddenInt4; hiddenIdx += CombineNThreads) {
       const int4 packed = reduceRemoteTokenPartialsBf16x8<HiddenInt4>(expertOutput, transport, destinationRank, weight,
@@ -595,12 +596,14 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorTopkExpandedRemotePartialsTma(
   for (int tokenIdx = static_cast<int>(blockIdx.x) - 1; tokenIdx < nTokens; tokenIdx += nWorkerBlocks) {
     if (warpId == 0) {
       const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-      const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
+      const bool validExpert = globalExpertIdx >= 0 && globalExpertIdx < nExperts;
+      const float weight =
+          validExpert ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
+      const int destinationRank = validExpert && weight != 0.0f ? globalExpertIdx / nLocalExperts : -1;
       const bool validRow = laneId < RankMajorTmaMaxNTopk && destinationRank >= 0;
       if (laneId < RankMajorTmaMaxNTopk) {
         validRows[laneId] = validRow;
-        slotWeights[laneId] =
-            validRow ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
+        slotWeights[laneId] = validRow ? weight : 0.0f;
       }
       __syncwarp();
 

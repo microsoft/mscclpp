@@ -255,11 +255,17 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorTopkExpandedNotify(const TransportVi
                                                                void* workspace, uint32_t epoch, int* sharedMem) {
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   auto* rankTokenCounts = sharedMem;
+  auto* metadataCompletionCounts = sharedMem + nRanks;
+  for (int dstRank = static_cast<int>(threadIdx.x); dstRank < nRanks; dstRank += static_cast<int>(blockDim.x)) {
+    // Token payloads are sparse per destination rank, but metadata is dense:
+    // each destination receives one [token, top-k] slot for every source route.
+    metadataCompletionCounts[dstRank] = nTokens * nTopk;
+  }
   countRankMajorTopkExpandedRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
   invalidateRankMajorTopkExpandedPadding(transport, outputTopkIdx, outputTopkWeights, nRanks, nTokens, nTopk,
                                          maxTokensPerRank, invalidTokenExpertId);
   writeRankMajorCounts(transport, rankTokenCounts, nRanks, recvBuffer, epoch);
-  publishDispatchPayloads(transport, rankTokenCounts, nRanks, workspaceView);
+  publishDispatchPayloads(transport, metadataCompletionCounts, nRanks, workspaceView);
 }
 
 template <int Hidden>
@@ -320,7 +326,11 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
     if (dstRank >= 0) {
       issueRankMajorTopkExpandedTokenStore<Hidden>(output, transport, dstRank, destIndex, sendState.stagedToken_);
       mscclpp::bulkStoreWait();
-      atomicAdd_block(completionCounts + dstRank, 1);
+    }
+    if (laneId < nTopk) {
+      for (int destinationRank = 0; destinationRank < nRanks; ++destinationRank) {
+        atomicAdd_block(completionCounts + destinationRank, 1);
+      }
     }
     __syncwarp();
   }
@@ -360,7 +370,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvRankMajorTopkExpanded(int* outputCount, c
   __syncthreads();
   nStores = sharedMem[0];
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
-  if (threadIdx.x == 0 && nStores > 0) {
+  if (threadIdx.x == 0) {
     if (transport.isSelf(sourceRank)) {
       workspaceView.dispatchLocalPayloadReady_->acquire();
     } else {

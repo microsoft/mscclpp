@@ -9,6 +9,10 @@ Launch with (intra-node, 8 GPUs):
     torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
         --output-layout rank_major
+    # Rank-major-top-k-expanded output:
+    torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
+        --output-layout rank_major_topk_expanded
     # Optional CUDA graph smoke/benchmark:
     torchrun --nproc_per_node=8 test/python/ep/test_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
@@ -192,6 +196,8 @@ def simulated_gemm_output(dispatch_out):
     assert dispatch_out.weights is not None
     output = torch.zeros_like(tokens, dtype=torch.float32)
     tokens_f = tokens.float()
+    if dispatch_out.topk_ids.dim() == 1:
+        return tokens
     for topk_idx in range(dispatch_out.topk_ids.size(1)):
         local_weight = dispatch_out.weights[:, topk_idx].masked_fill(dispatch_out.topk_ids[:, topk_idx] < 0, 0.0)
         output = torch.addcmul(output, tokens_f, local_weight.view(-1, 1))
@@ -321,70 +327,6 @@ def validate_expert_major_dispatch(
             )
 
 
-def validate_rank_major_dispatch(
-    *,
-    rank,
-    num_ranks,
-    num_tokens,
-    num_topk,
-    num_local_experts,
-    dispatch_out,
-    handle,
-    packed_recv_count,
-    all_topk_idx,
-    all_topk_weights,
-    all_x,
-    invalid_token_expert_id,
-):
-    assert all_x is not None
-    assert dispatch_out.topk_ids is not None
-    assert dispatch_out.weights is not None
-    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
-    assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
-    assert dispatch_out.layout.offsets is None
-    local_expert_begin = rank * num_local_experts
-    local_expert_end = local_expert_begin + num_local_experts
-
-    for source_rank in range(num_ranks):
-        recv_count = int(packed_recv_count[source_rank].item())
-        row_begin = source_rank * num_tokens
-        row_end = row_begin + recv_count
-        source_routing = all_topk_idx[source_rank]
-        expected_source_tokens = (
-            ((source_routing >= local_expert_begin) & (source_routing < local_expert_end))
-            .any(dim=1)
-            .nonzero()
-            .flatten()
-        )
-        assert recv_count == expected_source_tokens.numel()
-        if recv_count:
-            actual_source_tokens = decode_token_ids(dispatch_out.tokens[row_begin:row_end])
-            assert torch.equal(torch.sort(actual_source_tokens).values, expected_source_tokens)
-            actual_topk_ids = dispatch_out.topk_ids[row_begin:row_end]
-            actual_weights = dispatch_out.weights[row_begin:row_end]
-            expected_global_ids = all_topk_idx[source_rank, actual_source_tokens]
-            local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
-            expected_output_ids = torch.where(
-                local_mask,
-                expected_global_ids,
-                torch.full_like(expected_global_ids, invalid_token_expert_id),
-            )
-            expected_weights = torch.where(
-                local_mask,
-                all_topk_weights[source_rank, actual_source_tokens],
-                torch.zeros_like(actual_weights),
-            )
-            assert torch.equal(actual_topk_ids, expected_output_ids.to(torch.int32))
-            torch.testing.assert_close(actual_weights, expected_weights)
-            assert torch.equal(
-                dispatch_out.tokens[row_begin:row_end],
-                all_x[source_rank, actual_source_tokens],
-            )
-        block_end = row_begin + num_tokens
-        assert torch.all(dispatch_out.topk_ids[row_end:block_end] == invalid_token_expert_id)
-        assert torch.all(dispatch_out.weights[row_end:block_end] == 0)
-
-
 def validate_rank_major_topk_expanded_dispatch(
     *,
     rank,
@@ -412,11 +354,11 @@ def validate_rank_major_topk_expanded_dispatch(
             all_topk_idx[source_rank] < local_expert_end
         )
         assert int(packed_recv_count[source_rank].item()) == int(expected_local_routes.sum().item())
-        row_base = source_rank * num_tokens * num_topk
+        row_base = source_rank * num_tokens
         for token_idx in range(num_tokens):
-            metadata_row = source_rank * num_tokens + token_idx
             for topk_slot in range(num_topk):
-                route_idx = row_base + token_idx * num_topk + topk_slot
+                metadata_row = row_base + token_idx
+                route_idx = metadata_row * num_topk + topk_slot
                 expert = int(all_topk_idx[source_rank, token_idx, topk_slot].item())
                 expected_local = local_expert_begin <= expert < local_expert_end
                 expected_id = expert if expected_local else invalid_token_expert_id
@@ -561,11 +503,10 @@ def main():
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
         "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[args.output_layout]
-    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+    if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
         assert combine_mode in (
             ep.CombineMode.RANK_LOCAL_REDUCE,
-            ep.CombineMode.DIRECT_SEND,
-        ), "rank-major output requires a supported combine mode"
+        ), "runtime-owned output layouts require rank-local-reduce combine"
     dispatch_data_type = {
         "bf16": ep.DispatchDataType.BF16,
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
