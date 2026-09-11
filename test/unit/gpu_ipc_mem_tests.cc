@@ -25,6 +25,12 @@ void requirePosixFd(const mscclpp::GpuIpcMemHandle& handle) {
   }
 }
 
+void requireFabric(const mscclpp::GpuIpcMemHandle& handle) {
+  if ((handle.typeFlags & mscclpp::GpuIpcMemHandle::Type::Fabric) == 0) {
+    SKIP_TEST() << "CUDA Fabric memory handles are unavailable";
+  }
+}
+
 }  // namespace
 
 TEST(GpuIpcMemTest, ReusesPosixFdForSameAllocation) {
@@ -56,6 +62,38 @@ TEST(GpuIpcMemTest, UsesDifferentPosixFdsForDifferentAllocations) {
   requirePosixFd(*secondHandle);
 
   EXPECT_NE(firstHandle->posixFd.fd, secondHandle->posixFd.fd);
+}
+
+TEST(GpuIpcMemTest, ReusesFabricMappingForSameAllocation) {
+  auto memory = allocatePhysicalMemory(2);
+  auto baseHandle = mscclpp::GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(memory.get()));
+  auto offsetHandle = mscclpp::GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(memory.get() + 1));
+  requireFabric(*baseHandle);
+  requireFabric(*offsetHandle);
+
+  auto baseIpcMem = mscclpp::GpuIpcMem::create(*baseHandle);
+  auto baseMapping = baseIpcMem->map();
+  auto offsetIpcMem = mscclpp::GpuIpcMem::create(*offsetHandle);
+  auto offsetMapping = offsetIpcMem->map();
+
+  EXPECT_EQ(static_cast<size_t>(static_cast<char*>(offsetMapping.get()) - static_cast<char*>(baseMapping.get())),
+            sizeof(uint64_t));
+}
+
+TEST(GpuIpcMemTest, UsesDifferentFabricMappingsForDifferentAllocations) {
+  auto firstMemory = allocatePhysicalMemory(1);
+  auto secondMemory = allocatePhysicalMemory(1);
+  auto firstHandle = mscclpp::GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(firstMemory.get()));
+  auto secondHandle = mscclpp::GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(secondMemory.get()));
+  requireFabric(*firstHandle);
+  requireFabric(*secondHandle);
+
+  auto firstIpcMem = mscclpp::GpuIpcMem::create(*firstHandle);
+  auto firstMapping = firstIpcMem->map();
+  auto secondIpcMem = mscclpp::GpuIpcMem::create(*secondHandle);
+  auto secondMapping = secondIpcMem->map();
+
+  EXPECT_NE(firstMapping.get(), secondMapping.get());
 }
 
 #endif  // CUDA_NVLS_API_AVAILABLE
