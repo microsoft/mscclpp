@@ -12,6 +12,8 @@
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
+#include "exception.hpp"
+
 namespace mscclpp {
 namespace ep {
 
@@ -227,6 +229,47 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
 }
 
 struct ThroughputStorageLayout {
+  static constexpr int MaxTopk = 32;
+  static constexpr int MaxScales = 128;
+  static constexpr int MaxLocalExperts = 1024;
+  // Receive counts are data-dependent, so peers use a fixed-capacity pool mapped at setup time.
+  static constexpr int RecvPoolMaxTokens = 65536;
+  static constexpr int64_t RecvPoolMaxHiddenBytes = 16384;
+  static constexpr int64_t RecvPoolMetaBytes =
+      ((MaxTopk * (sizeof(int) + sizeof(float)) + MaxScales * sizeof(float) + BufferAlignmentBytes - 1) /
+       BufferAlignmentBytes) *
+      BufferAlignmentBytes;
+
+  // Control and receive-pool storage are separate peer-visible allocations.
+  size_t controlBufferBytes_;
+  size_t recvPoolBytes_;
+  size_t recvPoolHeaderBytes_;
+  size_t recvPoolMetadataOffset_;
+  void* dispatchOutputBuffer_ = nullptr;
+
+  ThroughputStorageLayout(void* recvPool, int numRanks) {
+    EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
+
+    const size_t ranks = static_cast<size_t>(numRanks);
+    const size_t prefixBytes = ranks * ranks * sizeof(int);
+    const size_t expertScratchBytes = ranks * MaxLocalExperts * sizeof(int);
+    controlBufferBytes_ = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
+
+    recvPoolHeaderBytes_ = configAlign<size_t>(ranks * sizeof(int), BufferAlignmentBytes);
+    const size_t hiddenBytes = static_cast<size_t>(RecvPoolMaxTokens) * static_cast<size_t>(RecvPoolMaxHiddenBytes);
+    recvPoolMetadataOffset_ = configAlign<size_t>(recvPoolHeaderBytes_ + hiddenBytes, BufferAlignmentBytes);
+    recvPoolBytes_ = configAlign<size_t>(
+        recvPoolMetadataOffset_ + static_cast<size_t>(RecvPoolMaxTokens) * RecvPoolMetaBytes, BufferAlignmentBytes);
+
+    if (recvPool != nullptr) {
+      dispatchOutputBuffer_ = static_cast<uint8_t*>(recvPool) + recvPoolHeaderBytes_;
+    }
+  }
+
+  size_t recvPoolHiddenBytes() const { return recvPoolMetadataOffset_ - recvPoolHeaderBytes_; }
+};
+
+struct ThroughputWorkspaceLayout {
   size_t totalBytes_;
   int* numTokensPerRank_ = nullptr;
   int* numTokensPerExpert_ = nullptr;
@@ -235,7 +278,7 @@ struct ThroughputStorageLayout {
   int* channelPrefixMatrix_ = nullptr;
   int* sendHead_ = nullptr;
 
-  ThroughputStorageLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
+  ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
     size_t offset = 0;
     auto place = [&](size_t bytes, size_t alignment) -> void* {
       offset = configAlign<size_t>(offset, alignment);
@@ -256,8 +299,8 @@ struct ThroughputStorageLayout {
   }
 };
 
-inline size_t throughputStorageSize(int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
-  return ThroughputStorageLayout(nullptr, maxTokensPerRank, numRanks, numExperts, maxChannels).totalBytes_;
+inline size_t throughputWorkspaceSize(int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
+  return ThroughputWorkspaceLayout(nullptr, maxTokensPerRank, numRanks, numExperts, maxChannels).totalBytes_;
 }
 
 }  // namespace ep

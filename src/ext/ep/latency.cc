@@ -166,8 +166,7 @@ void* MoERuntime::combineInputBuffer() const {
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
       EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-      return static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) +
-             RecvPoolConfig::recvPoolHeaderBytes(context.numRanks_);
+      return ThroughputStorageLayout(context.recvPool_, context.numRanks_).dispatchOutputBuffer_;
     }
     default:
       EP_THROW("Unsupported MoE runtime mode");

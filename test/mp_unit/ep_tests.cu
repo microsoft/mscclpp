@@ -15,8 +15,10 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "config.hpp"
 #include "exception.hpp"
 #include "mp_unit_tests.hpp"
 
@@ -643,6 +645,27 @@ class MoERuntimeTest : public CommunicatorTestBase {
   int combineBlocks_ = 0;
 };
 
+TEST(MoERuntimeTest, ThroughputStorageLayout) {
+  constexpr size_t HeaderBytes = 128;
+  constexpr size_t HiddenBytes = size_t{65536} * 16384;
+  constexpr size_t MetadataBytes = size_t{65536} * 768;
+  constexpr std::array<std::pair<int, size_t>, 4> cases{{{2, 8320}, {4, 16512}, {8, 33024}, {16, 66560}}};
+  std::array<uint8_t, 2 * HeaderBytes> recvPool{};
+
+  for (const auto& [numRanks, controlBytes] : cases) {
+    const mscclpp::ep::ThroughputStorageLayout layout(nullptr, numRanks);
+    ASSERT_EQ(layout.controlBufferBytes_, controlBytes);
+    ASSERT_EQ(layout.recvPoolHeaderBytes_, HeaderBytes);
+    ASSERT_EQ(layout.recvPoolMetadataOffset_, HeaderBytes + HiddenBytes);
+    ASSERT_EQ(layout.recvPoolBytes_, HeaderBytes + HiddenBytes + MetadataBytes);
+    ASSERT_EQ(layout.recvPoolHiddenBytes(), HiddenBytes);
+    ASSERT_EQ(layout.dispatchOutputBuffer_, nullptr);
+
+    const mscclpp::ep::ThroughputStorageLayout boundLayout(recvPool.data(), numRanks);
+    ASSERT_EQ(boundLayout.dispatchOutputBuffer_, static_cast<void*>(recvPool.data() + HeaderBytes));
+  }
+}
+
 TEST(MoERuntimeTest, InitializationAndModeValidation) {
   auto throughputRuntime = std::make_unique<mscclpp::ep::MoERuntime>(*communicator, mscclpp::ep::MoEMode::THROUGHPUT,
                                                                      CorrectnessTokens, CorrectnessHidden, NumExperts,
@@ -652,6 +675,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   throughputRuntime->initialize();
   ASSERT_NE(throughputRuntime->dispatchOutputBuffer(), nullptr);
   ASSERT_NE(throughputRuntime->combineInputBuffer(), nullptr);
+  ASSERT_EQ(throughputRuntime->combineInputBuffer(), throughputRuntime->dispatchOutputBuffer());
 
   auto runtime = createRuntime(*communicator, CorrectnessTokens, CorrectnessHidden,
                                mscclpp::ep::DispatchLayout::RANK_MAJOR, mscclpp::ep::CombineMode::DIRECT_SEND);

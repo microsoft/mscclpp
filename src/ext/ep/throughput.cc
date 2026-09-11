@@ -55,7 +55,7 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
       communicator_(communicator) {
   EP_HOST_ASSERT(hidden_ > 0);
   EP_HOST_ASSERT(numExperts_ > 0 && numExperts_ % numRanks_ == 0);
-  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= RecvPoolConfig::MaxTopk);
+  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= ThroughputStorageLayout::MaxTopk);
   EP_HOST_ASSERT(outputLayout_ == DispatchLayout::TOKEN_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(maxTokensPerRank_ > 0);
   EP_HOST_ASSERT(maxHiddenBytes_ % sizeof(int4) == 0);
@@ -64,11 +64,12 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
     return;
   }
 
-  controlBufferBytes_ = RecvPoolConfig::controlBufferBytes(numRanks_);
+  const ThroughputStorageLayout layout(nullptr, numRanks_);
+  controlBufferBytes_ = layout.controlBufferBytes_;
   symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
   physicalControlBuffer_ = numRanks_ > numNvlRanks_;
-  recvPoolBytes_ = RecvPoolConfig::recvPoolBytes(numRanks_);
-  workspaceBytes_ = throughputStorageSize(maxTokensPerRank_, numRanks_, numExperts_, MaxDispatchBlocks);
+  recvPoolBytes_ = layout.recvPoolBytes_;
+  workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_, MaxDispatchBlocks);
   available_ = canUseDirectRecvPool(maxTokensPerRank_);
 }
 
@@ -195,11 +196,11 @@ void ThroughputRuntimeContext::initialize() {
 
 bool ThroughputRuntimeContext::canUseDirectRecvPool(int maxTokensPerRank) const {
   if (maxTokensPerRank <= 0 || maxTokensPerRank > maxTokensPerRank_) return false;
-  if (maxHiddenBytes_ <= 0 || maxHiddenBytes_ > RecvPoolConfig::RecvPoolMaxHiddenBytes) return false;
+  if (maxHiddenBytes_ <= 0 || maxHiddenBytes_ > ThroughputStorageLayout::RecvPoolMaxHiddenBytes) return false;
+  const ThroughputStorageLayout layout(nullptr, numRanks_);
   const int maxRows = numRanks_ * maxTokensPerRank;
-  return maxRows <= RecvPoolConfig::RecvPoolMaxTokens &&
-         static_cast<size_t>(maxRows) * static_cast<size_t>(maxHiddenBytes_) <=
-             RecvPoolConfig::recvPoolHiddenBytes(numRanks_);
+  return maxRows <= ThroughputStorageLayout::RecvPoolMaxTokens &&
+         static_cast<size_t>(maxRows) * static_cast<size_t>(maxHiddenBytes_) <= layout.recvPoolHiddenBytes();
 }
 
 DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& request) {
@@ -229,19 +230,21 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
     EP_HOST_ASSERT(request.inputScales != nullptr || request.numTokens == 0);
   }
 
-  const ThroughputStorageLayout layout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                       context.numExperts_, MaxDispatchBlocks);
-  EP_HOST_ASSERT(layout.totalBytes_ <= context.workspaceBytes_);
+  const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
+                                                  context.numExperts_, MaxDispatchBlocks);
+  EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
   *context.moeRecvCounter_ = -1;
   for (int i = 0; i < context.numExperts_ / context.numRanks_; ++i) context.moeRecvExpertCounter_[i] = -1;
-  throughputPrepare(request.topkIdx, layout.numTokensPerRank_, layout.numTokensPerExpert_, layout.isTokenInRank_,
-                    request.numTokens, context.numTopk_, context.numExperts_, context.deviceContext_, request.stream);
-  throughputExchangeCounts(layout.numTokensPerRank_, layout.numTokensPerExpert_, context.numExperts_, request.numTokens,
-                           layout.isTokenInRank_, layout.channelPrefixMatrix_, layout.rankPrefixMatrix_, 1,
-                           context.deviceContext_, request.stream, request.numBlocks);
+  throughputPrepare(request.topkIdx, workspaceLayout.numTokensPerRank_, workspaceLayout.numTokensPerExpert_,
+                    workspaceLayout.isTokenInRank_, request.numTokens, context.numTopk_, context.numExperts_,
+                    context.deviceContext_, request.stream);
+  throughputExchangeCounts(workspaceLayout.numTokensPerRank_, workspaceLayout.numTokensPerExpert_, context.numExperts_,
+                           request.numTokens, workspaceLayout.isTokenInRank_, workspaceLayout.channelPrefixMatrix_,
+                           workspaceLayout.rankPrefixMatrix_, 1, context.deviceContext_, request.stream,
+                           request.numBlocks);
   waitForReceiveCounts(context.moeRecvCounter_, context.moeRecvExpertCounter_, context.numExperts_ / context.numRanks_);
   const int numRecvTokens = static_cast<int>(*context.moeRecvCounter_);
-  EP_HOST_ASSERT(numRecvTokens >= 0 && numRecvTokens <= RecvPoolConfig::RecvPoolMaxTokens);
+  EP_HOST_ASSERT(numRecvTokens >= 0 && numRecvTokens <= ThroughputStorageLayout::RecvPoolMaxTokens);
 
   if (request.outputCount != nullptr) {
     if (context.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
@@ -251,8 +254,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
     } else {
       std::vector<int> hostRankPrefix(static_cast<size_t>(context.numRanks_) * context.numRanks_);
       std::vector<int> hostRankCounts(context.numRanks_);
-      MSCCLPP_CUDATHROW(cudaMemcpy(hostRankPrefix.data(), layout.rankPrefixMatrix_, sizeof(int) * hostRankPrefix.size(),
-                                   cudaMemcpyDeviceToHost));
+      MSCCLPP_CUDATHROW(cudaMemcpy(hostRankPrefix.data(), workspaceLayout.rankPrefixMatrix_,
+                                   sizeof(int) * hostRankPrefix.size(), cudaMemcpyDeviceToHost));
       for (int srcRank = 0; srcRank < context.numRanks_; ++srcRank) {
         const int prefix = hostRankPrefix[srcRank * context.numRanks_ + context.rank_];
         const int previous = srcRank == 0 ? 0 : hostRankPrefix[(srcRank - 1) * context.numRanks_ + context.rank_];
@@ -263,27 +266,26 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
     }
   }
 
-  const size_t recvPoolHeaderBytes = RecvPoolConfig::recvPoolHeaderBytes(context.numRanks_);
-  const size_t recvPoolMetadataOffset = RecvPoolConfig::recvPoolMetadataOffset(context.numRanks_);
-  void* localRecvPoolX = static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) + recvPoolHeaderBytes;
-  throughputDispatch(layout.sendHead_, request.input, request.topkIdx, request.topkWeights, request.inputScales,
-                     layout.isTokenInRank_, layout.channelPrefixMatrix_, request.numTokens, numRecvTokens,
-                     hiddenBytes / static_cast<int>(sizeof(int4)), context.numTopk_, context.numExperts_, numScales,
-                     request.outputTopkIdx, request.outputTopkWeights, static_cast<float*>(request.outputScales),
-                     request.numBlocks, static_cast<int64_t>(recvPoolHeaderBytes),
-                     static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
-                     context.outputLayout_, request.maxTokensPerRank, context.deviceContext_, request.stream);
+  const ThroughputStorageLayout storageLayout(context.recvPool_, context.numRanks_);
+  throughputDispatch(
+      workspaceLayout.sendHead_, request.input, request.topkIdx, request.topkWeights, request.inputScales,
+      workspaceLayout.isTokenInRank_, workspaceLayout.channelPrefixMatrix_, request.numTokens, numRecvTokens,
+      hiddenBytes / static_cast<int>(sizeof(int4)), context.numTopk_, context.numExperts_, numScales,
+      request.outputTopkIdx, request.outputTopkWeights, static_cast<float*>(request.outputScales), request.numBlocks,
+      static_cast<int64_t>(storageLayout.recvPoolHeaderBytes_),
+      static_cast<int64_t>(storageLayout.recvPoolMetadataOffset_), ThroughputStorageLayout::RecvPoolMetaBytes,
+      context.outputLayout_, request.maxTokensPerRank, context.deviceContext_, request.stream);
 
   const int rows = outputRows(context.outputLayout_, context.numRanks_, numRecvTokens, request.maxTokensPerRank);
-  if (rows > 0 && request.output != localRecvPoolX) {
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.output, localRecvPoolX,
+  if (rows > 0 && request.output != storageLayout.dispatchOutputBuffer_) {
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.output, storageLayout.dispatchOutputBuffer_,
                                       static_cast<size_t>(rows) * static_cast<size_t>(hiddenBytes),
                                       cudaMemcpyDeviceToDevice, request.stream));
   }
 
   ++context.epoch_;
   return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.epoch_, request,
-                                                                     layout.sendHead_, numRecvTokens));
+                                                                     workspaceLayout.sendHead_, numRecvTokens));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -313,20 +315,19 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
   EP_HOST_ASSERT(request.input != nullptr || throughputMetadata->numRecvTokens_ == 0);
 
-  const size_t recvPoolHeaderBytes = RecvPoolConfig::recvPoolHeaderBytes(context.numRanks_);
-  const size_t recvPoolMetadataOffset = RecvPoolConfig::recvPoolMetadataOffset(context.numRanks_);
-  void* localRecvPoolX = static_cast<uint8_t*>(context.recvPoolPtrs_[context.rank_]) + recvPoolHeaderBytes;
-  if (throughputMetadata->numRecvTokens_ > 0 && request.input != localRecvPoolX) {
+  const ThroughputStorageLayout storageLayout(context.recvPool_, context.numRanks_);
+  if (throughputMetadata->numRecvTokens_ > 0 && request.input != storageLayout.dispatchOutputBuffer_) {
     MSCCLPP_CUDATHROW(
-        cudaMemcpyAsync(localRecvPoolX, request.input,
+        cudaMemcpyAsync(storageLayout.dispatchOutputBuffer_, request.input,
                         static_cast<size_t>(throughputMetadata->numRecvTokens_) * context.hidden_ * sizeof(Bf16),
                         cudaMemcpyDeviceToDevice, request.stream));
   }
 
   throughputReduceCombine(request.output, request.outputTopkWeights, throughputMetadata->sendHead_, handle.numTokens_,
-                          context.hidden_, context.numTopk_, static_cast<int64_t>(recvPoolHeaderBytes),
-                          static_cast<int64_t>(recvPoolMetadataOffset), RecvPoolConfig::RecvPoolMetaBytes,
-                          request.numBlocks, context.deviceContext_, request.stream);
+                          context.hidden_, context.numTopk_, static_cast<int64_t>(storageLayout.recvPoolHeaderBytes_),
+                          static_cast<int64_t>(storageLayout.recvPoolMetadataOffset_),
+                          ThroughputStorageLayout::RecvPoolMetaBytes, request.numBlocks, context.deviceContext_,
+                          request.stream);
 }
 
 }  // namespace ep

@@ -9,7 +9,6 @@
 #include "common/device_helpers.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
-#include "recv_pool.hpp"
 
 namespace mscclpp {
 namespace ep {

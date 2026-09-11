@@ -17,7 +17,6 @@
 
 #include "config.hpp"
 #include "device_context.hpp"
-#include "recv_pool.hpp"
 
 namespace mscclpp {
 namespace ep {
