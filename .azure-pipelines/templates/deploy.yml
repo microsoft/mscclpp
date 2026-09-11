@@ -154,6 +154,11 @@ steps:
 - task: Bash@3
   name: DeployTestEnv
   displayName: Deploy Test Env
+  env:
+    ${{ if or(eq(parameters.vmssName, 'mscclpp-h100-ci'), eq(parameters.vmssName, 'mscclpp-h100-multinode-ci')) }}:
+      MSCCLPP_PRUNE_DANGLING_IMAGES: 'true'
+    ${{ else }}:
+      MSCCLPP_PRUNE_DANGLING_IMAGES: 'false'
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
