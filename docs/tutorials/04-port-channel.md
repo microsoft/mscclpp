@@ -60,11 +60,14 @@ We need to call `proxyService.startProxy()` before running GPU kernels that use 
 
 The device handle of a `PortChannel` provides the following methods. Since the data transfer is offloaded, each method is supposed to be called by a single GPU thread.
 - `put()`: Initiates an asynchronous one-way data transfer from the local memory to the remote memory.
-- `signal()`: Asynchronously signals the completion of all previous `put()`s to the remote side.
+- `accumulate()`: Initiates a 64-bit atomic add on a value in remote memory.
+- `signal()`: Asynchronously signals the completion of previous operations to the remote side.
 - `wait()`: Blocks the calling GPU thread until the corresponding `signal()` is received from the remote side.
 - `poll()`: Non-blocking version of `wait()`. Returns immediately with a boolean indicating whether the signal has been received.
 - `flush()`: Synchronizes the local GPU with the `PortChannel`, ensuring that all previous operations are completed.
 - Fused methods (e.g., `putWithSignal()`): combines multiple sequential operations into a single call for efficiency.
+
+Like `put()`, `accumulate()` is issued asynchronously through the proxy and is ordered with operations issued after it on the same channel. A typical sequence enqueues one or more additions and then uses the application's existing `signal()`/`flush()`/`wait()` protocol before consuming the result. See the `PortChannel::accumulate()` and `Connection::accumulate()` API documentation for transport restrictions, alignment requirements, and concurrency details.
 
 The following diagram illustrates how the `bidirPutKernel()` function in the example code would work when GPU0 is faster than GPU1. The execution order may vary depending on the relative speeds of the GPUs. 
 

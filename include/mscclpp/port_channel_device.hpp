@@ -19,7 +19,7 @@ using MemoryId = uint32_t;
 
 namespace detail {
 #if defined(MSCCLPP_DEVICE_COMPILE)
-/// Wait until the proxy has processed and drained the TriggerSync at FIFO position `fifoPos`.
+/// Wait until the proxy has processed and drained the TriggerFlush at FIFO position `fifoPos`.
 /// The proxy publishes `flushDonePos = latestCompletedPos + 1` when the CQ drains, so the
 /// wait condition `flushDonePos > fifoPos` is satisfied exactly when our own request has
 /// been completed. Using the FIFO push position as the wait target couples the wait to the
@@ -51,7 +51,7 @@ struct BasePortChannelDeviceHandle {
       : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -59,10 +59,10 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
-    fifo_.push({TriggerData, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -71,10 +71,10 @@ struct BasePortChannelDeviceHandle {
     put(dstId, offset, srcId, offset, size);
   }
 
-  /// Push a TriggerFlag to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerFlag, 0, 0, 0, 0, 0, semaphoreId_}); }
+  /// Push a TriggerSignal to the FIFO.
+  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_}); }
 
-  /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -82,10 +82,10 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
-    fifo_.push({TriggerData | TriggerFlag, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
-  /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -94,7 +94,7 @@ struct BasePortChannelDeviceHandle {
     putWithSignal(dstId, offset, srcId, offset, size);
   }
 
-  /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -103,12 +103,11 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    uint64_t pos =
-        fifo_.push({TriggerData | TriggerFlag | TriggerSync, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
-  /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -119,11 +118,24 @@ struct BasePortChannelDeviceHandle {
     putWithSignalAndFlush(dstId, offset, srcId, offset, size, maxSpinCount);
   }
 
-  /// Push a TriggerSync to the FIFO.
+  /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
-    uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 0, semaphoreId_});
+    uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
+  }
+
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to remote memory.
+  /// Connection::accumulate() documents how many concurrent writers each transport allows.
+  /// @param dstId The ID of destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    // The operand occupies fst, spanning the low size and high srcOffset fields.
+    uint64_t operand = static_cast<uint64_t>(value);
+    ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
+                         static_cast<uint32_t>(operand), semaphoreId_);
+    fifo_.push(trigger);
   }
 
   /// Check if the port channel has been signaled.
@@ -149,7 +161,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
       : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -157,12 +169,12 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
-  /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -170,12 +182,12 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
-  /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
 
-  /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -185,11 +197,18 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
-  /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
+  }
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to the destination memory.
+  /// See Connection::accumulate() for transport support.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
+    BasePortChannelDeviceHandle::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };

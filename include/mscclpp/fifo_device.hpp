@@ -15,10 +15,27 @@
 
 namespace mscclpp {
 
+/// Operation that a trigger asks the proxy to perform.
+///
+/// These are opcodes, not flags: compare one by equality, and never combine two. The encoding
+/// enumerates the combinations the device API can produce rather than composing them, so a
+/// combination nothing emits cannot be expressed, and a trigger whose type field is unset is not
+/// a valid operation.
 using TriggerType = uint64_t;
-constexpr TriggerType TriggerData = 0x1;  // Trigger a data transfer.
-constexpr TriggerType TriggerFlag = 0x2;  // Trigger a signaling.
-constexpr TriggerType TriggerSync = 0x4;  // Trigger a flush.
+constexpr TriggerType TriggerNone = 0;                   // Not an operation; invalid for ProxyService.
+constexpr TriggerType TriggerPut = 1;                    // Transfer data.
+constexpr TriggerType TriggerSignal = 2;                 // Signal the remote semaphore.
+constexpr TriggerType TriggerPutWithSignal = 3;          // Transfer data, then signal.
+constexpr TriggerType TriggerFlush = 4;                  // Flush the connection.
+constexpr TriggerType TriggerAccumulate = 6;             // Add a value to remote memory.
+constexpr TriggerType TriggerPutWithSignalAndFlush = 7;  // Transfer data, signal, then flush.
+// 5 is unassigned.
+
+// Preserve the original flag-combination encodings for existing operations. Triggers are now
+// compared as opcodes, but changing these values would break producers and consumers built from
+// different revisions.
+static_assert(TriggerPut == 1 && TriggerSignal == 2 && TriggerPutWithSignal == 3 && TriggerFlush == 4 &&
+              TriggerPutWithSignalAndFlush == 7);
 
 constexpr unsigned int TriggerBitsSize = 32;
 constexpr unsigned int TriggerBitsOffset = 32;
@@ -28,6 +45,8 @@ constexpr unsigned int TriggerBitsSemaphoreId = 10;
 // The FIFO uses the reserved bit to mark a slot as written, so a trigger must not carry data
 // there. See FifoDeviceHandle::push().
 constexpr unsigned int TriggerBitsFifoReserved = 1;
+
+static_assert(TriggerAccumulate < (1ULL << TriggerBitsType), "trigger opcodes must fit in the type field");
 
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 /// Used as a work element in the concurrent FIFO.

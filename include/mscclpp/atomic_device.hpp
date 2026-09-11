@@ -46,8 +46,13 @@ constexpr auto memoryOrderRelease = __ATOMIC_RELEASE;
 constexpr auto memoryOrderAcqRel = __ATOMIC_ACQ_REL;
 constexpr auto memoryOrderSeqCst = __ATOMIC_SEQ_CST;
 
+#if defined(MSCCLPP_DEVICE_HIP)
+constexpr auto scopeSystem = __HIP_MEMORY_SCOPE_SYSTEM;
+constexpr auto scopeDevice = __HIP_MEMORY_SCOPE_AGENT;
+#else
 constexpr auto scopeSystem = 0;
 constexpr auto scopeDevice = 0;
+#endif  // defined(MSCCLPP_DEVICE_HIP)
 
 template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE T atomicLoad(const T* ptr, int memoryOrder) {
@@ -61,7 +66,11 @@ MSCCLPP_HOST_DEVICE_INLINE void atomicStore(T* ptr, const T& val, int memoryOrde
 
 template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrder) {
+#if defined(__HIP_DEVICE_COMPILE__)
+  return __hip_atomic_fetch_add(ptr, val, memoryOrder, scope);
+#else
   return __atomic_fetch_add(ptr, val, memoryOrder);
+#endif  // defined(__HIP_DEVICE_COMPILE__)
 }
 
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)

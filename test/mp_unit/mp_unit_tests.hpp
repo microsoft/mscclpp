@@ -141,6 +141,22 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
 
+// Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
+// concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one
+// test cannot show.
+//
+// Covers every transport that allows concurrent writers: IB, Ethernet, and CudaIpc on ROCm. See
+// Connection::accumulate().
+class PortChannelFanInTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override;
+  void TearDown() override;
+
+  void testFanIn(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
+
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
+};
+
 class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
@@ -161,6 +177,9 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
+  void testAccumulateRejected(mscclpp::Transport transport, IbMode ibMode, int tag, const char* backendMessage,
+                              bool checkHugeOffset);
   void testBandwidth(PingPongTestParams params);
   void setupMultiQpChannels(int numQps, size_t elemsPerChan, IbMode ibMode, int tagBase,
                             std::vector<std::shared_ptr<int>>& sendBuffs,

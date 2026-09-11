@@ -649,6 +649,36 @@ class Connection {
   /// @param newValue The new value to write.
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue);
 
+  /// Add a value to a 64-bit integer in a destination RegisteredMemory.
+  ///
+  /// The caller supplies only its own contribution, unlike updateAndSync(), which needs the
+  /// destination's current value. Addition is modulo 2^64 (the signed operand contributes its
+  /// two's-complement bit pattern) and commutes, so arrival order does not matter.
+  ///
+  /// The addition must be a real read-modify-write at the destination, so how many concurrent
+  /// writers one address allows depends on the transport:
+  ///
+  /// - IB: any number of writers, via NIC atomic fetch-and-add. Throws in no-atomic mode, where
+  ///   the device has no RDMA atomics.
+  /// - Ethernet: any number of remote writers. The receiving process does the update and
+  ///   serializes its connections. The destination GPU must not write the address concurrently;
+  ///   such a write is lost inside the read-modify-write window.
+  /// - CudaIpc on ROCm: any number of writers. The proxy runs a kernel, which a caller kernel
+  ///   does not block.
+  /// - CudaIpc on CUDA: throws. The host cannot read-modify-write device memory, and a
+  ///   proxy-launched kernel cannot run while the caller's kernel waits. Use a device-side atomic
+  ///   on peer memory reached through a MemoryChannel.
+  ///
+  /// The 8-byte target word must fit within @p dst, and its final address must be naturally
+  /// 8-byte aligned.
+  ///
+  /// @param dst The destination RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
+  /// @param value The 64-bit signed value to add.
+  /// @throws Error with ErrorCode::InvalidUsage if the target is out of bounds or misaligned, or
+  ///   if the transport cannot accumulate.
+  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value);
+
   /// Flush any pending writes to the remote process.
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
   void flush(int64_t timeoutUsec = -1);
