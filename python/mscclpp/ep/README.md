@@ -598,12 +598,14 @@ Latency `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED` exposes one row per routed tok
 
 ```python
 dispatch_out.tokens     # [world_size * max_tokens_per_rank * K, H]
-dispatch_out.topk_ids   # [world_size * max_tokens_per_rank * K]
-dispatch_out.weights    # [world_size * max_tokens_per_rank * K]
+dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
+dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
 Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
 final receive buffers and exposed as zero-copy Torch tensors.
+For `RANK_MAJOR_TOPK_EXPANDED`, `dispatch_out.topk_ids.reshape(-1)` and
+`dispatch_out.weights.reshape(-1)` align with the expanded token rows.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
 

@@ -344,8 +344,8 @@ def validate_rank_major_topk_expanded_dispatch(
     assert all_x is not None
     assert dispatch_out.topk_ids is not None
     assert dispatch_out.weights is not None
-    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens * num_topk,)
-    assert dispatch_out.weights.shape == (num_ranks * num_tokens * num_topk,)
+    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
+    assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
     local_expert_begin = rank * num_local_experts
     local_expert_end = local_expert_begin + num_local_experts
 
@@ -354,16 +354,17 @@ def validate_rank_major_topk_expanded_dispatch(
             all_topk_idx[source_rank] < local_expert_end
         )
         assert int(packed_recv_count[source_rank].item()) == int(expected_local_routes.sum().item())
-        row_base = source_rank * num_tokens * num_topk
+        row_base = source_rank * num_tokens
         for token_idx in range(num_tokens):
             for topk_slot in range(num_topk):
-                route_idx = row_base + token_idx * num_topk + topk_slot
+                metadata_row = row_base + token_idx
+                route_idx = metadata_row * num_topk + topk_slot
                 expert = int(all_topk_idx[source_rank, token_idx, topk_slot].item())
                 expected_local = local_expert_begin <= expert < local_expert_end
                 expected_id = expert if expected_local else invalid_token_expert_id
                 expected_weight = all_topk_weights[source_rank, token_idx, topk_slot] if expected_local else 0.0
-                assert int(dispatch_out.topk_ids[route_idx].item()) == expected_id
-                torch.testing.assert_close(dispatch_out.weights[route_idx], expected_weight)
+                assert int(dispatch_out.topk_ids[metadata_row, topk_slot].item()) == expected_id
+                torch.testing.assert_close(dispatch_out.weights[metadata_row, topk_slot], expected_weight)
                 if expected_local:
                     assert torch.equal(dispatch_out.tokens[route_idx], all_x[source_rank, token_idx])
 
