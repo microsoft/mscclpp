@@ -44,6 +44,15 @@ int main() {
           const Layout expanded(reinterpret_cast<void*>(base), capacity, hidden, ranks, experts, topk, true, true);
           const auto offset = [base](void* ptr) { return reinterpret_cast<uintptr_t>(ptr) - base; };
           const size_t rows = static_cast<size_t>(ranks) * capacity * topk;
+          // Single-IPC fast path reuses only existing private regions: R counts
+          // precede public metadata; one source routing image fits its staging.
+          require(offset(expanded.dispatchRecvBuffer_) + ranks * sizeof(int) <=
+                  offset(expanded.rankMajorTopkIdsBuffer_));
+          const size_t sourceRows = static_cast<size_t>(capacity) * topk;
+          require(offset(expanded.expandedSendIds_) + sourceRows * sizeof(int) <=
+                  offset(expanded.expandedSendWeights_));
+          require(offset(expanded.expandedSendWeights_) + sourceRows * sizeof(float) <=
+                  offset(expanded.expandedSyncFlags_));
           require(offset(expanded.rankMajorTokenBuffer_) + tokenBytes * topk <= expanded.recvBufferBytes_);
           require(offset(expanded.rankMajorExpertOutputBuffer_) == expanded.recvBufferBytes_);
           require(tokenBytes * topk <= expanded.recvBufferBytes_);

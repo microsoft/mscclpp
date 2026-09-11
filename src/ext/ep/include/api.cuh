@@ -172,6 +172,9 @@ struct CommContext {
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Byte stride of one staging-ring slot (token + top-k metadata).
   size_t gpuNetIoSlotStride_ = 0;
+  /// Collectively enabled expanded-layout TMA path; every peer is IPC-mapped
+  /// and both kernels can keep the maximum dispatch grid resident.
+  bool expandedNvlinkFastPath_ = false;
 };
 
 /// Return the optimized low-latency workspace size.

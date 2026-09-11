@@ -13,6 +13,7 @@
 
 #include "api.cuh"
 #include "exception.cuh"
+#include "low_latency/topk_expanded.cuh"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 #include <cstdlib>
@@ -186,6 +187,23 @@ void MoELowLatencyRuntime::setup() {
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
+  // A null GIN context alone is NOT proof that every peer is mapped. Select the
+  // expanded fast path only for a complete IPC domain, with collective resource
+  // and opt-out agreement. Selection is fixed before any CUDA graph capture.
+  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize >= numRanks_) {
+    const char* fastPath = std::getenv("MSCCLPP_EP_EXPANDED_NVLINK_FASTPATH");
+    const bool enabled = fastPath == nullptr || std::atoi(fastPath) != 0;
+    const bool allMapped = std::all_of(peerMappedBufferBases_.begin(), peerMappedBufferBases_.end(),
+                                       [](void* base) { return base != nullptr; });
+    const bool localReady = enabled && allMapped && commContext_.gpuNetIo_ == nullptr &&
+                            low_latency::topk_expanded::nvlinkFastPathAvailable(hidden_, numTopk_, commContext_);
+    std::vector<int> ready(numRanks_, 0);
+    ready[rank_] = localReady ? 1 : 0;
+    communicator_->bootstrap()->allGather(ready.data(), sizeof(int));
+    commContext_.expandedNvlinkFastPath_ =
+        std::all_of(ready.begin(), ready.end(), [](int value) { return value != 0; });
+  }
+
   // Host-side topology dump (opt-in via MSCCLPP_EP_DEBUG_TOPO): reveals whether
   // the NVLink/IPC (NVSwitch/MNNVL) fabric groups peers as this rank expects.
   // nvlinkPeerMap[r]='1' => peer r is NVLink/IPC-mapped (direct write); '0' =>
@@ -206,6 +224,11 @@ void MoELowLatencyRuntime::setup() {
                  rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_, (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0,
                  ginOn, available_ ? 1 : 0, nvmap.c_str());
     std::fflush(stderr);
+    if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+      std::fprintf(stderr, "[EPEXPANDED] rank=%d nvlinkFastPath=%d hidden=%d topk=%d\n", rank_,
+                   commContext_.expandedNvlinkFastPath_ ? 1 : 0, hidden_, numTopk_);
+      std::fflush(stderr);
+    }
   }
 }
 

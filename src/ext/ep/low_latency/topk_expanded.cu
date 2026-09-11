@@ -288,6 +288,218 @@ __global__ void combineTopkExpandedKernel(void* output, const void* input, const
   state.combineSyncer_->sync(gridDim.x);
 }
 
+// Single-domain path: stage routing ONCE per source, push only valid expanded
+// payload rows, then let each receiver materialize its own metadata. This avoids
+// an all-rank clear-before-scatter barrier and never races remote metadata stores.
+// The public [R * capacity * K, H] buffers and distinct duplicate slots remain.
+size_t nvlinkDispatchSharedBytes(int hidden) {
+  return static_cast<size_t>(hidden) * sizeof(Bf16) + sizeof(mscclpp::BulkBarrier);
+}
+
+size_t nvlinkCombineSharedBytes(int hidden, int topk) {
+  return static_cast<size_t>(topk) *
+         (static_cast<size_t>(hidden) * sizeof(Bf16) + sizeof(mscclpp::BulkBarrier) + sizeof(float));
+}
+
+__global__ void dispatchTopkExpandedNvlinkKernel(void* output, int* outputIds, float* outputWeights, int* outputCount,
+                                                 const void* input, const int64_t* topkIds, const float* weights,
+                                                 Workload work, CommContext comm, void* workspace) {
+#if MSCCLPP_BULK_AVAILABLE
+  extern __shared__ __align__(128) uint8_t shared[];
+  const TransportView transport(comm);
+  WorkspaceView state(workspace, comm.numRanks_, work.numExperts_);
+  const Layout layout(comm.symmetricBufferBase_, work.maxTokensPerRank_, work.hidden_, comm.numRanks_, work.numExperts_,
+                      work.numTopk_, true, true);
+  const int capacity = work.maxTokensPerRank_;
+  const int topk = work.numTopk_;
+  const int localExperts = work.numExperts_ / comm.numRanks_;
+  const size_t bytes = static_cast<size_t>(work.hidden_) * sizeof(Bf16);
+  const size_t rowsPerSource = static_cast<size_t>(capacity) * topk;
+  // Only the first capacity*K entries are used in this mode. All peers read this
+  // same source-owned routing image after its publication; no per-peer copies.
+  auto* stagedIds = static_cast<int*>(layout.expandedSendIds_);
+  auto* stagedWeights = static_cast<float*>(layout.expandedSendWeights_);
+  // Expanded dispatch does not use LL8 packets; the first R ints of the existing
+  // receive metadata region can hold published counts without changing Layout.
+  auto* publishedCounts = static_cast<int*>(layout.dispatchRecvBuffer_);
+  auto* flags = static_cast<uint64_t*>(layout.gpuNetIoFlagsBuffer_);
+  const uint64_t target = state.dispatchArrivedBaseline_[comm.rank_] + 1;
+  auto* barrier = reinterpret_cast<mscclpp::BulkBarrier*>(shared + bytes);
+  uint32_t phase = 0;
+  if (threadIdx.x == 0) barrier->init();
+
+  for (int token = blockIdx.x; token < capacity; token += gridDim.x) {
+    const bool active = token < work.numTokens_;
+    if (active && threadIdx.x == 0) {
+      barrier->arriveAndExpect(static_cast<uint32_t>(bytes));
+      mscclpp::bulkLoad(shared, static_cast<const uint8_t*>(input) + static_cast<size_t>(token) * bytes,
+                        static_cast<uint32_t>(bytes), *barrier);
+    }
+    const int k = static_cast<int>(threadIdx.x);
+    const size_t selection = static_cast<size_t>(token) * topk + k;
+    const int64_t expert = active && k < topk ? topkIds[selection] : -1;
+    const bool valid = k < topk && validExpert(expert, work.numExperts_);
+    if (k < topk) {
+      stagedIds[selection] = valid ? static_cast<int>(expert) : work.invalidTokenExpertId_;
+      stagedWeights[selection] = valid ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
+    }
+    if (valid) atomicAdd(state.dispatchRankPayloadSlots_ + expert / localExperts, 1);
+    if (active && threadIdx.x == 0) {
+      barrier->wait(phase);
+      mscclpp::bulkFence();
+    }
+    __syncthreads();
+    if (valid) {
+      const int peer = static_cast<int>(expert / localExperts);
+      const size_t row = static_cast<size_t>(comm.rank_) * rowsPerSource + selection;
+      auto* destination = static_cast<uint8_t*>(transport.mappedBuffer(output, peer)) + row * bytes;
+      mscclpp::bulkStore(destination, shared, static_cast<uint32_t>(bytes));
+      mscclpp::bulkStoreCommit();
+      // Full destination completion, not merely source-read completion, before
+      // publishing readiness. Each issuer waits for its own bulk group.
+      mscclpp::bulkStoreWait();
+    }
+    __syncthreads();  // no shared tile reuse while another slot still reads it
+  }
+  __threadfence_system();
+  state.combineSyncer_->sync(gridDim.x);
+  if (blockIdx.x == 0) {
+    // The runtime's existing stream-ordered memset resets these counters before
+    // every dispatch. They count selections, including duplicate/zero-weight ones.
+    if (threadIdx.x < comm.numRanks_) {
+      const int peer = threadIdx.x;
+      publishedCounts[peer] = state.dispatchRankPayloadSlots_[peer];
+      __threadfence_system();
+      auto* remote = static_cast<uint64_t*>(transport.mappedBuffer(flags, peer));
+      signalLocal(remote + static_cast<size_t>(comm.rank_) * GpuNetIoMaxQpsPerPeer);
+    }
+  } else if (blockIdx.x <= comm.numRanks_) {
+    const int source = blockIdx.x - 1;
+    if (threadIdx.x == 0) waitFlag(flags + static_cast<size_t>(source) * GpuNetIoMaxQpsPerPeer, target);
+    __syncthreads();
+    const auto* sourceIds = static_cast<const int*>(transport.mappedBuffer(stagedIds, source));
+    const auto* sourceWeights = static_cast<const float*>(transport.mappedBuffer(stagedWeights, source));
+    if (threadIdx.x == 0) {
+      const auto* counts = static_cast<const int*>(transport.mappedBuffer(publishedCounts, source));
+      outputCount[source] = counts[comm.rank_];
+    }
+    for (size_t row = threadIdx.x; row < rowsPerSource; row += blockDim.x) {
+      const int expert = sourceIds[row];
+      const bool local = validExpert(expert, work.numExperts_) && expert / localExperts == comm.rank_;
+      const size_t destination = static_cast<size_t>(source) * rowsPerSource + row;
+      outputIds[destination] = local ? expert : work.invalidTokenExpertId_;
+      outputWeights[destination] = local ? sourceWeights[row] : 0.0f;
+    }
+  }
+  __threadfence_system();
+  state.combineSyncer_->sync(gridDim.x);
+  if (blockIdx.x == 0) {
+    // All local metadata readers have arrived before acknowledging other ranks.
+    // Keep the original lifetime protocol; a helper alone is not a grid barrier.
+    finishCollective(transport, layout, comm.numRanks_);
+    if (threadIdx.x == 0) state.dispatchArrivedBaseline_[comm.rank_] = target;
+  }
+  state.combineSyncer_->sync(gridDim.x);
+#endif
+}
+
+__global__ void combineTopkExpandedNvlinkKernel(void* output, const void* input, const int64_t* topkIds,
+                                                const float* weights, Workload work, CommContext comm,
+                                                void* workspace) {
+#if MSCCLPP_BULK_AVAILABLE
+  extern __shared__ __align__(128) uint8_t shared[];
+  const TransportView transport(comm);
+  WorkspaceView state(workspace, comm.numRanks_, work.numExperts_);
+  const Layout layout(comm.symmetricBufferBase_, work.maxTokensPerRank_, work.hidden_, comm.numRanks_, work.numExperts_,
+                      work.numTopk_, true, true);
+  const int topk = work.numTopk_;
+  const int localExperts = work.numExperts_ / comm.numRanks_;
+  constexpr int Elements = sizeof(int4) / sizeof(Bf16);
+  const int vectors = work.hidden_ / Elements;
+  const size_t bytes = static_cast<size_t>(work.hidden_) * sizeof(Bf16);
+  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(shared + topk * bytes);
+  auto* rowWeights = reinterpret_cast<float*>(barriers + topk);
+  auto* flags = static_cast<uint64_t*>(layout.gpuNetIoCombineFlagsBuffer_);
+  const uint64_t target = state.combineArrivedBaseline_[comm.rank_] + 1;
+
+  // Expert output is produced by preceding stream work. Publish one local
+  // readiness generation per source, never an RDMA marker/drain loop.
+  if (blockIdx.x == 0) {
+    if (threadIdx.x < comm.numRanks_) {
+      auto* remote = static_cast<uint64_t*>(transport.mappedBuffer(flags, threadIdx.x));
+      signalLocal(remote + static_cast<size_t>(comm.rank_) * GpuNetIoMaxQpsPerPeer);
+    }
+    __syncthreads();
+    if (threadIdx.x < comm.numRanks_)
+      waitFlag(flags + static_cast<size_t>(threadIdx.x) * GpuNetIoMaxQpsPerPeer, target);
+  } else {
+    const int k = static_cast<int>(threadIdx.x);
+    uint32_t phase = 0;  // private per issuer; advances ONLY when this slot loads
+    if (k < topk) barriers[k].init();
+    for (int token = blockIdx.x - 1; token < work.numTokens_; token += gridDim.x - 1) {
+      if (k < topk) {
+        const size_t selection = static_cast<size_t>(token) * topk + k;
+        const int64_t expert = topkIds[selection];
+        const float weight =
+            validExpert(expert, work.numExperts_) ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
+        rowWeights[k] = weight;
+        // Skip invalid AND zero-weight rows before mapping or reading payload;
+        // their registered expert rows are allowed to contain NaNs.
+        if (weight != 0.0f) {
+          const int source = static_cast<int>(expert / localExperts);
+          waitFlag(flags + static_cast<size_t>(source) * GpuNetIoMaxQpsPerPeer, target);
+          const auto* base = static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(input), source));
+          const size_t row = (static_cast<size_t>(comm.rank_) * work.maxTokensPerRank_ + token) * topk + k;
+          barriers[k].arriveAndExpect(static_cast<uint32_t>(bytes));
+          mscclpp::bulkLoad(shared + k * bytes, base + row * bytes, static_cast<uint32_t>(bytes), barriers[k]);
+          barriers[k].wait(phase);
+          mscclpp::bulkFence();
+        }
+      }
+      __syncthreads();
+      for (int v = threadIdx.x; v < vectors; v += blockDim.x) {
+        float2 sum[Elements / 2] = {};
+        // Preserve original top-k order and source-side FP32 FMA semantics.
+        // Duplicate experts still reference distinct slot rows and are not deduplicated.
+        for (int slot = 0; slot < topk; ++slot) {
+          const float weight = rowWeights[slot];
+          if (weight == 0.0f) continue;
+          const int4 packed = reinterpret_cast<const int4*>(shared)[static_cast<size_t>(slot) * vectors + v];
+          const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+#pragma unroll
+          for (int p = 0; p < Elements / 2; ++p) {
+            const auto values = mscclpp::to<mscclpp::f32x2>(pairs[p]);
+            sum[p].x = fmaf(values.data[0], weight, sum[p].x);
+            sum[p].y = fmaf(values.data[1], weight, sum[p].y);
+          }
+        }
+        int4 packed;
+        auto* pairs = reinterpret_cast<mscclpp::bf16x2*>(&packed);
+#pragma unroll
+        for (int p = 0; p < Elements / 2; ++p) pairs[p] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(sum[p]));
+        static_cast<int4*>(output)[static_cast<size_t>(token) * vectors + v] = packed;
+      }
+      __syncthreads();  // all generic shared readers finish before the next load
+    }
+  }
+  __threadfence_system();
+  state.combineSyncer_->sync(gridDim.x);
+  if (blockIdx.x == 0) {
+    finishCollective(transport, layout, comm.numRanks_);
+    if (threadIdx.x == 0) state.combineArrivedBaseline_[comm.rank_] = target;
+  }
+  state.combineSyncer_->sync(gridDim.x);
+#endif
+}
+
+template <typename Kernel>
+bool nvlinkKernelFits(Kernel kernel, size_t sharedBytes, const CommContext& comm, detail::KernelConfigCache& config) {
+  cudaFuncAttributes attributes;
+  CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
+  if (sharedBytes + attributes.sharedSizeBytes > static_cast<size_t>(comm.maxSharedMemoryPerBlock_)) return false;
+  return detail::configureKernel(kernel, Threads, sharedBytes, comm, config) >= MaxDispatchBlocks;
+}
+
 void validate(const Workload& work, const CommContext& comm, int blocks) {
   EP_HOST_ASSERT(work.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(work.dispatchDataType_ == DispatchDataType::BF16);
@@ -302,12 +514,29 @@ void validate(const Workload& work, const CommContext& comm, int blocks) {
 
 }  // namespace
 
+bool nvlinkFastPathAvailable(int hidden, int topk, const CommContext& comm) {
+  if (hidden <= 0 || hidden % 8 != 0 || topk <= 0 || topk > 9) return false;
+  static thread_local detail::KernelConfigCache dispatchConfig, combineConfig;
+  return nvlinkKernelFits(dispatchTopkExpandedNvlinkKernel, nvlinkDispatchSharedBytes(hidden), comm, dispatchConfig) &&
+         nvlinkKernelFits(combineTopkExpandedNvlinkKernel, nvlinkCombineSharedBytes(hidden, topk), comm, combineConfig);
+}
+
 void dispatch(void* output, int* outputIds, float* outputWeights, int* outputCount, const void* input,
               const int64_t* topkIds, const float* weights, const Workload& workload, const CommContext& comm,
               void* workspace, int numBlocks, cudaStream_t stream) {
   validate(workload, comm, numBlocks);
   EP_HOST_ASSERT(output && outputIds && outputWeights && outputCount && workspace);
   EP_HOST_ASSERT(workload.numTokens_ == 0 || (input && topkIds));
+  if (comm.expandedNvlinkFastPath_) {
+    const size_t sharedBytes = nvlinkDispatchSharedBytes(workload.hidden_);
+    static thread_local detail::KernelConfigCache nvlinkConfig;
+    EP_HOST_ASSERT(detail::configureKernel(dispatchTopkExpandedNvlinkKernel, Threads, sharedBytes, comm,
+                                           nvlinkConfig) >= numBlocks);
+    dispatchTopkExpandedNvlinkKernel<<<numBlocks, Threads, sharedBytes, stream>>>(
+        output, outputIds, outputWeights, outputCount, input, topkIds, weights, workload, comm, workspace);
+    CUDA_CHECK(cudaGetLastError());
+    return;
+  }
   static thread_local detail::KernelConfigCache config;
   EP_HOST_ASSERT(detail::configureKernel(dispatchTopkExpandedKernel, Threads, 0, comm, config) >= numBlocks);
   dispatchTopkExpandedKernel<<<numBlocks, Threads, 0, stream>>>(output, outputIds, outputWeights, outputCount, input,
@@ -321,6 +550,16 @@ void combine(void* output, const void* input, const int64_t* topkIds, const floa
   validate(workload, comm, blocks);
   EP_HOST_ASSERT(input && workspace);
   EP_HOST_ASSERT(workload.numTokens_ == 0 || (output && topkIds));
+  if (comm.expandedNvlinkFastPath_) {
+    const size_t sharedBytes = nvlinkCombineSharedBytes(workload.hidden_, workload.numTopk_);
+    static thread_local detail::KernelConfigCache nvlinkConfig;
+    EP_HOST_ASSERT(detail::configureKernel(combineTopkExpandedNvlinkKernel, Threads, sharedBytes, comm, nvlinkConfig) >=
+                   blocks);
+    combineTopkExpandedNvlinkKernel<<<blocks, Threads, sharedBytes, stream>>>(output, input, topkIds, weights, workload,
+                                                                              comm, workspace);
+    CUDA_CHECK(cudaGetLastError());
+    return;
+  }
   static thread_local detail::KernelConfigCache config;
   EP_HOST_ASSERT(detail::configureKernel(combineTopkExpandedKernel, Threads, 0, comm, config) >= blocks);
   combineTopkExpandedKernel<<<blocks, Threads, 0, stream>>>(output, input, topkIds, weights, workload, comm, workspace);

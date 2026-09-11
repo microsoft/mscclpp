@@ -94,7 +94,7 @@ def _dispatch_reference(samples, destination, capacity, topk, num_experts, senti
     rows = ranks * capacity * topk
     result = DispatchReference([sentinel] * rows, [0.0] * rows, [0] * ranks, {})
     for source, sample in enumerate(samples):
-        assert len(sample.x) == len(sample.ids) < capacity
+        assert len(sample.x) == len(sample.ids) <= capacity
         for token, selections in enumerate(sample.ids):
             assert len(selections) == topk
             for k, expert in enumerate(selections):
@@ -135,7 +135,7 @@ def _combine_reference(sample, num_experts):
 def _make_sample(name, rank, ranks, capacity, topk, hidden):
     phase = CASES.index(name)
     experts = ranks * LOCAL_EXPERTS
-    tokens = capacity - 1
+    tokens = capacity if name == "dense_signed" else capacity - 1
     if name == "shrunk_mixed":
         tokens = 0 if rank == ranks - 1 else 1
     elif name == "all_invalid":
@@ -168,7 +168,8 @@ def _make_sample(name, rank, ranks, capacity, topk, hidden):
             values = [65.0] * hidden
             route = [rank * LOCAL_EXPERTS, ((rank + ranks // 2) % ranks) * LOCAL_EXPERTS]
             route += [rank * LOCAL_EXPERTS + k % LOCAL_EXPERTS for k in range(2, topk)]
-            w = [1.25, -1.0] + [0.0] * (topk - 2)
+            route = route[:topk]
+            w = ([1.25, -1.0] + [0.0] * (topk - 2))[:topk]
         x.append(values)
         ids.append(route)
         weights.append(w)
@@ -177,13 +178,14 @@ def _make_sample(name, rank, ranks, capacity, topk, hidden):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--hidden", type=int, default=7168, choices=(4096, 6656, 7168, 8192, 8704, 9216))
+    parser.add_argument("--hidden", type=int, default=7168, choices=(2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216))
     parser.add_argument(
-        "--capacity", type=int, default=8, help="Fixed allocation capacity, strictly larger than every batch"
+        "--capacity", type=int, default=8, help="Fixed capacity; dense case fills it, others shrink or empty"
     )
     parser.add_argument(
-        "--topk", type=int, default=8, choices=range(2, 10), help="At least two slots to test duplicates/FP32"
+        "--topk", type=int, default=8, choices=range(1, 10), help="Use >=2 for duplicate-slot/FP32-rounding witnesses"
     )
+    parser.add_argument("--expect-domain-size", type=int, help="Assert the discovered IPC domain; never override it")
     parser.add_argument("--graph-replays", type=int, default=5)
     parser.add_argument("--cpu-only", action="store_true", help="Run only the independent stdlib unittest oracle tests")
     args = parser.parse_args(argv)
@@ -293,7 +295,7 @@ def _validate_step(torch, ep, step, expert_output, args, rank, ranks, label):
     assert step.returned.data_ptr() == step.combined.data_ptr(), prefix
     context = step.handle.combine_context
     assert context.max_tokens_per_rank == args.capacity, prefix
-    assert context.num_tokens == len(case.sample.x) < args.capacity, prefix
+    assert context.num_tokens == len(case.sample.x) <= args.capacity, prefix
     assert context.topk_ids is case.ids and context.weights is case.weights, prefix
 
     for field, actual, expected in (
@@ -331,7 +333,7 @@ def run(args):
         ]
         expected_combines = [_combine_reference(sample, num_experts) for sample in samples]
         # Check the discriminator itself independently of any GPU result.
-        assert expected_combines[-1] == [[16.25] * args.hidden]
+        assert expected_combines[-1] == [[81.0 if args.topk == 1 else 16.25] * args.hidden]
         assert _bf16(_bf16(65.0 * 1.25) + _bf16(-65.0)) == 16.0
 
         import torch
@@ -342,6 +344,9 @@ def run(args):
         import mscclpp.ep as ep
 
         group = mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD)
+        domain = max(min(ranks, group.nranks_per_node), min(ranks, group.nranks_per_ipc_domain))
+        if args.expect_domain_size is not None and domain != args.expect_domain_size:
+            raise ValueError(f"discovered IPC domain={domain}, expected {args.expect_domain_size}")
         moe = ep.MoECommunicator(
             comm=group,
             num_experts=num_experts,
@@ -411,7 +416,7 @@ def run(args):
         if rank == 0:
             print(
                 f"[EXPANDED_TEST] pass ranks={ranks} hidden={args.hidden} capacity={args.capacity} "
-                f"topk={args.topk} graph_replays={args.graph_replays}",
+                f"topk={args.topk} graph_replays={args.graph_replays} ipc_domain={domain}",
                 flush=True,
             )
     except BaseException:
@@ -503,7 +508,7 @@ class CpuReferenceTests(unittest.TestCase):
                     source, rem = divmod(row, capacity * topk)
                     token, k = divmod(rem, topk)
                     sample = samples[source]
-                    self.assertLess(len(sample.x), capacity)
+                    self.assertLessEqual(len(sample.x), capacity)
                     expert = sample.ids[token][k] if token < len(sample.x) else -1
                     local = 0 <= expert < experts and expert // LOCAL_EXPERTS == destination
                     self.assertEqual(ref.ids[row], expert if local else experts)
@@ -516,6 +521,17 @@ class CpuReferenceTests(unittest.TestCase):
                     self.assertEqual(ref.counts, [0] * ranks)
                 previous = ref
         self.assertGreater(cleared_rows, 0, "shrinking must exercise formerly live rows")
+
+    def test_full_capacity_single_slot_and_multi_token_blocks(self):
+        # 133 tokens exceed both dispatch's 130 blocks and combine's 128 workers,
+        # exercising mbarrier phase reuse when this fixture is run on GPUs.
+        for topk in (1, 8, 9):
+            for capacity in (8, 133):
+                sample = _make_sample("dense_signed", 0, 2, capacity, topk, 8)
+                self.assertEqual(len(sample.x), capacity)
+                self.assertTrue(all(len(row) == topk for row in sample.ids))
+                witness = _make_sample("source_fp32", 0, 2, capacity, topk, 8)
+                self.assertEqual(_combine_reference(witness, 8), [[81.0 if topk == 1 else 16.25] * 8])
 
 
 @unittest.skipUnless(
