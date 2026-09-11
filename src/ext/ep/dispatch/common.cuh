@@ -255,12 +255,11 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorTopkExpandedNotify(const TransportVi
                                                                void* workspace, uint32_t epoch, int* sharedMem) {
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   auto* rankTokenCounts = sharedMem;
-  countRankMajorTopkExpandedRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
   auto* metadataCompletionCounts = sharedMem + nRanks;
   for (int dstRank = static_cast<int>(threadIdx.x); dstRank < nRanks; dstRank += static_cast<int>(blockDim.x)) {
     metadataCompletionCounts[dstRank] = nTokens * nTopk;
   }
-  __syncthreads();
+  countRankMajorTopkExpandedRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
   invalidateRankMajorTopkExpandedPadding(transport, outputTopkIdx, outputTopkWeights, nRanks, nTokens, nTopk,
                                          maxTokensPerRank, invalidTokenExpertId);
   writeRankMajorCounts(transport, rankTokenCounts, nRanks, recvBuffer, epoch);
