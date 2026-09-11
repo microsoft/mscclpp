@@ -257,6 +257,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorTopkExpandedNotify(const TransportVi
   auto* rankTokenCounts = sharedMem;
   auto* metadataCompletionCounts = sharedMem + nRanks;
   for (int dstRank = static_cast<int>(threadIdx.x); dstRank < nRanks; dstRank += static_cast<int>(blockDim.x)) {
+    // Token payloads are sparse per destination rank, but metadata is dense:
+    // each destination receives one [token, top-k] slot for every source route.
     metadataCompletionCounts[dstRank] = nTokens * nTopk;
   }
   countRankMajorTopkExpandedRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
