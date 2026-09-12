@@ -33,7 +33,8 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
       numTopk_(numTopk),
       outputLayout_(outputLayout),
       symmetricBufferBytes_(static_cast<int64_t>(low_latency::symmetricBufferSize(
-          maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout == DispatchLayout::RANK_MAJOR))),
+          maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout != DispatchLayout::EXPERT_MAJOR,
+          outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED))),
       workspaceBytes_(low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
@@ -41,7 +42,9 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
-  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
+                 outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  EP_HOST_ASSERT(outputLayout != DispatchLayout::RANK_MAJOR_TOPK_EXPANDED || (numTopk <= 9 && hidden > 0));
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks_ == 0);
@@ -63,22 +66,26 @@ MoELowLatencyRuntime::~MoELowLatencyRuntime() noexcept(false) {
 
 void* MoELowLatencyRuntime::outputTopkIdsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR)
+                             outputLayout_ != DispatchLayout::EXPERT_MAJOR,
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
       .rankMajorTopkIdsBuffer_;
 }
 void* MoELowLatencyRuntime::outputTopkWeightsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR)
+                             outputLayout_ != DispatchLayout::EXPERT_MAJOR,
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
       .rankMajorTopkWeightsBuffer_;
 }
 void* MoELowLatencyRuntime::outputTokensBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR)
+                             outputLayout_ != DispatchLayout::EXPERT_MAJOR,
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
       .rankMajorTokenBuffer_;
 }
 void* MoELowLatencyRuntime::expertOutputBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR)
+                             outputLayout_ != DispatchLayout::EXPERT_MAJOR,
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
       .rankMajorExpertOutputBuffer_;
 }
 
@@ -168,7 +175,8 @@ void MoELowLatencyRuntime::setup() {
     // Publish the symmetric staging/flags region pointers + slot stride so the
     // device inter-domain path can address them without reconstructing Layout.
     low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                               outputLayout_ == DispatchLayout::RANK_MAJOR);
+                               outputLayout_ != DispatchLayout::EXPERT_MAJOR,
+                               outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
     commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
     commContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
@@ -211,17 +219,23 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
-  EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - low_latency::DispatchControlBlocks >= numRanks_ &&
                  numBlocks <= low_latency::MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
+  const bool topkExpanded = dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
+  if (topkExpanded) {
+    EP_HOST_ASSERT(maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_);
+    EP_HOST_ASSERT(numExperts == numExperts_ && numTokens >= 0);
+    EP_HOST_ASSERT(dispatchDataType == low_latency::DispatchDataType::BF16);
+  }
   low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
-                                       outputLayout_ == DispatchLayout::RANK_MAJOR);
+                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR || topkExpanded) {
     EP_HOST_ASSERT(output == allocationLayout.rankMajorTokenBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
@@ -261,16 +275,23 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
                                    int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
-  EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= low_latency::MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
 
+  const bool topkExpanded = dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
+  if (topkExpanded) {
+    EP_HOST_ASSERT(maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_);
+    EP_HOST_ASSERT(numExperts == numExperts_ && numTokens >= 0 && numTokens <= maxTokensPerRank);
+    EP_HOST_ASSERT(dispatchDataType == low_latency::DispatchDataType::BF16);
+    EP_HOST_ASSERT(mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
+  }
   low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
-                                       outputLayout_ == DispatchLayout::RANK_MAJOR);
+                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR || topkExpanded) {
     EP_HOST_ASSERT(input == allocationLayout.rankMajorExpertOutputBuffer_);
   }
 

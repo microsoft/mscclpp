@@ -72,7 +72,12 @@ class MoECommunicatorConfig:
 
 @dataclass
 class DispatchLayoutInfo:
-    """Physical layout of dispatched tokens and optional rank/expert metadata."""
+    """Physical layout of dispatched tokens and optional rank/expert metadata.
+
+    For ``RANK_MAJOR_TOPK_EXPANDED``, ``num_tokens_per_rank`` counts valid
+    local selections per source rank, including zero-weight selections and
+    duplicate slots. Counts do not imply compaction of the fixed-stride output.
+    """
 
     kind: DispatchLayout
     num_tokens_per_expert: Optional[Union[torch.Tensor, List[int]]] = None
@@ -92,8 +97,22 @@ class DispatchOutputInfo:
 class DispatchOutput:
     """Dispatch result consumed by the local MLP.
 
-    ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
-    reused by every dispatch. Clone any result that must outlive the next call.
+    ``RANK_MAJOR`` and ``RANK_MAJOR_TOPK_EXPANDED`` tensors alias runtime-owned
+    registered buffers reused by every dispatch. Clone any result that must
+    outlive the next call.
+
+    Expanded tokens have shape ``[world_size * max_tokens_per_rank * topk,
+    hidden_size]``. The flat int32 ``topk_ids`` and FP32 ``weights`` each have
+    shape ``[world_size * max_tokens_per_rank * topk]``. A selection occupies
+    ``(source_rank * max_tokens_per_rank + source_token) * topk + k`` without
+    compaction. Valid local selections retain global expert IDs; nonlocal and
+    padding slots carry the configured invalid ID and zero weight. Valid
+    selections have weight one when dispatch weights are None.
+
+    Only expanded output exposes ``combine_input_buffer``. It aliases
+    ``tokens`` and ``get_expert_output_buffer()``: overwrite active rows with
+    unweighted expert results in place, after saving any needed dispatch
+    snapshot. Other layouts leave it None and retain their existing contracts.
     """
 
     tokens: torch.Tensor
@@ -101,6 +120,7 @@ class DispatchOutput:
     layout: DispatchLayoutInfo
     topk_ids: Optional[torch.Tensor] = None
     weights: Optional[torch.Tensor] = None
+    combine_input_buffer: Optional[torch.Tensor] = None
 
 
 # Combine-side context. These objects are layout-specific and opaque to the MLP.
@@ -131,6 +151,26 @@ class RankMajorCombineContext:
 
 
 @dataclass
+class RankMajorTopkExpandedCombineContext:
+    """Original source routing for fixed-stride, top-k-expanded combine.
+
+    ``topk_ids`` and ``weights`` retain the original [T,K] dispatch inputs,
+    not the destination's flat metadata. Keep them unchanged until combine
+    completes. Each registered expert row contains one unweighted result.
+    Combine applies original weights (None means one) exactly once in top-k
+    order in an FP32 sum at the source, then writes BF16 output. Invalid IDs
+    and zero weights are skipped before reading potentially NaN expert rows.
+    """
+
+    topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    max_tokens_per_rank: int
+
+
+@dataclass
 class HighThroughputCombineContext:
     """Combine context for high-throughput dispatch output."""
 
@@ -141,6 +181,7 @@ class HighThroughputCombineContext:
 CombineContext = Union[
     ExpertMajorCombineContext,
     RankMajorCombineContext,
+    RankMajorTopkExpandedCombineContext,
     HighThroughputCombineContext,
 ]
 
@@ -163,6 +204,13 @@ class ExpertMajorDispatchHandle(DispatchHandle):
 @dataclass
 class RankMajorDispatchHandle(DispatchHandle):
     combine_context: RankMajorCombineContext
+
+
+@dataclass
+class RankMajorTopkExpandedDispatchHandle(DispatchHandle):
+    """Expanded selections; distinct from pre-reduced ``RankMajorDispatchHandle``."""
+
+    combine_context: RankMajorTopkExpandedCombineContext
 
 
 @dataclass

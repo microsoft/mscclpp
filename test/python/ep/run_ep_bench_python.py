@@ -183,14 +183,20 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["rank_major", "expert_major"],
+        choices=["rank_major", "expert_major", "rank_major_topk_expanded"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
         "layout (nccl=expert_major, mscclpp=expert_major, deepep=rank_major, flashinfer=rank_major). "
         "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
         "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
-        "mscclpp LL is expert-major only and flashinfer is rank-major only; an unsupported request is "
-        "noted and the backend's default layout is kept.",
+        "mscclpp LL supports both; flashinfer is rank-major only and keeps its default for expert_major. "
+        "'rank_major_topk_expanded' requires --backend mscclpp, BF16, rank_local_reduce, K<=9, no overlap. "
+        "It stores unweighted expert rows in registered dispatch/combine aliases [R*C*K,H], "
+        "row=(sourceRank*C+sourceToken)*K+slot, with flat int32 IDs and FP32 weights [R*C*K]. "
+        "R=ranks, C=allocated tokens/rank, K=top-k, H=hidden; nonlocal/padding metadata uses sentinel "
+        "E=num-experts and zero weight. Counts include valid zero-weight selections, not unique tokens. "
+        "Combine skips invalid/out-of-range/zero-weight rows before payload reads and applies original "
+        "weights once in a source-side FP32 sum in top-k order, without per-rank BF16 partial rounding.",
     )
     p.add_argument(
         "--validate",
@@ -208,6 +214,15 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
     if args.iters_per_graph <= 0:
         raise SystemExit("--iters-per-graph must be positive")
+    if args.ep_layout == "rank_major_topk_expanded":
+        if args.backend != "mscclpp":
+            raise SystemExit("--ep-layout rank_major_topk_expanded requires --backend mscclpp (not all)")
+        if args.dispatch_dtype != "bf16":
+            raise SystemExit("--ep-layout rank_major_topk_expanded requires --dispatch-dtype bf16")
+        if args.combine_mode != "rank_local_reduce":
+            raise SystemExit("--ep-layout rank_major_topk_expanded requires --combine-mode rank_local_reduce")
+        if not 1 <= args.num_topk <= 9:
+            raise SystemExit("--ep-layout rank_major_topk_expanded requires --num-topk in [1, 9]")
     if not args.cuda_graph:
         # Grouping only applies to graph capture; treat as 1 for eager runs so the
         # non-1 default does not error a plain (non-graph) benchmark.
@@ -432,7 +447,9 @@ def run_backend(
     sync_each_iter = (
         _sync_each_iter_env == "1"
         if _sync_each_iter_env is not None
-        else name == "mscclpp" and args.ep_layout == "rank_major" and os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0") == "1"
+        else name == "mscclpp"
+        and args.ep_layout == "rank_major"
+        and os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0") == "1"
     )
     _debug_pair_env = os.environ.get("EP_DEBUG_PAIR")
     debug_pair = _debug_pair_env == "1" if _debug_pair_env is not None else sync_each_iter
