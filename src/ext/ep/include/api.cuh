@@ -40,7 +40,9 @@ enum class DispatchLayout {
   /// Token-major rows: [num_recv_tokens, hidden]. High throughput only.
   TOKEN_MAJOR,
   /// Fixed-stride [num_ranks, max_tokens_per_rank, hidden], grouped by source rank.
-  RANK_MAJOR
+  RANK_MAJOR,
+  /// Fixed-stride [num_ranks, max_tokens_per_rank, num_topk, hidden], indexed by original token and top-k slot.
+  RANK_MAJOR_TOPK_EXPANDED
 };
 
 // ===========================================================================
@@ -187,6 +189,7 @@ size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int num
 /// @param[out] outputSrcInfo Original source-token index for every output row.
 /// @param[out] outputTopkIdx Token-major global expert indices [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// Non-local and padding entries use Workload::invalidTokenExpertId_.
+/// For RANK_MAJOR_TOPK_EXPANDED, metadata is flat and row-aligned: [num_ranks * max_tokens_per_rank * num_topk].
 /// @param[out] outputTopkWeights Token-major routing weights
 /// [num_ranks * max_tokens_per_rank, num_topk], or nullptr.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset for expert-major output, or
@@ -210,6 +213,8 @@ void dispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputT
 /// @param[out] output Combined local tokens [num_tokens, hidden].
 /// @param[in] input Expert-major expert outputs or token-major pre-weighted
 /// rank-local partials, matching Workload::outputLayout_.
+/// RANK_MAJOR_TOPK_EXPANDED uses unweighted per-slot expert rows in the registered
+/// dispatch output buffer; combine applies original top-k weights once in source FP32.
 /// @param[in] topkIdx Global expert indices [num_tokens, num_topk].
 /// @param[in] topkWeights Routing weights [num_tokens, num_topk], or nullptr for unit weights.
 /// @param[in] srcInfo Original source-token index for every packed expert row.
