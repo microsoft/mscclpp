@@ -32,27 +32,6 @@ static_assert(alignof(mscclpp::DeviceSemaphore) <= alignof(int));
 static_assert(sizeof(mscclpp::DeviceSyncer) % sizeof(int) == 0);
 static_assert(alignof(mscclpp::DeviceSyncer) <= alignof(int));
 
-struct TransportView {
-  void* symmetricBufferBase_;
-  void* const* peerMappedBufferBases_;
-  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
-  int rank_;
-
-  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
-      : symmetricBufferBase_(context->localBufferBase_),
-        peerMappedBufferBases_(context->peerBufferBases_),
-        baseMemoryChannels_(context->channels_),
-        rank_(context->rank_) {}
-
-  MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
-
-  MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
-    if (isSelf(peerRank)) return localBuffer;
-    const auto offset = reinterpret_cast<uint8_t*>(localBuffer) - reinterpret_cast<uint8_t*>(symmetricBufferBase_);
-    return reinterpret_cast<uint8_t*>(peerMappedBufferBases_[peerRank]) + offset;
-  }
-};
-
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts) {
   return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
 }
@@ -80,10 +59,6 @@ using DispatchScaleType = typename DispatchDataTypeTraits<DataType>::ScaleType;
 
 template <DispatchDataType DataType>
 using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
-
-MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
-}
 
 template <DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk, int scaleBlockSize) {
@@ -152,32 +127,6 @@ struct WorkspaceView {
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
-
-struct KernelConfigCache {
-  int deviceId_ = -1;
-  size_t dynamicSharedBytes_ = 0;
-  int residentBlocks_ = 0;
-};
-
-template <typename Kernel>
-inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
-                           KernelConfigCache& cache) {
-  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
-    cudaFuncAttributes attributes;
-    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
-    EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
-                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
-    MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                           static_cast<int>(dynamicSharedBytes)));
-    int blocksPerSm;
-    MSCCLPP_CUDATHROW(
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
-    cache.deviceId_ = context.deviceId_;
-    cache.dynamicSharedBytes_ = dynamicSharedBytes;
-    cache.residentBlocks_ = blocksPerSm * context.numSms_;
-  }
-  return cache.residentBlocks_;
-}
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
   return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);

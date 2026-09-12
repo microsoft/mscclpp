@@ -10,6 +10,26 @@
 namespace mscclpp {
 namespace ep {
 
+const PrepareHandle::Impl& PrepareHandle::checked() const {
+  if (!impl_) {
+    EP_THROW("Invalid or empty preparation handle");
+  }
+  const auto owner = impl_->owner_.lock();
+  if (!owner) {
+    EP_THROW("Expired preparation handle");
+  }
+  if (impl_->epoch_ != owner->prepareEpoch_) {
+    EP_THROW("Stale preparation handle: a newer preparation has replaced its metadata");
+  }
+  return *impl_;
+}
+
+const int* PrepareHandle::numRecvTokensDevice() const { return checked().numRecvTokens_; }
+
+const int* PrepareHandle::outputCountsDevice() const { return checked().outputCounts_; }
+
+int PrepareHandle::numOutputCounts() const { return checked().numOutputCounts_; }
+
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
                        int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
     : bootstrap_(communicator.bootstrap()),
@@ -29,9 +49,9 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
-      throughputContext_ = std::make_shared<ThroughputRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_,
-                                                                      numRanksPerIpcDomain_, maxTokensPerRank, hidden,
-                                                                      numExperts, numTopk, outputLayout);
+      throughputContext_ =
+          std::make_shared<ThroughputRuntimeContext>(communicator, rank_, numRanks_, numRanksPerIpcDomain_,
+                                                     maxTokensPerRank, hidden, numExperts, numTopk, outputLayout);
       available_ = throughputContext_->available_;
       break;
     default:
@@ -74,7 +94,7 @@ void* MoERuntime::dispatchOutputBuffer() const {
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
       EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-      return ThroughputStorageLayout(context.recvPool_, context.numRanks_).dispatchOutputBuffer_;
+      return ThroughputStorageLayout(context.symmetricBuffer_, context.numRanks_).recvBuffer_;
     }
     default:
       EP_THROW("Unsupported MoE runtime mode");

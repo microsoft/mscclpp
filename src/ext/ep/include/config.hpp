@@ -37,12 +37,16 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementBytes(DispatchDataType d
                                                     : static_cast<int>(sizeof(Fp8E4M3));
 }
 
-MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchScaleBlockSize(DispatchDataType dispatchDataType) {
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementsPerScale(DispatchDataType dispatchDataType) {
   return dispatchDataType == DispatchDataType::FP8_E4M3 ? 128 : 0;
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNumScales(DispatchDataType dispatchDataType, int hidden) {
-  return dispatchDataType == DispatchDataType::FP8_E4M3 ? hidden / dispatchScaleBlockSize(dispatchDataType) : 0;
+  return dispatchDataType == DispatchDataType::FP8_E4M3 ? hidden / dispatchElementsPerScale(dispatchDataType) : 0;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
 }
 
 // Rank-deduplicated dispatch payload layout:
@@ -228,55 +232,102 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-struct ThroughputStorageLayout {
+// Unlike latency's packed per-token payload, throughput keeps dense token rows
+// and fixed-stride metadata in separate slabs so GEMM can use the rows directly.
+struct ThroughputPayloadView {
   static constexpr int MaxTopk = 32;
   static constexpr int MaxScales = 128;
-  static constexpr int MaxLocalExperts = 1024;
-  // Receive counts are data-dependent, so peers use a fixed-capacity pool mapped at setup time.
-  static constexpr int RecvPoolMaxTokens = 65536;
-  static constexpr int64_t RecvPoolMaxHiddenBytes = 16384;
-  static constexpr int64_t RecvPoolMetaBytes =
+  static constexpr int MaxTokens = 65536;
+  static constexpr int64_t MaxHiddenBytes = 16384;
+  static constexpr size_t MetadataOffset = static_cast<size_t>(MaxTokens) * MaxHiddenBytes;
+  static constexpr size_t MetadataSlotBytes =
       ((MaxTopk * (sizeof(int) + sizeof(float)) + MaxScales * sizeof(float) + BufferAlignmentBytes - 1) /
        BufferAlignmentBytes) *
       BufferAlignmentBytes;
 
-  // Control and receive-pool storage are separate peer-visible allocations.
-  size_t controlBufferBytes_;
-  size_t recvPoolBytes_;
-  size_t recvPoolHeaderBytes_;
-  size_t recvPoolMetadataOffset_;
-  void* dispatchOutputBuffer_ = nullptr;
+  int topK_;
 
-  ThroughputStorageLayout(void* recvPool, int numRanks) {
+  MSCCLPP_HOST_DEVICE_INLINE explicit ThroughputPayloadView(int topK) : topK_(topK) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t numBytes() {
+    return MetadataOffset + static_cast<size_t>(MaxTokens) * MetadataSlotBytes;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE size_t metadataBytes(int numScales) const {
+    return static_cast<size_t>(topK_) * (sizeof(int) + sizeof(float)) + static_cast<size_t>(numScales) * sizeof(float);
+  }
+
+  template <typename T>
+  MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
+    return static_cast<T*>(base);
+  }
+
+  template <typename T>
+  MSCCLPP_HOST_DEVICE_INLINE const T* data(const void* base) const {
+    return static_cast<const T*>(base);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base, int64_t row) const {
+    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + MetadataOffset + row * MetadataSlotBytes);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base, int64_t row) const {
+    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + MetadataOffset + row * MetadataSlotBytes);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base, int64_t row) const {
+    return reinterpret_cast<float*>(topKIndices(base, row) + topK_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base, int64_t row) const {
+    return reinterpret_cast<const float*>(topKIndices(base, row) + topK_);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE float* scaleFactors(void* base, int64_t row) const {
+    return topKValues(base, row) + topK_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const float* scaleFactors(const void* base, int64_t row) const {
+    return topKValues(base, row) + topK_;
+  }
+};
+
+struct ThroughputStorageLayout {
+  static constexpr int MaxLocalExperts = 1024;
+
+  size_t totalBytes_;
+  void* recvBuffer_ = nullptr;
+
+  ThroughputStorageLayout(void* symmetricBuffer, int numRanks) {
     EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
 
     const size_t ranks = static_cast<size_t>(numRanks);
     const size_t prefixBytes = ranks * ranks * sizeof(int);
     const size_t expertScratchBytes = ranks * MaxLocalExperts * sizeof(int);
-    controlBufferBytes_ = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
-
-    recvPoolHeaderBytes_ = configAlign<size_t>(ranks * sizeof(int), BufferAlignmentBytes);
-    const size_t hiddenBytes = static_cast<size_t>(RecvPoolMaxTokens) * static_cast<size_t>(RecvPoolMaxHiddenBytes);
-    recvPoolMetadataOffset_ = configAlign<size_t>(recvPoolHeaderBytes_ + hiddenBytes, BufferAlignmentBytes);
-    recvPoolBytes_ = configAlign<size_t>(
-        recvPoolMetadataOffset_ + static_cast<size_t>(RecvPoolMaxTokens) * RecvPoolMetaBytes, BufferAlignmentBytes);
-
-    if (recvPool != nullptr) {
-      dispatchOutputBuffer_ = static_cast<uint8_t*>(recvPool) + recvPoolHeaderBytes_;
+    const size_t recvOffset = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
+    totalBytes_ = configAlign<size_t>(recvOffset + ThroughputPayloadView::numBytes(), BufferAlignmentBytes);
+    if (symmetricBuffer != nullptr) {
+      recvBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + recvOffset;
     }
   }
-
-  size_t recvPoolHiddenBytes() const { return recvPoolMetadataOffset_ - recvPoolHeaderBytes_; }
 };
 
 struct ThroughputWorkspaceLayout {
   size_t totalBytes_;
+  // Local routing histograms produced before communicating with peers.
   int* numTokensPerRank_ = nullptr;
   int* numTokensPerExpert_ = nullptr;
-  bool* isTokenInRank_ = nullptr;
+  // Unpacked bool mask [local token, destination rank], not a bit-packed bitmap.
+  bool* tokenRankMask_ = nullptr;
+  // Inclusive counts [source rank, destination rank] locate each source's receive range.
   int* rankPrefixMatrix_ = nullptr;
+  // Inclusive local counts [destination rank, active channel] keep channel writes disjoint.
   int* channelPrefixMatrix_ = nullptr;
-  int* sendHead_ = nullptr;
+  // Receiver row for [local token, destination rank], or -1. Dispatch fills this for combine.
+  int* recvTokenIndices_ = nullptr;
+  int* numRecvTokens_ = nullptr;
+  // Receive counts indexed by local expert or source rank, depending on output layout.
+  int* recvCounts_ = nullptr;
 
   ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int maxChannels) {
     size_t offset = 0;
@@ -289,12 +340,16 @@ struct ThroughputWorkspaceLayout {
 
     numTokensPerRank_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
     numTokensPerExpert_ = static_cast<int*>(place(static_cast<size_t>(numExperts) * sizeof(int), alignof(int)));
-    isTokenInRank_ =
+    tokenRankMask_ =
         static_cast<bool*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(bool), alignof(bool)));
     rankPrefixMatrix_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * numRanks * sizeof(int), alignof(int)));
     channelPrefixMatrix_ =
         static_cast<int*>(place(static_cast<size_t>(numRanks) * maxChannels * sizeof(int), alignof(int)));
-    sendHead_ = static_cast<int*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(int), alignof(int)));
+    recvTokenIndices_ =
+        static_cast<int*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(int), alignof(int)));
+    numRecvTokens_ = static_cast<int*>(place(sizeof(int), alignof(int)));
+    recvCounts_ = static_cast<int*>(
+        place(static_cast<size_t>(std::max(numRanks, numExperts / numRanks)) * sizeof(int), alignof(int)));
     totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
   }
 };

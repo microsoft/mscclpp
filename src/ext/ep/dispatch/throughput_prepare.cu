@@ -14,8 +14,11 @@ namespace ep {
 
 template <int NumThreads, int NumExpertsPerBlock, int NumRanksPerBlock>
 __global__ void __launch_bounds__(NumThreads, 1)
-    prepareThroughputKernel(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                            int numTokens, int numTopk, int numExperts, const DeviceContext* context) {
+    countThroughputRoutesKernel(const int64_t* topkIdx, ThroughputWorkspaceLayout workspace, Workload workload,
+                                const DeviceContext* context) {
+  const int numTokens = workload.numTokens_;
+  const int numTopk = workload.numTopk_;
+  const int numExperts = workload.numExperts_;
   const int blockId = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
 
@@ -45,7 +48,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
       int sum = 0;
 #pragma unroll
       for (int i = 0; i < NumThreads; ++i) sum += shared.perExpert[i][threadId];
-      numTokensPerExpert[expertBegin + threadId] = sum;
+      workspace.numTokensPerExpert_[expertBegin + threadId] = sum;
     }
     return;
   }
@@ -70,7 +73,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
       if (rankExpertBegin <= expert && expert < rankExpertEnd) ++isInRank[expert / expertsPerRank - rankBegin];
     }
 
-    bool* tokenInRank = isTokenInRank + token * context->numRanks_;
+    bool* tokenInRank = workspace.tokenRankMask_ + token * context->numRanks_;
 #pragma unroll
     for (int i = 0; rankBegin + i < rankEnd; ++i) {
       tokenInRank[rankBegin + i] = isInRank[i] > 0;
@@ -84,20 +87,20 @@ __global__ void __launch_bounds__(NumThreads, 1)
     int sum = 0;
 #pragma unroll
     for (int i = 0; i < NumThreads; ++i) sum += shared.perRank[i][threadId];
-    numTokensPerRank[rankBegin + threadId] = sum;
+    workspace.numTokensPerRank_[rankBegin + threadId] = sum;
   }
 }
 
-void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                       int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream) {
+void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                           const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = 256;
   constexpr int NumExpertsPerBlock = 32;
   constexpr int NumRanksPerBlock = 8;
-  const int numBlocks = (numExperts + NumExpertsPerBlock - 1) / NumExpertsPerBlock +
+  const int numBlocks = (workload.numExperts_ + NumExpertsPerBlock - 1) / NumExpertsPerBlock +
                         (context.numRanks_ + NumRanksPerBlock - 1) / NumRanksPerBlock;
 
-  prepareThroughputKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock><<<numBlocks, NumThreads, 0, stream>>>(
-      topkIdx, numTokensPerRank, numTokensPerExpert, isTokenInRank, numTokens, numTopk, numExperts, context.devicePtr_);
+  countThroughputRoutesKernel<NumThreads, NumExpertsPerBlock, NumRanksPerBlock>
+      <<<numBlocks, NumThreads, 0, stream>>>(topkIdx, workspace, workload, context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 

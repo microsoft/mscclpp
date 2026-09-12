@@ -117,12 +117,8 @@ void LatencyRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
   deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
-                    .peerPayloadBases_ = nullptr,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
-                    .combineRecvIdx_ = nullptr,
-                    .mappedRecvCounter_ = nullptr,
-                    .mappedRecvExpertCounters_ = nullptr,
                     .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
                     .numSms_ = numSms,
                     .deviceId_ = deviceId_,
@@ -166,7 +162,7 @@ void* MoERuntime::combineInputBuffer() const {
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
       EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-      return ThroughputStorageLayout(context.recvPool_, context.numRanks_).dispatchOutputBuffer_;
+      return ThroughputStorageLayout(context.symmetricBuffer_, context.numRanks_).recvBuffer_;
     }
     default:
       EP_THROW("Unsupported MoE runtime mode");

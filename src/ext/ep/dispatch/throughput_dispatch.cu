@@ -12,6 +12,11 @@
 
 namespace mscclpp {
 namespace ep {
+namespace {
+
+constexpr int ThroughputDispatchThreads = 512;
+
+}  // namespace
 
 MSCCLPP_HOST_DEVICE_INLINE void getChannelTaskRange(int numTokens, int numChannels, int channel, int& tokenBegin,
                                                     int& tokenEnd) {
@@ -19,10 +24,7 @@ MSCCLPP_HOST_DEVICE_INLINE void getChannelTaskRange(int numTokens, int numChanne
   tokenEnd = static_cast<int>(static_cast<int64_t>(numTokens) * (channel + 1) / numChannels);
 }
 
-__global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, const int* numTokensPerExpert,
-                                               int numExperts, int numTokens, int numChannels,
-                                               const bool* isTokenInRank, int* channelPrefixMatrix,
-                                               int* rankPrefixMatrix, int expertAlignment,
+__global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspace, Workload workload, int numChannels,
                                                const DeviceContext* context) {
   const int numRanks = context->numRanks_;
   const int blockId = static_cast<int>(blockIdx.x);
@@ -36,17 +38,17 @@ __global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, cons
     if (threadId < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
     __syncthreads();
 
-    const int numExpertsPerRank = numExperts / numRanks;
+    const int numExpertsPerRank = workload.numExperts_ / numRanks;
     if (threadId < numRanks) {
       auto* peerRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[threadId]);
       auto* peerExpertCounts = peerRankCounts + numRanks * numRanks;
       for (int dstRank = 0; dstRank < numRanks; ++dstRank) {
-        peerRankCounts[context->rank_ * numRanks + dstRank] = numTokensPerRank[dstRank];
+        peerRankCounts[context->rank_ * numRanks + dstRank] = workspace.numTokensPerRank_[dstRank];
       }
 #pragma unroll
       for (int localExpert = 0; localExpert < numExpertsPerRank; ++localExpert) {
         peerExpertCounts[context->rank_ * numExpertsPerRank + localExpert] =
-            numTokensPerExpert[threadId * numExpertsPerRank + localExpert];
+            workspace.numTokensPerExpert_[threadId * numExpertsPerRank + localExpert];
       }
     }
     __syncthreads();
@@ -60,7 +62,7 @@ __global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, cons
         localRankCounts[srcRank * numRanks + threadId] += localRankCounts[(srcRank - 1) * numRanks + threadId];
       }
       if (threadId == context->rank_)
-        *context->mappedRecvCounter_ = localRankCounts[(numRanks - 1) * numRanks + context->rank_];
+        *workspace.numRecvTokens_ = localRankCounts[(numRanks - 1) * numRanks + context->rank_];
     }
 
     auto* localExpertCounts = localRankCounts + numRanks * numRanks;
@@ -69,12 +71,17 @@ __global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, cons
       for (int srcRank = 0; srcRank < numRanks; ++srcRank) {
         count += localExpertCounts[srcRank * numExpertsPerRank + threadId];
       }
-      context->mappedRecvExpertCounters_[threadId] = (count + expertAlignment - 1) / expertAlignment * expertAlignment;
+      if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) workspace.recvCounts_[threadId] = count;
     }
     __syncthreads();
 
+    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR && threadId < numRanks) {
+      const int prefix = localRankCounts[threadId * numRanks + context->rank_];
+      const int previous = threadId == 0 ? 0 : localRankCounts[(threadId - 1) * numRanks + context->rank_];
+      workspace.recvCounts_[threadId] = prefix - previous;
+    }
     for (int index = threadId; index < numRanks * numRanks; index += numThreads) {
-      rankPrefixMatrix[index] = localRankCounts[index];
+      workspace.rankPrefixMatrix_[index] = localRankCounts[index];
     }
     __threadfence_system();
     if (threadId < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
@@ -86,36 +93,35 @@ __global__ void exchangeThroughputCountsKernel(const int* numTokensPerRank, cons
   for (int channel = warpId; channel < numChannels; channel += numWarps) {
     int tokenBegin;
     int tokenEnd;
-    getChannelTaskRange(numTokens, numChannels, channel, tokenBegin, tokenEnd);
+    getChannelTaskRange(workload.numTokens_, numChannels, channel, tokenBegin, tokenEnd);
 
     int count = 0;
     for (int token = tokenBegin + laneId; token < tokenEnd; token += WARP_SIZE) {
-      count += isTokenInRank[token * numRanks + dstRank];
+      count += workspace.tokenRankMask_[token * numRanks + dstRank];
     }
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) count += __shfl_down_sync(0xffffffffu, count, offset);
-    if (laneId == 0) channelPrefixMatrix[dstRank * numChannels + channel] = count;
+    if (laneId == 0) workspace.channelPrefixMatrix_[dstRank * numChannels + channel] = count;
   }
   __syncthreads();
 
   if (threadId == 0) {
 #pragma unroll
     for (int channel = 1; channel < numChannels; ++channel) {
-      channelPrefixMatrix[dstRank * numChannels + channel] += channelPrefixMatrix[dstRank * numChannels + channel - 1];
+      workspace.channelPrefixMatrix_[dstRank * numChannels + channel] +=
+          workspace.channelPrefixMatrix_[dstRank * numChannels + channel - 1];
     }
   }
 }
 
-void throughputExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
-                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels) {
-  constexpr int NumThreads = 128;
-  EP_HOST_ASSERT(numExperts % context.numRanks_ == 0);
-  EP_HOST_ASSERT(numExperts / context.numRanks_ <= NumThreads && context.numRanks_ <= NumThreads);
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                              const DeviceContext& context, int numChannels, cudaStream_t stream) {
+  constexpr int NumThreads = ThroughputCountThreads;
+  EP_HOST_ASSERT(workload.numExperts_ % context.numRanks_ == 0);
+  EP_HOST_ASSERT(workload.numExperts_ / context.numRanks_ <= NumThreads && context.numRanks_ <= NumThreads);
   EP_HOST_ASSERT(numChannels > 0);
 
-  exchangeThroughputCountsKernel<<<1 + context.numRanks_, NumThreads, 0, stream>>>(
-      numTokensPerRank, numTokensPerExpert, numExperts, numTokens, numChannels, isTokenInRank, channelPrefixMatrix,
-      rankPrefixMatrix, expertAlignment, context.devicePtr_);
+  exchangeThroughputCountsKernel<<<1 + context.numRanks_, NumThreads, 0, stream>>>(workspace, workload, numChannels,
+                                                                                   context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
@@ -135,20 +141,29 @@ __global__ void publishCachedThroughputPrefixKernel(const int* rankPrefixMatrix,
   if (threadIdx.x < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
 }
 
-void throughputPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream) {
-  publishCachedThroughputPrefixKernel<<<1, 128, 0, stream>>>(rankPrefixMatrix, context.devicePtr_);
+void throughputPublishCachedPrefix(const ThroughputWorkspaceLayout& workspace, const DeviceContext& context,
+                                   cudaStream_t stream) {
+  publishCachedThroughputPrefixKernel<<<1, ThroughputCountThreads, 0, stream>>>(workspace.rankPrefixMatrix_,
+                                                                                context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
 template <int NumThreads, DispatchLayout Layout>
 __global__ void __launch_bounds__(NumThreads, 1)
-    throughputDispatchKernel(int* sendHead, const int4* input, const int64_t* topkIdx, const float* topkWeights,
-                             const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                             int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts,
-                             int numScales, int* recvTopkIdx, float* recvTopkWeights, float* recvXScales,
-                             int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                             int maxTokensPerRank, const DeviceContext* context) {
+    throughputDispatchKernel(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
+                             const int4* input, const int64_t* topkIdx, const float* topkWeights,
+                             const float* inputScales, Workload workload, ThroughputWorkspaceLayout workspace,
+                             void* recvBuffer, const DeviceContext* context) {
+  const int numTopk = workload.numTopk_;
+  const int maxTokensPerRank = workload.maxTokensPerRank_;
+  const int hiddenInt4 = workload.hidden_ * dispatchElementBytes(workload.dispatchDataType_) / sizeof(int4);
+  const int numScales = dispatchNumScales(workload.dispatchDataType_, workload.hidden_);
+  const ThroughputPayloadView payload(numTopk);
+  const TransportView transport(context);
   const int numRanks = context->numRanks_;
+  const int receivedTokens = *workspace.numRecvTokens_;
+  EP_DEVICE_ASSERT(receivedTokens >= 0 && receivedTokens <= numRanks * maxTokensPerRank);
+  EP_DEVICE_ASSERT(output != nullptr || receivedTokens == 0);
   const int numChannels = static_cast<int>(gridDim.x);
   const int channel = static_cast<int>(blockIdx.x);
   const int threadId = static_cast<int>(threadIdx.x);
@@ -156,29 +171,29 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int dstRank = threadId / threadsPerRank;
   const int rankThreadId = threadId % threadsPerRank;
   const int laneId = threadId % WARP_SIZE;
-  const int expertsPerRank = numExperts / numRanks;
+  const int expertsPerRank = workload.numExperts_ / numRanks;
   EP_DEVICE_ASSERT(numRanks <= WARP_SIZE);
   EP_DEVICE_ASSERT(NumThreads % numRanks == 0);
 
   const int* dstRankPrefix = reinterpret_cast<const int*>(context->peerBufferBases_[dstRank]);
   const int rankOffset = context->rank_ > 0 ? dstRankPrefix[(context->rank_ - 1) * numRanks + dstRank] : 0;
-  const int channelOffset = channel > 0 ? channelPrefixMatrix[dstRank * numChannels + channel - 1] : 0;
+  const int channelOffset = channel > 0 ? workspace.channelPrefixMatrix_[dstRank * numChannels + channel - 1] : 0;
   const int64_t rankBase =
       Layout == DispatchLayout::RANK_MAJOR ? static_cast<int64_t>(context->rank_) * maxTokensPerRank : rankOffset;
   const int64_t outputBase = rankBase + channelOffset;
-  auto* dstPool = reinterpret_cast<uint8_t*>(context->peerPayloadBases_[dstRank]);
-  auto* dstTokens = reinterpret_cast<int4*>(dstPool + recvPoolHeaderBytes);
-  auto* dstMetadata = dstPool + recvPoolMetadataOffset;
+  void* dstBuffer = transport.mappedBuffer(recvBuffer, dstRank);
+  auto* dstTokens = payload.data<int4>(dstBuffer);
 
   int tokenBegin;
   int tokenEnd;
-  getChannelTaskRange(numTokens, numChannels, channel, tokenBegin, tokenEnd);
+  getChannelTaskRange(workload.numTokens_, numChannels, channel, tokenBegin, tokenEnd);
 
   int outputOffset = 0;
   for (int token = tokenBegin; token < tokenEnd; ++token) {
-    const bool selected = isTokenInRank[token * numRanks + dstRank];
+    const bool selected = workspace.tokenRankMask_[token * numRanks + dstRank];
     const int64_t outputIndex = outputBase + outputOffset;
-    if (rankThreadId == 0) sendHead[token * numRanks + dstRank] = selected ? static_cast<int>(outputIndex) : -1;
+    if (rankThreadId == 0)
+      workspace.recvTokenIndices_[token * numRanks + dstRank] = selected ? static_cast<int>(outputIndex) : -1;
     if (!selected) continue;
 
     const int4* srcRow = input + static_cast<int64_t>(token) * hiddenInt4;
@@ -187,13 +202,9 @@ __global__ void __launch_bounds__(NumThreads, 1)
       dstRow[hiddenIndex] = __ldg(srcRow + hiddenIndex);
     }
 
-    auto* metadata = dstMetadata + outputIndex * metadataSlotBytes;
-    if (rankThreadId == 0 && context->combineRecvIdx_ != nullptr) {
-      context->combineRecvIdx_[token * numRanks + dstRank] = static_cast<int>(outputIndex);
-    }
     if (topkIdx != nullptr && laneId < numTopk && rankThreadId < WARP_SIZE) {
-      auto* metadataTopkIdx = reinterpret_cast<int*>(metadata);
-      auto* metadataTopkWeights = reinterpret_cast<float*>(metadata + static_cast<size_t>(numTopk) * sizeof(int));
+      auto* metadataTopkIdx = payload.topKIndices(dstBuffer, outputIndex);
+      auto* metadataTopkWeights = payload.topKValues(dstBuffer, outputIndex);
       const int expertBegin = dstRank * expertsPerRank;
       const int expertEnd = expertBegin + expertsPerRank;
       const int64_t expert = __ldg(topkIdx + static_cast<int64_t>(token) * numTopk + laneId);
@@ -205,8 +216,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
               : 0.0f;
     }
     if (inputScales != nullptr && rankThreadId < WARP_SIZE) {
-      auto* metadataScales =
-          reinterpret_cast<float*>(metadata + static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)));
+      auto* metadataScales = payload.scaleFactors(dstBuffer, outputIndex);
       for (int scale = laneId; scale < numScales; scale += WARP_SIZE) {
         metadataScales[scale] = __ldg(inputScales + static_cast<int64_t>(token) * numScales + scale);
       }
@@ -219,80 +229,73 @@ __global__ void __launch_bounds__(NumThreads, 1)
   if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
   cooperative_groups::this_grid().sync();
 
-  const auto* localPool = reinterpret_cast<const uint8_t*>(context->peerPayloadBases_[context->rank_]);
+  const void* localTokens = payload.data<int4>(recvBuffer);
   const int globalThreadId = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   const int gridThreads = static_cast<int>(gridDim.x * blockDim.x);
-  for (int token = globalThreadId; token < numRecvTokens; token += gridThreads) {
-    const auto* metadata = localPool + recvPoolMetadataOffset + static_cast<int64_t>(token) * metadataSlotBytes;
-    if (recvTopkIdx != nullptr || recvTopkWeights != nullptr) {
-      const auto* metadataTopkIdx = reinterpret_cast<const int*>(metadata);
-      const auto* metadataTopkWeights =
-          reinterpret_cast<const float*>(metadata + static_cast<size_t>(numTopk) * sizeof(int));
+  const int outputRows = Layout == DispatchLayout::RANK_MAJOR ? numRanks * maxTokensPerRank : receivedTokens;
+  if (output != nullptr && output != localTokens) {
+    copyThroughputRows(output, localTokens, outputRows, hiddenInt4 * sizeof(int4), workspace.recvCounts_,
+                       maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR, globalThreadId, gridThreads);
+  }
+  for (int token = globalThreadId; token < outputRows; token += gridThreads) {
+    if (!isActiveThroughputRow(token, workspace.recvCounts_, maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR))
+      continue;
+    if (outputTopkIdx != nullptr || outputTopkWeights != nullptr) {
+      const auto* metadataTopkIdx = payload.topKIndices(recvBuffer, token);
+      const auto* metadataTopkWeights = payload.topKValues(recvBuffer, token);
       for (int topk = 0; topk < numTopk; ++topk) {
-        if (recvTopkIdx != nullptr) recvTopkIdx[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkIdx[topk];
-        if (recvTopkWeights != nullptr) {
-          recvTopkWeights[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkWeights[topk];
+        if (outputTopkIdx != nullptr)
+          outputTopkIdx[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkIdx[topk];
+        if (outputTopkWeights != nullptr) {
+          outputTopkWeights[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkWeights[topk];
         }
       }
     }
-    if (recvXScales != nullptr) {
-      const auto* metadataScales =
-          reinterpret_cast<const float*>(metadata + static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)));
+    if (outputScales != nullptr) {
+      const auto* metadataScales = payload.scaleFactors(recvBuffer, token);
       for (int scale = 0; scale < numScales; ++scale) {
-        recvXScales[static_cast<int64_t>(token) * numScales + scale] = metadataScales[scale];
+        outputScales[static_cast<int64_t>(token) * numScales + scale] = metadataScales[scale];
       }
     }
   }
 }
 
 template <int NumThreads, DispatchLayout Layout>
-int maxCooperativeThroughputDispatchBlocks() {
-  static int cachedDevice = -1;
-  static int cachedMaxBlocks = 0;
-
-  int device;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
-  if (device != cachedDevice) {
-    int blocksPerSm;
-    int numSms;
-    auto kernel = throughputDispatchKernel<NumThreads, Layout>;
-    MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, NumThreads, 0));
-    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, device));
-    cachedDevice = device;
-    cachedMaxBlocks = blocksPerSm * numSms;
-  }
-  return cachedMaxBlocks;
+int maxCooperativeThroughputDispatchBlocks(const DeviceContext& context) {
+  static thread_local KernelConfigCache kernelConfig;
+  return configureKernel(throughputDispatchKernel<NumThreads, Layout>, NumThreads, 0, context, kernelConfig);
 }
 
-void throughputDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
-                        int* recvTopkIdx, float* recvTopkWeights, float* recvXScales, int numBlocks,
-                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        DispatchLayout layout, int maxTokensPerRank, const DeviceContext& context,
-                        cudaStream_t stream) {
-  constexpr int NumThreads = 512;
-  EP_HOST_ASSERT(context.peerPayloadBases_ != nullptr);
-  EP_HOST_ASSERT(numBlocks > 0);
-  EP_HOST_ASSERT(static_cast<int64_t>(numTopk) * static_cast<int64_t>(sizeof(int) + sizeof(float)) +
-                     static_cast<int64_t>(numScales) * static_cast<int64_t>(sizeof(float)) <=
-                 metadataSlotBytes);
+int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context) {
+  return layout == DispatchLayout::RANK_MAJOR
+             ? maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::RANK_MAJOR>(context)
+             : maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::TOKEN_MAJOR>(context);
+}
 
-  const bool rankMajor = layout == DispatchLayout::RANK_MAJOR;
-  const int maxBlocks = rankMajor ? maxCooperativeThroughputDispatchBlocks<NumThreads, DispatchLayout::RANK_MAJOR>()
-                                  : maxCooperativeThroughputDispatchBlocks<NumThreads, DispatchLayout::TOKEN_MAJOR>();
-  EP_HOST_ASSERT(numBlocks <= maxBlocks);
+void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
+                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+                        const Workload& workload, const ThroughputWorkspaceLayout& workspace, void* recvBuffer,
+                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  constexpr int NumThreads = ThroughputDispatchThreads;
+  EP_HOST_ASSERT(recvBuffer != nullptr && context.peerBufferBases_ != nullptr);
+  EP_HOST_ASSERT(workspace.numRecvTokens_ != nullptr && workspace.recvCounts_ != nullptr);
+  EP_HOST_ASSERT(numBlocks > 0);
+  EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
+  const ThroughputPayloadView payload(workload.numTopk_);
+  EP_HOST_ASSERT(payload.metadataBytes(dispatchNumScales(workload.dispatchDataType_, workload.hidden_)) <=
+                 ThroughputPayloadView::MetadataSlotBytes);
+
+  const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
+  EP_HOST_ASSERT(numBlocks <= maxCooperativeThroughputDispatchBlocks(workload.outputLayout_, context));
   auto kernel = rankMajor ? throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR>
                           : throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR>;
   cudaLaunchAttribute attribute{};
   attribute.id = cudaLaunchAttributeCooperative;
   attribute.val.cooperative = 1;
   cudaLaunchConfig_t config{dim3(numBlocks), dim3(NumThreads), 0, stream, &attribute, 1};
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, sendHead, reinterpret_cast<const int4*>(input), topkIdx,
-                                       topkWeights, inputScales, isTokenInRank, channelPrefixMatrix, numTokens,
-                                       numRecvTokens, hiddenInt4, numTopk, numExperts, numScales, recvTopkIdx,
-                                       recvTopkWeights, recvXScales, recvPoolHeaderBytes, recvPoolMetadataOffset,
-                                       metadataSlotBytes, maxTokensPerRank, context.devicePtr_));
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, output, outputTopkIdx, outputTopkWeights, outputScales,
+                                       reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales,
+                                       workload, workspace, recvBuffer, context.devicePtr_));
 }
 
 }  // namespace ep

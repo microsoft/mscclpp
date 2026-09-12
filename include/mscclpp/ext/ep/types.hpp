@@ -52,6 +52,70 @@ enum class DispatchDataType {
   FP8_E4M3
 };
 
+/// Arguments for throughput-mode routing preparation.
+///
+/// Preparation computes local routing counts and exchanges them with peers;
+/// it does not read or transfer token payloads.
+struct PrepareRequest {
+  /// Device-resident input top-k expert IDs.
+  ///
+  /// Keep this buffer alive for the GPU work using it. Its contents must remain
+  /// unchanged between preparation and dispatch, unless a graph replay also
+  /// recomputes preparation.
+  const int64_t* topkIdx;
+  /// Number of local input tokens, in [0, maxTokensPerRank].
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  int maxTokensPerRank;
+  /// Grid block count for subsequent dispatches; determines channel prefixes.
+  int numBlocks;
+  /// CUDA stream on which preparation is enqueued asynchronously.
+  cudaStream_t stream;
+};
+
+/// Opaque routing metadata returned by MoERuntime::prepare().
+///
+/// A handle borrows runtime-owned routing buffers without extending the
+/// runtime's lifetime. It can be reused for unchanged routing until another
+/// preparation, including an automatically prepared dispatch, starts on the
+/// same runtime. Receive counts remain on the GPU and are ready after preparation
+/// finishes on PrepareRequest::stream. Dispatch inserts a device-side dependency
+/// when consuming this handle; other consumers must establish their own stream order.
+class PrepareHandle {
+ public:
+  /// Construct an empty handle, which requests automatic preparation in dispatch.
+  /// Its device-count accessors reject it with EPException.
+  PrepareHandle() = default;
+
+  /// Return a device pointer to the rank-deduplicated receive-token count.
+  ///
+  /// This is the TOKEN_MAJOR output row count. RANK_MAJOR output still reserves
+  /// numRanks * maxTokensPerRank rows, including padding.
+  /// @throws EPException If the handle is empty, expired, or stale.
+  const int* numRecvTokensDevice() const;
+
+  /// Return a device pointer to receive counts matching the runtime's output layout.
+  ///
+  /// TOKEN_MAJOR has one entry per local expert; RANK_MAJOR has one entry per
+  /// source rank. The buffer is borrowed from the runtime and is replaced by
+  /// subsequent preparation; it is not a host-readable snapshot.
+  /// @throws EPException If the handle is empty, expired, or stale.
+  const int* outputCountsDevice() const;
+
+  /// Return the number of elements in outputCountsDevice(), determined by the runtime layout.
+  /// @throws EPException If the handle is empty, expired, or stale.
+  int numOutputCounts() const;
+
+ private:
+  friend class MoERuntime;
+
+  struct Impl;
+  explicit PrepareHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+  const Impl& checked() const;
+
+  std::shared_ptr<const Impl> impl_;
+};
+
 /// Arguments for latency-mode dispatch.
 ///
 /// The caller must keep all buffers referenced by this struct (inputs and
@@ -99,9 +163,9 @@ struct LatencyDispatchRequest {
 
 /// Arguments for throughput-mode dispatch.
 ///
-/// The caller must keep all input buffers valid until dispatch has been
-/// enqueued. The returned DispatchHandle must stay alive until the matching
-/// combine has been enqueued.
+/// The caller must keep input and output buffers valid until the GPU work
+/// using them, including graph replays, has completed. The returned
+/// DispatchHandle must stay alive until the matching combine has been enqueued.
 struct ThroughputDispatchRequest {
   /// Dispatch output buffer.
   ///
@@ -134,6 +198,15 @@ struct ThroughputDispatchRequest {
   int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Routing metadata returned by MoERuntime::prepare().
+  ///
+  /// An empty handle requests automatic preparation. For a non-empty handle,
+  /// topkIdx, numTokens, maxTokensPerRank, and numBlocks must match the preparation.
+  /// All ranks must agree on whether to reuse preparation or compute it automatically.
+  /// Routing IDs must remain unchanged; their device contents are not validated
+  /// on the host. A graph may either reuse this preparation or capture automatic
+  /// preparation with dispatch.
+  PrepareHandle prepareHandle;
 };
 
 /// Mode-specific dispatch request.
@@ -185,7 +258,10 @@ struct ThroughputCombineRequest {
   void* output;
   /// Optional combined top-k weights.
   float* outputTopkWeights;
-  /// Local expert output.
+  /// Local expert output in the dispatch output layout.
+  ///
+  /// A null pointer is valid only when the device receive count is zero; this
+  /// data-dependent condition is checked on the GPU.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

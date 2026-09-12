@@ -9,31 +9,13 @@
 
 #include <mscclpp/ext/ep/types.hpp>
 
+#include "config.hpp"
 #include "device_context.hpp"
 
 namespace mscclpp {
 namespace ep {
 
-void throughputPrepare(const int64_t* topkIdx, int* numTokensPerRank, int* numTokensPerExpert, bool* isTokenInRank,
-                       int numTokens, int numTopk, int numExperts, const DeviceContext& context, cudaStream_t stream);
-
-void throughputExchangeCounts(const int* numTokensPerRank, const int* numTokensPerExpert, int numExperts, int numTokens,
-                              const bool* isTokenInRank, int* channelPrefixMatrix, int* rankPrefixMatrix,
-                              int expertAlignment, const DeviceContext& context, cudaStream_t stream, int numChannels);
-
-void throughputPublishCachedPrefix(const int* rankPrefixMatrix, const DeviceContext& context, cudaStream_t stream);
-
-void throughputDispatch(int* sendHead, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                        const float* inputScales, const bool* isTokenInRank, const int* channelPrefixMatrix,
-                        int numTokens, int numRecvTokens, int hiddenInt4, int numTopk, int numExperts, int numScales,
-                        int* outputTopkIdx, float* outputTopkWeights, float* outputScales, int numBlocks,
-                        int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset, int64_t metadataSlotBytes,
-                        DispatchLayout layout, int maxTokensPerRank, const DeviceContext& context, cudaStream_t stream);
-
-void throughputReduceCombine(void* output, float* outputTopkWeights, const int* sendHead, int numOutputTokens,
-                             int hidden, int numTopk, int64_t recvPoolHeaderBytes, int64_t recvPoolMetadataOffset,
-                             int64_t metadataSlotBytes, int numBlocks, const DeviceContext& context,
-                             cudaStream_t stream);
+inline constexpr int ThroughputCountThreads = 128;
 
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
@@ -65,6 +47,55 @@ struct Workload {
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
+
+struct KernelConfigCache {
+  int deviceId_ = -1;
+  size_t dynamicSharedBytes_ = 0;
+  int residentBlocks_ = 0;
+};
+
+template <typename Kernel>
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
+                           KernelConfigCache& cache) {
+  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
+    cudaFuncAttributes attributes;
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
+    EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
+                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
+    MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                           static_cast<int>(dynamicSharedBytes)));
+    int blocksPerSm;
+    MSCCLPP_CUDATHROW(
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
+    cache.deviceId_ = context.deviceId_;
+    cache.dynamicSharedBytes_ = dynamicSharedBytes;
+    cache.residentBlocks_ = blocksPerSm * context.numSms_;
+  }
+  return cache.residentBlocks_;
+}
+
+// Local preparation: histogram top-k routes and build an unpacked token/rank mask.
+void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                           const DeviceContext& context, cudaStream_t stream);
+
+// Collective preparation: exchange counts and build rank/channel placement prefixes.
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                              const DeviceContext& context, int numChannels, cudaStream_t stream);
+
+// Synchronize peers and restore prepared prefixes before reusing receive storage.
+void throughputPublishCachedPrefix(const ThroughputWorkspaceLayout& workspace, const DeviceContext& context,
+                                   cudaStream_t stream);
+
+int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
+
+void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
+                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+                        const Workload& workload, const ThroughputWorkspaceLayout& workspace, void* recvBuffer,
+                        const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void throughputReduceCombine(void* output, float* outputTopkWeights, const void* input, const Workload& workload,
+                             const ThroughputWorkspaceLayout& workspace, void* recvBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream);
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 

@@ -4,7 +4,8 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 
-#include <chrono>
+#include <cuda.h>
+
 #include <future>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
@@ -15,62 +16,34 @@
 
 namespace mscclpp {
 namespace ep {
-namespace {
-
-constexpr auto ReceiveCountTimeout = std::chrono::seconds(100);
-
-int outputRows(DispatchLayout outputLayout, int numRanks, int numRecvTokens, int maxTokensPerRank) {
-  return outputLayout == DispatchLayout::RANK_MAJOR ? numRanks * maxTokensPerRank : numRecvTokens;
-}
-
-void waitForReceiveCounts(const volatile int* recvCounter, const volatile int* recvExpertCounter, int numLocalExperts) {
-  const auto start = std::chrono::steady_clock::now();
-  while (true) {
-    const int numRecvTokens = static_cast<int>(*recvCounter);
-    bool ready = numRecvTokens >= 0;
-    for (int i = 0; i < numLocalExperts && ready; ++i) ready &= recvExpertCounter[i] >= 0;
-    if (ready) return;
-    if (std::chrono::steady_clock::now() - start >= ReceiveCountTimeout) {
-      EP_THROW("MSCCL++ EP throughput receive-count timeout");
-    }
-  }
-}
-
-}  // namespace
 
 ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
-                                                   int numNvlRanks, int numRanksPerIpcDomain, int maxTokensPerRank,
-                                                   int hidden, int numExperts, int numTopk, DispatchLayout outputLayout)
+                                                   int numRanksPerIpcDomain, int maxTokensPerRank, int hidden,
+                                                   int numExperts, int numTopk, DispatchLayout outputLayout)
     : rank_(rank),
       numRanks_(numRanks),
-      numNvlRanks_(numNvlRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
       bootstrap_(communicator.bootstrap()),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
       numTopk_(numTopk),
-      maxHiddenBytes_(static_cast<int64_t>(hidden) * sizeof(Bf16)),
       outputLayout_(outputLayout),
       communicator_(communicator) {
   EP_HOST_ASSERT(hidden_ > 0);
   EP_HOST_ASSERT(numExperts_ > 0 && numExperts_ % numRanks_ == 0);
-  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= ThroughputStorageLayout::MaxTopk);
+  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= ThroughputPayloadView::MaxTopk);
   EP_HOST_ASSERT(outputLayout_ == DispatchLayout::TOKEN_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(maxTokensPerRank_ > 0);
-  EP_HOST_ASSERT(maxHiddenBytes_ % sizeof(int4) == 0);
+  EP_HOST_ASSERT(static_cast<int64_t>(hidden_) * sizeof(Bf16) % sizeof(int4) == 0);
 
   if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_) {
     return;
   }
 
-  const ThroughputStorageLayout layout(nullptr, numRanks_);
-  controlBufferBytes_ = layout.controlBufferBytes_;
-  symmetricBufferBytes_ = configAlign<size_t>(controlBufferBytes_, BufferAlignmentBytes);
-  physicalControlBuffer_ = numRanks_ > numNvlRanks_;
-  recvPoolBytes_ = layout.recvPoolBytes_;
+  symmetricBufferBytes_ = ThroughputStorageLayout(nullptr, numRanks_).totalBytes_;
   workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_, MaxDispatchBlocks);
-  available_ = canUseDirectRecvPool(maxTokensPerRank_);
+  available_ = fitsReceiveBuffer(maxTokensPerRank_);
 }
 
 ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
@@ -80,24 +53,13 @@ ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   bootstrap_->barrier();
 
+  if (prepareEvent_ != nullptr) MSCCLPP_CUDATHROW(cudaEventDestroy(prepareEvent_));
   MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
-  if (combineRecvIdxGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(combineRecvIdxGpu_));
-  if (recvPoolPtrsGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(recvPoolPtrsGpu_));
-  if (bufferPtrsGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(bufferPtrsGpu_));
+  if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
-  if (moeRecvExpertCounter_ != nullptr) MSCCLPP_CUDATHROW(cudaFreeHost(const_cast<int*>(moeRecvExpertCounter_)));
-  if (moeRecvCounter_ != nullptr) MSCCLPP_CUDATHROW(cudaFreeHost(const_cast<int*>(moeRecvCounter_)));
 
-  recvPoolMemories_.clear();
-  peerMemories_.clear();
-  if (recvPool_ != nullptr) mscclpp::detail::gpuFreePhysical(recvPool_);
-  if (symmetricBuffer_ != nullptr) {
-    if (physicalControlBuffer_) {
-      mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
-    } else {
-      MSCCLPP_CUDATHROW(cudaFree(symmetricBuffer_));
-    }
-  }
+  peerBufferMemories_.clear();
+  if (symmetricBuffer_ != nullptr) mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
 }
 
 void ThroughputRuntimeContext::initialize() {
@@ -105,71 +67,48 @@ void ThroughputRuntimeContext::initialize() {
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
 
-  if (physicalControlBuffer_) {
-    symmetricBuffer_ = mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_);
-  } else {
-    symmetricBuffer_ = mscclpp::detail::gpuCalloc(symmetricBufferBytes_);
-  }
-  recvPool_ = mscclpp::detail::gpuCallocPhysical(recvPoolBytes_);
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
+  const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+  symmetricBuffer_ =
+      mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
 
-  constexpr int ControlBufferTag = 17;
-  constexpr int RecvPoolTag = 18;
-  constexpr int BarrierConnectionTag = 19;
+  constexpr int BufferTag = 17;
+  constexpr int ConnectionTag = 19;
   const auto transport = mscclpp::Transport::CudaIpc;
   const mscclpp::EndpointConfig ipcConfig(transport);
-  peerMemories_.resize(numRanks_);
-  peerMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, transport);
+  peerBufferMemories_.resize(numRanks_);
+  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories(numRanks_);
-  recvPoolMemories_.resize(numRanks_);
-  recvPoolMemories_[rank_] = communicator_.registerMemory(recvPool_, recvPoolBytes_, transport);
-  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRecvPools(numRanks_);
-  std::vector<std::shared_future<mscclpp::Connection>> barrierConnections(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> connections(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer == rank_) continue;
-    communicator_.sendMemory(peerMemories_[rank_], peer, ControlBufferTag);
-    remoteMemories[peer] = communicator_.recvMemory(peer, ControlBufferTag);
-    communicator_.sendMemory(recvPoolMemories_[rank_], peer, RecvPoolTag);
-    remoteRecvPools[peer] = communicator_.recvMemory(peer, RecvPoolTag);
-    barrierConnections[peer] = communicator_.connect(ipcConfig, peer, BarrierConnectionTag);
+    communicator_.sendMemory(peerBufferMemories_[rank_], peer, BufferTag);
+    remoteMemories[peer] = communicator_.recvMemory(peer, BufferTag);
+    connections[peer] = communicator_.connect(ipcConfig, peer, ConnectionTag);
   }
 
-  bufferPtrs_.resize(numRanks_);
-  recvPoolPtrs_.resize(numRanks_);
-  barrierChannels_.reserve(numRanks_ - 1);
-  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> barrierChannelHandles(numRanks_);
+  peerMappedBufferBases_.resize(numRanks_);
+  baseMemoryChannels_.reserve(numRanks_ - 1);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
     if (peer != rank_) {
-      peerMemories_[peer] = remoteMemories[peer].get();
-      recvPoolMemories_[peer] = remoteRecvPools[peer].get();
+      peerBufferMemories_[peer] = remoteMemories[peer].get();
     }
-    bufferPtrs_[peer] = peer == rank_ ? symmetricBuffer_ : peerMemories_[peer].data();
-    recvPoolPtrs_[peer] = peer == rank_ ? recvPool_ : recvPoolMemories_[peer].data();
+    peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_ : peerBufferMemories_[peer].data();
     if (peer != rank_) {
-      auto semaphore =
-          std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, barrierConnections[peer].get());
-      barrierChannels_.emplace_back(semaphore);
-      barrierChannelHandles[peer] = barrierChannels_.back().deviceHandle();
+      auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connections[peer].get());
+      baseMemoryChannels_.emplace_back(semaphore);
+      baseMemoryChannelHandles[peer] = baseMemoryChannels_.back().deviceHandle();
     }
   }
 
-  bufferPtrsGpu_ = static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
-  mscclpp::gpuMemcpy<void*>(bufferPtrsGpu_, bufferPtrs_.data(), numRanks_, cudaMemcpyHostToDevice);
-  recvPoolPtrsGpu_ = static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
-  mscclpp::gpuMemcpy<void*>(recvPoolPtrsGpu_, recvPoolPtrs_.data(), numRanks_, cudaMemcpyHostToDevice);
-  barrierChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
-  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(barrierChannelHandles_.get(), barrierChannelHandles.data(),
-                                                             numRanks_, cudaMemcpyHostToDevice);
-  combineRecvIdxGpu_ =
-      static_cast<int*>(mscclpp::detail::gpuCalloc(sizeof(int) * static_cast<size_t>(maxTokensPerRank_) * numRanks_));
-  moeRecvCounter_ = static_cast<volatile int*>(mscclpp::detail::gpuCallocHost(sizeof(int), cudaHostAllocMapped));
-  MSCCLPP_CUDATHROW(cudaHostGetDevicePointer(&moeRecvCounterMapped_, const_cast<int*>(moeRecvCounter_), 0));
-  moeRecvExpertCounter_ = static_cast<volatile int*>(
-      mscclpp::detail::gpuCallocHost(sizeof(int) * static_cast<size_t>(numExperts_ / numRanks_), cudaHostAllocMapped));
-  MSCCLPP_CUDATHROW(cudaHostGetDevicePointer(&moeRecvExpertCounterMapped_, const_cast<int*>(moeRecvExpertCounter_), 0));
-  *moeRecvCounter_ = -1;
-  for (int i = 0; i < numExperts_ / numRanks_; ++i) moeRecvExpertCounter_[i] = -1;
-
+  peerMappedBufferBasesGpu_ =
+      static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
+  mscclpp::gpuMemcpy<void*>(peerMappedBufferBasesGpu_, peerMappedBufferBases_.data(), numRanks_,
+                            cudaMemcpyHostToDevice);
+  baseMemoryChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
   int deviceId;
   int maxSharedMemoryPerBlock;
   int numSms;
@@ -178,13 +117,9 @@ void ThroughputRuntimeContext::initialize() {
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId));
   deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
-                    .peerBufferBases_ = bufferPtrsGpu_,
-                    .peerPayloadBases_ = recvPoolPtrsGpu_,
-                    .channels_ = barrierChannelHandles_.get(),
+                    .peerBufferBases_ = peerMappedBufferBasesGpu_,
+                    .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
-                    .combineRecvIdx_ = combineRecvIdxGpu_,
-                    .mappedRecvCounter_ = moeRecvCounterMapped_,
-                    .mappedRecvExpertCounters_ = moeRecvExpertCounterMapped_,
                     .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
                     .numSms_ = numSms,
                     .deviceId_ = deviceId,
@@ -192,100 +127,141 @@ void ThroughputRuntimeContext::initialize() {
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
+  MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&prepareEvent_, cudaEventDisableTiming));
 }
 
-bool ThroughputRuntimeContext::canUseDirectRecvPool(int maxTokensPerRank) const {
+bool ThroughputRuntimeContext::fitsReceiveBuffer(int maxTokensPerRank) const {
   if (maxTokensPerRank <= 0 || maxTokensPerRank > maxTokensPerRank_) return false;
-  if (maxHiddenBytes_ <= 0 || maxHiddenBytes_ > ThroughputStorageLayout::RecvPoolMaxHiddenBytes) return false;
-  const ThroughputStorageLayout layout(nullptr, numRanks_);
-  const int maxRows = numRanks_ * maxTokensPerRank;
-  return maxRows <= ThroughputStorageLayout::RecvPoolMaxTokens &&
-         static_cast<size_t>(maxRows) * static_cast<size_t>(maxHiddenBytes_) <= layout.recvPoolHiddenBytes();
+  const uint64_t hiddenBytes = static_cast<uint64_t>(hidden_) * sizeof(Bf16);
+  const uint64_t maxRows = static_cast<uint64_t>(numRanks_) * maxTokensPerRank;
+  return hiddenBytes <= ThroughputPayloadView::MaxHiddenBytes && maxRows <= ThroughputPayloadView::MaxTokens;
 }
 
-DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& request) {
-  auto& context = *throughputContext_;
-  EP_HOST_ASSERT(context.available_);
-  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-  if (request.maxTokensPerRank <= 0 || request.maxTokensPerRank > context.maxTokensPerRank_ || request.numTokens < 0 ||
+Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
+  return {.epoch_ = epoch_,
+          .numTokens_ = numTokens,
+          .hidden_ = hidden_,
+          .numTopk_ = numTopk_,
+          .numExperts_ = numExperts_,
+          .invalidTokenExpertId_ = -1,
+          .maxTokensPerRank_ = maxTokensPerRank,
+          .outputLayout_ = outputLayout_,
+          .dispatchDataType_ = dataType};
+}
+
+void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& request) const {
+  EP_HOST_ASSERT(available_);
+  EP_HOST_ASSERT(deviceContext_.devicePtr_ != nullptr);
+  if (request.maxTokensPerRank <= 0 || request.maxTokensPerRank > maxTokensPerRank_ || request.numTokens < 0 ||
       request.numTokens > request.maxTokensPerRank) {
     EP_THROW("Throughput requests require 0 <= numTokens <= maxTokensPerRank <= runtime capacity");
   }
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxDispatchBlocks);
-  EP_HOST_ASSERT(request.output != nullptr || request.numTokens == 0);
-  EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
+  EP_HOST_ASSERT(numExperts_ / numRanks_ <= ThroughputCountThreads && numRanks_ <= ThroughputCountThreads);
+  EP_HOST_ASSERT(request.numBlocks <= maxCooperativeThroughputDispatchBlocks(outputLayout_, deviceContext_));
   EP_HOST_ASSERT(request.topkIdx != nullptr || request.numTokens == 0);
-  if (!context.canUseDirectRecvPool(request.maxTokensPerRank)) {
+  if (!fitsReceiveBuffer(request.maxTokensPerRank)) {
     EP_THROW("Throughput receive-pool capacity exceeded for this runtime configuration");
   }
+}
+
+PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
+  requireMode(MoEMode::THROUGHPUT);
+  auto& context = *throughputContext_;
+  context.validatePrepareRequest(request);
+  cudaStreamCaptureStatus captureStatus;
+  MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
+  const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
+                                                  context.numExperts_, MaxDispatchBlocks);
+  EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
+  const int numOutputCounts = context.outputLayout_ == DispatchLayout::TOKEN_MAJOR
+                                  ? context.numExperts_ / context.numRanks_
+                                  : context.numRanks_;
+  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.prepareEpoch_ + 1, request,
+                                                        workspaceLayout.numRecvTokens_, workspaceLayout.recvCounts_,
+                                                        numOutputCounts);
+
+  // Preparation replaces shared routing metadata, but reusing a preparation only
+  // replaces dispatch results. Track those lifetimes independently.
+  ++context.prepareEpoch_;
+  ++context.epoch_;
+  const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
+  throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
+  throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.numBlocks, request.stream);
+  // Keep readiness on the device, including when preparation is captured in a graph.
+  MSCCLPP_CUDATHROW(cudaEventRecordWithFlags(
+      context.prepareEvent_, request.stream,
+      captureStatus == cudaStreamCaptureStatusActive ? cudaEventRecordExternal : cudaEventRecordDefault));
+  return PrepareHandle(std::move(metadata));
+}
+
+DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequest& request) {
+  auto& context = *throughputContext_;
+  const PrepareRequest prepareRequest{request.topkIdx, request.numTokens, request.maxTokensPerRank, request.numBlocks,
+                                      request.stream};
+  context.validatePrepareRequest(prepareRequest);
+  EP_HOST_ASSERT(request.output != nullptr || request.numTokens == 0);
+  EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
+  EP_HOST_ASSERT(isSupportedDispatchDataType(request.dispatchDataType));
 
   const int elementBytes = dispatchElementBytes(request.dispatchDataType);
   const int hiddenBytes = context.hidden_ * elementBytes;
   if (hiddenBytes % static_cast<int>(sizeof(int4)) != 0) {
     EP_THROW("Throughput dispatch requires the row byte size to be a multiple of int4");
   }
-  const int numScales = dispatchNumScales(request.dispatchDataType, context.hidden_);
   if (request.dispatchDataType == DispatchDataType::FP8_E4M3) {
-    EP_HOST_ASSERT(context.hidden_ % dispatchScaleBlockSize(request.dispatchDataType) == 0);
+    EP_HOST_ASSERT(context.hidden_ % dispatchElementsPerScale(request.dispatchDataType) == 0);
     EP_HOST_ASSERT(request.inputScales != nullptr || request.numTokens == 0);
+  }
+
+  const bool reusePreparation = request.prepareHandle.impl_ != nullptr;
+  PrepareHandle preparation = request.prepareHandle;
+  if (reusePreparation) {
+    const auto& metadata = *preparation.impl_;
+    const auto owner = metadata.owner_.lock();
+    if (!owner) {
+      EP_THROW("Expired preparation handle");
+    }
+    if (owner != throughputContext_) {
+      EP_THROW("Preparation handle belongs to a different runtime");
+    }
+    if (metadata.epoch_ != context.prepareEpoch_) {
+      EP_THROW("Stale preparation handle: a newer preparation has replaced its metadata");
+    }
+    if (metadata.topkIdx_ != request.topkIdx || metadata.numTokens_ != request.numTokens ||
+        metadata.maxTokensPerRank_ != request.maxTokensPerRank || metadata.numBlocks_ != request.numBlocks) {
+      EP_THROW("Dispatch routing IDs, token counts, capacity, and block count must match the preparation");
+    }
+  } else {
+    preparation = prepare(prepareRequest);
   }
 
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, MaxDispatchBlocks);
-  EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
-  *context.moeRecvCounter_ = -1;
-  for (int i = 0; i < context.numExperts_ / context.numRanks_; ++i) context.moeRecvExpertCounter_[i] = -1;
-  throughputPrepare(request.topkIdx, workspaceLayout.numTokensPerRank_, workspaceLayout.numTokensPerExpert_,
-                    workspaceLayout.isTokenInRank_, request.numTokens, context.numTopk_, context.numExperts_,
-                    context.deviceContext_, request.stream);
-  throughputExchangeCounts(workspaceLayout.numTokensPerRank_, workspaceLayout.numTokensPerExpert_, context.numExperts_,
-                           request.numTokens, workspaceLayout.isTokenInRank_, workspaceLayout.channelPrefixMatrix_,
-                           workspaceLayout.rankPrefixMatrix_, 1, context.deviceContext_, request.stream,
-                           request.numBlocks);
-  waitForReceiveCounts(context.moeRecvCounter_, context.moeRecvExpertCounter_, context.numExperts_ / context.numRanks_);
-  const int numRecvTokens = static_cast<int>(*context.moeRecvCounter_);
-  EP_HOST_ASSERT(numRecvTokens >= 0 && numRecvTokens <= ThroughputStorageLayout::RecvPoolMaxTokens);
-
-  if (request.outputCount != nullptr) {
-    if (context.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
-      MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.outputCount, const_cast<int*>(context.moeRecvExpertCounter_),
-                                        sizeof(int) * static_cast<size_t>(context.numExperts_ / context.numRanks_),
-                                        cudaMemcpyHostToDevice, request.stream));
-    } else {
-      std::vector<int> hostRankPrefix(static_cast<size_t>(context.numRanks_) * context.numRanks_);
-      std::vector<int> hostRankCounts(context.numRanks_);
-      MSCCLPP_CUDATHROW(cudaMemcpy(hostRankPrefix.data(), workspaceLayout.rankPrefixMatrix_,
-                                   sizeof(int) * hostRankPrefix.size(), cudaMemcpyDeviceToHost));
-      for (int srcRank = 0; srcRank < context.numRanks_; ++srcRank) {
-        const int prefix = hostRankPrefix[srcRank * context.numRanks_ + context.rank_];
-        const int previous = srcRank == 0 ? 0 : hostRankPrefix[(srcRank - 1) * context.numRanks_ + context.rank_];
-        hostRankCounts[srcRank] = prefix - previous;
-      }
-      MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.outputCount, hostRankCounts.data(), sizeof(int) * hostRankCounts.size(),
-                                        cudaMemcpyHostToDevice, request.stream));
-    }
+  if (reusePreparation) {
+    cudaStreamCaptureStatus captureStatus;
+    MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
+    MSCCLPP_CUDATHROW(cudaStreamWaitEvent(
+        request.stream, context.prepareEvent_,
+        captureStatus == cudaStreamCaptureStatusActive ? cudaEventWaitExternal : cudaEventWaitDefault));
+    // Replays still need a peer handshake before overwriting the previous payload.
+    throughputPublishCachedPrefix(workspaceLayout, context.deviceContext_, request.stream);
   }
-
-  const ThroughputStorageLayout storageLayout(context.recvPool_, context.numRanks_);
-  throughputDispatch(
-      workspaceLayout.sendHead_, request.input, request.topkIdx, request.topkWeights, request.inputScales,
-      workspaceLayout.isTokenInRank_, workspaceLayout.channelPrefixMatrix_, request.numTokens, numRecvTokens,
-      hiddenBytes / static_cast<int>(sizeof(int4)), context.numTopk_, context.numExperts_, numScales,
-      request.outputTopkIdx, request.outputTopkWeights, static_cast<float*>(request.outputScales), request.numBlocks,
-      static_cast<int64_t>(storageLayout.recvPoolHeaderBytes_),
-      static_cast<int64_t>(storageLayout.recvPoolMetadataOffset_), ThroughputStorageLayout::RecvPoolMetaBytes,
-      context.outputLayout_, request.maxTokensPerRank, context.deviceContext_, request.stream);
-
-  const int rows = outputRows(context.outputLayout_, context.numRanks_, numRecvTokens, request.maxTokensPerRank);
-  if (rows > 0 && request.output != storageLayout.dispatchOutputBuffer_) {
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.output, storageLayout.dispatchOutputBuffer_,
-                                      static_cast<size_t>(rows) * static_cast<size_t>(hiddenBytes),
+  if (request.outputCount != nullptr) {
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.outputCount, workspaceLayout.recvCounts_,
+                                      sizeof(int) * static_cast<size_t>(preparation.impl_->numOutputCounts_),
                                       cudaMemcpyDeviceToDevice, request.stream));
   }
 
+  const ThroughputStorageLayout storageLayout(context.symmetricBuffer_, context.numRanks_);
+  const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
+  throughputDispatch(request.output, request.outputTopkIdx, request.outputTopkWeights,
+                     static_cast<float*>(request.outputScales), request.input, request.topkIdx, request.topkWeights,
+                     request.inputScales, workload, workspaceLayout, storageLayout.recvBuffer_, context.deviceContext_,
+                     request.numBlocks, request.stream);
+
   ++context.epoch_;
-  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.epoch_, request,
-                                                                     workspaceLayout.sendHead_, numRecvTokens));
+  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.epoch_, request));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -304,8 +280,7 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   if (handle.epoch_ != context.epoch_) {
     EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
   }
-  const auto* throughputMetadata = std::get_if<DispatchHandle::Impl::ThroughputMetadata>(&handle.metadata_);
-  if (throughputMetadata == nullptr) {
+  if (!std::holds_alternative<std::monostate>(handle.metadata_)) {
     EP_THROW("Dispatch handle does not contain throughput metadata");
   }
 
@@ -313,21 +288,13 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
-  EP_HOST_ASSERT(request.input != nullptr || throughputMetadata->numRecvTokens_ == 0);
 
-  const ThroughputStorageLayout storageLayout(context.recvPool_, context.numRanks_);
-  if (throughputMetadata->numRecvTokens_ > 0 && request.input != storageLayout.dispatchOutputBuffer_) {
-    MSCCLPP_CUDATHROW(
-        cudaMemcpyAsync(storageLayout.dispatchOutputBuffer_, request.input,
-                        static_cast<size_t>(throughputMetadata->numRecvTokens_) * context.hidden_ * sizeof(Bf16),
-                        cudaMemcpyDeviceToDevice, request.stream));
-  }
-
-  throughputReduceCombine(request.output, request.outputTopkWeights, throughputMetadata->sendHead_, handle.numTokens_,
-                          context.hidden_, context.numTopk_, static_cast<int64_t>(storageLayout.recvPoolHeaderBytes_),
-                          static_cast<int64_t>(storageLayout.recvPoolMetadataOffset_),
-                          ThroughputStorageLayout::RecvPoolMetaBytes, request.numBlocks, context.deviceContext_,
-                          request.stream);
+  const ThroughputStorageLayout storageLayout(context.symmetricBuffer_, context.numRanks_);
+  const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
+                                                  context.numExperts_, MaxDispatchBlocks);
+  const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
+  throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
+                          storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks, request.stream);
 }
 
 }  // namespace ep

@@ -12,20 +12,12 @@ namespace ep {
 struct DeviceContext {
   /// Local base used to translate local buffer addresses into peer mappings.
   void* localBufferBase_;
-  /// Peer-mapped control or symmetric-buffer bases.
+  /// Peer mappings of the same symmetric allocation.
   void* const* peerBufferBases_;
-  /// Optional peer-mapped payload-pool bases.
-  void* const* peerPayloadBases_;
   /// Peer synchronization channels.
   mscclpp::BaseMemoryChannelDeviceHandle* channels_;
   /// Optional algorithm workspace.
   void* workspace_;
-  /// Optional token/rank receive indices used by throughput combine.
-  int* combineRecvIdx_;
-  /// Optional mapped receive count used by throughput preparation.
-  int* mappedRecvCounter_;
-  /// Optional mapped per-expert receive counts used by throughput preparation.
-  int* mappedRecvExpertCounters_;
   /// Maximum dynamic shared memory available to one block.
   int maxSharedMemoryPerBlock_;
   /// Number of SMs on the device.
@@ -38,6 +30,27 @@ struct DeviceContext {
   int numRanks_;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
+};
+
+struct TransportView {
+  void* symmetricBufferBase_;
+  void* const* peerMappedBufferBases_;
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
+  int rank_;
+
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
+      : symmetricBufferBase_(context->localBufferBase_),
+        peerMappedBufferBases_(context->peerBufferBases_),
+        baseMemoryChannels_(context->channels_),
+        rank_(context->rank_) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
+    if (isSelf(peerRank)) return localBuffer;
+    const auto offset = reinterpret_cast<uint8_t*>(localBuffer) - reinterpret_cast<uint8_t*>(symmetricBufferBase_);
+    return reinterpret_cast<uint8_t*>(peerMappedBufferBases_[peerRank]) + offset;
+  }
 };
 
 }  // namespace ep

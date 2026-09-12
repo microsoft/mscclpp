@@ -21,8 +21,11 @@ struct ThroughputRuntimeContext;
 /// selected mode. LATENCY uses fixed-capacity expert-major or rank-major
 /// layouts. THROUGHPUT uses a receive pool exposed as compact token-major or
 /// fixed-stride rank-major rows.
-/// Operations are asynchronous with respect to the host and execute on the
-/// CUDA stream supplied by each request.
+/// Preparation, dispatch, and combine execute asynchronously on the request's
+/// CUDA stream. Routing counts and prefixes stay in device memory; an empty
+/// preparation handle makes dispatch enqueue preparation internally.
+/// Host calls sharing a runtime must be serialized, and GPU work reusing its
+/// buffers must be ordered, including across streams.
 class MoERuntime {
  public:
   /// Construct a runtime for the selected mode and topology.
@@ -78,6 +81,31 @@ class MoERuntime {
   /// Return the runtime-owned combine input buffer.
   void* combineInputBuffer() const;
 
+  /// Collectively prepare throughput routing without moving token payloads.
+  ///
+  /// Computes local routing counts, exchanges peer counts, and constructs rank
+  /// and channel prefixes entirely on the GPU, without a host copy or wait.
+  /// Dispatch can consume the handle on another stream using a device-side
+  /// event dependency. Preparation is supported only in THROUGHPUT mode and
+  /// can be captured together with dispatch in a CUDA graph.
+  ///
+  /// All ranks must prepare and dispatch in the same order. Starting a valid
+  /// preparation invalidates earlier preparation and dispatch handles on this
+  /// runtime. Rejected inputs do not invalidate handles. Previously enqueued
+  /// work must be ordered before preparation, including across streams.
+  /// A captured preparation must execute before consumers outside that graph.
+  ///
+  /// Attach the result to an otherwise unchanged throughput dispatch request:
+  /// @code
+  /// auto routing = runtime.prepare({topkIdx, numTokens, maxTokensPerRank, numBlocks, stream});
+  /// dispatchRequest.prepareHandle = routing;
+  /// auto dispatched = runtime.dispatch(DispatchRequest{dispatchRequest});
+  /// @endcode
+  /// @param request Routing IDs, token counts, dispatch grid size, and CUDA stream.
+  /// @return A reusable, non-owning preparation handle with device receive counts.
+  /// @throws EPException For invalid inputs or an unsupported mode.
+  PrepareHandle prepare(const PrepareRequest& request);
+
   /// Dispatch tokens using the configured runtime mode.
   ///
   /// @p request must contain the request type matching mode(): a
@@ -87,9 +115,14 @@ class MoERuntime {
   /// and output layout come from the runtime. Token count and active capacity
   /// may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
+  /// Throughput requests may reuse routing through prepareHandle. An empty
+  /// handle requests automatic GPU preparation; a non-empty handle skips count
+  /// recomputation. Both paths support CUDA graph capture. Keep routing
+  /// unchanged when replaying a graph that does not recompute preparation.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. A successful new
-  /// dispatch invalidates prior handles; a rejected request does not.
+  /// dispatch or throughput preparation invalidates prior dispatch handles;
+  /// a rejected request does not.
   /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);
 
