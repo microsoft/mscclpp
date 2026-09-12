@@ -9,11 +9,11 @@ namespace ep {
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
 __global__ __launch_bounds__(CombineNThreads, 1) void rankLocalReduceCombineKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
-    const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
+    const int64_t* layoutRange, Workload workload, void* combineBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
   combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout>(
-      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-      dispatchRecvBuffer, context);
+      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineBuffer, dispatchRecvBuffer,
+      context);
 }
 
 struct RankLocalReduceCombineKernelSelector {

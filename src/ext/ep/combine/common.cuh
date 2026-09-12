@@ -97,7 +97,7 @@ MSCCLPP_DEVICE_INLINE int4 reduceWeightedBf16x8(const void* expertOutput, int ro
 }
 
 template <int HiddenInt4>
-MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffer, int partialRankCandidate, int nTopk,
+MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineBuffer, int partialRankCandidate, int nTopk,
                                                     int maxTokensPerRank, int tokenIdx, int hiddenIdx) {
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   float2 reduced[Bf16PairsPerInt4] = {};
@@ -105,7 +105,7 @@ MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffe
     const int partialRank = warpBroadcast(partialRankCandidate, topkLane);
     if (partialRank < 0) continue;
     const int4 packed = reinterpret_cast<const int4*>(
-        combineRecvBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
+        combineBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
     const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
     for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
@@ -126,7 +126,7 @@ MSCCLPP_DEVICE_INLINE int4 reduceRankPartialsBf16x8(const void* combineRecvBuffe
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize>
 MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int nExperts, int nRanks, int nTopk,
-                                                   int maxTokensPerRank, void* combineRecvBuffer,
+                                                   int maxTokensPerRank, void* combineBuffer,
                                                    const void* dispatchRecvBuffer, const TransportView& transport,
                                                    WorkspaceView& workspaceView, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
@@ -186,7 +186,7 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
         mscclpp::bulkFence();
         const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
-        void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
+        void* destinationBuffer = transport.mappedBuffer(combineBuffer, sourceRank);
         auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                                (static_cast<size_t>(transport.rank_) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
         mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
@@ -200,7 +200,7 @@ MSCCLPP_DEVICE_INLINE void sendRankReducedPartials(const void* expertOutput, int
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const int* srcInfo,
                                                 const int64_t* layoutRange, int nExperts, int nRanks,
-                                                int maxTokensPerRank, void* combineRecvBuffer,
+                                                int maxTokensPerRank, void* combineBuffer,
                                                 const TransportView& transport, uint8_t* sharedMemory) {
   if (threadIdx.x >= WARP_SIZE) return;
   const int laneId = getLaneId();
@@ -258,7 +258,7 @@ MSCCLPP_DEVICE_INLINE void sendExpertRowsDirect(const void* expertOutput, const 
       bulkBarrier->wait(bulkPhase);
       mscclpp::bulkFence();
       const int globalExpertIdx = transport.rank_ * nLocalExperts + localExpertIdx;
-      void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
+      void* destinationBuffer = transport.mappedBuffer(combineBuffer, sourceRank);
       auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                              (static_cast<size_t>(globalExpertIdx) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
       mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
@@ -397,7 +397,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __restrict__ topkIndices, int nTokens,
                                                  int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
-                                                 const void* combineRecvBuffer, uint8_t* sharedMemory) {
+                                                 const void* combineBuffer, uint8_t* sharedMemory) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = getLaneId();
   const int nLocalExperts = nExperts / nRanks;
@@ -422,8 +422,8 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __
     for (int chunkIdx = 0; chunkIdx < ChunksPerThread; ++chunkIdx) {
       const int hiddenIdx = threadId + chunkIdx * CombineNThreads;
       if (hiddenIdx < HiddenInt4) {
-        reduced[chunkIdx] = reduceRankPartialsBf16x8<HiddenInt4>(combineRecvBuffer, partialRank, nTopk,
-                                                                 maxTokensPerRank, tokenIdx, hiddenIdx);
+        reduced[chunkIdx] = reduceRankPartialsBf16x8<HiddenInt4>(combineBuffer, partialRank, nTopk, maxTokensPerRank,
+                                                                 tokenIdx, hiddenIdx);
       }
     }
     if (tokenIteration >= CombineNStages && threadId == 0) {
@@ -450,7 +450,7 @@ MSCCLPP_DEVICE_INLINE void recvRankLocalPartials(void* output, const int64_t* __
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __restrict__ topkIndices,
                                                 const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                                int maxTokensPerRank, const void* combineRecvBuffer) {
+                                                int maxTokensPerRank, const void* combineBuffer) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -469,7 +469,7 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __r
       for (int topkIdx = 0; topkIdx < nTopk; ++topkIdx) {
         const int expertIdx = regTopkIndices[topkIdx];
         if (expertIdx < 0) continue;
-        const auto* expertRow = reinterpret_cast<const int4*>(combineRecvBuffer) +
+        const auto* expertRow = reinterpret_cast<const int4*>(combineBuffer) +
                                 (static_cast<size_t>(expertIdx) * maxTokensPerRank + tokenIdx) * HiddenInt4;
         const int4 packed = expertRow[hiddenIdx];
         const auto* values = reinterpret_cast<const Bf16*>(&packed);
@@ -496,7 +496,7 @@ MSCCLPP_DEVICE_INLINE void recvExpertRowsDirect(void* output, const int64_t* __r
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
 MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, const int64_t* __restrict__ topkIndices,
                                        const float* __restrict__ topkWeights, const int* srcInfo,
-                                       const int64_t* layoutRange, Workload workload, void* combineRecvBuffer,
+                                       const int64_t* layoutRange, Workload workload, void* combineBuffer,
                                        const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
@@ -520,12 +520,12 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     }
     return;
   } else if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(
-        expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank, combineRecvBuffer, dispatchRecvBuffer, transport,
-        workspaceView, sharedMemory);
+    sendRankReducedPartials<Hidden, DispatchType, ScaleBlockSize>(expertOutput, nExperts, nRanks, nTopk,
+                                                                  maxTokensPerRank, combineBuffer, dispatchRecvBuffer,
+                                                                  transport, workspaceView, sharedMemory);
   } else {
-    sendExpertRowsDirect<Hidden>(expertOutput, srcInfo, layoutRange, nExperts, nRanks, maxTokensPerRank,
-                                 combineRecvBuffer, transport, sharedMemory);
+    sendExpertRowsDirect<Hidden>(expertOutput, srcInfo, layoutRange, nExperts, nRanks, maxTokensPerRank, combineBuffer,
+                                 transport, sharedMemory);
   }
 
   workspaceView.combineSyncer_->sync(gridDim.x);
@@ -534,9 +534,9 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
 
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
     recvRankLocalPartials<Hidden>(output, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank,
-                                  combineRecvBuffer, sharedMemory);
+                                  combineBuffer, sharedMemory);
   } else {
-    recvExpertRowsDirect<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineRecvBuffer);
+    recvExpertRowsDirect<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineBuffer);
   }
 #endif  // MSCCLPP_BULK_AVAILABLE
 }

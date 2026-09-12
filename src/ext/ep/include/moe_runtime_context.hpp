@@ -24,17 +24,13 @@ namespace ep {
 struct Workload;
 
 struct PrepareHandle::Impl {
-  Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t epoch, const PrepareRequest& request,
-       const int* numRecvTokens, const int* outputCounts, int numOutputCounts)
+  Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t epoch, const PrepareRequest& request)
       : owner_(std::move(owner)),
         epoch_(epoch),
         topkIdx_(request.topkIdx),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
-        numBlocks_(request.numBlocks),
-        numRecvTokens_(numRecvTokens),
-        outputCounts_(outputCounts),
-        numOutputCounts_(numOutputCounts) {}
+        numBlocks_(request.numBlocks) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
   uint64_t epoch_;
@@ -42,9 +38,6 @@ struct PrepareHandle::Impl {
   int numTokens_;
   int maxTokensPerRank_;
   int numBlocks_;
-  const int* numRecvTokens_;
-  const int* outputCounts_;
-  int numOutputCounts_;
 };
 
 struct DispatchHandle::Impl {
@@ -125,10 +118,10 @@ struct ThroughputRuntimeContext {
 
  private:
   friend class MoERuntime;
-  friend class PrepareHandle;
 
   void initialize();
   bool fitsReceiveBuffer(int maxTokensPerRank) const;
+  ThroughputStorageLayout storageLayout() const;
   void validatePrepareRequest(const PrepareRequest& request) const;
   Workload makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType = DispatchDataType::BF16) const;
 

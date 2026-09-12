@@ -17,10 +17,9 @@ struct ThroughputRuntimeContext;
 
 /// Unified host runtime for expert-parallel dispatch and combine.
 ///
-/// One runtime owns the communication buffers and synchronization state for the
-/// selected mode. LATENCY uses fixed-capacity expert-major or rank-major
-/// layouts. THROUGHPUT uses a receive pool exposed as compact token-major or
-/// fixed-stride rank-major rows.
+/// Both modes own fixed-capacity symmetric storage sized from the runtime
+/// configuration. LATENCY exposes expert-major or rank-major rows. THROUGHPUT
+/// exposes compact token-major or fixed-stride rank-major rows within that storage.
 /// Preparation, dispatch, and combine execute asynchronously on the request's
 /// CUDA stream. Routing counts and prefixes stay in device memory; an empty
 /// preparation handle makes dispatch enqueue preparation internally.
@@ -32,6 +31,7 @@ class MoERuntime {
   ///
   /// Only resources required by @p mode are allocated. Mode-specific
   /// communicator buffers are deferred until initialize().
+  /// The configured capacity, dimensions, and layout must match across ranks.
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
@@ -83,8 +83,8 @@ class MoERuntime {
 
   /// Collectively prepare throughput routing without moving token payloads.
   ///
-  /// Computes local routing counts, exchanges peer counts, and constructs rank
-  /// and channel prefixes entirely on the GPU, without a host copy or wait.
+  /// Computes stable local token offsets and exchanges peer counts to determine
+  /// receive ranges entirely on the GPU, without a host copy or wait.
   /// Dispatch can consume the handle on another stream using a device-side
   /// event dependency. Preparation is supported only in THROUGHPUT mode and
   /// can be captured together with dispatch in a CUDA graph.
@@ -102,7 +102,7 @@ class MoERuntime {
   /// auto dispatched = runtime.dispatch(DispatchRequest{dispatchRequest});
   /// @endcode
   /// @param request Routing IDs, token counts, dispatch grid size, and CUDA stream.
-  /// @return A reusable, non-owning preparation handle with device receive counts.
+  /// @return An opaque, reusable handle identifying runtime-owned routing metadata.
   /// @throws EPException For invalid inputs or an unsupported mode.
   PrepareHandle prepare(const PrepareRequest& request);
 

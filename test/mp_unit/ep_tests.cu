@@ -114,13 +114,19 @@ std::array<int, NumTopk> routedExperts(int rank, int token, int numExperts) {
   return routes;
 }
 
-__global__ void initializeInputs(Bf16* input, float* topkWeights, int rank, int numTokens, int hidden) {
+MSCCLPP_HOST_DEVICE_INLINE float testTokenValue(int rank, int numTokens, int token, int valueModulo) {
+  const int index = rank * numTokens + token;
+  return static_cast<float>((valueModulo > 0 ? index % valueModulo : index) * NumTopk);
+}
+
+__global__ void initializeInputs(Bf16* input, float* topkWeights, int rank, int numTokens, int hidden,
+                                 int valueModulo) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   const size_t inputElements = static_cast<size_t>(numTokens) * hidden;
   for (size_t index = thread; index < inputElements; index += stride) {
     const int token = static_cast<int>(index / hidden);
-    input[index] = static_cast<Bf16>(static_cast<float>((rank * numTokens + token) * NumTopk));
+    input[index] = static_cast<Bf16>(testTokenValue(rank, numTokens, token, valueModulo));
   }
 
   const size_t routingElements = static_cast<size_t>(numTokens) * NumTopk;
@@ -134,6 +140,37 @@ MSCCLPP_DEVICE_INLINE float fp8ToFloat(Fp8E4M3 value) {
   packed.data[0] = value;
   packed.data[1] = value;
   return mscclpp::to<mscclpp::f32x2>(packed).data[0];
+}
+
+__global__ void initializeThroughputFp8(Fp8E4M3* input, float* scales, const Bf16* reference, int numTokens,
+                                        int hidden) {
+  const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+  const size_t elements = static_cast<size_t>(numTokens) * hidden;
+  mscclpp::f32x2 value;
+  value.data[0] = 1.0f;
+  value.data[1] = 1.0f;
+  const auto one = mscclpp::to<mscclpp::f8_e4m3x2>(value).data[0];
+  for (size_t index = thread; index < elements; index += stride) input[index] = one;
+  const int scalesPerRow = hidden / 128;
+  for (size_t index = thread; index < static_cast<size_t>(numTokens) * scalesPerRow; index += stride) {
+    scales[index] = static_cast<float>(reference[index / scalesPerRow * hidden]);
+  }
+}
+
+__global__ void stageThroughputFp8ExpertOutput(Bf16* output, const Fp8E4M3* input, const float* scales,
+                                               const float* rowWeights, int rows, int hidden) {
+  const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+  for (size_t index = thread; index < static_cast<size_t>(rows) * hidden; index += stride) {
+    const int row = static_cast<int>(index / hidden);
+    const float weight = rowWeights[row];
+    output[index] =
+        weight == 0.0f
+            ? static_cast<Bf16>(0.0f)
+            : static_cast<Bf16>(fp8ToFloat(input[index]) *
+                                scales[static_cast<size_t>(row) * (hidden / 128) + index % hidden / 128] * weight);
+  }
 }
 
 __global__ void dequantizeExpertMajor(Bf16* output, const Fp8E4M3* input, const float* scales, int rowsPerExpert,
@@ -200,7 +237,7 @@ __global__ void stageThroughputExpertOutput(Bf16* output, const Bf16* input, con
 int numBlocks(size_t elements) { return static_cast<int>(std::min<size_t>((elements + Threads - 1) / Threads, 4096)); }
 
 void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hidden, cudaStream_t stream,
-                           int numExperts = NumExperts) {
+                           int numExperts = NumExperts, int valueModulo = 0) {
   std::vector<int64_t> topkIdx(static_cast<size_t>(numTokens) * NumTopk);
   for (int token = 0; token < numTokens; ++token) {
     const auto experts = routedExperts(rank, token, numExperts);
@@ -210,7 +247,7 @@ void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hi
                                     cudaMemcpyHostToDevice, stream));
   const size_t elements = std::max(static_cast<size_t>(numTokens) * hidden, static_cast<size_t>(numTokens) * NumTopk);
   initializeInputs<<<numBlocks(elements), Threads, 0, stream>>>(buffers.input.data(), buffers.topkWeights.data(), rank,
-                                                                numTokens, hidden);
+                                                                numTokens, hidden, valueModulo);
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.output.data(), 0, buffers.output.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.expertOutput.data(), 0, buffers.expertOutput.bytes(), stream));
@@ -231,11 +268,11 @@ std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMod
   return std::string(layoutName) + "/" + combineName + "/" + dataTypeName;
 }
 
-std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden, float tolerance) {
+std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden, float tolerance, int valueModulo = 0) {
   std::vector<Bf16> hostOutput(static_cast<size_t>(numTokens) * hidden);
   MSCCLPP_CUDATHROW(cudaMemcpy(hostOutput.data(), output, hostOutput.size() * sizeof(Bf16), cudaMemcpyDeviceToHost));
   for (int token = 0; token < numTokens; ++token) {
-    const float expected = static_cast<float>((rank * numTokens + token) * NumTopk);
+    const float expected = testTokenValue(rank, numTokens, token, valueModulo);
     for (int hiddenIndex = 0; hiddenIndex < hidden; ++hiddenIndex) {
       const float actual = static_cast<float>(hostOutput[static_cast<size_t>(token) * hidden + hiddenIndex]);
       if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance) {
@@ -449,20 +486,42 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
 
 enum class ThroughputPreparation { Automatic, Explicit, Captured };
 
+struct ThroughputTestCase {
+  ThroughputPreparation preparationMode = ThroughputPreparation::Automatic;
+  int numTokens = CorrectnessTokens;
+  int hidden = CorrectnessHidden;
+  int runtimeCapacity = CorrectnessTokens;
+  mscclpp::ep::DispatchDataType dataType = mscclpp::ep::DispatchDataType::BF16;
+};
+
 void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
-                                  mscclpp::ep::DispatchLayout layout,
-                                  ThroughputPreparation preparationMode = ThroughputPreparation::Automatic) {
+                                  mscclpp::ep::DispatchLayout layout, ThroughputTestCase testCase = {}) {
+  const auto preparationMode = testCase.preparationMode;
+  const int numTokens = testCase.numTokens;
+  const int hidden = testCase.hidden;
+  const bool useFp8 = testCase.dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
+  const int numScales = useFp8 ? hidden / 128 : 0;
+  // Keep larger synthetic inputs exactly representable after BF16 expert weighting.
+  const int valueModulo = numTokens > CorrectnessTokens ? 32 : 0;
   const char* layoutName = layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR ? "token-major" : "rank-major";
-  const std::string label = std::string("throughput/") + layoutName + "/bf16";
-  auto runtime = createThroughputRuntime(communicator, CorrectnessTokens, CorrectnessHidden, layout);
+  const std::string label = std::string("throughput/") + layoutName + (useFp8 ? "/fp8-e4m3" : "/bf16");
+  auto runtime = createThroughputRuntime(communicator, testCase.runtimeCapacity, hidden, layout);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
 
   CudaStream stream;
-  TestBuffers buffers(CorrectnessTokens, CorrectnessHidden);
-  initializeTestBuffers(buffers, rank, CorrectnessTokens, CorrectnessHidden, stream);
+  TestBuffers buffers(numTokens, hidden);
+  initializeTestBuffers(buffers, rank, numTokens, hidden, stream, NumExperts, valueModulo);
+  mscclpp::GpuBuffer<Fp8E4M3> fp8Input(useFp8 ? static_cast<size_t>(numTokens) * hidden : 1);
+  mscclpp::GpuBuffer<float> inputScales(useFp8 ? static_cast<size_t>(numTokens) * numScales : 1);
+  if (useFp8) {
+    initializeThroughputFp8<<<numBlocks(static_cast<size_t>(numTokens) * hidden), Threads, 0, stream>>>(
+        fp8Input.data(), inputScales.data(), buffers.input.data(), numTokens, hidden);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+  }
+  const void* input = useFp8 ? static_cast<const void*>(fp8Input.data()) : buffers.input.data();
 
-  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, CorrectnessTokens, NumExperts);
+  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, numTokens, NumExperts);
   mscclpp::GpuBuffer<float> rowWeights(expectation.totalRows > 0 ? static_cast<size_t>(expectation.totalRows) : 1);
   if (expectation.totalRows > 0) {
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(rowWeights.data(), expectation.rowWeights.data(),
@@ -471,7 +530,7 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   }
 
   const bool prepared = preparationMode != ThroughputPreparation::Automatic;
-  const size_t elements = static_cast<size_t>(expectation.totalRows) * CorrectnessHidden;
+  const size_t elements = static_cast<size_t>(expectation.totalRows) * hidden;
   mscclpp::GpuBuffer<Bf16> dispatchStorage(prepared ? elements + 1 : 1);
   mscclpp::GpuBuffer<Bf16> combineStorage(prepared ? elements + 1 : 1);
   const size_t metadataElements = static_cast<size_t>(expectation.totalRows) * NumTopk;
@@ -487,7 +546,7 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   CudaStream prepareStream;
   mscclpp::ep::PrepareHandle preparation;
   auto prepare = [&](cudaStream_t prepareOn) {
-    return runtime->prepare({buffers.topkIdx.data(), CorrectnessTokens, CorrectnessTokens, dispatchBlocks, prepareOn});
+    return runtime->prepare({buffers.topkIdx.data(), numTokens, numTokens, dispatchBlocks, prepareOn});
   };
   if (preparationMode == ThroughputPreparation::Explicit) preparation = prepare(prepareStream);
 
@@ -495,26 +554,31 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
     if (preparationMode == ThroughputPreparation::Captured) preparation = prepare(stream);
     const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{
         .output = dispatchOutput,
-        .outputScales = nullptr,
+        .outputScales = useFp8 ? buffers.outputScales.data() : nullptr,
         .outputTopkIdx = receivedTopkIdx.data(),
         .outputTopkWeights = receivedTopkWeights.data(),
         .outputCount = buffers.outputCount.data(),
-        .input = buffers.input.data(),
-        .inputScales = nullptr,
+        .input = input,
+        .inputScales = useFp8 ? inputScales.data() : nullptr,
         .topkIdx = buffers.topkIdx.data(),
         .topkWeights = buffers.topkWeights.data(),
-        .numTokens = CorrectnessTokens,
-        .maxTokensPerRank = CorrectnessTokens,
-        .dispatchDataType = mscclpp::ep::DispatchDataType::BF16,
+        .numTokens = numTokens,
+        .maxTokensPerRank = numTokens,
+        .dispatchDataType = testCase.dataType,
         .numBlocks = dispatchBlocks,
         .stream = stream,
         .prepareHandle = preparation,
     }});
 
     if (expectation.totalRows > 0) {
-      stageThroughputExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
-          combineInput, static_cast<const Bf16*>(dispatchOutput), rowWeights.data(), expectation.totalRows,
-          CorrectnessHidden);
+      if (useFp8) {
+        stageThroughputFp8ExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+            combineInput, static_cast<const Fp8E4M3*>(dispatchOutput), buffers.outputScales.data(), rowWeights.data(),
+            expectation.totalRows, hidden);
+      } else {
+        stageThroughputExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+            combineInput, static_cast<const Bf16*>(dispatchOutput), rowWeights.data(), expectation.totalRows, hidden);
+      }
       MSCCLPP_CUDATHROW(cudaGetLastError());
     }
 
@@ -537,53 +601,44 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   }
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  if (prepared) {
-    cudaPointerAttributes attributes{};
-    MSCCLPP_CUDATHROW(cudaPointerGetAttributes(&attributes, preparation.numRecvTokensDevice()));
-    ASSERT_TRUE(attributes.type == cudaMemoryTypeDevice);
-    MSCCLPP_CUDATHROW(cudaPointerGetAttributes(&attributes, preparation.outputCountsDevice()));
-    ASSERT_TRUE(attributes.type == cudaMemoryTypeDevice);
-    ASSERT_EQ(preparation.numOutputCounts(), static_cast<int>(expectation.outputCount.size()));
-    // Only the test reads back the GPU-resident preparation results.
-    int received = -1;
-    std::vector<int> counts(preparation.numOutputCounts());
-    MSCCLPP_CUDATHROW(cudaMemcpy(&received, preparation.numRecvTokensDevice(), sizeof(int), cudaMemcpyDeviceToHost));
-    MSCCLPP_CUDATHROW(cudaMemcpy(counts.data(), preparation.outputCountsDevice(), counts.size() * sizeof(int),
-                                 cudaMemcpyDeviceToHost));
-    ASSERT_EQ(received, expectation.numRecvTokens);
-    ASSERT_TRUE(counts == expectation.outputCount);
-  }
-
-  std::string error = checkThroughputCounts(buffers.outputCount.data(), layout, rank, CorrectnessTokens, NumExperts);
+  std::string error = checkThroughputCounts(buffers.outputCount.data(), layout, rank, numTokens, NumExperts);
   if (error.empty()) {
-    error = checkOutput(buffers.output.data(), rank, CorrectnessTokens, CorrectnessHidden, 0.0f);
+    error = checkOutput(buffers.output.data(), rank, numTokens, hidden, 0.0f, valueModulo);
   }
   assertCollectiveSuccess(error, label);
 
   std::vector<int> topkIdx(metadataElements);
   std::vector<float> topkWeights(metadataElements);
+  std::vector<float> scales(static_cast<size_t>(expectation.totalRows) * numScales);
   if (metadataElements > 0) {
     MSCCLPP_CUDATHROW(
         cudaMemcpy(topkIdx.data(), receivedTopkIdx.data(), metadataElements * sizeof(int), cudaMemcpyDeviceToHost));
     MSCCLPP_CUDATHROW(cudaMemcpy(topkWeights.data(), receivedTopkWeights.data(), metadataElements * sizeof(float),
                                  cudaMemcpyDeviceToHost));
   }
+  if (!scales.empty()) {
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(scales.data(), buffers.outputScales.data(), scales.size() * sizeof(float), cudaMemcpyDeviceToHost));
+  }
   int compactRow = 0;
   constexpr int LocalExperts = NumExperts / NumRanks;
   for (int source = 0; source < NumRanks; ++source) {
     int rankRow = 0;
-    for (int token = 0; token < CorrectnessTokens; ++token) {
+    for (int token = 0; token < numTokens; ++token) {
       const auto experts = routedExperts(source, token, NumExperts);
       const bool selected =
           std::any_of(experts.begin(), experts.end(), [&](int expert) { return expert / LocalExperts == rank; });
       if (!selected) continue;
-      const int row =
-          layout == mscclpp::ep::DispatchLayout::RANK_MAJOR ? source * CorrectnessTokens + rankRow++ : compactRow++;
+      const int row = layout == mscclpp::ep::DispatchLayout::RANK_MAJOR ? source * numTokens + rankRow++ : compactRow++;
       for (int topk = 0; topk < NumTopk; ++topk) {
         const int localExpert = experts[topk] / LocalExperts == rank ? experts[topk] % LocalExperts : -1;
         const size_t index = static_cast<size_t>(row) * NumTopk + topk;
         ASSERT_EQ(topkIdx[index], localExpert);
         ASSERT_EQ(topkWeights[index], localExpert >= 0 ? 1.0f / NumTopk : 0.0f);
+      }
+      for (int scale = 0; scale < numScales; ++scale) {
+        ASSERT_EQ(scales[static_cast<size_t>(row) * numScales + scale],
+                  testTokenValue(source, numTokens, token, valueModulo));
       }
     }
   }
@@ -592,12 +647,13 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
     MSCCLPP_CUDATHROW(cudaMemsetAsync(buffers.topkIdx.data(), 0xff, buffers.topkIdx.bytes(), stream));
     graph.launch(stream);
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-    int received = -1;
-    std::vector<Bf16> output(static_cast<size_t>(CorrectnessTokens) * CorrectnessHidden);
-    MSCCLPP_CUDATHROW(cudaMemcpy(&received, preparation.numRecvTokensDevice(), sizeof(int), cudaMemcpyDeviceToHost));
+    std::vector<int> counts(expectation.outputCount.size());
+    std::vector<Bf16> output(static_cast<size_t>(numTokens) * hidden);
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(counts.data(), buffers.outputCount.data(), counts.size() * sizeof(int), cudaMemcpyDeviceToHost));
     MSCCLPP_CUDATHROW(
         cudaMemcpy(output.data(), buffers.output.data(), output.size() * sizeof(Bf16), cudaMemcpyDeviceToHost));
-    ASSERT_EQ(received, 0);
+    ASSERT_TRUE(std::all_of(counts.begin(), counts.end(), [](int value) { return value == 0; }));
     ASSERT_TRUE(
         std::all_of(output.begin(), output.end(), [](Bf16 value) { return static_cast<float>(value) == 0.0f; }));
   }
@@ -749,23 +805,33 @@ class MoERuntimeTest : public CommunicatorTestBase {
 };
 
 TEST(MoERuntimeTest, ThroughputStorageLayout) {
-  constexpr size_t HiddenBytes = size_t{65536} * 16384;
-  constexpr size_t MetadataBytes = size_t{65536} * 768;
-  constexpr std::array<std::pair<int, size_t>, 4> cases{{{2, 8320}, {4, 16512}, {8, 33024}, {16, 66560}}};
-  ASSERT_EQ(mscclpp::ep::ThroughputPayloadView::numBytes(), HiddenBytes + MetadataBytes);
-  ASSERT_EQ(mscclpp::ep::ThroughputPayloadView::MetadataOffset, HiddenBytes);
-  ASSERT_EQ(mscclpp::ep::ThroughputPayloadView::MetadataSlotBytes, size_t{768});
+  constexpr std::array<std::pair<int, size_t>, 4> cases{{{2, 256}, {4, 384}, {8, 768}, {16, 2048}}};
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::FP8_E4M3), 128);
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::BF16), 0);
 
   for (const auto& [numRanks, controlBytes] : cases) {
-    const mscclpp::ep::ThroughputStorageLayout layout(nullptr, numRanks);
-    ASSERT_EQ(layout.totalBytes_, controlBytes + HiddenBytes + MetadataBytes);
-    ASSERT_EQ(layout.recvBuffer_, nullptr);
+    for (const int capacity : {1, 8, 16, 8193}) {
+      for (const int hidden : {136, 4096, 9216}) {
+        for (const int topk : {8, 16}) {
+          const size_t rows = static_cast<size_t>(numRanks) * capacity;
+          const size_t hiddenBytes = rows * hidden * sizeof(Bf16);
+          const size_t metadataOffset = (hiddenBytes + 127) / 128 * 128;
+          const size_t slotBytes =
+              (topk * (sizeof(int) + sizeof(float)) + hidden / 128 * sizeof(float) + 127) / 128 * 128;
+          const mscclpp::ep::ThroughputStorageLayout layout(nullptr, capacity, hidden, numRanks, 16 * numRanks, topk);
+          ASSERT_EQ(layout.payload_.metadataOffset_, metadataOffset);
+          ASSERT_EQ(layout.payload_.metadataSlotBytes_, slotBytes);
+          ASSERT_EQ(layout.payload_.numBytes_, metadataOffset + rows * slotBytes);
+          ASSERT_EQ(layout.totalBytes_, controlBytes + metadataOffset + rows * slotBytes);
+          ASSERT_EQ(layout.recvBuffer_, nullptr);
 
-    std::vector<uint8_t> symmetricBuffer(controlBytes + 1);
-    const mscclpp::ep::ThroughputStorageLayout boundLayout(symmetricBuffer.data(), numRanks);
-    ASSERT_EQ(boundLayout.recvBuffer_, static_cast<void*>(symmetricBuffer.data() + controlBytes));
+          std::vector<uint8_t> symmetricBuffer(controlBytes + 1);
+          const mscclpp::ep::ThroughputStorageLayout boundLayout(symmetricBuffer.data(), capacity, hidden, numRanks,
+                                                                 16 * numRanks, topk);
+          ASSERT_EQ(boundLayout.recvBuffer_, static_cast<void*>(symmetricBuffer.data() + controlBytes));
+        }
+      }
+    }
   }
 }
 
@@ -779,12 +845,12 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   ASSERT_NE(throughputRuntime->dispatchOutputBuffer(), nullptr);
   ASSERT_NE(throughputRuntime->combineInputBuffer(), nullptr);
   ASSERT_EQ(throughputRuntime->combineInputBuffer(), throughputRuntime->dispatchOutputBuffer());
-  const mscclpp::ep::ThroughputPayloadView payload(NumTopk);
+  const mscclpp::ep::ThroughputPayloadView payload(static_cast<size_t>(NumRanks) * CorrectnessTokens, CorrectnessHidden,
+                                                   NumTopk);
   const void* receiveBuffer = throughputRuntime->dispatchOutputBuffer();
-  for (const int row : {0, mscclpp::ep::ThroughputPayloadView::MaxTokens - 1}) {
-    const uintptr_t metadata = reinterpret_cast<uintptr_t>(receiveBuffer) +
-                               mscclpp::ep::ThroughputPayloadView::MetadataOffset +
-                               static_cast<size_t>(row) * mscclpp::ep::ThroughputPayloadView::MetadataSlotBytes;
+  for (const int row : {0, NumRanks * CorrectnessTokens - 1}) {
+    const uintptr_t metadata = reinterpret_cast<uintptr_t>(receiveBuffer) + payload.metadataOffset_ +
+                               static_cast<size_t>(row) * payload.metadataSlotBytes_;
     ASSERT_EQ(reinterpret_cast<uintptr_t>(payload.topKIndices(receiveBuffer, row)), metadata);
     ASSERT_EQ(reinterpret_cast<uintptr_t>(payload.topKValues(receiveBuffer, row)), metadata + NumTopk * sizeof(int));
     ASSERT_EQ(reinterpret_cast<uintptr_t>(payload.scaleFactors(receiveBuffer, row)),
@@ -867,23 +933,62 @@ TEST(MoERuntimeTest, ThroughputDispatchCombineCorrectness) {
 TEST(MoERuntimeTest, ThroughputPreparedDispatchCombineCorrectness) {
   for (const auto layout : {mscclpp::ep::DispatchLayout::TOKEN_MAJOR, mscclpp::ep::DispatchLayout::RANK_MAJOR}) {
     runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
-                                 ThroughputPreparation::Explicit);
+                                 {.preparationMode = ThroughputPreparation::Explicit});
   }
 }
 
 TEST(MoERuntimeTest, ThroughputCapturedPreparation) {
   for (const auto layout : {mscclpp::ep::DispatchLayout::TOKEN_MAJOR, mscclpp::ep::DispatchLayout::RANK_MAJOR}) {
     runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
-                                 ThroughputPreparation::Captured);
+                                 {.preparationMode = ThroughputPreparation::Captured});
+  }
+}
+
+TEST(MoERuntimeTest, ThroughputConfiguredCapacity) {
+  for (const auto layout : {mscclpp::ep::DispatchLayout::TOKEN_MAJOR, mscclpp::ep::DispatchLayout::RANK_MAJOR}) {
+    runThroughputCorrectnessCase(
+        *communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
+        {.preparationMode = ThroughputPreparation::Captured, .hidden = 9216, .runtimeCapacity = 2 * CorrectnessTokens});
+  }
+}
+
+TEST(MoERuntimeTest, ThroughputTokenScheduling) {
+  for (const auto layout : {mscclpp::ep::DispatchLayout::TOKEN_MAJOR, mscclpp::ep::DispatchLayout::RANK_MAJOR}) {
+    for (const int dispatchBlocks : {1, 2, 3}) {
+      for (const int hidden : {136, 7168, 9216}) {
+        runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks, combineBlocks_, layout,
+                                     {.preparationMode = ThroughputPreparation::Captured,
+                                      .numTokens = 67,
+                                      .hidden = hidden,
+                                      .runtimeCapacity = 96});
+      }
+    }
+    for (const int hidden : {4096, 9216}) {
+      runThroughputCorrectnessCase(*communicator, gEnv->rank, 3, combineBlocks_, layout,
+                                   {.preparationMode = ThroughputPreparation::Captured,
+                                    .numTokens = 67,
+                                    .hidden = hidden,
+                                    .runtimeCapacity = 96,
+                                    .dataType = mscclpp::ep::DispatchDataType::FP8_E4M3});
+    }
+  }
+}
+
+TEST(MoERuntimeTest, ThroughputLargeTokenScheduling) {
+  for (const auto layout : {mscclpp::ep::DispatchLayout::TOKEN_MAJOR, mscclpp::ep::DispatchLayout::RANK_MAJOR}) {
+    for (const int tokens : {1025, 4097}) {
+      runThroughputCorrectnessCase(*communicator, gEnv->rank, 24, combineBlocks_, layout,
+                                   {.preparationMode = ThroughputPreparation::Captured,
+                                    .numTokens = tokens,
+                                    .hidden = 136,
+                                    .runtimeCapacity = tokens + 31});
+    }
   }
 }
 
 TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   using namespace mscclpp::ep;
   PrepareHandle empty;
-  ASSERT_TRUE(rejectsEpRequest([&] { empty.numRecvTokensDevice(); }));
-  ASSERT_TRUE(rejectsEpRequest([&] { empty.outputCountsDevice(); }));
-  ASSERT_TRUE(rejectsEpRequest([&] { empty.numOutputCounts(); }));
 
   auto runtime =
       createThroughputRuntime(*communicator, CorrectnessTokens, CorrectnessHidden, DispatchLayout::TOKEN_MAJOR);
@@ -941,7 +1046,6 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   const auto dispatchHandle = runtime->dispatch(DispatchRequest{request});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   auto replacement = runtime->prepare(prepareRequest);
-  ASSERT_TRUE(rejectsEpRequest([&] { preparation.outputCountsDevice(); }));
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{request}); }));
   ASSERT_TRUE(rejectsEpRequest([&] {
     runtime->combine(CombineRequest{ThroughputCombineRequest{
@@ -962,7 +1066,6 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   invalid.prepareHandle = otherPreparation;
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
   other.reset();
-  ASSERT_TRUE(rejectsEpRequest([&] { otherPreparation.numRecvTokensDevice(); }));
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
 
   auto latency = createRuntime(*communicator, CorrectnessTokens, CorrectnessHidden, DispatchLayout::RANK_MAJOR,
@@ -977,7 +1080,9 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   request.prepareHandle = empty;
   runtime->dispatch(DispatchRequest{request});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  ASSERT_TRUE(rejectsEpRequest([&] { replacement.numRecvTokensDevice(); }));
+  invalid = request;
+  invalid.prepareHandle = replacement;
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
 
   const auto zero = runtime->prepare({nullptr, 0, CorrectnessTokens, dispatchBlocks_, stream});
   request.input = nullptr;
@@ -995,9 +1100,10 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
       .stream = stream,
   }});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  int received = -1;
-  MSCCLPP_CUDATHROW(cudaMemcpy(&received, zero.numRecvTokensDevice(), sizeof(int), cudaMemcpyDeviceToHost));
-  ASSERT_EQ(received, 0);
+  std::vector<int> counts(NumExperts / NumRanks);
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(counts.data(), buffers.outputCount.data(), counts.size() * sizeof(int), cudaMemcpyDeviceToHost));
+  ASSERT_TRUE(std::all_of(counts.begin(), counts.end(), [](int value) { return value == 0; }));
 
   runtime.reset();
   communicator->bootstrap()->barrier();

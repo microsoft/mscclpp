@@ -16,8 +16,6 @@
 namespace mscclpp {
 namespace ep {
 
-constexpr int DispatchNWarps = 16;
-constexpr int DispatchMinNWarpsPerGroup = 8;
 constexpr int DispatchMaxNWarpGroups = DispatchNWarps / DispatchMinNWarpsPerGroup;
 constexpr int DispatchNThreads = DispatchNWarps * WARP_SIZE;
 constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;
@@ -58,17 +56,12 @@ template <DispatchDataType DataType>
 using DispatchScaleType = typename DispatchDataTypeTraits<DataType>::ScaleType;
 
 template <DispatchDataType DataType>
-using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
+using DispatchPayloadView = LatencyPayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
 
 template <DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk, int scaleBlockSize) {
   return configAlign<size_t>(DispatchPayloadView<DataType>(hidden, nTopk, scaleBlockSize).numBytes_,
                              BufferAlignmentBytes);
-}
-
-MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
-  return nTokens <= nBlocks ? DispatchNWarps
-                            : (nTokens <= 2 * nBlocks ? DispatchNWarps / 2 : DispatchMinNWarpsPerGroup);
 }
 
 struct RecvTask {

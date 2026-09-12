@@ -27,7 +27,7 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// Rows grouped by local expert.
   EXPERT_MAJOR,
-  /// Dynamically sized token-major rows used by throughput mode.
+  /// Compact token-major valid rows within throughput's fixed-capacity storage.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
   RANK_MAJOR
@@ -67,7 +67,7 @@ struct PrepareRequest {
   int numTokens;
   /// Active per-rank token capacity, positive and no greater than the runtime capacity.
   int maxTokensPerRank;
-  /// Grid block count for subsequent dispatches; determines channel prefixes.
+  /// Requested grid block count for subsequent dispatches.
   int numBlocks;
   /// CUDA stream on which preparation is enqueued asynchronously.
   cudaStream_t stream;
@@ -78,40 +78,18 @@ struct PrepareRequest {
 /// A handle borrows runtime-owned routing buffers without extending the
 /// runtime's lifetime. It can be reused for unchanged routing until another
 /// preparation, including an automatically prepared dispatch, starts on the
-/// same runtime. Receive counts remain on the GPU and are ready after preparation
-/// finishes on PrepareRequest::stream. Dispatch inserts a device-side dependency
-/// when consuming this handle; other consumers must establish their own stream order.
+/// same runtime. The routing buffers remain private to the runtime. Dispatch
+/// inserts a device-side dependency when consuming this handle.
 class PrepareHandle {
  public:
   /// Construct an empty handle, which requests automatic preparation in dispatch.
-  /// Its device-count accessors reject it with EPException.
   PrepareHandle() = default;
-
-  /// Return a device pointer to the rank-deduplicated receive-token count.
-  ///
-  /// This is the TOKEN_MAJOR output row count. RANK_MAJOR output still reserves
-  /// numRanks * maxTokensPerRank rows, including padding.
-  /// @throws EPException If the handle is empty, expired, or stale.
-  const int* numRecvTokensDevice() const;
-
-  /// Return a device pointer to receive counts matching the runtime's output layout.
-  ///
-  /// TOKEN_MAJOR has one entry per local expert; RANK_MAJOR has one entry per
-  /// source rank. The buffer is borrowed from the runtime and is replaced by
-  /// subsequent preparation; it is not a host-readable snapshot.
-  /// @throws EPException If the handle is empty, expired, or stale.
-  const int* outputCountsDevice() const;
-
-  /// Return the number of elements in outputCountsDevice(), determined by the runtime layout.
-  /// @throws EPException If the handle is empty, expired, or stale.
-  int numOutputCounts() const;
 
  private:
   friend class MoERuntime;
 
   struct Impl;
   explicit PrepareHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
-  const Impl& checked() const;
 
   std::shared_ptr<const Impl> impl_;
 };
@@ -170,7 +148,7 @@ struct ThroughputDispatchRequest {
   /// Dispatch output buffer.
   ///
   /// This may alias MoERuntime::dispatchOutputBuffer() to use the runtime-owned
-  /// receive pool directly.
+  /// receive buffer directly.
   void* output;
   /// Optional dispatch scale output.
   void* outputScales;

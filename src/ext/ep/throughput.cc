@@ -7,6 +7,7 @@
 #include <cuda.h>
 
 #include <future>
+#include <limits>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -41,9 +42,10 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
     return;
   }
 
-  symmetricBufferBytes_ = ThroughputStorageLayout(nullptr, numRanks_).totalBytes_;
-  workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_, MaxDispatchBlocks);
   available_ = fitsReceiveBuffer(maxTokensPerRank_);
+  if (!available_) return;
+  symmetricBufferBytes_ = storageLayout().totalBytes_;
+  workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_);
 }
 
 ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
@@ -134,7 +136,13 @@ bool ThroughputRuntimeContext::fitsReceiveBuffer(int maxTokensPerRank) const {
   if (maxTokensPerRank <= 0 || maxTokensPerRank > maxTokensPerRank_) return false;
   const uint64_t hiddenBytes = static_cast<uint64_t>(hidden_) * sizeof(Bf16);
   const uint64_t maxRows = static_cast<uint64_t>(numRanks_) * maxTokensPerRank;
-  return hiddenBytes <= ThroughputPayloadView::MaxHiddenBytes && maxRows <= ThroughputPayloadView::MaxTokens;
+  // Kernel row sizes, route indices, and expert counters use signed int arithmetic.
+  constexpr uint64_t MaxIndex = std::numeric_limits<int>::max();
+  return hiddenBytes <= MaxIndex && maxRows * static_cast<uint64_t>(numTopk_) <= MaxIndex;
+}
+
+ThroughputStorageLayout ThroughputRuntimeContext::storageLayout() const {
+  return {symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_};
 }
 
 Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
@@ -161,7 +169,7 @@ void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& requ
   EP_HOST_ASSERT(request.numBlocks <= maxCooperativeThroughputDispatchBlocks(outputLayout_, deviceContext_));
   EP_HOST_ASSERT(request.topkIdx != nullptr || request.numTokens == 0);
   if (!fitsReceiveBuffer(request.maxTokensPerRank)) {
-    EP_THROW("Throughput receive-pool capacity exceeded for this runtime configuration");
+    EP_THROW("Throughput receive-buffer capacity exceeded for this runtime configuration");
   }
 }
 
@@ -172,14 +180,9 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   cudaStreamCaptureStatus captureStatus;
   MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_, MaxDispatchBlocks);
+                                                  context.numExperts_);
   EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
-  const int numOutputCounts = context.outputLayout_ == DispatchLayout::TOKEN_MAJOR
-                                  ? context.numExperts_ / context.numRanks_
-                                  : context.numRanks_;
-  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.prepareEpoch_ + 1, request,
-                                                        workspaceLayout.numRecvTokens_, workspaceLayout.recvCounts_,
-                                                        numOutputCounts);
+  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.prepareEpoch_ + 1, request);
 
   // Preparation replaces shared routing metadata, but reusing a preparation only
   // replaces dispatch results. Track those lifetimes independently.
@@ -187,7 +190,7 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   ++context.epoch_;
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
   throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
-  throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.numBlocks, request.stream);
+  throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.stream);
   // Keep readiness on the device, including when preparation is captured in a graph.
   MSCCLPP_CUDATHROW(cudaEventRecordWithFlags(
       context.prepareEvent_, request.stream,
@@ -237,7 +240,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   }
 
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_, MaxDispatchBlocks);
+                                                  context.numExperts_);
   if (reusePreparation) {
     cudaStreamCaptureStatus captureStatus;
     MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
@@ -245,20 +248,23 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
         request.stream, context.prepareEvent_,
         captureStatus == cudaStreamCaptureStatusActive ? cudaEventWaitExternal : cudaEventWaitDefault));
     // Replays still need a peer handshake before overwriting the previous payload.
-    throughputPublishCachedPrefix(workspaceLayout, context.deviceContext_, request.stream);
+    throughputSynchronizePeers(context.deviceContext_, request.stream);
   }
   if (request.outputCount != nullptr) {
+    const int numOutputCounts = context.outputLayout_ == DispatchLayout::TOKEN_MAJOR
+                                    ? context.numExperts_ / context.numRanks_
+                                    : context.numRanks_;
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.outputCount, workspaceLayout.recvCounts_,
-                                      sizeof(int) * static_cast<size_t>(preparation.impl_->numOutputCounts_),
-                                      cudaMemcpyDeviceToDevice, request.stream));
+                                      sizeof(int) * static_cast<size_t>(numOutputCounts), cudaMemcpyDeviceToDevice,
+                                      request.stream));
   }
 
-  const ThroughputStorageLayout storageLayout(context.symmetricBuffer_, context.numRanks_);
+  const ThroughputStorageLayout storageLayout = context.storageLayout();
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
   throughputDispatch(request.output, request.outputTopkIdx, request.outputTopkWeights,
                      static_cast<float*>(request.outputScales), request.input, request.topkIdx, request.topkWeights,
-                     request.inputScales, workload, workspaceLayout, storageLayout.recvBuffer_, context.deviceContext_,
-                     request.numBlocks, request.stream);
+                     request.inputScales, workload, workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_,
+                     context.deviceContext_, request.numBlocks, request.stream);
 
   ++context.epoch_;
   return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.epoch_, request));
@@ -289,12 +295,13 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
 
-  const ThroughputStorageLayout storageLayout(context.symmetricBuffer_, context.numRanks_);
+  const ThroughputStorageLayout storageLayout = context.storageLayout();
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_, MaxDispatchBlocks);
+                                                  context.numExperts_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
   throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
-                          storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks, request.stream);
+                          storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks,
+                          request.stream);
 }
 
 }  // namespace ep
