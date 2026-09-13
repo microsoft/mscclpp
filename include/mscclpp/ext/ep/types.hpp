@@ -27,7 +27,7 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// Rows grouped by local expert.
   EXPERT_MAJOR,
-  /// Dynamically sized token-major rows used by throughput mode.
+  /// Compact token-major valid rows within throughput's fixed-capacity storage.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
   RANK_MAJOR
@@ -50,6 +50,48 @@ enum class DispatchDataType {
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
   FP8_E4M3
+};
+
+/// Arguments for throughput-mode routing preparation.
+///
+/// Preparation computes local routing counts and exchanges them with peers;
+/// it does not read or transfer token payloads.
+struct PrepareRequest {
+  /// Device-resident input top-k expert IDs.
+  ///
+  /// Keep this buffer alive for the GPU work using it. Its contents must remain
+  /// unchanged between preparation and dispatch, unless a graph replay also
+  /// recomputes preparation.
+  const int64_t* topkIdx;
+  /// Number of local input tokens, in [0, maxTokensPerRank].
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  int maxTokensPerRank;
+  /// Requested grid block count for subsequent dispatches.
+  int numBlocks;
+  /// CUDA stream on which preparation is enqueued asynchronously.
+  cudaStream_t stream;
+};
+
+/// Opaque routing metadata returned by MoERuntime::prepare().
+///
+/// A handle borrows runtime-owned routing buffers without extending the
+/// runtime's lifetime. It can be reused for unchanged routing until another
+/// preparation, including an automatically prepared dispatch, starts on the
+/// same runtime. The routing buffers remain private to the runtime. Dispatch
+/// inserts a device-side dependency when consuming this handle.
+class PrepareHandle {
+ public:
+  /// Construct an empty handle, which requests automatic preparation in dispatch.
+  PrepareHandle() = default;
+
+ private:
+  friend class MoERuntime;
+
+  struct Impl;
+  explicit PrepareHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+
+  std::shared_ptr<const Impl> impl_;
 };
 
 /// Arguments for latency-mode dispatch.
@@ -97,14 +139,59 @@ struct LatencyDispatchRequest {
   cudaStream_t stream;
 };
 
-/// Reserved request type for throughput-mode dispatch.
-struct ThroughputDispatchRequest {};
+/// Arguments for throughput-mode dispatch.
+///
+/// The caller must keep input and output buffers valid until the GPU work
+/// using them, including graph replays, has completed. The returned
+/// DispatchHandle must stay alive until the matching combine has been enqueued.
+struct ThroughputDispatchRequest {
+  /// Dispatch output buffer.
+  ///
+  /// This may alias MoERuntime::dispatchOutputBuffer() to use the runtime-owned
+  /// receive buffer directly.
+  void* output;
+  /// Optional dispatch scale output.
+  void* outputScales;
+  /// Optional dispatched local-expert IDs.
+  int* outputTopkIdx;
+  /// Optional dispatched top-k weights.
+  float* outputTopkWeights;
+  /// Per-expert or per-rank output counts.
+  int* outputCount;
+  /// Input token payload.
+  const void* input;
+  /// Optional input scale factors.
+  const float* inputScales;
+  /// Input top-k expert IDs.
+  const int64_t* topkIdx;
+  /// Optional input top-k weights.
+  const float* topkWeights;
+  /// Number of input tokens, in [0, maxTokensPerRank].
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  int maxTokensPerRank;
+  /// Requested dispatch payload format.
+  DispatchDataType dispatchDataType;
+  /// Dispatch grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+  /// Routing metadata returned by MoERuntime::prepare().
+  ///
+  /// An empty handle requests automatic preparation. For a non-empty handle,
+  /// topkIdx, numTokens, maxTokensPerRank, and numBlocks must match the preparation.
+  /// All ranks must agree on whether to reuse preparation or compute it automatically.
+  /// Routing IDs must remain unchanged; their device contents are not validated
+  /// on the host. A graph may either reuse this preparation or capture automatic
+  /// preparation with dispatch.
+  PrepareHandle prepareHandle;
+};
 
 /// Mode-specific dispatch request.
 struct DispatchRequest {
   /// Construct a latency dispatch request.
   explicit DispatchRequest(LatencyDispatchRequest request) : value_(std::move(request)) {}
-  /// Construct a reserved throughput dispatch request.
+  /// Construct a throughput dispatch request.
   explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
 
  private:
@@ -143,14 +230,30 @@ struct LatencyCombineRequest {
   cudaStream_t stream;
 };
 
-/// Reserved request type for throughput-mode combine.
-struct ThroughputCombineRequest {};
+/// Arguments for throughput-mode combine.
+struct ThroughputCombineRequest {
+  /// Combined token output.
+  void* output;
+  /// Optional combined top-k weights.
+  float* outputTopkWeights;
+  /// Local expert output in the dispatch output layout.
+  ///
+  /// A null pointer is valid only when the device receive count is zero; this
+  /// data-dependent condition is checked on the GPU.
+  const void* input;
+  /// Handle returned by the matching dispatch.
+  DispatchHandle handle;
+  /// Combine grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+};
 
 /// Mode-specific combine request.
 struct CombineRequest {
   /// Construct a latency combine request.
   explicit CombineRequest(LatencyCombineRequest request) : value_(std::move(request)) {}
-  /// Construct a reserved throughput combine request.
+  /// Construct a throughput combine request.
   explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
 
  private:

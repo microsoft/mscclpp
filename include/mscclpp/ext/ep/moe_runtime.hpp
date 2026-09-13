@@ -14,26 +14,31 @@ namespace mscclpp {
 namespace ep {
 struct LatencyRuntimeContext;
 struct ThroughputRuntimeContext;
+
 /// Unified host runtime for expert-parallel dispatch and combine.
 ///
-/// One runtime owns the communication buffers and synchronization state for the
-/// selected mode. This library initially implements LATENCY with fixed-capacity
-/// expert-major or rank-major layouts. The THROUGHPUT API is reserved for a
-/// follow-up implementation and is rejected at runtime.
-/// Operations are asynchronous with respect to the host and execute on the
-/// CUDA stream supplied by each request.
+/// Both modes own fixed-capacity symmetric storage sized from the runtime
+/// configuration. LATENCY exposes expert-major or rank-major rows. THROUGHPUT
+/// exposes compact token-major or fixed-stride rank-major rows within that storage.
+/// Preparation, dispatch, and combine execute asynchronously on the request's
+/// CUDA stream. Routing counts and prefixes stay in device memory; an empty
+/// preparation handle makes dispatch enqueue preparation internally.
+/// Host calls sharing a runtime must be serialized, and GPU work reusing its
+/// buffers must be ordered, including across streams.
 class MoERuntime {
  public:
   /// Construct a runtime for the selected mode and topology.
   ///
   /// Only resources required by @p mode are allocated. Mode-specific
   /// communicator buffers are deferred until initialize().
+  /// The configured capacity, dimensions, and layout must match across ranks.
+  /// THROUGHPUT supports 2, 4, 8, 16, or 32 ranks within one CUDA IPC domain.
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
-  /// @param hidden Hidden dimension for latency-mode buffers.
+  /// @param hidden Hidden dimension.
   /// @param numExperts Global expert count.
-  /// @param numTopk Number of routed experts per token.
+  /// @param numTopk Number of routed experts per token, in [1, 8].
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   /// @throws EPException For an unsupported mode or invalid configuration.
@@ -77,35 +82,69 @@ class MoERuntime {
   /// Return the runtime-owned combine input buffer.
   void* combineInputBuffer() const;
 
+  /// Collectively prepare throughput routing without moving token payloads.
+  ///
+  /// Computes stable local token offsets and exchanges peer counts to determine
+  /// receive ranges entirely on the GPU, without a host copy or wait.
+  /// Dispatch can consume the handle on another stream using a device-side
+  /// event dependency. Preparation is supported only in THROUGHPUT mode and
+  /// can be captured together with dispatch in a CUDA graph.
+  ///
+  /// All ranks must prepare and dispatch in the same order. Starting a valid
+  /// preparation invalidates earlier preparation and dispatch handles on this
+  /// runtime. Rejected inputs do not invalidate handles. Previously enqueued
+  /// work must be ordered before preparation, including across streams.
+  /// A captured preparation must execute before consumers outside that graph.
+  ///
+  /// Attach the result to an otherwise unchanged throughput dispatch request:
+  /// @code
+  /// auto routing = runtime.prepare({topkIdx, numTokens, maxTokensPerRank, numBlocks, stream});
+  /// dispatchRequest.prepareHandle = routing;
+  /// auto dispatched = runtime.dispatch(DispatchRequest{dispatchRequest});
+  /// @endcode
+  /// @param request Routing IDs, token counts, dispatch grid size, and CUDA stream.
+  /// @return An opaque, reusable handle identifying runtime-owned routing metadata.
+  /// @throws EPException For invalid inputs or an unsupported mode.
+  PrepareHandle prepare(const PrepareRequest& request);
+
   /// Dispatch tokens using the configured runtime mode.
   ///
-  /// ThroughputDispatchRequest is reserved for a follow-up implementation.
-  /// Output buffers remain owned by the caller unless obtained through a runtime buffer accessor.
-  /// Hidden size, expert count, top-k count, and output layout come from the runtime.
-  /// Token count and active capacity may vary between dispatches, with
+  /// @p request must contain the request type matching mode(): a
+  /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
+  /// THROUGHPUT. Output buffers remain owned by the caller unless obtained
+  /// through a runtime buffer accessor. Hidden size, expert count, top-k count,
+  /// and output layout come from the runtime. Token count and active capacity
+  /// may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
-  /// @param request Dispatch inputs, outputs, dimensions, and CUDA stream.
+  /// Throughput requests may reuse routing through prepareHandle. An empty
+  /// handle requests automatic GPU preparation; a non-empty handle skips count
+  /// recomputation. Both paths support CUDA graph capture. Keep routing
+  /// unchanged when replaying a graph that does not recompute preparation.
+  /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. A successful new
-  /// dispatch invalidates prior handles; a rejected request does not.
-  /// @throws EPException If @p request is not a valid latency request.
+  /// dispatch or throughput preparation invalidates prior dispatch handles;
+  /// a rejected request does not.
+  /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
   ///
-  /// The request's handle supplies routing metadata, token count, active capacity,
-  /// format, and epoch. Fixed dimensions, layout, and algorithm come from the runtime.
-  /// Handle ownership and freshness are checked when enqueuing or capturing
-  /// combine, not when replaying a graph. Device metadata is not validated on the host.
-  /// ThroughputCombineRequest is reserved for a follow-up implementation.
+  /// The request's handle supplies routing metadata, token count, active
+  /// capacity, and epoch. Fixed dimensions, layout, and algorithm come from the
+  /// runtime. Handle ownership and freshness are checked when enqueuing or
+  /// capturing combine, not when replaying a graph. Device metadata is not
+  /// validated on the host.
   /// @param request Expert inputs, outputs, dispatch handle, block count, and CUDA stream.
-  /// @throws EPException If @p request is invalid or its handle is empty, expired,
-  /// stale, or belongs to another runtime.
+  /// @throws EPException If @p request is invalid or its handle is empty,
+  /// expired, stale, or belongs to another runtime.
   void combine(const CombineRequest& request);
 
  private:
   void requireMode(MoEMode expected) const;
   DispatchHandle launchLatencyDispatch(const LatencyDispatchRequest& request);
+  DispatchHandle launchThroughputDispatch(const ThroughputDispatchRequest& request);
   void launchLatencyCombine(const LatencyCombineRequest& request);
+  void launchThroughputCombine(const ThroughputCombineRequest& request);
 
   std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
   MoEMode mode_;

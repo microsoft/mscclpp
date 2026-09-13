@@ -3,6 +3,8 @@
 #ifndef MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 #define MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 
+#include <mscclpp/memory_channel_device.hpp>
+
 #include "exception.hpp"
 
 #ifndef WARP_SIZE
@@ -67,6 +69,49 @@ MSCCLPP_DEVICE_INLINE int getLaneId() {
   int laneId;
   asm("mov.s32 %0, %laneid;" : "=r"(laneId));
   return laneId;
+}
+
+MSCCLPP_DEVICE_INLINE bool isActiveThroughputRow(int row, const int* recvCounts, int maxTokensPerRank, bool rankMajor) {
+  return !rankMajor || row % maxTokensPerRank < recvCounts[row / maxTokensPerRank];
+}
+
+// Skip rank-major padding and support unaligned caller buffers without a host-sized copy.
+MSCCLPP_DEVICE_INLINE void copyThroughputRows(void* dst, const void* src, int rows, int rowBytes, const int* recvCounts,
+                                              int maxTokensPerRank, bool rankMajor, uint32_t threadId,
+                                              uint32_t numThreads) {
+  if ((reinterpret_cast<uintptr_t>(dst) | reinterpret_cast<uintptr_t>(src)) % sizeof(int4) == 0 &&
+      rowBytes % sizeof(int4) == 0) {
+    auto* dstVectors = static_cast<int4*>(dst);
+    const auto* srcVectors = static_cast<const int4*>(src);
+    const int vectorsPerRow = rowBytes / sizeof(int4);
+    const uint64_t elements = static_cast<uint64_t>(rows) * vectorsPerRow;
+    for (uint64_t index = threadId; index < elements; index += numThreads) {
+      if (isActiveThroughputRow(static_cast<int>(index / vectorsPerRow), recvCounts, maxTokensPerRank, rankMajor)) {
+        dstVectors[index] = srcVectors[index];
+      }
+    }
+  } else {
+    auto* dstBytes = static_cast<uint8_t*>(dst);
+    const auto* srcBytes = static_cast<const uint8_t*>(src);
+    const uint64_t bytes = static_cast<uint64_t>(rows) * rowBytes;
+    for (uint64_t index = threadId; index < bytes; index += numThreads) {
+      if (isActiveThroughputRow(static_cast<int>(index / rowBytes), recvCounts, maxTokensPerRank, rankMajor)) {
+        dstBytes[index] = srcBytes[index];
+      }
+    }
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void barrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
+  constexpr int64_t MaxSpinCount = 100'000'000;
+  const int laneId = getLaneId();
+  EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= WARP_SIZE);
+
+  if (laneId < numRanks && laneId != rank) {
+    channels[laneId].signal();
+    channels[laneId].wait(MaxSpinCount);
+  }
+  __syncwarp();
 }
 
 }  // namespace ep

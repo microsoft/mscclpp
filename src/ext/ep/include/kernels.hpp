@@ -9,15 +9,17 @@
 
 #include <mscclpp/ext/ep/types.hpp>
 
+#include "config.hpp"
 #include "device_context.hpp"
 
 namespace mscclpp {
 namespace ep {
 
+inline constexpr int ThroughputCountThreads = 128;
+
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
-inline constexpr int MaxNumTopk = 8;
 
 inline constexpr bool isSupportedHidden(int hidden) {
   return hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 ||
@@ -44,6 +46,57 @@ struct Workload {
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
 };
+
+struct KernelConfigCache {
+  int deviceId_ = -1;
+  size_t dynamicSharedBytes_ = 0;
+  int residentBlocks_ = 0;
+};
+
+template <typename Kernel>
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
+                           KernelConfigCache& cache) {
+  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
+    cudaFuncAttributes attributes;
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
+    EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
+                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
+    MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                           static_cast<int>(dynamicSharedBytes)));
+    int blocksPerSm;
+    MSCCLPP_CUDATHROW(
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
+    cache.deviceId_ = context.deviceId_;
+    cache.dynamicSharedBytes_ = dynamicSharedBytes;
+    cache.residentBlocks_ = blocksPerSm * context.numSms_;
+  }
+  return cache.residentBlocks_;
+}
+
+// Local preparation: count routes and assign stable per-destination token offsets.
+void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                           const DeviceContext& context, cudaStream_t stream);
+
+// Collective preparation: exchange counts and determine source-rank receive ranges.
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                              const DeviceContext& context, cudaStream_t stream);
+
+// Wait until peers have finished consuming the previous payload before overwriting it.
+void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream);
+
+// Grid-wide synchronization requires all blocks to be resident, not just an SM-count cap.
+// Preparation can be reused by either data format, so use their lower occupancy limit.
+int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
+
+void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
+                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+                        const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                        const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
+                        int numBlocks, cudaStream_t stream);
+
+void throughputReduceCombine(void* output, float* outputTopkWeights, const void* input, const Workload& workload,
+                             const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
+                             void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
