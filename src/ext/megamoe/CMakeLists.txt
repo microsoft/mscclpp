@@ -48,3 +48,4 @@ set_target_properties(mscclpp_megamoe PROPERTIES
     INSTALL_RPATH "$ORIGIN"
 )
 install(TARGETS mscclpp_megamoe LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
+install(FILES LICENSE.cutlass DESTINATION ${INSTALL_PREFIX}/licenses/mscclpp_megamoe)

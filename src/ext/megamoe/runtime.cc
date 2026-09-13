@@ -113,6 +113,9 @@ struct MegaMoeContext::Impl {
   std::unique_ptr<GpuBuffer<char>> symmetric;
   std::shared_ptr<char> workspace;
   std::shared_ptr<uint64_t> peerBases;
+  std::shared_ptr<uint32_t> startSignal;
+  cudaEvent_t startResetEvent = nullptr;
+  bool startRecorded = false;
   std::array<std::shared_ptr<uint8_t>, 4> weightBuffers;
   RegisteredMemory localMemory;
   std::vector<RegisteredMemory> peerMemories;
@@ -127,6 +130,7 @@ struct MegaMoeContext::Impl {
     (void)cudaGetDevice(&original);
     (void)cudaSetDevice(device);
     (void)cudaDeviceSynchronize();
+    if (startResetEvent) (void)cudaEventDestroy(startResetEvent);
     plan.reset();
     connections.clear();
     peerMemories.clear();
@@ -169,6 +173,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   p.symmetric = std::make_unique<GpuBuffer<char>>(p.layout.bytes);
   p.workspace = detail::gpuCallocShared<char>(p.workspaceBytes);
   p.peerBases = detail::gpuCallocShared<uint64_t>(c.worldSize);
+  p.startSignal = detail::gpuCallocShared<uint32_t>(1);
+  MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
   p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
   p.peerMemories.resize(c.worldSize);
   p.peerMemories[c.rank] = p.localMemory;
@@ -217,22 +223,53 @@ size_t MegaMoeContext::sharedBytes() const { return kernelPlanSharedBytes(*impl_
 size_t MegaMoeContext::symmetricBytes() const { return impl_->layout.bytes; }
 size_t MegaMoeContext::privateBytes() const { return impl_->workspaceBytes; }
 
-void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* scores, void* output, int tokens,
-                             cudaStream_t stream) {
+size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {
   int device;
   MSCCLPP_CUDATHROW(cudaGetDevice(&device));
   if (device != impl_->device) throw std::invalid_argument("MegaMoE forward must use the context's CUDA device");
   if (tokens < 0 || tokens > config().maxTokens)
     throw std::invalid_argument("MegaMoE numTokens exceeds the configured capacity");
   size_t inputBytes = size_t(tokens) * config().hidden * 2;
-  size_t routingBytes = size_t(tokens) * config().topK * 4;
-  if ((tokens && (!x || !ids || !scores || !output)) ||
-      overlaps(output, inputBytes, impl_->symmetric->data(), impl_->layout.bytes))
+  if ((tokens && (!x || !output)) || overlaps(output, inputBytes, impl_->symmetric->data(), impl_->layout.bytes))
     throw std::invalid_argument("MegaMoE requires non-null arrays and output disjoint from the registered workspace");
+  return inputBytes;
+}
+
+void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* scores, void* output, int tokens,
+                             cudaStream_t stream, bool signalStart) {
+  const size_t inputBytes = validateForward(x, output, tokens);
+  const size_t routingBytes = size_t(tokens) * config().topK * 4;
+  if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
   stage(input(), x, inputBytes, stream);
   stage(topkIds(), ids, routingBytes, stream);
   stage(topkWeights(), scores, routingBytes, stream);
-  launchNativeMegaMoe(impl_->plan, tokens, output, stream);
+  impl_->startRecorded = false;
+  if (signalStart) {
+    MSCCLPP_CUDATHROW(cudaMemsetAsync(impl_->startSignal.get(), 0, sizeof(uint32_t), stream));
+    MSCCLPP_CUDATHROW(cudaEventRecord(impl_->startResetEvent, stream));
+  }
+  launchNativeMegaMoe(impl_->plan, tokens, output, stream, signalStart ? impl_->startSignal.get() : nullptr);
+  impl_->startRecorded = signalStart;
+}
+
+void MegaMoeContext::forwardShared(const void* x, void* output, int tokens, cudaStream_t stream) {
+  if (config().worldSize != 1 || config().numExperts != 1 || config().topK != 1)
+    throw std::invalid_argument("Shared forward requires world_size=1, num_experts=1, top_k=1");
+  const size_t inputBytes = validateForward(x, output, tokens);
+  impl_->startRecorded = false;
+  stage(input(), x, inputBytes, stream);
+  launchNativeSharedExpert(impl_->plan, tokens, output, stream);
+}
+
+void MegaMoeContext::waitUntilStarted(cudaStream_t stream) {
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  if (device != impl_->device) throw std::invalid_argument("MegaMoE start wait must use the context's CUDA device");
+  if (!impl_->startRecorded)
+    throw std::invalid_argument("MegaMoE waitUntilStarted requires a preceding signalStart forward");
+  MSCCLPP_CUDATHROW(cudaStreamWaitEvent(stream, impl_->startResetEvent, 0));
+  MSCCLPP_CUTHROW(
+      cuStreamWaitValue32(stream, reinterpret_cast<CUdeviceptr>(impl_->startSignal.get()), 1, CU_STREAM_WAIT_VALUE_EQ));
 }
 
 }  // namespace mscclpp::megamoe

@@ -57,10 +57,26 @@ class MegaMoeContext {
   /// No allocation, registration, host synchronization, or host epoch update occurs
   /// here. This method is CUDA Graph capturable. Caller-owned arrays and this
   /// context must outlive all queued execution and every graph replay.
+  /// @param signalStart Reset and publish an execution-start signal for waitUntilStarted().
+  /// This opt-in adds a reset/event before the kernel; ordinary forwards do not.
   void forward(const void* input, const int32_t* topkIds, const float* topkWeights, void* output, int numTokens,
-               cudaStream_t stream);
+               cudaStream_t stream, bool signalStart = false);
+
+  /// Order a consumer stream after the latest signalStart forward has entered its kernel.
+  /// This does not wait for completion or make the forward's output ready. The
+  /// reset event prevents reading a prior replay's signal. The stream memory wait
+  /// uses no resident CTA and is CUDA Graph capturable. Join the consumer stream
+  /// before reusing the context, including before the next graph replay.
+  /// @param stream Consumer stream on the context's device.
+  void waitUntilStarted(cudaStream_t stream);
+
+  /// Enqueue one unweighted local expert without routing metadata or communication.
+  /// Requires worldSize=1, numExperts=1, topK=1. Inputs/outputs are BF16
+  /// [numTokens, hidden]. Shares the context's nonconcurrent workspace lifetime.
+  void forwardShared(const void* input, void* output, int numTokens, cudaStream_t stream);
 
  private:
+  size_t validateForward(const void* input, void* output, int numTokens) const;
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

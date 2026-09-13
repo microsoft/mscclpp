@@ -33,8 +33,8 @@ struct SymmetricLayout {
   size_t topkWeights = 0;
   size_t partialOutput = 0;
   size_t epoch = 0;
-  size_t readySignals = 0;
-  size_t doneSignals = 0;
+  size_t peerSignals = 0;
+  size_t expectedPeerSignals = 0;
   size_t tokenCount = 0;
 };
 
@@ -63,7 +63,10 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& config, void* s
                                              const PackedWeights& weights);
 int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
-void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream);
+void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream,
+                         uint32_t* startSignal = nullptr);
+void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
+                              cudaStream_t stream);
 
 }  // namespace mscclpp::megamoe
 

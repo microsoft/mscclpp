@@ -13,25 +13,26 @@
 
 namespace mscclpp::megamoe::detail {
 
-using TileShape = cute::Shape<cute::_256, cute::_128, cute::_128>;
+using TileShape = cute::Shape<cute::_256, cute::_32, cute::_128>;
 using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;
 using ProblemShape = cute::Shape<int, int, int, int>;
 using ScaleConfig = cutlass::detail::Sm100MixedInputBlockwiseScaleConfig<1, 32>;
 
-template <bool E5M2>
+template <bool E5M2, bool Local = false>
 struct CollectiveTypes {
+  using KernelTile = cute::conditional_t<Local, cute::Shape<cute::_256, cute::_128, cute::_128>, TileShape>;
   using Weight = cute::conditional_t<E5M2, cutlass::float_e5m2_t, cutlass::float_e4m3_t>;
   using Scale = cutlass::float_ue8m0_t;
   using Activation = cutlass::bfloat16_t;
   using Builder = typename cutlass::gemm::collective::CollectiveBuilder<
       cutlass::arch::Sm100, cutlass::arch::OpClassTensorOp, cute::tuple<Weight, Scale>,
       cute::tuple<cutlass::layout::RowMajor, ScaleConfig::LayoutScale>, 16, Activation, cutlass::layout::ColumnMajor, 8,
-      float, TileShape, ClusterShape, cutlass::gemm::collective::StageCountAutoCarveout<65536>,
+      float, KernelTile, ClusterShape, cutlass::gemm::collective::StageCountAutoCarveout<65536>,
       cutlass::gemm::KernelTmaWarpSpecialized2SmMixedInputSm100>::CollectiveOp;
-  using Policy =
-      cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<4, 4, 2, 2, ClusterShape, cutlass::arch::Sm100>;
+  using Policy = cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<Local ? 4 : 8, Local ? 4 : 7, 2, 2,
+                                                                              ClusterShape, cutlass::arch::Sm100>;
   using Mainloop = cutlass::gemm::collective::CollectiveMma<
-      Policy, TileShape, typename Builder::ElementAOptionalTuple,
+      Policy, KernelTile, typename Builder::ElementAOptionalTuple,
       cute::tuple<typename Builder::StrideA, typename Builder::LayoutScale>, typename Builder::ElementBOptionalTuple,
       typename Builder::StrideB, typename Builder::TiledMma, typename Builder::GmemTiledCopyA,
       typename Builder::SmemLayoutAtomsA, typename Builder::CopyAtomsA, typename Builder::TransformA,
@@ -56,13 +57,14 @@ __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t 
   return result;
 }
 
-template <bool E5M2, class Inputs>
+template <bool E5M2, bool Local = false, class Inputs>
 __device__ __forceinline__ void transformWeights(
-    typename CollectiveTypes<E5M2>::LoadA& load, typename CollectiveTypes<E5M2>::LoadA::PipelineState& loadState,
-    typename CollectiveTypes<E5M2>::Transform& transformed,
-    typename CollectiveTypes<E5M2>::Transform::PipelineState& transformState, Inputs& inputs, int kTiles) {
+    typename CollectiveTypes<E5M2, Local>::LoadA& load,
+    typename CollectiveTypes<E5M2, Local>::LoadA::PipelineState& loadState,
+    typename CollectiveTypes<E5M2, Local>::Transform& transformed,
+    typename CollectiveTypes<E5M2, Local>::Transform::PipelineState& transformState, Inputs& inputs, int kTiles) {
   using namespace cute;
-  using Types = CollectiveTypes<E5M2>;
+  using Types = CollectiveTypes<E5M2, Local>;
   using Mainloop = typename Types::Mainloop;
   using Utils = cutlass::gemm::collective::detail::MixedInputUtils<Mainloop>;
   auto copyOp = get<1>(inputs);

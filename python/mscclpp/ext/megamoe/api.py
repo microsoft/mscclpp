@@ -182,7 +182,52 @@ class MegaMoE:
             raise TypeError("num_tokens must be an integer")
         return torch.utils.dlpack.from_dlpack(self._native.input_dlpack(num_tokens))
 
-    def forward(self, inputs, topk_ids, topk_weights, *, output=None, stream=None, validate_routing=False):
+    def wait_until_started(self, stream):
+        """Order ``stream`` after the latest signaled forward enters its kernel.
+
+        Call after ``forward(..., signal_start=True)``. This waits for kernel entry,
+        not output readiness, and uses a non-resident CUDA stream memory wait.
+        It is graph-capturable. Join this consumer before another forward/replay
+        reuses the context; ordinary producer-input ordering remains caller-owned.
+        """
+        import torch
+
+        stream = self._stream(stream)
+        with torch.cuda.device(self.device):
+            self._native.wait_until_started(stream.cuda_stream)
+
+    def forward_shared(self, inputs, *, output=None, stream=None):
+        """Enqueue an unweighted local SwiGLU expert without routing metadata.
+
+        Requires ``world_size=1``, ``num_experts=1``, and ``top_k=1``.
+        Uses the same FP32 activation arithmetic, BF16 handoff/output, clamping,
+        and stream/lifetime rules as ``forward`` with ID zero and weight one.
+        Input staging is retained unless ``inputs`` is an exact ``input_view``
+        alias. No token dispatch or final top-k reduction is needed.
+        """
+        import torch
+
+        if (self.config.world_size, self.config.num_experts, self.config.top_k) != (1, 1, 1):
+            raise ValueError("forward_shared requires world_size=1, num_experts=1, top_k=1")
+        stream = self._stream(stream)
+        if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
+            raise ValueError("inputs must be a rank-2 torch.Tensor")
+        tokens = inputs.shape[0]
+        if tokens > self.config.max_tokens:
+            raise ValueError("input token count exceeds max_tokens")
+        _tensor(inputs, "inputs", (tokens, self.config.hidden), torch.bfloat16, self.device)
+        with torch.cuda.device(self.device), torch.cuda.stream(stream):
+            if output is None:
+                output = torch.empty((tokens, self.config.hidden), dtype=torch.bfloat16, device=self.device)
+            _tensor(output, "output", (tokens, self.config.hidden), torch.bfloat16, self.device)
+            inputs.record_stream(stream)
+            output.record_stream(stream)
+            self._native.forward_shared(inputs.data_ptr(), output.data_ptr(), tokens, stream.cuda_stream)
+        return output
+
+    def forward(
+        self, inputs, topk_ids, topk_weights, *, output=None, stream=None, validate_routing=False, signal_start=False
+    ):
         """Enqueue routed experts and return BF16 [T,H] output on ``stream``.
 
         ``inputs`` is BF16, ``topk_ids`` is int32, and ``topk_weights`` is float32.
@@ -194,10 +239,16 @@ class MegaMoE:
         Pass an output allocated before capture for stable graph replay storage.
         The caller must preserve graph inputs/outputs and this context across
         replays. Stream dependencies for producer tensors remain caller-owned.
+
+        ``signal_start=True`` enables ``wait_until_started`` for a subsequent
+        consumer stream. It adds a device-flag reset/event before kernel launch;
+        the default path does not enqueue these operations.
         """
         import torch
 
         stream = self._stream(stream)
+        if not isinstance(signal_start, bool):
+            raise TypeError("signal_start must be bool")
         if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
             raise ValueError("inputs must be a rank-2 torch.Tensor")
         t, h = inputs.shape
@@ -227,6 +278,7 @@ class MegaMoE:
                 output.data_ptr(),
                 t,
                 stream.cuda_stream,
+                signal_start,
             )
         return output
 

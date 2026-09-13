@@ -87,15 +87,26 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("symmetric_bytes", &MegaMoeContext::symmetricBytes)
       .def_prop_ro("private_bytes", &MegaMoeContext::privateBytes)
       .def(
+          "forward_shared",
+          [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {
+            self.forwardShared(reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output), tokens,
+                               reinterpret_cast<cudaStream_t>(stream));
+          },
+          nb::arg("input"), nb::arg("output"), nb::arg("num_tokens"), nb::arg("stream"))
+      .def(
+          "wait_until_started",
+          [](MegaMoeContext& self, uintptr_t stream) { self.waitUntilStarted(reinterpret_cast<cudaStream_t>(stream)); },
+          nb::arg("stream"))
+      .def(
           "forward",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t ids, uintptr_t scores, uintptr_t output, int tokens,
-             uintptr_t stream) {
+             uintptr_t stream, bool signalStart) {
             self.forward(reinterpret_cast<const void*>(input), reinterpret_cast<const int32_t*>(ids),
                          reinterpret_cast<const float*>(scores), reinterpret_cast<void*>(output), tokens,
-                         reinterpret_cast<cudaStream_t>(stream));
+                         reinterpret_cast<cudaStream_t>(stream), signalStart);
           },
           nb::arg("input"), nb::arg("topk_ids"), nb::arg("topk_weights"), nb::arg("output"), nb::arg("num_tokens"),
-          nb::arg("stream"));
+          nb::arg("stream"), nb::arg("signal_start") = false);
 #else
   m.def("megamoe_available", []() { return false; });
 #endif
