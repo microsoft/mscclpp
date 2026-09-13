@@ -191,6 +191,26 @@ and 32 shared CTAs. Router, projections, staging, and enabled postprocessing run
 inside every timed invocation. This is **not full-model timing**: real weights,
 attention, prenorm, residual gathering, and training operations are excluded.
 
+### Native performance
+
+Measured with `benchmark_shared` on GB200 using Torch 2.11.0+cu130, the default
+geometry and precision above (FP32 router with TF32 allowed), and 120/32
+routed/shared CTAs. EP4 uses one four-GPU host and 64 experts; EP32 uses eight
+four-GPU hosts in one NVLink fabric and 512 experts.
+
+| Schedule | EP4 latency | EP32 latency |
+| --- | ---: | ---: |
+| Layer without shared (`routed-only`) | 296.11 us | 310.84 us |
+| Shared expert only (`shared-only`) | 47.18 us | 47.84 us |
+| Complete layer, serial | 348.04 us | 363.27 us |
+| Complete layer, routed-first overlap | **312.17 us** | **325.49 us** |
+
+These are unprofiled CUDA-event medians with `--graph-batch 20 --warmup 10
+--iterations 30`: each graph repeats the same input, and each sample takes the
+maximum latency across ranks before computing the median. Layer timings include
+router, projections, staging, enabled expert branches, postnorm, and residual;
+`routed-only` here is not an expert-kernel-only measurement.
+
 ### Multi-host runs and measurement
 
 For four GPUs per host, set `NNODES=2`, `4`, or `8` for EP8, EP16, or EP32.
