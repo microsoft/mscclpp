@@ -34,8 +34,7 @@ __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspa
                                                const DeviceContext* context) {
   const int numRanks = context->numRanks_;
   const int threadId = static_cast<int>(threadIdx.x);
-  if (threadId < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
-  __syncthreads();
+  blockPeerBarrier(context->channels_, context->rank_, numRanks);
 
   const int numExpertsPerRank = workload.numExperts_ / numRanks;
   if (threadId < numRanks) {
@@ -51,8 +50,7 @@ __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspa
   }
   __syncthreads();
 
-  if (threadId < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
-  __syncthreads();
+  blockPeerBarrier(context->channels_, context->rank_, numRanks);
 
   auto* localRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[context->rank_]);
   if (threadId < numRanks) {
@@ -95,15 +93,17 @@ void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const 
 }
 
 __global__ void synchronizeThroughputPeersKernel(const DeviceContext* context) {
-  barrier(context->channels_, context->rank_, context->numRanks_);
+  blockPeerBarrier(context->channels_, context->rank_, context->numRanks_);
 }
 
 void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream) {
-  synchronizeThroughputPeersKernel<<<1, WARP_SIZE, 0, stream>>>(context.devicePtr_);
+  const int numThreads = std::max(context.numRanks_, WARP_SIZE);
+  synchronizeThroughputPeersKernel<<<1, numThreads, 0, stream>>>(context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
+// Both variants schedule tokens; a warp-sized peer set permits a cheaper direct-rank lookup.
+template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType, bool RouteByTopk>
 __global__ void __launch_bounds__(NumThreads, 1)
     throughputDispatchKernel(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
                              const int4* input, const int64_t* topkIdx, const float* topkWeights,
@@ -130,11 +130,32 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int tokenStride = numBlocks * groupsPerBlock;
   const int firstToken = static_cast<int>(blockIdx.x) * groupsPerBlock + groupId;
   const int expertsPerRank = workload.numExperts_ / numRanks;
-  EP_DEVICE_ASSERT(numRanks <= WARP_SIZE);
-  void* laneBuffer = laneId < numRanks ? transport.mappedBuffer(recvBuffer, laneId) : nullptr;
+  const bool powerOfTwoExperts = (expertsPerRank & (expertsPerRank - 1)) == 0;
+  const int expertRankShift = __ffs(expertsPerRank) - 1;
+  EP_DEVICE_ASSERT(numTopk > 0 && numTopk <= WARP_SIZE);
+  EP_DEVICE_ASSERT(RouteByTopk || numRanks <= WARP_SIZE);
+  void* fixedPeerBuffer = nullptr;
+  if constexpr (!RouteByTopk) {
+    fixedPeerBuffer = laneId < numRanks ? transport.mappedBuffer(recvBuffer, laneId) : nullptr;
+  }
 
   for (int token = firstToken; token < workload.numTokens_; token += tokenStride) {
-    const int laneSlot = laneId < numRanks ? workspace.recvTokenIndex(token, laneId, numRanks) : -1;
+    int laneRank = laneId;
+    int laneSlot;
+    void* laneBuffer = fixedPeerBuffer;
+    if constexpr (RouteByTopk) {
+      const int64_t routedExpert =
+          laneId < numTopk ? __ldg(topkIdx + static_cast<int64_t>(token) * numTopk + laneId) : -1;
+      EP_DEVICE_ASSERT(routedExpert < workload.numExperts_);
+      const int expert = routedExpert >= 0 && routedExpert < workload.numExperts_ ? static_cast<int>(routedExpert) : -1;
+      laneRank = expert >= 0 ? (powerOfTwoExperts ? expert >> expertRankShift : expert / expertsPerRank) : -1;
+      const bool firstLaneForRank = isFirstLaneForRank(laneRank, laneId);
+      laneSlot = laneRank >= 0 && firstLaneForRank ? workspace.recvTokenIndex(token, laneRank, numRanks) : -1;
+      laneBuffer = laneSlot >= 0 ? transport.mappedBuffer(recvBuffer, laneRank) : nullptr;
+    } else {
+      laneSlot = laneId < numRanks ? workspace.recvTokenIndex(token, laneId, numRanks) : -1;
+    }
+    // For larger peer sets, mask bits identify top-k lanes rather than rank IDs.
     const unsigned destinationMask = __ballot_sync(0xffffffffu, laneSlot >= 0);
     if (destinationMask == 0) continue;
     int4* laneRow =
@@ -151,8 +172,8 @@ __global__ void __launch_bounds__(NumThreads, 1)
       if (valid) value = __ldg(srcRow + hiddenIndex);
       unsigned destinations = destinationMask;
       while (destinations != 0) {
-        const int dstRank = __ffs(static_cast<int>(destinations)) - 1;
-        auto* dstRow = warpBroadcast(laneRow, dstRank);
+        const int destinationLane = __ffs(static_cast<int>(destinations)) - 1;
+        auto* dstRow = warpBroadcast(laneRow, destinationLane);
         if (valid) dstRow[hiddenIndex] = value;
         destinations &= destinations - 1u;
       }
@@ -174,9 +195,11 @@ __global__ void __launch_bounds__(NumThreads, 1)
       }
       unsigned destinations = destinationMask;
       while (destinations != 0) {
-        const int dstRank = __ffs(static_cast<int>(destinations)) - 1;
-        const int outputIndex = warpBroadcast(laneSlot, dstRank);
-        void* dstBuffer = transport.mappedBuffer(recvBuffer, dstRank);
+        const int destinationLane = __ffs(static_cast<int>(destinations)) - 1;
+        const int dstRank = RouteByTopk ? warpBroadcast(laneRank, destinationLane) : destinationLane;
+        const int outputIndex = warpBroadcast(laneSlot, destinationLane);
+        void* dstBuffer =
+            RouteByTopk ? warpBroadcast(laneBuffer, destinationLane) : transport.mappedBuffer(recvBuffer, dstRank);
         if (laneId < numTopk) {
           const int expertBegin = dstRank * expertsPerRank;
           const int expertEnd = expertBegin + expertsPerRank;
@@ -201,9 +224,10 @@ __global__ void __launch_bounds__(NumThreads, 1)
     }
   }
 
-  __threadfence_system();
+  // Join all writers before block 0 publishes their stores with system-release signals.
   cooperative_groups::this_grid().sync();
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
+  if (blockIdx.x == 0) blockPeerBarrier(context->channels_, context->rank_, numRanks);
+  // All receiving blocks must wait for block 0's peer acquires.
   cooperative_groups::this_grid().sync();
 
   const void* localTokens = payload.data<int4>(recvBuffer);
@@ -238,9 +262,16 @@ __global__ void __launch_bounds__(NumThreads, 1)
 }
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
+auto selectThroughputDispatchKernel(const DeviceContext& context) {
+  return context.numRanks_ > WARP_SIZE ? throughputDispatchKernel<NumThreads, Layout, DataType, true>
+                                       : throughputDispatchKernel<NumThreads, Layout, DataType, false>;
+}
+
+template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
 int maxCooperativeThroughputDispatchBlocks(const DeviceContext& context) {
-  static thread_local KernelConfigCache kernelConfig;
-  return configureKernel(throughputDispatchKernel<NumThreads, Layout, DataType>, NumThreads, 0, context, kernelConfig);
+  static thread_local KernelConfigCache kernelConfigs[2];
+  auto kernel = selectThroughputDispatchKernel<NumThreads, Layout, DataType>(context);
+  return configureKernel(kernel, NumThreads, 0, context, kernelConfigs[context.numRanks_ > WARP_SIZE]);
 }
 
 int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context) {
@@ -273,10 +304,15 @@ void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeigh
   const bool fp8 = workload.dispatchDataType_ == DispatchDataType::FP8_E4M3;
   EP_HOST_ASSERT(numBlocks <= maxCooperativeThroughputDispatchBlocks(workload.outputLayout_, context));
   auto kernel =
-      rankMajor ? (fp8 ? throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::FP8_E4M3>
-                       : throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::BF16>)
-                : (fp8 ? throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::FP8_E4M3>
-                       : throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::BF16>);
+      rankMajor
+          ? (fp8 ? selectThroughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::FP8_E4M3>(
+                       context)
+                 : selectThroughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::BF16>(
+                       context))
+          : (fp8 ? selectThroughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::FP8_E4M3>(
+                       context)
+                 : selectThroughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::BF16>(
+                       context));
   cudaLaunchAttribute attribute{};
   attribute.id = cudaLaunchAttributeCooperative;
   attribute.val.cooperative = 1;

@@ -102,16 +102,17 @@ MSCCLPP_DEVICE_INLINE void copyThroughputRows(void* dst, const void* src, int ro
   }
 }
 
-MSCCLPP_DEVICE_INLINE void barrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
+// All block threads participate; one thread publishes to and waits for each peer.
+MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
   constexpr int64_t MaxSpinCount = 100'000'000;
-  const int laneId = getLaneId();
-  EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= WARP_SIZE);
+  const int peer = static_cast<int>(threadIdx.x);
+  EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= static_cast<int>(blockDim.x));
 
-  if (laneId < numRanks && laneId != rank) {
-    channels[laneId].signal();
-    channels[laneId].wait(MaxSpinCount);
+  if (peer < numRanks && peer != rank) {
+    channels[peer].signal();
+    channels[peer].wait(MaxSpinCount);
   }
-  __syncwarp();
+  __syncthreads();
 }
 
 }  // namespace ep

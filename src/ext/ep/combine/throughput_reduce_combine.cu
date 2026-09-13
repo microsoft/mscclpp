@@ -31,7 +31,8 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const TransportView transport(context);
   const int numRanks = context->numRanks_;
-  EP_DEVICE_ASSERT(MaxContributors <= numRanks);
+  // MaxContributors is min(numTopk, numRanks) rounded up to 2, 4, or 8 slots.
+  EP_DEVICE_ASSERT(MaxContributors >= (numTopk < numRanks ? numTopk : numRanks));
   constexpr int ChunkInt4 = COMBINE_TMA_CHUNK_INT4;
   constexpr int NumStages = COMBINE_TMA_STAGES;
   constexpr int ChunkBytes = ChunkInt4 * static_cast<int>(sizeof(int4));
@@ -49,8 +50,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     const int rows = rankMajor ? numRanks * maxTokensPerRank : receivedTokens;
     copyThroughputRows(localTokens, input, rows, hiddenInt4 * sizeof(int4), workspace.recvCounts_, maxTokensPerRank,
                        rankMajor, blockIdx.x * blockDim.x + threadIdx.x, gridDim.x * blockDim.x);
-    // Every local staging copy must finish before the peer barrier publishes it.
-    __threadfence_system();
+    // Join staging stores before the system-release peer publication below.
     cooperative_groups::this_grid().sync();
   }
 
@@ -65,7 +65,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   };
   uint32_t barrierPhases[NumStages] = {};
 
-  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) barrier(context->channels_, context->rank_, numRanks);
+  if (blockIdx.x == 0) blockPeerBarrier(context->channels_, context->rank_, numRanks);
   cooperative_groups::this_grid().sync();
   if (laneId == 0) {
 #pragma unroll
@@ -216,7 +216,7 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const void*
 
   const int numTopk = workload.numTopk_;
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
-  // Rank-deduplicated routing needs at most top-k contributors, even with 32 ranks.
+  // Rank-deduplicated routing needs at most top-k contributors, independent of rank count.
   const int maxContributors = std::min(numTopk, context.numRanks_);
   const bool useWideKernel = numBlocks <= COMBINE_TMA_WIDE_MAX_BLOCKS;
   auto launch = launchThroughputCombine<2, COMBINE_TMA_WARPS>;

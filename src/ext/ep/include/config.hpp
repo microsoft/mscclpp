@@ -20,9 +20,7 @@ namespace ep {
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
 
-inline constexpr bool isSupportedThroughputRanks(int numRanks) {
-  return numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16 || numRanks == 32;
-}
+inline constexpr bool isSupportedThroughputRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
