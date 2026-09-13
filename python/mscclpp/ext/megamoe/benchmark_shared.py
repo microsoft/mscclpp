@@ -4,7 +4,7 @@
 """Synthetic routed-first native MegaMoE layer benchmark; launch with torchrun."""
 
 import argparse
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import gc
 import json
@@ -43,6 +43,11 @@ def _parse_args(argv=None):
     parser.add_argument("--shared-intermediate", type=int, default=2048, help="shared post-SwiGLU width")
     parser.add_argument("--route-sm-margin", type=int, default=32)
     parser.add_argument("--shared-sms", type=int, default=32, help="requested shared persistent CTA count")
+    parser.add_argument("--router-allow-tf32", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--router-weight-layout", choices=("expert-major", "hidden-major"), default="expert-major")
+    parser.add_argument(
+        "--router-probability-order", choices=("softmax-first", "selected-logits"), default="softmax-first"
+    )
     parser.add_argument("--post-norm", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--residual", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rms-eps", type=float, default=1e-6, help="finite positive post-RMSNorm epsilon")
@@ -106,6 +111,18 @@ def _scope_report(args):
         "scope": scope,
         "included_by_mode": included,
         "excluded": excluded,
+        "router_policy": {
+            "input_weight_logits_dtype": "FP32",
+            "allow_tf32": args.router_allow_tf32,
+            "environment_tf32_override": os.environ.get("NVIDIA_TF32_OVERRIDE"),
+            "weight_layout": args.router_weight_layout,
+            "weight_shape": "[experts, hidden]" if args.router_weight_layout == "expert-major" else "[hidden, experts]",
+            "probability_order": args.router_probability_order,
+            "renormalize_selected_probabilities": True,
+            "renormalization_epsilon": 0,
+            "topk_backend": "Torch; not a production fused top-k kernel",
+            "training_noise_and_selection_bias": False,
+        },
         "postprocess": {
             "post_norm": args.post_norm,
             "residual": args.residual,
@@ -165,6 +182,19 @@ def _phase(rank, phase, **fields):
         json.dumps({"utc": datetime.now(timezone.utc).isoformat(), "rank": rank, "phase": phase, **fields}),
         flush=True,
     )
+
+
+@contextmanager
+def _router_math_mode(allow_tf32):
+    import torch
+
+    # Saving only allow_tf32 would restore "medium" as "high".
+    previous = torch.get_float32_matmul_precision()
+    torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+    try:
+        yield
+    finally:
+        torch.set_float32_matmul_precision(previous)
 
 
 class _Postprocess:
@@ -282,23 +312,46 @@ class _Postprocess:
 class _Frontend:
     """Preallocated Torch projections/metadata, also usable by CPU shape tests."""
 
-    def __init__(self, inputs, routed_config, *, postprocess=None):
+    def __init__(
+        self,
+        inputs,
+        routed_config,
+        *,
+        postprocess=None,
+        router_allow_tf32=True,
+        router_weight_layout="expert-major",
+        router_probability_order="softmax-first",
+    ):
         import torch
 
         self.inputs = inputs
         tokens, original_hidden = inputs.shape
         hidden, experts, top_k = routed_config.hidden, routed_config.num_experts, routed_config.top_k
         device = inputs.device
+        if not isinstance(router_allow_tf32, bool):
+            raise ValueError("router_allow_tf32 must be bool")
+        if router_weight_layout not in ("expert-major", "hidden-major"):
+            raise ValueError("unsupported router_weight_layout")
+        if router_probability_order not in ("softmax-first", "selected-logits"):
+            raise ValueError("unsupported router_probability_order")
+        self.router_allow_tf32 = router_allow_tf32
+        self.router_weight_layout = router_weight_layout
+        self.router_probability_order = router_probability_order
 
         def empty(shape, dtype=torch.bfloat16):
             return torch.empty(shape, device=device, dtype=dtype)
 
         self.router_weight = empty((original_hidden, experts), torch.float32).normal_(std=original_hidden**-0.5)
+        if router_weight_layout == "expert-major":
+            # Preserve the logical matrix and RNG sequence while changing storage.
+            self.router_weight = self.router_weight.t().contiguous()
         self.squash_weight = empty((original_hidden, hidden)).normal_(std=original_hidden**-0.5)
         self.unsquash_weight = empty((hidden, original_hidden)).normal_(std=hidden**-0.5)
         self.fp32_input = empty(inputs.shape, torch.float32)
         self.logits = empty((tokens, experts), torch.float32)
-        self.selected_logits = empty((tokens, top_k), torch.float32)
+        self.probabilities = empty((tokens, experts), torch.float32)
+        self.selected_values = empty((tokens, top_k), torch.float32)
+        self.selected_sum = empty((tokens, 1), torch.float32)
         self.indices64 = empty((tokens, top_k), torch.int64)
         self.ids = empty((tokens, top_k), torch.int32)
         self.scores = empty((tokens, top_k), torch.float32)
@@ -316,10 +369,18 @@ class _Frontend:
         import torch
 
         self.fp32_input.copy_(self.inputs)
-        torch.mm(self.fp32_input, self.router_weight, out=self.logits)
-        torch.topk(self.logits, self.ids.shape[1], dim=-1, out=(self.selected_logits, self.indices64))
+        weight = self.router_weight.t() if self.router_weight_layout == "expert-major" else self.router_weight
+        with _router_math_mode(self.router_allow_tf32):
+            torch.mm(self.fp32_input, weight, out=self.logits)
+        if self.router_probability_order == "softmax-first":
+            torch.softmax(self.logits, dim=-1, out=self.probabilities)
+            torch.topk(self.probabilities, self.ids.shape[1], dim=-1, out=(self.selected_values, self.indices64))
+            torch.sum(self.selected_values, dim=-1, keepdim=True, out=self.selected_sum)
+            torch.div(self.selected_values, self.selected_sum, out=self.scores)
+        else:
+            torch.topk(self.logits, self.ids.shape[1], dim=-1, out=(self.selected_values, self.indices64))
+            torch.softmax(self.selected_values, dim=-1, out=self.scores)
         self.ids.copy_(self.indices64)
-        torch.softmax(self.selected_logits, dim=-1, out=self.scores)
 
     def squash(self):
         import torch
@@ -711,7 +772,8 @@ def main(argv=None):
     device = torch.device("cuda", local_rank)
     if torch.cuda.get_device_capability(device) != (10, 0):
         raise RuntimeError("native MegaMoE requires SM100")
-    # The router/reference explicitly request FP32, not implicit TF32 matmuls.
+    # Expert/reference operations keep the surrounding policy; the router scopes
+    # its explicit math mode locally, including during graph capture.
     torch.backends.cuda.matmul.allow_tf32 = False
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
     route_config, shared_config = _configs(args, rank, world, physical_sms)
@@ -752,7 +814,14 @@ def main(argv=None):
         add_residual=args.residual,
         residual_dtype=args.residual_dtype,
     )
-    frontend = _Frontend(inputs, route_config, postprocess=postprocess)
+    frontend = _Frontend(
+        inputs,
+        route_config,
+        postprocess=postprocess,
+        router_allow_tf32=args.router_allow_tf32,
+        router_weight_layout=args.router_weight_layout,
+        router_probability_order=args.router_probability_order,
+    )
     layer = _Layer(frontend, routed, shared)
     torch.cuda.synchronize(device)
     initialization_ms = (time.perf_counter() - start) * 1000
@@ -802,7 +871,7 @@ def main(argv=None):
                 "normalized_output": "BF16",
                 "residual": args.residual_dtype.upper(),
                 "final_output": args.residual_dtype.upper() if args.residual else "BF16",
-                "router_linear_logits_selected_softmax": "FP32",
+                "router_inputs_weights_logits_probabilities": "FP32",
                 "routing_ids": "int32",
                 "native_expert_weights": "MXFP8 E4M3FN with E8M0 K32 scales",
             },

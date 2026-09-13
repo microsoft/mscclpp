@@ -277,16 +277,17 @@ def test_frontend_shapes_router_precision_and_buffer_reuse(tokens):
     f = _Frontend(inputs, routed)
     pointers = {name: value.data_ptr() for name, value in vars(f).items() if isinstance(value, torch.Tensor)}
     f.router()
-    expected_logits = inputs.float() @ f.router_weight
-    selected = expected_logits.topk(3, dim=-1)
+    expected_logits = inputs.float() @ f.router_weight.t()
+    selected = expected_logits.softmax(dim=-1).topk(3, dim=-1)
     torch.testing.assert_close(f.logits, expected_logits, rtol=0, atol=0)
     torch.testing.assert_close(f.ids, selected.indices.to(torch.int32), rtol=0, atol=0)
-    torch.testing.assert_close(f.scores, selected.values.softmax(dim=-1), rtol=0, atol=0)
+    expected_scores = selected.values / selected.values.sum(dim=-1, keepdim=True)
+    torch.testing.assert_close(f.scores, expected_scores, rtol=0, atol=0)
     assert f.logits.dtype == f.scores.dtype == torch.float32
     assert f.ids.dtype == f.shared_ids.dtype == torch.int32
     assert f.shared_ids.shape == f.shared_scores.shape == (tokens, 1)
     assert f.ids.shape == f.scores.shape == (tokens, 3)
-    assert f.router_weight.shape == (256, 8)
+    assert f.router_weight.shape == (8, 256)
     assert f.squash_weight.shape == (256, 128)
     assert f.unsquash_weight.shape == (128, 256)
     f.squash()
@@ -308,6 +309,204 @@ def test_frontend_shapes_router_precision_and_buffer_reuse(tokens):
         f.router()
         assert not torch.equal(original_ids, f.ids)
     assert pointers == {name: value.data_ptr() for name, value in vars(f).items() if isinstance(value, torch.Tensor)}
+
+
+@pytest.mark.parametrize("allow_tf32", [False, True])
+@pytest.mark.parametrize("layout", ["expert-major", "hidden-major"])
+@pytest.mark.parametrize("order", ["softmax-first", "selected-logits"])
+def test_router_policy_and_scoped_math_mode(monkeypatch, allow_tf32, layout, order):
+    torch = pytest.importorskip("torch")
+    args = _small_args()
+    args.experts, args.top_k = 8, 3
+    config, _ = _configs(args, 0, 1, 152)
+    inputs = torch.randn(2, 256, dtype=torch.bfloat16)
+    frontend = _Frontend(
+        inputs,
+        config,
+        router_allow_tf32=allow_tf32,
+        router_weight_layout=layout,
+        router_probability_order=order,
+    )
+    original_mm = torch.mm
+    previous = torch.backends.cuda.matmul.allow_tf32
+    observed = []
+
+    def matmul(a, b, *, out):
+        observed.append(torch.backends.cuda.matmul.allow_tf32)
+        return original_mm(a, b, out=out)
+
+    monkeypatch.setattr(torch, "mm", matmul)
+    frontend.router()
+    assert observed == [allow_tf32]
+    assert torch.backends.cuda.matmul.allow_tf32 == previous
+    weight = frontend.router_weight.t() if layout == "expert-major" else frontend.router_weight
+    logits = inputs.float() @ weight
+    selected = (logits.softmax(dim=-1) if order == "softmax-first" else logits).topk(3, dim=-1)
+    expected_scores = (
+        selected.values / selected.values.sum(dim=-1, keepdim=True)
+        if order == "softmax-first"
+        else selected.values.softmax(dim=-1)
+    )
+    torch.testing.assert_close(frontend.logits, logits, rtol=0, atol=0)
+    torch.testing.assert_close(frontend.ids, selected.indices.to(torch.int32), rtol=0, atol=0)
+    torch.testing.assert_close(frontend.scores, expected_scores, rtol=0, atol=0)
+
+
+def test_router_math_mode_is_restored_after_failure(monkeypatch):
+    torch = pytest.importorskip("torch")
+    config, _ = _configs(_small_args(), 0, 1, 152)
+    original = torch.backends.cuda.matmul.allow_tf32
+    frontend = _Frontend(torch.ones(2, 256, dtype=torch.bfloat16), config, router_allow_tf32=not original)
+
+    def fail(*args, **kwargs):
+        assert torch.backends.cuda.matmul.allow_tf32 != original
+        raise RuntimeError("matmul failure")
+
+    monkeypatch.setattr(torch, "mm", fail)
+    with pytest.raises(RuntimeError, match="matmul failure"):
+        frontend.router()
+    assert torch.backends.cuda.matmul.allow_tf32 == original
+
+
+@pytest.mark.parametrize("precision", ["highest", "high", "medium"])
+@pytest.mark.parametrize("body_raises", [False, True])
+def test_router_math_mode_preserves_full_surrounding_precision(precision, body_raises):
+    from contextlib import nullcontext
+    from mscclpp.ext.megamoe.benchmark_shared import _router_math_mode
+
+    torch = pytest.importorskip("torch")
+    previous = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision(precision)
+        with pytest.raises(RuntimeError, match="body failed") if body_raises else nullcontext():
+            with _router_math_mode(True):
+                assert torch.backends.cuda.matmul.allow_tf32
+                if body_raises:
+                    raise RuntimeError("body failed")
+        assert torch.get_float32_matmul_precision() == precision
+    finally:
+        torch.set_float32_matmul_precision(previous)
+
+
+def test_router_storage_layout_preserves_logical_weights_and_projection_rng():
+    torch = pytest.importorskip("torch")
+    config, _ = _configs(_small_args(), 0, 1, 152)
+    inputs = torch.ones(2, 256, dtype=torch.bfloat16)
+    torch.manual_seed(391)
+    hidden_major = _Frontend(inputs, config, router_weight_layout="hidden-major")
+    torch.manual_seed(391)
+    expert_major = _Frontend(inputs, config, router_weight_layout="expert-major")
+    torch.testing.assert_close(expert_major.router_weight, hidden_major.router_weight.t(), rtol=0, atol=0)
+    torch.testing.assert_close(expert_major.squash_weight, hidden_major.squash_weight, rtol=0, atol=0)
+    torch.testing.assert_close(expert_major.unsquash_weight, hidden_major.unsquash_weight, rtol=0, atol=0)
+    assert expert_major.router_weight.is_contiguous()
+    assert expert_major.router_weight.t().stride() == (1, 256)
+
+
+def test_router_cli_defaults_and_legacy_policy():
+    args = _parse_args([])
+    policy = _scope_report(args)["router_policy"]
+    assert policy["allow_tf32"]
+    assert policy["weight_layout"] == "expert-major"
+    assert policy["probability_order"] == "softmax-first"
+    assert policy["renormalization_epsilon"] == 0
+    legacy = _parse_args(
+        [
+            "--no-router-allow-tf32",
+            "--router-weight-layout",
+            "hidden-major",
+            "--router-probability-order",
+            "selected-logits",
+        ]
+    )
+    assert not legacy.router_allow_tf32
+    assert legacy.router_weight_layout == "hidden-major"
+    assert legacy.router_probability_order == "selected-logits"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"router_allow_tf32": 1},
+        {"router_weight_layout": "invalid"},
+        {"router_probability_order": "invalid"},
+    ],
+)
+def test_router_rejects_invalid_policy(override):
+    torch = pytest.importorskip("torch")
+    config, _ = _configs(_small_args(), 0, 1, 152)
+    with pytest.raises(ValueError):
+        _Frontend(torch.ones(2, 256, dtype=torch.bfloat16), config, **override)
+
+
+def test_router_full_softmax_renormalization_with_near_ties_and_uniform_logits():
+    torch = pytest.importorskip("torch")
+    args = _small_args()
+    args.experts, args.top_k = 8, 3
+    config, _ = _configs(args, 0, 1, 152)
+    inputs = torch.zeros(2, 256, dtype=torch.bfloat16)
+    inputs[0, 0] = 1
+    frontend = _Frontend(inputs, config)
+    frontend.router_weight.zero_()
+    frontend.router_weight[:, 0].copy_(torch.tensor([1, 1 + 2**-20, 1 - 2**-20, -20, 0, 0.5, 0.5, -30]))
+    frontend.router()
+    probabilities = (inputs.float() @ frontend.router_weight.t()).softmax(dim=-1)
+    selected = probabilities.topk(3, dim=-1)
+    torch.testing.assert_close(frontend.ids, selected.indices.to(torch.int32), rtol=0, atol=0)
+    torch.testing.assert_close(
+        frontend.scores,
+        selected.values / selected.values.sum(dim=-1, keepdim=True),
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(frontend.scores.sum(dim=-1), torch.ones(2))
+
+
+@pytest.mark.skipif(
+    os.environ.get("MSCCLPP_TEST_MEGAMOE_SHARED") != "1",
+    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into the CUDA router graph test",
+)
+@pytest.mark.parametrize("allow_tf32", [False, True])
+@pytest.mark.parametrize("order", ["softmax-first", "selected-logits"])
+def test_router_graph_keeps_captured_math_policy_and_updates_metadata(allow_tf32, order):
+    torch = pytest.importorskip("torch")
+    from mscclpp.ext.megamoe.benchmark_shared import _router_math_mode
+
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    args = _small_args(32)
+    args.experts, args.top_k = 512, 7
+    config, _ = _configs(args, 0, 1, 152)
+    inputs = torch.randn(32, 256, dtype=torch.bfloat16, device="cuda")
+    frontend = _Frontend(inputs, config, router_allow_tf32=allow_tf32, router_probability_order=order)
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(3):
+            frontend.router()
+    stream.synchronize()
+    previous = torch.backends.cuda.matmul.allow_tf32
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=stream):
+        frontend.router()
+    assert torch.backends.cuda.matmul.allow_tf32 == previous
+    original = inputs.clone()
+    old_ids = None
+    for scale in (1, -1):
+        inputs.copy_(original * scale)
+        frontend.router()
+        torch.cuda.synchronize()
+        expected = [value.clone() for value in (frontend.logits, frontend.ids, frontend.scores)]
+        if old_ids is not None:
+            assert not torch.equal(old_ids, expected[1])
+        old_ids = expected[1]
+        torch.cuda.synchronize()
+        with _router_math_mode(not allow_tf32):
+            graph.replay()
+            torch.cuda.synchronize()
+        for actual, reference in zip((frontend.logits, frontend.ids, frontend.scores), expected):
+            torch.testing.assert_close(actual, reference, rtol=0, atol=0)
+    assert torch.backends.cuda.matmul.allow_tf32 == previous
 
 
 @pytest.mark.parametrize("postprocess_enabled", [False, True])
