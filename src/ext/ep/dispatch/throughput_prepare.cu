@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 //
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
-// branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
 // Throughput routing-count construction.
 
