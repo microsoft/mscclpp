@@ -33,6 +33,7 @@ struct PrepareHandle::Impl {
         numBlocks_(request.numBlocks) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
+  // Host-side generation of the routing workspace; a new prepare invalidates old handles.
   uint64_t epoch_;
   const int64_t* topkIdx_;
   int numTokens_;
@@ -145,6 +146,7 @@ struct ThroughputRuntimeContext {
   void* workspace_ = nullptr;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
+  // Device copy of the peer pointer table, not another payload allocation.
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;

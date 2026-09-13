@@ -18,6 +18,11 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
+inline constexpr int MaxNumTopk = 8;
+
+inline constexpr bool isSupportedThroughputRanks(int numRanks) {
+  return numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16 || numRanks == 32;
+}
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -236,8 +241,6 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
 // Unlike latency's packed per-token payload, throughput keeps dense token rows
 // and fixed-stride metadata in separate slabs so GEMM can use the rows directly.
 struct ThroughputPayloadView {
-  static constexpr int MaxTopk = 32;
-
   int topK_;
   size_t metadataOffset_;
   size_t metadataSlotBytes_;
@@ -299,9 +302,9 @@ struct ThroughputStorageLayout {
   ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                           int numTopk)
       : payload_(static_cast<size_t>(numRanks) * maxTokensPerRank, hidden, numTopk) {
-    EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
+    EP_HOST_ASSERT(isSupportedThroughputRanks(numRanks));
     EP_HOST_ASSERT(maxTokensPerRank > 0 && hidden > 0 && numExperts > 0 && numExperts % numRanks == 0);
-    EP_HOST_ASSERT(numTopk > 0 && numTopk <= ThroughputPayloadView::MaxTopk);
+    EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
 
     const size_t ranks = static_cast<size_t>(numRanks);
     const size_t prefixBytes = ranks * ranks * sizeof(int);

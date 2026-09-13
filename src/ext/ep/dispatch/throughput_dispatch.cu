@@ -14,18 +14,19 @@ namespace mscclpp {
 namespace ep {
 namespace {
 
-constexpr int ThroughputDispatchThreads = DispatchNWarps * WARP_SIZE;
+constexpr int ThroughputDispatchWarps = 16;
+constexpr int ThroughputDispatchThreads = ThroughputDispatchWarps * WARP_SIZE;
 
 }  // namespace
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int throughputWarpsPerGroup(int numTokens, int numBlocks, int hiddenInt4) {
   constexpr int MaxVectorsPerThread = 16;
   int groups = 1;
-  while (groups < DispatchNWarps && numTokens > numBlocks * groups) groups *= 2;
+  while (groups < ThroughputDispatchWarps && numTokens > numBlocks * groups) groups *= 2;
   // Balance independent tokens without making wide rows a long per-lane copy loop.
   int rowWarps = 1;
-  while (rowWarps < DispatchNWarps && hiddenInt4 > rowWarps * WARP_SIZE * MaxVectorsPerThread) rowWarps *= 2;
-  const int tokenWarps = DispatchNWarps / groups;
+  while (rowWarps < ThroughputDispatchWarps && hiddenInt4 > rowWarps * WARP_SIZE * MaxVectorsPerThread) rowWarps *= 2;
+  const int tokenWarps = ThroughputDispatchWarps / groups;
   return tokenWarps > rowWarps ? tokenWarps : rowWarps;
 }
 
@@ -43,7 +44,6 @@ __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspa
     for (int dstRank = 0; dstRank < numRanks; ++dstRank) {
       peerRankCounts[context->rank_ * numRanks + dstRank] = workspace.numTokensPerRank_[dstRank];
     }
-#pragma unroll
     for (int localExpert = 0; localExpert < numExpertsPerRank; ++localExpert) {
       peerExpertCounts[context->rank_ * numExpertsPerRank + localExpert] =
           workspace.numTokensPerExpert_[threadId * numExpertsPerRank + localExpert];
@@ -109,7 +109,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
                              const int4* input, const int64_t* topkIdx, const float* topkWeights,
                              const float* inputScales, Workload workload, ThroughputWorkspaceLayout workspace,
                              ThroughputPayloadView payload, void* recvBuffer, const DeviceContext* context) {
-  static_assert(NumThreads == DispatchNWarps * WARP_SIZE);
+  static_assert(NumThreads == ThroughputDispatchThreads);
   const int numTopk = workload.numTopk_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const int hiddenInt4 = workload.hidden_ * dispatchElementBytes(DataType) / sizeof(int4);
@@ -168,14 +168,14 @@ __global__ void __launch_bounds__(NumThreads, 1)
       float firstScale = 0.0f;
       float secondScale = 0.0f;
       if (cacheScales) {
-        if (laneId < numScales) firstScale = __ldg(inputScales + static_cast<int64_t>(token) * numScales + laneId);
+        if (laneId < numScales) firstScale = inputScales[static_cast<int64_t>(token) * numScales + laneId];
         if (laneId + WARP_SIZE < numScales)
-          secondScale = __ldg(inputScales + static_cast<int64_t>(token) * numScales + laneId + WARP_SIZE);
+          secondScale = inputScales[static_cast<int64_t>(token) * numScales + laneId + WARP_SIZE];
       }
       unsigned destinations = destinationMask;
       while (destinations != 0) {
         const int dstRank = __ffs(static_cast<int>(destinations)) - 1;
-        const int outputIndex = __shfl_sync(0xffffffffu, laneSlot, dstRank);
+        const int outputIndex = warpBroadcast(laneSlot, dstRank);
         void* dstBuffer = transport.mappedBuffer(recvBuffer, dstRank);
         if (laneId < numTopk) {
           const int expertBegin = dstRank * expertsPerRank;
@@ -192,7 +192,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
             if (laneId + WARP_SIZE < numScales) metadataScales[laneId + WARP_SIZE] = secondScale;
           } else {
             for (int scale = laneId; scale < numScales; scale += WARP_SIZE) {
-              metadataScales[scale] = __ldg(inputScales + static_cast<int64_t>(token) * numScales + scale);
+              metadataScales[scale] = inputScales[static_cast<int64_t>(token) * numScales + scale];
             }
           }
         }

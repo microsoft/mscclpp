@@ -32,12 +32,13 @@ class MoERuntime {
   /// Only resources required by @p mode are allocated. Mode-specific
   /// communicator buffers are deferred until initialize().
   /// The configured capacity, dimensions, and layout must match across ranks.
+  /// THROUGHPUT supports 2, 4, 8, 16, or 32 ranks within one CUDA IPC domain.
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
   /// @param hidden Hidden dimension.
   /// @param numExperts Global expert count.
-  /// @param numTopk Number of routed experts per token.
+  /// @param numTopk Number of routed experts per token, in [1, 8].
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   /// @throws EPException For an unsupported mode or invalid configuration.

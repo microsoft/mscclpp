@@ -33,12 +33,12 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
       communicator_(communicator) {
   EP_HOST_ASSERT(hidden_ > 0);
   EP_HOST_ASSERT(numExperts_ > 0 && numExperts_ % numRanks_ == 0);
-  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= ThroughputPayloadView::MaxTopk);
+  EP_HOST_ASSERT(numTopk_ > 0 && numTopk_ <= MaxNumTopk);
   EP_HOST_ASSERT(outputLayout_ == DispatchLayout::TOKEN_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(maxTokensPerRank_ > 0);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden_) * sizeof(Bf16) % sizeof(int4) == 0);
 
-  if ((numRanks_ != 2 && numRanks_ != 4 && numRanks_ != 8 && numRanks_ != 16) || numRanksPerIpcDomain_ < numRanks_) {
+  if (!isSupportedThroughputRanks(numRanks_) || numRanksPerIpcDomain_ < numRanks_) {
     return;
   }
 

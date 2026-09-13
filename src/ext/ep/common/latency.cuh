@@ -16,6 +16,14 @@
 namespace mscclpp {
 namespace ep {
 
+constexpr int DispatchNWarps = 16;
+constexpr int DispatchMinNWarpsPerGroup = 8;
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
+  return nTokens <= nBlocks ? DispatchNWarps
+                            : (nTokens <= 2 * nBlocks ? DispatchNWarps / 2 : DispatchMinNWarpsPerGroup);
+}
+
 constexpr int DispatchMaxNWarpGroups = DispatchNWarps / DispatchMinNWarpsPerGroup;
 constexpr int DispatchNThreads = DispatchNWarps * WARP_SIZE;
 constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;

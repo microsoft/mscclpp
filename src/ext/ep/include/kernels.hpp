@@ -16,18 +16,10 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr int ThroughputCountThreads = 128;
-inline constexpr int DispatchNWarps = 16;
-inline constexpr int DispatchMinNWarpsPerGroup = 8;
-
-MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
-  return nTokens <= nBlocks ? DispatchNWarps
-                            : (nTokens <= 2 * nBlocks ? DispatchNWarps / 2 : DispatchMinNWarpsPerGroup);
-}
 
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
-inline constexpr int MaxNumTopk = 8;
 
 inline constexpr bool isSupportedHidden(int hidden) {
   return hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 ||
@@ -92,6 +84,8 @@ void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const 
 // Wait until peers have finished consuming the previous payload before overwriting it.
 void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream);
 
+// Grid-wide synchronization requires all blocks to be resident, not just an SM-count cap.
+// Preparation can be reused by either data format, so use their lower occupancy limit.
 int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
 
 void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,

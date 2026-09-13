@@ -81,6 +81,27 @@ void* MoERuntime::dispatchOutputBuffer() const {
   }
 }
 
+void* MoERuntime::combineInputBuffer() const {
+  switch (mode_) {
+    case MoEMode::LATENCY: {
+      const auto& context = *latencyContext_;
+      EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+      EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
+                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                                  context.combineMode_)
+          .combineBuffer_;
+    }
+    case MoEMode::THROUGHPUT: {
+      const auto& context = *throughputContext_;
+      EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+      return context.storageLayout().recvBuffer_;
+    }
+    default:
+      EP_THROW("Unsupported MoE runtime mode");
+  }
+}
+
 DispatchHandle MoERuntime::dispatch(const DispatchRequest& request) {
   switch (mode_) {
     case MoEMode::LATENCY: {

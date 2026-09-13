@@ -212,39 +212,19 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const void*
   EP_HOST_ASSERT(recvBuffer != nullptr && context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
+  EP_HOST_ASSERT(isSupportedThroughputRanks(context.numRanks_));
 
   const int numTopk = workload.numTopk_;
+  EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
+  // Rank-deduplicated routing needs at most top-k contributors, even with 32 ranks.
+  const int maxContributors = std::min(numTopk, context.numRanks_);
   const bool useWideKernel = numBlocks <= COMBINE_TMA_WIDE_MAX_BLOCKS;
   auto launch = launchThroughputCombine<2, COMBINE_TMA_WARPS>;
-
-  switch (context.numRanks_) {
-    case 2:
-      break;
-    case 4:
-      if (numTopk > 2) launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
-      break;
-    case 8:
-      if (numTopk <= 4) {
-        launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
-      } else {
-        launch = useWideKernel ? launchThroughputCombine<8, COMBINE_TMA_WARPS_WIDE>
-                               : launchThroughputCombine<8, COMBINE_TMA_WARPS_NARROW>;
-      }
-      break;
-    case 16:
-      if (numTopk <= 4) {
-        launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
-      } else if (numTopk <= 8) {
-        launch = useWideKernel ? launchThroughputCombine<8, COMBINE_TMA_WARPS_WIDE>
-                               : launchThroughputCombine<8, COMBINE_TMA_WARPS_NARROW>;
-      } else if (numTopk <= 12) {
-        launch = launchThroughputCombine<12, 9>;
-      } else {
-        launch = launchThroughputCombine<16, 7>;
-      }
-      break;
-    default:
-      EP_HOST_ASSERT(false && "Unsupported ranks");
+  if (maxContributors > 4) {
+    launch = useWideKernel ? launchThroughputCombine<8, COMBINE_TMA_WARPS_WIDE>
+                           : launchThroughputCombine<8, COMBINE_TMA_WARPS_NARROW>;
+  } else if (maxContributors > 2) {
+    launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
   }
   launch(output, outputTopkWeights, input, workload, workspace, payload, recvBuffer, context, numBlocks, stream);
 }

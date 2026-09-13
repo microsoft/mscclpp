@@ -20,6 +20,7 @@
 
 #include "config.hpp"
 #include "exception.hpp"
+#include "kernels.hpp"
 #include "mp_unit_tests.hpp"
 
 namespace {
@@ -805,14 +806,18 @@ class MoERuntimeTest : public CommunicatorTestBase {
 };
 
 TEST(MoERuntimeTest, ThroughputStorageLayout) {
-  constexpr std::array<std::pair<int, size_t>, 4> cases{{{2, 256}, {4, 384}, {8, 768}, {16, 2048}}};
+  constexpr std::array<std::pair<int, size_t>, 5> cases{{{2, 256}, {4, 384}, {8, 768}, {16, 2048}, {32, 6144}}};
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::FP8_E4M3), 128);
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::BF16), 0);
+  for (const int numRanks : {0, 1, 3, 31, 64}) {
+    ASSERT_TRUE(!mscclpp::ep::isSupportedThroughputRanks(numRanks));
+  }
 
   for (const auto& [numRanks, controlBytes] : cases) {
+    ASSERT_TRUE(mscclpp::ep::isSupportedThroughputRanks(numRanks));
     for (const int capacity : {1, 8, 16, 8193}) {
       for (const int hidden : {136, 4096, 9216}) {
-        for (const int topk : {8, 16}) {
+        for (const int topk : {1, 4, 8}) {
           const size_t rows = static_cast<size_t>(numRanks) * capacity;
           const size_t hiddenBytes = rows * hidden * sizeof(Bf16);
           const size_t metadataOffset = (hiddenBytes + 127) / 128 * 128;
@@ -835,7 +840,85 @@ TEST(MoERuntimeTest, ThroughputStorageLayout) {
   }
 }
 
+TEST(MoERuntimeTest, ThroughputRoutingAt32Ranks) {
+  using namespace mscclpp::ep;
+  constexpr int RoutingRanks = 32;
+  constexpr int ExpertsPerRank = 16;
+  constexpr int RoutingExperts = RoutingRanks * ExpertsPerRank;
+  constexpr int Tokens = 257;
+  constexpr int Capacity = Tokens + 17;
+  CudaStream stream;
+  mscclpp::GpuBuffer<uint8_t> storage(throughputWorkspaceSize(Capacity, RoutingRanks, RoutingExperts));
+  const ThroughputWorkspaceLayout workspace(storage.data(), Capacity, RoutingRanks, RoutingExperts);
+  mscclpp::GpuBuffer<DeviceContext> deviceContext(1);
+  DeviceContext context{};
+  context.numRanks_ = RoutingRanks;
+  context.devicePtr_ = deviceContext.data();
+  MSCCLPP_CUDATHROW(cudaMemcpy(deviceContext.data(), &context, sizeof(context), cudaMemcpyHostToDevice));
+
+  // Exercise rank 31 and cross-tile offsets locally without requiring 32 peer GPUs.
+  for (const int numTopk : {1, 4, 8}) {
+    std::vector<int64_t> routes(static_cast<size_t>(Tokens) * numTopk, -1);
+    std::vector<int> expectedOffsets(static_cast<size_t>(Tokens) * RoutingRanks, -1);
+    std::array<int, RoutingRanks> expectedRankCounts{};
+    std::array<int, RoutingExperts> expectedExpertCounts{};
+    for (int token = 0; token < Tokens; ++token) {
+      std::array<bool, RoutingRanks> selected{};
+      for (int topk = 0; topk < numTopk; ++topk) {
+        if (token % 17 == 0 || (token + topk) % 11 == 0) continue;
+        const int destination = topk % 3 == 0 ? 31 : (token + topk) % RoutingRanks;
+        const int expert = destination * ExpertsPerRank + topk;
+        routes[static_cast<size_t>(token) * numTopk + topk] = expert;
+        selected[destination] = true;
+        ++expectedExpertCounts[expert];
+      }
+      for (int peer = 0; peer < RoutingRanks; ++peer) {
+        if (selected[peer]) {
+          expectedOffsets[static_cast<size_t>(token) * RoutingRanks + peer] = expectedRankCounts[peer]++;
+        }
+      }
+    }
+    mscclpp::GpuBuffer<int64_t> deviceRoutes(routes.size());
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(deviceRoutes.data(), routes.data(), routes.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
+    const Workload workload{.epoch_ = 0,
+                            .numTokens_ = Tokens,
+                            .hidden_ = CorrectnessHidden,
+                            .numTopk_ = numTopk,
+                            .numExperts_ = RoutingExperts,
+                            .invalidTokenExpertId_ = -1,
+                            .maxTokensPerRank_ = Capacity,
+                            .outputLayout_ = DispatchLayout::TOKEN_MAJOR,
+                            .dispatchDataType_ = DispatchDataType::BF16};
+    throughputCountRoutes(deviceRoutes.data(), workspace, workload, context, stream);
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+    std::array<int, RoutingRanks> rankCounts;
+    std::array<int, RoutingExperts> expertCounts;
+    std::vector<int> offsets(expectedOffsets.size());
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(rankCounts.data(), workspace.numTokensPerRank_, sizeof(rankCounts), cudaMemcpyDeviceToHost));
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(expertCounts.data(), workspace.numTokensPerExpert_, sizeof(expertCounts), cudaMemcpyDeviceToHost));
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(offsets.data(), workspace.recvTokenOffsets_, offsets.size() * sizeof(int), cudaMemcpyDeviceToHost));
+    for (int peer = 0; peer < RoutingRanks; ++peer) ASSERT_EQ(rankCounts[peer], expectedRankCounts[peer]);
+    for (int expert = 0; expert < RoutingExperts; ++expert)
+      ASSERT_EQ(expertCounts[expert], expectedExpertCounts[expert]);
+    for (size_t index = 0; index < offsets.size(); ++index) ASSERT_EQ(offsets[index], expectedOffsets[index]);
+  }
+}
+
 TEST(MoERuntimeTest, InitializationAndModeValidation) {
+  for (const int numTopk : {0, 9}) {
+    ASSERT_TRUE(rejectsEpRequest([&] {
+      mscclpp::ep::MoERuntime invalid(*communicator, mscclpp::ep::MoEMode::THROUGHPUT, CorrectnessTokens,
+                                      CorrectnessHidden, NumExperts, numTopk, mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
+    }));
+    ASSERT_TRUE(rejectsEpRequest([&] {
+      mscclpp::ep::ThroughputStorageLayout invalid(nullptr, CorrectnessTokens, CorrectnessHidden, 32, 32 * 16, numTopk);
+    }));
+  }
   auto throughputRuntime = std::make_unique<mscclpp::ep::MoERuntime>(*communicator, mscclpp::ep::MoEMode::THROUGHPUT,
                                                                      CorrectnessTokens, CorrectnessHidden, NumExperts,
                                                                      NumTopk, mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
@@ -928,6 +1011,74 @@ TEST(MoERuntimeTest, ThroughputDispatchCombineCorrectness) {
                                mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
   runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
                                mscclpp::ep::DispatchLayout::RANK_MAJOR);
+}
+
+TEST(MoERuntimeTest, ThroughputTopkRange) {
+  using namespace mscclpp::ep;
+  constexpr int Tokens = 5;
+  constexpr int Hidden = 136;
+  CudaStream stream;
+  std::vector<Bf16> input(Tokens * Hidden);
+  for (size_t index = 0; index < input.size(); ++index) {
+    input[index] = static_cast<Bf16>(gEnv->rank * Tokens + index / Hidden + 1);
+  }
+  mscclpp::GpuBuffer<Bf16> deviceInput(input.size());
+  mscclpp::GpuBuffer<Bf16> deviceOutput(input.size());
+  mscclpp::gpuMemcpy<Bf16>(deviceInput.data(), input.data(), input.size(), cudaMemcpyHostToDevice);
+
+  for (const auto layout : {DispatchLayout::TOKEN_MAJOR, DispatchLayout::RANK_MAJOR}) {
+    for (const int numTopk : {1, 2, 3, 4, 5, 8}) {
+      auto runtime =
+          std::make_unique<MoERuntime>(*communicator, MoEMode::THROUGHPUT, Tokens, Hidden, NumExperts, numTopk, layout);
+      runtime->initialize();
+      std::vector<int64_t> routes(Tokens * numTopk);
+      for (int token = 0; token < Tokens; ++token) {
+        for (int topk = 0; topk < numTopk; ++topk) {
+          const int peer = (gEnv->rank + token + topk) % NumRanks;
+          routes[token * numTopk + topk] = peer * (NumExperts / NumRanks) + topk;
+        }
+      }
+      mscclpp::GpuBuffer<int64_t> deviceRoutes(routes.size());
+      mscclpp::GpuBuffer<float> deviceWeights(routes.size());
+      mscclpp::gpuMemcpy<int64_t>(deviceRoutes.data(), routes.data(), routes.size(), cudaMemcpyHostToDevice);
+      const auto handle = runtime->dispatch(DispatchRequest{ThroughputDispatchRequest{
+          .output = runtime->dispatchOutputBuffer(),
+          .outputScales = nullptr,
+          .outputTopkIdx = nullptr,
+          .outputTopkWeights = nullptr,
+          .outputCount = nullptr,
+          .input = deviceInput.data(),
+          .inputScales = nullptr,
+          .topkIdx = deviceRoutes.data(),
+          .topkWeights = nullptr,
+          .numTokens = Tokens,
+          .maxTokensPerRank = Tokens,
+          .dispatchDataType = DispatchDataType::BF16,
+          .numBlocks = dispatchBlocks_,
+          .stream = stream,
+          .prepareHandle = {},
+      }});
+      runtime->combine(CombineRequest{ThroughputCombineRequest{
+          .output = deviceOutput.data(),
+          .outputTopkWeights = deviceWeights.data(),
+          .input = runtime->combineInputBuffer(),
+          .handle = handle,
+          .numBlocks = numTopk == 5 ? std::min(combineBlocks_, 24) : combineBlocks_,
+          .stream = stream,
+      }});
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      std::vector<Bf16> output(input.size());
+      std::vector<float> weights(routes.size());
+      mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
+      mscclpp::gpuMemcpy<float>(weights.data(), deviceWeights.data(), weights.size(), cudaMemcpyDeviceToHost);
+      for (size_t index = 0; index < output.size(); ++index) {
+        ASSERT_EQ(static_cast<float>(output[index]), static_cast<float>(input[index]) * numTopk);
+      }
+      for (const float weight : weights) ASSERT_EQ(weight, 1.0f);
+      runtime.reset();
+      communicator->bootstrap()->barrier();
+    }
+  }
 }
 
 TEST(MoERuntimeTest, ThroughputPreparedDispatchCombineCorrectness) {

@@ -148,27 +148,6 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
       .rankMajorTopkWeightsBuffer_;
 }
 
-void* MoERuntime::combineInputBuffer() const {
-  switch (mode_) {
-    case MoEMode::LATENCY: {
-      const auto& context = *latencyContext_;
-      EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
-      EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
-                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                                  context.combineMode_)
-          .combineBuffer_;
-    }
-    case MoEMode::THROUGHPUT: {
-      const auto& context = *throughputContext_;
-      EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-      return context.storageLayout().recvBuffer_;
-    }
-    default:
-      EP_THROW("Unsupported MoE runtime mode");
-  }
-}
-
 DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   auto& context = *latencyContext_;
   void* output = request.output;
@@ -253,17 +232,17 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
   }
 
-  const auto* latencyMetadata = std::get_if<DispatchHandle::Impl::LatencyMetadata>(&handle.metadata_);
-  if (latencyMetadata == nullptr) {
+  const auto* metadata = std::get_if<DispatchHandle::Impl::LatencyMetadata>(&handle.metadata_);
+  if (metadata == nullptr) {
     EP_THROW("Dispatch handle does not contain latency metadata");
   }
 
   void* output = request.output;
   const void* input = request.input;
-  const int64_t* topkIdx = latencyMetadata->topkIdx_;
-  const float* topkWeights = latencyMetadata->topkWeights_;
-  const int* srcInfo = latencyMetadata->srcInfo_;
-  const int64_t* layoutRange = latencyMetadata->layoutRange_;
+  const int64_t* topkIdx = metadata->topkIdx_;
+  const float* topkWeights = metadata->topkWeights_;
+  const int* srcInfo = metadata->srcInfo_;
+  const int64_t* layoutRange = metadata->layoutRange_;
   const int numTokens = handle.numTokens_;
   const int hidden = context.hidden_;
   const int numTopk = context.numTopk_;
