@@ -51,6 +51,9 @@ MSCCLPP_DEVICE_INLINE T warpBroadcast(T value, int sourceLane) {
   return result;
 }
 
+// All warp lanes participate; bit i is set exactly when lane i's predicate is true.
+MSCCLPP_DEVICE_INLINE unsigned warpLaneMask(bool predicate) { return __ballot_sync(0xffffffffu, predicate); }
+
 MSCCLPP_DEVICE_INLINE int warpInclusiveSum(int value, int laneId) {
 #pragma unroll
   for (int offset = 1; offset < WARP_SIZE; offset *= 2) {

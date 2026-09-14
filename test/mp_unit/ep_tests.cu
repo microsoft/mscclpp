@@ -544,15 +544,14 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   void* dispatchOutput = prepared ? dispatchStorage.data() + storageOffset : runtime->dispatchOutputBuffer();
   auto* combineInput =
       prepared ? combineStorage.data() + storageOffset : static_cast<Bf16*>(runtime->combineInputBuffer());
-  CudaStream prepareStream;
   mscclpp::ep::PrepareHandle preparation;
-  auto prepare = [&](cudaStream_t prepareOn) {
-    return runtime->prepare({buffers.topkIdx.data(), numTokens, numTokens, dispatchBlocks, prepareOn});
+  auto prepare = [&] {
+    return runtime->prepare({buffers.topkIdx.data(), numTokens, numTokens, dispatchBlocks, stream});
   };
-  if (preparationMode == ThroughputPreparation::Explicit) preparation = prepare(prepareStream);
+  if (preparationMode == ThroughputPreparation::Explicit) preparation = prepare();
 
   auto operation = [&] {
-    if (preparationMode == ThroughputPreparation::Captured) preparation = prepare(stream);
+    if (preparationMode == ThroughputPreparation::Captured) preparation = prepare();
     const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{
         .output = dispatchOutput,
         .outputScales = useFp8 ? buffers.outputScales.data() : nullptr,
@@ -919,10 +918,10 @@ TEST(MoERuntimeTest, ThroughputStorageLayout) {
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::FP8_E4M3), 128);
   ASSERT_EQ(mscclpp::ep::dispatchElementsPerScale(mscclpp::ep::DispatchDataType::BF16), 0);
   for (const int numRanks : {-1, 0, 65, 128}) {
-    ASSERT_TRUE(!mscclpp::ep::isSupportedThroughputRanks(numRanks));
+    ASSERT_TRUE(!mscclpp::ep::isSupportedRanks(numRanks));
   }
   for (int numRanks = 1; numRanks <= 64; ++numRanks) {
-    ASSERT_TRUE(mscclpp::ep::isSupportedThroughputRanks(numRanks));
+    ASSERT_TRUE(mscclpp::ep::isSupportedRanks(numRanks));
   }
 
   for (const auto& [numRanks, controlBytes] : cases) {
@@ -1030,7 +1029,7 @@ class MoERuntimeRankCountTest : public MultiProcessTest {
  protected:
   void SetUp() override {
     MultiProcessTest::SetUp();
-    if (!mscclpp::ep::isSupportedThroughputRanks(gEnv->worldSize)) {
+    if (!mscclpp::ep::isSupportedRanks(gEnv->worldSize)) {
       SKIP_TEST() << "MoE runtime rank-count tests require 1-64 ranks";
     }
     MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
@@ -1111,6 +1110,7 @@ TEST(MoERuntimeRankCountTest, ThroughputDispatchCombine) {
           .stream = stream,
       }});
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      communicator->bootstrap()->barrier();
       mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
       for (size_t index = 0; index < output.size(); ++index) {
         ASSERT_EQ(static_cast<float>(output[index]), static_cast<float>(input[index]));
@@ -1282,6 +1282,7 @@ TEST(MoERuntimeTest, ThroughputTopkRange) {
           .stream = stream,
       }});
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      communicator->bootstrap()->barrier();
       std::vector<Bf16> output(input.size());
       std::vector<float> weights(routes.size());
       mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
@@ -1409,25 +1410,30 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   invalid.numBlocks -= 1;
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
 
+  const auto previousDispatchHandle = runtime->dispatch(DispatchRequest{request});
   const auto dispatchHandle = runtime->dispatch(DispatchRequest{request});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  communicator->bootstrap()->barrier();
+  ThroughputCombineRequest combineRequest{
+      .output = buffers.output.data(),
+      .outputTopkWeights = nullptr,
+      .input = runtime->combineInputBuffer(),
+      .handle = previousDispatchHandle,
+      .numBlocks = combineBlocks_,
+      .stream = stream,
+  };
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
   auto replacement = runtime->prepare(prepareRequest);
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{request}); }));
-  ASSERT_TRUE(rejectsEpRequest([&] {
-    runtime->combine(CombineRequest{ThroughputCombineRequest{
-        .output = buffers.output.data(),
-        .outputTopkWeights = nullptr,
-        .input = runtime->combineInputBuffer(),
-        .handle = dispatchHandle,
-        .numBlocks = combineBlocks_,
-        .stream = stream,
-    }});
-  }));
+  combineRequest.handle = dispatchHandle;
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
 
   auto other =
       createThroughputRuntime(*communicator, CorrectnessTokens, CorrectnessHidden, DispatchLayout::TOKEN_MAJOR);
   other->initialize();
   auto otherPreparation = other->prepare(prepareRequest);
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  communicator->bootstrap()->barrier();
   invalid = request;
   invalid.prepareHandle = otherPreparation;
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
@@ -1466,6 +1472,7 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
       .stream = stream,
   }});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  communicator->bootstrap()->barrier();
   std::vector<int> counts(NumExperts / NumRanks);
   MSCCLPP_CUDATHROW(
       cudaMemcpy(counts.data(), buffers.outputCount.data(), counts.size() * sizeof(int), cudaMemcpyDeviceToHost));

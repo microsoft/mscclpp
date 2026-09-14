@@ -79,7 +79,8 @@ struct PrepareRequest {
 /// runtime's lifetime. It can be reused for unchanged routing until another
 /// preparation, including an automatically prepared dispatch, starts on the
 /// same runtime. The routing buffers remain private to the runtime. Dispatch
-/// inserts a device-side dependency when consuming this handle.
+/// must consume the handle on the same CUDA stream used for preparation;
+/// the handle itself does not synchronize GPU work.
 class PrepareHandle {
  public:
   /// Construct an empty handle, which requests automatic preparation in dispatch.
@@ -181,6 +182,7 @@ struct ThroughputDispatchRequest {
   /// An empty handle requests automatic preparation. For a non-empty handle,
   /// topkIdx, numTokens, maxTokensPerRank, and numBlocks must match the preparation.
   /// All ranks must agree on whether to reuse preparation or compute it automatically.
+  /// This dispatch must use the same CUDA stream as preparation.
   /// Routing IDs must remain unchanged; their device contents are not validated
   /// on the host. A graph may either reuse this preparation or capture automatic
   /// preparation with dispatch.

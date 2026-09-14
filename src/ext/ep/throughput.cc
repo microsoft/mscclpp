@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 //
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
-// branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 
 #include <cuda.h>
 
@@ -24,7 +23,6 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
-      bootstrap_(communicator.bootstrap()),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
@@ -38,7 +36,7 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
   EP_HOST_ASSERT(maxTokensPerRank_ > 0);
   EP_HOST_ASSERT(static_cast<int64_t>(hidden_) * sizeof(Bf16) % sizeof(int4) == 0);
 
-  if (!isSupportedThroughputRanks(numRanks_) || numRanksPerIpcDomain_ < numRanks_) {
+  if (!isSupportedRanks(numRanks_) || numRanksPerIpcDomain_ < numRanks_) {
     return;
   }
 
@@ -52,10 +50,6 @@ ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
   if (deviceContext_.devicePtr_ == nullptr) return;
 
   CudaDeviceGuard deviceGuard(deviceContext_.deviceId_);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-  bootstrap_->barrier();
-
-  if (prepareEvent_ != nullptr) MSCCLPP_CUDATHROW(cudaEventDestroy(prepareEvent_));
   MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
@@ -129,7 +123,6 @@ void ThroughputRuntimeContext::initialize() {
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
-  MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&prepareEvent_, cudaEventDisableTiming));
 }
 
 bool ThroughputRuntimeContext::fitsReceiveBuffer(int maxTokensPerRank) const {
@@ -146,7 +139,7 @@ ThroughputStorageLayout ThroughputRuntimeContext::storageLayout() const {
 }
 
 Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
-  return {.epoch_ = epoch_,
+  return {.epoch_ = 0,
           .numTokens_ = numTokens,
           .hidden_ = hidden_,
           .numTopk_ = numTopk_,
@@ -177,24 +170,17 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   requireMode(MoEMode::THROUGHPUT);
   auto& context = *throughputContext_;
   context.validatePrepareRequest(request);
-  cudaStreamCaptureStatus captureStatus;
-  MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_);
   EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
-  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.prepareEpoch_ + 1, request);
+  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.routingEpoch_ + 1, request);
 
-  // Preparation replaces shared routing metadata, but reusing a preparation only
-  // replaces dispatch results. Track those lifetimes independently.
-  ++context.prepareEpoch_;
-  ++context.epoch_;
+  // Rebuilding routing invalidates both handle types; dispatch alone only expires dispatch results.
+  ++context.routingEpoch_;
+  ++context.dispatchEpoch_;
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
   throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
   throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.stream);
-  // Keep readiness on the device, including when preparation is captured in a graph.
-  MSCCLPP_CUDATHROW(cudaEventRecordWithFlags(
-      context.prepareEvent_, request.stream,
-      captureStatus == cudaStreamCaptureStatusActive ? cudaEventRecordExternal : cudaEventRecordDefault));
   return PrepareHandle(std::move(metadata));
 }
 
@@ -228,7 +214,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
     if (owner != throughputContext_) {
       EP_THROW("Preparation handle belongs to a different runtime");
     }
-    if (metadata.epoch_ != context.prepareEpoch_) {
+    if (metadata.routingEpoch_ != context.routingEpoch_) {
       EP_THROW("Stale preparation handle: a newer preparation has replaced its metadata");
     }
     if (metadata.topkIdx_ != request.topkIdx || metadata.numTokens_ != request.numTokens ||
@@ -242,11 +228,6 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_);
   if (reusePreparation) {
-    cudaStreamCaptureStatus captureStatus;
-    MSCCLPP_CUDATHROW(cudaStreamIsCapturing(request.stream, &captureStatus));
-    MSCCLPP_CUDATHROW(cudaStreamWaitEvent(
-        request.stream, context.prepareEvent_,
-        captureStatus == cudaStreamCaptureStatusActive ? cudaEventWaitExternal : cudaEventWaitDefault));
     // Replays still need a peer handshake before overwriting the previous payload.
     throughputSynchronizePeers(context.deviceContext_, request.stream);
   }
@@ -266,8 +247,9 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
                      request.inputScales, workload, workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_,
                      context.deviceContext_, request.numBlocks, request.stream);
 
-  ++context.epoch_;
-  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.epoch_, request));
+  ++context.dispatchEpoch_;
+  return DispatchHandle(
+      std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.dispatchEpoch_, request));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -283,7 +265,7 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   if (owner != throughputContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
-  if (handle.epoch_ != context.epoch_) {
+  if (handle.epoch_ != context.dispatchEpoch_) {
     EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
   }
   if (!std::holds_alternative<std::monostate>(handle.metadata_)) {

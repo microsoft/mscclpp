@@ -27,7 +27,7 @@ inline constexpr bool isSupportedHidden(int hidden) {
 }
 
 struct Workload {
-  /// Host-assigned epoch shared by the matching dispatch and combine calls.
+  /// Latency packet epoch; throughput kernels do not consume this field.
   uint32_t epoch_;
   /// Number of local input or output tokens.
   int numTokens_;
@@ -53,6 +53,7 @@ struct KernelConfigCache {
   int residentBlocks_ = 0;
 };
 
+// Both modes use this shared-memory opt-in and residency setup before launching kernels.
 template <typename Kernel>
 inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
                            KernelConfigCache& cache) {

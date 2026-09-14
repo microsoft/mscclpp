@@ -1,8 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-//
-// Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
-// branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 
 #include <cooperative_groups.h>
 
@@ -30,6 +27,7 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int throughputWarpsPerGroup(int numTokens, 
   return tokenWarps > rowWarps ? tokenWarps : rowWarps;
 }
 
+// Count-exchange structure adapted from DeepEP (https://github.com/deepseek-ai/DeepEP).
 __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspace, Workload workload,
                                                const DeviceContext* context) {
   const int numRanks = context->numRanks_;
@@ -156,7 +154,7 @@ __global__ void __launch_bounds__(NumThreads, 1)
       laneSlot = laneId < numRanks ? workspace.recvTokenIndex(token, laneId, numRanks) : -1;
     }
     // For larger peer sets, mask bits identify top-k lanes rather than rank IDs.
-    const unsigned destinationMask = __ballot_sync(0xffffffffu, laneSlot >= 0);
+    const unsigned destinationMask = warpLaneMask(laneSlot >= 0);
     if (destinationMask == 0) continue;
     int4* laneRow =
         laneSlot >= 0 ? payload.data<int4>(laneBuffer) + static_cast<int64_t>(laneSlot) * hiddenInt4 : nullptr;

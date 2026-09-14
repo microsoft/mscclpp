@@ -54,7 +54,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadata(const TransportView& transport,
       laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
   const float candidateWeight =
       laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
-  unsigned int leaderMask = __ballot_sync(0xffffffff, route.dstRank >= 0 && route.isLeader);
+  unsigned int leaderMask = warpLaneMask(route.dstRank >= 0 && route.isLeader);
   while (leaderMask != 0) {
     const int leaderLane = __ffs(leaderMask) - 1;
     const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
@@ -886,14 +886,13 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   const int nRanks = context.numRanks_;
   const int numWorkerBlocks = numBlocks - DispatchControlBlocks;
 
-  EP_HOST_ASSERT(nRanks > 0);
+  EP_HOST_ASSERT(isSupportedRanks(nRanks));
   EP_HOST_ASSERT(nExperts > 0);
   EP_HOST_ASSERT(nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
   EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);

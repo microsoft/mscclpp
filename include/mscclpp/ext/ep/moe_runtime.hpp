@@ -20,11 +20,10 @@ struct ThroughputRuntimeContext;
 /// Both modes own fixed-capacity symmetric storage sized from the runtime
 /// configuration. LATENCY exposes expert-major or rank-major rows. THROUGHPUT
 /// exposes compact token-major or fixed-stride rank-major rows within that storage.
-/// Preparation, dispatch, and combine execute asynchronously on the request's
-/// CUDA stream. Routing counts and prefixes stay in device memory; an empty
-/// preparation handle makes dispatch enqueue preparation internally.
-/// Host calls sharing a runtime must be serialized, and GPU work reusing its
-/// buffers must be ordered, including across streams.
+/// Operations enqueue asynchronously on the supplied CUDA stream. All GPU work
+/// sharing a runtime, including expert computation, must use that same stream.
+/// Cross-stream execution is not supported.
+/// Host calls sharing a runtime must be serialized.
 class MoERuntime {
  public:
   /// Construct a runtime for the selected mode and topology.
@@ -86,14 +85,14 @@ class MoERuntime {
   ///
   /// Computes stable local token offsets and exchanges peer counts to determine
   /// receive ranges entirely on the GPU, without a host copy or wait.
-  /// Dispatch can consume the handle on another stream using a device-side
-  /// event dependency. Preparation is supported only in THROUGHPUT mode and
-  /// can be captured together with dispatch in a CUDA graph.
+  /// Enqueue dispatch on the same stream to consume the returned handle.
+  /// Preparation is supported only in THROUGHPUT mode and can be captured
+  /// together with dispatch in a CUDA graph.
   ///
   /// All ranks must prepare and dispatch in the same order. Starting a valid
   /// preparation invalidates earlier preparation and dispatch handles on this
-  /// runtime. Rejected inputs do not invalidate handles. Previously enqueued
-  /// work must be ordered before preparation, including across streams.
+  /// runtime. Host validation failures do not invalidate handles. Previously
+  /// enqueued work must precede preparation on the same stream.
   /// A captured preparation must execute before consumers outside that graph.
   ///
   /// Attach the result to an otherwise unchanged throughput dispatch request:
@@ -123,7 +122,7 @@ class MoERuntime {
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. A successful new
   /// dispatch or throughput preparation invalidates prior dispatch handles;
-  /// a rejected request does not.
+  /// a request rejected by host validation does not.
   /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);
 

@@ -24,17 +24,17 @@ namespace ep {
 struct Workload;
 
 struct PrepareHandle::Impl {
-  Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t epoch, const PrepareRequest& request)
+  Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t routingEpoch, const PrepareRequest& request)
       : owner_(std::move(owner)),
-        epoch_(epoch),
+        routingEpoch_(routingEpoch),
         topkIdx_(request.topkIdx),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
         numBlocks_(request.numBlocks) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
-  // Host-side generation of the routing workspace; a new prepare invalidates old handles.
-  uint64_t epoch_;
+  // Snapshot of the routing workspace's generation; a new prepare invalidates this handle.
+  uint64_t routingEpoch_;
   const int64_t* topkIdx_;
   int numTokens_;
   int maxTokensPerRank_;
@@ -130,7 +130,6 @@ struct ThroughputRuntimeContext {
   int numRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
   int maxTokensPerRank_;
   int hidden_;
   int numExperts_;
@@ -139,9 +138,10 @@ struct ThroughputRuntimeContext {
   size_t symmetricBufferBytes_ = 0;
   size_t workspaceBytes_ = 0;
   mscclpp::Communicator& communicator_;
-  uint32_t epoch_ = 0;
-  uint64_t prepareEpoch_ = 0;
-  cudaEvent_t prepareEvent_ = nullptr;
+  // Dispatch results expire on either a new dispatch or a new preparation.
+  uint32_t dispatchEpoch_ = 0;
+  // Prepared routing remains reusable across dispatches until the next preparation.
+  uint64_t routingEpoch_ = 0;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   std::vector<void*> peerMappedBufferBases_;

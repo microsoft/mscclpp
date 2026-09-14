@@ -47,7 +47,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
-  available_ = numRanksPerIpcDomain_ >= numRanks_;
+  available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {

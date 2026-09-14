@@ -46,11 +46,12 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   EP_DEVICE_ASSERT(input != nullptr || receivedTokens == 0);
 
   auto* localTokens = payload.data<int4>(recvBuffer);
+  // Peers can read the runtime's symmetric storage, not an arbitrary caller allocation.
   if (receivedTokens > 0 && input != localTokens) {
     const int rows = rankMajor ? numRanks * maxTokensPerRank : receivedTokens;
     copyThroughputRows(localTokens, input, rows, hiddenInt4 * sizeof(int4), workspace.recvCounts_, maxTokensPerRank,
                        rankMajor, blockIdx.x * blockDim.x + threadIdx.x, gridDim.x * blockDim.x);
-    // Join staging stores before the system-release peer publication below.
+    // Every staging block must finish before block 0 publishes readiness to peers.
     cooperative_groups::this_grid().sync();
   }
 
@@ -85,7 +86,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
     for (int rankBase = 0; rankBase < numRanks; rankBase += WARP_SIZE) {
       const int peerRank = rankBase + laneId;
       const int slot = peerRank < numRanks ? workspace.recvTokenIndex(token, peerRank, numRanks) : -1;
-      unsigned contributors = __ballot_sync(0xffffffffu, slot >= 0);
+      unsigned contributors = warpLaneMask(slot >= 0);
       while (contributors != 0u) {
         const int sourceLane = __ffs(static_cast<int>(contributors)) - 1;
         if (numContributors < MaxContributors) {
@@ -212,7 +213,7 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const void*
   EP_HOST_ASSERT(recvBuffer != nullptr && context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
-  EP_HOST_ASSERT(isSupportedThroughputRanks(context.numRanks_));
+  EP_HOST_ASSERT(isSupportedRanks(context.numRanks_));
 
   const int numTopk = workload.numTopk_;
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);

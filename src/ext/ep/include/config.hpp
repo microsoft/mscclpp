@@ -20,7 +20,7 @@ namespace ep {
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
 
-inline constexpr bool isSupportedThroughputRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
+inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -236,8 +236,25 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-// Unlike latency's packed per-token payload, throughput keeps dense token rows
+// Unlike latency's packed per-token payload, throughput keeps token data
 // and fixed-stride metadata in separate slabs so GEMM can use the rows directly.
+//
+// TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
+//   [dense data: DataType[numRecvTokens][hidden]]
+//   [unused allocation tail up to metadataOffset_]
+//   [metadata row 0] ... [metadata row numRecvTokens - 1]
+//   [unused metadata capacity up to numBytes_]
+//
+// Each metadata row has a 128-byte-aligned stride of metadataSlotBytes_:
+//   [topKIndices: int[topK]]
+//   [topKValues: float[topK]]
+//   [optional FP8 scales: float[hidden / 128]]
+//   [padding to metadataSlotBytes_]
+//
+// maxRows = numRanks * configuredMaxTokensPerRank is capacity, not a per-rank stride.
+// The BF16-sized data reservation keeps metadataOffset_ fixed for FP8 too.
+// RANK_MAJOR uses explicit source-rank row ranges instead of the compact view above.
+// Inverse routing stays in the workspace; there is no source-token ID in this payload.
 struct ThroughputPayloadView {
   int topK_;
   size_t metadataOffset_;
@@ -300,7 +317,7 @@ struct ThroughputStorageLayout {
   ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                           int numTopk)
       : payload_(static_cast<size_t>(numRanks) * maxTokensPerRank, hidden, numTopk) {
-    EP_HOST_ASSERT(isSupportedThroughputRanks(numRanks));
+    EP_HOST_ASSERT(isSupportedRanks(numRanks));
     EP_HOST_ASSERT(maxTokensPerRank > 0 && hidden > 0 && numExperts > 0 && numExperts % numRanks == 0);
     EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
 
