@@ -981,6 +981,9 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
     for (const auto dataType : {DispatchDataType::BF16, DispatchDataType::FP8_E4M3}) {
       runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
                                    {.runtimeCapacity = 2 * CorrectnessTokens, .dataType = dataType});
+      runThroughputCorrectnessCase(
+          *communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
+          {.usePreparation = true, .runtimeCapacity = 2 * CorrectnessTokens, .dataType = dataType});
       runThroughputCorrectnessCase(*communicator, gEnv->rank, 3, combineBlocks_, layout,
                                    {.numTokens = 67, .hidden = 9216, .runtimeCapacity = 96, .dataType = dataType});
     }
@@ -1055,122 +1058,6 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       communicator->bootstrap()->barrier();
     }
   }
-}
-
-TEST(MoERuntimeTest, ThroughputPrepare) {
-  using namespace mscclpp::ep;
-  for (const auto layout : {DispatchLayout::TOKEN_MAJOR, DispatchLayout::RANK_MAJOR}) {
-    for (const auto dataType : {DispatchDataType::BF16, DispatchDataType::FP8_E4M3}) {
-      runThroughputCorrectnessCase(
-          *communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
-          {.usePreparation = true, .runtimeCapacity = 2 * CorrectnessTokens, .dataType = dataType});
-    }
-  }
-  PrepareHandle empty;
-
-  auto runtime =
-      createThroughputRuntime(*communicator, CorrectnessTokens, CorrectnessHidden, DispatchLayout::TOKEN_MAJOR);
-  runtime->initialize();
-  CudaStream stream;
-  TestBuffers buffers(CorrectnessTokens, CorrectnessHidden);
-  initializeTestBuffers(buffers, gEnv->rank, CorrectnessTokens, CorrectnessHidden, stream);
-  const PrepareRequest prepareRequest{buffers.topkIdx.data(), CorrectnessTokens, CorrectnessTokens, dispatchBlocks_,
-                                      stream};
-  auto preparation = runtime->prepare(prepareRequest);
-  ThroughputDispatchRequest request{
-      .output = runtime->dispatchOutputBuffer(),
-      .outputScales = nullptr,
-      .outputTopkIdx = nullptr,
-      .outputTopkWeights = nullptr,
-      .outputCount = buffers.outputCount.data(),
-      .input = buffers.input.data(),
-      .inputScales = nullptr,
-      .topkIdx = buffers.topkIdx.data(),
-      .topkWeights = buffers.topkWeights.data(),
-      .numTokens = CorrectnessTokens,
-      .maxTokensPerRank = CorrectnessTokens,
-      .dispatchDataType = DispatchDataType::BF16,
-      .numBlocks = dispatchBlocks_,
-      .stream = stream,
-      .prepareHandle = preparation,
-  };
-
-  auto invalid = request;
-  invalid.numTokens -= 1;
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
-
-  for (const bool reusePreparation : {false, true}) {
-    invalid = request;
-    if (!reusePreparation) invalid.prepareHandle = {};
-    invalid.input = buffers.input.data() + 1;
-    ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
-    invalid.input = request.input;
-    invalid.output = static_cast<Bf16*>(request.output) + 1;
-    ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
-  }
-
-  const auto previousDispatchHandle = runtime->dispatch(DispatchRequest{request});
-  const auto dispatchHandle = runtime->dispatch(DispatchRequest{request});
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  communicator->bootstrap()->barrier();
-  ThroughputCombineRequest combineRequest{
-      .output = buffers.output.data(),
-      .outputTopkWeights = nullptr,
-      .input = runtime->combineInputBuffer(),
-      .handle = previousDispatchHandle,
-      .numBlocks = combineBlocks_,
-      .stream = stream,
-  };
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
-  combineRequest.handle = dispatchHandle;
-  auto invalidCombine = combineRequest;
-  invalidCombine.input = static_cast<const Bf16*>(combineRequest.input) + 1;
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{invalidCombine}); }));
-  invalidCombine = combineRequest;
-  invalidCombine.output = buffers.output.data() + 1;
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{invalidCombine}); }));
-  runtime->combine(CombineRequest{combineRequest});
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  communicator->bootstrap()->barrier();
-  auto replacement = runtime->prepare(prepareRequest);
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{request}); }));
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
-
-  request.prepareHandle = replacement;
-  runtime->dispatch(DispatchRequest{request});
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-
-  request.prepareHandle = empty;
-  runtime->dispatch(DispatchRequest{request});
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  invalid = request;
-  invalid.prepareHandle = replacement;
-  ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
-
-  const auto zero = runtime->prepare({nullptr, 0, CorrectnessTokens, dispatchBlocks_, stream});
-  request.input = nullptr;
-  request.output = nullptr;
-  request.topkIdx = nullptr;
-  request.numTokens = 0;
-  request.prepareHandle = zero;
-  const auto zeroDispatch = runtime->dispatch(DispatchRequest{request});
-  runtime->combine(CombineRequest{ThroughputCombineRequest{
-      .output = nullptr,
-      .outputTopkWeights = nullptr,
-      .input = nullptr,
-      .handle = zeroDispatch,
-      .numBlocks = combineBlocks_,
-      .stream = stream,
-  }});
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  communicator->bootstrap()->barrier();
-  std::vector<int> counts(NumExperts / NumRanks);
-  MSCCLPP_CUDATHROW(
-      cudaMemcpy(counts.data(), buffers.outputCount.data(), counts.size() * sizeof(int), cudaMemcpyDeviceToHost));
-  ASSERT_TRUE(std::all_of(counts.begin(), counts.end(), [](int value) { return value == 0; }));
-
-  runtime.reset();
-  communicator->bootstrap()->barrier();
 }
 
 PERF_TEST(MoERuntimeTest, GraphDispatchCombine32Tokens) {
