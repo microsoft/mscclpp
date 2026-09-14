@@ -760,17 +760,18 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
   communicator.bootstrap()->barrier();
 }
 
-void runThroughputDispatchPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communicator& communicator, int rank,
-                                      int numTokens, int dispatchBlocks, mscclpp::ep::DispatchDataType dataType,
-                                      cudaStream_t stream) {
+void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communicator& communicator, int rank,
+                              int numTokens, int dispatchBlocks, int combineBlocks,
+                              mscclpp::ep::DispatchDataType dataType, cudaStream_t stream) {
   using namespace mscclpp::ep;
   constexpr int Warmups = 3;
   constexpr int Iterations = 200;
   const bool fp8 = dataType == DispatchDataType::FP8_E4M3;
 
-  // Dispatch-only storage: do not allocate the latency fixture's expert/GEMM staging buffers.
   const size_t elements = static_cast<size_t>(numTokens) * PerfHidden;
   mscclpp::GpuBuffer<Bf16> input(elements);
+  mscclpp::GpuBuffer<Bf16> expertInput(static_cast<size_t>(NumRanks) * elements);
+  mscclpp::GpuBuffer<Bf16> output(elements);
   mscclpp::GpuBuffer<Fp8E4M3> fp8Input(fp8 ? elements : 1);
   mscclpp::GpuBuffer<float> inputScales(fp8 ? static_cast<size_t>(numTokens) * (PerfHidden / 128) : 1);
   std::vector<int64_t> routes(static_cast<size_t>(numTokens) * NumTopk);
@@ -788,6 +789,11 @@ void runThroughputDispatchPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp:
     initializeThroughputFp8<<<numBlocks(elements), Threads, 0, stream>>>(fp8Input.data(), inputScales.data(),
                                                                          input.data(), numTokens, PerfHidden);
     MSCCLPP_CUDATHROW(cudaGetLastError());
+  }
+  // Prepare representative BF16 expert results outside timing, including for FP8 dispatch.
+  for (int peer = 0; peer < NumRanks; ++peer) {
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(expertInput.data() + static_cast<size_t>(peer) * elements, input.data(),
+                                      elements * sizeof(Bf16), cudaMemcpyDeviceToDevice, stream));
   }
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
@@ -808,12 +814,22 @@ void runThroughputDispatchPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp:
       .stream = stream,
       .prepareHandle = {},
   };
-  auto dispatch = [&] { runtime.dispatch(DispatchRequest{request}); };
+  auto operation = [&] {
+    const auto handle = runtime.dispatch(DispatchRequest{request});
+    runtime.combine(CombineRequest{ThroughputCombineRequest{
+        .output = output.data(),
+        .outputTopkWeights = nullptr,
+        .input = expertInput.data(),
+        .handle = handle,
+        .numBlocks = combineBlocks,
+        .stream = stream,
+    }});
+  };
   for (const bool cached : {false, true}) {
     if (cached) {
       request.prepareHandle = runtime.prepare({topkIdx.data(), numTokens, numTokens, dispatchBlocks, stream});
     }
-    for (int iteration = 0; iteration < Warmups; ++iteration) dispatch();
+    for (int iteration = 0; iteration < Warmups; ++iteration) operation();
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
     communicator.bootstrap()->barrier();
@@ -823,7 +839,7 @@ void runThroughputDispatchPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp:
     MSCCLPP_CUDATHROW(cudaEventCreate(&start));
     MSCCLPP_CUDATHROW(cudaEventCreate(&end));
     MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
-    for (int iteration = 0; iteration < Iterations; ++iteration) dispatch();
+    for (int iteration = 0; iteration < Iterations; ++iteration) operation();
     MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
     MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
     float elapsedMs;
@@ -835,11 +851,11 @@ void runThroughputDispatchPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp:
     double maxMicroseconds = 0.0;
     MPI_Allreduce(&localMicroseconds, &maxMicroseconds, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     if (rank == 0) {
-      const std::string label = std::string("throughput-dispatch/eager/token-major/format=") +
-                                (fp8 ? "fp8-e4m3" : "bf16") + "/tokens=" + std::to_string(numTokens) +
-                                "/blocks=" + std::to_string(dispatchBlocks) +
-                                "/preparation=" + (cached ? "cached" : "automatic");
-      ::mscclpp::test::reportPerfResult(label, maxMicroseconds, "us/dispatch");
+      const std::string label =
+          std::string("throughput-dispatch-combine/eager/token-major/format=") + (fp8 ? "fp8-e4m3" : "bf16") +
+          "/tokens=" + std::to_string(numTokens) + "/dispatch_blocks=" + std::to_string(dispatchBlocks) +
+          "/combine_blocks=" + std::to_string(combineBlocks) + "/preparation=" + (cached ? "cached" : "automatic");
+      ::mscclpp::test::reportPerfResult(label, maxMicroseconds, "us/D+C");
     }
     communicator.bootstrap()->barrier();
   }
@@ -1174,8 +1190,9 @@ PERF_TEST(MoERuntimeTest, ThroughputPerformance) {
   CudaStream stream;
   for (const int tokens : {1024, 2048, 4096}) {
     for (const int blocks : {24, dispatchBlocks_}) {
+      const int combineBlocks = blocks == 24 ? std::min(32, combineBlocks_) : combineBlocks_;
       for (const auto dataType : {mscclpp::ep::DispatchDataType::BF16, mscclpp::ep::DispatchDataType::FP8_E4M3}) {
-        runThroughputDispatchPerformance(*runtime, *communicator, gEnv->rank, tokens, blocks, dataType, stream);
+        runThroughputPerformance(*runtime, *communicator, gEnv->rank, tokens, blocks, combineBlocks, dataType, stream);
       }
     }
   }

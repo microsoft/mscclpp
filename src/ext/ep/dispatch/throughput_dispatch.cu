@@ -27,69 +27,6 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int throughputWarpsPerGroup(int numTokens, 
   return tokenWarps > rowWarps ? tokenWarps : rowWarps;
 }
 
-// Count-exchange structure adapted from DeepEP (https://github.com/deepseek-ai/DeepEP).
-__global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspace, Workload workload,
-                                               const DeviceContext* context) {
-  const int numRanks = context->numRanks_;
-  const int threadId = static_cast<int>(threadIdx.x);
-  blockPeerBarrier(context->channels_, context->rank_, numRanks);
-
-  const int numExpertsPerRank = workload.numExperts_ / numRanks;
-  if (threadId < numRanks) {
-    auto* peerRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[threadId]);
-    auto* peerExpertCounts = peerRankCounts + numRanks * numRanks;
-    for (int dstRank = 0; dstRank < numRanks; ++dstRank) {
-      peerRankCounts[context->rank_ * numRanks + dstRank] = workspace.numTokensPerRank_[dstRank];
-    }
-    for (int localExpert = 0; localExpert < numExpertsPerRank; ++localExpert) {
-      peerExpertCounts[context->rank_ * numExpertsPerRank + localExpert] =
-          workspace.numTokensPerExpert_[threadId * numExpertsPerRank + localExpert];
-    }
-  }
-  __syncthreads();
-
-  blockPeerBarrier(context->channels_, context->rank_, numRanks);
-
-  auto* localRankCounts = reinterpret_cast<int*>(context->peerBufferBases_[context->rank_]);
-  if (threadId < numRanks) {
-    for (int srcRank = 1; srcRank < numRanks; ++srcRank) {
-      localRankCounts[srcRank * numRanks + threadId] += localRankCounts[(srcRank - 1) * numRanks + threadId];
-    }
-    const int rankPrefix = context->rank_ > 0 ? localRankCounts[(context->rank_ - 1) * numRanks + threadId] : 0;
-    workspace.rankOffsets_[threadId] =
-        workload.outputLayout_ == DispatchLayout::RANK_MAJOR ? context->rank_ * workload.maxTokensPerRank_ : rankPrefix;
-    if (threadId == context->rank_)
-      *workspace.numRecvTokens_ = localRankCounts[(numRanks - 1) * numRanks + context->rank_];
-  }
-
-  auto* localExpertCounts = localRankCounts + numRanks * numRanks;
-  if (threadId < numExpertsPerRank) {
-    int count = 0;
-    for (int srcRank = 0; srcRank < numRanks; ++srcRank) {
-      count += localExpertCounts[srcRank * numExpertsPerRank + threadId];
-    }
-    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) workspace.recvCounts_[threadId] = count;
-  }
-  __syncthreads();
-
-  if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR && threadId < numRanks) {
-    const int prefix = localRankCounts[threadId * numRanks + context->rank_];
-    const int previous = threadId == 0 ? 0 : localRankCounts[(threadId - 1) * numRanks + context->rank_];
-    workspace.recvCounts_[threadId] = prefix - previous;
-  }
-  // Dispatch and combine use local rank offsets; peers no longer read these prefixes.
-}
-
-void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
-                              const DeviceContext& context, cudaStream_t stream) {
-  constexpr int NumThreads = ThroughputCountThreads;
-  EP_HOST_ASSERT(workload.numExperts_ % context.numRanks_ == 0);
-  EP_HOST_ASSERT(workload.numExperts_ / context.numRanks_ <= NumThreads && context.numRanks_ <= NumThreads);
-
-  exchangeThroughputCountsKernel<<<1, NumThreads, 0, stream>>>(workspace, workload, context.devicePtr_);
-  MSCCLPP_CUDATHROW(cudaGetLastError());
-}
-
 __global__ void synchronizeThroughputPeersKernel(const DeviceContext* context) {
   blockPeerBarrier(context->channels_, context->rank_, context->numRanks_);
 }
