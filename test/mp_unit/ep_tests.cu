@@ -532,18 +532,15 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
 
   const bool prepared = preparationMode != ThroughputPreparation::Automatic;
   const size_t elements = static_cast<size_t>(expectation.totalRows) * hidden;
-  mscclpp::GpuBuffer<Bf16> dispatchStorage(prepared ? elements + 1 : 1);
-  mscclpp::GpuBuffer<Bf16> combineStorage(prepared ? elements + 1 : 1);
+  mscclpp::GpuBuffer<Bf16> dispatchStorage(prepared ? std::max<size_t>(elements, 1) : 1);
+  mscclpp::GpuBuffer<Bf16> combineStorage(prepared ? std::max<size_t>(elements, 1) : 1);
   const size_t metadataElements = static_cast<size_t>(expectation.totalRows) * NumTopk;
   mscclpp::GpuBuffer<int> receivedTopkIdx(std::max<size_t>(metadataElements, 1));
   mscclpp::GpuBuffer<float> receivedTopkWeights(std::max<size_t>(metadataElements, 1));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(receivedTopkIdx.data(), 0xff, receivedTopkIdx.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(receivedTopkWeights.data(), 0, receivedTopkWeights.bytes(), stream));
-  // Exercise aligned copies with explicit preparation and unaligned copies with captured preparation.
-  const int storageOffset = preparationMode == ThroughputPreparation::Captured ? 1 : 0;
-  void* dispatchOutput = prepared ? dispatchStorage.data() + storageOffset : runtime->dispatchOutputBuffer();
-  auto* combineInput =
-      prepared ? combineStorage.data() + storageOffset : static_cast<Bf16*>(runtime->combineInputBuffer());
+  void* dispatchOutput = prepared ? dispatchStorage.data() : runtime->dispatchOutputBuffer();
+  auto* combineInput = prepared ? combineStorage.data() : static_cast<Bf16*>(runtime->combineInputBuffer());
   mscclpp::ep::PrepareHandle preparation;
   auto prepare = [&] {
     return runtime->prepare({buffers.topkIdx.data(), numTokens, numTokens, dispatchBlocks, stream});
@@ -1410,6 +1407,16 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
   invalid.numBlocks -= 1;
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
 
+  for (const bool reusePreparation : {false, true}) {
+    invalid = request;
+    if (!reusePreparation) invalid.prepareHandle = {};
+    invalid.input = buffers.input.data() + 1;
+    ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
+    invalid.input = request.input;
+    invalid.output = static_cast<Bf16*>(request.output) + 1;
+    ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{invalid}); }));
+  }
+
   const auto previousDispatchHandle = runtime->dispatch(DispatchRequest{request});
   const auto dispatchHandle = runtime->dispatch(DispatchRequest{request});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -1423,9 +1430,18 @@ TEST(MoERuntimeTest, ThroughputPreparationValidation) {
       .stream = stream,
   };
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
+  combineRequest.handle = dispatchHandle;
+  auto invalidCombine = combineRequest;
+  invalidCombine.input = static_cast<const Bf16*>(combineRequest.input) + 1;
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{invalidCombine}); }));
+  invalidCombine = combineRequest;
+  invalidCombine.output = buffers.output.data() + 1;
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{invalidCombine}); }));
+  runtime->combine(CombineRequest{combineRequest});
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  communicator->bootstrap()->barrier();
   auto replacement = runtime->prepare(prepareRequest);
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->dispatch(DispatchRequest{request}); }));
-  combineRequest.handle = dispatchHandle;
   ASSERT_TRUE(rejectsEpRequest([&] { runtime->combine(CombineRequest{combineRequest}); }));
 
   auto other =

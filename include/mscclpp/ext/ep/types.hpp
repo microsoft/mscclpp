@@ -146,7 +146,7 @@ struct LatencyDispatchRequest {
 /// using them, including graph replays, has completed. The returned
 /// DispatchHandle must stay alive until the matching combine has been enqueued.
 struct ThroughputDispatchRequest {
-  /// Dispatch output buffer.
+  /// Dispatch output buffer, 16-byte aligned.
   ///
   /// This may alias MoERuntime::dispatchOutputBuffer() to use the runtime-owned
   /// receive buffer directly.
@@ -159,7 +159,7 @@ struct ThroughputDispatchRequest {
   float* outputTopkWeights;
   /// Per-expert or per-rank output counts.
   int* outputCount;
-  /// Input token payload.
+  /// Input token payload, 16-byte aligned.
   const void* input;
   /// Optional input scale factors.
   const float* inputScales;
@@ -234,11 +234,11 @@ struct LatencyCombineRequest {
 
 /// Arguments for throughput-mode combine.
 struct ThroughputCombineRequest {
-  /// Combined token output.
+  /// Combined token output, 16-byte aligned.
   void* output;
   /// Optional combined top-k weights.
   float* outputTopkWeights;
-  /// Local expert output in the dispatch output layout.
+  /// Local expert output in the dispatch output layout, 16-byte aligned when non-null.
   ///
   /// A null pointer is valid only when the device receive count is zero; this
   /// data-dependent condition is checked on the GPU.

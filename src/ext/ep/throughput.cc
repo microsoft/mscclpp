@@ -191,6 +191,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   context.validatePrepareRequest(prepareRequest);
   EP_HOST_ASSERT(request.output != nullptr || request.numTokens == 0);
   EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
+  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
+  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(request.dispatchDataType));
 
   const int elementBytes = dispatchElementBytes(request.dispatchDataType);
@@ -276,6 +278,8 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
+  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
+  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,

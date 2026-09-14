@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
+
 #include <cooperative_groups.h>
 
 #include <algorithm>
