@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <mscclpp/bulk_device.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 
 #include "common/device_helpers.cuh"
 #include "exception.hpp"
@@ -38,7 +39,8 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   constexpr int ChunkInt4 = COMBINE_TMA_CHUNK_INT4;
   constexpr int NumStages = COMBINE_TMA_STAGES;
   constexpr int ChunkBytes = ChunkInt4 * static_cast<int>(sizeof(int4));
-  constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(nv_bfloat16);
+  constexpr int Bf16PerInt4 = mscclpp::bf16x8::Size;
+  static_assert(sizeof(mscclpp::bf16x8) == sizeof(int4));
 
   const int laneId = getLaneId();
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -122,26 +124,22 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
 
     auto reduceStore = [&](int stageIdx, int chunkOffset, int chunkSize) {
       for (int index = laneId; index < chunkSize; index += WARP_SIZE) {
-        float values[Bf16PerInt4] = {};
+        mscclpp::f32x8 values;
+#pragma unroll
+        for (int element = 0; element < Bf16PerInt4; ++element) values.data[element] = 0.0f;
 #pragma unroll
         for (int contributor = 0; contributor < MaxContributors; ++contributor) {
           if (contributor >= numContributors) break;
-          const int4 packed =
-              *reinterpret_cast<const int4*>(stage(stageIdx, contributor) + index * static_cast<int>(sizeof(int4)));
-          const auto* inputValues = reinterpret_cast<const nv_bfloat16*>(&packed);
+          const auto* peerValues = reinterpret_cast<const mscclpp::bf16x8*>(stage(stageIdx, contributor));
+          const auto packed = peerValues[index];
+          const auto inputValues = mscclpp::to<mscclpp::f32x8>(packed);
 #pragma unroll
           for (int element = 0; element < Bf16PerInt4; ++element) {
-            values[element] += static_cast<float>(inputValues[element]);
+            values.data[element] += inputValues.data[element];
           }
         }
 
-        int4 packedOutput;
-        auto* outputValues = reinterpret_cast<nv_bfloat16*>(&packedOutput);
-#pragma unroll
-        for (int element = 0; element < Bf16PerInt4; ++element) {
-          outputValues[element] = static_cast<nv_bfloat16>(values[element]);
-        }
-        outputRow[chunkOffset + index] = packedOutput;
+        outputRow[chunkOffset + index] = mscclpp::bit_cast<int4>(mscclpp::to<mscclpp::bf16x8>(values));
       }
     };
 
