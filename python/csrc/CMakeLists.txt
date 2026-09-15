@@ -28,3 +28,14 @@ if(MSCCLPP_USE_ROCM)
     target_compile_definitions(mscclpp_py PRIVATE MSCCLPP_USE_ROCM)
 endif()
 install(TARGETS mscclpp_py LIBRARY DESTINATION .)
+
+if(TARGET mscclpp_ep)
+    nanobind_add_module(mscclpp_ep_cpp ${PROJECT_SOURCE_DIR}/src/ext/ep/bindings.cpp)
+    target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp_ep)
+    target_include_directories(mscclpp_ep_cpp SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
+    target_compile_definitions(mscclpp_ep_cpp PRIVATE
+        $<$<BOOL:${MSCCLPP_DISABLE_NB_LEAK_WARNINGS}>:MSCCLPP_DISABLE_NB_LEAK_WARNINGS>
+    )
+    set_target_properties(mscclpp_ep_cpp PROPERTIES INSTALL_RPATH "\$ORIGIN/lib")
+    install(TARGETS mscclpp_ep_cpp LIBRARY DESTINATION .)
+endif()

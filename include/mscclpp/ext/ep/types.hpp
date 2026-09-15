@@ -222,7 +222,13 @@ class DispatchHandle {
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
-  /// Local expert output.
+  /// Local BF16 expert output.
+  ///
+  /// Rank-major external input is staged into combineInputBuffer() on the
+  /// caller stream after handle validation. It must contain [numRanks,
+  /// active capacity, hidden] elements, with an extra top-k dimension before
+  /// hidden for DIRECT_SEND. It may alias the runtime buffer exactly, but
+  /// must not overlap it partially.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
