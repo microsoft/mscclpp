@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "megamoe_specialization.hpp"
+
 namespace mscclpp::megamoe {
 
 struct NativeConfig {
@@ -45,6 +47,16 @@ struct PackedWeights {
   uint8_t* fc2Scale = nullptr;
 };
 
+struct KernelResources {
+  int ctas = 0;
+  int device = -1;
+  size_t sharedBytes = 0;
+};
+
+}  // namespace mscclpp::megamoe
+
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
+
 // Input weights are canonical [E_local, 2I, H] / [E_local, H, I] with
 // row-major E8M0 scales [E_local, M, K/32]. Packing preserves byte counts.
 void packNativeWeights(const NativeConfig& config, const PackedWeights& source, const PackedWeights& destination,
@@ -53,6 +65,7 @@ void packNativeWeights(const NativeConfig& config, const PackedWeights& source, 
 SymmetricLayout getSymmetricLayout(const NativeConfig& config);
 size_t getPrivateWorkspaceBytes(const NativeConfig& config);
 void validateNativeConfig(const NativeConfig& config);
+KernelResources preflightKernel(const NativeConfig& config);
 
 struct KernelPlan;
 
@@ -68,6 +81,6 @@ void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens,
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
                               cudaStream_t stream);
 
-}  // namespace mscclpp::megamoe
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE
 
 #endif  // MSCCLPP_EXT_MEGAMOE_KERNEL_HPP_

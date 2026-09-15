@@ -32,8 +32,8 @@ INCLUDED = {
 INCLUDED["overlap"] = INCLUDED["serial"] + ["routed_entry_start_gate", "stream_fork_join"]
 
 
-def _parse_args(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+def _parse_args(argv=None, *, parser=None):
+    parser = parser if parser is not None else argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tokens", type=int, default=32, help="tokens per rank; zero is supported")
     parser.add_argument("--original-hidden", type=int, default=8704)
     parser.add_argument("--hidden", type=int, default=4096, help="squashed routed hidden width")
@@ -63,6 +63,11 @@ def _parse_args(argv=None):
         "--trace-eager", action="store_true", help="trace eager launches with host stage labels instead"
     )
     parser.add_argument("--json-output", default=None)
+    parser.add_argument("--tuned-profile", default=None, help="reuse an exact offline profile; never compile or tune")
+    parser.add_argument("--cache-dir", default=None, help="local native kernel JIT cache")
+    parser.add_argument(
+        "--topology-id", default=None, help="explicit fabric/partition identifier; required with tuned profiles"
+    )
     parser.add_argument("--bootstrap-port", type=int, default=None, help="native TCP port (default MASTER_PORT+1)")
     args = parser.parse_args(argv)
     if args.tokens < 0:
@@ -79,6 +84,8 @@ def _parse_args(argv=None):
         parser.error("bootstrap-port must be in [1, 65535]")
     if args.trace_eager and not args.trace_path:
         parser.error("--trace-eager requires --trace-path")
+    if args.tuned_profile and (not args.topology_id or not args.topology_id.strip()):
+        parser.error("--tuned-profile requires an explicit --topology-id")
     return args
 
 
@@ -147,10 +154,13 @@ def _configs(args, rank, world, physical_sms):
     route_ctas = physical_sms - args.route_sm_margin
     if route_ctas < 2 or route_ctas % 2 or args.shared_sms > physical_sms:
         raise ValueError("SM margins must request even CTA counts >= 2, not exceeding physical SM count")
+    capacity = getattr(args, "max_tokens", max(1, args.tokens))
+    if capacity < max(1, args.tokens):
+        raise ValueError("context max_tokens must cover the input before graph capture")
     routed = MegaMoEConfig(
         rank=rank,
         world_size=world,
-        max_tokens=max(1, args.tokens),
+        max_tokens=capacity,
         hidden=args.hidden,
         intermediate=args.intermediate,
         num_experts=args.experts if args.experts is not None else 16 * world,
@@ -160,7 +170,7 @@ def _configs(args, rank, world, physical_sms):
     shared = MegaMoEConfig(
         rank=0,
         world_size=1,
-        max_tokens=max(1, args.tokens),
+        max_tokens=capacity,
         hidden=args.original_hidden,
         intermediate=args.shared_intermediate,
         num_experts=1,
@@ -521,12 +531,34 @@ def _capture(layer, mode, repetitions, barrier=lambda: None):
     return graph
 
 
-def _check(layer, routed_weights, shared_weights, args, barrier):
+def _check(layer, routed_weights, shared_weights, args, barrier, *, routed_reference=None, error_guard=nullcontext):
+    graphs = {}
+    try:
+        return _check_impl(
+            layer,
+            routed_weights,
+            shared_weights,
+            args,
+            barrier,
+            graphs,
+            routed_reference=routed_reference,
+            error_guard=error_guard,
+        )
+    finally:
+        for graph in graphs.values():
+            graph.reset()
+        graphs.clear()
+        gc.collect()
+
+
+def _check_impl(
+    layer, routed_weights, shared_weights, args, barrier, graphs, *, routed_reference=None, error_guard=nullcontext
+):
     import torch
     from .benchmark import _reference
 
+    routed_reference = routed_reference if routed_reference is not None else _reference
     f = layer.frontend
-    graphs = {}
     for mode in ("serial", "overlap"):
         _phase(layer.routed.config.rank, "check_capture", mode=mode)
         graphs[mode] = _capture(layer, mode, args.graph_batch, barrier)
@@ -551,47 +583,53 @@ def _check(layer, routed_weights, shared_weights, args, barrier):
         combined, normalized = f.combined.clone(), f.postprocess.normalized.clone()
         shared_output, routed_output = f.shared_output.clone(), f.routed_output.clone()
         ids = f.ids.cpu()
-        if previous_ids is not None and f.inputs.shape[0] and layer.routed.config.num_experts > 1:
-            if torch.equal(ids, previous_ids):
-                raise AssertionError("changed synthetic input did not change routing")
+        with error_guard():
+            if previous_ids is not None and f.inputs.shape[0] and layer.routed.config.num_experts > 1:
+                if torch.equal(ids, previous_ids):
+                    raise AssertionError("changed synthetic input did not change routing")
         previous_ids = ids
         # The routed oracle intentionally uses the actual global Gloo group.
         # The shared oracle is local even when the benchmark runs at EP32.
-        route_reference = _reference(layer.routed.config, f.squashed.cpu(), ids, f.scores.cpu(), routed_weights_cpu)
+        route_reference = routed_reference(
+            layer.routed.config, f.squashed.cpu(), ids, f.scores.cpu(), routed_weights_cpu
+        )
         shared_reference = _shared_reference(f.inputs.cpu(), shared_weights_cpu)
         combined_reference = (route_reference @ unsquash_weight_cpu) + shared_reference
         normalized_reference = f.postprocess._reference_normalized(combined_reference)
         final_reference = f.postprocess.reference(combined_reference)
-        metrics = {
-            "routed": _error_stats(routed_output, route_reference),
-            "shared": _error_stats(shared_output, shared_reference),
-            "combined": _error_stats(combined, combined_reference),
-            "normalized": _error_stats(normalized, normalized_reference),
-            "final": _error_stats(expected, final_reference),
-        }
-        for branch, error in metrics.items():
-            if error["relative_l2"] > args.reference_relative_l2:
-                raise AssertionError(f"{branch} sample {sample}: relative L2 {error} exceeds tolerance")
-        if f.inputs.numel():
-            if not bool(torch.count_nonzero(shared_output)):
-                raise AssertionError("shared branch produced no contribution")
-            if torch.equal(combined, f.unsquashed):
-                raise AssertionError("shared contribution disappeared from the BF16 branch add")
+        with error_guard():
+            metrics = {
+                "routed": _error_stats(routed_output, route_reference),
+                "shared": _error_stats(shared_output, shared_reference),
+                "combined": _error_stats(combined, combined_reference),
+                "normalized": _error_stats(normalized, normalized_reference),
+                "final": _error_stats(expected, final_reference),
+            }
+            for branch, error in metrics.items():
+                if error["relative_l2"] > args.reference_relative_l2:
+                    raise AssertionError(f"{branch} sample {sample}: relative L2 {error} exceeds tolerance")
+            if f.inputs.numel():
+                if not bool(torch.count_nonzero(shared_output)):
+                    raise AssertionError("shared branch produced no contribution")
+                if torch.equal(combined, f.unsquashed):
+                    raise AssertionError("shared contribution disappeared from the BF16 branch add")
         # Copies/oracle tensor producers above use the current stream. Make the
         # dependency explicit before overwriting their source buffers.
         layer.stream.wait_stream(torch.cuda.current_stream(layer.device))
         overlap = layer.launch("overlap")
         layer.stream.synchronize()
-        torch.testing.assert_close(overlap, expected, rtol=0, atol=0)
-        torch.testing.assert_close(f.combined, combined, rtol=0, atol=0)
-        torch.testing.assert_close(f.postprocess.normalized, normalized, rtol=0, atol=0)
+        with error_guard():
+            torch.testing.assert_close(overlap, expected, rtol=0, atol=0)
+            torch.testing.assert_close(f.combined, combined, rtol=0, atol=0)
+            torch.testing.assert_close(f.postprocess.normalized, normalized, rtol=0, atol=0)
         for mode, graph in graphs.items():
             with torch.cuda.stream(layer.stream):
                 graph.replay()
             layer.stream.synchronize()
-            torch.testing.assert_close(f.output, expected, rtol=0, atol=0)
-            torch.testing.assert_close(f.combined, combined, rtol=0, atol=0)
-            torch.testing.assert_close(f.postprocess.normalized, normalized, rtol=0, atol=0)
+            with error_guard():
+                torch.testing.assert_close(f.output, expected, rtol=0, atol=0)
+                torch.testing.assert_close(f.combined, combined, rtol=0, atol=0)
+                torch.testing.assert_close(f.postprocess.normalized, normalized, rtol=0, atol=0)
         results.append({"sample": sample, "oracles": metrics, "eager_and_graph_schedules_bitwise_equal": True})
     with torch.cuda.stream(layer.stream):
         f.inputs.copy_(original)
@@ -776,12 +814,25 @@ def main(argv=None):
     # its explicit math mode locally, including during graph capture.
     torch.backends.cuda.matmul.allow_tf32 = False
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
-    route_config, shared_config = _configs(args, rank, world, physical_sms)
-    if args.trace_path and physical_sms - args.route_sm_margin == args.shared_sms:
-        raise ValueError("--trace-path requires distinct routed/shared CTA counts for grid attribution")
     _phase(rank, "initialization_start", world_size=world, physical_sms=physical_sms)
     start = time.perf_counter()
     dist.init_process_group("gloo", rank=rank, world_size=world)
+    prepared_profile = None
+    if args.tuned_profile:
+        from .autotune import resolve_for_benchmark
+
+        prepared_profile = resolve_for_benchmark(args, device)
+        _phase(
+            rank,
+            "tuned_profile_loaded",
+            kernel_key=prepared_profile.kernel.key,
+            max_tokens=prepared_profile.max_tokens,
+            route_sm_margin=args.route_sm_margin,
+            shared_sms=args.shared_sms,
+        )
+    route_config, shared_config = _configs(args, rank, world, physical_sms)
+    if args.trace_path and physical_sms - args.route_sm_margin == args.shared_sms:
+        raise ValueError("--trace-path requires distinct routed/shared CTA counts for grid attribution")
     bootstrap = TcpBootstrap.create(rank, world)
     bootstrap.initialize(f"{os.environ['MASTER_ADDR']}:{port}")
     communicator = Communicator(bootstrap)
@@ -789,7 +840,12 @@ def main(argv=None):
     torch.manual_seed(args.seed + rank)
     routed_weights = _weights(route_config, device)
     context_start = time.perf_counter()
-    routed = MegaMoE(route_config, communicator, *routed_weights)
+    routed = MegaMoE(
+        route_config,
+        communicator,
+        *routed_weights,
+        **({"kernel": prepared_profile.kernel} if prepared_profile is not None else {}),
+    )
     route_init_ms = (time.perf_counter() - context_start) * 1000
     _phase(rank, "shared_weights")
     # This is NOT a rank/world override on the global communicator: the shared
@@ -861,6 +917,7 @@ def main(argv=None):
             "implementation": "mscclpp-native-cuda-megamoe-shared",
             **_scope_report(args),
             "not_full_sglang_model_parity": True,
+            "tuned_selection": prepared_profile.entry["winner"] if prepared_profile is not None else None,
             "configuration": {**vars(args), "experts": route_config.num_experts, "world_size": world},
             "routed_config": vars(route_config),
             "shared_config": vars(shared_config),

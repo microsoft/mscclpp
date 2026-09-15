@@ -11,9 +11,11 @@
 #include <cutlass/gemm/collective/collective_builder.hpp>
 #include <cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp>
 
-namespace mscclpp::megamoe::detail {
+#include "megamoe_specialization.hpp"
 
-using TileShape = cute::Shape<cute::_256, cute::_32, cute::_128>;
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
+
+using TileShape = cute::Shape<cute::_256, cute::Int<TileN>, cute::_128>;
 using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;
 using ProblemShape = cute::Shape<int, int, int, int>;
 using ScaleConfig = cutlass::detail::Sm100MixedInputBlockwiseScaleConfig<1, 32>;
@@ -29,8 +31,9 @@ struct CollectiveTypes {
       cute::tuple<cutlass::layout::RowMajor, ScaleConfig::LayoutScale>, 16, Activation, cutlass::layout::ColumnMajor, 8,
       float, KernelTile, ClusterShape, cutlass::gemm::collective::StageCountAutoCarveout<65536>,
       cutlass::gemm::KernelTmaWarpSpecialized2SmMixedInputSm100>::CollectiveOp;
-  using Policy = cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<Local ? 4 : 8, Local ? 4 : 7, 2, 2,
-                                                                              ClusterShape, cutlass::arch::Sm100>;
+  using Policy =
+      cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<Local ? 4 : LoadStages, Local ? 4 : TransformStages,
+                                                                   2, 2, ClusterShape, cutlass::arch::Sm100>;
   using Mainloop = cutlass::gemm::collective::CollectiveMma<
       Policy, KernelTile, typename Builder::ElementAOptionalTuple,
       cute::tuple<typename Builder::StrideA, typename Builder::LayoutScale>, typename Builder::ElementBOptionalTuple,
@@ -102,6 +105,6 @@ __device__ __forceinline__ void transformWeights(
   }
 }
 
-}  // namespace mscclpp::megamoe::detail
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #endif  // MSCCLPP_EXT_MEGAMOE_COLLECTIVE_CUH_

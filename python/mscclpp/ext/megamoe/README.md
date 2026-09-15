@@ -240,6 +240,99 @@ rank zero exports the trace. `--trace-eager` adds host stage labels instead of
 profiling graph replays. Overlap attribution requires distinct routed/shared CTA
 counts. Profiler samples can be distorted and must not replace unprofiled latency.
 
+### JIT kernel specializations
+
+JIT compiles the **same native CUDA template** with a different token tile and
+pipeline depths, leaving M256/K128, two-CTA clusters, two accumulator stages,
+packed conversion, numerical semantics, and the local shared kernel unchanged.
+The default N32/load8/transform7 kernel remains precompiled and needs no compiler.
+
+```python
+from mscclpp.ext.megamoe import KernelConfig, compile_kernel, MegaMoE
+
+kernel = compile_kernel(KernelConfig(tile_n=64, load_stages=6, transform_stages=6))
+moe = MegaMoE(config, communicator, fc1, fc1_scale, fc2, fc2_scale, kernel=kernel)
+```
+
+Prepare modules outside collective construction and CUDA Graph capture.
+`load_stages` jointly controls raw weights, scales, and activation prefetch;
+`transform_stages` controls converted weights in TMEM. N and stage counts must
+fit TMEM, compiled shared memory, registers, and resident-cluster limits.
+`moe.kernel_id`, `moe.kernel_config`, and `moe.shared_bytes` report the selection.
+
+Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
+`MSCCLPP_MEGAMOE_NVCC` selects nvcc >=13.3 and `CUDA_HOME` selects runtime
+development libraries (default `/usr/local/cuda`). For separately installed
+compiler/runtime packages, `MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS` accepts matching
+runtime include directories separated by `:`. Do not override the compiler's
+CCCL with an older toolkit's headers.
+
+The cache defaults to `$XDG_CACHE_HOME/mscclpp/megamoe` (or
+`~/.cache/mscclpp/megamoe`); override it with `MSCCLPP_MEGAMOE_CACHE_DIR`.
+File locking avoids duplicate builds on a host. Modules and manifests use
+content-addressed keys and checksums; compilation failures are explicit and
+logs are retained. `load_cached_kernel(key)` reuses a compatible module without
+nvcc or a CUTLASS checkout. Installed JIT sources must remain available for
+fingerprint validation. Change `MSCCLPP_MEGAMOE_CACHE_TAG` when changing an
+external performance policy such as GPU clocks or power limits.
+
+Different variants require separate contexts and workspace layouts. Keep their
+graphs/contexts alive while in use; neither forward nor replay compiles, tunes,
+or changes the selected variant. All ranks must select the same variant.
+
+### Offline autotuning and profile reuse
+
+[`megamoe_tuning.json`](megamoe_tuning.json) lists kernel candidates, resource
+splits, shape overrides, and inclusive token buckets with representative samples.
+The default tunes N32/load8/transform7, N32/load6/transform7, N64/load6/transform6,
+and N128/load4/transform4 at the same 32/32 resource split. The shared kernel is
+not retuned.
+
+```bash
+torchrun --nnodes=1 --nproc-per-node=4 \
+  --master-addr=127.0.0.1 --master-port=29500 \
+  -m mscclpp.ext.megamoe.autotune \
+  --profile-output results/megamoe-tuned.json --topology-id nvlink-partition-a \
+  --graph-batch 20 --warmup 10 --iterations 30 --trials 3
+```
+
+Use `--config /path/to/tuning.json` to change the search. Token samples come from
+that file, not `--tokens`; all contexts use the bucket's upper-bound capacity.
+Shape and frontend flags match `benchmark_shared`. Add workload objects such as
+`{"hidden":4096,"intermediate":4352,"local_experts":16}` to tune additional shapes.
+Use separate buckets around performance crossovers, for example 0-32, 33-64,
+and 65-128. A bucket reuses the kernel configuration, not a variable-shape CUDA
+Graph: capture separate graphs when actual input shapes or launch arguments change.
+Run separately for each EP size. Multi-host runs use the same rendezvous pattern
+as the benchmark, a shared topology identifier, and identical source/toolchains.
+
+The tuner first prepares modules and agrees on their IDs across ranks, then
+checks numerical correctness, changed-input graph replay, empty and unequal-rank
+token counts. It rotates candidate order across trials and measures complete
+routed-first layers. The objective minimizes the worst representative-sample
+latency ratio against one common builtin reference. Raw timings, failures,
+actual resource usage, and the selected configuration are saved atomically on
+each node. This selects the best measured candidate, not a global optimum for
+every routing distribution or token count within the bucket.
+
+Reuse a profile without compiling or measuring:
+
+```bash
+torchrun --nnodes=1 --nproc-per-node=4 \
+  --master-addr=127.0.0.1 --master-port=29500 \
+  -m mscclpp.ext.megamoe.benchmark_shared \
+  --tokens 32 --graph-batch 20 --check \
+  --tuned-profile results/megamoe-tuned.json --topology-id nvlink-partition-a
+```
+
+Selection matches hardware/topology, EP size, dimensions, experts/top-k, frontend
+precision, execution policy, and build/environment fingerprints exactly.
+Missing/stale profiles, missing local modules, and out-of-range buckets are
+errors, not triggers for online retuning or silent fallback. Every node needs
+its saved profile and local JIT cache. `autotune.collect_selection_key()` and
+`autotune.resolve_profile()` expose the same selection for application setup;
+reuse the returned kernel and capacity before constructing contexts/graphs.
+
 ## Tests
 
 From the repository root with the extension installed:
@@ -252,3 +345,12 @@ MSCCLPP_TEST_MEGAMOE_SHARED=1 python -m pytest --noconftest \
 GPU cases require SM100. Omitting `MSCCLPP_TEST_MEGAMOE_SHARED` skips the opt-in
 shared/router GPU cases. Single-GPU tests do not replace multi-rank `--check`
 and CUDA Graph validation on the target fabric.
+
+JIT cache/profile host tests run without compilation. Set
+`MSCCLPP_TEST_MEGAMOE_JIT=1` with the JIT toolchain configured to also exercise
+non-default kernels, module lifetime, and graph replay:
+
+```bash
+python -m pytest --noconftest \
+  python/test/test_megamoe_jit.py python/test/test_megamoe_autotune.py -q
+```

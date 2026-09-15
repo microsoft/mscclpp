@@ -5,6 +5,7 @@
 #define MSCCLPP_EXT_MEGAMOE_HPP_
 
 #include <mscclpp/core.hpp>
+#include <string>
 
 #include "megamoe_kernel.hpp"
 
@@ -24,8 +25,11 @@ class MegaMoeContext {
   /// @param weights Canonical local weights and E8M0 K32 scales.
   /// @param stream CUDA stream used to pack weights; synchronized before returning.
   /// @param tag Bootstrap tag reserved for this collective context construction.
+  /// @param kernelPath Absolute path to an optional native JIT module; empty selects the builtin kernel.
+  /// @param kernelId Expected 64-character specialization digest; empty for the builtin kernel.
   MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
-                 cudaStream_t stream = nullptr, int tag = 17920);
+                 cudaStream_t stream = nullptr, int tag = 17920, const std::string& kernelPath = "",
+                 const std::string& kernelId = "");
   ~MegaMoeContext();
   MegaMoeContext(const MegaMoeContext&) = delete;
   MegaMoeContext& operator=(const MegaMoeContext&) = delete;
@@ -48,6 +52,14 @@ class MegaMoeContext {
   size_t symmetricBytes() const;
   /// Return the private workspace size in bytes, excluding weights.
   size_t privateBytes() const;
+  /// Return the specialization digest, or "builtin" for the builtin module.
+  const std::string& kernelId() const;
+  /// Return the routed token tile width (the shared expert always uses 128).
+  int kernelTileN() const;
+  /// Return the routed raw-weight/scale/activation load pipeline depth.
+  int kernelLoadStages() const;
+  /// Return the routed transformed-weight pipeline depth.
+  int kernelTransformStages() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///

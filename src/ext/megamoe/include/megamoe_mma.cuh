@@ -35,7 +35,7 @@
 
 #include "megamoe_collective.cuh"
 
-namespace mscclpp::megamoe::detail {
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <bool E5M2, bool Local = false, class FrgEngine, class FrgLayout, class TensorA, class TensorB>
 __device__ __forceinline__ auto mmaTiles(
@@ -125,6 +125,6 @@ __device__ __forceinline__ auto mmaTiles(
   return make_tuple(currentLoad, currentTransform, accumulateState);
 }
 
-}  // namespace mscclpp::megamoe::detail
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #endif  // MSCCLPP_EXT_MEGAMOE_MMA_CUH_

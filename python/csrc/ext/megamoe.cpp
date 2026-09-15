@@ -6,6 +6,7 @@
 #ifdef MSCCLPP_BUILD_EXT_MEGAMOE
 #include <dlpack/dlpack.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
 
 #include <array>
 #include <memory>
@@ -71,14 +72,16 @@ void register_megamoe(nb::module_& m) {
       .def_static(
           "create",
           [](std::shared_ptr<mscclpp::Communicator> comm, const NativeConfig& config, uintptr_t fc1, uintptr_t fc1Scale,
-             uintptr_t fc2, uintptr_t fc2Scale, uintptr_t stream, int tag) {
+             uintptr_t fc2, uintptr_t fc2Scale, uintptr_t stream, int tag, const std::string& kernelPath,
+             const std::string& kernelId) {
             PackedWeights weights{reinterpret_cast<uint8_t*>(fc1), reinterpret_cast<uint8_t*>(fc1Scale),
                                   reinterpret_cast<uint8_t*>(fc2), reinterpret_cast<uint8_t*>(fc2Scale)};
             return std::make_shared<MegaMoeContext>(std::move(comm), config, weights,
-                                                    reinterpret_cast<cudaStream_t>(stream), tag);
+                                                    reinterpret_cast<cudaStream_t>(stream), tag, kernelPath, kernelId);
           },
           nb::arg("communicator"), nb::arg("config"), nb::arg("fc1"), nb::arg("fc1_scale"), nb::arg("fc2"),
-          nb::arg("fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920, nb::call_guard<nb::gil_scoped_release>())
+          nb::arg("fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920, nb::arg("kernel_path") = "",
+          nb::arg("kernel_id") = "", nb::call_guard<nb::gil_scoped_release>())
       .def("input_ptr", [](const MegaMoeContext& self) { return reinterpret_cast<uintptr_t>(self.input()); })
       .def("input_dlpack", &inputDlpack, nb::arg("num_tokens"))
       .def_prop_ro("device", &MegaMoeContext::device)
@@ -86,6 +89,10 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("shared_bytes", &MegaMoeContext::sharedBytes)
       .def_prop_ro("symmetric_bytes", &MegaMoeContext::symmetricBytes)
       .def_prop_ro("private_bytes", &MegaMoeContext::privateBytes)
+      .def_prop_ro("kernel_id", &MegaMoeContext::kernelId)
+      .def_prop_ro("kernel_tile_n", &MegaMoeContext::kernelTileN)
+      .def_prop_ro("kernel_load_stages", &MegaMoeContext::kernelLoadStages)
+      .def_prop_ro("kernel_transform_stages", &MegaMoeContext::kernelTransformStages)
       .def(
           "forward_shared",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {

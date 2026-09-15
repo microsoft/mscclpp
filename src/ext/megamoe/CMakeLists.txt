@@ -38,7 +38,7 @@ target_include_directories(mscclpp_megamoe SYSTEM PRIVATE "${MSCCLPP_MEGAMOE_CUT
 target_compile_options(mscclpp_megamoe PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;--expt-extended-lambda>
 )
-target_link_libraries(mscclpp_megamoe PUBLIC mscclpp PRIVATE ${GPU_LIBRARIES})
+target_link_libraries(mscclpp_megamoe PUBLIC mscclpp PRIVATE ${GPU_LIBRARIES} ${CMAKE_DL_LIBS})
 target_compile_definitions(mscclpp_megamoe PRIVATE MSCCLPP_USE_CUDA)
 set_target_properties(mscclpp_megamoe PROPERTIES
     CUDA_ARCHITECTURES "100a-real"
@@ -49,3 +49,14 @@ set_target_properties(mscclpp_megamoe PROPERTIES
 )
 install(TARGETS mscclpp_megamoe LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(FILES LICENSE.cutlass DESTINATION ${INSTALL_PREFIX}/licenses/mscclpp_megamoe)
+
+set(MEGAMOE_JIT_INSTALL_DIR "${INSTALL_PREFIX}/share/mscclpp/megamoe")
+install(FILES megamoe.cu LICENSE.cutlass "${PROJECT_SOURCE_DIR}/LICENSE"
+    DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}")
+install(FILES
+    include/megamoe_collective.cuh
+    include/megamoe_mma.cuh
+    include/megamoe_kernel.hpp
+    include/megamoe_jit.hpp
+    include/megamoe_specialization.hpp
+    DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}/include")

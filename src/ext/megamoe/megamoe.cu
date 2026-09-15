@@ -17,11 +17,20 @@
 #include "megamoe_kernel.hpp"
 #include "megamoe_mma.cuh"
 
+#if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
+#include <cstring>
+
+#include "megamoe_jit.hpp"
+#ifndef MSCCLPP_MEGAMOE_JIT_ID
+#error "A MegaMoE JIT module requires MSCCLPP_MEGAMOE_JIT_ID"
+#endif
+#endif
+
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1000
 #error "Native MegaMoE requires an SM100a compilation target"
 #endif
 
-namespace mscclpp::megamoe {
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 namespace detail {
 
 constexpr int Threads = 512;
@@ -35,7 +44,6 @@ constexpr int LocalEntryRegisters = 168;
 constexpr int LocalComputeRegisters = 232;
 static_assert(256 * LocalComputeRegisters + (LocalThreads - 256) * TransferRegisters <=
               LocalThreads * LocalEntryRegisters);
-constexpr int TileN = 32;
 constexpr int LocalTileN = 128;
 constexpr int LocalTokenAlignment = 64;
 constexpr int EpilogueTokens = 32;
@@ -664,9 +672,11 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
       }
       cPipeline.producer_tail(cState);
     }
-    cutlass::arch::warpgroup_reg_alloc<RestoreRegisters>();
   }
+  // An idle transfer warp must not reclaim registers before every compute warp
+  // has acquired its budget and finished; that can deadlock the initial allocation.
   __syncthreads();
+  if (warp >= 4 && warp < TransformWarp) cutlass::arch::warpgroup_reg_alloc<RestoreRegisters>();
   cute::cluster_sync();
   if (warp == 4) {
     allocator.release_allocation_lock();
@@ -821,20 +831,69 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmetric, const uint64_t* peers,
-                                             void* workspace, const PackedWeights& weights) {
+KernelResources preflightKernel(const NativeConfig& c) {
   validateNativeConfig(c);
-  if (!symmetric || !peers || !workspace || !weights.fc1 || !weights.fc1Scale || !weights.fc2 || !weights.fc2Scale)
-    throw std::invalid_argument("MegaMoE plan requires live workspaces, peer addresses, and packed weights");
-  auto plan = std::make_shared<KernelPlan>();
-  MSCCLPP_CUDATHROW(cudaGetDevice(&plan->device));
+  KernelResources resources{};
+  MSCCLPP_CUDATHROW(cudaGetDevice(&resources.device));
   cudaDeviceProp properties{};
-  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, plan->device));
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, resources.device));
   if (properties.major != 10 || properties.minor != 0)
     throw std::invalid_argument("Native MegaMoE currently requires an SM100 GPU");
   if (c.smMargin > properties.multiProcessorCount - 2)
     throw std::invalid_argument("MegaMoE smMargin must leave at least two SMs");
-  plan->ctas = (properties.multiProcessorCount - c.smMargin) / 2 * 2;
+  resources.ctas = (properties.multiProcessorCount - c.smMargin) / 2 * 2;
+  auto configure = [&]<bool E5M2, int LocalMode>() {
+    constexpr bool Local = LocalMode != 0;
+    constexpr int Entry = Local ? detail::LocalEntryRegisters : detail::EntryRegisters;
+    auto kernel = detail::megaMoe<E5M2, LocalMode>;
+    resources.sharedBytes = std::max(resources.sharedBytes, sizeof(detail::SharedStorage<E5M2, Local>));
+    cudaFuncAttributes attributes{};
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
+    if (attributes.numRegs < Entry)
+      throw std::runtime_error("MegaMoE entry register allocation is too small for warpgroup reconfiguration");
+    if (resources.sharedBytes + attributes.sharedSizeBytes > properties.sharedMemPerBlockOptin)
+      throw std::invalid_argument("MegaMoE specialization exceeds the device's shared memory limit");
+    MSCCLPP_CUDATHROW(
+        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
+    cudaLaunchAttribute attribute{};
+    attribute.id = cudaLaunchAttributeClusterDimension;
+    attribute.val.clusterDim = {2, 1, 1};
+    cudaLaunchConfig_t launch{};
+    launch.gridDim = dim3(resources.ctas);
+    launch.blockDim = dim3(Local ? detail::LocalThreads : detail::Threads);
+    launch.dynamicSmemBytes = resources.sharedBytes;
+    launch.attrs = &attribute;
+    launch.numAttrs = 1;
+    int clusters = 0;
+    MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
+    resources.ctas = std::min(resources.ctas, clusters * 2);
+    if (resources.ctas < 2) throw std::runtime_error("MegaMoE cannot keep a two-CTA cluster resident");
+  };
+  if (detail::isLocalExpert(c)) {
+    if (c.weightE5M2) {
+      configure.template operator()<true, 1>();
+      configure.template operator()<true, 2>();
+    } else {
+      configure.template operator()<false, 1>();
+      configure.template operator()<false, 2>();
+    }
+  } else if (c.weightE5M2) {
+    configure.template operator()<true, 0>();
+  } else {
+    configure.template operator()<false, 0>();
+  }
+  return resources;
+}
+
+std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmetric, const uint64_t* peers,
+                                             void* workspace, const PackedWeights& weights) {
+  if (!symmetric || !peers || !workspace || !weights.fc1 || !weights.fc1Scale || !weights.fc2 || !weights.fc2Scale)
+    throw std::invalid_argument("MegaMoE plan requires live workspaces, peer addresses, and packed weights");
+  const auto resources = preflightKernel(c);
+  auto plan = std::make_shared<KernelPlan>();
+  plan->device = resources.device;
+  plan->ctas = resources.ctas;
+  plan->sharedBytes = resources.sharedBytes;
   plan->localExpert = detail::isLocalExpert(c);
   if (plan->localExpert && c.weightE5M2) {
     plan->params = detail::makeParameters<true, true>(c, symmetric, peers, workspace, weights);
@@ -845,42 +904,6 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
   } else {
     plan->params = detail::makeParameters<false>(c, symmetric, peers, workspace, weights);
   }
-  std::visit(
-      [&](const auto& params) {
-        constexpr bool E5M2 = std::decay_t<decltype(params)>::WeightE5M2;
-        auto configure = [&]<int LocalMode>(std::integral_constant<int, LocalMode>) {
-          constexpr bool Local = LocalMode != 0;
-          constexpr int Entry = Local ? detail::LocalEntryRegisters : detail::EntryRegisters;
-          auto kernel = detail::megaMoe<E5M2, LocalMode>;
-          plan->sharedBytes = std::max(plan->sharedBytes, sizeof(detail::SharedStorage<E5M2, Local>));
-          cudaFuncAttributes attributes{};
-          MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
-          if (attributes.numRegs < Entry)
-            throw std::runtime_error("MegaMoE entry register allocation is too small for warpgroup reconfiguration");
-          MSCCLPP_CUDATHROW(
-              cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(plan->sharedBytes)));
-          cudaLaunchAttribute attribute{};
-          attribute.id = cudaLaunchAttributeClusterDimension;
-          attribute.val.clusterDim = {2, 1, 1};
-          cudaLaunchConfig_t launch{};
-          launch.gridDim = dim3(plan->ctas);
-          launch.blockDim = dim3(Local ? detail::LocalThreads : detail::Threads);
-          launch.dynamicSmemBytes = plan->sharedBytes;
-          launch.attrs = &attribute;
-          launch.numAttrs = 1;
-          int clusters = 0;
-          MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
-          plan->ctas = std::min(plan->ctas, clusters * 2);
-          if (plan->ctas < 2) throw std::runtime_error("MegaMoE cannot keep a two-CTA cluster resident");
-        };
-        if constexpr (std::decay_t<decltype(params)>::LocalExpert) {
-          configure(std::integral_constant<int, 1>{});
-          configure(std::integral_constant<int, 2>{});
-        } else {
-          configure(std::integral_constant<int, 0>{});
-        }
-      },
-      plan->params);
   return plan;
 }
 
@@ -941,4 +964,145 @@ void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int token
   launchPlan(plan, tokens, output, stream, nullptr, true);
 }
 
-}  // namespace mscclpp::megamoe
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE
+
+#if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
+namespace {
+
+using namespace mscclpp::megamoe;
+using JitPlan = std::shared_ptr<jit::KernelPlan>;
+
+constexpr char JitId[] = MSCCLPP_MEGAMOE_JIT_ID;
+static_assert(sizeof(JitId) == MSCCLPP_MEGAMOE_JIT_ID_CAPACITY, "MegaMoE JIT ID must be a 64-character hex digest");
+static_assert(
+    [] {
+      for (size_t i = 0; i < sizeof(JitId) - 1; ++i)
+        if (!((JitId[i] >= '0' && JitId[i] <= '9') || (JitId[i] >= 'a' && JitId[i] <= 'f'))) return false;
+      return true;
+    }(),
+    "MegaMoE JIT ID must be a lowercase hex digest");
+
+template <class Function>
+int jitCall(char* error, size_t capacity, Function&& function) noexcept {
+  if (error && capacity) error[0] = '\0';
+  auto report = [&](const char* message) {
+    if (error && capacity) {
+      const size_t bytes = std::min(capacity - 1, std::strlen(message));
+      std::memcpy(error, message, bytes);
+      error[bytes] = '\0';
+    }
+  };
+  try {
+    function();
+    return 0;
+  } catch (const std::invalid_argument& e) {
+    report(e.what());
+    return 1;
+  } catch (const std::exception& e) {
+    report(e.what());
+    return 2;
+  } catch (...) {
+    report("Unknown C++ exception in MegaMoE JIT module");
+    return 2;
+  }
+}
+
+NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
+  if (!c || (c->weightE5M2 != 0 && c->weightE5M2 != 1))
+    throw std::invalid_argument("Invalid MegaMoE JIT configuration");
+  return NativeConfig{c->rank,       c->worldSize, c->maxTokens, c->hidden,           c->intermediate,
+                      c->numExperts, c->topK,      c->smMargin,  bool(c->weightE5M2), c->gateUpClamp};
+}
+
+PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {
+  if (!weights) throw std::invalid_argument("Null MegaMoE JIT weight descriptor");
+  return PackedWeights{weights->fc1, weights->fc1Scale, weights->fc2, weights->fc2Scale};
+}
+
+int jitPreflight(const MegaMoeJitConfigV1* config, MegaMoeJitLayoutV1* output, char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    if (!output) throw std::invalid_argument("Null MegaMoE JIT layout descriptor");
+    auto c = nativeConfig(config);
+    auto layout = jit::getSymmetricLayout(c);
+    const size_t workspaceBytes = jit::getPrivateWorkspaceBytes(c);
+    auto resources = jit::preflightKernel(c);
+    *output = MegaMoeJitLayoutV1{layout.bytes,
+                                 layout.input,
+                                 layout.topkIds,
+                                 layout.topkWeights,
+                                 layout.partialOutput,
+                                 layout.epoch,
+                                 layout.peerSignals,
+                                 layout.expectedPeerSignals,
+                                 layout.tokenCount,
+                                 workspaceBytes,
+                                 resources.sharedBytes,
+                                 resources.ctas,
+                                 0};
+  });
+}
+
+int jitPack(const MegaMoeJitConfigV1* config, const MegaMoeJitWeightsV1* source, const MegaMoeJitWeightsV1* destination,
+            void* stream, char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    jit::packNativeWeights(nativeConfig(config), nativeWeights(source), nativeWeights(destination),
+                           reinterpret_cast<cudaStream_t>(stream));
+  });
+}
+
+int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peers, void* workspace,
+              const MegaMoeJitWeightsV1* weights, void** plan, char* error, size_t capacity) noexcept {
+  if (plan) *plan = nullptr;
+  return jitCall(error, capacity, [&] {
+    if (!plan) throw std::invalid_argument("Null MegaMoE JIT plan output");
+    auto result = std::make_unique<JitPlan>(
+        jit::createKernelPlan(nativeConfig(config), symmetric, peers, workspace, nativeWeights(weights)));
+    *plan = result.release();
+  });
+}
+
+void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
+
+int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* startSignal, int32_t shared,
+              char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    if (!plan || (shared != 0 && shared != 1)) throw std::invalid_argument("Invalid MegaMoE JIT launch");
+    const auto& native = *static_cast<JitPlan*>(plan);
+    if (shared) {
+      jit::launchNativeSharedExpert(native, tokens, output, reinterpret_cast<cudaStream_t>(stream));
+    } else {
+      jit::launchNativeMegaMoe(native, tokens, output, reinterpret_cast<cudaStream_t>(stream), startSignal);
+    }
+  });
+}
+
+const MegaMoeJitApiV1 JitApi = [] {
+  MegaMoeJitApiV1 api{};
+  api.abiVersion = MSCCLPP_MEGAMOE_JIT_ABI_VERSION;
+  api.structBytes = sizeof(MegaMoeJitApiV1);
+  api.configBytes = sizeof(MegaMoeJitConfigV1);
+  api.weightsBytes = sizeof(MegaMoeJitWeightsV1);
+  api.layoutBytes = sizeof(MegaMoeJitLayoutV1);
+  api.tileM = 256;
+  api.tileN = jit::detail::TileN;
+  api.tileK = 128;
+  api.loadStages = jit::detail::LoadStages;
+  api.transformStages = jit::detail::TransformStages;
+  api.clusterSize = 2;
+  api.accumulatorStages = 2;
+  api.architecture = 1000;
+  std::memcpy(api.kernelId, JitId, sizeof(JitId));
+  api.preflight = jitPreflight;
+  api.packWeights = jitPack;
+  api.createPlan = jitCreate;
+  api.destroyPlan = jitDestroy;
+  api.launch = jitLaunch;
+  return api;
+}();
+
+}  // namespace
+
+extern "C" __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_jit_get_api_v1() {
+  return &JitApi;
+}
+#endif

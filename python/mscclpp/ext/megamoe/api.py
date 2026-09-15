@@ -103,9 +103,26 @@ class MegaMoE:
     graphs. Do not run two forwards or graph replays concurrently on one context.
     Order use on different streams explicitly with CUDA events. Shared experts,
     squash, unsquash, residuals, and router-weight normalization are not included.
+
+    ``kernel`` selects a routed ``KernelConfig`` or prepared ``CompiledKernel``.
+    Preparing modules before collective construction is recommended; neither
+    forward nor graph replay compiles or tunes. The default uses the builtin
+    kernel without a compiler dependency. Local shared experts remain unchanged.
     """
 
-    def __init__(self, config: MegaMoEConfig, communicator, fc1, fc1_scale, fc2, fc2_scale, *, stream=None, tag=17920):
+    def __init__(
+        self,
+        config: MegaMoEConfig,
+        communicator,
+        fc1,
+        fc1_scale,
+        fc2,
+        fc2_scale,
+        *,
+        stream=None,
+        tag=17920,
+        kernel=None,
+    ):
         if not isinstance(config, MegaMoEConfig):
             raise TypeError("config must be a MegaMoEConfig")
         if not is_available():
@@ -115,6 +132,7 @@ class MegaMoE:
             )
         import torch
         from mscclpp import _mscclpp
+        from .jit import CompiledKernel, KernelConfig, compile_kernel
 
         if not torch.cuda.is_available() or torch.version.hip:
             raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100 GPU; ROCm is unsupported")
@@ -134,6 +152,16 @@ class MegaMoE:
         _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
         _tensor(fc2, "fc2", (e, h, i), dtype, self.device)
         _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
+        if kernel is None:
+            kernel = KernelConfig()
+        if not isinstance(kernel, (KernelConfig, CompiledKernel)):
+            raise TypeError("kernel must be KernelConfig, CompiledKernel, or None")
+        selected = kernel if isinstance(kernel, KernelConfig) else kernel.config
+        if (config.world_size, config.num_experts, config.top_k) == (1, 1, 1) and selected != KernelConfig():
+            raise ValueError("JIT specialization applies to routed experts; the local shared kernel is fixed")
+        if isinstance(kernel, KernelConfig):
+            kernel = compile_kernel(kernel)
+        self._kernel = kernel
         native_config = _mscclpp.CppMegaMoeConfig()
         for name, value in vars(config).items():
             setattr(native_config, name, value)
@@ -146,7 +174,24 @@ class MegaMoE:
             fc2_scale.data_ptr(),
             stream.cuda_stream,
             tag,
+            kernel.path,
+            "" if kernel.key == "builtin" else kernel.key,
         )
+
+    @property
+    def kernel_config(self):
+        """Routed specialization selected before context construction."""
+        return self._kernel.config
+
+    @property
+    def kernel_id(self):
+        """Content-addressed JIT key, or ``builtin`` for the default kernel."""
+        return self._native.kernel_id
+
+    @property
+    def shared_bytes(self):
+        """Dynamic shared-memory bytes per CTA for the selected native kernel."""
+        return self._native.shared_bytes
 
     def _stream(self, stream):
         import torch
