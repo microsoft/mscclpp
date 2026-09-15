@@ -59,6 +59,7 @@ parameters:
 jobs:
 - job: SGLangTestMultiNode
   displayName: SGLang Test Multi Node
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda12:

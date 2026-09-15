@@ -28,6 +28,7 @@ pr:
 jobs:
 - job: RcclTestMI300X
   displayName: Run MSCCLPP over RCCL Test (MI300X)
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-mi300x
 

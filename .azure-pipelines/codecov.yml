@@ -29,7 +29,7 @@ pr:
 
 jobs:
 - job: CodeCoverageA100
-  timeoutInMinutes: 40
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci
   variables:
@@ -52,7 +52,7 @@ jobs:
       gpuArch:          '80'
 
 - job: CodeCoverageH100
-  timeoutInMinutes: 40
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-h100
   variables:
@@ -75,7 +75,7 @@ jobs:
       gpuArch:          '90'
 
 - job: CodeCoverageMI300X
-  timeoutInMinutes: 60
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-mi300x
   variables:

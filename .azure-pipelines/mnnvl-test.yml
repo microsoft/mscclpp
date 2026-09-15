@@ -25,6 +25,7 @@ variables:
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda13:

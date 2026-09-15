@@ -38,6 +38,7 @@ pr:
 jobs:
 - job: SGLangTest
   displayName: SGLang Test
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda12:

@@ -28,6 +28,7 @@ pr:
 jobs:
 - job: IntegrationTestA100
   displayName: Integration test A100
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda12:
@@ -49,6 +50,7 @@ jobs:
 
 - job: IntegrationTestH100
   displayName: Integration test H100
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda12:
