@@ -36,11 +36,12 @@ pr:
     - '**/*.md'
 
 variables:
-  Codeql.Enabled: false
+  Codeql.Enabled: true
 
 jobs:
 - job: SGLangTest
   displayName: SGLang Test
+  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda12:
