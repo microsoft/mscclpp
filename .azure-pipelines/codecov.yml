@@ -27,9 +27,12 @@ pr:
       - docs/**
       - '**/*.md'
 
+variables:
+  Codeql.Enabled: false
+
 jobs:
 - job: CodeCoverageA100
-  timeoutInMinutes: 120
+  timeoutInMinutes: 40
   pool:
     name: msccl-ci
   variables:
@@ -52,7 +55,7 @@ jobs:
       gpuArch:          '80'
 
 - job: CodeCoverageH100
-  timeoutInMinutes: 120
+  timeoutInMinutes: 40
   pool:
     name: msccl-ci-h100
   variables:
@@ -75,7 +78,7 @@ jobs:
       gpuArch:          '90'
 
 - job: CodeCoverageMI300X
-  timeoutInMinutes: 120
+  timeoutInMinutes: 60
   pool:
     name: msccl-ci-mi300x
   variables:

@@ -21,11 +21,12 @@ parameters:
 
 variables:
   - group: mscclpp
+  - name: Codeql.Enabled
+    value: false
 
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test
-  timeoutInMinutes: 120
   strategy:
     matrix:
       cuda13:

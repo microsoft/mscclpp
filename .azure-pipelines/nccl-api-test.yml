@@ -25,10 +25,12 @@ pr:
       - docs/**
       - '**/*.md'
 
+variables:
+  Codeql.Enabled: false
+
 jobs:
 - job: NcclTestA100
   displayName: Run MSCCLPP over NCCL Test (A100)
-  timeoutInMinutes: 120
   pool:
     name: msccl-ci
 
@@ -52,7 +54,6 @@ jobs:
 
 - job: NcclTestH100
   displayName: Run MSCCLPP over NCCL Test (H100)
-  timeoutInMinutes: 120
   pool:
     name: msccl-ci-h100
 
