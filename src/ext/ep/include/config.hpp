@@ -332,6 +332,12 @@ struct ThroughputStorageLayout {
   }
 };
 
+struct alignas(8) ThroughputTokenRoute {
+  int rank_;
+  // Stable token offset within this source rank's receive range.
+  int offset_;
+};
+
 struct ThroughputWorkspaceLayout {
   size_t totalBytes_;
   // Local routing histograms produced before communicating with peers.
@@ -339,13 +345,13 @@ struct ThroughputWorkspaceLayout {
   int* numTokensPerExpert_ = nullptr;
   // Beginning of this source rank's receive range on each destination rank.
   int* rankOffsets_ = nullptr;
-  // Stable offset within that range for [local token, destination rank], or -1.
-  int* recvTokenOffsets_ = nullptr;
+  // numTopk entries per token: distinct ranks in ascending order, followed by {-1, -1} padding.
+  ThroughputTokenRoute* tokenRoutes_ = nullptr;
   int* numRecvTokens_ = nullptr;
   // Receive counts indexed by local expert or source rank, depending on output layout.
   int* recvCounts_ = nullptr;
 
-  ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts) {
+  ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
     size_t offset = 0;
     auto place = [&](size_t bytes, size_t alignment) -> void* {
       offset = configAlign<size_t>(offset, alignment);
@@ -357,22 +363,21 @@ struct ThroughputWorkspaceLayout {
     numTokensPerRank_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
     numTokensPerExpert_ = static_cast<int*>(place(static_cast<size_t>(numExperts) * sizeof(int), alignof(int)));
     rankOffsets_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
-    recvTokenOffsets_ =
-        static_cast<int*>(place(static_cast<size_t>(maxTokensPerRank) * numRanks * sizeof(int), alignof(int)));
+    tokenRoutes_ = static_cast<ThroughputTokenRoute*>(place(
+        static_cast<size_t>(maxTokensPerRank) * numTopk * sizeof(ThroughputTokenRoute), alignof(ThroughputTokenRoute)));
     numRecvTokens_ = static_cast<int*>(place(sizeof(int), alignof(int)));
     recvCounts_ = static_cast<int*>(
         place(static_cast<size_t>(std::max(numRanks, numExperts / numRanks)) * sizeof(int), alignof(int)));
     totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE int recvTokenIndex(int token, int destinationRank, int numRanks) const {
-    const int offset = recvTokenOffsets_[static_cast<size_t>(token) * numRanks + destinationRank];
-    return offset < 0 ? -1 : rankOffsets_[destinationRank] + offset;
+  MSCCLPP_HOST_DEVICE_INLINE int recvTokenIndex(const ThroughputTokenRoute& route) const {
+    return route.offset_ < 0 ? -1 : rankOffsets_[route.rank_] + route.offset_;
   }
 };
 
-inline size_t throughputWorkspaceSize(int maxTokensPerRank, int numRanks, int numExperts) {
-  return ThroughputWorkspaceLayout(nullptr, maxTokensPerRank, numRanks, numExperts).totalBytes_;
+inline size_t throughputWorkspaceSize(int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
+  return ThroughputWorkspaceLayout(nullptr, maxTokensPerRank, numRanks, numExperts, numTopk).totalBytes_;
 }
 
 }  // namespace ep

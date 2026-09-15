@@ -3,7 +3,7 @@
 //
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 //
-// Throughput routing preparation: local counts, stable offsets, and peer count exchange.
+// Throughput routing preparation: token destination maps, stable offsets, and peer count exchange.
 
 #include <cub/block/block_scan.cuh>
 
@@ -73,25 +73,37 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int destinationRank = blockId - expertBlocks;
   if (destinationRank >= context->numRanks_) return;
   const int expertsPerRank = numExperts / context->numRanks_;
-  const int rankExpertBegin = destinationRank * expertsPerRank;
-  const int rankExpertEnd = rankExpertBegin + expertsPerRank;
+  const bool powerOfTwoExperts = (expertsPerRank & (expertsPerRank - 1)) == 0;
+  const int expertRankShift = __ffs(expertsPerRank) - 1;
+  const uint64_t rankBit = uint64_t{1} << destinationRank;
   RankPrefix prefix;
   // Count and number each destination's tokens in parallel tiles of the same pass.
   for (int tokenBase = 0; tokenBase < numTokens; tokenBase += NumThreads) {
     const int token = tokenBase + threadId;
-    int selected = 0;
+    uint64_t destinationMask = 0;
     if (token < numTokens) {
 #pragma unroll
       for (int topk = 0; topk < numTopk; ++topk) {
-        const int expert = static_cast<int>(__ldg(topkIdx + static_cast<size_t>(token) * numTopk + topk));
-        selected |= rankExpertBegin <= expert && expert < rankExpertEnd;
+        const int64_t expert = __ldg(topkIdx + static_cast<size_t>(token) * numTopk + topk);
+        if (expert >= 0 && expert < numExperts) {
+          const int rank = powerOfTwoExperts ? static_cast<int>(expert) >> expertRankShift
+                                             : static_cast<int>(expert) / expertsPerRank;
+          destinationMask |= uint64_t{1} << rank;
+        }
       }
     }
+    const int selected = (destinationMask & rankBit) != 0;
     int offset;
     BlockScan(shared.rankScan).ExclusiveSum(selected, offset, prefix);
     if (token < numTokens) {
-      workspace.recvTokenOffsets_[static_cast<size_t>(token) * context->numRanks_ + destinationRank] =
-          selected ? offset : -1;
+      auto* routes = workspace.tokenRoutes_ + static_cast<size_t>(token) * numTopk;
+      if (selected) {
+        // Each destination owns one rank-ordered entry, independent of its top-k positions.
+        routes[__popcll(destinationMask & (rankBit - 1))] = {destinationRank, offset};
+      }
+      if (destinationRank == 0) {
+        for (int route = __popcll(destinationMask); route < numTopk; ++route) routes[route] = {-1, -1};
+      }
     }
     __syncthreads();
   }

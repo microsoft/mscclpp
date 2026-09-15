@@ -43,7 +43,7 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
   available_ = fitsReceiveBuffer(maxTokensPerRank_);
   if (!available_) return;
   symmetricBufferBytes_ = storageLayout().totalBytes_;
-  workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_);
+  workspaceBytes_ = throughputWorkspaceSize(maxTokensPerRank_, numRanks_, numExperts_, numTopk_);
 }
 
 ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
@@ -171,7 +171,7 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   auto& context = *throughputContext_;
   context.validatePrepareRequest(request);
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_);
+                                                  context.numExperts_, context.numTopk_);
   EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
   auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.routingEpoch_ + 1, request);
 
@@ -228,7 +228,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   }
 
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_);
+                                                  context.numExperts_, context.numTopk_);
   if (reusePreparation) {
     // Replays still need a peer handshake before overwriting the previous payload.
     throughputSynchronizePeers(context.deviceContext_, request.stream);
@@ -283,7 +283,7 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                                  context.numExperts_);
+                                                  context.numExperts_, context.numTopk_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
   throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
                           storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks,

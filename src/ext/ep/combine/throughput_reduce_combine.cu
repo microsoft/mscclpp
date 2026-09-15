@@ -86,20 +86,15 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   for (int token = globalWarp; token < workload.numTokens_; token += totalWarps) {
     int contributorRanks[MaxContributors];
     int contributorSlots[MaxContributors];
-    int numContributors = 0;
-    for (int rankBase = 0; rankBase < numRanks; rankBase += WARP_SIZE) {
-      const int peerRank = rankBase + laneId;
-      const int slot = peerRank < numRanks ? workspace.recvTokenIndex(token, peerRank, numRanks) : -1;
-      unsigned contributors = warpLaneMask(slot >= 0);
-      while (contributors != 0u) {
-        const int sourceLane = __ffs(static_cast<int>(contributors)) - 1;
-        if (numContributors < MaxContributors) {
-          contributorRanks[numContributors] = rankBase + sourceLane;
-          contributorSlots[numContributors] = __shfl_sync(0xffffffffu, slot, sourceLane);
-          ++numContributors;
-        }
-        contributors &= contributors - 1u;
-      }
+    const ThroughputTokenRoute route = laneId < numTopk
+                                           ? workspace.tokenRoutes_[static_cast<size_t>(token) * numTopk + laneId]
+                                           : ThroughputTokenRoute{-1, -1};
+    const int slot = workspace.recvTokenIndex(route);
+    const int numContributors = __popc(warpLaneMask(slot >= 0));
+    EP_DEVICE_ASSERT(numContributors <= MaxContributors);
+    for (int contributor = 0; contributor < numContributors; ++contributor) {
+      contributorRanks[contributor] = warpBroadcast(route.rank_, contributor);
+      contributorSlots[contributor] = warpBroadcast(slot, contributor);
     }
 
     auto* outputRow = output + static_cast<int64_t>(token) * hiddenInt4;
@@ -208,7 +203,7 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const void*
                              const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
                              void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || workload.numTokens_ == 0);
-  EP_HOST_ASSERT(workspace.recvTokenOffsets_ != nullptr && workspace.rankOffsets_ != nullptr);
+  EP_HOST_ASSERT(workspace.tokenRoutes_ != nullptr && workspace.rankOffsets_ != nullptr);
   EP_HOST_ASSERT(workspace.numRecvTokens_ != nullptr && workspace.recvCounts_ != nullptr);
   EP_HOST_ASSERT(recvBuffer != nullptr && context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.channels_ != nullptr);

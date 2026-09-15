@@ -74,7 +74,7 @@ inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedByte
   return cache.residentBlocks_;
 }
 
-// Local preparation: count routes and assign stable per-destination token offsets.
+// Local preparation: build per-token destination maps with stable offsets and routing counts.
 void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayout& workspace, const Workload& workload,
                            const DeviceContext& context, cudaStream_t stream);
 

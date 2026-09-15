@@ -83,8 +83,9 @@ class MoERuntime {
 
   /// Collectively prepare throughput routing without moving token payloads.
   ///
-  /// Computes stable local token offsets and exchanges peer counts to determine
-  /// receive ranges entirely on the GPU, without a host copy or wait.
+  /// Computes each token's distinct destination ranks and stable local offsets,
+  /// then exchanges peer counts to determine receive ranges entirely on the GPU,
+  /// without a host copy or wait.
   /// Enqueue dispatch on the same stream to consume the returned handle.
   /// Preparation is supported only in THROUGHPUT mode and can be captured
   /// together with dispatch in a CUDA graph.

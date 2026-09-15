@@ -995,6 +995,7 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
 
   constexpr int Tokens = 5;
   constexpr int Hidden = 136;
+  constexpr int ExpertsPerRank = NumTopk + 1;
   CudaStream stream;
   std::vector<Bf16> input(Tokens * Hidden);
   for (size_t index = 0; index < input.size(); ++index) {
@@ -1006,14 +1007,24 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
 
   for (const auto layout : {DispatchLayout::TOKEN_MAJOR, DispatchLayout::RANK_MAJOR}) {
     for (const int numTopk : {1, 2, 3, 4, 5, 8}) {
-      auto runtime =
-          std::make_unique<MoERuntime>(*communicator, MoEMode::THROUGHPUT, Tokens, Hidden, NumExperts, numTopk, layout);
+      auto runtime = std::make_unique<MoERuntime>(*communicator, MoEMode::THROUGHPUT, Tokens, Hidden,
+                                                  ExpertsPerRank * NumRanks, numTopk, layout);
       runtime->initialize();
       std::vector<int64_t> routes(Tokens * numTopk);
+      std::array<int, Tokens> numDestinations{};
+      // Cover unordered destinations, repeated ranks, mixed invalid entries, and empty routes.
       for (int token = 0; token < Tokens; ++token) {
+        std::array<bool, NumRanks> selectedRanks{};
         for (int topk = 0; topk < numTopk; ++topk) {
-          const int peer = (gEnv->rank + token + topk) % NumRanks;
-          routes[token * numTopk + topk] = peer * (NumExperts / NumRanks) + topk;
+          int peer = (gEnv->rank + NumRanks - 1 - topk) % NumRanks;
+          if (token == 1) peer = (gEnv->rank + 3) % NumRanks;
+          if (token == 2) peer = (gEnv->rank + topk % 2) % NumRanks;
+          const bool valid = token != 3 && (token != 2 || topk % 3 != 0) && (token != 4 || topk == numTopk - 1);
+          routes[token * numTopk + topk] = valid ? peer * ExpertsPerRank + topk : -1;
+          if (valid && !selectedRanks[peer]) {
+            selectedRanks[peer] = true;
+            ++numDestinations[token];
+          }
         }
       }
       mscclpp::GpuBuffer<int64_t> deviceRoutes(routes.size());
@@ -1051,9 +1062,12 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
       mscclpp::gpuMemcpy<float>(weights.data(), deviceWeights.data(), weights.size(), cudaMemcpyDeviceToHost);
       for (size_t index = 0; index < output.size(); ++index) {
-        ASSERT_EQ(static_cast<float>(output[index]), static_cast<float>(input[index]) * numTopk);
+        ASSERT_EQ(static_cast<float>(output[index]),
+                  static_cast<float>(input[index]) * numDestinations[index / Hidden]);
       }
-      for (const float weight : weights) ASSERT_EQ(weight, 1.0f);
+      for (size_t index = 0; index < weights.size(); ++index) {
+        ASSERT_EQ(weights[index], routes[index] >= 0 ? 1.0f : 0.0f);
+      }
       runtime.reset();
       communicator->bootstrap()->barrier();
     }
