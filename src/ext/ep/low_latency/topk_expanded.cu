@@ -9,6 +9,7 @@
 #include "config.cuh"
 #include "exception.cuh"
 #include "topk_expanded.cuh"
+#include "topk_expanded_ipc.cuh"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 #include <mscclpp/port_channel_gpunetio_device.hpp>
@@ -404,11 +405,12 @@ __device__ const uint8_t* expandedRow(const void* input, const Layout& layout, c
 
 // Upstream contributor-ready TMA gather. Only the source address and readiness
 // predicate differ for GPUNetIO landing rows. A skipped lane retains its phase.
-template <int Hidden>
+template <int Hidden, bool CachedReady = false>
 __device__ void recvRankMajorTopkExpandedRemotePartialsTma(void* output, const void* input, const int64_t* topkIds,
                                                            const float* weights, const Workload& work,
                                                            const TransportView& transport, const Layout& layout,
-                                                           int ranks, uint64_t target, uint8_t* shared) {
+                                                           int ranks, uint64_t target, uint8_t* shared,
+                                                           WorkspaceView* readyState = nullptr) {
   constexpr size_t bytes = Hidden * sizeof(Bf16);
   constexpr int vectors = bytes / sizeof(int4);
   constexpr int pairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
@@ -439,7 +441,8 @@ __device__ void recvRankMajorTopkExpandedRemotePartialsTma(void* output, const v
       __syncwarp();
       bool pending = valid;
       while (__any_sync(0xffffffff, pending)) {
-        const bool ready = pending && sourceReady(transport, flags, source, target, true);
+        const bool ready = pending && (CachedReady ? ipc::ready(*readyState, source, target)
+                                                   : sourceReady(transport, flags, source, target, true));
         if (ready) {
           const auto* src =
               expandedRow(input, layout, transport, source, token, lane, work.maxTokensPerRank_, work.numTopk_, bytes);
@@ -479,11 +482,11 @@ __device__ void recvRankMajorTopkExpandedRemotePartialsTma(void* output, const v
 
 // K=9 fallback: fixed slots and original top-k order. Hidden specializations
 // contain a multiple of WARP_SIZE int4s, so each vector-loop warp is full.
-template <int Hidden>
+template <int Hidden, bool CachedReady = false>
 __device__ void recvRankMajorTopkExpandedRemotePartials(void* output, const void* input, const int64_t* topkIds,
                                                         const float* weights, const Workload& work,
                                                         const TransportView& transport, const Layout& layout, int ranks,
-                                                        uint64_t target) {
+                                                        uint64_t target, WorkspaceView* readyState = nullptr) {
   constexpr size_t bytes = Hidden * sizeof(Bf16);
   constexpr int vectors = bytes / sizeof(int4);
   static_assert(vectors % WARP_SIZE == 0);
@@ -496,8 +499,14 @@ __device__ void recvRankMajorTopkExpandedRemotePartials(void* output, const void
     const float weight = validExpert(expert, work.numExperts_) ? (weights == nullptr ? 1.0f : weights[index]) : 0.0f;
     const int source =
         validExpert(expert, work.numExperts_) && weight != 0.0f ? static_cast<int>(expert / localExperts) : -1;
-    if (source >= 0)
-      waitSource(transport, static_cast<uint64_t*>(layout.gpuNetIoCombineFlagsBuffer_), source, target, true);
+    if (source >= 0) {
+      if constexpr (CachedReady) {
+        while (!ipc::ready(*readyState, source, target)) {
+        }
+      } else {
+        waitSource(transport, static_cast<uint64_t*>(layout.gpuNetIoCombineFlagsBuffer_), source, target, true);
+      }
+    }
     __syncwarp();
     for (int v = threadIdx.x; v < vectors; v += CombineNThreads) {
       float2 reduced[pairsPerVector] = {};
@@ -609,6 +618,8 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineTopkExpandedKernel(
 #endif
 }
 
+#include "topk_expanded_gpunetio.cuh"
+
 void validate(const Workload& work, const CommContext& comm, int blocks) {
   EP_HOST_ASSERT(work.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(work.dispatchDataType_ == DispatchDataType::BF16);
@@ -626,6 +637,21 @@ void launchDispatch(void* output, int* ids, float* weightsOut, int* count, const
                     const float* weights, const Workload& work, const CommContext& comm, void* workspace, int blocks,
                     cudaStream_t stream) {
   const size_t shared = dispatchSharedBytes<Hidden>(comm.numRanks_, work.numTopk_);
+  if (comm.expandedGpuNetIoFastPath_) {
+    static thread_local KernelConfigCache netConfig;
+    EP_HOST_ASSERT(configureKernel(gpunetio_fast::dispatchKernel<Hidden>, DispatchNThreads, shared, comm, netConfig) >=
+                   blocks);
+    gpunetio_fast::dispatchKernel<Hidden><<<blocks, DispatchNThreads, shared, stream>>>(
+        output, ids, weightsOut, count, input, topkIds, weights, work, comm, workspace);
+    return;
+  }
+  if (comm.expandedIpcFastPath_) {
+    static thread_local KernelConfigCache ipcConfig;
+    EP_HOST_ASSERT(configureKernel(ipc::dispatchKernel<Hidden>, DispatchNThreads, shared, comm, ipcConfig) >= blocks);
+    ipc::dispatchKernel<Hidden><<<blocks, DispatchNThreads, shared, stream>>>(output, ids, weightsOut, count, input,
+                                                                              topkIds, weights, work, comm, workspace);
+    return;
+  }
   static thread_local KernelConfigCache config;
   EP_HOST_ASSERT(configureKernel(dispatchTopkExpandedKernel<Hidden>, DispatchNThreads, shared, comm, config) >= blocks);
   dispatchTopkExpandedKernel<Hidden><<<blocks, DispatchNThreads, shared, stream>>>(
@@ -636,6 +662,22 @@ template <int Hidden, bool UseTma>
 void launchCombine(void* output, const void* input, const int64_t* ids, const float* weights, const Workload& work,
                    const CommContext& comm, void* workspace, int blocks, cudaStream_t stream) {
   const size_t shared = combineSharedBytes<Hidden>(work.numTopk_);
+  if (comm.expandedGpuNetIoFastPath_) {
+    static thread_local KernelConfigCache netConfig;
+    EP_HOST_ASSERT(configureKernel(gpunetio_fast::combineKernel<Hidden, UseTma>, CombineNThreads, shared, comm,
+                                   netConfig) >= blocks);
+    gpunetio_fast::combineKernel<Hidden, UseTma>
+        <<<blocks, CombineNThreads, shared, stream>>>(output, input, ids, weights, work, comm, workspace);
+    return;
+  }
+  if (comm.expandedIpcFastPath_) {
+    static thread_local KernelConfigCache ipcConfig;
+    EP_HOST_ASSERT(configureKernel(ipc::combineKernel<Hidden, UseTma>, CombineNThreads, shared, comm, ipcConfig) >=
+                   blocks);
+    ipc::combineKernel<Hidden, UseTma>
+        <<<blocks, CombineNThreads, shared, stream>>>(output, input, ids, weights, work, comm, workspace);
+    return;
+  }
   static thread_local KernelConfigCache config;
   EP_HOST_ASSERT(configureKernel(combineTopkExpandedKernel<Hidden, UseTma>, CombineNThreads, shared, comm, config) >=
                  blocks);
