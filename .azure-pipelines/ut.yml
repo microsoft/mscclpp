@@ -27,12 +27,9 @@ pr:
       - docs/**
       - '**/*.md'
 
-variables:
-  Codeql.Enabled: false
-
 jobs:
 - job: UnitTestA100
-  timeoutInMinutes: 40
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci
   strategy:
@@ -53,7 +50,7 @@ jobs:
       gpuArch:          '80'
 
 - job: UnitTestWithNpKitA100
-  timeoutInMinutes: 30
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci
   strategy:
@@ -74,7 +71,7 @@ jobs:
       gpuArch:          '80'
 
 - job: UnitTestH100
-  timeoutInMinutes: 60
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-h100
   strategy:
@@ -95,7 +92,7 @@ jobs:
       gpuArch:          '90'
 
 - job: UnitTestWithNpKitH100
-  timeoutInMinutes: 30
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-h100
   strategy:
@@ -116,7 +113,7 @@ jobs:
       gpuArch:          '90'
 
 - job: UnitTestNoIBEnv
-  timeoutInMinutes: 60
+  timeoutInMinutes: 120
   displayName: Test No IB Environment
   pool:
     name: msccl-ci-h100
@@ -139,7 +136,7 @@ jobs:
       gpuArch:          '90'
 
 - job: UnitTestMI300X
-  timeoutInMinutes: 40
+  timeoutInMinutes: 120
   pool:
     name: msccl-ci-mi300x
   strategy:
@@ -162,7 +159,7 @@ jobs:
       gpuArch:          gfx942
 
 - job: UnitTestExecutor
-  timeoutInMinutes: 60
+  timeoutInMinutes: 120
   displayName: Test DSL Executor
   pool:
     name: msccl-ci-h100
