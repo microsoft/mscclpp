@@ -49,6 +49,8 @@ constexpr int LocalTokenAlignment = 64;
 constexpr int EpilogueTokens = 32;
 constexpr int ScratchStride = EpilogueTokens + 1;
 constexpr int DispatchChunkBytes = 2048;
+constexpr int SmallRoutingSlots = 2 * Threads;
+constexpr int SmallRoutingExperts = 128;
 constexpr int64_t SpinLimit = 1000000000;
 
 struct Control {
@@ -154,6 +156,14 @@ struct DispatchStorage {
 
 struct NoDispatchStorage {};
 
+struct RoutingStorage {
+  int counts[SmallRoutingExperts];
+  int starts[SmallRoutingExperts];
+  uint64_t peers[72];
+  int tokenCounts[72];
+};
+static_assert(sizeof(RoutingStorage) <= 128 * ScratchStride * sizeof(float));
+
 template <bool E5M2, bool Local = false>
 struct alignas(1024) SharedStorage {
   typename CollectiveTypes<E5M2, Local>::Mainloop::TensorStorage tensors;
@@ -165,6 +175,7 @@ struct alignas(1024) SharedStorage {
   union alignas(128) {
     float scratch[128 * ScratchStride];
     __bfloat16 packed[EpilogueTokens * 128];
+    RoutingStorage routing;
   } epilogue;
   std::conditional_t<Local, NoDispatchStorage, DispatchStorage> dispatch;
 };
@@ -190,9 +201,7 @@ __device__ __forceinline__ void signalAndWait(const Parameters<E5M2>& p, int pee
 }
 
 template <bool E5M2>
-__device__ int routeExpert(const Parameters<E5M2>& p, int rank, int token, int slot) {
-  if (token >= *peerAt<E5M2, int>(p, rank, p.symmetric.tokenCount)) return -1;
-  int id = peerAt<E5M2, int>(p, rank, p.symmetric.topkIds)[token * p.config.topK + slot];
+__device__ int localExpert(const Parameters<E5M2>& p, int id, int rank, int token, int slot) {
   if (id < -1 || id >= p.config.numExperts) {
     printf("MegaMoE rank %d: invalid expert %d from rank %d, token %d, slot %d\n", p.config.rank, id, rank, token,
            slot);
@@ -205,7 +214,87 @@ __device__ int routeExpert(const Parameters<E5M2>& p, int rank, int token, int s
 }
 
 template <bool E5M2>
-__device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens) {
+__device__ int routeExpert(const Parameters<E5M2>& p, int rank, int token, int slot) {
+  if (token >= *peerAt<E5M2, int>(p, rank, p.symmetric.tokenCount)) return -1;
+  int id = peerAt<E5M2, int>(p, rank, p.symmetric.topkIds)[token * p.config.topK + slot];
+  return localExpert(p, id, rank, token, slot);
+}
+
+template <bool E5M2>
+__device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& scratch) {
+  const auto& c = p.config;
+  const auto& w = p.workspace;
+  int experts = c.numExperts / c.worldSize;
+  int slots = c.worldSize * c.maxTokens * c.topK;
+  if (threadIdx.x < experts) scratch.counts[threadIdx.x] = 0;
+  if (threadIdx.x < c.worldSize) {
+    // Each peer-owning thread has already waited for that peer's publication.
+    scratch.peers[threadIdx.x] = p.peers[threadIdx.x];
+    scratch.tokenCounts[threadIdx.x] = *peerAt<E5M2, int>(p, threadIdx.x, p.symmetric.tokenCount);
+  }
+  __syncthreads();
+
+  int assignedExperts[SmallRoutingSlots / Threads];
+  int expertRows[SmallRoutingSlots / Threads];
+  float weights[SmallRoutingSlots / Threads];
+  CUTE_UNROLL
+  for (int j = 0; j < SmallRoutingSlots / Threads; ++j) {
+    int i = threadIdx.x + j * Threads;
+    int expert = -1;
+    if (i < slots) {
+      int rank = i / (c.maxTokens * c.topK);
+      int token = i / c.topK % c.maxTokens;
+      int slot = i % c.topK;
+      if (token < scratch.tokenCounts[rank]) {
+        void* peer = reinterpret_cast<void*>(scratch.peers[rank]);
+        int id = at<int>(peer, p.symmetric.topkIds)[token * c.topK + slot];
+        weights[j] = at<float>(peer, p.symmetric.topkWeights)[token * c.topK + slot];
+        expert = localExpert(p, id, rank, token, slot);
+      }
+    }
+    assignedExperts[j] = expert;
+    if (expert >= 0) expertRows[j] = atomicAdd(scratch.counts + expert, 1);
+  }
+  __syncthreads();
+  if (threadIdx.x < 32) {
+    int preceding = 0;
+    for (int base = 0; base < experts; base += 32) {
+      int expert = base + threadIdx.x;
+      int count = expert < experts ? scratch.counts[expert] : 0;
+      int blocks = (count + TileN - 1) / TileN;
+      int scan = blocks;
+      CUTE_UNROLL
+      for (int distance = 1; distance < 32; distance *= 2) {
+        int other = __shfl_up_sync(0xffffffff, scan, distance);
+        if (threadIdx.x >= distance) scan += other;
+      }
+      int firstBlock = preceding + scan - blocks;
+      if (expert < experts) {
+        scratch.starts[expert] = w.starts[expert] = firstBlock * TileN;
+        w.counts[expert] = w.cursors[expert] = count;
+        for (int block = 0; block < blocks; ++block)
+          w.blocks[firstBlock + block] = TokenBlock{expert, min(int(TileN), count - block * TileN)};
+      }
+      preceding += __shfl_sync(0xffffffff, scan, 31);
+    }
+    if (threadIdx.x == 0) w.control->tokenBlocks = preceding;
+  }
+  __syncthreads();
+  CUTE_UNROLL
+  for (int j = 0; j < SmallRoutingSlots / Threads; ++j) {
+    int expert = assignedExperts[j];
+    if (expert >= 0) {
+      int i = threadIdx.x + j * Threads;
+      int rank = i / (c.maxTokens * c.topK);
+      int token = i / c.topK % c.maxTokens;
+      int slot = i % c.topK;
+      w.routes[scratch.starts[expert] + expertRows[j]] = Route{rank, token, slot, weights[j]};
+    }
+  }
+}
+
+template <bool E5M2>
+__device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStorage& scratch) {
   const auto& c = p.config;
   const auto& w = p.workspace;
   int thread = blockIdx.x * Threads + threadIdx.x;
@@ -231,9 +320,16 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens) {
   if (blockIdx.x == 0 && threadIdx.x < c.worldSize) {
     signalAndWait(p, threadIdx.x);
   }
+  int slots = c.worldSize * c.maxTokens * c.topK;
+  if (slots <= SmallRoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
+    // Only the planner CTA needs peer readiness. Publish its entire plan once;
+    // the histogram ticket is also the final row offset, so IDs are read once.
+    if (blockIdx.x == 0) prepareSmallRoutes(p, scratch);
+    w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+    return;
+  }
   w.control->gridBarrier.sync(gridDim.x, SpinLimit);
 
-  int slots = c.worldSize * c.maxTokens * c.topK;
   for (int i = thread; i < slots; i += stride) {
     int rank = i / (c.maxTokens * c.topK);
     int token = i / c.topK % c.maxTokens;
@@ -535,7 +631,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   if constexpr (Local) {
     if (tokens == 0) return;
   } else {
-    prepareRoutes(p, tokens);
+    prepareRoutes(p, tokens, s.epilogue.routing);
   }
 
   typename LoadA::Params aParams{};

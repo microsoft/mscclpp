@@ -72,6 +72,14 @@ are BF16; top-k combination sums in FP32 and returns BF16.
 cluster alignment. This is not a fixed SM-ID partition or exclusive reservation.
 `moe.workspace_bytes` reports workspace sizes, excluding packed weights.
 
+For routing capacity `world_size * max_tokens * top_k <= 1024` and at most
+128 local experts, routing preparation uses one CTA with cached peer headers,
+IDs and weights, a shared-memory histogram, and a warp-parallel prefix. It
+publishes the completed plan once, reducing preparation from five full-grid
+joins to two without changing peer readiness or output-completion requirements.
+The scratch storage reuses the epilogue allocation. Larger capacities/expert
+counts retain the distributed planner; selection is automatic and capture-safe.
+
 ### Local shared expert
 
 Construct a separate context with `world_size=1`, `num_experts=1`, and `top_k=1`,
@@ -193,6 +201,7 @@ attention, prenorm, residual gathering, and training operations are excluded.
 
 ### Native performance
 
+These reference measurements predate the small-capacity routing planner.
 Measured with `benchmark_shared` on GB200 using Torch 2.11.0+cu130, the default
 geometry and precision above (FP32 router with TF32 allowed), and 120/32
 routed/shared CTAs. EP4 uses one four-GPU host and 64 experts; EP32 uses eight
@@ -354,3 +363,13 @@ non-default kernels, module lifetime, and graph replay:
 python -m pytest --noconftest \
   python/test/test_megamoe_jit.py python/test/test_megamoe_autotune.py -q
 ```
+
+Routing-planner boundary, masking, and changing-routing graph tests:
+
+```bash
+MSCCLPP_TEST_MEGAMOE_ROUTING=1 python -m pytest --noconftest \
+  python/test/test_megamoe_routing.py -q
+```
+
+The same file supports two/four-rank `torchrun` execution. Add
+`MSCCLPP_TEST_MEGAMOE_JIT=1` to cover each routed JIT specialization.
