@@ -186,6 +186,31 @@ void MoELowLatencyRuntime::setup() {
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
+  // Fixed before graph capture; never mix the two completion protocols within
+  // one communicator. A null networking context alone does not prove IPC reachability.
+  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize >= numRanks_) {
+    const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_IPC_FASTPATH");
+    const bool allMapped = std::all_of(peerMappedBufferBases_.begin(), peerMappedBufferBases_.end(),
+                                       [](void* base) { return base != nullptr; });
+    std::vector<int> enabled(numRanks_, 0);
+    enabled[rank_] =
+        (requested == nullptr || std::atoi(requested) != 0) && allMapped && commContext_.gpuNetIo_ == nullptr;
+    communicator_->bootstrap()->allGather(enabled.data(), sizeof(int));
+    commContext_.expandedIpcFastPath_ =
+        std::all_of(enabled.begin(), enabled.end(), [](int value) { return value != 0; });
+  }
+
+  // Default-on only after the GPUNetIO service exists. This does NOT enable
+  // networking itself: MSCCLPP_EP_ENABLE_GPUNETIO retains its original meaning.
+  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize < numRanks_) {
+    const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_GPUNETIO_FASTPATH");
+    std::vector<int> enabled(numRanks_, 0);
+    enabled[rank_] = (requested == nullptr || std::atoi(requested) != 0) && commContext_.gpuNetIo_ != nullptr;
+    communicator_->bootstrap()->allGather(enabled.data(), sizeof(int));
+    commContext_.expandedGpuNetIoFastPath_ =
+        std::all_of(enabled.begin(), enabled.end(), [](int value) { return value != 0; });
+  }
+
   // Host-side topology dump (opt-in via MSCCLPP_EP_DEBUG_TOPO): reveals whether
   // the NVLink/IPC (NVSwitch/MNNVL) fabric groups peers as this rank expects.
   // nvlinkPeerMap[r]='1' => peer r is NVLink/IPC-mapped (direct write); '0' =>
@@ -206,6 +231,13 @@ void MoELowLatencyRuntime::setup() {
                  rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_, (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0,
                  ginOn, available_ ? 1 : 0, nvmap.c_str());
     std::fflush(stderr);
+    if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+      std::fprintf(stderr, "[EPEXPANDED] rank=%d ipcFastPath=%d hidden=%d topk=%d\n", rank_,
+                   commContext_.expandedIpcFastPath_ ? 1 : 0, hidden_, numTopk_);
+      const int networkFastPath = commContext_.expandedGpuNetIoFastPath_ ? 1 : 0;
+      std::fprintf(stderr, "[EPEXPANDED_GPUNETIO] rank=%d gpuNetIoFastPath=%d\n", rank_, networkFastPath);
+      std::fflush(stderr);
+    }
   }
 }
 

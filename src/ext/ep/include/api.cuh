@@ -172,6 +172,12 @@ struct CommContext {
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Byte stride of one staging-ring slot (token + top-k metadata).
   size_t gpuNetIoSlotStride_ = 0;
+  /// Expanded-only IPC specialization, default-on when every peer is mapped
+  /// without GPUNetIO; an explicit environment value of 0 opts out collectively.
+  bool expandedIpcFastPath_ = false;
+  /// Expanded-only GPUNetIO specialization, default-on with an active network
+  /// context outside the IPC domain; an explicit 0 opts out collectively.
+  bool expandedGpuNetIoFastPath_ = false;
 };
 
 /// Return the optimized low-latency workspace size.
