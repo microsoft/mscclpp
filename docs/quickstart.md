@@ -57,21 +57,6 @@ $ docker run -it --privileged --net=host --ipc=host --security-opt=seccomp=uncon
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
 
-To build the CUDA 13.3 development image locally, use the `cuda13.3` target. It is based on the official `nvidia/cuda:13.3.1-devel-ubuntu24.04` image and includes the CUDA compiler and the native MSCCL++ build prerequisites. It does not install PyTorch or experiment-specific packages.
-
-```bash
-# Build for the current supported host architecture.
-$ ./docker/build.sh cuda13.3
-
-# Build the linux/arm64 image for an ARM64 GB200 host (or with build emulation configured).
-$ ./docker/build.sh --platform linux/arm64 cuda13.3
-
-# Confirm the selected base and platform without invoking Docker.
-$ ./docker/build.sh --print-config --platform linux/arm64 cuda13.3
-```
-
-The resulting development image is tagged `base-dev-cuda13.3-aarch64` for `linux/arm64` (`base-dev-cuda13.3-x86_64` for `linux/amd64`). Check the toolchain with `nvcc --version` and `ptxas --version` after building. GPU execution is not required for those checks.
-
 (install-from-source)=
 ## Install from Source
 
