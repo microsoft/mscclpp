@@ -49,7 +49,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 # OpenMPI short link (for compatibility with old images)
-RUN ln -s /usr/lib/x86_64-linux-gnu/openmpi /usr/local/mpi
+RUN DEB_HOST_MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH) && \
+    ln -s "/usr/lib/${DEB_HOST_MULTIARCH}/openmpi" /usr/local/mpi
 
 ARG EXTRA_LD_PATH=
 ENV LD_LIBRARY_PATH="${EXTRA_LD_PATH}:${LD_LIBRARY_PATH}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 declare -A baseImageTable
 baseImageTable=(
@@ -8,6 +8,7 @@ baseImageTable=(
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
+    ["cuda13.3"]="nvidia/cuda:13.3.1-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
     ["rocm7.2"]="rocm/dev-ubuntu-24.04:7.2.4"
 )
@@ -24,57 +25,126 @@ ofedVersionTable=(
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
+    ["cuda13.3"]="24.10-3.2.5.0"
     ["rocm6.2"]="24.10-1.1.4.0"
     ["rocm7.2"]="24.10-3.2.5.0"
 )
 
-TARGET=${1}
-OS_ARCH=$(uname -m)
+TARGET=""
+DOCKER_PLATFORM=""
+PRINT_CONFIG=false
 
 print_usage() {
-    echo "Usage: $0 [cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2|rocm7.2]"
+    echo "Usage: $0 [--platform linux/amd64|linux/arm64] [--print-config] [cuda12.4|cuda12.8|cuda12.9|cuda13.0|cuda13.3|rocm6.2|rocm7.2]"
 }
 
-if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
-    echo "Invalid target: ${TARGET}"
-    print_usage
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --platform)
+            if [[ $# -lt 2 ]]; then
+                echo "Missing value for --platform" >&2
+                print_usage >&2
+                exit 1
+            fi
+            DOCKER_PLATFORM="$2"
+            shift 2
+            ;;
+        --platform=*)
+            DOCKER_PLATFORM="${1#*=}"
+            shift
+            ;;
+        --print-config)
+            PRINT_CONFIG=true
+            shift
+            ;;
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            print_usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$TARGET" ]]; then
+                echo "Unexpected argument: $1" >&2
+                print_usage >&2
+                exit 1
+            fi
+            TARGET="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$TARGET" || -z "${baseImageTable[$TARGET]-}" ]]; then
+    echo "Invalid target: ${TARGET:-<none>}" >&2
+    print_usage >&2
     exit 1
 fi
-echo "Target: ${TARGET}"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+if [[ -z "$DOCKER_PLATFORM" ]]; then
+    case "$(uname -m)" in
+        x86_64|amd64) DOCKER_PLATFORM="linux/amd64" ;;
+        aarch64|arm64) DOCKER_PLATFORM="linux/arm64" ;;
+        *)
+            echo "Unsupported host architecture: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+fi
 
-cd ${SCRIPT_DIR}/..
+case "$DOCKER_PLATFORM" in
+    linux/amd64) OS_ARCH="x86_64" ;;
+    linux/arm64) OS_ARCH="aarch64" ;;
+    *)
+        echo "Unsupported platform: ${DOCKER_PLATFORM}; expected linux/amd64 or linux/arm64" >&2
+        exit 1
+        ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+cd "${SCRIPT_DIR}/.."
 
 DEFAULT_OFED_VERSION="5.2-2.2.3.0"
-OFED_VERSION=${ofedVersionTable[${TARGET}]}
-if [[ -z ${OFED_VERSION} ]]; then
-    OFED_VERSION=${DEFAULT_OFED_VERSION}
+OFED_VERSION="${ofedVersionTable[$TARGET]:-$DEFAULT_OFED_VERSION}"
+BASE_IMAGE="${baseImageTable[$TARGET]}"
+EXTRA_LD_PATH="${extraLdPathTable[$TARGET]-}"
+
+echo "Target: ${TARGET}"
+echo "Base image: ${BASE_IMAGE}"
+echo "Platform: ${DOCKER_PLATFORM}"
+echo "Image architecture: ${OS_ARCH}"
+echo "OFED version: ${OFED_VERSION}"
+
+if $PRINT_CONFIG; then
+    exit 0
 fi
 
 TAG_TMP="tmp-${TARGET}-${OS_ARCH}"
 TAG_BASE="base-${TARGET}-${OS_ARCH}"
 TAG_BASE_DEV="base-dev-${TARGET}-${OS_ARCH}"
 
-docker build -t ${TAG_TMP} \
+docker build --platform "${DOCKER_PLATFORM}" -t "${TAG_TMP}" \
     -f docker/base-x.dockerfile \
-    --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
-    --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
-    --build-arg TARGET=${TARGET} \
-    --build-arg OFED_VERSION=${OFED_VERSION} .
+    --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+    --build-arg EXTRA_LD_PATH="${EXTRA_LD_PATH}" \
+    --build-arg TARGET="${TARGET}" \
+    --build-arg OFED_VERSION="${OFED_VERSION}" .
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
 else
     echo "Building CUDA base image..."
 fi
-docker tag ${TAG_TMP} ${TAG_BASE}
-docker rmi --no-prune ${TAG_TMP}
+docker tag "${TAG_TMP}" "${TAG_BASE}"
+docker rmi --no-prune "${TAG_TMP}"
 
-docker build -t ${TAG_BASE_DEV} \
+docker build --platform "${DOCKER_PLATFORM}" -t "${TAG_BASE_DEV}" \
     -f docker/base-dev-x.dockerfile \
-    --build-arg BASE_IMAGE=${TAG_BASE} \
-    --build-arg TARGET=${TARGET} .
+    --build-arg BASE_IMAGE="${TAG_BASE}" \
+    --build-arg TARGET="${TARGET}" .
 
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
