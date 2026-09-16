@@ -80,8 +80,8 @@ endif()
 # GPU-initiated networking (GPUNetIO / GDAKI) backend for cross-NVLink-domain LL.
 # The GpuNetIoService host code is compiled into libmscclpp (mscclpp_gpunetio_obj),
 # so the EP module only needs the header include path and the compile define.
-# Scope both to the host runtime translation unit (ll_runtime.cc) so the EP CUDA
-# device TUs are unaffected (they only forward-declare GpuNetIoDeviceContext).
+# Scope definitions/includes to the host setup and the rank-major transport TUs.
+# Unrelated expert-major/throughput TUs keep the forward-declared device context.
 if(MSCCLPP_USE_GPUNETIO)
     set_source_files_properties(latency.cc PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
@@ -91,9 +91,14 @@ if(MSCCLPP_USE_GPUNETIO)
     set_source_files_properties(dispatch/rank_major_dispatch.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
-    # The low-latency combine kernel RDMA-reads (gin->get) remote expert outputs
-    # for cross-domain peers.
+    # Cross-domain combine PUSHes pre-reduced rows; it does not issue RDMA reads.
     set_source_files_properties(combine/direct_send_combine.cu combine/rank_local_reduce_combine.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+endif()
+
+option(MSCCLPP_EP_GPUNETIO_DIAG "Enable bounded GPUNetIO rank-major count diagnostics" OFF)
+if(MSCCLPP_EP_GPUNETIO_DIAG)
+    set_property(SOURCE dispatch/rank_major_dispatch.cu APPEND PROPERTY
+        COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_DIAG)
 endif()

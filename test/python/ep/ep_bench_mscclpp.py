@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import torch
 
 from ep_bench_common import (
@@ -42,7 +43,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    num_blocks = args.num_sms or 130
+    num_blocks = args.num_sms or int(os.environ.get("MSCCLPP_EP_LL_BLOCKS", "130"))
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
@@ -77,7 +78,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LATENCY,
-        num_blocks=args.num_sms or None,
+        num_blocks=num_blocks,
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
@@ -87,7 +88,8 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if rank == 0:
         print(
             f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
-            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} ll_blocks={num_blocks} "
+            f"cuda_graph={args.cuda_graph}",
             flush=True,
         )
         print(f"[cfg] mscclpp output_layout={args.ep_layout or 'expert_major'}", flush=True)
@@ -108,14 +110,22 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
 
     def _combine(dispatch_out, handle):
         nonlocal expert_output_initialized
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         # Rank-major MoE writes directly into the runtime-owned registered output
         # buffer. Pre-fill it once to benchmark communication without timing a copy.
         combine_input = dispatch_out.combine_input_buffer
         if combine_input is None:
             combine_input = simulated_gemm_output(dispatch_out)
-        elif not expert_output_initialized:
-            combine_input.normal_()
-            expert_output_initialized = True
+        else:
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] enter", flush=True)
+            if not expert_output_initialized:
+                combine_input.normal_()
+                expert_output_initialized = True
+                if debug_combine:
+                    print(f"[rank_major_input][rank {rank}] initialized", flush=True)
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] buffer ready", flush=True)
         moe_comm.combine(combine_input, handle, out=out)
 
     # Optional one-time correctness check (mirrors test_latency_multirank).
@@ -172,7 +182,12 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(dout):
         dispatch_out, handle = dout
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[combfn][rank {rank}] enter", flush=True)
         _combine(dispatch_out, handle)
+        if debug_combine:
+            print(f"[combfn][rank {rank}] exit", flush=True)
 
     # Capture-safe ops for the harness's single-graph capture: dispatch+combine run
     # as ONE graph (one replay does both, so combine_fn becomes a no-op), matching
@@ -189,7 +204,17 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
         def _graph_combine():
-            moe_comm.combine(simulated_gemm_output(_cap["out"]), _cap["handle"], out=out)
+            debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+            if debug_combine:
+                print(f"[graph_combfn][rank {rank}] enter", flush=True)
+                if rank_major:
+                    print(f"[rank_major_input][rank {rank}] enter", flush=True)
+            graph_input = simulated_gemm_output(_cap["out"])
+            if debug_combine and rank_major:
+                print(f"[rank_major_input][rank {rank}] simulated", flush=True)
+            moe_comm.combine(graph_input, _cap["handle"], out=out)
+            if debug_combine:
+                print(f"[graph_combfn][rank {rank}] exit", flush=True)
 
         graph_spec = {
             "dispatch": _graph_dispatch,

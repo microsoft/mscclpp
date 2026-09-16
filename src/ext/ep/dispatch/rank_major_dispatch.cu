@@ -27,6 +27,12 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  // dfa5e151: reset before any producer can allocate a destination slot. Unlike
+  // the old workspace, this layout starts with persistent arrival baselines and
+  // recv counts; never memset workspace[0..R) here. This node is graph-captured.
+  const WorkspaceView workspace(context.workspace_, context.numRanks_, workload.numExperts_);
+  CUDA_CHECK(cudaMemsetAsync(workspace.dispatchRankPayloadSlots_, 0,
+                             static_cast<size_t>(context.numRanks_) * sizeof(int), stream));
   dispatchAlgorithm<DispatchLayout::RANK_MAJOR, RankMajorDispatchKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);

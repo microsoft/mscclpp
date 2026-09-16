@@ -139,8 +139,12 @@ struct PayloadView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet),
-                             BufferAlignmentBytes);
+  // Rank-major counts use [R,2R), with dedicated count send scratch at [2R,3R).
+  // Reserve all three ranges even when there is only one expert per rank.
+  const size_t metadataPackets = static_cast<size_t>(numRanks) + numExperts;
+  const size_t countPackets = static_cast<size_t>(3) * numRanks;
+  const size_t packets = metadataPackets > countPackets ? metadataPackets : countPackets;
+  return configAlign<size_t>(packets * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,

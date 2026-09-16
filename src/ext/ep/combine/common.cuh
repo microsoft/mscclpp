@@ -292,10 +292,15 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
 MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks, uint32_t epoch,
                                                        WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
-  if (blockIdx.x == 0 && threadId < nRanks) {
-    const int peerRank = threadId;
-    if (!transport.isSelf(peerRank) && transport.isNvlinkPeer(peerRank)) {
+  // Port the signal-all / wait-all order from b31afb9. Cross-domain peers use
+  // PUSH completion flags rather than uninitialized IPC channel handles.
+  if (blockIdx.x == 0 && threadId == 0) {
+    for (int peerRank = 0; peerRank < nRanks; ++peerRank) {
+      if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
       transport.baseMemoryChannels_[peerRank].relaxedSignal();
+    }
+    for (int peerRank = 0; peerRank < nRanks; ++peerRank) {
+      if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
       transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
     }
   }
@@ -639,7 +644,6 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, in
                          /*signalValue=*/1);
     } else {
       gin->put(sourceRank, dstRowOffset, srcRowOffset, HiddenBytes);
-      if ((slot & 63) == 63) gin->flush(sourceRank);
     }
   }
   gin->flush(sourceRank);
@@ -742,11 +746,12 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     // Cross-domain active: use the GPUNetIO PUSH combine (NVLink peers via mapped
     // read, cross-domain peers via landing region) instead of the pull/gather.
     if (transport.gpuNetIo_ != nullptr) {
-      const uint32_t epoch = workload.epoch_;
+      const uint32_t epoch = workload.epoch_ * 2;
       synchronizeRankMajorCombine(transport, nRanks, epoch, workspaceView);
       sendRankMajorCombinePush<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView);
       recvRankMajorCombinePush<Hidden>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                        maxTokensPerRank, transport, workspaceView);
+      synchronizeRankMajorCombine(transport, nRanks, epoch + 1, workspaceView);
       return;
     }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)

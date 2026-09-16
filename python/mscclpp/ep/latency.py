@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import torch
@@ -264,25 +265,45 @@ class LatencyRuntime(Runtime):
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
         mode_context = self.context
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[py_ll_combine][rank {mode_context.rank}] enter handle={type(handle).__name__}", flush=True)
         self._validate_combine(expert_output, handle, out)
+        if debug_combine:
+            print(f"[py_ll_combine][rank {mode_context.rank}] validated", flush=True)
         context = handle._context
         if isinstance(context, _ExpertMajorCombineContext):
             topk_weights = context.weights
             src_info = context.src_info
             layout_range = context.layout_range
             active_capacity = mode_context.max_tokens_per_rank
+            if debug_combine:
+                print(f"[py_ll_combine][rank {mode_context.rank}] expert-major context", flush=True)
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
             topk_weights = None
             src_info = None
             layout_range = None
+            if debug_combine:
+                print(
+                    f"[py_ll_combine][rank {mode_context.rank}] rank-major context capacity={active_capacity}",
+                    flush=True,
+                )
         else:
             raise ValueError("DispatchHandle does not contain latency combine context")
         if out is None:
+            if debug_combine:
+                print(f"[py_ll_combine][rank {mode_context.rank}] allocate output", flush=True)
             out = torch.empty(
                 (context.num_tokens, mode_context.hidden_size),
                 dtype=torch.bfloat16,
                 device=expert_output.device,
+            )
+        if debug_combine:
+            print(
+                f"[py_ll_combine][rank {mode_context.rank}] before combine tokens={context.num_tokens} "
+                f"hidden={mode_context.hidden_size} topk={mode_context.topk}",
+                flush=True,
             )
         self.cpp_runtime.combine(
             expert_output.data_ptr(),
@@ -302,6 +323,8 @@ class LatencyRuntime(Runtime):
             mode_context.num_blocks - 2,
             cuda_stream_ptr(stream),
         )
+        if debug_combine:
+            print(f"[py_ll_combine][rank {mode_context.rank}] after combine", flush=True)
         return out
 
     def initialize(self) -> None:

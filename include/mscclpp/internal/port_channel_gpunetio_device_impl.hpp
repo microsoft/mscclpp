@@ -68,7 +68,15 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int peer, uint64_t d
 }
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer) {
-  doca_gpu_dev_verbs_wait(detail::ginQp(qps, peer));
+  // Drain through the latest reserved ticket so the shared dispatch/combine CQ
+  // advances and its signaled entries can be recycled across iterations.
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+  uint64_t ticket =
+      doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_rsvd_index);
+  if (ticket == 0) return;
+  doca_gpu_dev_verbs_cq* cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);
+  while (doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(cq, ticket - 1) == EBUSY) {
+  }
 }
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int peer, uint64_t remoteOffset, uint64_t localOffset,
@@ -78,7 +86,8 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int peer, uint64_t remoteO
   doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
   doca_gpu_dev_verbs_ticket_t ticket;
   doca_gpu_dev_verbs_get_thread<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, raddr, laddr, size, laddr, &ticket);
-  doca_gpu_dev_verbs_wait(qp);
+  // Wait for this read, not unrelated operations concurrently reserved on the QP.
+  doca_gpu_dev_verbs_wait(qp, ticket);
 }
 
 MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount) {

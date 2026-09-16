@@ -63,7 +63,11 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
   // does not span all ranks, provided the backend is explicitly enabled.
   if (numRanksPerIpcDomain_ < numRanks_) {
     const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
-    if (enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) available_ = true;
+    // The ported network protocol carries one pre-reduced BF16 row per rank.
+    // Expert-major and the newer per-route DIRECT_SEND layout are IPC-only.
+    if (enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
+      available_ = outputLayout_ == DispatchLayout::RANK_MAJOR && combineMode_ == CombineMode::RANK_LOCAL_REDUCE;
+    }
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 }
@@ -269,6 +273,10 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   }
 
   ++context.epoch_;
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    std::fprintf(stderr, "[EPOCHDBG] rank=%d dispatch epoch=%u numTokens=%d\n", rank_, context.epoch_, numTokens);
+    std::fflush(stderr);
+  }
   const Workload workload{.epoch_ = context.epoch_,
                           .numTokens_ = numTokens,
                           .hidden_ = hidden,
@@ -317,6 +325,12 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
+  if (context.deviceContext_.gpuNetIo_ != nullptr) {
+    EP_HOST_ASSERT(dispatchLayout == DispatchLayout::RANK_MAJOR && mode == CombineMode::RANK_LOCAL_REDUCE);
+    EP_HOST_ASSERT(numBlocks >= context.numRanks_);
+    EP_HOST_ASSERT(static_cast<size_t>(context.numRanks_) * (static_cast<size_t>(maxTokensPerRank) + 1) <=
+                   GpuNetIoStagingSlots);
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
                                         numExperts, numTopk, context.outputLayout_, context.combineMode_);
@@ -327,6 +341,10 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
   }
 
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    std::fprintf(stderr, "[EPOCHDBG] rank=%d combine  epoch=%u\n", rank_, context.epoch_);
+    std::fflush(stderr);
+  }
   const Workload workload{.epoch_ = context.epoch_,
                           .numTokens_ = numTokens,
                           .hidden_ = hidden,
