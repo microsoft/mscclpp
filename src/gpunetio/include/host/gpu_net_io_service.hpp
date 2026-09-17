@@ -33,7 +33,9 @@ class GpuNetIoService {
  public:
   /// @param bootstrap Bootstrap used for the QP-info / rkey all-gather.
   /// @param ibDeviceName Comma-separated IB devices; QPs are striped across them.
-  /// An empty string selects active HCAs using PCI/NUMA affinity across local GPU ranks.
+  /// An empty string selects all active HCAs with the best PCI/NUMA affinity
+  /// for this GPU, sorted by device name. GPUs may share the same local HCA set;
+  /// it is not divided among local ranks. Explicit device lists are unchanged.
   /// @param cudaDeviceId CUDA device ordinal that owns the symmetric buffer.
   GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName, int cudaDeviceId);
 

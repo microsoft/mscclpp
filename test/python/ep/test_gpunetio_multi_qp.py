@@ -25,18 +25,22 @@ IMPL = "include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"
 
 
 class MultiQpTests(unittest.TestCase):
-    def test_actual_hca_assignment_and_list_parsing(self):
+    def test_actual_plural_hca_selection_and_list_parsing(self):
         service = source(SERVICE)
         native = HOST_PREAMBLE + "\n#include <limits>\n#include <cstdio>\n"
         native += "enum class ErrorCode { InternalError, InvalidUsage };\n"
         native += (
             "struct Error : std::runtime_error { Error(const char* text, ErrorCode) : std::runtime_error(text) {} };\n"
         )
-        native += structure(service, "TopologyExchangeInfo") + structure(service, "HcaTopology")
+        native += source("src/gpunetio/host/gpu_net_io_topology.hpp")
+        native += "\nnamespace detail = mscclpp::detail;\n"
+        native += "using mscclpp::detail::gpunetio::HcaTopology;\n"
+        native += "using mscclpp::detail::gpunetio::pciPathDistance;\n"
+        native += structure(service, "TopologyExchangeInfo")
         native += "std::vector<HcaTopology> available;\n"
         native += "std::vector<HcaTopology> discoverActiveHcas() { return available; }\n"
         native += "std::string canonicalPath(const std::string& path) { return path; }\n"
-        for name in ("pciPathDistance", "hcaAffinityScore", "selectAutomaticHcas", "splitIbDeviceNames"):
+        for name in ("selectAutomaticHcas", "splitIbDeviceNames"):
             native += function(service, name)
         native += r"""
 int main() {
@@ -60,13 +64,16 @@ int main() {
     std::vector<int> use(hcas);
     for (int rank=0; rank<gpus; ++rank) {
       auto selected=selectAutomaticHcas(topology,rank);
-      require(selected.size()==static_cast<size_t>((hcas+gpus-1)/gpus), "wrong per-rank share");
+            require(selected.size()==static_cast<size_t>(hcas), "best-affinity set was divided among local GPUs");
       require(selected==selectAutomaticHcas(topology,rank), "nondeterministic selection");
       auto unique=selected;std::sort(unique.begin(),unique.end());
+            require(selected==unique, "HCA set must be sorted by name");
       require(std::adjacent_find(unique.begin(),unique.end())==unique.end(), "duplicate HCA per GPU");
+            std::reverse(available.begin(),available.end());
+            require(selected==selectAutomaticHcas(topology,rank), "sysfs enumeration changed logical HCA indices");
       for (const auto& name:selected) ++use[std::stoi(name.substr(3))];
     }
-    require(*std::max_element(use.begin(),use.end())-*std::min_element(use.begin(),use.end())<=1, "unbalanced equal-affinity assignment");
+        require(std::all_of(use.begin(),use.end(),[&](int count) { return count==gpus; }), "nearby GPUs must share every best-affinity HCA");
     topology[0].gpuNumaNode=1;
     available.push_back({"remote-numa", "/sys/bus/pci/devices/nic-local",1});
     require(selectAutomaticHcas(topology,0)==std::vector<std::string>{"remote-numa"}, "NUMA affinity ignored");

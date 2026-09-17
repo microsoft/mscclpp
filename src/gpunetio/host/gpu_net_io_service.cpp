@@ -15,12 +15,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <limits>
 #include <mscclpp/errors.hpp>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "gpu_net_io_topology.hpp"
 #include "ib.hpp"  // mscclpp core IbCtx / IbMr (ibverbs context + pd + MR)
 
 // Vendored DOCA GPUNetIO host API.
@@ -83,11 +83,7 @@ struct TopologyExchangeInfo {
   char gpuPciBusId[32];
 };
 
-struct HcaTopology {
-  std::string name;
-  std::string pciPath;
-  int numaNode;
-};
+using detail::gpunetio::HcaTopology;
 
 uint64_t stableStringHash(const std::string& value) {
   uint64_t hash = 1469598103934665603ull;
@@ -125,26 +121,6 @@ std::string canonicalPath(const std::string& path) {
   return realpath(path.c_str(), resolved) == nullptr ? std::string() : std::string(resolved);
 }
 
-int pciPathDistance(const std::string& left, const std::string& right) {
-  if (left.empty() || right.empty()) return 1 << 10;
-  size_t common = 0;
-  size_t leftPos = 0;
-  size_t rightPos = 0;
-  while (leftPos < left.size() && rightPos < right.size()) {
-    const size_t leftEnd = left.find('/', leftPos + 1);
-    const size_t rightEnd = right.find('/', rightPos + 1);
-    const size_t leftLen = (leftEnd == std::string::npos ? left.size() : leftEnd) - leftPos;
-    const size_t rightLen = (rightEnd == std::string::npos ? right.size() : rightEnd) - rightPos;
-    if (leftLen != rightLen || left.compare(leftPos, leftLen, right, rightPos, rightLen) != 0) break;
-    ++common;
-    leftPos = leftEnd == std::string::npos ? left.size() : leftEnd;
-    rightPos = rightEnd == std::string::npos ? right.size() : rightEnd;
-  }
-  const int leftDepth = static_cast<int>(std::count(left.begin(), left.end(), '/'));
-  const int rightDepth = static_cast<int>(std::count(right.begin(), right.end(), '/'));
-  return leftDepth + rightDepth - 2 * static_cast<int>(common);
-}
-
 std::vector<HcaTopology> discoverActiveHcas() {
   constexpr const char* InfinibandClassPath = "/sys/class/infiniband";
   std::unique_ptr<DIR, decltype(&closedir)> directory(opendir(InfinibandClassPath), &closedir);
@@ -169,79 +145,11 @@ std::vector<HcaTopology> discoverActiveHcas() {
   return hcas;
 }
 
-int hcaAffinityScore(const TopologyExchangeInfo& gpu, const HcaTopology& hca) {
-  constexpr int NumaMismatchPenalty = 1 << 20;
-  const std::string gpuPath = canonicalPath("/sys/bus/pci/devices/" + std::string(gpu.gpuPciBusId));
-  int score = pciPathDistance(gpuPath, hca.pciPath);
-  if (gpu.gpuNumaNode >= 0 && hca.numaNode >= 0 && gpu.gpuNumaNode != hca.numaNode) score += NumaMismatchPenalty;
-  return score;
-}
-
 std::vector<std::string> selectAutomaticHcas(const std::vector<TopologyExchangeInfo>& topology, int rank) {
   const auto hcas = discoverActiveHcas();
-  std::vector<int> localRanks;
-  for (int peer = 0; peer < static_cast<int>(topology.size()); ++peer) {
-    if (topology[peer].hostHash == topology[rank].hostHash) localRanks.push_back(peer);
-  }
-  if (localRanks.empty())
-    throw Error("GPUNetIO topology discovery could not find the local rank", ErrorCode::InternalError);
-  const int hcaCount = static_cast<int>(hcas.size());
-  const int localRankCount = static_cast<int>(localRanks.size());
-  std::vector<std::vector<int>> affinity(localRankCount, std::vector<int>(hcaCount));
-  for (int localRank = 0; localRank < localRankCount; ++localRank) {
-    for (int hca = 0; hca < hcaCount; ++hca)
-      affinity[localRank][hca] = hcaAffinityScore(topology[localRanks[localRank]], hcas[hca]);
-  }
-  std::vector<std::vector<int>> localHcas(localRankCount);
-  std::vector<int> hcasPerRank(localRankCount);
-  int maxHcasPerRank = 0;
-  for (int localRank = 0; localRank < localRankCount; ++localRank) {
-    const int bestAffinity = *std::min_element(affinity[localRank].begin(), affinity[localRank].end());
-    for (int hca = 0; hca < hcaCount; ++hca) {
-      if (affinity[localRank][hca] == bestAffinity) localHcas[localRank].push_back(hca);
-    }
-    const int firstHca = localHcas[localRank][0];
-    int bestGpuAffinity = std::numeric_limits<int>::max();
-    for (int gpu = 0; gpu < localRankCount; ++gpu) bestGpuAffinity = std::min(bestGpuAffinity, affinity[gpu][firstHca]);
-    int localGpuCount = 0;
-    for (int gpu = 0; gpu < localRankCount; ++gpu) {
-      if (affinity[gpu][firstHca] == bestGpuAffinity) ++localGpuCount;
-    }
-    hcasPerRank[localRank] = (static_cast<int>(localHcas[localRank].size()) + localGpuCount - 1) / localGpuCount;
-    maxHcasPerRank = std::max(maxHcasPerRank, hcasPerRank[localRank]);
-  }
-  std::vector<std::vector<int>> assignments(localRankCount);
-  std::vector<int> usage(hcaCount, 0);
-  for (int slot = 0; slot < maxHcasPerRank; ++slot) {
-    for (int localRank = 0; localRank < localRankCount; ++localRank) {
-      if (slot >= hcasPerRank[localRank]) continue;
-      int selected = -1;
-      int selectedUsage = std::numeric_limits<int>::max();
-      int selectedOrder = std::numeric_limits<int>::max();
-      const int candidateCount = static_cast<int>(localHcas[localRank].size());
-      for (int candidate = 0; candidate < candidateCount; ++candidate) {
-        const int order = (candidate - localRank % candidateCount + candidateCount) % candidateCount;
-        const int hca = localHcas[localRank][candidate];
-        if (std::find(assignments[localRank].begin(), assignments[localRank].end(), hca) !=
-            assignments[localRank].end())
-          continue;
-        if (usage[hca] < selectedUsage || (usage[hca] == selectedUsage && order < selectedOrder)) {
-          selected = hca;
-          selectedUsage = usage[hca];
-          selectedOrder = order;
-        }
-      }
-      if (selected >= 0) {
-        assignments[localRank].push_back(selected);
-        ++usage[selected];
-      }
-    }
-  }
-  const auto rankIt = std::find(localRanks.begin(), localRanks.end(), rank);
-  const auto& selected = assignments[std::distance(localRanks.begin(), rankIt)];
-  std::vector<std::string> names;
-  for (int hca : selected) names.push_back(hcas[hca].name);
-  return names;
+  const auto& gpu = topology[rank];
+  const std::string gpuPath = canonicalPath("/sys/bus/pci/devices/" + std::string(gpu.gpuPciBusId));
+  return detail::gpunetio::selectClosestHcas(gpuPath, gpu.gpuNumaNode, hcas);
 }
 
 std::vector<std::string> splitIbDeviceNames(const std::string& spec) {
