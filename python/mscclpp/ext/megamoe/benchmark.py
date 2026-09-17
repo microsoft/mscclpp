@@ -28,6 +28,72 @@ def _weights(config, device):
     return tensors
 
 
+def _operand_corpus(config, device, seed, count):
+    """Build stable, deterministic, rank-asymmetric graph operands.
+
+    Routing patterns alternate and are revisited, while every complete operand
+    set remains distinct through independently generated activations and scores.
+    Separate allocations are intentional: CUDA graph capture must bind each
+    launch to the corresponding input, routing, and output pointers.
+    """
+    import torch
+
+    if count < 1:
+        raise ValueError("operand corpus must not be empty")
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed + 104729 * config.rank)
+    token = torch.arange(config.max_tokens, device=device, dtype=torch.int64)[:, None]
+    slot = torch.arange(config.top_k, device=device, dtype=torch.int64)[None, :]
+    # Revisit both halves of this sequence. This catches implementations which
+    # key only on routing while still making every complete operand set unique.
+    route_cases = (0, 1, 0, 2, 1, 3)
+    corpus = []
+    for case in range(count):
+        inputs = torch.randn(
+            (config.max_tokens, config.hidden), generator=generator, device=device, dtype=torch.bfloat16
+        )
+        # The offset is exactly representable in BF16 and differs by rank/case.
+        inputs.add_((config.rank + 1) * (case + 1) / 128.0)
+        route_case = route_cases[case % len(route_cases)]
+        base = token * (route_case + 1) + 17 * config.rank + 13 * route_case
+        ids = ((base + slot) % config.num_experts).to(torch.int32)
+        raw_scores = torch.rand(
+            (config.max_tokens, config.top_k), generator=generator, device=device, dtype=torch.float32
+        )
+        raw_scores.add_((config.rank + 1) * (case + 1) / 1024.0)
+        scores = raw_scores / raw_scores.sum(dim=-1, keepdim=True)
+        output = torch.empty_like(inputs)
+        corpus.append((inputs, ids, scores, output))
+    return corpus
+
+
+def _validate_corpus(corpus, references, rtol, atol):
+    """Check every associated output and prove a one-result cache is rejected."""
+    import torch
+
+    if len(corpus) != len(references) or not corpus:
+        raise ValueError("operand corpus and references must be non-empty and aligned")
+    max_abs_error, total_abs_error, elements = 0.0, 0.0, 0
+    stale_rejected = True
+    for index, ((_, _, _, output), reference) in enumerate(zip(corpus, references)):
+        error = (output.float() - reference.float()).abs()
+        max_abs_error = max(max_abs_error, error.max().item() if error.numel() else 0.0)
+        total_abs_error += error.sum().item()
+        elements += error.numel()
+        torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
+        if index:
+            # A memoizer returning the preceding corpus output must not pass.
+            stale_rejected &= not torch.allclose(reference, references[index - 1], rtol=rtol, atol=atol)
+    if not stale_rejected:
+        raise AssertionError("corpus does not behaviorally distinguish a stale cached output")
+    return {
+        "max_abs_error": max_abs_error,
+        "mean_abs_error": total_abs_error / elements if elements else 0.0,
+        "outputs_checked": len(corpus),
+        "stale_output_rejected": True,
+    }
+
+
 def _reference(config, inputs, ids, scores, weights):
     import torch
     import torch.distributed as dist
@@ -73,10 +139,12 @@ def main():
     parser.add_argument("--e5m2", action="store_true")
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
+    parser.add_argument("--graph-batch", type=int, default=10, help="distinct collectives captured per replay")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
-    parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
+    parser.add_argument(
+        "--check", action="store_true", help="compare every operand set against an independent Torch reference"
+    )
     parser.add_argument("--rtol", type=float, default=0.05)
     parser.add_argument("--atol", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=1234)
@@ -85,6 +153,8 @@ def main():
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
+    if args.graph and args.graph_batch > 1 and args.input_mode == "direct":
+        parser.error("distinct graph operands require staged input mode when graph-batch exceeds one")
 
     import torch
     import torch.distributed as dist
@@ -125,50 +195,51 @@ def main():
     start = time.perf_counter()
     context = MegaMoE(config, communicator, *weights)
     initialization_ms = (time.perf_counter() - start) * 1000
-    inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
-    ids = torch.rand((args.tokens, args.experts), device=device).topk(args.top_k, dim=-1).indices.to(torch.int32)
-    scores = torch.rand((args.tokens, args.top_k), device=device, dtype=torch.float32)
-    scores /= scores.sum(dim=-1, keepdim=True)
+    corpus_size = args.graph_batch if args.graph else 1
+    corpus = _operand_corpus(config, device, args.seed, corpus_size)
     if args.input_mode == "direct":
         direct = context.input_view(args.tokens)
-        direct.copy_(inputs)
-        inputs = direct
-    output = torch.empty_like(inputs)
+        direct.copy_(corpus[0][0])
+        corpus[0] = (direct, *corpus[0][1:])
     stream = torch.cuda.Stream(device=device)
     stream.wait_stream(torch.cuda.current_stream(device))
 
-    def launch():
+    def launch(operand):
+        inputs, ids, scores, output = operand
         context(inputs, ids, scores, output=output, stream=stream)
 
-    for _ in range(args.warmup):
-        launch()
+    for warmup in range(args.warmup):
+        launch(corpus[warmup % corpus_size])
     stream.synchronize()
-    correctness = None
+    references = None
     if args.check:
-        reference = _reference(config, inputs, ids, scores, weights)
-        error = (output.float() - reference.float()).abs()
-        correctness = {"max_abs_error": error.max().item(), "mean_abs_error": error.mean().item()}
-        torch.testing.assert_close(output, reference, rtol=args.rtol, atol=args.atol)
+        # Corpus construction and all independent Torch references are outside
+        # graph capture and the event-timed benchmark region.
+        references = [_reference(config, inputs, ids, scores, weights) for inputs, ids, scores, _ in corpus]
     del weights
     graph = None
     if args.graph:
         graph = torch.cuda.CUDAGraph()
         dist.barrier()
         with torch.cuda.graph(graph, stream=stream):
-            for _ in range(args.graph_batch):
-                launch()
+            for operand in corpus:
+                launch(operand)
         graph.replay()
         torch.cuda.synchronize(device)
-        if args.check:
-            torch.testing.assert_close(output, reference, rtol=args.rtol, atol=args.atol)
+    elif args.check:
+        for operand in corpus:
+            launch(operand)
+        stream.synchronize()
+    correctness = _validate_corpus(corpus, references, args.rtol, args.atol) if args.check else None
+
     samples = []
-    repetitions = args.graph_batch if graph else 1
+    repetitions = corpus_size if graph else 1
     begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    for _ in range(args.iterations):
+    for iteration in range(args.iterations):
         dist.barrier()
         with torch.cuda.stream(stream):
             begin.record()
-            graph.replay() if graph else launch()
+            graph.replay() if graph else launch(corpus[iteration % corpus_size])
             end.record()
         end.synchronize()
         samples.append(begin.elapsed_time(end) * 1000 / repetitions)
@@ -210,7 +281,7 @@ def main():
     # Release only after every GPU has completed every peer access.
     torch.cuda.synchronize(device)
     bootstrap.barrier()
-    del graph, context, inputs
+    del graph, context, corpus
     dist.destroy_process_group()
 
 
