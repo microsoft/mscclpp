@@ -366,7 +366,7 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
 
   const int nHcas = static_cast<int>(s.ibDeviceNames.size());
   const char* qpsEnv = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER");
-  int requestedQps = qpsEnv == nullptr ? nHcas : std::max(1, std::atoi(qpsEnv));
+  int requestedQps = qpsEnv == nullptr ? nHcas : std::atoi(qpsEnv);
   std::vector<ConfigExchangeInfo> configAll(s.worldSize);
   configAll[s.rank] = {static_cast<uint32_t>(nHcas), static_cast<uint32_t>(requestedQps)};
   s.bootstrap->allGather(configAll.data(), static_cast<int>(sizeof(ConfigExchangeInfo)));
