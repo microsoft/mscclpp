@@ -160,10 +160,10 @@ void LatencyContext::initialize() {
   const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
   if (crossDomain && enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
     std::string hca;
-    if (const char* h = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
-      hca = h;
-    } else {
-      hca = mscclpp::getIBDeviceName(mscclpp::Transport::IB0);
+    if (const char* devices = std::getenv("MSCCLPP_EP_GPUNETIO_HCAS")) {
+      hca = devices;
+    } else if (const char* device = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+      hca = device;
     }
     auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
     svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));

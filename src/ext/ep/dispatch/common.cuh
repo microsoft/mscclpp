@@ -136,7 +136,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(const TransportView& tran
 
 // Cross-domain rank-major send: stages token+metadata in this rank's GPUNetIO
 // staging ring, then posts three CQ-signaled writes with one submit. The notify
-// block publishes arrival counts only after all payload QPs have drained. Re-derived for
+// block posts ordered per-QP markers after every payload has been submitted. Re-derived for
 // the new layout: staging ring slots [nRanks, GpuNetIoStagingSlots) (the reserved
 // prefix remains unused; count packets have separate metadata scratch). Remote
 // destinations use the symmetric output/outputTopkIdx/outputTopkWeights bases.
@@ -871,18 +871,22 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvRankMajor(int* outputTopkIdx, float* outp
     // Persist even zero counts: combine must not reuse a previous source's rows.
     workspaceView.dispatchRecvCounts_[sourceRank] = nRankTokens;
   }
-  if (threadIdx.x == 0 && nRankTokens > 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(sourceRank)) {
-      auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);
-      const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + static_cast<uint64_t>(nRankTokens);
-      while (flags[sourceRank] < target) {
+  if (transport.gpuNetIo_ != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+    const int nQp = transport.gpuNetIo_->numQpsPerPeer;
+    const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + 1;
+    auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_) +
+                  static_cast<size_t>(sourceRank) * GpuNetIoMaxQpsPerPeer;
+    for (int qpIndex = static_cast<int>(threadIdx.x); qpIndex < nQp; qpIndex += static_cast<int>(blockDim.x)) {
+      while (flags[qpIndex] < target) {
       }
-      // Never clear a NIC-written counter; only advance this source's private baseline.
-      workspaceView.dispatchArrivedBaseline_[sourceRank] = target;
-      return;
     }
+    __syncthreads();
+    if (threadIdx.x == 0) workspaceView.dispatchArrivedBaseline_[sourceRank] = target;
+    return;
+  }
 #endif
+  if (threadIdx.x == 0 && nRankTokens > 0) {
     if (transport.isSelf(sourceRank)) {
       workspaceView.dispatchLocalPayloadReady_->acquire();
     } else {
@@ -1073,16 +1077,6 @@ MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* o
       auto* gin = transport.gpuNetIo_;
       const int nQp = gin->numQpsPerPeer;
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
-      const long long flushStart = clock64();
-#endif
-      __syncthreads();
-      for (int index = threadIdx.x; index < nRanks * nQp; index += blockDim.x) {
-        const int peer = index / nQp, qpIndex = index % nQp;
-        if (!transport.isNvlinkPeer(peer) && (usedQpMask[peer] & (1ull << qpIndex))) gin->flush(peer, qpIndex);
-      }
-      __syncthreads();
-#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
-      flushCycles = clock64() - flushStart;
       const long long barrierStart = clock64();
 #endif
       workspaceView.combineSyncer_->sync(gridDim.x);
@@ -1090,14 +1084,25 @@ MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* o
       barrierCycles = clock64() - barrierStart;
 #endif
       if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
-        const int qpIndex = static_cast<int>(blockIdx.x) % nQp;
-        auto* flag = static_cast<uint64_t*>(transport.gpuNetIoFlagsBuffer_) + transport.rank_;
-        for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
-          if (!transport.isNvlinkPeer(peer) && sharedMem[peer] > 0)
-            gin->atomicAdd(peer, transport.symmetricOffset(flag), sharedMem[peer], qpIndex);
+        auto* flagsSelf = static_cast<uint64_t*>(transport.gpuNetIoFlagsBuffer_) +
+                          static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
+        for (int index = threadIdx.x; index < nRanks * nQp; index += blockDim.x) {
+          const int peer = index / nQp, qpIndex = index % nQp;
+          if (!transport.isNvlinkPeer(peer))
+            gin->atomicAdd(peer, transport.symmetricOffset(flagsSelf + qpIndex), 1, qpIndex);
         }
         __syncthreads();
-        if (threadIdx.x == 0) flushAllCrossDomain(transport, nRanks, qpIndex);
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+        const long long flushStart = clock64();
+#endif
+        for (int index = threadIdx.x; index < nRanks * nQp; index += blockDim.x) {
+          const int peer = index / nQp, qpIndex = index % nQp;
+          if (!transport.isNvlinkPeer(peer)) gin->flush(peer, qpIndex);
+        }
+        __syncthreads();
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING)
+        flushCycles = clock64() - flushStart;
+#endif
       }
     }
   }

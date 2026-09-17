@@ -177,7 +177,7 @@ struct LatencyStorageLayout {
   // existing regions so their offsets are unchanged. Always reserved so the
   // layout is uniform regardless of whether the backend is compiled in/enabled.
   //   - gpuNetIoStagingBuffer_: serialized ring of GpuNetIoStagingSlots slots.
-  //   - gpuNetIoFlagsBuffer_: per-source-rank dispatch completion flags.
+  //   - gpuNetIoFlagsBuffer_: per-source, per-QP dispatch completion flags.
   //   - gpuNetIoCombineFlagsBuffer_: independent per-source, per-QP combine flags.
   void* gpuNetIoStagingBuffer_ = nullptr;
   void* gpuNetIoFlagsBuffer_ = nullptr;
@@ -223,8 +223,8 @@ struct LatencyStorageLayout {
         BufferAlignmentBytes);
     const size_t gpuNetIoStagingBytes =
         configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
-    const size_t gpuNetIoFlagsBytes =
-        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t gpuNetIoFlagsBytes = configAlign<size_t>(
+        static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
         static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineLandingBytes = configAlign<size_t>(

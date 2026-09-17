@@ -46,7 +46,7 @@ struct DeviceContext {
   mscclpp::GpuNetIoDeviceContext* gpuNetIo_ = nullptr;
   /// Symmetric inter-domain send-staging ring base (GpuNetIoStagingSlots slots).
   void* gpuNetIoStagingBuffer_ = nullptr;
-  /// Symmetric per-source-rank dispatch completion flag array base.
+  /// Symmetric per-source-rank, per-QP dispatch completion flag array base.
   void* gpuNetIoFlagsBuffer_ = nullptr;
   /// Symmetric per-peer-rank combine completion flag array base (kept separate
   /// from gpuNetIoFlagsBuffer_ so dispatch and combine signal counts never alias).

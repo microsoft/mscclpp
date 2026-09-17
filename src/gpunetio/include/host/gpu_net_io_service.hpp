@@ -32,7 +32,8 @@ namespace mscclpp {
 class GpuNetIoService {
  public:
   /// @param bootstrap Bootstrap used for the QP-info / rkey all-gather.
-  /// @param ibDeviceName Name of the IB device to use (e.g. "mlx5_0").
+  /// @param ibDeviceName Comma-separated IB devices; QPs are striped across them.
+  /// An empty string selects active HCAs using PCI/NUMA affinity across local GPU ranks.
   /// @param cudaDeviceId CUDA device ordinal that owns the symmetric buffer.
   GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName, int cudaDeviceId);
 
@@ -41,8 +42,8 @@ class GpuNetIoService {
   GpuNetIoService(const GpuNetIoService&) = delete;
   GpuNetIoService& operator=(const GpuNetIoService&) = delete;
 
-  /// Register the symmetric buffer, create + connect one GDAKI QP per remote
-  /// rank, exchange rkeys / base addresses, and build the device context.
+  /// Register the symmetric buffer on every selected HCA, connect per-peer QPs,
+  /// exchange per-HCA rkeys and base addresses, and build the device context.
   /// Idempotent guard: must be called exactly once.
   /// @param symmetricBuffer Device pointer to this rank's symmetric buffer.
   /// @param bytes Size of the symmetric buffer.

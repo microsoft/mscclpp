@@ -25,6 +25,137 @@ IMPL = "include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"
 
 
 class MultiQpTests(unittest.TestCase):
+    def test_actual_hca_assignment_and_list_parsing(self):
+        service = source(SERVICE)
+        native = HOST_PREAMBLE + "\n#include <limits>\n#include <cstdio>\n"
+        native += "enum class ErrorCode { InternalError, InvalidUsage };\n"
+        native += (
+            "struct Error : std::runtime_error { Error(const char* text, ErrorCode) : std::runtime_error(text) {} };\n"
+        )
+        native += structure(service, "TopologyExchangeInfo") + structure(service, "HcaTopology")
+        native += "std::vector<HcaTopology> available;\n"
+        native += "std::vector<HcaTopology> discoverActiveHcas() { return available; }\n"
+        native += "std::string canonicalPath(const std::string& path) { return path; }\n"
+        for name in ("pciPathDistance", "hcaAffinityScore", "selectAutomaticHcas", "splitIbDeviceNames"):
+            native += function(service, name)
+        native += r"""
+int main() {
+  require(splitIbDeviceNames("  nic0, nic1\t, ,nic2,") == std::vector<std::string>{"nic0","nic1","nic2"}, "list order/trim");
+  for (const std::string spec : {"", " , \t", "nic0,nic0"}) {
+    bool rejected = false;
+    try { splitIbDeviceNames(spec); } catch (const Error&) { rejected = true; }
+    require(rejected, "empty/duplicate HCA list accepted");
+  }
+  require(pciPathDistance("", "") == 1024, "unknown PCI path penalty");
+  require(pciPathDistance("/root/a/gpu", "/root/a/nic") < pciPathDistance("/root/a/gpu", "/other/b/nic"), "PCI affinity");
+  for (int gpus : {1,2,4,8}) for (int hcas : {1,2,4,8}) {
+    available.clear();
+    for (int index=0; index<hcas; ++index) available.push_back({"nic"+std::to_string(index), "/sys/bus/pci/devices/nic"+std::to_string(index),0});
+    std::vector<TopologyExchangeInfo> topology(gpus+1);
+    for (int rank=0; rank<=gpus; ++rank) {
+      topology[rank].hostHash = rank==gpus ? 2 : 1;
+      topology[rank].gpuNumaNode = 0;
+      std::snprintf(topology[rank].gpuPciBusId,32,"gpu%d",rank);
+    }
+    std::vector<int> use(hcas);
+    for (int rank=0; rank<gpus; ++rank) {
+      auto selected=selectAutomaticHcas(topology,rank);
+      require(selected.size()==static_cast<size_t>((hcas+gpus-1)/gpus), "wrong per-rank share");
+      require(selected==selectAutomaticHcas(topology,rank), "nondeterministic selection");
+      auto unique=selected;std::sort(unique.begin(),unique.end());
+      require(std::adjacent_find(unique.begin(),unique.end())==unique.end(), "duplicate HCA per GPU");
+      for (const auto& name:selected) ++use[std::stoi(name.substr(3))];
+    }
+    require(*std::max_element(use.begin(),use.end())-*std::min_element(use.begin(),use.end())<=1, "unbalanced equal-affinity assignment");
+    topology[0].gpuNumaNode=1;
+    available.push_back({"remote-numa", "/sys/bus/pci/devices/nic-local",1});
+    require(selectAutomaticHcas(topology,0)==std::vector<std::string>{"remote-numa"}, "NUMA affinity ignored");
+  }
+}
+"""
+        self.run_native(native)
+
+    def test_actual_collective_geometry_validation(self):
+        setup = function(source(SERVICE), "GpuNetIoService::setup")
+        validation = block(setup, r"for\s*\(const auto& config : configAll\)")
+        native = HOST_PREAMBLE + "\nenum class ErrorCode { InvalidUsage };\n"
+        native += (
+            "struct Error : std::runtime_error { Error(const char* text, ErrorCode) : std::runtime_error(text) {} };\n"
+        )
+        native += structure(source(SERVICE), "ConfigExchangeInfo")
+        native += "bool valid(int nHcas,int requestedQps,ConfigExchangeInfo remote) {\n"
+        native += "std::vector<ConfigExchangeInfo> configAll={{static_cast<uint32_t>(nHcas),static_cast<uint32_t>(requestedQps)},remote};\n"
+        native += (
+            "try { for(const auto& config:configAll) "
+            + validation
+            + " } catch(const Error&) { return false; } return true; }\n"
+        )
+        native += r"""
+int main() {
+  for (int hcas : {0,1,2,3,4,8,64,65}) for (int queues : {0,1,2,3,4,8,12,64,65}) {
+    const bool expected=hcas>=1 && queues>=hcas && queues<=64 && queues%hcas==0;
+    require(valid(hcas,queues,{static_cast<uint32_t>(hcas),static_cast<uint32_t>(queues)})==expected,"geometry validation");
+    require(!valid(hcas,queues,{static_cast<uint32_t>(hcas+1),static_cast<uint32_t>(queues)}),"HCA disagreement");
+    require(!valid(hcas,queues,{static_cast<uint32_t>(hcas),static_cast<uint32_t>(queues+1)}),"QP disagreement");
+  }
+}
+"""
+        self.run_native(native)
+        self.ordered(
+            setup,
+            "allGather(configAll.data()",
+            "for (const auto& config : configAll)",
+            "hca.ibCtx = std::make_unique<IbCtx>",
+            "hca.mr = hca.ibCtx->registerMr",
+            "s.qpHl.assign",
+        )
+        self.ordered(setup, "initAttr.ibpd = s.hcas[s.hcaIndex(qpIndex)].ibCtx->getPd()", "doca_gpu_verbs_create_qp_hl")
+        self.assertIn("rkeysHost[static_cast<size_t>(hca)*s.worldSize+r]=htobe32(info.rkey)", code(setup))
+        self.assertIn("ctxHost.lkeys=s.lkeysGpu", code(setup))
+        self.assertIn("ctxHost.numHcas=nHcas", code(setup))
+        self.assertIn("if(lkeysGpu)(void)cudaFree(lkeysGpu)", code(source(SERVICE)))
+        initialize = function(source("src/ext/ep/latency.cc"), "LatencyContext::initialize")
+        self.ordered(
+            initialize,
+            'std::getenv("MSCCLPP_EP_GPUNETIO_HCAS")',
+            'std::getenv("MSCCLPP_EP_GPUNETIO_HCA")',
+            "std::make_shared<mscclpp::GpuNetIoService>",
+        )
+
+    def test_all_qp_generations_and_fixed_stripe_markers(self):
+        recv = function(source(DISPATCH), "dispatchRecvRankMajor")
+        remote = block(
+            recv, r"if\s*\(transport.gpuNetIo_\s*!=\s*nullptr\s*&&\s*!transport.isNvlinkPeer\(sourceRank\)\)"
+        )
+        self.ordered(
+            remote,
+            "dispatchArrivedBaseline_[sourceRank] + 1",
+            "qpIndex < nQp",
+            "while (flags[qpIndex] < target)",
+            "__syncthreads()",
+            "if (threadIdx.x == 0) workspaceView.dispatchArrivedBaseline_[sourceRank] = target",
+            "return",
+        )
+        self.assertNotIn("nRankTokens", remote)
+        for queues in (1, 4, 64):
+            flags = [0] * queues
+            baseline = 0
+            for generation in range(1, 201):
+                for queue in reversed(range(queues)):
+                    flags[queue] = generation + (queue > 0)
+                    self.assertEqual(all(value >= baseline + 1 for value in flags), queue == 0)
+                baseline += 1
+                self.assertEqual(baseline, generation)
+            for hcas in (1, 2, 4, 8, 64):
+                if queues % hcas:
+                    continue
+                for owner, rows in product((0, 1, 7, 63), (1, 2, 7, 133)):
+                    used = [(owner % queues + stripe) % queues for stripe in range(hcas)]
+                    self.assertEqual(len(set(queue % hcas for queue in used)), hcas)
+                    intervals = [(rows * stripe // hcas, rows * (stripe + 1) // hcas) for stripe in range(hcas)]
+                    self.assertEqual([row for begin, end in intervals for row in range(begin, end)], list(range(rows)))
+                    self.assertEqual(len(intervals), hcas)
+
     def run_native(self, native):
         compiler = shutil.which("g++")
         if compiler is None:
@@ -78,16 +209,19 @@ int main() {
             current.rankMajorTopkWeightsBuffer_ == previous.rankMajorTopkWeightsBuffer_ &&
             current.gpuNetIoStagingBuffer_ == previous.gpuNetIoStagingBuffer_ &&
             current.gpuNetIoFlagsBuffer_ == previous.gpuNetIoFlagsBuffer_ &&
-            current.gpuNetIoCombineFlagsBuffer_ == previous.gpuNetIoCombineFlagsBuffer_ &&
             current.gpuNetIoSlotStride_ == previous.gpuNetIoSlotStride_, "existing offsets changed");
     if (layout == DispatchLayout::RANK_MAJOR && mode == CombineMode::RANK_LOCAL_REDUCE)
       require(current.combineRecvBuffer_ == current.dispatchOutputBuffer_, "rank-major alias changed");
     auto* base = static_cast<uint8_t*>(allocation);
     auto* landing = static_cast<uint8_t*>(current.gpuNetIoCombineLandingBuffer_);
     const size_t bytes = static_cast<size_t>(ranks) * capacity * hidden * sizeof(Bf16);
-    require(landing == base + previous.totalBytes_, "landing must append after every existing region");
+        const size_t oldFlags = configAlign<size_t>(static_cast<size_t>(ranks) * sizeof(uint64_t), 128);
+        const size_t flags = configAlign<size_t>(static_cast<size_t>(ranks) * 64 * sizeof(uint64_t), 128);
+        require(current.gpuNetIoCombineFlagsBuffer_ == static_cast<uint8_t*>(current.gpuNetIoFlagsBuffer_) + flags,
+            "dispatch flags overlap combine flags");
+        require(landing == base + previous.totalBytes_ + flags - oldFlags, "landing must follow enlarged flags");
     require(reinterpret_cast<uintptr_t>(landing) % 128 == 0, "landing alignment");
-    require(current.totalBytes_ == previous.totalBytes_ + configAlign<size_t>(bytes, 128), "landing allocation size");
+    require(current.totalBytes_ == previous.totalBytes_ + flags - oldFlags + configAlign<size_t>(bytes, 128), "landing allocation size");
     for (int rank = 0; rank < ranks; ++rank) {
       const size_t offset = static_cast<size_t>(rank) * capacity * hidden * sizeof(Bf16);
       require(landing + offset + static_cast<size_t>(capacity) * hidden * sizeof(Bf16) <=
@@ -111,6 +245,7 @@ int main() {
         native = HOST_PREAMBLE + r"""
 #define MSCCLPP_DEVICE_INLINE inline
 #define __trap() throw std::runtime_error("invalid QP count")
+#define EP_DEVICE_ASSERT(condition) require(condition, "device assertion")
 using Bf16 = uint16_t;
 constexpr int GpuNetIoMaxQpsPerPeer = 64;
 struct Dim { unsigned int x = 0; } blockIdx, threadIdx;
@@ -121,6 +256,7 @@ template<class Value, int Scope> void atomicStore(Value* target, Value value, in
 struct Transfer { int owner; uint64_t destination, source, bytes, flag, value; int queue; };
 struct Gin {
   int numQpsPerPeer = 1;
+    int numHcas = 1;
   std::vector<Transfer> transfers;
   std::vector<std::pair<int, int>> drains;
   void putWithSignal(int owner, uint64_t destination, uint64_t source, uint64_t bytes,
@@ -129,10 +265,17 @@ struct Gin {
   }
   void flush(int owner, int queue) { drains.emplace_back(owner, queue); }
 };
+namespace mscclpp { using GpuNetIoDeviceContext = Gin; }
+struct Channel {
+    mutable int signals = 0, waits = 0;
+    void relaxedSignal() const { ++signals; }
+    void relaxedWait(int) const { require(signals > waits, "wait before signal"); ++waits; }
+};
 struct TransportView {
   int rank_; Gin* gpuNetIo_;
   uint8_t* base;
   void* gpuNetIoCombineLandingBuffer_; void* gpuNetIoCombineFlagsBuffer_;
+    Channel baseMemoryChannels_[64];
   bool isSelf(int peer) const { return peer == rank_; }
   bool isNvlinkPeer(int peer) const { return peer / 2 == rank_ / 2; }
   uint64_t symmetricOffset(const void* ptr) const { return static_cast<const uint8_t*>(ptr) - base; }
@@ -144,6 +287,8 @@ struct WorkspaceView {
 """
         combine = source(COMBINE)
         native += function(combine, "rankMajorSlotForDestination")
+        native += function(combine, "rankMajorCombineStripeQp")
+        native += function(combine, "signalRankMajorCombineLocalStart")
         native += function(combine, "publishRankMajorCombinePushReady")
         native += "template<int Hidden>\n" + function(combine, "sendRankMajorCombinePush")
         native += function(combine, "drainRankMajorCombinePush")
@@ -151,7 +296,8 @@ struct WorkspaceView {
 int main() {
   constexpr size_t hiddenBytes = 8 * sizeof(Bf16);
   for (int ranks : {2, 8, 16, 32, 64}) for (int queues : {1, 4, 64})
-  for (int capacity : {1, 8, 257, 1024}) {
+    for (int capacity : {1, 8, 257, 1024}) for (int hcas : {1, 2, 4, 8, 64}) {
+        if (hcas > queues || queues % hcas) continue;
     const size_t payloadBytes = static_cast<size_t>(ranks) * capacity * hiddenBytes;
     std::vector<uint64_t> storage((2 * payloadBytes) / 8 + ranks * 64);
     auto* base = reinterpret_cast<uint8_t*>(storage.data());
@@ -163,28 +309,32 @@ int main() {
     WorkspaceView workspace{counts.data(), slots.data(), baselines.data(), ready.data()};
     Gin gin;
     gin.numQpsPerPeer = queues;
+    gin.numHcas = hcas;
     TransportView transport{ranks - 1, &gin, base, base + payloadBytes, flags};
     size_t expectedTransfers = 0;
     for (int owner = 0; owner < ranks; ++owner) {
       counts[owner] = owner % 3 == 0 ? 0 : capacity;
-      expectedTransfers += !transport.isNvlinkPeer(owner) && counts[owner] > 0;
+    if (!transport.isNvlinkPeer(owner) && counts[owner] > 0) expectedTransfers += hcas;
     }
     for (unsigned int owner = 0; owner < static_cast<unsigned int>(ranks + 2); ++owner) {
       blockIdx.x = owner;
-      for (threadIdx.x = 0; threadIdx.x < 4; ++threadIdx.x) {
+    for (threadIdx.x = 0; threadIdx.x < 65; ++threadIdx.x) {
         sendRankMajorCombinePush<8>(base, ranks, capacity, transport, workspace, 1);
         drainRankMajorCombinePush(ranks, transport, workspace, 1);
       }
     }
     require(gin.transfers.size() == expectedTransfers && gin.drains.size() == expectedTransfers,
-            "must post and drain exactly once per nonempty remote owner");
+            "must post and drain exactly once per HCA of each nonempty remote owner");
     for (size_t index = 0; index < gin.transfers.size(); ++index) {
       const auto& transfer = gin.transfers[index];
-      const int queue = transfer.owner % queues;
-      require(transfer.source == static_cast<size_t>(transfer.owner) * capacity * hiddenBytes, "source rows");
-      require(transfer.destination == payloadBytes + static_cast<size_t>(transport.rank_) * capacity * hiddenBytes,
+    const int stripe = index % hcas;
+    const int queue = (transfer.owner % queues + stripe) % queues;
+    const int begin = counts[transfer.owner] * stripe / hcas;
+    const int end = counts[transfer.owner] * (stripe + 1) / hcas;
+    require(transfer.source == (static_cast<size_t>(transfer.owner) * capacity + begin) * hiddenBytes, "source rows");
+    require(transfer.destination == payloadBytes + (static_cast<size_t>(transport.rank_) * capacity + begin) * hiddenBytes,
               "landing keyed by expert-host rank");
-      require(transfer.bytes == static_cast<size_t>(counts[transfer.owner]) * hiddenBytes, "contiguous byte count");
+    require(transfer.bytes == static_cast<size_t>(end - begin) * hiddenBytes, "stripe byte count incl zero-row marker");
       require(transfer.flag == 2 * payloadBytes + (transport.rank_ * 64 + queue) * sizeof(uint64_t) &&
               transfer.queue == queue && transfer.value == 1, "owner-QP marker");
       require(gin.drains[index] == std::make_pair(transfer.owner, queue), "drain wrong queue");
@@ -194,11 +344,14 @@ int main() {
       std::fill(ready.begin(), ready.end(), epoch - 1);
       for (int peer = 0; peer < ranks; ++peer) routes[peer] = (epoch + peer) % 3 == 0 ? -1 : peer;
       blockIdx.x = 0;
+            for (threadIdx.x = 0; threadIdx.x < static_cast<unsigned int>(ranks); ++threadIdx.x)
+                signalRankMajorCombineLocalStart(transport, ranks);
       for (int peer = ranks - 1; peer >= 0; --peer) {
         threadIdx.x = peer;
         const bool incoming = !transport.isNvlinkPeer(peer) && routes[peer] >= 0;
         const uint64_t before = baselines[peer];
-        if (incoming) flags[peer * 64 + transport.rank_ % queues] = before + 1;
+                if (incoming) for (int stripe = 0; stripe < hcas; ++stripe)
+                    flags[peer * 64 + (transport.rank_ % queues + stripe) % queues] = before + 1;
         publishRankMajorCombinePushReady(routes.data(), ranks, 1, 1, ranks, epoch, transport, workspace);
         require(baselines[peer] == before + incoming && ready[peer] == epoch, "readiness/baseline generation");
         if (peer > 0) require(ready[peer - 1] == epoch - 1, "one peer must not publish another peer's readiness");
@@ -281,6 +434,10 @@ int main() {
         for name in ("put", "putWithSignal", "atomicAdd", "get", "flush", "tryFlush", "putBatched3"):
             native = function(source(IMPL), "GpuNetIoDeviceContext::" + name)
             self.assertIn("detail::ginQp(qps,peer*numQpsPerPeer+qpIndex)", code(native))
+            if name in ("put", "putWithSignal", "atomicAdd", "get", "putBatched3"):
+                self.assertIn("detail::ginRemoteKey(*this,peer,qpIndex)", code(native))
+                self.assertIn("detail::ginHtobe32(detail::ginLocalKey(*this,qpIndex))", code(native))
+                self.assertNotIn("rkeys[peer]", code(native))
         native = code(function(source(SERVICE), "GpuNetIoService::setup"))
         self.assertIn("qpAll[static_cast<size_t>(r)*rowLen+static_cast<size_t>(s.rank)*nQp+qpIndex]", native)
         self.assertIn("ctxHost.numQpsPerPeer=s.numQpsPerPeer;", native)
@@ -293,18 +450,17 @@ int main() {
     def test_configuration_agreement_precedes_variable_sized_exchange(self):
         self.ordered(
             function(source(SERVICE), "GpuNetIoService::setup"),
-            "int requestedQps = 1;",
-            "peerQps[s.rank] = requestedQps;",
-            "s.bootstrap->allGather(peerQps.data(), sizeof(int));",
-            "requestedQps > 64",
-            "value == requestedQps",
+            "int requestedQps = qpsEnv == nullptr ? nHcas : std::max(1, std::atoi(qpsEnv));",
+            "s.bootstrap->allGather(configAll.data(), static_cast<int>(sizeof(ConfigExchangeInfo)));",
+            "config.numQpsPerPeer > 64",
+            "config.numQpsPerPeer % config.numHcas != 0",
             "throw Error(",
             "s.numQpsPerPeer = requestedQps;",
             "s.qpHl.assign(rowLen, nullptr)",
             "s.bootstrap->allGather(qpAll.data(), static_cast<int>(rowLen * sizeof(QpExchangeInfo)))",
         )
 
-    def test_dispatch_drain_barrier_then_count_publication(self):
+    def test_dispatch_posting_barrier_then_markers_and_parallel_drains(self):
         send = function(source(DISPATCH), "sendRankMajorGpuNetIo")
         self.ordered(
             send,
@@ -320,12 +476,12 @@ int main() {
             function(source(DISPATCH), "dispatchBody"),
             "usedQpMask[peer] = 0",
             "dispatchSendRankMajor<Hidden>",
-            "usedQpMask[peer] & (1ull << qpIndex)",
-            "gin->flush(peer, qpIndex)",
             "workspaceView.combineSyncer_->sync(gridDim.x)",
-            "sharedMem[peer] > 0",
-            "gin->atomicAdd(peer, transport.symmetricOffset(flag), sharedMem[peer], qpIndex)",
-            "flushAllCrossDomain(",
+            "static_cast<int>(blockIdx.x) == nWorkerBlocks + 1",
+            "gin->atomicAdd(peer, transport.symmetricOffset(flagsSelf + qpIndex), 1, qpIndex)",
+            "__syncthreads()",
+            "gin->flush(peer, qpIndex)",
+            "__syncthreads()",
             "dispatchRecvRankMajor(",
         )
         self.assertNotIn("flush(", function(source(DISPATCH), "writeRankMajorCounts"))
@@ -367,9 +523,9 @@ int main() {
             send,
             "const int owner = static_cast<int>(blockIdx.x)",
             "workspaceView.dispatchRecvCounts_[owner] > 0",
-            "const int qpIndex = owner % nQp",
+            "const int qpIndex = rankMajorCombineStripeQp(gin, owner, stripe)",
             "gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,",
-            "static_cast<uint64_t>(nRowsToOwner) * HiddenBytes, transport.symmetricOffset(remoteFlag), 1, qpIndex)",
+            "static_cast<uint64_t>(rowEnd - rowBegin) * HiddenBytes, transport.symmetricOffset(remoteFlag), 1, qpIndex)",
         )
         self.assertNotIn("flush(", send)
         self.assertNotIn("combineSyncer_", send)
@@ -377,13 +533,16 @@ int main() {
             function(source(COMBINE), "recvRankMajorCombinePush"),
             "if (!sendsToRank) continue",
             "combineArrivedBaseline_[destinationRank] + 1",
-            "const int qpIndex = transport.rank_ % nQp",
+            "stripe < gin->numHcas",
+            "const int qpIndex = rankMajorCombineStripeQp(gin, transport.rank_, stripe)",
             "while (flags[flagIndex] < target)",
             "combineArrivedBaseline_[destinationRank] = target",
             "combineSyncer_->sync(gridDim.x)",
         )
         self.ordered(
             function(source(COMBINE), "combineBody"),
+            "signalRankMajorCombineLocalStart(transport, nRanks)",
+            "synchronizeRankMajorCombine(transport, nRanks, epoch, workspaceView)",
             "sendRankMajorCombinePush<Hidden>",
             "if (nTopk <= RankMajorTmaMaxNTopk)",
             "publishRankMajorCombinePushReady(",
@@ -397,8 +556,10 @@ int main() {
             function(source(COMBINE), "publishRankMajorCombinePushReady"),
             "if (blockIdx.x != 0) return",
             "threadIdx.x",
+            "transport.baseMemoryChannels_[destinationRank].relaxedWait(-1)",
             "if (sendsToRank)",
-            "transport.rank_ % transport.gpuNetIo_->numQpsPerPeer",
+            "stripe < gin->numHcas",
+            "rankMajorCombineStripeQp(gin, transport.rank_, stripe)",
             "while (flags[flagIndex] < target)",
             "combineArrivedBaseline_[destinationRank] = target",
             "workspaceView.combineRankReadyEpochs_ + destinationRank",
@@ -425,7 +586,6 @@ int main() {
             "gpuNetIoStagingBytes+gpuNetIoFlagsBytes+gpuNetIoCombineFlagsBytes+gpuNetIoCombineLandingBytes", config
         )
         for path in (DISPATCH, COMBINE, SERVICE):
-            self.assertNotIn("numHcas", source(path))
             self.assertNotIn("putWarpRows", source(path))
 
     def test_actual_batched_wqes_and_default_api(self):
@@ -499,21 +659,29 @@ doca_gpu_dev_verbs_qp* ginQp(void* ptr,int flat){return static_cast<doca_gpu_dev
 uint32_t ginHtobe32(uint32_t key){return __builtin_bswap32(key);}
 }
 """
-        native = structure(source(HEADER), "GpuNetIoDeviceContext") + function(
-            source(IMPL), "GpuNetIoDeviceContext::putBatched3"
-        )
+        native = structure(source(HEADER), "GpuNetIoDeviceContext") + "namespace detail {\n"
+        for name in ("ginHcaIndex", "ginRemoteKey", "ginLocalKey"):
+            native += function(source(IMPL), name)
+        native += "}\n" + function(source(IMPL), "GpuNetIoDeviceContext::putBatched3")
         main = r"""
 }
 int main(){
  doca_gpu_dev_verbs_qp queues[8];expected=queues+7;
- uint32_t keys[2]={0,0x1234};uintptr_t bases[2]={0,0x100000};
+ uint32_t keys[8]={0,0x1234,0,0x5678,0,0x9abc,0,0xdef0};uintptr_t bases[2]={0,0x100000};
+ uint32_t localKeys[4]={0x12345678,0x23456789,0x3456789a,0x456789ab};
  mscclpp::GpuNetIoDeviceContext context{queues,keys,bases,0x12345678,0x200000,2,4};
+ for (int hcas : {1,2,4}) for (bool legacy : {false,true}) {
+ if (legacy && hcas != 1) continue;
+ context.numHcas=hcas;context.lkeys=legacy?nullptr:localKeys;
+ expected->next=1023;events.clear();
  context.putBatched3(1,3,100,200,14336,300,400,32,500,600,32);
  if(events!=std::vector<int>{1,2,2,2,3,4})return 1;
  for(int index=0;index<3;++index){auto row=expected->entries[index];
-  if(row.ticket!=1023+index || row.flags!=2 || row.rkey!=0x1234 || row.lkey!=0x78563412)return 2;
+  if(row.ticket!=1023+index || row.flags!=2 || row.rkey!=keys[(3%hcas)*2+1] ||
+      row.lkey!=__builtin_bswap32(localKeys[3%hcas]))return 2;
   if(row.dst!=0x100000+100+index*200 || row.src!=0x200000+200+index*200)return 3;
   if(row.bytes!=(index?32:14336))return 4;
+ }
  }
  return 0;
 }

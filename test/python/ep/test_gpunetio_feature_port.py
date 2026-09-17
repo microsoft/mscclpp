@@ -115,7 +115,9 @@ def function(text, name):
     harness; the signature and body themselves are copied unchanged.
     """
     masked = mask_cpp(text)
-    match = unique_match(masked, r"\b(?:void|bool|int|size_t)\s+" + re.escape(name) + r"\s*\(")
+    match = unique_match(
+        masked, r"\b(?:void|bool|int|size_t|uint32_t|uint64_t|std::vector<[^>]+>)\s+" + re.escape(name) + r"\s*\("
+    )
     params_end = matching_delimiter(masked, match.end() - 1)
     brace = params_end + 1
     while brace < len(masked) and masked[brace].isspace():
@@ -273,10 +275,10 @@ class NativeSourceTests(unittest.TestCase):
         )
         self.assert_ordered(
             remote,
-            "auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoFlagsBuffer_);",
-            "const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + "
-            "static_cast<uint64_t>(nRankTokens);",
-            "while (flags[sourceRank] < target) { }",
+            "const uint64_t target = workspaceView.dispatchArrivedBaseline_[sourceRank] + 1;",
+            "static_cast<size_t>(sourceRank) * GpuNetIoMaxQpsPerPeer",
+            "while (flags[qpIndex] < target) { }",
+            "__syncthreads();",
             "workspaceView.dispatchArrivedBaseline_[sourceRank] = target;",
             "return;",
         )
@@ -359,20 +361,22 @@ class NativeSourceTests(unittest.TestCase):
         self.assert_ordered(
             send,
             "const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];",
-            "const int qpIndex = owner % nQp;",
+            "const int qpIndex = rankMajorCombineStripeQp(gin, owner, stripe);",
             "gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,",
         )
-        self.assertIn("static_cast<size_t>(transport.rank_)*maxTokensPerRank*HiddenBytes", code(send))
-        self.assertIn("static_cast<uint64_t>(nRowsToOwner)*HiddenBytes", code(send))
+        self.assertIn("(static_cast<size_t>(transport.rank_)*maxTokensPerRank+rowBegin)*HiddenBytes", code(send))
+        self.assertIn("static_cast<uint64_t>(rowEnd-rowBegin)*HiddenBytes", code(send))
         drain = function(source(COMBINE), "drainRankMajorCombinePush")
-        self.assertIn("transport.gpuNetIo_->flush(owner,owner%transport.gpuNetIo_->numQpsPerPeer)", code(drain))
+        self.assertIn(
+            "gin->flush(owner,rankMajorCombineStripeQp(gin,owner,static_cast<int>(threadIdx.x)))", code(drain)
+        )
         recv = function(source(COMBINE), "recvRankMajorCombinePush")
         self.assertIn("(static_cast<size_t>(destinationRank)*maxTokensPerRank+destinationSlot)*HiddenBytes", code(recv))
         self.assert_ordered(
             recv,
             "if (!sendsToRank) continue;",
             "const uint64_t target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;",
-            "const int qpIndex = transport.rank_ % nQp;",
+            "const int qpIndex = rankMajorCombineStripeQp(gin, transport.rank_, stripe);",
             "while (flags[flagIndex] < target) { }",
             "workspaceView.combineArrivedBaseline_[destinationRank] = target;",
             "workspaceView.combineSyncer_->sync(gridDim.x);",
@@ -412,9 +416,7 @@ class ArrivalModel:
 
     def receive(self, peer, count):
         self.counts[peer] = count
-        if count == 0:
-            return True
-        target = self.baseline[peer] + count
+        target = self.baseline[peer] + 1
         if self.flags[peer] < target:
             return False
         self.baseline[peer] = target
@@ -432,9 +434,9 @@ class ProtocolModelTests(unittest.TestCase):
                 for generation in range(256):
                     for peer in range(ranks):
                         count = (generation * 7 + peer * 3) % 11
-                        target = model.baseline[peer] + count
+                        target = model.baseline[peer] + 1
                         before = model.baseline[:]
-                        if count and model.flags[peer] < target:
+                        if model.flags[peer] < target:
                             self.assertFalse(model.receive(peer, count))
                             self.assertEqual(model.baseline, before)
                         # Inject only monotonic NIC observations, including
@@ -442,34 +444,29 @@ class ProtocolModelTests(unittest.TestCase):
                         model.flags[peer] = max(model.flags[peer], target + (generation + peer) % 5)
                         observed = model.flags[:]
                         self.assertTrue(model.receive(peer, count))
-                        totals[peer] += count
+                        totals[peer] += 1
                         self.assertEqual(model.baseline, totals)
                         self.assertEqual(model.flags, observed)  # no receiver resets NIC state
                         self.assertEqual(model.counts[peer], count)
                 self.assertTrue(all(value > 0 for value in totals))
 
     def test_overshoot_must_not_be_absorbed_or_reset_at_receiver(self):
-        # Two sources advance independently; a zero-count generation consumes
-        # no arrival credit and overwrites the previous nonzero combine count.
+        # The one-QP case consumes a generation even for a zero-count source.
         model = ArrivalModel(2)
         model.baseline[:] = [5, 20]
-        model.flags[:] = [12, 21]
+        model.flags[:] = [7, 21]
         model.counts[:] = [7, 9]
         self.assertTrue(model.receive(0, 3))
         self.assertTrue(model.receive(1, 0))
-        self.assertEqual(model.baseline, [8, 20])
+        self.assertEqual(model.baseline, [6, 21])
         self.assertEqual(model.counts, [3, 0])
-        self.assertEqual(model.flags, [12, 21])
-        self.assertTrue(model.receive(0, 4))  # consume the four excess credits
-        self.assertEqual(model.baseline, [12, 20])
+        self.assertEqual(model.flags, [7, 21])
+        self.assertTrue(model.receive(0, 4))
+        self.assertEqual(model.baseline, [7, 21])
         self.assertFalse(model.receive(0, 1))  # no more source-zero arrivals
-        self.assertTrue(model.receive(1, 1))  # source-one credit is independent
-        self.assertEqual(model.baseline, [12, 21])
-        self.assertEqual(model.flags, [12, 21])
-        # Regression witnesses: either absorbing the observation or clearing
-        # the NIC flag would block the otherwise-ready next four-token batch.
-        self.assertFalse(12 >= 12 + 4)
-        self.assertFalse(0 >= 8 + 4)
+        self.assertFalse(model.receive(1, 1))
+        self.assertEqual(model.baseline, [7, 21])
+        self.assertEqual(model.flags, [7, 21])
 
     def test_unsafe_mid_send_reset_has_duplicate_slot_witness(self):
         for rows in (2, 3, 17, 128):
@@ -495,13 +492,13 @@ class ProtocolModelTests(unittest.TestCase):
                         slots[peer] += 1
                         # A remote notifier may run here, but must not reset.
                     self.assertEqual(allocated, list(range(rows)))
-                    dispatch_baseline[peer] += rows
+                    dispatch_baseline[peer] += 1
                     combine_baseline[peer] += int(rows > 0)
                 saved = (dispatch_baseline[:], combine_baseline[:])
                 slots[:] = [0] * ranks
                 self.assertEqual((dispatch_baseline, combine_baseline), saved)
 
-    def test_combine_generations_zero_rows_signal_owner_qp_not_per_row(self):
+    def test_single_hca_combine_generations_signal_owner_qp_not_per_row(self):
         for ranks in RANKS:
             for queues in (1, 4, 64):
                 flags = [[0] * queues for _ in range(ranks)]
