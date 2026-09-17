@@ -789,18 +789,19 @@ def main():
         )
         graph_out = torch.empty_like(out)
         graph, _, graph_combined_x, _, _, _ = _graph_capture(graph_dispatch_output_buffer, graph_out)
-        graph.replay()
-        torch.cuda.synchronize()
-
-        _, graph_diff = validate_combine_output(
-            graph_combined_x,
-            expected,
-            exact=combine_mode == ep.CombineMode.DIRECT_SEND,
-            group=group,
-        )
+        graph_diff = 0.0
+        for _ in range(2):
+            graph.replay()
+            torch.cuda.synchronize()
+            _, graph_diff = validate_combine_output(
+                graph_combined_x,
+                expected,
+                exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+                group=group,
+            )
         if rank == 0:
             print(
-                f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}",
+                f"[cuda graph dispatch+combine x2] OK max|got-expected|={graph_diff:.4e}",
                 flush=True,
             )
 

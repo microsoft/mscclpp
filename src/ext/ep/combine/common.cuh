@@ -297,30 +297,17 @@ MSCCLPP_DEVICE_INLINE void exchangeCombineReady(const TransportView& transport, 
   }
 }
 
-MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks, uint32_t epoch,
+MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& transport, int nRanks,
                                                        WorkspaceView& workspaceView) {
   const int threadId = static_cast<int>(threadIdx.x);
   if (blockIdx.x == 0 && threadId < nRanks) {
     const int peerRank = threadId;
     if (!transport.isSelf(peerRank)) {
-      transport.baseMemoryChannels_[peerRank].relaxedSignal();
-      transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
+      transport.baseMemoryChannels_[peerRank].signal();
+      transport.baseMemoryChannels_[peerRank].wait(-1);
     }
   }
-  if (blockIdx.x == 0) {
-    __syncthreads();
-    if (threadIdx.x == 0) {
-      mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineReadyEpoch_, epoch,
-                                                           mscclpp::memoryOrderRelaxed);
-    }
-  } else {
-    if (threadIdx.x == 0) {
-      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspaceView.combineReadyEpoch_,
-                                                                 mscclpp::memoryOrderRelaxed) != epoch) {
-      }
-    }
-    __syncthreads();
-  }
+  workspaceView.combineSyncer_->sync(gridDim.x, -1);
 }
 
 MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& transport, int nRanks, uint32_t epoch,
@@ -329,8 +316,8 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
   const int threadId = static_cast<int>(threadIdx.x);
   if (threadId < nRanks) {
     if (!transport.isSelf(threadId)) {
-      transport.baseMemoryChannels_[threadId].relaxedSignal();
-      transport.baseMemoryChannels_[threadId].relaxedWait(-1);
+      transport.baseMemoryChannels_[threadId].signal();
+      transport.baseMemoryChannels_[threadId].wait(-1);
     }
     mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadId, epoch,
                                                          mscclpp::memoryOrderRelaxed);
@@ -780,14 +767,16 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
       const uint32_t epoch = workload.epoch_;
       if (blockIdx.x == 0) {
         publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
-      } else {
+      }
+      workspaceView.combineSyncer_->sync(gridDim.x, -1);
+      if (blockIdx.x != 0) {
         recvRankMajorRemotePartialsTma<Hidden, Mode>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts,
                                                      nRanks, maxTokensPerRank, epoch, transport, workspaceView,
                                                      sharedMemory);
       }
       return;
     }
-    synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
+    synchronizeRankMajorCombine(transport, nRanks, workspaceView);
     recvRankMajorRemotePartials<Hidden, Mode>(output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks,
                                               maxTokensPerRank, transport, workspaceView);
     return;
@@ -798,14 +787,16 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
       const uint32_t epoch = workload.epoch_;
       if (blockIdx.x == 0) {
         publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
-      } else {
+      }
+      workspaceView.combineSyncer_->sync(gridDim.x, -1);
+      if (blockIdx.x != 0) {
         recvRankMajorTopkExpandedRemotePartialsTma<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens,
                                                            nTopk, nExperts, nRanks, maxTokensPerRank, epoch, transport,
                                                            workspaceView, sharedMemory);
       }
       return;
     }
-    synchronizeRankMajorCombine(transport, nRanks, workload.epoch_, workspaceView);
+    synchronizeRankMajorCombine(transport, nRanks, workspaceView);
     recvRankMajorTopkExpandedRemotePartials<Hidden>(output, expertOutput, topkIndices, topkWeights, nTokens, nTopk,
                                                     nExperts, nRanks, maxTokensPerRank, transport);
     return;
