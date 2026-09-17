@@ -21,14 +21,18 @@ from mscclpp.ep.types import (
     QuantConfig,
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
+    _RankMajorTopkExpandedCombineContext,
 )
 from mscclpp.ep.utils import (
     DevicePointerArray,
+    combine_tensor_dtype,
     cuda_stream_ptr,
     dispatch_scale_block_size,
     dispatch_scale_dtype,
+    dispatch_tensor_dtype,
     resolve_expert_placement,
     resolve_dispatch_data_type,
+    resolve_num_blocks,
     tensor_from_pointer,
 )
 
@@ -43,7 +47,11 @@ class LatencyContext(Context):
         output_layout = config.output_layout
         if output_layout is None:
             output_layout = DispatchLayout.EXPERT_MAJOR
-        num_blocks = 130 if config.num_blocks is None else config.num_blocks
+        dispatch_blocks, combine_blocks = resolve_num_blocks(
+            config.num_blocks,
+            default=(130, 128),
+            scalar_combine_offset=-2,
+        )
 
         self.comm = comm
         self.rank = comm.my_rank
@@ -58,7 +66,8 @@ class LatencyContext(Context):
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_blocks = num_blocks
+        self.dispatch_blocks = dispatch_blocks
+        self.combine_blocks = combine_blocks
         self.combine_mode = config.combine_mode
         self.invalid_token_expert_id = (
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
@@ -73,8 +82,10 @@ class LatencyContext(Context):
             raise NotImplementedError("unsupported latency output layout")
         if self.num_experts % self.world_size != 0:
             raise ValueError("latency mode requires num_experts divisible by world_size")
-        if not self.world_size + 2 <= self.num_blocks <= 130:
-            raise ValueError("num_blocks must be between world_size + 2 and 130 in latency mode")
+        if not self.world_size + 2 <= dispatch_blocks <= 130:
+            raise ValueError("dispatch block count must be between world_size + 2 and 130 in latency mode")
+        if not 0 < combine_blocks <= 128:
+            raise ValueError("combine block count must be between 1 and 128 in latency mode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.invalid_token_expert_id) is not int:
@@ -98,6 +109,8 @@ class LatencyContext(Context):
                 raise ValueError("expanded output supports topk in [1, 9]")
             if self.max_tokens_per_rank * self.topk > (1 << 31) - 1:
                 raise ValueError("expanded per-rank row count must fit in int32")
+            if combine_blocks <= self.world_size:
+                raise ValueError("expanded combine requires more blocks than ranks, including its control block")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -144,7 +157,6 @@ class LatencyRuntime(Runtime):
             hidden=context.hidden_size,
             num_experts=context.num_experts,
             num_topk=context.topk,
-            num_blocks=context.num_blocks,
             output_layout=context.output_layout,
             combine_mode=context.combine_mode,
         )
@@ -200,7 +212,7 @@ class LatencyRuntime(Runtime):
             mode_context.invalid_token_expert_id,
             mode_context.output_layout,
             mode_context.dispatch_data_type,
-            mode_context.num_blocks,
+            mode_context.dispatch_blocks,
             cuda_stream_ptr(stream),
         )
         output_quant = (
@@ -255,7 +267,7 @@ class LatencyRuntime(Runtime):
                     layout_range=layout_range,
                 ),
             )
-        elif mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
+        elif mode_context.output_layout == DispatchLayout.RANK_MAJOR:
             handle = DispatchHandle(
                 output_info=output_info,
                 _context=_RankMajorCombineContext(
@@ -264,7 +276,18 @@ class LatencyRuntime(Runtime):
                     num_tokens=input.size(0),
                     hidden_size=mode_context.hidden_size,
                     max_tokens_per_rank=active_capacity,
-                    weights=weights if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED else None,
+                ),
+            )
+        elif mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            handle = DispatchHandle(
+                output_info=output_info,
+                _context=_RankMajorTopkExpandedCombineContext(
+                    topk_ids=topk_ids,
+                    weights=weights,
+                    num_experts=mode_context.num_experts,
+                    num_tokens=input.size(0),
+                    hidden_size=mode_context.hidden_size,
+                    max_tokens_per_rank=active_capacity,
                 ),
             )
         else:
@@ -307,6 +330,11 @@ class LatencyRuntime(Runtime):
                     f"[py_ll_combine][rank {mode_context.rank}] rank-major context capacity={active_capacity}",
                     flush=True,
                 )
+        elif isinstance(context, _RankMajorTopkExpandedCombineContext):
+            active_capacity = context.max_tokens_per_rank
+            topk_weights = context.weights
+            src_info = None
+            layout_range = None
         else:
             raise ValueError("DispatchHandle does not contain latency combine context")
         if out is None:
@@ -314,7 +342,7 @@ class LatencyRuntime(Runtime):
                 print(f"[py_ll_combine][rank {mode_context.rank}] allocate output", flush=True)
             out = torch.empty(
                 (context.num_tokens, mode_context.hidden_size),
-                dtype=torch.bfloat16,
+                dtype=combine_tensor_dtype(mode_context.dispatch_data_type),
                 device=expert_output.device,
             )
         if debug_combine:
@@ -338,7 +366,7 @@ class LatencyRuntime(Runtime):
             mode_context.output_layout,
             mode_context.dispatch_data_type,
             mode_context.combine_mode,
-            mode_context.num_blocks - 2,
+            mode_context.combine_blocks,
             cuda_stream_ptr(stream),
         )
         if debug_combine:
@@ -367,7 +395,7 @@ class LatencyRuntime(Runtime):
         else:
             dispatch_shape = (context.world_size * context.max_tokens_per_rank, context.hidden_size)
 
-        dispatch_dtype = torch.bfloat16 if context.dispatch_data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
+        dispatch_dtype = dispatch_tensor_dtype(context.dispatch_data_type)
         context._dispatch_output_owner, context.dispatch_output_buffer = tensor_from_pointer(
             self.cpp_runtime.dispatch_output_buffer_ptr(),
             dispatch_shape,
@@ -524,16 +552,14 @@ class LatencyRuntime(Runtime):
         if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
             assert mode_context.dispatch_output_buffer is not None
             if output_buffer.data_ptr() != mode_context.dispatch_output_buffer.data_ptr():
-                raise ValueError("RANK_MAJOR output uses the runtime-owned dispatch output buffer")
+                raise ValueError(f"{mode_context.output_layout} output uses the runtime-owned dispatch output buffer")
             return
         if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
             if output_buffer.data_ptr() != mode_context.dispatch_output_buffer.data_ptr():
                 raise ValueError("expanded output requires the runtime-owned dispatch buffer")
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {mode_context.output_layout} tensor")
-        expected_dtype = (
-            torch.bfloat16 if mode_context.dispatch_data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
-        )
+        expected_dtype = dispatch_tensor_dtype(mode_context.dispatch_data_type)
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
@@ -542,7 +568,8 @@ class LatencyRuntime(Runtime):
     def _validate_combine(self, expert_output, handle, out) -> None:
         mode_context = self.context
         if not isinstance(handle, DispatchHandle) or not isinstance(
-            handle._context, (_ExpertMajorCombineContext, _RankMajorCombineContext)
+            handle._context,
+            (_ExpertMajorCombineContext, _RankMajorCombineContext, _RankMajorTopkExpandedCombineContext),
         ):
             raise ValueError("DispatchHandle does not contain latency combine context")
         context = handle._context
@@ -556,7 +583,7 @@ class LatencyRuntime(Runtime):
             raise ValueError("DispatchHandle quantization does not match this MoECommunicator configuration")
         active_capacity = (
             context.max_tokens_per_rank
-            if isinstance(context, _RankMajorCombineContext)
+            if isinstance(context, (_RankMajorCombineContext, _RankMajorTopkExpandedCombineContext))
             else mode_context.max_tokens_per_rank
         )
         slots_per_expert = mode_context.world_size * active_capacity
@@ -590,8 +617,9 @@ class LatencyRuntime(Runtime):
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype != torch.bfloat16:
-            raise ValueError("expert_output must be BF16")
+        expected_dtype = combine_tensor_dtype(mode_context.dispatch_data_type)
+        if expert_output.dtype != expected_dtype:
+            raise ValueError(f"expert_output must be {expected_dtype}")
         if handle.output_info.layout.kind in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             assert mode_context.combine_input_buffer is not None
             if expert_output.data_ptr() != mode_context.combine_input_buffer.data_ptr():
@@ -608,5 +636,5 @@ class LatencyRuntime(Runtime):
                     raise ValueError("expanded combine output must not overlap its input")
         if out is not None:
             expected_out_shape = (context.num_tokens, mode_context.hidden_size)
-            if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
-                raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
+            if tuple(out.shape) != expected_out_shape or out.dtype != expected_dtype or not out.is_contiguous():
+                raise ValueError(f"out must be a contiguous {expected_dtype} tensor with shape {expected_out_shape}")

@@ -115,9 +115,15 @@ def function(text, name):
     harness; the signature and body themselves are copied unchanged.
     """
     masked = mask_cpp(text)
-    match = unique_match(
-        masked, r"\b(?:void|bool|int|size_t|uint32_t|uint64_t|std::vector<[^>]+>)\s+" + re.escape(name) + r"\s*\("
-    )
+    pattern = r"\b(?:void|bool|int|size_t|uint32_t|uint64_t|std::vector<[^>]+>)\s+" + re.escape(name) + r"\s*\("
+    matches = [
+        candidate
+        for candidate in re.finditer(pattern, masked)
+        if masked[matching_delimiter(masked, candidate.end() - 1) + 1 :].lstrip().startswith("{")
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one definition of {name}, found {len(matches)}")
+    match = matches[0]
     params_end = matching_delimiter(masked, match.end() - 1)
     brace = params_end + 1
     while brace < len(masked) and masked[brace].isspace():

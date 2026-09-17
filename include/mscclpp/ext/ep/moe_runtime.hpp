@@ -35,14 +35,10 @@ class MoERuntime {
   /// @param numExperts Global expert count.
   /// @param numTopk Number of routed experts per token.
   /// @param maxHiddenBytes Maximum throughput-mode bytes per token row.
-  /// @param numBlocks Total communication block count. LATENCY includes its two
-  /// reserved scheduler/control blocks in this value; THROUGHPUT uses all blocks
-  /// as communication workers.
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
-             int numTopk, int64_t maxHiddenBytes, int numBlocks,
-             DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
+             int numTopk, int64_t maxHiddenBytes, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
   ~MoERuntime() noexcept(false);
 
@@ -110,8 +106,8 @@ class MoERuntime {
   /// This host-synchronizing metadata phase must precede throughput dispatch
   /// when cached routing metadata is unavailable.
   int notify(int* rankPrefixMatrix, int* channelPrefixMatrix, int* numRecvTokensPerExpert, const int* numTokensPerRank,
-             const int* numTokensPerExpert, const bool* isTokenInRank, int numTokens, int numExperts, int xElementSize,
-             int expertAlignment, cudaStream_t stream);
+             const int* numTokensPerExpert, const bool* isTokenInRank, int numTokens, int numExperts,
+             int expertAlignment, int numBlocks, cudaStream_t stream);
 
  private:
   void requireMode(MoEMode expected) const;
@@ -135,7 +131,7 @@ class MoERuntime {
 /// Create the unified MoE runtime selected by @p mode.
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numBlocks, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
+                                             DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
                                              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
 
 }  // namespace ep

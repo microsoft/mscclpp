@@ -682,6 +682,7 @@ void dispatch(void* output, int* outputIds, float* outputWeights, int* outputCou
     EXPANDED_DISPATCH(2048);
     EXPANDED_DISPATCH(4096);
     EXPANDED_DISPATCH(4352);
+    EXPANDED_DISPATCH(5120);
     EXPANDED_DISPATCH(6656);
     EXPANDED_DISPATCH(7168);
     EXPANDED_DISPATCH(8192);
@@ -696,7 +697,7 @@ void dispatch(void* output, int* outputIds, float* outputWeights, int* outputCou
 
 void combine(void* output, const void* input, const int64_t* topkIds, const float* weights, const Workload& work,
              const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  const int blocks = numBlocks + 1;
+  const int blocks = numBlocks;
   validate(work, context, blocks);
   EP_HOST_ASSERT(input && context.workspace_);
   EP_HOST_ASSERT(work.numTokens_ == 0 || (output && topkIds));
@@ -711,6 +712,7 @@ void combine(void* output, const void* input, const int64_t* topkIds, const floa
     EXPANDED_COMBINE(2048);
     EXPANDED_COMBINE(4096);
     EXPANDED_COMBINE(4352);
+    EXPANDED_COMBINE(5120);
     EXPANDED_COMBINE(6656);
     EXPANDED_COMBINE(7168);
     EXPANDED_COMBINE(8192);

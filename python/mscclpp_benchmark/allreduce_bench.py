@@ -251,11 +251,8 @@ if __name__ == "__main__":
     shm_comm.Free()
     cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
 
-    # create a MscclppGroup
-    network_interface, my_ip = get_netinterface_info()
-    root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
-    ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
-    mscclpp_group = CommGroup(interfaceIpPortTrio=ifIpPortTrio, rank=MPI.COMM_WORLD.rank, size=MPI.COMM_WORLD.size)
+    # create a MscclppGroup (MPI-based bootstrap; ephemeral port, matches executor_test.py)
+    mscclpp_group = CommGroup(MPI.COMM_WORLD)
 
     # create a NcclComm
     if MPI.COMM_WORLD.rank == 0:

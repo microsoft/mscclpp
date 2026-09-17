@@ -14,6 +14,28 @@ from mscclpp.ep._cpp import DispatchDataType
 from mscclpp.ep.types import QuantConfig
 
 
+def resolve_num_blocks(
+    num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]],
+    *,
+    default: Tuple[int, int],
+    scalar_combine_offset: int,
+) -> Tuple[int, int]:
+    """Resolve one block count or a ``(dispatch, combine)`` pair."""
+    if num_blocks is None:
+        return default
+    if type(num_blocks) is int:
+        return num_blocks, num_blocks + scalar_combine_offset
+    if not isinstance(num_blocks, tuple):
+        raise TypeError("num_blocks must be an int or a (dispatch, combine) tuple")
+    if len(num_blocks) != 2:
+        raise ValueError("num_blocks tuple must contain exactly (dispatch, combine)")
+    if any(value is not None and type(value) is not int for value in num_blocks):
+        raise TypeError("num_blocks tuple values must be ints or None")
+    dispatch_blocks = default[0] if num_blocks[0] is None else num_blocks[0]
+    combine_blocks = default[1] if num_blocks[1] is None else num_blocks[1]
+    return dispatch_blocks, combine_blocks
+
+
 def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
     """Resolve dispatch storage type from optional quantization metadata."""
     if quant is None:
@@ -42,7 +64,21 @@ def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the scale dtype for a quantized dispatch format."""
     if data_type == DispatchDataType.FP8_E4M3:
         return torch.float32
-    raise ValueError("BF16 dispatch does not have block scales")
+    raise ValueError(f"{data_type} dispatch does not have block scales")
+
+
+def dispatch_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the tensor dtype for a dispatch payload format."""
+    if data_type == DispatchDataType.BF16:
+        return torch.bfloat16
+    if data_type == DispatchDataType.FP8_E4M3:
+        return torch.float8_e4m3fn
+    raise ValueError(f"unsupported dispatch data type: {data_type}")
+
+
+def combine_tensor_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the tensor dtype expected by latency combine."""
+    return torch.bfloat16
 
 
 def send_bytes(comm: Any, payload: bytes, peer: int, tag: int) -> None:
@@ -151,6 +187,7 @@ def tensor_from_pointer(
     """Create a zero-copy tensor view over runtime-owned CUDA memory."""
     storage_types = {
         torch.bfloat16: "<u2",
+        torch.float16: "<f2",
         torch.float8_e4m3fn: "|u1",
         torch.int32: "<i4",
         torch.float32: "<f4",

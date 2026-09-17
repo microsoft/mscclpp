@@ -74,6 +74,9 @@ class ExpandedTests(unittest.TestCase):
             ),
             cuda_stream_ptr=lambda stream: 17,
         )
+        _load(
+            "python/mscclpp/ep/utils.py", ("resolve_num_blocks", "dispatch_tensor_dtype", "combine_tensor_dtype"), api
+        )
         _load("python/mscclpp/ep/latency.py", ("LatencyContext", "LatencyRuntime"), api)
         if isinstance(overrides.get("combine_mode"), str):
             overrides["combine_mode"] = getattr(api["CombineMode"], overrides["combine_mode"])
@@ -154,6 +157,38 @@ class ExpandedTests(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             self.runtime(quant=NS(format="fp8"))
 
+    def test_independent_total_block_counts(self):
+        for requested, expected in (
+            (None, (130, 128)),
+            (64, (64, 62)),
+            ((32, 16), (32, 16)),
+            ((None, 16), (130, 16)),
+            ((32, None), (32, 128)),
+            ((None, None), (130, 128)),
+        ):
+            api, runtime, trace = self.runtime(num_blocks=requested, hidden_size=5120)
+            context = runtime.context
+            self.assertEqual((context.dispatch_blocks, context.combine_blocks), expected)
+            tokens = Tensor((2, 5120), device=context.device)
+            ids = Tensor((2, context.topk), "int64", context.device)
+            output, handle = runtime.dispatch(
+                tokens,
+                ids,
+                None,
+                None,
+                output_buffer=None,
+                stream=None,
+                previous_handle=None,
+                runtime_max_tokens_per_rank=None,
+            )
+            self.assertIsInstance(handle._context, api["_RankMajorTopkExpandedCombineContext"])
+            runtime.combine(output.tokens, handle, out=Tensor((2, 5120), pointer=0x900000), stream=None)
+            self.assertEqual(trace[0][1][-2], expected[0])
+            self.assertEqual(trace[1][1][-2], expected[1])
+        for requested in ((32, 2), (32, 0), (3, 16), (32,), True, [32, 16], (32, False)):
+            with self.assertRaises((ValueError, TypeError)):
+                self.runtime(num_blocks=requested)
+
     def test_benchmark_uses_unweighted_aliased_rows(self):
         helper = benchmark_tests.CpuPortTest()
         helper.setUp()
@@ -218,6 +253,14 @@ int main() {
 
     def test_generation_markers_and_final_ack_order(self):
         kernel = source(KERNEL)
+        self.assertIn("const int blocks = numBlocks;", function(kernel, "combine"))
+        self.assertIn("EXPANDED_DISPATCH(5120)", function(kernel, "dispatch"))
+        self.assertIn("EXPANDED_COMBINE(5120)", function(kernel, "combine"))
+        for path, name, target in (
+            ("src/ext/ep/dispatch/rank_major_dispatch.cu", "rankMajorTopkExpandedDispatch", "dispatch"),
+            ("src/ext/ep/combine/rank_local_reduce_combine.cu", "rankMajorTopkExpandedGatherReduceCombine", "combine"),
+        ):
+            self.assertIn(f"topk_expanded::{target}(", function(source(path), name))
         for name, baseline in (
             ("dispatchTopkExpandedKernel", "dispatchArrivedBaseline_"),
             ("combineTopkExpandedKernel", "combineArrivedBaseline_"),

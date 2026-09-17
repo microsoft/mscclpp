@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import torch
 import mscclpp
@@ -57,9 +57,10 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Total communication blocks. LATENCY includes two reserved scheduler/control
-    # blocks; THROUGHPUT uses every block as a communication worker.
-    num_blocks: Optional[int] = None
+    # Launch tuning. Accepts one count or a (dispatch, combine) pair;
+    # either pair entry may be None to use its mode default.
+    # Both values are total grid sizes.
+    num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
@@ -144,6 +145,18 @@ class _RankMajorCombineContext:
 
 
 @dataclass
+class _RankMajorTopkExpandedCombineContext:
+    """Combine context for fixed-stride source-rank/top-k-expanded output."""
+
+    topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    max_tokens_per_rank: int
+
+
+@dataclass
 class _ThroughputCombineContext:
     """Combine context for throughput output."""
 
@@ -154,6 +167,7 @@ class _ThroughputCombineContext:
 _CombineContext = Union[
     _ExpertMajorCombineContext,
     _RankMajorCombineContext,
+    _RankMajorTopkExpandedCombineContext,
     _ThroughputCombineContext,
 ]
 

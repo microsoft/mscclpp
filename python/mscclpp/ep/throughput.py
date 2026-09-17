@@ -28,6 +28,7 @@ from mscclpp.ep.utils import (
     current_stream_ptr as _stream_ptr,
     ptr as _ptr,
     resolve_expert_placement,
+    resolve_num_blocks,
     tensor_from_pointer,
 )
 
@@ -45,9 +46,15 @@ class ThroughputContext(Context):
         output_layout = config.output_layout
         if output_layout is None:
             output_layout = DispatchLayout.TOKEN_MAJOR
-        num_blocks = 20 if config.num_blocks is None else config.num_blocks
-        if num_blocks <= 0:
-            raise ValueError("num_blocks must be positive in throughput mode")
+        dispatch_blocks, combine_blocks = resolve_num_blocks(
+            config.num_blocks,
+            default=(20, 20),
+            scalar_combine_offset=0,
+        )
+        if dispatch_blocks <= 0:
+            raise ValueError("dispatch block count must be positive in throughput mode")
+        if combine_blocks <= 0:
+            raise ValueError("combine block count must be positive in throughput mode")
         max_hidden_bytes = config.hidden_size * torch.empty((), dtype=torch.bfloat16).element_size()
 
         self.rank: int = comm.my_rank
@@ -63,7 +70,8 @@ class ThroughputContext(Context):
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_blocks = num_blocks
+        self.dispatch_blocks = dispatch_blocks
+        self.combine_blocks = combine_blocks
         self.max_hidden_bytes = max_hidden_bytes
         self.enable_overlap = config.enable_overlap
 
@@ -95,7 +103,6 @@ class ThroughputRuntime(Runtime):
             context.mode,
             max_tokens_per_rank=context.max_tokens_per_rank,
             max_hidden_bytes=context.max_hidden_bytes,
-            num_blocks=context.num_blocks,
             output_layout=context.output_layout,
         )
         super().__init__(context, cpp_runtime)
@@ -278,6 +285,7 @@ class ThroughputRuntime(Runtime):
                 hidden,
                 num_topk,
                 expert_output.element_size(),
+                mode_context.combine_blocks,
                 _stream_ptr(),
             )
             if out is not None:
@@ -331,7 +339,7 @@ class ThroughputRuntime(Runtime):
         cached_mode = cached_rank_prefix_matrix is not None
         num_tokens, hidden = int(x.size(0)), int(x.size(1))
         x_element_size = x.element_size()
-        num_channels = mode_context.num_blocks
+        num_channels = mode_context.dispatch_blocks
 
         num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
         num_scales = 0
@@ -365,8 +373,8 @@ class ThroughputRuntime(Runtime):
                 _ptr(is_token_in_rank),
                 num_tokens,
                 num_experts,
-                x_element_size,
                 expert_alignment,
+                mode_context.dispatch_blocks,
                 _stream_ptr(),
             )
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
@@ -412,6 +420,7 @@ class ThroughputRuntime(Runtime):
             x_element_size,
             num_recv_tokens,
             cached_mode,
+            mode_context.dispatch_blocks,
             _stream_ptr(),
         )
         return (

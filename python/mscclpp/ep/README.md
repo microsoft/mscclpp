@@ -74,8 +74,12 @@ class MoECommunicatorConfig:
     # Quantization defaults
     quant: Optional[QuantConfig] = None
 
-    # Launch resources; defaults to 130 for LATENCY and 20 for THROUGHPUT
-    num_blocks: Optional[int] = None
+    # LATENCY: dispatch blocks or (dispatch, combine); defaults to (130, 128)
+    # THROUGHPUT: dispatch/combine blocks; defaults to (20, 20)
+    # Counts are total grid sizes.
+    # A single value uses the mode-specific relation for both operations.
+    # Either tuple entry may be None to use its mode default.
+    num_blocks: Optional[int | tuple[Optional[int], Optional[int]]] = None
 
     # Overlap
     enable_overlap: bool = False
@@ -145,7 +149,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
-| `num_blocks` | total communication block count; LATENCY includes two reserved scheduler/control blocks, while THROUGHPUT uses all blocks as workers; mode-specific default when unset |
+| `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently, and `None` uses that entry's mode default. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
 | `dispatch_config`, `combine_config` | context-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
 
@@ -192,6 +196,7 @@ Use `DispatchLayout` instead of string literals for this field:
 | `DispatchLayout.TOKEN_MAJOR` | Throughput: `[total_recv_tokens, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 | `DispatchLayout.RANK_MAJOR` | Latency or throughput: `[world_size * max_tokens_per_rank, hidden]` |
+| `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED` | Latency: `[world_size * max_tokens_per_rank * topk, hidden]` |
 
 ## MoECommunicator methods
 
@@ -284,6 +289,7 @@ class DispatchLayout(str, Enum):
     EXPERT_MAJOR = "expert_major"
     TOKEN_MAJOR = "token_major"
     RANK_MAJOR = "rank_major"
+    RANK_MAJOR_TOPK_EXPANDED = "rank_major_topk_expanded"
 
 
 @dataclass
@@ -460,7 +466,7 @@ Requirements:
 | Shape | `[T, H]`, token-major |
 | Layout | contiguous row-major |
 | Device | CUDA tensor |
-| dtype | BF16, FP16, FP8, NVFP4, or another supported activation dtype |
+| dtype | BF16, or another supported activation dtype |
 | Ordering | original local token order; not expert sorted |
 
 The user should not expand `input` by top-k and should not convert it to
@@ -492,16 +498,17 @@ combine to reduce the `K` expert results for each token back to `[T, H]`.
 
 ### `quant`
 
-`quant` contains activation quantization metadata for `input`. It should be
-`None` for BF16/FP16 input. `quant.format` defines the tensor representation
-and scale layout.
+`quant` contains activation quantization metadata for dispatch output. It should
+be `None` for BF16 dispatch. `quant.format` defines the wire/output
+representation and scale layout; latency FP8 dispatch currently consumes BF16
+input and emits FP8 output.
 
 Examples:
 
 | Format | `input` | `quant.block_scales` |
 |---|---|---|
-| BF16/FP16 | `[T, H]` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `[T, H / 128]` |
+| BF16 | `[T, H]` BF16 | `None` |
+| FP8 E4M3 | `[T, H]` BF16 input, FP8 output | `[T, H / 128]` |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
@@ -587,8 +594,21 @@ dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
+Latency `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED` exposes one row per routed token/top-k lane:
+
+```python
+dispatch_out.tokens     # [world_size * max_tokens_per_rank * K, H]
+dispatch_out.topk_ids   # [world_size * max_tokens_per_rank * K]
+dispatch_out.weights    # [world_size * max_tokens_per_rank * K]
+```
+
 Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
 final receive buffers and exposed as zero-copy Torch tensors.
+For `RANK_MAJOR_TOPK_EXPANDED`, the flat IDs and weights align with the expanded
+token rows. This layout uses the configured capacity for every call, supports
+BF16 with top-k 1 through 9, and requires `RANK_LOCAL_REDUCE`. Expert output is
+unweighted and must reuse `dispatch_out.combine_input_buffer`, which aliases
+`dispatch_out.tokens`; combine applies the original routing weights once.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
 
@@ -642,11 +662,13 @@ dimension replaced by the scale dimension.
 Examples:
 
 ```text
-token-major tokens:   throughput [total_recv_tokens, H]; latency rank-major [world_size * max_tokens_per_rank, H]
-rank-major scales:    not yet supported
+token-major tokens:              throughput [total_recv_tokens, H]
+rank-major tokens:               latency/throughput [world_size * max_tokens_per_rank, H]
+rank-major-topk-expanded tokens: latency [world_size * max_tokens_per_rank * topk, H]
+rank-major scales:               not yet supported
 
-expert-major tokens:  [num_local_experts, max_slots, H]
-expert-major scales:  [num_local_experts, max_slots, S]
+expert-major tokens:             [num_local_experts, max_slots, H]
+expert-major scales:             [num_local_experts, max_slots, S]
 ```
 
 `S` is `H / 128` with FP32 values for `FP8_E4M3`.
@@ -655,18 +677,21 @@ expert-major scales:  [num_local_experts, max_slots, S]
 
 The MLP consumes `dispatch_out`, not the original token-major input.
 
-For token-major output, the local MLP consumes each token once, runs the local
+For rank-major output, the local MLP consumes each token once, runs the local
 experts selected by `topk_ids`, applies `weights`, and returns one pre-reduced
 rank partial in the same row:
 
 ```python
-rank_partial = token_major_mlp(
+rank_partial = rank_major_mlp(
     dispatch_out.tokens,
     dispatch_out.topk_ids,
     dispatch_out.weights,
     dispatch_out.quant,
 )
 ```
+
+For rank-major-top-k-expanded output, each valid top-k slot owns a fixed sparse
+row in `dispatch_out.tokens`, and combine applies the original routing weights.
 
 For padded expert-major output:
 
@@ -678,12 +703,14 @@ expert_output = expert_major_mlp(
 )
 ```
 
-The MLP must preserve the dispatch output layout and row/slot order. For
-token-major output, combine assumes each row is already weighted and reduced
-across all local experts. With rank-major output, `CombineMode.DIRECT_SEND`
-consumes weighted route rows and performs the full top-k reduction in combine.
-With expert-major output, it retains its existing expert-row direct-send
-behavior.
+The MLP must preserve the dispatch output layout and row/slot order.
+For rank-major `RANK_LOCAL_REDUCE`, combine assumes each row is already
+weighted and reduced across all local experts.
+For rank-major `DIRECT_SEND`, combine consumes weighted route rows and performs
+the full top-k reduction in combine.
+For rank-major-top-k-expanded output, combine consumes one row per top-k route
+and applies the original routing weights.
+With expert-major output, it retains its existing expert-row direct-send behavior.
 
 ## Combine API
 

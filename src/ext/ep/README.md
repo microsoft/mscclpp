@@ -94,14 +94,14 @@ The throughput family has one direct path. Every dispatch block writes hidden ro
 metadata directly into each destination's final receive-pool slots. Combine
 stages any out-of-place expert output back into that pool, synchronizes ranks,
 then uses a TMA shared-memory pipeline to gather and reduce peer contributions.
-There is no ring algorithm or runtime fallback. Set the communication block
-budget through the `num_blocks` API configuration.
+There is no ring algorithm or runtime fallback. Set the dispatch/combine block
+budgets through the `num_blocks` API configuration.
 
 The persistent throughput configuration contains only:
 
 | Field | Meaning |
 |---|---|
-| `num_blocks` | Total communication block count. Throughput uses all blocks as workers; latency includes two reserved scheduler/control blocks. |
+| `num_blocks` | Throughput dispatch/combine block counts |
 
 ## Build
 

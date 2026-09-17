@@ -65,6 +65,7 @@ def _api_types():
             "DispatchHandle",
             "_ExpertMajorCombineContext",
             "_RankMajorCombineContext",
+            "_RankMajorTopkExpandedCombineContext",
         ),
         namespace,
     )
@@ -446,6 +447,7 @@ class CpuPortTest(unittest.TestCase):
             cuda_stream_ptr=lambda stream: stream.cuda_stream,
         )
         _load("python/mscclpp/ep/latency.py", ("combine", "_validate_combine"), namespace, owner="LatencyRuntime")
+        _load("python/mscclpp/ep/utils.py", ("combine_tensor_dtype",), namespace)
         runtime_type = type("LatencyRuntime", (), {name: namespace[name] for name in ("combine", "_validate_combine")})
         runtime = runtime_type()
         layout = namespace["DispatchLayout"].RANK_MAJOR if rank_major else namespace["DispatchLayout"].EXPERT_MAJOR
@@ -470,7 +472,8 @@ class CpuPortTest(unittest.TestCase):
             hidden_size=16,
             topk=2,
             max_tokens_per_rank=4,
-            num_blocks=12,
+            dispatch_blocks=12,
+            combine_blocks=10,
             output_layout=layout,
             dispatch_data_type=namespace["DispatchDataType"].BF16,
             combine_mode=mode,

@@ -38,5 +38,15 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
 
+void rankMajorTopkExpandedDispatch(void* output, [[maybe_unused]] void* outputScales,
+                                   [[maybe_unused]] int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+                                   [[maybe_unused]] int64_t* outputLayout, int* outputCount, const void* input,
+                                   const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+                                   [[maybe_unused]] void* recvBuffer, const DeviceContext& context, int numBlocks,
+                                   cudaStream_t stream) {
+  topk_expanded::dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights, workload,
+                          context, numBlocks, stream);
+}
+
 }  // namespace ep
 }  // namespace mscclpp

@@ -30,7 +30,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    if args.ep_layout == "token_major":
+    if args.ep_layout in ("token_major", "rank_major_topk_expanded"):
         raise ValueError("NCCL-EP supports expert_major or rank_major layout")
     if args.mode == "latency":
         algorithm = nccl_ep.Algorithm.LOW_LATENCY

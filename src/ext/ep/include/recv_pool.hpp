@@ -25,11 +25,7 @@ struct RecvPoolConfig {
        BufferAlignmentBytes) *
       BufferAlignmentBytes;
 
-  int numBlocks_;
-
-  explicit RecvPoolConfig(int numBlocks) : numBlocks_(numBlocks) { EP_HOST_ASSERT(numBlocks > 0); }
-
-  size_t controlBufferBytes(int numRanks) const {
+  static size_t controlBufferBytes(int numRanks) {
     EP_HOST_ASSERT(numRanks == 2 || numRanks == 4 || numRanks == 8 || numRanks == 16);
 
     const size_t ranks = static_cast<size_t>(numRanks);

@@ -82,7 +82,7 @@ function run_pytests()
   echo "==================Run python tests================================"
   mpirun ${MPI_ARGS} -tag-output -np 16 \
   ${MSCCLPP_ENV} \
-  -x MSCCLPP_HOME=/root/mscclpp -npernode 8 bash /root/mscclpp/test/deploy/pytest.sh
+  -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" -npernode 8 bash /root/mscclpp/test/deploy/pytest.sh
 }
 
 function run_py_benchmark()
@@ -91,9 +91,10 @@ function run_py_benchmark()
   mpirun ${MPI_ARGS} -np 16 \
   ${MSCCLPP_ENV} \
   -mca pml ob1 -mca btl ^openib -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 \
-  -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 -x NCCL_TOPO_FILE=/opt/microsoft/ndv4-topo.xml \
-  -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 -x NCCL_MIN_NCHANNELS=32 -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=0 -x NCCL_SHM_DISABLE=0 \
-  -x MSCCLPP_HOME=/root/mscclpp -npernode 8 python3 /root/mscclpp/python/mscclpp_benchmark/allreduce_bench.py
+  -x CUDA_DEVICE_ORDER=PCI_BUS_ID \
+  -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 -x NCCL_MIN_NCHANNELS=32 -x NCCL_NVLS_ENABLE=0 \
+  -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=0 -x NCCL_SHM_DISABLE=0 \
+  -x MSCCLPP_HOME=/root/mscclpp -x PATH="${PATH}" -npernode 8 python3 /root/mscclpp/python/mscclpp_benchmark/allreduce_bench.py
 }
 
 if [ $# -lt 1 ]; then

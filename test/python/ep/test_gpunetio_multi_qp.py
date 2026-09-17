@@ -391,7 +391,8 @@ int main() {
             torch=SimpleNamespace(cuda=cuda, empty_like=lambda value: value),
             dist=SimpleNamespace(barrier=lambda **kwargs: None),
             ep=SimpleNamespace(
-                DispatchLayout=SimpleNamespace(RANK_MAJOR=1), CombineMode=SimpleNamespace(DIRECT_SEND=2)
+                DispatchLayout=SimpleNamespace(RANK_MAJOR=1, RANK_MAJOR_TOPK_EXPANDED=3),
+                CombineMode=SimpleNamespace(DIRECT_SEND=2),
             ),
             output_layout=1,
             combine_mode=1,

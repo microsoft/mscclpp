@@ -153,7 +153,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Communication SM/block budget. DeepEP interprets it as SMs; MSCCL++ maps it to the total "
-        "communication block count, including reserved scheduler/control blocks. 0 uses backend defaults.",
+        "communication block count. 0 uses backend defaults.",
     )
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
     p.add_argument("-d", "--hidden", type=int, default=7168, help="hidden dimension")
@@ -199,7 +199,8 @@ def parse_args() -> argparse.Namespace:
         "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
         "DeepEP=rank_major, FlashInfer=rank_major). "
         "The explicit value is applied where supported: NCCL-EP and DeepEP accept rank_major/expert_major; "
-        "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
+        "MSCCL++ latency accepts expert_major/rank_major/rank_major_topk_expanded and throughput accepts "
+        "rank_major/token_major. "
         "FlashInfer is rank-major only; unsupported requests are "
         "noted and the backend's default layout is kept.",
     )

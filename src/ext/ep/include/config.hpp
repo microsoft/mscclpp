@@ -163,6 +163,11 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkExpandedTokenOffset(int numRanks, int numExperts, int maxTokensPerRank,
+                                                                   int numTopk) {
+  return rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+}
+
 struct LatencyStorageLayout {
   size_t totalBytes_;
   size_t dispatchRecvBufferBytes_;
@@ -172,6 +177,8 @@ struct LatencyStorageLayout {
   void* combineRecvBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
+  void* rankMajorTokenBuffer_ = nullptr;
+  void* rankMajorTopkExpandedTokenBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
   // GPU-initiated networking (GPUNetIO) inter-domain staging, appended after the
   // existing regions so their offsets are unchanged. Always reserved so the
@@ -264,6 +271,8 @@ struct LatencyStorageLayout {
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+      rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
+      rankMajorTopkExpandedTokenBuffer_ = rankMajorTokenBuffer_;
       dispatchOutputBuffer_ =
           rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
       combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
