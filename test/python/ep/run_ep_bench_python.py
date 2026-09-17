@@ -193,7 +193,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["token_major", "rank_major", "expert_major"],
+        choices=["token_major", "rank_major", "expert_major", "rank_major_topk_expanded"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
         "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
@@ -445,7 +445,7 @@ def run_backend(
         if _sync_each_iter_env is not None
         else name == "mscclpp"
         and args.mode == "latency"
-        and args.ep_layout == "rank_major"
+        and args.ep_layout in ("rank_major", "rank_major_topk_expanded")
         and os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0") == "1"
     )
     _debug_pair_env = os.environ.get("EP_DEBUG_PAIR")
@@ -652,6 +652,8 @@ _PARSE_KINETO = {
 
 def main() -> None:
     args = parse_args()
+    if args.ep_layout == "rank_major_topk_expanded" and (args.backend != "mscclpp" or args.mode != "latency"):
+        raise ValueError("rank_major_topk_expanded requires --backend mscclpp --mode latency")
     comm, rank, num_ranks, local_rank = init_mpi()
     # Debug aid: EP_FAULTHANDLER_SECS>0 dumps every thread's Python traceback if the
     # process is still alive after N seconds (surfaces the exact hang location under

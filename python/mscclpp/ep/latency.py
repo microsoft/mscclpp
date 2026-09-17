@@ -68,6 +68,7 @@ class LatencyContext(Context):
         if self.output_layout not in (
             DispatchLayout.EXPERT_MAJOR,
             DispatchLayout.RANK_MAJOR,
+            DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
         ):
             raise NotImplementedError("unsupported latency output layout")
         if self.num_experts % self.world_size != 0:
@@ -82,7 +83,7 @@ class LatencyContext(Context):
             raise ValueError("invalid_token_expert_id must fit in int32")
         if 0 <= self.invalid_token_expert_id < self.num_experts:
             raise ValueError("invalid_token_expert_id must not overlap a valid global expert ID")
-        if self.output_layout == DispatchLayout.RANK_MAJOR:
+        if self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             if self.combine_mode not in (
                 CombineMode.RANK_LOCAL_REDUCE,
                 CombineMode.DIRECT_SEND,
@@ -90,6 +91,13 @@ class LatencyContext(Context):
                 raise ValueError("RANK_MAJOR output requires a supported combine mode")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR output does not support overlapping calls yet")
+        if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
+                raise ValueError("expanded output requires RANK_LOCAL_REDUCE mode with unweighted per-slot results")
+            if not 1 <= self.topk <= 9:
+                raise ValueError("expanded output supports topk in [1, 9]")
+            if self.max_tokens_per_rank * self.topk > (1 << 31) - 1:
+                raise ValueError("expanded per-rank row count must fit in int32")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -100,7 +108,10 @@ class LatencyContext(Context):
         )
 
         self.dispatch_data_type = resolve_dispatch_data_type(config.quant)
-        if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
+        if (
+            self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+            and self.dispatch_data_type != DispatchDataType.BF16
+        ):
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
 
         self._dispatch_scales: Optional[torch.Tensor] = None
@@ -202,7 +213,7 @@ class LatencyRuntime(Runtime):
         )
         if mode_context.output_layout == DispatchLayout.EXPERT_MAJOR:
             layout_info = DispatchLayoutInfo(kind=mode_context.output_layout, num_tokens_per_expert=count)
-        elif mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+        elif mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             layout_info = DispatchLayoutInfo(
                 kind=mode_context.output_layout,
                 num_tokens_per_rank=count,
@@ -211,7 +222,7 @@ class LatencyRuntime(Runtime):
             raise ValueError(f"unsupported latency output layout: {mode_context.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
         combine_input_buffer = mode_context.combine_input_buffer
-        if mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+        if mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             assert combine_input_buffer is not None
         dispatch_out = DispatchOutput(
             tokens=out_buf,
@@ -220,9 +231,13 @@ class LatencyRuntime(Runtime):
             topk_ids=recv_topk_ids,
             weights=recv_weights,
             combine_input_buffer=(
-                combine_input_buffer[: mode_context.world_size * active_capacity]
-                if mode_context.output_layout == DispatchLayout.RANK_MAJOR
-                else None
+                combine_input_buffer
+                if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+                else (
+                    combine_input_buffer[: mode_context.world_size * active_capacity]
+                    if mode_context.output_layout == DispatchLayout.RANK_MAJOR
+                    else None
+                )
             ),
         )
         if mode_context.output_layout == DispatchLayout.EXPERT_MAJOR:
@@ -240,7 +255,7 @@ class LatencyRuntime(Runtime):
                     layout_range=layout_range,
                 ),
             )
-        elif mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+        elif mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             handle = DispatchHandle(
                 output_info=output_info,
                 _context=_RankMajorCombineContext(
@@ -249,6 +264,7 @@ class LatencyRuntime(Runtime):
                     num_tokens=input.size(0),
                     hidden_size=mode_context.hidden_size,
                     max_tokens_per_rank=active_capacity,
+                    weights=weights if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED else None,
                 ),
             )
         else:
@@ -281,7 +297,9 @@ class LatencyRuntime(Runtime):
                 print(f"[py_ll_combine][rank {mode_context.rank}] expert-major context", flush=True)
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
-            topk_weights = None
+            topk_weights = (
+                context.weights if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED else None
+            )
             src_info = None
             layout_range = None
             if debug_combine:
@@ -344,6 +362,8 @@ class LatencyRuntime(Runtime):
                 context.world_size * context.max_tokens_per_rank,
                 context.hidden_size,
             )
+        elif context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            dispatch_shape = (context.world_size * context.max_tokens_per_rank * context.topk, context.hidden_size)
         else:
             dispatch_shape = (context.world_size * context.max_tokens_per_rank, context.hidden_size)
 
@@ -356,10 +376,12 @@ class LatencyRuntime(Runtime):
             self.cpp_runtime,
         )
 
-        if context.output_layout != DispatchLayout.RANK_MAJOR:
+        if context.output_layout not in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             return
 
         metadata_shape = (context.world_size * context.max_tokens_per_rank, context.topk)
+        if context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            metadata_shape = (context.world_size * context.max_tokens_per_rank * context.topk,)
         context._output_topk_ids_owner, context._output_topk_ids = tensor_from_pointer(
             self.cpp_runtime.output_topk_ids_buffer_ptr(),
             metadata_shape,
@@ -432,7 +454,7 @@ class LatencyRuntime(Runtime):
                         device=device,
                     )
                     mode_context._dispatch_scales = scale_storage.transpose(1, 2)
-            elif mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+            elif mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
                 mode_context._dispatch_src_info = None
                 assert mode_context._output_topk_ids is not None
                 assert mode_context._output_topk_weights is not None
@@ -487,6 +509,11 @@ class LatencyRuntime(Runtime):
                 slots_per_expert,
                 mode_context.hidden_size,
             )
+        elif mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            expected_shape = (
+                mode_context.world_size * mode_context.max_tokens_per_rank * mode_context.topk,
+                mode_context.hidden_size,
+            )
         elif mode_context.output_layout == DispatchLayout.RANK_MAJOR:
             expected_shape = (
                 mode_context.world_size * mode_context.max_tokens_per_rank,
@@ -499,6 +526,9 @@ class LatencyRuntime(Runtime):
             if output_buffer.data_ptr() != mode_context.dispatch_output_buffer.data_ptr():
                 raise ValueError("RANK_MAJOR output uses the runtime-owned dispatch output buffer")
             return
+        if mode_context.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            if output_buffer.data_ptr() != mode_context.dispatch_output_buffer.data_ptr():
+                raise ValueError("expanded output requires the runtime-owned dispatch buffer")
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {mode_context.output_layout} tensor")
         expected_dtype = (
@@ -550,6 +580,10 @@ class LatencyRuntime(Runtime):
                 mode_context.world_size * active_capacity,
                 mode_context.hidden_size,
             )
+        elif handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            if active_capacity != mode_context.max_tokens_per_rank:
+                raise ValueError("expanded combine requires the configured capacity")
+            expected_shape = (mode_context.world_size * active_capacity * mode_context.topk, mode_context.hidden_size)
         else:
             raise ValueError(f"unsupported latency output layout: {handle.output_info.layout.kind}")
         if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():
@@ -558,10 +592,20 @@ class LatencyRuntime(Runtime):
             raise ValueError(f"expert_output shape must be {expected_shape}")
         if expert_output.dtype != torch.bfloat16:
             raise ValueError("expert_output must be BF16")
-        if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
+        if handle.output_info.layout.kind in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             assert mode_context.combine_input_buffer is not None
             if expert_output.data_ptr() != mode_context.combine_input_buffer.data_ptr():
                 raise ValueError("RANK_MAJOR combine requires the runtime-owned combine input buffer")
+        if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            if expert_output.device != mode_context.device:
+                raise ValueError("expanded expert_output must use the configured CUDA device")
+            if out is not None and out.device != expert_output.device:
+                raise ValueError("expanded combine output must use the same CUDA device")
+            if out is not None and out.numel() and expert_output.numel():
+                output_end = out.data_ptr() + out.numel() * out.element_size()
+                input_end = expert_output.data_ptr() + expert_output.numel() * expert_output.element_size()
+                if out.data_ptr() < input_end and expert_output.data_ptr() < output_end:
+                    raise ValueError("expanded combine output must not overlap its input")
         if out is not None:
             expected_out_shape = (context.num_tokens, mode_context.hidden_size)
             if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():

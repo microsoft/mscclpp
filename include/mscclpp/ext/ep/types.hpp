@@ -29,7 +29,9 @@ enum class DispatchLayout {
   /// Dynamically sized token-major rows used by throughput mode.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
-  RANK_MAJOR
+  RANK_MAJOR,
+  /// Fixed [source rank, original token, top-k slot, hidden] rows with flat metadata.
+  RANK_MAJOR_TOPK_EXPANDED
 };
 
 /// Combine algorithm.

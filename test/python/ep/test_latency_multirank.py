@@ -76,6 +76,7 @@ def decode_token_ids(tokens):
 def parse_args():
     parser = argparse.ArgumentParser(description="MSCCL++ EP low-latency multi-rank correctness/benchmark test")
     parser.add_argument("--num-tokens", type=int, default=128)
+    parser.add_argument("--capacity", type=int, default=None, help="Fixed expanded capacity, at least num-tokens")
     parser.add_argument(
         "--hidden",
         type=int,
@@ -107,7 +108,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-layout",
-        choices=("expert_major", "rank_major"),
+        choices=("expert_major", "rank_major", "rank_major_topk_expanded"),
         default="expert_major",
         help="Low-latency dispatch output layout",
     )
@@ -202,6 +203,8 @@ def stage_simulated_gemm_output(dispatch_out):
     combine_input = dispatch_out.combine_input_buffer
     if combine_input is None:
         return simulated_gemm_output(dispatch_out)
+    if dispatch_out.topk_ids.dim() == 1:
+        return combine_input
     combine_input.copy_(
         simulated_rank_major_route_output(dispatch_out)
         if combine_input.dim() == 3
@@ -455,6 +458,24 @@ def expected_direct_send_output(reference_x, topk_idx, topk_weights):
     return expected.to(torch.bfloat16)
 
 
+def validate_expanded_dispatch(dispatch_out, all_ids, all_weights, all_x, rank, local_experts, capacity, sentinel):
+    ranks, tokens, topk = all_ids.shape
+    ids = dispatch_out.topk_ids.reshape(ranks, capacity, topk)
+    weights = dispatch_out.weights.reshape(ranks, capacity, topk)
+    payload = dispatch_out.tokens.reshape(ranks, capacity, topk, all_x.size(-1))
+    local = (all_ids >= rank * local_experts) & (all_ids < (rank + 1) * local_experts)
+    expected_ids = torch.where(local, all_ids, torch.full_like(all_ids, sentinel)).to(torch.int32)
+    expected_weights = torch.where(local, all_weights, torch.zeros_like(all_weights))
+    assert torch.equal(ids[:, :tokens], expected_ids)
+    assert torch.equal(weights[:, :tokens], expected_weights)
+    assert torch.all(ids[:, tokens:] == sentinel)
+    assert torch.all(weights[:, tokens:] == 0)
+    assert torch.equal(dispatch_out.layout.num_tokens_per_rank, local.sum(dim=(1, 2)).to(torch.int32))
+    expected_payload = all_x.unsqueeze(2).expand(-1, -1, topk, -1)
+    assert torch.equal(payload[:, :tokens][local], expected_payload[local])
+    assert dispatch_out.combine_input_buffer.data_ptr() == dispatch_out.tokens.data_ptr()
+
+
 def expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts):
     """Reference for RANK_LOCAL_REDUCE combine, which rounds every destination
     rank's partial sum to BF16 before the cross-rank accumulation. Applies to
@@ -503,7 +524,12 @@ def main():
     output_layout = {
         "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
+        "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[args.output_layout]
+    expanded = output_layout == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+    capacity = num_tokens if args.capacity is None else args.capacity
+    if args.capacity is not None and (not expanded or capacity < num_tokens or capacity <= 0):
+        raise ValueError("--capacity requires expanded layout and capacity >= num-tokens > 0")
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
         assert combine_mode in (
             ep.CombineMode.RANK_LOCAL_REDUCE,
@@ -545,6 +571,14 @@ def main():
     # Randomly mask some positions
     for _ in range(min(10, num_tokens)):
         topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
+    if expanded and num_tokens:
+        topk_idx[0, 0] = 0
+        if num_topk > 1:
+            topk_idx[0, 1] = topk_idx[0, 0]
+        if topk_weights is not None:
+            topk_weights[0, 0] = 0
+        if num_tokens > 1:
+            topk_idx[-1, -1] = (1 << 40) + num_experts
 
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
@@ -552,7 +586,7 @@ def main():
         num_local_experts=num_local_experts,
         hidden_size=hidden,
         topk=num_topk,
-        max_tokens_per_rank=num_tokens,
+        max_tokens_per_rank=capacity,
         mode=ep.MoEMode.LATENCY,
         num_blocks=args.num_blocks,
         combine_mode=combine_mode,
@@ -589,6 +623,8 @@ def main():
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR
         else (num_ranks * num_tokens, hidden)
     )
+    if expanded:
+        dispatch_output_shape = (num_ranks * capacity * num_topk, hidden)
     assert moe_comm._context.dispatch_output_buffer is dispatch_output_buffer
     dispatch_out, handle = moe_comm.dispatch(
         x,
@@ -599,7 +635,7 @@ def main():
     assert dispatch_out.tokens.data_ptr() == dispatch_output_buffer.data_ptr()
     assert tuple(dispatch_out.tokens.shape) == dispatch_output_shape
     assert dispatch_out.tokens.dtype == dispatch_dtype
-    if output_layout == ep.DispatchLayout.RANK_MAJOR:
+    if output_layout == ep.DispatchLayout.RANK_MAJOR or expanded:
         assert dispatch_out.combine_input_buffer is not None
         if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
             assert dispatch_out.combine_input_buffer.data_ptr() == dispatch_out.tokens.data_ptr()
@@ -626,7 +662,7 @@ def main():
     dist.all_gather_into_tensor(all_topk_weights, local_topk_weights, group=group)
     all_x = None
     expected_scales = None
-    if dispatch_quant is not None or output_layout == ep.DispatchLayout.RANK_MAJOR:
+    if dispatch_quant is not None or output_layout == ep.DispatchLayout.RANK_MAJOR or expanded:
         all_x = torch.empty((num_ranks, num_tokens, hidden), dtype=x.dtype, device="cuda")
         dist.all_gather_into_tensor(all_x, x, group=group)
     if dispatch_quant is not None:
@@ -660,6 +696,17 @@ def main():
             all_x=all_x,
             expected_scales=expected_scales,
         )
+    elif expanded:
+        validate_expanded_dispatch(
+            dispatch_out,
+            all_topk_idx,
+            all_topk_weights,
+            all_x,
+            rank,
+            num_local_experts,
+            capacity,
+            invalid_token_expert_id,
+        )
     else:
         validate_rank_major_dispatch(
             rank=rank,
@@ -684,6 +731,8 @@ def main():
     # returns sum(x * weight) across experts.
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
     simulated_gemm_x = stage_simulated_gemm_output(dispatch_out)
+    if expanded:
+        simulated_gemm_x[dispatch_out.weights == 0] = float("nan")
     reference_x = x
     if dispatch_quant is not None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
@@ -719,7 +768,10 @@ def main():
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
-    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
+    if expanded:
+        valid_ids = topk_idx.masked_fill((topk_idx < 0) | (topk_idx >= num_experts), -1)
+        expected = expected_direct_send_output(reference_x, valid_ids, topk_weights)
+    elif output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
         expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
     elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
         expected = expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)

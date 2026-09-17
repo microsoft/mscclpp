@@ -50,7 +50,7 @@ def _api_types():
     namespace = {
         "dataclass": dataclass,
         "CombineMode": Enum("CombineMode", "RANK_LOCAL_REDUCE DIRECT_SEND"),
-        "DispatchLayout": Enum("DispatchLayout", "EXPERT_MAJOR RANK_MAJOR TOKEN_MAJOR"),
+        "DispatchLayout": Enum("DispatchLayout", "EXPERT_MAJOR RANK_MAJOR TOKEN_MAJOR RANK_MAJOR_TOPK_EXPANDED"),
         "DispatchDataType": Enum("DispatchDataType", "BF16 FP8_E4M3"),
         "MoEMode": Enum("MoEMode", "LATENCY THROUGHPUT"),
     }
@@ -151,7 +151,10 @@ class CpuPortTest(unittest.TestCase):
 
             def dispatch(self, *args, **kwargs):
                 trace.append("dispatch")
-                rank_major = self.config.output_layout == api["DispatchLayout"].RANK_MAJOR
+                rank_major = self.config.output_layout in (
+                    api["DispatchLayout"].RANK_MAJOR,
+                    api["DispatchLayout"].RANK_MAJOR_TOPK_EXPANDED,
+                )
                 return (
                     api["DispatchOutput"](
                         tokens=self.tokens,

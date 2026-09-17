@@ -88,7 +88,7 @@ if(MSCCLPP_USE_GPUNETIO)
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # The low-latency dispatch kernel issues the inter-domain GPUNetIO sends, so it
     # needs the device context definition + the vendored DOCA device headers.
-    set_source_files_properties(dispatch/rank_major_dispatch.cu PROPERTIES
+    set_source_files_properties(dispatch/rank_major_dispatch.cu topk_expanded.cu PROPERTIES
         COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
         INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
     # Cross-domain combine PUSHes pre-reduced rows; it does not issue RDMA reads.

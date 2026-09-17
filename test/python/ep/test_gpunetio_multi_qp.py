@@ -188,7 +188,7 @@ int main() {
 #include <sys/mman.h>
 using Bf16 = uint16_t;
 using Fp8E4M3 = uint8_t;
-enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR };
+enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR, RANK_MAJOR_TOPK_EXPANDED };
 enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
 """
         native += "\n".join(line for line in current.splitlines() if line.startswith("inline constexpr int GpuNetIo"))

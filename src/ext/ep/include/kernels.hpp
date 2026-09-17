@@ -62,6 +62,14 @@ struct Workload {
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
+namespace topk_expanded {
+void dispatch(void* output, int* outputIds, float* outputWeights, int* outputCount, const void* input,
+              const int64_t* topkIds, const float* weights, const Workload& work, const DeviceContext& context,
+              int numBlocks, cudaStream_t stream);
+void combine(void* output, const void* input, const int64_t* topkIds, const float* weights, const Workload& work,
+             const DeviceContext& context, int numBlocks, cudaStream_t stream);
+}  // namespace topk_expanded
+
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                          const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,

@@ -62,10 +62,13 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     }[args.combine_mode]
     if args.ep_layout == "token_major":
         raise ValueError("MSCCL++ latency mode supports expert_major or rank_major layout")
-    rank_major = args.ep_layout == "rank_major"
+    expanded = args.ep_layout == "rank_major_topk_expanded"
+    rank_major = args.ep_layout in ("rank_major", "rank_major_topk_expanded")
     if rank_major and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError("rank-major output requires rank_local_reduce combine")
     output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
+    if expanded:
+        output_layout = ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
     if rank_major and dispatch_quant is not None:
         raise ValueError("rank-major output supports BF16 dispatch only")
@@ -116,7 +119,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         combine_input = dispatch_out.combine_input_buffer
         if combine_input is None:
             combine_input = simulated_gemm_output(dispatch_out)
-        else:
+        elif not expanded:
             if debug_combine:
                 print(f"[rank_major_input][rank {rank}] enter", flush=True)
             if not expert_output_initialized:
@@ -132,7 +135,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
-        validation_input = simulated_gemm_output(v_dispatch_out)
+        validation_input = v_dispatch_out.tokens if expanded else simulated_gemm_output(v_dispatch_out)
         if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
@@ -143,7 +146,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         if dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
             x_f = x.float()
-            if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+            if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE and not expanded:
                 # Rank-local reduce rounds each destination rank's partial sum to
                 # BF16 before the cross-rank accumulation.
                 for destination_rank in range(num_ranks):
@@ -155,7 +158,10 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
                     expected_f += rank_partial.to(torch.bfloat16).float()
             else:
                 for j in range(num_topk):
-                    weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
+                    selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] < num_experts)
+                    weight_j = (
+                        selected.float() if topk_weights is None else topk_weights[:, j].masked_fill(~selected, 0.0)
+                    ).view(-1, 1)
                     expected_f = torch.addcmul(expected_f, x_f, weight_j)
             gdiff = validate_combine_output_mpi(
                 v_out, expected_f.to(torch.bfloat16), comm, exact=args.combine_mode == "direct_send"
@@ -209,7 +215,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
                 print(f"[graph_combfn][rank {rank}] enter", flush=True)
                 if rank_major:
                     print(f"[rank_major_input][rank {rank}] enter", flush=True)
-            graph_input = simulated_gemm_output(_cap["out"])
+            graph_input = _cap["out"].combine_input_buffer if expanded else simulated_gemm_output(_cap["out"])
             if debug_combine and rank_major:
                 print(f"[rank_major_input][rank {rank}] simulated", flush=True)
             moe_comm.combine(graph_input, _cap["handle"], out=out)
@@ -246,7 +252,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_blocks = args.num_sms or 20
-    if args.ep_layout == "expert_major":
+    if args.ep_layout in ("expert_major", "rank_major_topk_expanded"):
         raise ValueError("MSCCL++ throughput mode supports token_major or rank_major layout")
     output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
 

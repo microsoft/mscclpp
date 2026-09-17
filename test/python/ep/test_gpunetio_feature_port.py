@@ -392,7 +392,7 @@ class NativeSourceTests(unittest.TestCase):
         self.assertEqual(
             code(enabled),
             code("""{
-              available_ = outputLayout_ == DispatchLayout::RANK_MAJOR &&
+              available_ = (outputLayout_ == DispatchLayout::RANK_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
                            combineMode_ == CombineMode::RANK_LOCAL_REDUCE;
             }"""),
         )
