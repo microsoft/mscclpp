@@ -51,6 +51,8 @@ struct DeviceContext {
   /// Symmetric per-peer-rank combine completion flag array base (kept separate
   /// from gpuNetIoFlagsBuffer_ so dispatch and combine signal counts never alias).
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  /// Symmetric payload-only combine landing rows, null unless active.
+  void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Byte stride of one staging-ring slot (token + top-k metadata).
   size_t gpuNetIoSlotStride_ = 0;
   /// Persistent device copy used by kernel launches. Host launch code only.

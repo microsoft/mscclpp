@@ -174,6 +174,7 @@ void LatencyContext::initialize() {
     deviceContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     deviceContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
     deviceContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
+    deviceContext_.gpuNetIoCombineLandingBuffer_ = layout.gpuNetIoCombineLandingBuffer_;
     deviceContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
@@ -328,8 +329,6 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   if (context.deviceContext_.gpuNetIo_ != nullptr) {
     EP_HOST_ASSERT(dispatchLayout == DispatchLayout::RANK_MAJOR && mode == CombineMode::RANK_LOCAL_REDUCE);
     EP_HOST_ASSERT(numBlocks >= context.numRanks_);
-    EP_HOST_ASSERT(static_cast<size_t>(context.numRanks_) * (static_cast<size_t>(maxTokensPerRank) + 1) <=
-                   GpuNetIoStagingSlots);
   }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,

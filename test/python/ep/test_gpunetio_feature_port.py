@@ -353,27 +353,27 @@ class NativeSourceTests(unittest.TestCase):
         )
         self.assert_ordered(sync, control, "__syncthreads();", "workspaceView.combineReadyEpoch_, epoch,")
 
-    def test_combine_push_defers_qp_drains_and_retains_plus_rank_landing(self):
+    def test_combine_push_defers_owner_qp_drain_and_uses_dense_landing(self):
         send = function(source(COMBINE), "sendRankMajorCombinePush")
-        rows = block(send, r"for\s*\(int slot\s*=\s*static_cast<int>\(blockIdx.x\)")
         self.assertNotIn("flush(", code(send))
         self.assert_ordered(
             send,
             "const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];",
-            rows,
-            "workspaceView.combineSyncer_->sync(gridDim.x);",
-            "gin->atomicAdd(owner, transport.symmetricOffset(flags + queue), 1, queue)",
+            "const int qpIndex = owner % nQp;",
+            "gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,",
         )
-        self.assertIn("static_cast<size_t>(nRanks+transport.rank_*maxTokensPerRank+slot)", code(rows))
+        self.assertIn("static_cast<size_t>(transport.rank_)*maxTokensPerRank*HiddenBytes", code(send))
+        self.assertIn("static_cast<uint64_t>(nRowsToOwner)*HiddenBytes", code(send))
         drain = function(source(COMBINE), "drainRankMajorCombinePush")
-        self.assertIn("transport.gpuNetIo_->flush(owner,queue)", code(drain))
+        self.assertIn("transport.gpuNetIo_->flush(owner,owner%transport.gpuNetIo_->numQpsPerPeer)", code(drain))
         recv = function(source(COMBINE), "recvRankMajorCombinePush")
-        self.assertIn("static_cast<size_t>(nRanks+destinationRank*maxTokensPerRank+destinationSlot)", code(recv))
+        self.assertIn("(static_cast<size_t>(destinationRank)*maxTokensPerRank+destinationSlot)*HiddenBytes", code(recv))
         self.assert_ordered(
             recv,
             "if (!sendsToRank) continue;",
             "const uint64_t target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;",
-            "while (flags[flagBase + queue] < target) { }",
+            "const int qpIndex = transport.rank_ % nQp;",
+            "while (flags[flagIndex] < target) { }",
             "workspaceView.combineArrivedBaseline_[destinationRank] = target;",
             "workspaceView.combineSyncer_->sync(gridDim.x);",
         )
@@ -501,7 +501,7 @@ class ProtocolModelTests(unittest.TestCase):
                 slots[:] = [0] * ranks
                 self.assertEqual((dispatch_baseline, combine_baseline), saved)
 
-    def test_combine_generations_zero_rows_signal_once_per_qp_not_per_row(self):
+    def test_combine_generations_zero_rows_signal_owner_qp_not_per_row(self):
         for ranks in RANKS:
             for queues in (1, 4, 64):
                 flags = [[0] * queues for _ in range(ranks)]
@@ -511,11 +511,12 @@ class ProtocolModelTests(unittest.TestCase):
                         rows = (pair + peer * 5) % 19
                         if rows:
                             target = baseline[peer] + 1
-                            for queue in range(queues):
-                                flags[peer][queue] += 1
-                                self.assertEqual(all(value >= target for value in flags[peer]), queue == queues - 1)
+                            flags[peer][peer % queues] += 1
+                            self.assertEqual(flags[peer][peer % queues], target)
                             baseline[peer] = target
-                        self.assertEqual(flags[peer], [baseline[peer]] * queues)
+                        self.assertEqual(
+                            flags[peer], [baseline[peer] if queue == peer % queues else 0 for queue in range(queues)]
+                        )
 
     def test_phase_epochs_do_not_alias_previous_exit_and_next_entry(self):
         previous_exit = 0
@@ -531,20 +532,18 @@ class ProtocolModelTests(unittest.TestCase):
             legacy_exit_target = epoch
             self.assertEqual(legacy_ready_cache, legacy_exit_target)
 
-    def test_count_ranges_and_landing_are_disjoint(self):
+    def test_count_ranges_and_dense_landing_rows(self):
         for ranks in RANKS:
             received = set(range(ranks, 2 * ranks))
             scratch = set(range(2 * ranks, 3 * ranks))
             self.assertFalse(received & scratch)
             for experts in (ranks, 2 * ranks, 256):
                 self.assertLess(max(scratch), max(ranks + experts, 3 * ranks))
-            for capacity in (1, 8, 133, 257):
-                if ranks + ranks * capacity > 32768:
-                    continue
-                landing = [ranks + peer * capacity + slot for peer in range(ranks) for slot in range(capacity)]
+            for capacity in (1, 8, 133, 257, 1024):
+                landing = [peer * capacity + slot for peer in range(ranks) for slot in range(capacity)]
                 self.assertEqual(len(landing), len(set(landing)))
-                self.assertGreaterEqual(min(landing), ranks)
-                self.assertLess(max(landing), 32768)
+                self.assertEqual(min(landing), 0)
+                self.assertEqual(max(landing), ranks * capacity - 1)
 
 
 HOST_PREAMBLE = r"""

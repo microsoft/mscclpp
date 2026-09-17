@@ -182,6 +182,7 @@ struct LatencyStorageLayout {
   void* gpuNetIoStagingBuffer_ = nullptr;
   void* gpuNetIoFlagsBuffer_ = nullptr;
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  void* gpuNetIoCombineLandingBuffer_ = nullptr;
   size_t gpuNetIoSlotStride_ = 0;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
@@ -226,7 +227,10 @@ struct LatencyStorageLayout {
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
         static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
-    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
+    const size_t gpuNetIoCombineLandingBytes = configAlign<size_t>(
+        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16), BufferAlignmentBytes);
+    const size_t gpuNetIoRegionBytes =
+        gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
     totalBytes_ = baseBytes + gpuNetIoRegionBytes;
 
     if (symmetricBuffer != nullptr) {
@@ -241,6 +245,8 @@ struct LatencyStorageLayout {
       gpuNetIoStagingBuffer_ = gpuNetIoBase;
       gpuNetIoFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes;
       gpuNetIoCombineFlagsBuffer_ = gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
+      gpuNetIoCombineLandingBuffer_ =
+          gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
     }
   }
 };
