@@ -214,18 +214,15 @@ class NativeSourceTests(unittest.TestCase):
         self.assert_ordered(
             send,
             "auto* stagingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoStagingBuffer_);",
-            "for (int i = 0; i < NumVec; ++i) dst[i] = src[i];",
+            "for (int vector = laneId; vector < NumVec; vector += WARP_SIZE) dst[vector] = src[vector];",
             "slotIds[laneId] = isLocal ? candidateExpert : invalidTokenExpertId;",
             "slotWeights[laneId] = isLocal ? candidateWeight : 0.0f;",
             "__syncwarp();",
             "__threadfence_system();",
             "__syncwarp();",
-            "gin->put(destinationRank, transport.symmetricOffset(remoteToken), "
-            "transport.symmetricOffset(slot), HiddenBytes);",
-            "gin->put(destinationRank, transport.symmetricOffset(remoteIds),",
-            "gin->putWithSignal(destinationRank, transport.symmetricOffset(remoteWeights),",
-            "transport.symmetricOffset(remoteFlag), /*signalValue=*/1);",
-            "gin->flush(destinationRank);",
+            "gin->putBatched3(destinationRank, qpIndex, transport.symmetricOffset(remoteToken),",
+            "transport.symmetricOffset(slot), HiddenBytes, transport.symmetricOffset(remoteIds),",
+            "transport.symmetricOffset(remoteWeights),",
         )
         initialize = function(source(HOST_CONTEXT), "LatencyContext::initialize")
         self.assertIn("svc->setup(symmetricBuffer_,static_cast<size_t>(symmetricBufferBytes_));", code(initialize))
@@ -241,8 +238,8 @@ class NativeSourceTests(unittest.TestCase):
             "__threadfence_system();",
             "auto* remotePacket = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + nRanks + transport.rank_;",
             "gin->put(dstRank, transport.symmetricOffset(remotePacket), "
-            "transport.symmetricOffset(scratch), sizeof(mscclpp::LL8Packet));",
-            "gin->flush(dstRank);",
+            "transport.symmetricOffset(scratch), sizeof(mscclpp::LL8Packet), "
+            "static_cast<int>(blockIdx.x) % gin->numQpsPerPeer);",
             "continue;",
         )
         self.assertNotIn("gpuNetIoStagingBuffer_", code(write))
@@ -356,29 +353,27 @@ class NativeSourceTests(unittest.TestCase):
         )
         self.assert_ordered(sync, control, "__syncthreads();", "workspaceView.combineReadyEpoch_, epoch,")
 
-    def test_combine_push_has_one_final_flush_and_retains_plus_rank_landing(self):
+    def test_combine_push_defers_qp_drains_and_retains_plus_rank_landing(self):
         send = function(source(COMBINE), "sendRankMajorCombinePush")
-        rows = block(send, r"for\s*\(int slot\s*=\s*0;")
-        self.assertNotIn("flush(", code(rows))
-        self.assertEqual(code(send).count("gin->flush("), 1)
+        rows = block(send, r"for\s*\(int slot\s*=\s*static_cast<int>\(blockIdx.x\)")
+        self.assertNotIn("flush(", code(send))
         self.assert_ordered(
             send,
-            "const int nRowsToOwner = workspaceView.dispatchRecvCounts_[sourceRank];",
-            "if (nRowsToOwner <= 0) return;",
+            "const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];",
             rows,
-            "gin->flush(sourceRank);",
+            "workspaceView.combineSyncer_->sync(gridDim.x);",
+            "gin->atomicAdd(owner, transport.symmetricOffset(flags + queue), 1, queue)",
         )
         self.assertIn("static_cast<size_t>(nRanks+transport.rank_*maxTokensPerRank+slot)", code(rows))
-        last = block(rows, r"if\s*\(slot\s*==\s*nRowsToOwner\s*-\s*1\)")
-        self.assertIn("gin->putWithSignal(", code(last))
-        self.assertIn("transport.symmetricOffset(remoteFlag),1);", code(last))
+        drain = function(source(COMBINE), "drainRankMajorCombinePush")
+        self.assertIn("transport.gpuNetIo_->flush(owner,queue)", code(drain))
         recv = function(source(COMBINE), "recvRankMajorCombinePush")
         self.assertIn("static_cast<size_t>(nRanks+destinationRank*maxTokensPerRank+destinationSlot)", code(recv))
         self.assert_ordered(
             recv,
             "if (!sendsToRank) continue;",
             "const uint64_t target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;",
-            "while (flags[destinationRank] < target) { }",
+            "while (flags[flagBase + queue] < target) { }",
             "workspaceView.combineArrivedBaseline_[destinationRank] = target;",
             "workspaceView.combineSyncer_->sync(gridDim.x);",
         )
@@ -506,22 +501,21 @@ class ProtocolModelTests(unittest.TestCase):
                 slots[:] = [0] * ranks
                 self.assertEqual((dispatch_baseline, combine_baseline), saved)
 
-    def test_combine_generations_zero_rows_signal_once_not_per_row(self):
+    def test_combine_generations_zero_rows_signal_once_per_qp_not_per_row(self):
         for ranks in RANKS:
-            flags = [0] * ranks
-            baseline = [0] * ranks
-            for pair in range(200):
-                for peer in range(ranks):
-                    rows = (pair + peer * 5) % 19
-                    puts = ["put"] * max(0, rows - 1) + (["signal", "flush"] if rows else [])
-                    self.assertEqual(puts.count("signal"), int(rows > 0))
-                    self.assertEqual(puts.count("flush"), int(rows > 0))
-                    if rows:
-                        flags[peer] += 1
-                        target = baseline[peer] + 1
-                        self.assertGreaterEqual(flags[peer], target)
-                        baseline[peer] = target
-                    self.assertEqual(flags[peer], baseline[peer])
+            for queues in (1, 4, 64):
+                flags = [[0] * queues for _ in range(ranks)]
+                baseline = [0] * ranks
+                for pair in range(200):
+                    for peer in range(ranks):
+                        rows = (pair + peer * 5) % 19
+                        if rows:
+                            target = baseline[peer] + 1
+                            for queue in range(queues):
+                                flags[peer][queue] += 1
+                                self.assertEqual(all(value >= target for value in flags[peer]), queue == queues - 1)
+                            baseline[peer] = target
+                        self.assertEqual(flags[peer], [baseline[peer]] * queues)
 
     def test_phase_epochs_do_not_alias_previous_exit_and_next_entry(self):
         previous_exit = 0

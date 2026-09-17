@@ -19,6 +19,8 @@ inline constexpr size_t BufferAlignmentBytes = 128;
 
 // Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
 inline constexpr int GpuNetIoStagingSlots = 32768;
+inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
+inline constexpr int GpuNetIoFlushInterval = 128;
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -176,7 +178,7 @@ struct LatencyStorageLayout {
   // layout is uniform regardless of whether the backend is compiled in/enabled.
   //   - gpuNetIoStagingBuffer_: serialized ring of GpuNetIoStagingSlots slots.
   //   - gpuNetIoFlagsBuffer_: per-source-rank dispatch completion flags.
-  //   - gpuNetIoCombineFlagsBuffer_: independent per-peer-rank combine flags.
+  //   - gpuNetIoCombineFlagsBuffer_: independent per-source, per-QP combine flags.
   void* gpuNetIoStagingBuffer_ = nullptr;
   void* gpuNetIoFlagsBuffer_ = nullptr;
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
@@ -222,8 +224,9 @@ struct LatencyStorageLayout {
         configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
     const size_t gpuNetIoFlagsBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
-    // Two independent flag arrays (dispatch payload-arrival + combine barrier).
-    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + 2 * gpuNetIoFlagsBytes;
+    const size_t gpuNetIoCombineFlagsBytes = configAlign<size_t>(
+        static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t gpuNetIoRegionBytes = gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
     totalBytes_ = baseBytes + gpuNetIoRegionBytes;
 
     if (symmetricBuffer != nullptr) {

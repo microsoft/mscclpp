@@ -30,47 +30,49 @@
 namespace mscclpp {
 
 namespace detail {
-MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_qp* ginQp(void* qps, int peer) {
-  return reinterpret_cast<doca_gpu_dev_verbs_qp*>(qps) + peer;
+MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_qp* ginQp(void* qps, int flatQpIndex) {
+  return reinterpret_cast<doca_gpu_dev_verbs_qp*>(qps) + flatQpIndex;
 }
 MSCCLPP_DEVICE_INLINE __be32 ginHtobe32(uint32_t v) {
   return static_cast<__be32>(__byte_perm(v, 0, 0x0123));
 }
 }  // namespace detail
 
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                      int qpIndex) {
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr laddr{localBase + srcOffset, detail::ginHtobe32(lkey)};
   doca_gpu_dev_verbs_ticket_t ticket;
-  doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(detail::ginQp(qps, peer), raddr, laddr, size,
-                                                                        &ticket);
+  doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      detail::ginQp(qps, peer * numQpsPerPeer + qpIndex), raddr, laddr, size, &ticket);
 }
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int peer, uint64_t dstOffset, uint64_t srcOffset,
-                                                               uint64_t size, uint64_t signalOffset,
-                                                               uint64_t signalValue) {
+                                                                uint64_t size, uint64_t signalOffset,
+                                                                uint64_t signalValue, int qpIndex) {
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr laddr{localBase + srcOffset, detail::ginHtobe32(lkey)};
   doca_gpu_dev_verbs_addr sigR{peerBase[peer] + signalOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr sigL{localBase, detail::ginHtobe32(lkey)};
   doca_gpu_dev_verbs_ticket_t ticket;
   doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-      detail::ginQp(qps, peer), raddr, laddr, size, sigR, sigL, signalValue, &ticket);
+      detail::ginQp(qps, peer * numQpsPerPeer + qpIndex), raddr, laddr, size, sigR, sigL, signalValue, &ticket);
 }
 
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int peer, uint64_t dstOffset, int64_t value) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex) {
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr laddr{localBase, detail::ginHtobe32(lkey)};
   doca_gpu_dev_verbs_ticket_t ticket;
   // Fused zero-byte write + remote atomic-add expresses a standalone atomic add.
   doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-      detail::ginQp(qps, peer), raddr, laddr, /*size=*/0, raddr, laddr, static_cast<uint64_t>(value), &ticket);
+      detail::ginQp(qps, peer * numQpsPerPeer + qpIndex), raddr, laddr, /*size=*/0, raddr, laddr,
+      static_cast<uint64_t>(value), &ticket);
 }
 
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer, int qpIndex) {
   // Drain through the latest reserved ticket so the shared dispatch/combine CQ
   // advances and its signaled entries can be recycled across iterations.
-  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer * numQpsPerPeer + qpIndex);
   uint64_t ticket =
       doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_rsvd_index);
   if (ticket == 0) return;
@@ -80,18 +82,18 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int peer) {
 }
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int peer, uint64_t remoteOffset, uint64_t localOffset,
-                                                     uint64_t size) {
+                                                      uint64_t size, int qpIndex) {
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + remoteOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr laddr{localBase + localOffset, detail::ginHtobe32(lkey)};
-  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer * numQpsPerPeer + qpIndex);
   doca_gpu_dev_verbs_ticket_t ticket;
   doca_gpu_dev_verbs_get_thread<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, raddr, laddr, size, laddr, &ticket);
   // Wait for this read, not unrelated operations concurrently reserved on the QP.
   doca_gpu_dev_verbs_wait(qp, ticket);
 }
 
-MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount) {
-  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer);
+MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount, int qpIndex) {
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer * numQpsPerPeer + qpIndex);
   uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
       &qp->sq_rsvd_index);
   if (ticket == 0) return 0;
@@ -103,6 +105,30 @@ MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t max
     if (status != EBUSY) return status;
   }
   return EBUSY;
+}
+
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putBatched3(int peer, int qpIndex, uint64_t dst0, uint64_t src0,
+                                                              uint64_t size0, uint64_t dst1, uint64_t src1,
+                                                              uint64_t size1, uint64_t dst2, uint64_t src2,
+                                                              uint64_t size2) {
+  doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer * numQpsPerPeer + qpIndex);
+  const uint64_t destinations[3] = {dst0, dst1, dst2};
+  const uint64_t sources[3] = {src0, src1, src2};
+  const uint64_t sizes[3] = {size0, size1, size2};
+  const uint64_t base = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      qp, 3, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+#pragma unroll
+  for (int index = 0; index < 3; ++index) {
+    auto* wqe = doca_gpu_dev_verbs_get_wqe_ptr(qp, base + index);
+    doca_gpu_dev_verbs_wqe_prepare_write(qp, wqe, base + index, DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0,
+                                         peerBase[peer] + destinations[index], rkeys[peer], localBase + sources[index],
+                                         detail::ginHtobe32(lkey), sizes[index]);
+  }
+  doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, base, base + 2);
+  doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD,
+                            DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO>(qp, base + 3,
+                                                                  DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
 }
 
 }  // namespace mscclpp

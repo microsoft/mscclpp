@@ -129,8 +129,13 @@ def parse_args():
     )
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument("--graph-pairs", type=int, default=1, help="Dispatch/combine pairs per correctness graph")
+    parser.add_argument("--graph-replays", type=int, default=1, help="Correctness graph replay count")
     parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.graph_pairs < 1 or args.graph_replays < 1:
+        parser.error("--graph-pairs and --graph-replays must be positive")
+    return args
 
 
 def init_dist():
@@ -735,7 +740,7 @@ def main():
     if rank == 0:
         print("PASS", flush=True)
 
-    def _graph_capture(dispatch_buffer, combine_out, expert_output=None):
+    def _graph_capture(dispatch_buffer, combine_out, expert_output=None, pairs=1):
         graph = torch.cuda.CUDAGraph()
         graph_start = torch.cuda.Event(enable_timing=True, external=True)
         dispatch_end = torch.cuda.Event(enable_timing=True, external=True)
@@ -744,15 +749,18 @@ def main():
         dist.barrier(group=group)
         with torch.cuda.graph(graph):
             graph_start.record()
-            graph_dout = moe_comm.dispatch(
-                x,
-                topk_idx,
-                topk_weights,
-                output_buffer=dispatch_buffer,
-            )
-            dispatch_end.record()
-            graph_expert_output = stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
-            graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
+            for _ in range(pairs):
+                graph_dout = moe_comm.dispatch(
+                    x,
+                    topk_idx,
+                    topk_weights,
+                    output_buffer=dispatch_buffer,
+                )
+                dispatch_end.record()
+                graph_expert_output = (
+                    stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+                )
+                graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
             graph_end.record()
         return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end
 
@@ -763,8 +771,11 @@ def main():
             else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
         )
         graph_out = torch.empty_like(out)
-        graph, _, graph_combined_x, _, _, _ = _graph_capture(graph_dispatch_output_buffer, graph_out)
-        graph.replay()
+        graph, _, graph_combined_x, _, _, _ = _graph_capture(
+            graph_dispatch_output_buffer, graph_out, pairs=args.graph_pairs
+        )
+        for _ in range(args.graph_replays):
+            graph.replay()
         torch.cuda.synchronize()
 
         _, graph_diff = validate_combine_output(
@@ -775,7 +786,8 @@ def main():
         )
         if rank == 0:
             print(
-                f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}",
+                f"[cuda graph dispatch+combine] OK pairs={args.graph_pairs} replays={args.graph_replays} "
+                f"max|got-expected|={graph_diff:.4e}",
                 flush=True,
             )
 

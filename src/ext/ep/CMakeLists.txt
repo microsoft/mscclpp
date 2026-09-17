@@ -102,3 +102,9 @@ if(MSCCLPP_EP_GPUNETIO_DIAG)
     set_property(SOURCE dispatch/rank_major_dispatch.cu APPEND PROPERTY
         COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_DIAG)
 endif()
+
+    option(MSCCLPP_EP_GPUNETIO_TIMING "Enable device printf timing for GPUNetIO rank-major kernels" OFF)
+    if(MSCCLPP_EP_GPUNETIO_TIMING)
+        set_property(SOURCE dispatch/rank_major_dispatch.cu combine/rank_local_reduce_combine.cu
+        combine/direct_send_combine.cu APPEND PROPERTY COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_TIMING)
+    endif()
