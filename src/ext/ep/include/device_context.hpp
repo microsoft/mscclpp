@@ -55,6 +55,10 @@ struct DeviceContext {
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Byte stride of one staging-ring slot (token + top-k metadata).
   size_t gpuNetIoSlotStride_ = 0;
+  /// Expanded IPC specialization, collectively enabled when all peers are mapped.
+  bool expandedIpcFastPath_ = false;
+  /// Expanded network specialization, collectively enabled only with active GPUNetIO.
+  bool expandedGpuNetIoFastPath_ = false;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
 };
