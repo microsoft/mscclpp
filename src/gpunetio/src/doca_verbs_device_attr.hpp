@@ -30,70 +30,70 @@
 
 #pragma once
 
-#include <unistd.h>
 #include <stdlib.h>
-#include <mutex>
 #include <time.h>
+#include <unistd.h>
 
-#include "host/mlx5_prm.h"
-#include "host/mlx5_ifc.h"
+#include <mutex>
 
 #include "doca_internal.hpp"
+#include "host/mlx5_ifc.h"
+#include "host/mlx5_prm.h"
 
 /**
  *  @brief This struct implements the doca rdma_verbs device attributes
  */
 struct doca_verbs_device_attr {
-   public:
-    /**
-     * @brief constructor
-     *
-     * @param [in] ibv_ctx
-     * IBV context to query device attributes from
-     *
-     */
-    doca_verbs_device_attr(struct ibv_context *ibv_ctx);
+ public:
+  /**
+   * @brief constructor
+   *
+   * @param [in] ibv_ctx
+   * IBV context to query device attributes from
+   *
+   */
+  doca_verbs_device_attr(struct ibv_context *ibv_ctx);
 
-    /**
-     * @brief destructor
-     */
-    ~doca_verbs_device_attr() = default;
+  /**
+   * @brief destructor
+   */
+  ~doca_verbs_device_attr() = default;
 
-    /**
-     * @brief Query device capabilities
-     *
-     * @param [in] ibv_ctx
-     * IBV context to query device attributes from
-     *
-     */
-    void query_caps(struct ibv_context *ibv_ctx);
+  /**
+   * @brief Query device capabilities
+   *
+   * @param [in] ibv_ctx
+   * IBV context to query device attributes from
+   *
+   */
+  void query_caps(struct ibv_context *ibv_ctx);
 
-    uint32_t m_max_qp{};
-    uint32_t m_max_qp_wr{};
-    uint32_t m_max_sge{};
-    uint32_t m_max_cq{};
-    uint32_t m_max_cqe{};
-    uint32_t m_max_mr{};
-    uint32_t m_max_pd{};
-    uint32_t m_max_ah{};
-    uint32_t m_max_srq{};
-    uint32_t m_max_srq_wr{};
-    uint32_t m_max_srq_sge{};
-    uint32_t m_max_pkeys{};
-    uint32_t m_max_sq_desc_size{};
-    uint32_t m_max_rq_desc_size{};
-    uint32_t m_max_send_wqebb{};
-    uint16_t m_min_udp_sport{};
-    uint16_t m_max_udp_sport{};
-    uint16_t m_gid_table_size{};
-    uint8_t m_is_qp_rc_supported{};
-    uint8_t m_port_type{};
-    uint8_t m_is_rts2rts_qp_dscp_supported{};
-    uint8_t m_phys_port_cnt{};
-    uint8_t m_send_dbr_mode_no_dbr_ext{};
-    uint8_t m_max_qp_init_rd_atom{};
-    uint8_t m_max_qp_rd_atom{};
+  uint32_t m_max_qp{};
+  uint32_t m_max_qp_wr{};
+  uint32_t m_max_sge{};
+  uint32_t m_max_cq{};
+  uint32_t m_max_cqe{};
+  uint32_t m_max_mr{};
+  uint32_t m_max_pd{};
+  uint32_t m_max_ah{};
+  uint32_t m_max_srq{};
+  uint32_t m_max_srq_wr{};
+  uint32_t m_max_srq_sge{};
+  uint32_t m_max_pkeys{};
+  uint32_t m_max_sq_desc_size{};
+  uint32_t m_max_rq_desc_size{};
+  uint32_t m_max_send_wqebb{};
+  uint16_t m_min_udp_sport{};
+  uint16_t m_max_udp_sport{};
+  uint16_t m_gid_table_size{};
+  uint8_t m_is_qp_rc_supported{};
+  uint8_t m_port_type{};
+  uint8_t m_is_rts2rts_qp_dscp_supported{};
+  uint8_t m_phys_port_cnt{};
+  uint8_t m_send_dbr_mode_no_dbr_ext{};
+  uint8_t m_max_qp_init_rd_atom{};
+  uint8_t m_max_qp_rd_atom{};
 
-   private:
-    doca_verbs_device_attr &operator=(doca_verbs_device_attr const &) = delete;
+ private:
+  doca_verbs_device_attr &operator=(doca_verbs_device_attr const &) = delete;
 };

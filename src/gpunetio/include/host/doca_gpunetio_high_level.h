@@ -43,54 +43,53 @@ extern "C" {
 #endif
 
 enum doca_gpu_verbs_mem_reg_type {
-    DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT =
-        0,  ///< Automatically select the most appropriate method
-    DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_DMABUF = 1,   ///< Use CUDA DMABUF to register memory
-    DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_PEERMEM = 2,  ///< Use CUDA PeerMem to register memory
-    DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_MAX,               ///< Sentinel value
+  DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT = 0,       ///< Automatically select the most appropriate method
+  DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_DMABUF = 1,   ///< Use CUDA DMABUF to register memory
+  DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_PEERMEM = 2,  ///< Use CUDA PeerMem to register memory
+  DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_MAX,               ///< Sentinel value
 };
 
 struct doca_gpu_verbs_qp_init_attr_hl {
-    struct doca_gpu *gpu_dev;
-    struct ibv_pd *ibpd;
-    uint16_t sq_nwqe;
-    uint8_t reserved1[2];
-    enum doca_gpu_dev_verbs_nic_handler nic_handler;
-    enum doca_gpu_verbs_mem_reg_type mreg_type;
-    enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
-    bool cq_collapsed;
-    uint8_t reserved2[3];
-    uint8_t reserved3[16];
+  struct doca_gpu *gpu_dev;
+  struct ibv_pd *ibpd;
+  uint16_t sq_nwqe;
+  uint8_t reserved1[2];
+  enum doca_gpu_dev_verbs_nic_handler nic_handler;
+  enum doca_gpu_verbs_mem_reg_type mreg_type;
+  enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
+  bool cq_collapsed;
+  uint8_t reserved2[3];
+  uint8_t reserved3[16];
 } __attribute__((__aligned__(8))) __attribute__((__packed__));
 
 struct doca_gpu_verbs_qp_hl {
-    struct doca_gpu *gpu_dev; /* DOCA GPU device to use */
+  struct doca_gpu *gpu_dev; /* DOCA GPU device to use */
 
-    // CQ
-    struct doca_verbs_cq *cq_sq;
-    void *cq_sq_umem_gpu_ptr;
-    struct doca_verbs_umem *cq_sq_umem;
-    void *cq_sq_umem_dbr_gpu_ptr;
-    struct doca_verbs_umem *cq_sq_umem_dbr;
+  // CQ
+  struct doca_verbs_cq *cq_sq;
+  void *cq_sq_umem_gpu_ptr;
+  struct doca_verbs_umem *cq_sq_umem;
+  void *cq_sq_umem_dbr_gpu_ptr;
+  struct doca_verbs_umem *cq_sq_umem_dbr;
 
-    // QP
-    struct doca_verbs_qp *qp;
-    void *qp_umem_gpu_ptr;
-    struct doca_verbs_umem *qp_umem;
-    void *qp_umem_dbr_gpu_ptr;
-    struct doca_verbs_umem *qp_umem_dbr;
-    struct doca_verbs_uar *external_uar;
+  // QP
+  struct doca_verbs_qp *qp;
+  void *qp_umem_gpu_ptr;
+  struct doca_verbs_umem *qp_umem;
+  void *qp_umem_dbr_gpu_ptr;
+  struct doca_verbs_umem *qp_umem_dbr;
+  struct doca_verbs_uar *external_uar;
 
-    enum doca_gpu_dev_verbs_nic_handler nic_handler;
-    enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
+  enum doca_gpu_dev_verbs_nic_handler nic_handler;
+  enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
 
-    // QP GPUNetIO Object
-    struct doca_gpu_verbs_qp *qp_gverbs;
+  // QP GPUNetIO Object
+  struct doca_gpu_verbs_qp *qp_gverbs;
 };
 
 struct doca_gpu_verbs_qp_group_hl {
-    struct doca_gpu_verbs_qp_hl qp_main;
-    struct doca_gpu_verbs_qp_hl qp_companion;
+  struct doca_gpu_verbs_qp_hl qp_main;
+  struct doca_gpu_verbs_qp_hl qp_companion;
 };
 
 /**
@@ -173,8 +172,7 @@ doca_error_t doca_gpu_verbs_destroy_qp_group_hl(struct doca_gpu_verbs_qp_group_h
  * doca_error code - in case of failure:
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
-doca_error_t doca_gpu_verbs_qp_flat_list_create_hl(struct doca_gpu_verbs_qp_hl **qp_list,
-                                                   uint32_t num_elems,
+doca_error_t doca_gpu_verbs_qp_flat_list_create_hl(struct doca_gpu_verbs_qp_hl **qp_list, uint32_t num_elems,
                                                    struct doca_gpu_dev_verbs_qp **qp_gpu);
 
 /**

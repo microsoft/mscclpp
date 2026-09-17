@@ -39,9 +39,9 @@
 #include "common/doca_gpunetio_verbs_def.h"
 #include "common/doca_gpunetio_verbs_dev.h"
 #include "device/doca_gpunetio_dev_verbs_common.cuh"
-#include "device/doca_gpunetio_dev_verbs_cq.cuh"
-#include "device/doca_gpunetio_dev_verbs_qp.cuh"
-#include "device/doca_gpunetio_dev_verbs_onesided.cuh"
 #include "device/doca_gpunetio_dev_verbs_counter.cuh"
+#include "device/doca_gpunetio_dev_verbs_cq.cuh"
+#include "device/doca_gpunetio_dev_verbs_onesided.cuh"
+#include "device/doca_gpunetio_dev_verbs_qp.cuh"
 
 #endif /* DOCA_GPUNETIO_DEVICE_H */

@@ -36,9 +36,9 @@
 #ifndef DOCA_GPUNETIO_H
 #define DOCA_GPUNETIO_H
 
-#include "doca_error.h"
-#include "../doca_gpunetio_config.h"
 #include "../common/doca_gpunetio_verbs_def.h"
+#include "../doca_gpunetio_config.h"
+#include "doca_error.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,12 +57,12 @@ struct doca_gpu;
  *
  */
 enum doca_gpu_mem_type {
-    /* GPU memory not accessible from CPU. */
-    DOCA_GPU_MEM_TYPE_GPU = 0,
-    /* GPU memory with direct access from CPU. */
-    DOCA_GPU_MEM_TYPE_GPU_CPU = 1,
-    /* CPU memory with direct access from GPU. */
-    DOCA_GPU_MEM_TYPE_CPU_GPU = 2,
+  /* GPU memory not accessible from CPU. */
+  DOCA_GPU_MEM_TYPE_GPU = 0,
+  /* GPU memory with direct access from CPU. */
+  DOCA_GPU_MEM_TYPE_GPU_CPU = 1,
+  /* CPU memory with direct access from GPU. */
+  DOCA_GPU_MEM_TYPE_CPU_GPU = 2,
 };
 
 /**
@@ -77,34 +77,34 @@ struct doca_gpu_dev_verbs_cq;
  *
  */
 struct doca_gpu_verbs_qp {
-    struct doca_gpu *gpu_dev;
-    struct doca_verbs_qp *qp;
-    uint64_t *cpu_db;
-    uint64_t sq_wqe_pi_last;
-    uint64_t *sq_db;
-    __be32 *sq_dbrec;
-    bool cpu_proxy;
-    uint32_t sq_num_shift8_be;
-    enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
+  struct doca_gpu *gpu_dev;
+  struct doca_verbs_qp *qp;
+  uint64_t *cpu_db;
+  uint64_t sq_wqe_pi_last;
+  uint64_t *sq_db;
+  __be32 *sq_dbrec;
+  bool cpu_proxy;
+  uint32_t sq_num_shift8_be;
+  enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext;
 
-    /* CPU handler */
-    struct doca_gpu_dev_verbs_qp *qp_cpu;
-    /* GPU handler */
-    struct doca_gpu_dev_verbs_qp *qp_gpu;
-    /* CPU-accessible GPU handler. Linked with qp_gpu via GDRCopy. */
-    struct doca_gpu_dev_verbs_qp *qp_gpu_h;
+  /* CPU handler */
+  struct doca_gpu_dev_verbs_qp *qp_cpu;
+  /* GPU handler */
+  struct doca_gpu_dev_verbs_qp *qp_gpu;
+  /* CPU-accessible GPU handler. Linked with qp_gpu via GDRCopy. */
+  struct doca_gpu_dev_verbs_qp *qp_gpu_h;
 };
 
 /**
  * @brief GPUNetIO QP Error info.
  */
 struct doca_gpu_verbs_qp_error_info {
-    bool has_error;
-    int syndrome;
-    int vendor_err_synd;
-    int hw_err_synd;
-    int hw_synd_type;
-    int wqe_counter;
+  bool has_error;
+  int syndrome;
+  int vendor_err_synd;
+  int hw_err_synd;
+  int hw_synd_type;
+  int wqe_counter;
 };
 
 typedef void *doca_gpu_verbs_service_t;
@@ -171,8 +171,8 @@ doca_error_t doca_gpu_destroy(struct doca_gpu *gpu_dev);
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  * - DOCA_ERROR_NO_MEMORY - if an error occurred dealing with GPU memory.
  */
-doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t alignment,
-                                enum doca_gpu_mem_type mtype, void **memptr_gpu, void **memptr_cpu);
+doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t alignment, enum doca_gpu_mem_type mtype,
+                                void **memptr_gpu, void **memptr_cpu);
 
 /**
  * Free a GPU memory buffer.
@@ -214,8 +214,8 @@ doca_error_t doca_gpu_mem_free(struct doca_gpu *gpu, void *memptr_gpu);
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
 doca_error_t doca_gpu_verbs_export_qp(struct doca_gpu *gpu_dev, struct doca_verbs_qp *qp,
-                                      enum doca_gpu_dev_verbs_nic_handler nic_handler,
-                                      void *gpu_qp_umem_dev_ptr, struct doca_verbs_cq *cq_sq,
+                                      enum doca_gpu_dev_verbs_nic_handler nic_handler, void *gpu_qp_umem_dev_ptr,
+                                      struct doca_verbs_cq *cq_sq,
                                       enum doca_gpu_verbs_send_dbr_mode_ext send_dbr_mode_ext,
                                       struct doca_gpu_verbs_qp **qp_out);
 
@@ -247,8 +247,7 @@ doca_error_t doca_gpu_verbs_unexport_qp(struct doca_gpu *gpu_dev, struct doca_gp
  * doca_error code - in case of failure:
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
-doca_error_t doca_gpu_verbs_get_qp_dev(struct doca_gpu_verbs_qp *qp,
-                                       struct doca_gpu_dev_verbs_qp **qp_gpu);
+doca_error_t doca_gpu_verbs_get_qp_dev(struct doca_gpu_verbs_qp *qp, struct doca_gpu_dev_verbs_qp **qp_gpu);
 
 /**
  * Return a DMABuf file descriptor from a GPU memory address if the GPU device and CUDA installation
@@ -269,8 +268,7 @@ doca_error_t doca_gpu_verbs_get_qp_dev(struct doca_gpu_verbs_qp *qp,
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  * - DOCA_ERROR_NOT_SUPPORTED - DMABuf not supported
  */
-doca_error_t doca_gpu_dmabuf_fd(struct doca_gpu *gpu_dev, void *memptr_gpu, size_t size,
-                                int *dmabuf_fd);
+doca_error_t doca_gpu_dmabuf_fd(struct doca_gpu *gpu_dev, void *memptr_gpu, size_t size, int *dmabuf_fd);
 
 /**
  * Check if UAR can be registered on GPU
@@ -357,8 +355,7 @@ doca_error_t doca_gpu_verbs_create_service(doca_gpu_verbs_service_t *out_service
  * doca_error code - in case of failure:
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
-doca_error_t doca_gpu_verbs_service_monitor_qp(doca_gpu_verbs_service_t service,
-                                               struct doca_gpu_verbs_qp *qp);
+doca_error_t doca_gpu_verbs_service_monitor_qp(doca_gpu_verbs_service_t service, struct doca_gpu_verbs_qp *qp);
 
 /**
  * Destroy a service object.
@@ -406,10 +403,8 @@ doca_error_t doca_gpu_verbs_query_last_error(struct doca_gpu_verbs_qp *qp,
  * doca_error code - in case of failure:
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
-doca_error_t doca_gpu_verbs_export_multi_qps_dev(struct doca_gpu *gpu_dev,
-                                                 struct doca_gpu_verbs_qp **qps,
-                                                 unsigned int num_qps,
-                                                 struct doca_gpu_dev_verbs_qp **out_qp_gpus);
+doca_error_t doca_gpu_verbs_export_multi_qps_dev(struct doca_gpu *gpu_dev, struct doca_gpu_verbs_qp **qps,
+                                                 unsigned int num_qps, struct doca_gpu_dev_verbs_qp **out_qp_gpus);
 
 /**
  * Unexport multiple QPs from GPU
@@ -428,10 +423,8 @@ doca_error_t doca_gpu_verbs_export_multi_qps_dev(struct doca_gpu *gpu_dev,
  * doca_error code - in case of failure:
  * - DOCA_ERROR_INVALID_VALUE - if an invalid input had been received.
  */
-doca_error_t doca_gpu_verbs_unexport_multi_qps_dev(struct doca_gpu *gpu_dev,
-                                                   struct doca_gpu_verbs_qp **qps,
-                                                   unsigned int num_qps,
-                                                   struct doca_gpu_dev_verbs_qp *qp_gpus);
+doca_error_t doca_gpu_verbs_unexport_multi_qps_dev(struct doca_gpu *gpu_dev, struct doca_gpu_verbs_qp **qps,
+                                                   unsigned int num_qps, struct doca_gpu_dev_verbs_qp *qp_gpus);
 
 /**
  * Reset tracking and memory of a GPUNetIO QP

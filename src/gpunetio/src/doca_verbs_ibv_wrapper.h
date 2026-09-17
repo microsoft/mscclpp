@@ -54,101 +54,101 @@
 extern "C" {
 #endif
 
-#include "host/doca_error.h"
-
 #include <dlfcn.h>
+#include <linux/types.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <linux/types.h>
+
+#include "host/doca_error.h"
 
 union ibv_gid {
-    uint8_t raw[16];
-    struct {
-        __be64 subnet_prefix;
-        __be64 interface_id;
-    } global;
+  uint8_t raw[16];
+  struct {
+    __be64 subnet_prefix;
+    __be64 interface_id;
+  } global;
 };
 
 struct ibv_global_route {
-    union ibv_gid dgid;
-    uint32_t flow_label;
-    uint8_t sgid_index;
-    uint8_t hop_limit;
-    uint8_t traffic_class;
+  union ibv_gid dgid;
+  uint32_t flow_label;
+  uint8_t sgid_index;
+  uint8_t hop_limit;
+  uint8_t traffic_class;
 };
 
 struct ibv_ah_attr {
-    struct ibv_global_route grh;
-    uint16_t dlid;
-    uint8_t sl;
-    uint8_t src_path_bits;
-    uint8_t static_rate;
-    uint8_t is_global;
-    uint8_t port_num;
+  struct ibv_global_route grh;
+  uint16_t dlid;
+  uint8_t sl;
+  uint8_t src_path_bits;
+  uint8_t static_rate;
+  uint8_t is_global;
+  uint8_t port_num;
 };
 
 enum ibv_atomic_cap { IBV_ATOMIC_NONE, IBV_ATOMIC_HCA, IBV_ATOMIC_GLOB };
 
 struct ibv_device_attr {
-    char fw_ver[64];
-    __be64 node_guid;
-    __be64 sys_image_guid;
-    uint64_t max_mr_size;
-    uint64_t page_size_cap;
-    uint32_t vendor_id;
-    uint32_t vendor_part_id;
-    uint32_t hw_ver;
-    int max_qp;
-    int max_qp_wr;
-    unsigned int device_cap_flags;
-    int max_sge;
-    int max_sge_rd;
-    int max_cq;
-    int max_cqe;
-    int max_mr;
-    int max_pd;
-    int max_qp_rd_atom;
-    int max_ee_rd_atom;
-    int max_res_rd_atom;
-    int max_qp_init_rd_atom;
-    int max_ee_init_rd_atom;
-    enum ibv_atomic_cap atomic_cap;
-    int max_ee;
-    int max_rdd;
-    int max_mw;
-    int max_raw_ipv6_qp;
-    int max_raw_ethy_qp;
-    int max_mcast_grp;
-    int max_mcast_qp_attach;
-    int max_total_mcast_qp_attach;
-    int max_ah;
-    int max_fmr;
-    int max_map_per_fmr;
-    int max_srq;
-    int max_srq_wr;
-    int max_srq_sge;
-    uint16_t max_pkeys;
-    uint8_t local_ca_ack_delay;
-    uint8_t phys_port_cnt;
+  char fw_ver[64];
+  __be64 node_guid;
+  __be64 sys_image_guid;
+  uint64_t max_mr_size;
+  uint64_t page_size_cap;
+  uint32_t vendor_id;
+  uint32_t vendor_part_id;
+  uint32_t hw_ver;
+  int max_qp;
+  int max_qp_wr;
+  unsigned int device_cap_flags;
+  int max_sge;
+  int max_sge_rd;
+  int max_cq;
+  int max_cqe;
+  int max_mr;
+  int max_pd;
+  int max_qp_rd_atom;
+  int max_ee_rd_atom;
+  int max_res_rd_atom;
+  int max_qp_init_rd_atom;
+  int max_ee_init_rd_atom;
+  enum ibv_atomic_cap atomic_cap;
+  int max_ee;
+  int max_rdd;
+  int max_mw;
+  int max_raw_ipv6_qp;
+  int max_raw_ethy_qp;
+  int max_mcast_grp;
+  int max_mcast_qp_attach;
+  int max_total_mcast_qp_attach;
+  int max_ah;
+  int max_fmr;
+  int max_map_per_fmr;
+  int max_srq;
+  int max_srq_wr;
+  int max_srq_sge;
+  uint16_t max_pkeys;
+  uint8_t local_ca_ack_delay;
+  uint8_t phys_port_cnt;
 };
 
 struct ibv_pd {
-    struct ibv_context *context;
-    uint32_t handle;
+  struct ibv_context *context;
+  uint32_t handle;
 };
 
 enum ibv_access_flags {
-    IBV_ACCESS_LOCAL_WRITE = 1,
-    IBV_ACCESS_REMOTE_WRITE = (1 << 1),
-    IBV_ACCESS_REMOTE_READ = (1 << 2),
-    IBV_ACCESS_REMOTE_ATOMIC = (1 << 3),
-    IBV_ACCESS_MW_BIND = (1 << 4),
-    IBV_ACCESS_ZERO_BASED = (1 << 5),
-    IBV_ACCESS_ON_DEMAND = (1 << 6),
-    IBV_ACCESS_HUGETLB = (1 << 7),
-    IBV_ACCESS_FLUSH_GLOBAL = (1 << 8),
-    IBV_ACCESS_FLUSH_PERSISTENT = (1 << 9),
-    IBV_ACCESS_RELAXED_ORDERING = (1 << 20),
+  IBV_ACCESS_LOCAL_WRITE = 1,
+  IBV_ACCESS_REMOTE_WRITE = (1 << 1),
+  IBV_ACCESS_REMOTE_READ = (1 << 2),
+  IBV_ACCESS_REMOTE_ATOMIC = (1 << 3),
+  IBV_ACCESS_MW_BIND = (1 << 4),
+  IBV_ACCESS_ZERO_BASED = (1 << 5),
+  IBV_ACCESS_ON_DEMAND = (1 << 6),
+  IBV_ACCESS_HUGETLB = (1 << 7),
+  IBV_ACCESS_FLUSH_GLOBAL = (1 << 8),
+  IBV_ACCESS_FLUSH_PERSISTENT = (1 << 9),
+  IBV_ACCESS_RELAXED_ORDERING = (1 << 20),
 };
 
 struct ibv_device;
@@ -169,8 +169,7 @@ struct ibv_port_attr;
 /**
  * @brief Wrapper for ibv_get_device_list
  */
-doca_error_t doca_verbs_wrapper_ibv_get_device_list(int *num_devices,
-                                                    struct ibv_device ***device_list);
+doca_error_t doca_verbs_wrapper_ibv_get_device_list(int *num_devices, struct ibv_device ***device_list);
 
 /**
  * @brief Wrapper for ibv_free_device_list
@@ -180,14 +179,12 @@ doca_error_t doca_verbs_wrapper_ibv_free_device_list(struct ibv_device **list);
 /**
  * @brief Wrapper for ibv_get_device_name
  */
-doca_error_t doca_verbs_wrapper_ibv_get_device_name(struct ibv_device *device,
-                                                    const char **device_name);
+doca_error_t doca_verbs_wrapper_ibv_get_device_name(struct ibv_device *device, const char **device_name);
 
 /**
  * @brief Wrapper for ibv_open_device
  */
-doca_error_t doca_verbs_wrapper_ibv_open_device(struct ibv_device *device,
-                                                struct ibv_context **context);
+doca_error_t doca_verbs_wrapper_ibv_open_device(struct ibv_device *device, struct ibv_context **context);
 
 /**
  * @brief Wrapper for ibv_close_device
@@ -218,8 +215,7 @@ doca_error_t doca_verbs_wrapper_ibv_dereg_mr(struct ibv_mr *mr);
 /**
  * @brief Wrapper for ibv_query_device
  */
-doca_error_t doca_verbs_wrapper_ibv_query_device(struct ibv_context *context,
-                                                 struct ibv_device_attr *device_attr);
+doca_error_t doca_verbs_wrapper_ibv_query_device(struct ibv_context *context, struct ibv_device_attr *device_attr);
 
 /**
  * @brief Wrapper for ibv_query_port
@@ -230,14 +226,13 @@ doca_error_t doca_verbs_wrapper_ibv_query_port(struct ibv_context *context, uint
 /**
  * @brief Wrapper for ibv_query_gid
  */
-doca_error_t doca_verbs_wrapper_ibv_query_gid(struct ibv_context *context, uint8_t port_num,
-                                              int index, union ibv_gid *gid);
+doca_error_t doca_verbs_wrapper_ibv_query_gid(struct ibv_context *context, uint8_t port_num, int index,
+                                              union ibv_gid *gid);
 
 /**
  * @brief Wrapper for ibv_create_ah
  */
-doca_error_t doca_verbs_wrapper_ibv_create_ah(struct ibv_pd *pd, struct ibv_ah_attr *attr,
-                                              struct ibv_ah **ah);
+doca_error_t doca_verbs_wrapper_ibv_create_ah(struct ibv_pd *pd, struct ibv_ah_attr *attr, struct ibv_ah **ah);
 
 /**
  * @brief Wrapper for ibv_destroy_ah
@@ -247,9 +242,8 @@ doca_error_t doca_verbs_wrapper_ibv_destroy_ah(struct ibv_ah *ah);
 /**
  * @brief Wrapper for ibv_create_cq
  */
-doca_error_t doca_verbs_wrapper_ibv_create_cq(struct ibv_context *context, int cqe,
-                                              void *cq_context, struct ibv_comp_channel *channel,
-                                              int comp_vector, struct ibv_cq **cq);
+doca_error_t doca_verbs_wrapper_ibv_create_cq(struct ibv_context *context, int cqe, void *cq_context,
+                                              struct ibv_comp_channel *channel, int comp_vector, struct ibv_cq **cq);
 
 /**
  * @brief Wrapper for ibv_destroy_cq
@@ -259,8 +253,7 @@ doca_error_t doca_verbs_wrapper_ibv_destroy_cq(struct ibv_cq *cq);
 /**
  * @brief Wrapper for ibv_create_srq
  */
-doca_error_t doca_verbs_wrapper_ibv_create_srq(struct ibv_pd *pd,
-                                               struct ibv_srq_init_attr *srq_init_attr,
+doca_error_t doca_verbs_wrapper_ibv_create_srq(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr,
                                                struct ibv_srq **srq);
 
 /**
@@ -271,8 +264,7 @@ doca_error_t doca_verbs_wrapper_ibv_destroy_srq(struct ibv_srq *srq);
 /**
  * @brief Wrapper for ibv_create_qp
  */
-doca_error_t doca_verbs_wrapper_ibv_create_qp(struct ibv_pd *pd,
-                                              struct ibv_qp_init_attr *qp_init_attr,
+doca_error_t doca_verbs_wrapper_ibv_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr,
                                               struct ibv_qp **qp);
 
 /**
@@ -283,14 +275,13 @@ doca_error_t doca_verbs_wrapper_ibv_destroy_qp(struct ibv_qp *qp);
 /**
  * @brief Wrapper for ibv_modify_qp
  */
-doca_error_t doca_verbs_wrapper_ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
-                                              int attr_mask);
+doca_error_t doca_verbs_wrapper_ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask);
 
 /**
  * @brief Wrapper for ibv_query_qp
  */
-doca_error_t doca_verbs_wrapper_ibv_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
-                                             int attr_mask, struct ibv_qp_init_attr *init_attr);
+doca_error_t doca_verbs_wrapper_ibv_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask,
+                                             struct ibv_qp_init_attr *init_attr);
 
 #ifdef __cplusplus
 }
@@ -308,137 +299,125 @@ extern "C" {
 
 /* *********** Direct Implementation (when wrapper not used) *********** */
 
-static inline doca_error_t doca_verbs_wrapper_ibv_get_device_list(
-    int *num_devices, struct ibv_device ***device_list) {
-    *device_list = ibv_get_device_list(num_devices);
-    return (*device_list != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_get_device_list(int *num_devices, struct ibv_device ***device_list) {
+  *device_list = ibv_get_device_list(num_devices);
+  return (*device_list != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_free_device_list(struct ibv_device **list) {
-    ibv_free_device_list(list);
-    return DOCA_SUCCESS;
+  ibv_free_device_list(list);
+  return DOCA_SUCCESS;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_get_device_name(struct ibv_device *device,
-                                                                  const char **device_name) {
-    *device_name = ibv_get_device_name(device);
-    return (*device_name != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_get_device_name(struct ibv_device *device, const char **device_name) {
+  *device_name = ibv_get_device_name(device);
+  return (*device_name != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_open_device(struct ibv_device *device,
-                                                              struct ibv_context **context) {
-    *context = ibv_open_device(device);
-    return (*context != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_open_device(struct ibv_device *device, struct ibv_context **context) {
+  *context = ibv_open_device(device);
+  return (*context != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_close_device(struct ibv_context *context) {
-    int ret = ibv_close_device(context);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_close_device(context);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_alloc_pd(struct ibv_context *context,
-                                                           struct ibv_pd **pd) {
-    *pd = ibv_alloc_pd(context);
-    return (*pd != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_alloc_pd(struct ibv_context *context, struct ibv_pd **pd) {
+  *pd = ibv_alloc_pd(context);
+  return (*pd != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_dealloc_pd(struct ibv_pd *pd) {
-    int ret = ibv_dealloc_pd(pd);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_dealloc_pd(pd);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_reg_mr(struct ibv_pd *pd, void *addr,
-                                                         size_t length, int access,
+static inline doca_error_t doca_verbs_wrapper_ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, int access,
                                                          struct ibv_mr **mr) {
-    *mr = ibv_reg_mr(pd, addr, length, access);
-    return (*mr != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  *mr = ibv_reg_mr(pd, addr, length, access);
+  return (*mr != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_dereg_mr(struct ibv_mr *mr) {
-    int ret = ibv_dereg_mr(mr);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_dereg_mr(mr);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_query_device(
-    struct ibv_context *context, struct ibv_device_attr *device_attr) {
-    int ret = ibv_query_device(context, device_attr);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_query_device(struct ibv_context *context,
+                                                               struct ibv_device_attr *device_attr) {
+  int ret = ibv_query_device(context, device_attr);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_query_port(struct ibv_context *context,
-                                                             uint8_t port_num,
+static inline doca_error_t doca_verbs_wrapper_ibv_query_port(struct ibv_context *context, uint8_t port_num,
                                                              struct ibv_port_attr *port_attr) {
-    int ret = ibv_query_port(context, port_num, port_attr);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_query_port(context, port_num, port_attr);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_query_gid(struct ibv_context *context,
-                                                            uint8_t port_num, int index,
+static inline doca_error_t doca_verbs_wrapper_ibv_query_gid(struct ibv_context *context, uint8_t port_num, int index,
                                                             union ibv_gid *gid) {
-    int ret = ibv_query_gid(context, port_num, index, gid);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_query_gid(context, port_num, index, gid);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_create_ah(struct ibv_pd *pd,
-                                                            struct ibv_ah_attr *attr,
+static inline doca_error_t doca_verbs_wrapper_ibv_create_ah(struct ibv_pd *pd, struct ibv_ah_attr *attr,
                                                             struct ibv_ah **ah) {
-    *ah = ibv_create_ah(pd, attr);
-    return (*ah != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  *ah = ibv_create_ah(pd, attr);
+  return (*ah != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_destroy_ah(struct ibv_ah *ah) {
-    int ret = ibv_destroy_ah(ah);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_destroy_ah(ah);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_create_cq(struct ibv_context *context, int cqe,
-                                                            void *cq_context,
-                                                            struct ibv_comp_channel *channel,
-                                                            int comp_vector, struct ibv_cq **cq) {
-    *cq = ibv_create_cq(context, cqe, cq_context, channel, comp_vector);
-    return (*cq != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_create_cq(struct ibv_context *context, int cqe, void *cq_context,
+                                                            struct ibv_comp_channel *channel, int comp_vector,
+                                                            struct ibv_cq **cq) {
+  *cq = ibv_create_cq(context, cqe, cq_context, channel, comp_vector);
+  return (*cq != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_destroy_cq(struct ibv_cq *cq) {
-    int ret = ibv_destroy_cq(cq);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_destroy_cq(cq);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_create_srq(
-    struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr, struct ibv_srq **srq) {
-    *srq = ibv_create_srq(pd, srq_init_attr);
-    return (*srq != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+static inline doca_error_t doca_verbs_wrapper_ibv_create_srq(struct ibv_pd *pd, struct ibv_srq_init_attr *srq_init_attr,
+                                                             struct ibv_srq **srq) {
+  *srq = ibv_create_srq(pd, srq_init_attr);
+  return (*srq != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_destroy_srq(struct ibv_srq *srq) {
-    int ret = ibv_destroy_srq(srq);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_destroy_srq(srq);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_create_qp(struct ibv_pd *pd,
-                                                            struct ibv_qp_init_attr *qp_init_attr,
+static inline doca_error_t doca_verbs_wrapper_ibv_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr,
                                                             struct ibv_qp **qp) {
-    *qp = ibv_create_qp(pd, qp_init_attr);
-    return (*qp != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  *qp = ibv_create_qp(pd, qp_init_attr);
+  return (*qp != NULL) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 static inline doca_error_t doca_verbs_wrapper_ibv_destroy_qp(struct ibv_qp *qp) {
-    int ret = ibv_destroy_qp(qp);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_destroy_qp(qp);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_modify_qp(struct ibv_qp *qp,
-                                                            struct ibv_qp_attr *attr,
+static inline doca_error_t doca_verbs_wrapper_ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
                                                             int attr_mask) {
-    int ret = ibv_modify_qp(qp, attr, attr_mask);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_modify_qp(qp, attr, attr_mask);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
-static inline doca_error_t doca_verbs_wrapper_ibv_query_qp(struct ibv_qp *qp,
-                                                           struct ibv_qp_attr *attr, int attr_mask,
+static inline doca_error_t doca_verbs_wrapper_ibv_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask,
                                                            struct ibv_qp_init_attr *init_attr) {
-    int ret = ibv_query_qp(qp, attr, attr_mask, init_attr);
-    return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
+  int ret = ibv_query_qp(qp, attr, attr_mask, init_attr);
+  return (ret == 0) ? DOCA_SUCCESS : DOCA_ERROR_DRIVER;
 }
 
 #ifdef __cplusplus

@@ -101,13 +101,10 @@ MSCCLPP_DEVICE_INLINE void completeRankMajorTokenStore(WorkspaceView& workspaceV
 #if defined(MSCCLPP_USE_GPUNETIO)
 // NVLink-only metadata store: identical to sendRankMajorMetadata but skips leaders
 // whose destination is cross-domain (their metadata travels with the GPUNetIO send).
-MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(const TransportView& transport, int* outputTopkIdx,
-                                                      float* outputTopkWeights,
-                                                      const int64_t* __restrict__ topkIndices,
-                                                      const float* __restrict__ topkWeights,
-                                                      const RankMajorRoute& route, int tokenIdx, int nTopk,
-                                                      int nLocalExperts, int maxTokensPerRank, int invalidTokenExpertId,
-                                                      bool skipCrossDomain) {
+MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(
+    const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
+    const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights, const RankMajorRoute& route,
+    int tokenIdx, int nTopk, int nLocalExperts, int maxTokensPerRank, int invalidTokenExpertId, bool skipCrossDomain) {
   const int laneId = get_lane_id();
   const int candidateExpert =
       laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;

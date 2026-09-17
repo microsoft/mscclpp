@@ -34,23 +34,23 @@ namespace mscclpp {
 
 namespace {
 
-#define MSCCLPP_DOCA_THROW(expr)                                                                  \
-  do {                                                                                            \
-    doca_error_t _st = (expr);                                                                    \
-    if (_st != DOCA_SUCCESS) {                                                                    \
-      throw mscclpp::Error(std::string("DOCA GPUNetIO call failed: ") + #expr + " status=" +      \
-                               std::to_string(static_cast<int>(_st)),                             \
-                           mscclpp::ErrorCode::SystemError);                                       \
-    }                                                                                             \
+#define MSCCLPP_DOCA_THROW(expr)                                                                                   \
+  do {                                                                                                             \
+    doca_error_t _st = (expr);                                                                                     \
+    if (_st != DOCA_SUCCESS) {                                                                                     \
+      throw mscclpp::Error(                                                                                        \
+          std::string("DOCA GPUNetIO call failed: ") + #expr + " status=" + std::to_string(static_cast<int>(_st)), \
+          mscclpp::ErrorCode::SystemError);                                                                        \
+    }                                                                                                              \
   } while (0)
 
-#define MSCCLPP_CUDA_THROW(expr)                                                                          \
-  do {                                                                                                    \
-    cudaError_t _e = (expr);                                                                              \
-    if (_e != cudaSuccess) {                                                                              \
-      throw mscclpp::Error(std::string("CUDA call failed: ") + #expr + " : " + cudaGetErrorString(_e),    \
-                           mscclpp::ErrorCode::SystemError);                                              \
-    }                                                                                                     \
+#define MSCCLPP_CUDA_THROW(expr)                                                                       \
+  do {                                                                                                 \
+    cudaError_t _e = (expr);                                                                           \
+    if (_e != cudaSuccess) {                                                                           \
+      throw mscclpp::Error(std::string("CUDA call failed: ") + #expr + " : " + cudaGetErrorString(_e), \
+                           mscclpp::ErrorCode::SystemError);                                           \
+    }                                                                                                  \
   } while (0)
 
 // Per-peer connection info exchanged via the bootstrap all-gather.

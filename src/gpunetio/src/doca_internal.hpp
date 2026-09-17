@@ -30,32 +30,31 @@
 
 #pragma once
 
-#include <vector>
-
-#include <stdint.h>
-#include <stddef.h>
-#include <string>
-#include <cmath>
+#include <cuda_runtime.h>
+#include <linux/types.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <syslog.h>
-#include <linux/types.h>
-#include <cuda_runtime.h>
+#include <unistd.h>
 
-#include "host/doca_error.h"
+#include <cmath>
+#include <string>
+#include <vector>
+
 #include "doca_gpunetio_config.h"
 #include "doca_gpunetio_log.hpp"
+#include "host/doca_error.h"
 
 #ifndef CUDA_ROUND_UP
 #define CUDA_ROUND_UP(unaligned_mapping_size, align_val) \
-    ((unaligned_mapping_size) + (align_val) - 1) & (~((align_val) - 1))
+  ((unaligned_mapping_size) + (align_val) - 1) & (~((align_val) - 1))
 #endif
 
 #ifndef CUDA_ROUND_DOWN
-#define CUDA_ROUND_DOWN(unaligned_mapping_size, align_val) \
-    ((unaligned_mapping_size) & ~((align_val) - 1))
+#define CUDA_ROUND_DOWN(unaligned_mapping_size, align_val) ((unaligned_mapping_size) & ~((align_val) - 1))
 #endif
 
 #define DOCA_VERBS_PAGE_SIZE 4096
@@ -64,8 +63,8 @@
 #define DOCA_VERBS_DB_UAR_SIZE 8
 
 static inline cudaError_t doca_verbs_cuda_clear_error(cudaError_t cuda_result) {
-    if (cuda_result != cudaSuccess) cudaGetLastError();
-    return cuda_result;
+  if (cuda_result != cudaSuccess) cudaGetLastError();
+  return cuda_result;
 }
 
 #define DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cmd) doca_verbs_cuda_clear_error(cmd)
@@ -80,47 +79,47 @@ static inline cudaError_t doca_verbs_cuda_clear_error(cudaError_t cuda_result) {
 inline bool doca_internal_utils_is_power_of_two(uint64_t x) { return x && (x & (x - 1)) == 0; }
 
 inline uint64_t doca_internal_utils_next_power_of_two(uint64_t x) {
-    x--;
+  x--;
 
-    x |= x >> 1;
-    x |= x >> 2;
-    x |= x >> 4;
-    x |= x >> 8;
-    x |= x >> 16;
-    x |= x >> 32;
+  x |= x >> 1;
+  x |= x >> 2;
+  x |= x >> 4;
+  x |= x >> 8;
+  x |= x >> 16;
+  x |= x >> 32;
 
-    return x + 1;
+  return x + 1;
 }
 
 struct doca_internal_mlx5_wqe_data_seg {
-    __be32 byte_count;
-    __be32 lkey;
-    __be64 addr;
+  __be32 byte_count;
+  __be32 lkey;
+  __be64 addr;
 };
 
 struct doca_internal_mlx5_wqe_mprq_next_seg {
-    uint8_t rsvd0[2];
-    __be16 next_wqe_index;
-    uint8_t signature;
-    uint8_t rsvd1[11];
+  uint8_t rsvd0[2];
+  __be16 next_wqe_index;
+  uint8_t signature;
+  uint8_t rsvd1[11];
 };
 
 template <typename T>
 T doca_internal_utils_log2(T x) {
-    if (x == 0) /* log(0) is undefined */
-        return 0;
+  if (x == 0) /* log(0) is undefined */
+    return 0;
 
-    return static_cast<T>(std::log2(x));
+  return static_cast<T>(std::log2(x));
 }
 
 inline uint64_t doca_internal_utils_align_up_uint64(uint64_t value, uint64_t alignment) {
-    uint64_t remainder = (value % alignment);
+  uint64_t remainder = (value % alignment);
 
-    if (remainder == 0) return value;
+  if (remainder == 0) return value;
 
-    return value + (alignment - remainder);
+  return value + (alignment - remainder);
 }
 
 inline uint32_t doca_internal_utils_align_up_uint32(uint32_t value, uint32_t alignment) {
-    return (uint32_t)doca_internal_utils_align_up_uint64(value, alignment);
+  return (uint32_t)doca_internal_utils_align_up_uint64(value, alignment);
 }

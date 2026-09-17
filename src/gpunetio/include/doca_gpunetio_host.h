@@ -36,14 +36,14 @@
 #ifndef DOCA_GPUNETIO_HOST_H
 #define DOCA_GPUNETIO_HOST_H
 
-#include "doca_gpunetio_config.h"
 #include "common/doca_gpunetio_verbs_def.h"
 #include "common/doca_gpunetio_verbs_dev.h"
-#include "host/mlx5_ifc.h"
-#include "host/mlx5_prm.h"
+#include "doca_gpunetio_config.h"
 #include "host/doca_error.h"
-#include "host/doca_verbs.h"
 #include "host/doca_gpunetio.h"
 #include "host/doca_gpunetio_high_level.h"
+#include "host/doca_verbs.h"
+#include "host/mlx5_ifc.h"
+#include "host/mlx5_prm.h"
 
 #endif /* DOCA_GPUNETIO_HOST_H */

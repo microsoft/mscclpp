@@ -28,50 +28,47 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
+#include "doca_gpunetio_log.hpp"
+
+#include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <string.h>
 #include <syslog.h>
 #include <time.h>
-#include <stdarg.h>
-
-#include "doca_gpunetio_log.hpp"
+#include <unistd.h>
 
 static const char *doca_gpu_log_level_strings[] = {"EMERG",   "ALERT",  "CRIT", "ERR",
                                                    "WARNING", "NOTICE", "INFO", "DEBUG"};
 
-void doca_gpu_log_print(int log_level, const char *file, int line, const char *func,
-                        const char *fmt, ...) {
-    static int cur_log_level = -1;
+void doca_gpu_log_print(int log_level, const char *file, int line, const char *func, const char *fmt, ...) {
+  static int cur_log_level = -1;
+  if (cur_log_level < 0) {
+    const char *debug_env = getenv("DOCA_GPUNETIO_LOG");
+    if (debug_env != NULL) {
+      int env_log_level = atoi(debug_env);
+      if (env_log_level >= 0 &&
+          env_log_level <= (int)(sizeof(doca_gpu_log_level_strings) / sizeof(doca_gpu_log_level_strings[0]))) {
+        cur_log_level = env_log_level;
+      }
+    }
     if (cur_log_level < 0) {
-        const char *debug_env = getenv("DOCA_GPUNETIO_LOG");
-        if (debug_env != NULL) {
-            int env_log_level = atoi(debug_env);
-            if (env_log_level >= 0 &&
-                env_log_level <= (int)(sizeof(doca_gpu_log_level_strings) /
-                                       sizeof(doca_gpu_log_level_strings[0]))) {
-                cur_log_level = env_log_level;
-            }
-        }
-        if (cur_log_level < 0) {
-            cur_log_level = 0;
-        }
+      cur_log_level = 0;
     }
+  }
 
-    if (log_level <= cur_log_level) {
-        time_t now = time(NULL);
-        char *timestamp = ctime(&now);
-        timestamp[strlen(timestamp) - 1] = '\0';
-        va_list args;
-        va_start(args, fmt);
-        fprintf(stderr, "%s [%s] [%s]: %d: %s(): ", timestamp,
-                doca_gpu_log_level_strings[log_level], file, line, func);
-        vfprintf(stderr, fmt, args);
-        fprintf(stderr, "\n");
-        va_end(args);
-    }
+  if (log_level <= cur_log_level) {
+    time_t now = time(NULL);
+    char *timestamp = ctime(&now);
+    timestamp[strlen(timestamp) - 1] = '\0';
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "%s [%s] [%s]: %d: %s(): ", timestamp, doca_gpu_log_level_strings[log_level], file, line, func);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+  }
 }

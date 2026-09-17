@@ -129,8 +129,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
 
 using PortChannelHandle = DeviceHandle<mscclpp::PortChannel>;
 
-__constant__ __align__(alignof(PortChannelHandle)) unsigned char
-    gChannelOneToOneTestConstPortChans[sizeof(PortChannelHandle)];
+__constant__ __align__(
+    alignof(PortChannelHandle)) unsigned char gChannelOneToOneTestConstPortChans[sizeof(PortChannelHandle)];
 
 __device__ PortChannelHandle& channelOneToOneTestPortChan() {
   return *reinterpret_cast<PortChannelHandle*>(gChannelOneToOneTestConstPortChans);
@@ -679,8 +679,7 @@ __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTr
 }
 
 static constexpr int kMaxQps = 4;
-__constant__ __align__(alignof(PortChannelHandle)) unsigned char
-    gMultiQpPortChans[kMaxQps * sizeof(PortChannelHandle)];
+__constant__ __align__(alignof(PortChannelHandle)) unsigned char gMultiQpPortChans[kMaxQps * sizeof(PortChannelHandle)];
 
 __device__ PortChannelHandle& multiQpPortChan(int q) {
   return reinterpret_cast<PortChannelHandle*>(gMultiQpPortChans)[q];
@@ -1043,8 +1042,8 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
 // each caller waits on its own TriggerSync rather than on a globally-incrementing counter
 // that could be assigned out-of-order relative to the FIFO push order.
-__constant__ __align__(alignof(PortChannelHandle)) unsigned char
-    gSingleChanForConcurrentFlush[sizeof(PortChannelHandle)];
+__constant__ __align__(
+    alignof(PortChannelHandle)) unsigned char gSingleChanForConcurrentFlush[sizeof(PortChannelHandle)];
 
 __device__ PortChannelHandle& singleChanForConcurrentFlush() {
   return *reinterpret_cast<PortChannelHandle*>(gSingleChanForConcurrentFlush);

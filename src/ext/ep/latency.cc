@@ -7,9 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <future>
-#include <string>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
+#include <string>
 
 #include "exception.hpp"
 #include "kernels.hpp"
@@ -129,7 +129,7 @@ void LatencyContext::initialize() {
     peerBufferMemories_[r] = remoteFutures[r].get();
     peerMappedBufferBases_[r] = peerBufferMemories_[r].data();
     auto semaphore =
-      std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator_, connectionFutures[r].get());
+        std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator_, connectionFutures[r].get());
     baseMemoryChannels_.emplace_back(semaphore);
     baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
   }
@@ -222,8 +222,8 @@ void LatencyContext::initialize() {
     std::fprintf(stderr,
                  "[EPTOPO] rank=%d numRanks=%d nRanksPerIpcDomain=%d numNvlRanks=%d crossDomain=%d ginOn=%d "
                  "available=%d nvlinkPeerMap=%s\n",
-                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_,
-                 (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0, ginOn, available_ ? 1 : 0, nvmap.c_str());
+                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_, (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0,
+                 ginOn, available_ ? 1 : 0, nvmap.c_str());
     std::fflush(stderr);
     if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
       std::fprintf(stderr, "[EPEXPANDED] rank=%d ipcFastPath=%d hidden=%d topk=%d\n", rank_,

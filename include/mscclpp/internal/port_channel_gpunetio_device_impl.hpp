@@ -42,9 +42,7 @@ MSCCLPP_DEVICE_INLINE uint32_t ginRemoteKey(const GpuNetIoDeviceContext& context
 MSCCLPP_DEVICE_INLINE uint32_t ginLocalKey(const GpuNetIoDeviceContext& context, int qpIndex) {
   return context.lkeys == nullptr ? context.lkey : context.lkeys[ginHcaIndex(context, qpIndex)];
 }
-MSCCLPP_DEVICE_INLINE __be32 ginHtobe32(uint32_t v) {
-  return static_cast<__be32>(__byte_perm(v, 0, 0x0123));
-}
+MSCCLPP_DEVICE_INLINE __be32 ginHtobe32(uint32_t v) { return static_cast<__be32>(__byte_perm(v, 0, 0x0123)); }
 }  // namespace detail
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
@@ -105,8 +103,8 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int peer, uint64_t remoteO
 
 MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int peer, uint64_t maxSpinCount, int qpIndex) {
   doca_gpu_dev_verbs_qp* qp = detail::ginQp(qps, peer * numQpsPerPeer + qpIndex);
-  uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-      &qp->sq_rsvd_index);
+  uint64_t ticket =
+      doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_rsvd_index);
   if (ticket == 0) return 0;
   --ticket;
 

@@ -190,9 +190,9 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +   // dispatchArrivedBaseline_
-           static_cast<size_t>(nRanks) * sizeof(uint64_t) +   // combineArrivedBaseline_
-           static_cast<size_t>(nRanks) * sizeof(int) +        // dispatchRecvCounts_
+    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // dispatchArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // combineArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRecvCounts_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_

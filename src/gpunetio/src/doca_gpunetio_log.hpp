@@ -34,10 +34,9 @@
 #include <stdio.h>
 #include <syslog.h>
 
-void doca_gpu_log_print(int log_level, const char *file, int line, const char *func,
-                        const char *fmt, ...);
+void doca_gpu_log_print(int log_level, const char *file, int line, const char *func, const char *fmt, ...);
 
-#define DOCA_LOG(LOG_LEVEL, fmt, ...)                                                    \
-    do {                                                                                 \
-        doca_gpu_log_print(LOG_LEVEL, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__); \
-    } while (0)
+#define DOCA_LOG(LOG_LEVEL, fmt, ...)                                                \
+  do {                                                                               \
+    doca_gpu_log_print(LOG_LEVEL, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__); \
+  } while (0)

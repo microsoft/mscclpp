@@ -30,31 +30,30 @@
 
 #pragma once
 
-#include <unistd.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <unordered_map>
 
 #include "doca_verbs_cuda_wrapper.h"
 
 struct doca_gpu {
-    CUdevice cuda_dev; /* CUDA device handler */
-    std::unordered_map<uintptr_t, struct doca_gpu_mtable *>
-        *mtable;                       /* Table of GPU/CPU memory allocated addresses */
-    bool support_gdrcopy;              ///< Boolean value that indicates if gdrcopy is
-                                       ///< supported
-    bool support_dmabuf;               ///< Boolean value that indicates if dmabuf is
-                                       ///< supported by the gpu
-    bool support_wq_gpumem;            ///< Boolean value that indicates if gpumem is
-                                       ///< available and nic-gpu mapping is supported
-    bool support_cq_gpumem;            ///< Boolean value that indicates if gpumem is
-                                       ///< available and nic-gpu mapping is supported
-    bool support_uar_gpumem;           ///< Boolean value that indicates if gpumem is
-                                       ///< available and gpu-nic mapping is supported
-    bool support_async_store_release;  ///< Boolean value that indicates if
-                                       ///< async store release is supported
-    bool support_bf_uar;               ///< Boolean value that indicates if BlueFlame
-                                       ///< is supported
-    bool need_mcst;                    ///< Boolean value that indicates if memory consistency
-                                       ///< algorithm is required for igress GPU data
+  CUdevice cuda_dev;                                               /* CUDA device handler */
+  std::unordered_map<uintptr_t, struct doca_gpu_mtable *> *mtable; /* Table of GPU/CPU memory allocated addresses */
+  bool support_gdrcopy;                                            ///< Boolean value that indicates if gdrcopy is
+                                                                   ///< supported
+  bool support_dmabuf;                                             ///< Boolean value that indicates if dmabuf is
+                                                                   ///< supported by the gpu
+  bool support_wq_gpumem;                                          ///< Boolean value that indicates if gpumem is
+                                                                   ///< available and nic-gpu mapping is supported
+  bool support_cq_gpumem;                                          ///< Boolean value that indicates if gpumem is
+                                                                   ///< available and nic-gpu mapping is supported
+  bool support_uar_gpumem;                                         ///< Boolean value that indicates if gpumem is
+                                                                   ///< available and gpu-nic mapping is supported
+  bool support_async_store_release;                                ///< Boolean value that indicates if
+                                                                   ///< async store release is supported
+  bool support_bf_uar;                                             ///< Boolean value that indicates if BlueFlame
+                                                                   ///< is supported
+  bool need_mcst;  ///< Boolean value that indicates if memory consistency
+                   ///< algorithm is required for igress GPU data
 };

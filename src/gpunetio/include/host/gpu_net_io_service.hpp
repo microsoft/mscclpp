@@ -7,11 +7,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string>
-#include <vector>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/port_channel_gpunetio_device.hpp>
+#include <string>
+#include <vector>
 
 namespace mscclpp {
 

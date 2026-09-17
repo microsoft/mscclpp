@@ -36,16 +36,15 @@
 #ifndef DOCA_GPUNETIO_GDRCOPY_H
 #define DOCA_GPUNETIO_GDRCOPY_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 bool doca_gpu_gdrcopy_is_supported();
-int doca_gpu_gdrcopy_create_mapping(void *dev_aligned_ptr, size_t size, void **out_mh,
-                                    void **out_host_ptr);
+int doca_gpu_gdrcopy_create_mapping(void *dev_aligned_ptr, size_t size, void **out_mh, void **out_host_ptr);
 void doca_gpu_gdrcopy_destroy_mapping(void *mh, void *host_ptr, size_t size);
 
 #ifdef __cplusplus

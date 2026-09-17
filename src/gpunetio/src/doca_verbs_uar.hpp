@@ -30,8 +30,8 @@
 
 #pragma once
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -41,77 +41,74 @@
  *  @brief This struct implements the doca verbs uar
  */
 struct doca_verbs_uar {
-   public:
-    /**
-     * @brief constructor
-     *
-     * @param [in] context
-     * ibv_context
-     * @param [in] allocation_type
-     * The uar allocation type.
-     */
-    doca_verbs_uar(struct ibv_context *context,
-                   enum doca_verbs_uar_allocation_type allocation_type);
+ public:
+  /**
+   * @brief constructor
+   *
+   * @param [in] context
+   * ibv_context
+   * @param [in] allocation_type
+   * The uar allocation type.
+   */
+  doca_verbs_uar(struct ibv_context *context, enum doca_verbs_uar_allocation_type allocation_type);
 
-    /**
-     * @brief destructor
-     */
-    ~doca_verbs_uar();
+  /**
+   * @brief destructor
+   */
+  ~doca_verbs_uar();
 
-    /**
-     * @brief destroy the uar
-     *
-     * @return
-     * DOCA_SUCCESS on successful destroy.
-     * DOCA_ERROR_DRIVER on failure to destroy the uar.
-     *
-     */
-    doca_error_t destroy() noexcept;
+  /**
+   * @brief destroy the uar
+   *
+   * @return
+   * DOCA_SUCCESS on successful destroy.
+   * DOCA_ERROR_DRIVER on failure to destroy the uar.
+   *
+   */
+  doca_error_t destroy() noexcept;
 
-    /**
-     * @brief create the uar
-     *
-     */
-    void create();
+  /**
+   * @brief create the uar
+   *
+   */
+  void create();
 
-    /**
-     * @brief Get uar ID
-     *
-     * @return uar ID
-     */
-    uint32_t get_uar_id() const noexcept { return m_uar_id; }
+  /**
+   * @brief Get uar ID
+   *
+   * @return uar ID
+   */
+  uint32_t get_uar_id() const noexcept { return m_uar_id; }
 
-    /**
-     * @brief Get UAR reg address
-     *
-     * @return UAR reg address
-     */
-    void *get_reg_addr() const noexcept { return m_reg_addr; }
+  /**
+   * @brief Get UAR reg address
+   *
+   * @return UAR reg address
+   */
+  void *get_reg_addr() const noexcept { return m_reg_addr; }
 
-    /**
-     * @brief Get DBR-less DB address
-     *
-     * @return DBR-less DB address
-     */
-    void *get_dbr_less_addr() const noexcept { return m_dbr_less_addr; }
+  /**
+   * @brief Get DBR-less DB address
+   *
+   * @return DBR-less DB address
+   */
+  void *get_dbr_less_addr() const noexcept { return m_dbr_less_addr; }
 
-    /**
-     * @brief Get UAR memory allocation type
-     *
-     * @return UAR memory allocation type
-     */
-    enum doca_verbs_uar_allocation_type get_uar_mtype() const noexcept { return m_allocation_type; }
+  /**
+   * @brief Get UAR memory allocation type
+   *
+   * @return UAR memory allocation type
+   */
+  enum doca_verbs_uar_allocation_type get_uar_mtype() const noexcept { return m_allocation_type; }
 
-   private:
-    struct mlx5dv_devx_uar *m_uar_obj{};
-    struct ibv_context *m_ibv_ctx{};
-    enum doca_verbs_uar_allocation_type m_allocation_type {
-        DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME
-    };
-    uint32_t m_uar_id{};
-    void *m_reg_addr{};
-    void *m_dbr_less_addr{};
+ private:
+  struct mlx5dv_devx_uar *m_uar_obj{};
+  struct ibv_context *m_ibv_ctx{};
+  enum doca_verbs_uar_allocation_type m_allocation_type { DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME };
+  uint32_t m_uar_id{};
+  void *m_reg_addr{};
+  void *m_dbr_less_addr{};
 
-    doca_verbs_uar(doca_verbs_uar const &) = delete;
-    doca_verbs_uar &operator=(doca_verbs_uar const &) = delete;
+  doca_verbs_uar(doca_verbs_uar const &) = delete;
+  doca_verbs_uar &operator=(doca_verbs_uar const &) = delete;
 };

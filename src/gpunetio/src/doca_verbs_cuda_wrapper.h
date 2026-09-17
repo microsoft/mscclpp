@@ -39,47 +39,42 @@ extern "C" {
 
 /* CUDA type declarations for builds without cuda.h */
 typedef enum cudaError_enum {
-    CUDA_SUCCESS = 0,
-    CUDA_ERROR_NOT_INITIALIZED = 3,
+  CUDA_SUCCESS = 0,
+  CUDA_ERROR_NOT_INITIALIZED = 3,
 } CUresult;
 typedef int CUdevice;
 typedef unsigned long long CUdeviceptr;
 typedef enum CUmemRangeHandleType_enum {
-    CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD = 0x1,
-    CU_MEM_RANGE_HANDLE_TYPE_MAX = 0x7FFFFFFF
+  CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD = 0x1,
+  CU_MEM_RANGE_HANDLE_TYPE_MAX = 0x7FFFFFFF
 } CUmemRangeHandleType;
 
 typedef enum CUpointer_attribute_enum {
-    CU_POINTER_ATTRIBUTE_SYNC_MEMOPS =
-        6, /**< Synchronize every synchronous memory operation initiated on this region */
+  CU_POINTER_ATTRIBUTE_SYNC_MEMOPS = 6, /**< Synchronize every synchronous memory operation initiated on this region */
 } CUpointer_attribute;
 
 typedef enum CUdevice_attribute_enum {
-    CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WRITES_ORDERING =
-        118, /**< GPUDirect RDMA writes to the device do not need to be flushed for consumers within
-                the scope indicated by the returned attribute. See ::CUGPUDirectRDMAWritesOrdering
-                for the numerical values returned here. */
-    CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED =
-        124, /**< Device supports buffer sharing with dma_buf mechanism. */
+  CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WRITES_ORDERING =
+      118, /**< GPUDirect RDMA writes to the device do not need to be flushed for consumers within
+              the scope indicated by the returned attribute. See ::CUGPUDirectRDMAWritesOrdering
+              for the numerical values returned here. */
+  CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED = 124, /**< Device supports buffer sharing with dma_buf mechanism. */
 } CUdevice_attribute;
 
 typedef enum CUflushGPUDirectRDMAWritesScope_enum {
-    CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER = 100, /**< Blocks until remote writes are visible to
-                                                       the CUDA device context owning the data. */
-    CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_ALL_DEVICES =
-        200 /**< Blocks until remote writes are visible to all CUDA device contexts. */
+  CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER = 100, /**< Blocks until remote writes are visible to
+                                                     the CUDA device context owning the data. */
+  CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_ALL_DEVICES =
+      200 /**< Blocks until remote writes are visible to all CUDA device contexts. */
 } CUflushGPUDirectRDMAWritesScope;
 
 typedef void *CUcontext;
 
 /* Wrapper function declarations */
 CUresult doca_verbs_wrapper_cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib, CUdevice dev);
-CUresult doca_verbs_wrapper_cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
-                                                  CUdeviceptr ptr);
-CUresult doca_verbs_wrapper_cuMemGetHandleForAddressRange(int *pHandle, CUdeviceptr dptr,
-                                                          size_t size,
-                                                          CUmemRangeHandleType handleType,
-                                                          unsigned long long flags);
+CUresult doca_verbs_wrapper_cuPointerSetAttribute(const void *value, CUpointer_attribute attribute, CUdeviceptr ptr);
+CUresult doca_verbs_wrapper_cuMemGetHandleForAddressRange(int *pHandle, CUdeviceptr dptr, size_t size,
+                                                          CUmemRangeHandleType handleType, unsigned long long flags);
 CUresult doca_verbs_wrapper_cuCtxGetCurrent(CUcontext *pctx);
 
 /* Initialization function */
