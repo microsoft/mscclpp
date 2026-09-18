@@ -37,7 +37,8 @@ class MoERuntime {
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   /// @throws EPException For an unsupported mode or invalid configuration.
-  /// @warning @p communicator must remain alive until initialize() returns.
+  /// @warning @p communicator is retained by reference and must remain alive
+  /// until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
@@ -105,7 +106,7 @@ class MoERuntime {
   DispatchHandle launchLatencyDispatch(const LatencyDispatchRequest& request);
   void launchLatencyCombine(const LatencyCombineRequest& request);
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
+  mscclpp::Communicator& communicator_;
   MoEMode mode_;
   int rank_;
   int numRanks_;

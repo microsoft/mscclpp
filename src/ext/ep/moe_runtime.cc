@@ -12,11 +12,11 @@ namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
                        int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
-    : bootstrap_(communicator.bootstrap()),
+    : communicator_(communicator),
       mode_(mode),
-      rank_(bootstrap_->getRank()),
-      numRanks_(bootstrap_->getNranks()),
-      numRanksPerIpcDomain_(std::min(numRanks_, bootstrap_->getNranksPerIpcDomain())) {
+      rank_(communicator_.bootstrap()->getRank()),
+      numRanks_(communicator_.bootstrap()->getNranks()),
+      numRanksPerIpcDomain_(std::min(numRanks_, communicator_.bootstrap()->getNranksPerIpcDomain())) {
   EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
   EP_HOST_ASSERT(numRanksPerIpcDomain_ > 0);
 
@@ -24,7 +24,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     EP_THROW("This build only supports MoEMode::LATENCY");
   }
   latencyContext_ =
-      std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numRanksPerIpcDomain_, maxTokensPerRank,
+      std::make_shared<LatencyRuntimeContext>(communicator_, rank_, numRanks_, numRanksPerIpcDomain_, maxTokensPerRank,
                                               hidden, numExperts, numTopk, outputLayout, combineMode);
   available_ = latencyContext_->available_;
 }
