@@ -41,7 +41,8 @@ class MoERuntime {
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   /// @throws EPException For an unsupported mode or invalid configuration.
-  /// @warning @p communicator must remain alive until initialize() returns.
+  /// @warning @p communicator is retained by reference and must remain alive
+  /// until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
@@ -67,8 +68,6 @@ class MoERuntime {
   int rank() const { return rank_; }
   /// Return the global rank count.
   int numRanks() const { return numRanks_; }
-  /// Return the NVLink-local rank count.
-  int numNvlRanks() const { return numNvlRanks_; }
   /// Return the rank count in one CUDA IPC domain.
   int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
 
@@ -146,11 +145,10 @@ class MoERuntime {
   void launchLatencyCombine(const LatencyCombineRequest& request);
   void launchThroughputCombine(const ThroughputCombineRequest& request);
 
-  std::shared_ptr<mscclpp::Bootstrap> bootstrap_;
+  mscclpp::Communicator& communicator_;
   MoEMode mode_;
   int rank_;
   int numRanks_;
-  int numNvlRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
   std::shared_ptr<LatencyRuntimeContext> latencyContext_;

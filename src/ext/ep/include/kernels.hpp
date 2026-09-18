@@ -20,6 +20,8 @@ inline constexpr int ThroughputCountThreads = 128;
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
+inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 
 inline constexpr bool isSupportedHidden(int hidden) {
   return hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 ||

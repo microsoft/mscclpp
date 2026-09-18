@@ -15,9 +15,8 @@ namespace mscclpp {
 namespace ep {
 
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
-                                             int numNvlRanks, int numRanksPerIpcDomain, int maxTokensPerRank,
-                                             int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                                             CombineMode combineMode)
+                                             int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
+                                             int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -43,9 +42,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode));
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
-  EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
 }
@@ -168,7 +165,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const int invalidTokenExpertId = request.invalidTokenExpertId;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = request.dispatchDataType;
-  const int numBlocks = request.numBlocks;
+  const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
   EP_HOST_ASSERT(context.available_);
@@ -251,7 +248,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
   const CombineMode mode = context.combineMode_;
-  const int numBlocks = request.numBlocks;
+  const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
   EP_HOST_ASSERT(context.available_);
