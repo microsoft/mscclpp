@@ -25,6 +25,140 @@ IMPL = "include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"
 
 
 class MultiQpTests(unittest.TestCase):
+    def test_cmake_gpunetio_prerequisites(self):
+        cmake = source("CMakeLists.txt")
+        guard = cmake[cmake.index("if(MSCCLPP_USE_GPUNETIO AND") : cmake.index("# Code coverage setup")]
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "guard.cmake"
+            script.write_text(guard)
+            for enabled, cuda, rocm, ib in product((0, 1), repeat=4):
+                result = subprocess.run(
+                    [
+                        "cmake",
+                        f"-DMSCCLPP_USE_GPUNETIO={enabled}",
+                        f"-DMSCCLPP_USE_CUDA={cuda}",
+                        f"-DMSCCLPP_USE_ROCM={rocm}",
+                        f"-DMSCCLPP_USE_IB={ib}",
+                        "-P",
+                        str(script),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode == 0, not enabled or bool(cuda and not rocm and ib), result.stderr)
+                if result.returncode:
+                    self.assertIn("requires CUDA and InfiniBand", result.stderr)
+
+    def test_service_teardown_precedes_memory_release(self):
+        context = source("src/ext/ep/latency.cc")
+        destructor = context[
+            context.index("LatencyContext::~LatencyContext()") : context.index("void LatencyContext::initialize()")
+        ]
+        native = HOST_PREAMBLE + "\n#include <memory>\n#define MSCCLPP_USE_GPUNETIO\n#define CUDA_CHECK(call) call\n"
+        native += 'int stage=0;void cudaDeviceSynchronize(){require(stage++==0,"sync order");}'
+        native += 'void cudaFree(void*){require(stage==2,"service still alive");}'
+        native += 'namespace mscclpp::detail{void gpuFreePhysical(void*){require(stage++==2,"backing memory order");}}'
+        native += 'struct Service{~Service(){require(stage++==1,"registration teardown order");}};'
+        native += "struct LatencyContext{std::unique_ptr<Service> gpuNetIoService_=std::make_unique<Service>();"
+        native += "struct{void* devicePtr_=(void*)1;}deviceContext_;void* peerMappedBufferBasesGpu_=(void*)2;"
+        native += "void* workspace_=(void*)3;void* symmetricBuffer_=(void*)4;~LatencyContext()noexcept(false);};"
+        native += destructor + 'int main(){{LatencyContext context;}require(stage==3,"all resources released");}'
+        self.run_native(native)
+
+    def test_qp_mtu_uses_both_active_ports(self):
+        service = source(SERVICE)
+        method = service[service.index("  doca_verbs_mtu_size pathMtu") : service.index("  // INIT -> RTR -> RTS")]
+        native = HOST_PREAMBLE
+        native += "enum{IBV_MTU_256=1,IBV_MTU_512,IBV_MTU_1024,IBV_MTU_2048,IBV_MTU_4096};"
+        native += "enum doca_verbs_mtu_size{DOCA_VERBS_MTU_SIZE_256_BYTES=1,DOCA_VERBS_MTU_SIZE_512_BYTES,DOCA_VERBS_MTU_SIZE_1K_BYTES,DOCA_VERBS_MTU_SIZE_2K_BYTES,DOCA_VERBS_MTU_SIZE_4K_BYTES};"
+        native += "enum class ErrorCode{InvalidUsage};struct Error:std::runtime_error{Error(const char* message,ErrorCode):std::runtime_error(message){}};"
+        native += "struct QpExchangeInfo{uint8_t activeMtu;};struct Impl{" + method + "};"
+        native += "int main(){Impl impl;for(uint8_t local=0;local<=6;++local)for(uint8_t remote=0;remote<=6;++remote){"
+        native += "bool valid=local>=1&&local<=5&&remote>=1&&remote<=5;try{auto mtu=impl.pathMtu(local,{remote});"
+        native += 'require(valid&&int(mtu)==std::min(local,remote),"MTU exceeds endpoint");}catch(const Error&){require(!valid,"valid MTU rejected");}}}'
+        self.run_native(native)
+        self.ordered(
+            function(service, "connectQp"),
+            "hcas[hcaIndex]",
+            "ibv_query_port(",
+            "pathMtu(",
+            "doca_verbs_qp_attr_set_path_mtu(attr, mtu)",
+        )
+
+    def test_generic_channel_peer_and_signals(self):
+        header = source("include/mscclpp/port_channel_device.hpp")
+        native = HOST_PREAMBLE + r"""
+#define MSCCLPP_DEVICE_COMPILE
+#define MSCCLPP_INLINE
+#define MSCCLPP_HOST_DEVICE_INLINE
+#define MSCCLPP_DEVICE_INLINE
+#define MSCCLPP_ASSERT_DEVICE(test,message) require(test,message)
+using SemaphoreId=uint32_t;using MemoryId=uint32_t;
+enum class PortChannelBackend{Proxy,GpuNetIo};
+enum{TriggerData=1,TriggerFlag=2,TriggerSync=4};
+struct ProxyTrigger{
+ uint64_t fst=0,snd=0;struct{uint64_t dstOffset,dstMemoryId,type,semaphoreId;}fields;
+ ProxyTrigger()=default;
+ ProxyTrigger(int,uint32_t,uint64_t,uint32_t,uint64_t,uint64_t,uint32_t){}
+};
+struct FifoDeviceHandle{int count=0;uint64_t push(ProxyTrigger){return count++;}};
+struct Host2DeviceSemaphoreDeviceHandle{
+ uint64_t* inboundToken;uint64_t* expectedInboundToken;
+ bool poll(){if(*inboundToken>*expectedInboundToken){++*expectedInboundToken;return true;}return false;}
+ void wait(int64_t){require(poll(),"receive signal missing");}
+};
+namespace detail{void waitFlush(uint64_t*,uint64_t,int64_t){}}
+struct GpuNetIoDeviceContext{
+ int numPeers=4,puts=0,signals=0,flushes=0;uint64_t payload=99,counter=0;
+ void put(int peer,uint64_t,uint64_t,uint64_t){require(peer==3,"put peer");++puts;}
+ void atomicAdd(int peer,uint64_t offset,int64_t value){
+  require(peer==3,"atomic peer");
+  if(offset==64){counter+=value;++signals;}
+  else require(offset==128&&value==7,"atomic offset/value");
+ }
+ void putWithSignal(int peer,uint64_t dst,uint64_t src,uint64_t bytes,uint64_t offset,uint64_t value){
+  put(peer,dst,src,bytes);atomicAdd(peer,offset,value);
+ }
+ void flush(int peer){require(peer==3,"flush peer");++flushes;}
+};
+"""
+        native += header[header.index("struct BasePortChannelDeviceHandle") : header.rindex("}  // namespace mscclpp")]
+        native += r"""
+int main(){
+ GpuNetIoDeviceContext gin;uint64_t expected=0;
+ BasePortChannelDeviceHandle channel(&gin,3,64,&gin.counter,&expected);
+ channel.semaphoreId_=12;
+ channel.put(0,0,8,0,4);channel.putWithSignal(0,0,8,0,4);
+ require(channel.poll()&&!channel.poll(),"poll consumes exactly one signal");
+ channel.signal();channel.wait();channel.putWithSignalAndFlush(0,0,8,0,4,100);channel.wait();
+ channel.atomicAdd(0,128,7);channel.flush();
+ require(gin.payload==99&&gin.puts==3&&gin.signals==3&&gin.flushes==2&&channel.fifo_.count==0,"network routing");
+ PortChannelDeviceHandle derived(&gin,3,64,&gin.counter,&expected);
+ derived.putWithSignalAndFlush(uint64_t(0),uint64_t(0),uint64_t(4),int64_t(100));derived.wait();
+ require(gin.flushes==3,"derived fused flush");
+ BasePortChannelDeviceHandle proxy(99,{&gin.counter,&expected},{},nullptr);
+ proxy.put(0,0,8,0,4);proxy.signal();proxy.putWithSignalAndFlush(0,0,8,0,4,100);
+ require(proxy.fifo_.count==3,"proxy fallback");
+}
+"""
+        self.run_native(native)
+
+    def test_storage_geometry_agreement_before_allocation(self):
+        initialize = function(source("src/ext/ep/latency.cc"), "LatencyContext::initialize")
+        begin = initialize.index("struct StorageConfig")
+        end = initialize.index("EP_HOST_ASSERT(available_);", begin)
+        agreement = initialize[begin:end]
+        native = HOST_PREAMBLE + '\n#define EP_HOST_ASSERT(test) if(!(test)) throw std::runtime_error("mismatch")\n'
+        native += "struct Bootstrap{int mismatch=0;template<class Config>void allGather(Config* values,int){"
+        native += "values[1]=values[0];if(mismatch==1)values[1].bytes++;if(mismatch==2)values[1].ipcDomainSize++;if(mismatch==3)values[1].useGpuNetIo^=1;}};"
+        native += "struct Communicator{Bootstrap state;Bootstrap* bootstrap(){return &state;}};"
+        native += "void check(Communicator* communicator_,bool useGpuNetIo_){int rank_=0,numRanks_=2,numRanksPerIpcDomain_=1;uint64_t symmetricBufferBytes_=4096;"
+        native += agreement + "}"
+        native += "int main(){for(bool network:{false,true})for(int mismatch=0;mismatch<4;++mismatch){Communicator comm;comm.state.mismatch=mismatch;bool rejected=false;"
+        native += 'try{check(&comm,network);}catch(const std::runtime_error&){rejected=true;}require(rejected==(mismatch!=0),"collective storage agreement");}}'
+        self.run_native(native)
+        self.ordered(initialize, "allGather(storageConfigs.data()", "config.bytes ==", "gpuCallocPhysical(")
+
     def test_actual_plural_hca_selection_and_list_parsing(self):
         service = source(SERVICE)
         native = HOST_PREAMBLE + "\n#include <limits>\n#include <cstdio>\n"
@@ -203,11 +337,14 @@ int main() {
   for (int hidden : {4096, 7168, 9216}) for (int topk : {1, 8, 32})
   for (auto layout : {DispatchLayout::RANK_MAJOR, DispatchLayout::EXPERT_MAJOR})
   for (auto mode : {CombineMode::RANK_LOCAL_REDUCE, CombineMode::DIRECT_SEND}) {
-    LatencyStorageLayout sizing(nullptr, capacity, hidden, ranks, 256, topk, layout, mode);
+    LatencyStorageLayout sizing(nullptr, capacity, hidden, ranks, 256, topk, layout, mode, true);
     require(sizing.gpuNetIoCombineLandingBuffer_ == nullptr, "null layout must not publish a landing pointer");
     void* allocation = mmap(nullptr, sizing.totalBytes_, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     require(allocation != MAP_FAILED, "virtual address reservation failed");
-    LatencyStorageLayout current(allocation, capacity, hidden, ranks, 256, topk, layout, mode);
+    LatencyStorageLayout current(allocation, capacity, hidden, ranks, 256, topk, layout, mode, true);
+    LatencyStorageLayout ipc(allocation, capacity, hidden, ranks, 256, topk, layout, mode);
+    require(ipc.totalBytes_ < current.totalBytes_ && !ipc.gpuNetIoStagingBuffer_ && !ipc.gpuNetIoCombineLandingBuffer_, "IPC allocated network storage");
+    require(ipc.dispatchOutputBuffer_ == current.dispatchOutputBuffer_ && ipc.combineRecvBuffer_ == current.combineRecvBuffer_, "IPC base offsets changed");
     PreviousLayout previous(allocation, capacity, hidden, ranks, 256, topk, layout, mode);
     require(current.dispatchRecvBuffer_ == previous.dispatchRecvBuffer_ &&
             current.combineRecvBuffer_ == previous.combineRecvBuffer_ &&
@@ -458,7 +595,7 @@ int main() {
     def test_configuration_agreement_precedes_variable_sized_exchange(self):
         self.ordered(
             function(source(SERVICE), "GpuNetIoService::setup"),
-            "int requestedQps = qpsEnv == nullptr ? nHcas : std::max(1, std::atoi(qpsEnv));",
+            "int requestedQps = qpsEnv == nullptr ? nHcas : std::atoi(qpsEnv);",
             "s.bootstrap->allGather(configAll.data(), static_cast<int>(sizeof(ConfigExchangeInfo)));",
             "config.numQpsPerPeer > 64",
             "config.numQpsPerPeer % config.numHcas != 0",

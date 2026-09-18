@@ -41,6 +41,7 @@ struct LatencyContext {
   int numRanksPerIpcDomain_;
   int numNvlRanks_ = 0;
   bool available_ = false;
+  bool useGpuNetIo_ = false;
   int deviceId_;
   int maxTokensPerRank_;
   int hidden_;

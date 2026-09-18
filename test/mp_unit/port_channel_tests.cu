@@ -1123,23 +1123,25 @@ __global__ void kernelGpuNetIoP2P(mscclpp::GpuNetIoDeviceContext* ctx, int rank,
                                   uint64_t signalOffset, int* ret) {
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
   constexpr uint64_t kMaxSpins = 100000000ULL;
+  auto* inbound = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(buff) + signalOffset);
+  mscclpp::PortChannelDeviceHandle channel(ctx, peer, signalOffset, inbound, inbound + 1);
   if (rank == 0) {
     ret[0] = 10;
     buff[0] = 42;
     __threadfence_system();
     // RDMA-write the 4-byte payload to the peer's symmetric buffer and fuse a
     // remote atomic-add signal that becomes visible only after the payload.
-    ctx->putWithSignal(peer, /*dstOffset=*/0, /*srcOffset=*/0, sizeof(int), signalOffset, /*signalValue=*/1);
+    channel.putWithSignal(uint64_t{0}, uint64_t{0}, sizeof(int));
     ret[0] = 20;
     ret[1] = ctx->tryFlush(peer, kMaxSpins);
     ret[0] = (ret[1] == 0) ? 30 : 31;
   } else {
-    volatile int* sig = reinterpret_cast<volatile int*>(reinterpret_cast<char*>(buff) + signalOffset);
     uint64_t spin = 0;
-    while (*sig == 0 && spin++ < kMaxSpins) {
+    bool signaled = false;
+    while (!(signaled = channel.poll()) && spin++ < kMaxSpins) {
     }
-    ret[0] = (*sig != 0) ? 50 : 40;
-    ret[1] = (*sig != 0) ? buff[0] : *sig;
+    ret[0] = signaled ? 50 : 40;
+    ret[1] = signaled ? buff[0] : 0;
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
@@ -1169,6 +1171,7 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
     svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
     svc->setup(symBuf, bytes);
   } catch (const mscclpp::Error& e) {
+    svc.reset();
     MSCCLPP_CUDATHROW(cudaFree(symBuf));
     SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
     return;
@@ -1196,6 +1199,7 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
   }
 
   MSCCLPP_CUDATHROW(cudaFree(retDev));
+  svc.reset();
   MSCCLPP_CUDATHROW(cudaFree(symBuf));
 #else
   SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";

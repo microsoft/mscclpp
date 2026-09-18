@@ -220,11 +220,12 @@ class ExpandedTests(unittest.TestCase):
         native += r"""
 int main() {
   for (int ranks : {1,2,8,16,32,64}) for (int capacity : {1,8,133,32769}) for (int topk : {1,8,9}) {
+    for (bool network : {false,true}) {
     constexpr int hidden=4096;
-    LatencyStorageLayout size(nullptr,capacity,hidden,ranks,ranks,topk,DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,CombineMode::RANK_LOCAL_REDUCE);
+    LatencyStorageLayout size(nullptr,capacity,hidden,ranks,ranks,topk,DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,CombineMode::RANK_LOCAL_REDUCE,network);
     void* allocation=mmap(nullptr,size.totalBytes_,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     require(allocation!=MAP_FAILED,"address reservation");
-    LatencyStorageLayout layout(allocation,capacity,hidden,ranks,ranks,topk,DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,CombineMode::RANK_LOCAL_REDUCE);
+    LatencyStorageLayout layout(allocation,capacity,hidden,ranks,ranks,topk,DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,CombineMode::RANK_LOCAL_REDUCE,network);
     auto* base=static_cast<uint8_t*>(allocation);
     const size_t rows=static_cast<size_t>(ranks)*capacity*topk;
     require(layout.dispatchOutputBytes_==rows*hidden*2,"expanded payload size");
@@ -238,14 +239,23 @@ int main() {
     region(layout.rankMajorTopkIdsBuffer_,rows*sizeof(int));
     region(layout.rankMajorTopkWeightsBuffer_,rows*sizeof(float));
     region(layout.dispatchOutputBuffer_,rows*hidden*2);
+    if (network) {
     region(layout.gpuNetIoStagingBuffer_,static_cast<size_t>(std::max(capacity,32768))*layout.gpuNetIoSlotStride_);
+    }
     region(layout.gpuNetIoFlagsBuffer_,ranks*64*sizeof(uint64_t));
     region(layout.gpuNetIoCombineFlagsBuffer_,ranks*64*sizeof(uint64_t));
+    if (network) {
     region(layout.gpuNetIoCombineLandingBuffer_,rows*hidden*2);
     region(layout.expandedSendIds_,rows*sizeof(int));region(layout.expandedSendWeights_,rows*sizeof(float));
+        } else {
+            require(!layout.gpuNetIoStagingBuffer_ && !layout.gpuNetIoCombineLandingBuffer_,"disabled network pointers");
+            require(!layout.expandedSendIds_ && !layout.expandedSendWeights_ && !layout.expandedCountStaging_,"disabled outbound metadata");
+        }
     region(layout.expandedSyncFlags_,ranks*sizeof(uint64_t));region(layout.expandedSyncEpoch_,sizeof(uint64_t));
-    region(layout.expandedCounts_,ranks*sizeof(int));region(layout.expandedCountStaging_,ranks*sizeof(int));
+    region(layout.expandedCounts_,ranks*sizeof(int));
+    if (network) region(layout.expandedCountStaging_,ranks*sizeof(int));
     require(munmap(allocation,size.totalBytes_)==0,"release");
+   }
   }
 }
 """
@@ -543,7 +553,11 @@ int main() {
             "dispatchSendRankMajorTopkExpandedBf16",
             "postRemoteDispatchMetadataAndMarkers",
         ):
-            self.assertEqual(code(function(current, name)), code(function(old, name)))
+            current_body = function(current, name)
+            if name in ("dispatchTopkExpandedKernel", "combineTopkExpandedKernel"):
+                self.assertIn("context->gpuNetIo_ != nullptr", current_body)
+                current_body = current_body.replace(", context->gpuNetIo_ != nullptr", "")
+            self.assertEqual(code(current_body), code(function(old, name)))
         for name, kernel in (("launchDispatch", "dispatchKernel"), ("launchCombine", "combineKernel")):
             launch = function(current, name)
             self.assertLess(

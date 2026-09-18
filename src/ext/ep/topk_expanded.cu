@@ -348,7 +348,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   WorkspaceView state(context->workspace_, context->numRanks_, work.numExperts_);
   const LatencyStorageLayout layout(context->localBufferBase_, work.maxTokensPerRank_, Hidden, context->numRanks_,
                                     work.numExperts_, work.numTopk_, DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,
-                                    CombineMode::RANK_LOCAL_REDUCE);
+                                    CombineMode::RANK_LOCAL_REDUCE, context->gpuNetIo_ != nullptr);
   const uint64_t target = state.dispatchArrivedBaseline_[context->rank_] + 1;
   if (blockIdx.x < gridDim.x - 1)
     dispatchSendRankMajorTopkExpandedBf16<Hidden>(output, outputIds, outputWeights, input, topkIds, weights, work,
@@ -558,7 +558,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineTopkExpandedKernel(
   WorkspaceView state(context->workspace_, context->numRanks_, work.numExperts_);
   const LatencyStorageLayout layout(context->localBufferBase_, work.maxTokensPerRank_, Hidden, context->numRanks_,
                                     work.numExperts_, work.numTopk_, DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,
-                                    CombineMode::RANK_LOCAL_REDUCE);
+                                    CombineMode::RANK_LOCAL_REDUCE, context->gpuNetIo_ != nullptr);
   auto* flags = static_cast<uint64_t*>(layout.gpuNetIoCombineFlagsBuffer_);
   const uint64_t target = state.combineArrivedBaseline_[context->rank_] + 1;
   if (blockIdx.x == 0) {

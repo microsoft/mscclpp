@@ -400,10 +400,15 @@ class NativeSourceTests(unittest.TestCase):
             code("""{
               available_ = (outputLayout_ == DispatchLayout::RANK_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
                            combineMode_ == CombineMode::RANK_LOCAL_REDUCE;
+              useGpuNetIo_ = available_;
             }"""),
         )
         initialize = function(context, "LatencyContext::initialize")
         self.assert_ordered(initialize, "EP_HOST_ASSERT(available_);", "svc->setup(")
+        self.assert_ordered(initialize, "allGather(storageConfigs.data()", "config.bytes ==", "gpuCallocPhysical(")
+        self.assertIn("config.useGpuNetIo ==", initialize)
+        self.assertIn("config.ipcDomainSize ==", initialize)
+        self.assertNotIn('getenv("MSCCLPP_EP_ENABLE_GPUNETIO")', initialize)
 
 
 class ArrivalModel:

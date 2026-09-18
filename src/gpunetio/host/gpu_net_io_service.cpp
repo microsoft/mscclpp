@@ -248,11 +248,12 @@ struct GpuNetIoService::Impl {
     std::memcpy(outGid, gid.raw, 16);
   }
 
-  doca_verbs_mtu_size pathMtu(const QpExchangeInfo& remote) const {
-    uint8_t mtu = remote.activeMtu;
-    if (mtu == 0) {
-      mtu = IBV_MTU_1024;
+  doca_verbs_mtu_size pathMtu(uint8_t localMtu, const QpExchangeInfo& remote) const {
+    if (localMtu < IBV_MTU_256 || localMtu > IBV_MTU_4096 || remote.activeMtu < IBV_MTU_256 ||
+        remote.activeMtu > IBV_MTU_4096) {
+      throw Error("Invalid active MTU for GPUNetIO QP", ErrorCode::InvalidUsage);
     }
+    const uint8_t mtu = std::min(localMtu, remote.activeMtu);
     switch (mtu) {
       case IBV_MTU_256:
         return DOCA_VERBS_MTU_SIZE_256_BYTES;
@@ -272,6 +273,11 @@ struct GpuNetIoService::Impl {
   // INIT -> RTR -> RTS for one QP, targeting the given remote info.
   void connectQp(int hcaIndex, struct doca_gpu_verbs_qp_hl* qp, const QpExchangeInfo& remote) {
     auto& hca = hcas[hcaIndex];
+    ibv_port_attr localPortAttr{};
+    if (ibv_query_port(hca.ibCtx->getContext(), portNum, &localPortAttr) != 0) {
+      throw Error("ibv_query_port failed for GPUNetIO QP", ErrorCode::SystemError);
+    }
+    const auto mtu = pathMtu(static_cast<uint8_t>(localPortAttr.active_mtu), remote);
     struct doca_verbs_ah_attr* ah = nullptr;
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_create(hca.ibCtx->getContext(), &ah));
     struct doca_verbs_gid vgid;
@@ -307,7 +313,7 @@ struct GpuNetIoService::Impl {
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_next_state(attr, DOCA_VERBS_QP_STATE_RTR));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_rq_psn(attr, 0));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_dest_qp_num(attr, remote.qpn));
-    MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, pathMtu(remote)));
+    MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, mtu));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ah_attr(attr, ah));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_min_rnr_timer(attr, 12));
     MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, 1));

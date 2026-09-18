@@ -70,7 +70,7 @@ void* MoERuntime::dispatchOutputBuffer() const {
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
       return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
                                   context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                                  context.combineMode_)
+                                  context.combineMode_, context.useGpuNetIo_)
           .dispatchOutputBuffer_;
     }
     case MoEMode::THROUGHPUT: {
