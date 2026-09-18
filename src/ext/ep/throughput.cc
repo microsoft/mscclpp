@@ -150,15 +150,6 @@ Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerR
           .dispatchDataType_ = dataType};
 }
 
-const int* MoERuntime::numRecvTokensDevicePtr() const {
-  requireMode(MoEMode::THROUGHPUT);
-  const auto& context = *throughputContext_;
-  EP_HOST_ASSERT(context.workspace_ != nullptr);
-  return ThroughputWorkspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
-                                   context.numExperts_, context.numTopk_)
-      .numRecvTokens_;
-}
-
 void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& request) const {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(deviceContext_.devicePtr_ != nullptr);

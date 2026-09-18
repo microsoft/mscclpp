@@ -17,7 +17,14 @@ if importlib.util.find_spec("mscclpp.mscclpp_ep_cpp") is None:
 
 from mscclpp import CommGroup
 from mscclpp._mscclpp import Error as MscclppError
-from mscclpp.ep import CombineMode, DispatchDataType, DispatchLayout, MoECommunicator, MoEMode, QuantConfig
+from mscclpp.ep import (
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    MoECommunicator,
+    MoEMode,
+    QuantConfig,
+)
 
 
 @pytest.fixture(scope="module")
@@ -114,6 +121,7 @@ def test_dispatch_combine(ep_group, mode, layout, data_type, combine_mode):
             )
             assert result.tokens.data_ptr() == runtime.get_dispatch_output_buffer().data_ptr()
             assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
+            assert result.layout is handle.output_info.layout
             if layout == DispatchLayout.EXPERT_MAJOR:
                 counts = result.layout.num_tokens_per_expert
                 valid_rows = torch.arange(ep_group.nranks * active_capacity, device="cuda")[None, :] < counts[:, None]
@@ -122,19 +130,20 @@ def test_dispatch_combine(ep_group, mode, layout, data_type, combine_mode):
                 valid_rows = torch.arange(active_capacity, device="cuda")[None, :] < counts[:, None]
             else:
                 counts = result.layout.num_tokens_per_expert
-                valid_rows = (
-                    torch.arange(ep_group.nranks * active_capacity, device="cuda") < result.layout.num_recv_tokens
-                )
+                valid_rows = None
             tokens = result.tokens.float()
             if fp8:
                 assert result.quant.block_scales.dtype == torch.float32
                 assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], hidden // 128)
                 tokens = tokens * result.quant.block_scales.repeat_interleave(128, dim=-1)
-            tokens = torch.where(valid_rows[..., None], tokens, 0)
+            if valid_rows is not None:
+                tokens = torch.where(valid_rows[..., None], tokens, 0)
             if layout == DispatchLayout.EXPERT_MAJOR:
                 expert_output = tokens.to(torch.bfloat16)
             else:
-                local_weights = torch.where(valid_rows[..., None], result.weights, 0)
+                local_weights = (
+                    result.weights if valid_rows is None else torch.where(valid_rows[..., None], result.weights, 0)
+                )
                 if mode == MoEMode.LATENCY and combine_mode == CombineMode.DIRECT_SEND:
                     expert_output = (tokens[..., None, :] * local_weights[..., None]).to(torch.bfloat16)
                 else:
@@ -153,7 +162,6 @@ def test_dispatch_combine(ep_group, mode, layout, data_type, combine_mode):
             torch.testing.assert_close(combined_weights, expected_weights, rtol=0, atol=0)
 
         expected_counts = [0] * (ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else 4)
-        expected_rows = 0
         for source in range(ep_group.nranks):
             for token in range(num_tokens):
                 local_routes = [
@@ -162,15 +170,12 @@ def test_dispatch_combine(ep_group, mode, layout, data_type, combine_mode):
                     if expert >= 0 and expert // 4 == ep_group.my_rank
                 ]
                 if local_routes:
-                    expected_rows += 1
                     if layout == DispatchLayout.RANK_MAJOR:
                         expected_counts[source] += 1
                 if layout != DispatchLayout.RANK_MAJOR:
                     for expert in local_routes:
                         expected_counts[expert % 4] += 1
         assert counts.cpu().tolist() == expected_counts
-        if mode == MoEMode.THROUGHPUT:
-            assert result.layout.num_recv_tokens.item() == expected_rows
 
 
 def test_preparation_reuse_and_invalidation(ep_group):
@@ -207,7 +212,6 @@ def test_preparation_reuse_and_invalidation(ep_group):
             result, handle = runtime.dispatch(input, routes, stream=stream, prepare_handle=empty)
             output = runtime.combine(result.tokens, handle, stream=stream)
         stream.synchronize()
-        assert result.layout.num_recv_tokens.item() == 0
         torch.testing.assert_close(output, torch.zeros_like(output), rtol=0, atol=0)
 
 
@@ -302,7 +306,6 @@ def test_empty_dispatch(ep_group):
             output = runtime.combine(result.tokens, handle, stream=stream)
         stream.synchronize()
         assert output.shape == (0, 136)
-        assert result.layout.num_recv_tokens.item() == 0
 
 
 def test_runtime_buffer_view_lifetime(ep_group):

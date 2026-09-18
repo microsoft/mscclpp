@@ -79,17 +79,6 @@ class MoERuntime {
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
   void* combineInputBuffer() const;
-  /// Return a borrowed device pointer to the throughput receive-row count.
-  ///
-  /// Preparation updates this count asynchronously. Consume it on the same stream
-  /// after preparation, without a host readback. The count excludes duplicate
-  /// destinations and rank-major padding, and is overwritten by the next preparation.
-  /// The returned pointer remains valid until this runtime is destroyed. Do not write
-  /// to this scalar: it is runtime-owned routing metadata.
-  /// @return A borrowed, read-only pointer to one device-resident int.
-  /// @throws EPException If the runtime is not initialized or is not in THROUGHPUT mode.
-  const int* numRecvTokensDevicePtr() const;
-
   /// Collectively prepare throughput routing without moving token payloads.
   ///
   /// Computes each token's distinct destination ranks and stable local offsets,
