@@ -150,7 +150,7 @@ Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerR
           .dispatchDataType_ = dataType};
 }
 
-const int* MoERuntime::numRecvTokensBuffer() const {
+const int* MoERuntime::numRecvTokensDevicePtr() const {
   requireMode(MoEMode::THROUGHPUT);
   const auto& context = *throughputContext_;
   EP_HOST_ASSERT(context.workspace_ != nullptr);

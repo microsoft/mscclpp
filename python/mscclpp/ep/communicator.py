@@ -24,10 +24,10 @@ from .types import (
     QuantConfig,
 )
 from .utils import (
-    check_no_overlap,
     check_tensor,
     ptr,
     record_stream,
+    requires_initialized,
     resolve_dispatch_data_type,
     resolve_num_blocks,
     tensor_from_pointer,
@@ -38,9 +38,10 @@ class MoECommunicator:
     """Collective MoE dispatch/combine on one caller-owned CUDA stream.
 
     LATENCY defaults to EXPERT_MAJOR; THROUGHPUT defaults to TOKEN_MAJOR.
-    Initialize collectively before graph capture. Operations otherwise initialize
-    lazily. Host calls must be serialized, and expert computation must use the
-    same stream as communication. This interface supplies no autograd backward.
+    Construction and collective initialization must precede graph capture.
+    Operations otherwise initialize lazily. Host calls must be serialized, and
+    expert computation must use the same stream as communication. This interface
+    supplies no autograd backward.
     """
 
     def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
@@ -52,8 +53,6 @@ class MoECommunicator:
         self._initialized = False
         self._stream: Optional[torch.cuda.Stream] = None
         with torch.cuda.device(self.device):
-            if torch.cuda.is_current_stream_capturing():
-                raise RuntimeError("construct and initialize MoECommunicator before CUDA graph capture")
             self._runtime = _cpp.create_moe_runtime(
                 comm=self.comm.communicator,
                 mode=self.mode,
@@ -148,8 +147,7 @@ class MoECommunicator:
 
     def is_available(self) -> bool:
         """Return native support for this runtime's mode and topology."""
-        with torch.cuda.device(self.device):
-            return self._runtime.is_available()
+        return self._runtime.is_available()
 
     def is_initialized(self) -> bool:
         """Return whether collective resource initialization has completed."""
@@ -160,11 +158,10 @@ class MoECommunicator:
         if self._initialized:
             return
         with torch.cuda.device(self.device):
-            if torch.cuda.is_current_stream_capturing():
-                raise RuntimeError("call initialize() collectively before CUDA graph capture")
             self._runtime.initialize()
             self._initialized = True
 
+    @requires_initialized
     def get_dispatch_output_buffer(
         self,
         *,
@@ -180,11 +177,11 @@ class MoECommunicator:
         active = self._capacity(runtime_max_tokens_per_rank)
         data_type, _ = self._dispatch_format(quant)
         with torch.cuda.device(self.device):
-            self.initialize()
             return self._view(
                 self._runtime.dispatch_output_buffer_ptr(), self._dispatch_shape(active), _payload_dtype(data_type)
             )
 
+    @requires_initialized
     def prepare(
         self,
         topk_ids: torch.Tensor,
@@ -205,8 +202,7 @@ class MoECommunicator:
         if num_tokens > active:
             raise ValueError("topk_ids token count exceeds runtime_max_tokens_per_rank")
         caller_stream = self._resolve_stream(stream)
-        with torch.cuda.device(self.device), torch.cuda.stream(caller_stream):
-            self.initialize()
+        with torch.cuda.stream(caller_stream):
             record_stream((topk_ids,), caller_stream)
             native = self._runtime.prepare(
                 topk_idx_ptr=ptr(topk_ids),
@@ -227,6 +223,7 @@ class MoECommunicator:
             _stream=caller_stream,
         )
 
+    @requires_initialized
     def dispatch(
         self,
         input: torch.Tensor,
@@ -245,6 +242,8 @@ class MoECommunicator:
         global expert IDs or negative dropped routes. Optional weights are
         CUDA FP32 with the same shape; omitted weights mean one per valid route.
         Routing values are not copied to or inspected on the host.
+        Inputs must not overlap the output or runtime receive storage written
+        by this operation. Aliasing is a caller precondition and is not checked.
         """
         active = self._capacity(runtime_max_tokens_per_rank)
         data_type, input_scales = self._dispatch_format(quant)
@@ -276,8 +275,7 @@ class MoECommunicator:
                 raise ValueError("prepare_handle routing pointer, token count, and active capacity must match dispatch")
         caller_stream = self._resolve_stream(stream)
 
-        with torch.cuda.device(self.device), torch.cuda.stream(caller_stream):
-            self.initialize()
+        with torch.cuda.stream(caller_stream):
             runtime_output_ptr = self._runtime.dispatch_output_buffer_ptr()
             if (
                 self.mode == MoEMode.LATENCY
@@ -291,10 +289,6 @@ class MoECommunicator:
                 if output_buffer is None or ptr(output_buffer) == runtime_output_ptr
                 else output_buffer
             )
-            for tensor in (input, topk_ids, weights, input_scales):
-                if tensor is not None:
-                    check_no_overlap(tensor, tokens, "dispatch inputs and output_buffer")
-
             rank_major = self.output_layout == DispatchLayout.RANK_MAJOR
             count = torch.empty(
                 (self.world_size if rank_major else self.num_local_experts,), dtype=torch.int32, device=self.device
@@ -332,7 +326,7 @@ class MoECommunicator:
                 else self._view(self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), torch.bfloat16)
             )
             num_recv_tokens = (
-                self._view(self._runtime.num_recv_tokens_buffer_ptr(), (), torch.int32)
+                self._view(self._runtime.num_recv_tokens_device_ptr(), (), torch.int32)
                 if self.mode == MoEMode.THROUGHPUT
                 else None
             )
@@ -419,7 +413,6 @@ class MoECommunicator:
             _num_tokens=num_tokens,
             _active_capacity=active,
             _tensors=retained,
-            _combine_input_buffer=combine_input,
             _stream=caller_stream,
         )
         return output, handle
@@ -439,31 +432,24 @@ class MoECommunicator:
         layouts require already-weighted local expert sums (per-topk results
         for latency DIRECT_SEND). Throughput optionally writes combined weights
         into ``output_topk_weights``, a CUDA FP32 ``[local_num_tokens, topk]`` tensor.
+        Outputs must not overlap each other, expert inputs, or runtime combine
+        storage. Expert inputs may exactly reuse ``combine_input_buffer``, but
+        partial overlap is unsupported. The caller must ensure these conditions;
+        buffer aliasing is not checked.
         """
         self._validate_handle(handle, DispatchHandle)
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), torch.bfloat16)
         output_shape = (handle._num_tokens, self.hidden_size)
         if out is not None:
             self._check(out, "out", output_shape, torch.bfloat16)
-            check_no_overlap(out, expert_output, "out and expert_output")
         if output_topk_weights is not None:
             if self.mode != MoEMode.THROUGHPUT:
                 raise ValueError("output_topk_weights is supported only in THROUGHPUT mode")
             self._check(output_topk_weights, "output_topk_weights", (handle._num_tokens, self.topk), torch.float32, 4)
-            check_no_overlap(output_topk_weights, expert_output, "output_topk_weights and expert_output")
         caller_stream = self._resolve_stream(stream)
-        with torch.cuda.device(self.device), torch.cuda.stream(caller_stream):
+        with torch.cuda.stream(caller_stream):
             if out is None:
                 out = torch.empty(output_shape, dtype=torch.bfloat16, device=self.device)
-            required_input = handle._combine_input_buffer
-            if required_input is not None:
-                check_no_overlap(out, required_input, "out and the runtime combine buffer")
-                if ptr(expert_output) != ptr(required_input):
-                    check_no_overlap(expert_output, required_input, "expert_output and the runtime combine buffer")
-            if output_topk_weights is not None:
-                check_no_overlap(out, output_topk_weights, "out and output_topk_weights")
-                if required_input is not None:
-                    check_no_overlap(output_topk_weights, required_input, "output_topk_weights and the runtime buffer")
             record_stream((*handle._tensors, expert_output, out, output_topk_weights), caller_stream)
             if self.mode == MoEMode.LATENCY:
                 self._runtime.combine_latency(

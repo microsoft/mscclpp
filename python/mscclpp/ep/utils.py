@@ -5,12 +5,24 @@
 
 from __future__ import annotations
 
+from functools import wraps
 from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 
 from ._cpp import DispatchDataType
 from .types import QuantConfig
+
+
+def requires_initialized(method):
+    """Initialize the communicator once before entering an operation."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        self.initialize()
+        return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 def resolve_num_blocks(
@@ -61,7 +73,7 @@ def check_tensor(
     device: torch.device,
     alignment: int,
 ) -> None:
-    """Check host-visible tensor metadata before any native GPU enqueue."""
+    """Check host-visible tensor metadata before submitting communication work."""
     if not isinstance(tensor, torch.Tensor):
         raise TypeError(f"{name} must be a torch.Tensor")
     if tensor.layout != torch.strided or not tensor.is_contiguous():
@@ -81,16 +93,6 @@ def check_tensor(
         raise ValueError(f"{name} must have allocated CUDA storage")
     if pointer % alignment:
         raise ValueError(f"{name} must be {alignment}-byte aligned")
-
-
-def check_no_overlap(left: torch.Tensor, right: torch.Tensor, names: str) -> None:
-    """Reject overlapping contiguous buffers that are read and written concurrently."""
-    if left.numel() == 0 or right.numel() == 0:
-        return
-    left_end = left.data_ptr() + left.numel() * left.element_size()
-    right_end = right.data_ptr() + right.numel() * right.element_size()
-    if left.data_ptr() < right_end and right.data_ptr() < left_end:
-        raise ValueError(f"{names} must not overlap")
 
 
 def record_stream(tensors: Iterable[Optional[torch.Tensor]], stream: torch.cuda.Stream) -> None:

@@ -75,7 +75,12 @@ resources. The wrapper itself does not synchronize on destruction.
 All ranks must configure matching dimensions, layout, capacity, and algorithms,
 and invoke collectives in the same order. Initialization is idempotent and is
 otherwise performed lazily by `prepare`, `dispatch`, or
-`get_dispatch_output_buffer`. Passing a `MoECommunicatorConfig` instead of
+`get_dispatch_output_buffer` through the shared initialization decorator.
+Construction and initialization before graph capture are caller preconditions;
+the Python wrapper does not query capture state. An explicit `device` is honored
+during native construction and initialization, even when another CUDA device is
+current; the previous device is restored afterward. Operations use the caller
+stream's device scope. Passing a `MoECommunicatorConfig` instead of
 constructor keywords is equivalent.
 
 ## Shapes, counts, and computation
@@ -150,6 +155,14 @@ must have the exact active shape, dtype, device, and contiguous layout.
 `get_dispatch_output_buffer(quant=..., runtime_max_tokens_per_rank=...)` returns
 a correctly shaped runtime view without moving data.
 
+**Buffer aliasing is the caller's responsibility and is not checked.**
+Dispatch payload, routing, and scale inputs must not overlap its output or
+runtime receive storage written by the operation. Combine outputs must be
+disjoint from each other, expert inputs, and runtime combine storage. Expert
+results may use the exact runtime `combine_input_buffer`; otherwise they must
+not overlap it. These restrictions apply on a single stream too: arbitrary
+in-place operations and partially overlapping copies are unsupported.
+
 Throughput's runtime dispatch and BF16 combine views **share physical storage**.
 After FP8 dispatch, consume the FP8 data into separate expert-output storage
 before writing BF16 into `combine_input_buffer`; never expand FP8 to BF16
@@ -177,8 +190,8 @@ in-place while reading it. Runtime views are reused, not independent results.
   allocator reuse. This is not cross-stream execution or peer synchronization.
   The caller must complete **all local and peer GPU use** before releasing the
   last runtime, handle, or view.
-* Initialize outside CUDA graph capture. Preparation/dispatch/combine may be
-  captured on the same stream. Handle checks occur while capturing, not on
+* Construct and initialize outside CUDA graph capture. Preparation/dispatch/combine
+  may be captured on the same stream. Handle checks occur while capturing, not on
   replay: preserve graph ordering, routing, buffers, and owners through the last
   replay. A graph reusing preparation without recomputing it needs unchanged
   routing.
