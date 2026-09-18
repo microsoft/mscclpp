@@ -325,19 +325,6 @@ class MoECommunicator:
                 if self.output_layout == DispatchLayout.EXPERT_MAJOR
                 else self._view(self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), torch.bfloat16)
             )
-            num_recv_tokens = (
-                self._view(self._runtime.num_recv_tokens_device_ptr(), (), torch.int32)
-                if self.mode == MoEMode.THROUGHPUT
-                else None
-            )
-            layout = DispatchLayoutInfo(
-                kind=self.output_layout,
-                num_tokens_per_expert=None if rank_major else count,
-                num_tokens_per_rank=count if rank_major else None,
-                num_recv_tokens=num_recv_tokens,
-            )
-            output_quant = None if scales is None else QuantConfig(format=data_type, block_scales=scales)
-            output_info = DispatchOutputInfo(layout=layout, quant=output_quant)
             retained = tuple(
                 tensor
                 for tensor in (
@@ -353,7 +340,6 @@ class MoECommunicator:
                     recv_weights,
                     count,
                     combine_input,
-                    num_recv_tokens,
                 )
                 if tensor is not None
             )
@@ -396,6 +382,13 @@ class MoECommunicator:
                     prepare_handle=_cpp.PrepareHandle() if prepare_handle is None else prepare_handle._native,
                 )
             self._bind_stream(caller_stream)
+            layout = DispatchLayoutInfo(
+                kind=self.output_layout,
+                num_tokens_per_expert=None if rank_major else count,
+                num_tokens_per_rank=count if rank_major else None,
+            )
+            output_quant = None if scales is None else QuantConfig(format=data_type, block_scales=scales)
+            output_info = DispatchOutputInfo(layout=layout, quant=output_quant)
 
         output = DispatchOutput(
             tokens=tokens,

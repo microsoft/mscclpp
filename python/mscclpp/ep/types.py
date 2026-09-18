@@ -58,14 +58,13 @@ class MoECommunicatorConfig:
 
 @dataclass
 class DispatchLayoutInfo:
-    """GPU-resident counts describing valid rows inside capacity-sized tensors.
+    """GPU-resident per-expert or per-rank counts for dispatched tensors.
 
-    TOKEN_MAJOR rows are dense only up to ``num_recv_tokens``; per-expert counts
-    cannot be summed to obtain this value when tokens select multiple local
-    experts. RANK_MAJOR uses ``num_tokens_per_rank`` to bound each source rank.
+    TOKEN_MAJOR outputs are capacity-sized; the native combine operation uses
+    private routing metadata and ignores unused tail rows. Its per-expert counts
+    count routes and do not define disjoint token ranges.
+    RANK_MAJOR uses ``num_tokens_per_rank`` to bound each source rank.
     EXPERT_MAJOR uses ``num_tokens_per_expert`` to bound each local expert.
-    ``num_recv_tokens`` is a borrowed read-only scalar overwritten by preparation.
-    Do not modify it; PyTorch cannot enforce read-only access to this storage.
     No count is read back to the host. ``offsets`` is reserved and is not populated.
     """
 
@@ -73,12 +72,6 @@ class DispatchLayoutInfo:
     num_tokens_per_expert: Optional[torch.Tensor] = None
     offsets: Optional[torch.Tensor] = None
     num_tokens_per_rank: Optional[torch.Tensor] = None
-    num_recv_tokens: Optional[torch.Tensor] = None
-
-    @property
-    def num_tokens(self) -> Optional[torch.Tensor]:
-        """Alias for the throughput runtime's scalar GPU receive-row count."""
-        return self.num_recv_tokens
 
 
 @dataclass

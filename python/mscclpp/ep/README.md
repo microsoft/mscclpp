@@ -51,10 +51,9 @@ def main():
             x, ids, weights, prepare_handle=routing, stream=stream
         )
 
-        # The receive count stays on the GPU; capacity tails are unspecified.
-        valid = torch.arange(received.tokens.shape[0], device=device) < received.layout.num_recv_tokens
-        # Identity expert, topk=1, weight=1: already weighted and locally aggregated.
-        expert_output = torch.where(valid[:, None], received.tokens, 0)
+        # Identity expert, topk=1, weight=1. The tensor is capacity-sized;
+        # native combine ignores rows outside its private routing metadata.
+        expert_output = received.tokens
         result = moe.combine(expert_output, handle, stream=stream)
 
     # Caller-owned completion, only for checking the example and safe teardown.
@@ -97,16 +96,13 @@ kernel is introduced.
 | --- | --- | --- | --- |
 | LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | BF16 per-expert results; native combine applies the original routing weights |
 | LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | BF16 already-weighted local expert sums |
-| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | scalar `layout.num_recv_tokens` | BF16 already-weighted local expert sums |
+| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | private native routing metadata | BF16 already-weighted local expert sums |
 | THROUGHPUT / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | BF16 already-weighted local expert sums |
 
-Counts are CUDA int32 tensors. Throughput's `layout.num_recv_tokens` (also exposed
-as `layout.num_tokens`) is a borrowed, read-only scalar containing the number
-of distinct received token rows, excluding padding. It is overwritten by the
-next preparation. **Do not modify this tensor:** PyTorch cannot enforce its
-read-only contract. TOKEN_MAJOR per-expert counts count routes, not disjoint row
-ranges; summing them is **not** a replacement for this scalar. `offsets` is not
-populated. For RANK_MAJOR, a GPU mask can be formed with
+Counts are CUDA int32 tensors. TOKEN_MAJOR per-expert counts count routes, not
+disjoint row ranges. Its output remains capacity-sized, and native combine uses
+private routing metadata to ignore unused tail rows; no compact row count is
+exposed to Python. `offsets` is not populated. For RANK_MAJOR, a GPU mask can be formed with
 `torch.arange(A, device=device)[None, :] < layout.num_tokens_per_rank[:, None]`.
 Consumers must honor these counts; capacity tails and padded metadata are
 unspecified.
