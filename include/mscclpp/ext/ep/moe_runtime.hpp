@@ -83,9 +83,12 @@ class MoERuntime {
   /// Hidden size, expert count, top-k count, and output layout come from the runtime.
   /// Token count and active capacity may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
+  /// Dispatch and combine must alternate on each runtime, in the same order on
+  /// all ranks. The caller must enqueue or capture the matching combine before
+  /// starting the next dispatch; the runtime does not enforce this ordering.
   /// @param request Dispatch inputs, outputs, dimensions, and CUDA stream.
-  /// @return A non-owning handle identifying this dispatch. A successful new
-  /// dispatch invalidates prior handles; a rejected request does not.
+  /// @return A non-owning handle consumed by the matching successful combine.
+  /// Rejected requests leave the current dispatch/combine pair unchanged.
   /// @throws EPException If @p request is not a valid latency request.
   DispatchHandle dispatch(const DispatchRequest& request);
 
