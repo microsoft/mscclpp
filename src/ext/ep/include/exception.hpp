@@ -3,8 +3,8 @@
 #ifndef MSCCLPP_EP_EXCEPTION_HPP_
 #define MSCCLPP_EP_EXCEPTION_HPP_
 
-#include <exception>
 #include <mscclpp/assert_device.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <string>
 
@@ -12,16 +12,12 @@
 #define EP_STATIC_ASSERT(cond, reason) static_assert(cond, reason)
 #endif
 
-class EPException : public std::exception {
- private:
-  std::string message = {};
-
+class EPException : public mscclpp::Error {
  public:
-  explicit EPException(const char* name, const char* file, const int line, const std::string& error) {
-    message = std::string("Failed: ") + name + " error " + file + ":" + std::to_string(line) + " '" + error + "'";
-  }
-
-  const char* what() const noexcept override { return message.c_str(); }
+  explicit EPException(const char* name, const char* file, const int line, const std::string& error)
+      : mscclpp::Error(
+            std::string("Failed: ") + name + " error " + file + ":" + std::to_string(line) + " '" + error + "'",
+            mscclpp::ErrorCode::InvalidUsage) {}
 };
 
 #ifndef EP_THROW
