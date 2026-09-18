@@ -115,13 +115,17 @@ class MoERuntime {
   /// and output layout come from the runtime. Token count and active capacity
   /// may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
+  /// In LATENCY mode, dispatch and combine must alternate in the same order on
+  /// all ranks. The caller must enqueue or capture the matching combine before
+  /// starting the next dispatch; the runtime does not enforce this ordering.
   /// Throughput requests may reuse routing through prepareHandle. An empty
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
-  /// @return A non-owning handle identifying this dispatch. A successful new
-  /// dispatch or throughput preparation invalidates prior dispatch handles;
+  /// @return A non-owning handle identifying this dispatch. In LATENCY mode,
+  /// the matching successful combine consumes the handle. In THROUGHPUT mode,
+  /// a successful new dispatch or preparation invalidates prior dispatch handles;
   /// a request rejected by host validation does not.
   /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);

@@ -187,7 +187,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
-  const Workload workload{.epoch_ = context.epoch_ + 1,
+  const Workload workload{.epoch_ = context.epoch_,
                           .numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
@@ -208,7 +208,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_,
                         numBlocks, stream);
   }
-  context.epoch_ = workload.epoch_;
   return handle;
 }
 
@@ -226,7 +225,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
   if (handle.epoch_ != context.epoch_) {
-    EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
+    EP_THROW("Stale dispatch handle: its dispatch has already been combined");
   }
 
   const auto* metadata = std::get_if<DispatchHandle::Impl::LatencyMetadata>(&handle.metadata_);
@@ -289,6 +288,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
+  ++context.epoch_;
 }
 
 }  // namespace ep
