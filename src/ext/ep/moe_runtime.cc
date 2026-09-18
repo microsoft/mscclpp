@@ -12,25 +12,24 @@ namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
                        int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
-    : bootstrap_(communicator.bootstrap()),
+    : communicator_(communicator),
       mode_(mode),
-      rank_(bootstrap_->getRank()),
-      numRanks_(bootstrap_->getNranks()),
-      numNvlRanks_(std::min(numRanks_, bootstrap_->getNranksPerNode())),
-      numRanksPerIpcDomain_(std::max(numNvlRanks_, std::min(numRanks_, bootstrap_->getNranksPerIpcDomain()))) {
+      rank_(communicator_.bootstrap()->getRank()),
+      numRanks_(communicator_.bootstrap()->getNranks()),
+      numRanksPerIpcDomain_(std::min(numRanks_, communicator_.bootstrap()->getNranksPerIpcDomain())) {
   EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
-  EP_HOST_ASSERT(numNvlRanks_ > 0);
+  EP_HOST_ASSERT(numRanksPerIpcDomain_ > 0);
 
   switch (mode_) {
     case MoEMode::LATENCY:
-      latencyContext_ = std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_,
-                                                                numRanksPerIpcDomain_, maxTokensPerRank, hidden,
-                                                                numExperts, numTopk, outputLayout, combineMode);
+      latencyContext_ = std::make_shared<LatencyRuntimeContext>(communicator_, rank_, numRanks_, numRanksPerIpcDomain_,
+                                                                maxTokensPerRank, hidden, numExperts, numTopk,
+                                                                outputLayout, combineMode);
       available_ = latencyContext_->available_;
       break;
     case MoEMode::THROUGHPUT:
       throughputContext_ =
-          std::make_shared<ThroughputRuntimeContext>(communicator, rank_, numRanks_, numRanksPerIpcDomain_,
+          std::make_shared<ThroughputRuntimeContext>(communicator_, rank_, numRanks_, numRanksPerIpcDomain_,
                                                      maxTokensPerRank, hidden, numExperts, numTopk, outputLayout);
       available_ = throughputContext_->available_;
       break;

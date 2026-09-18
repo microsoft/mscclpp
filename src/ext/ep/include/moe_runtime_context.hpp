@@ -77,9 +77,9 @@ struct DispatchHandle::Impl {
 
 // Mode-specific contexts owned by MoERuntime.
 struct LatencyRuntimeContext {
-  LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numNvlRanks,
-                        int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
-                        DispatchLayout outputLayout, CombineMode combineMode);
+  LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numRanksPerIpcDomain,
+                        int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
+                        CombineMode combineMode);
   ~LatencyRuntimeContext() noexcept(false);
 
  private:
