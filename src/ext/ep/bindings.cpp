@@ -64,8 +64,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
            [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.outputTopkIdsBuffer()); })
       .def("output_topk_weights_buffer_ptr",
            [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.outputTopkWeightsBuffer()); })
-      .def("num_recv_tokens_buffer_ptr",
-           [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.numRecvTokensBuffer()); })
+      .def("num_recv_tokens_device_ptr",
+           [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.numRecvTokensDevicePtr()); })
       .def(
           "prepare",
           [](MoERuntime& self, uintptr_t topkIdxPtr, int numTokens, int maxTokensPerRank, int numBlocks,

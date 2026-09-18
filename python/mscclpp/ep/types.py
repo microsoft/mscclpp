@@ -143,5 +143,4 @@ class DispatchHandle:
     _num_tokens: int = field(repr=False)
     _active_capacity: int = field(repr=False)
     _tensors: Tuple[torch.Tensor, ...] = field(repr=False)
-    _combine_input_buffer: Optional[torch.Tensor] = field(repr=False)
     _stream: torch.cuda.Stream = field(repr=False)

@@ -16,6 +16,7 @@ if importlib.util.find_spec("mscclpp.mscclpp_ep_cpp") is None:
     pytest.skip("The CUDA EP extension was not built", allow_module_level=True)
 
 from mscclpp import CommGroup
+from mscclpp._mscclpp import Error as MscclppError
 from mscclpp.ep import CombineMode, DispatchDataType, DispatchLayout, MoECommunicator, MoEMode, QuantConfig
 
 
@@ -194,11 +195,11 @@ def test_preparation_reuse_and_invalidation(ep_group):
                 stream.synchronize()
                 torch.testing.assert_close(output, input, rtol=0, atol=0)
             result, latest = runtime.dispatch(input, routes, stream=stream, prepare_handle=preparation)
-            with pytest.raises(RuntimeError, match="(?i)stale"):
+            with pytest.raises(MscclppError, match="(?i)stale"):
                 runtime.combine(result.tokens, previous, stream=stream)
             runtime.combine(result.tokens, latest, stream=stream)
             refreshed = runtime.prepare(routes, stream=stream)
-            with pytest.raises(RuntimeError, match="(?i)stale"):
+            with pytest.raises(MscclppError, match="(?i)stale"):
                 runtime.dispatch(input, routes, stream=stream, prepare_handle=preparation)
             runtime.dispatch(input, routes, stream=stream, prepare_handle=refreshed)
             routes.fill_(-1)
@@ -410,8 +411,57 @@ def test_stale_rank_major_combine_preserves_buffer(ep_group, combine_mode):
             result, current = runtime.dispatch(input, routes, stream=stream)
             result.combine_input_buffer.fill_(4)
             invalid_expert_output = torch.full_like(result.combine_input_buffer, 9)
-            with pytest.raises(RuntimeError, match="(?i)stale"):
+            with pytest.raises(MscclppError, match="(?i)stale"):
                 runtime.combine(invalid_expert_output, stale, stream=stream)
             output = runtime.combine(result.combine_input_buffer, current, stream=stream)
         stream.synchronize()
         torch.testing.assert_close(output, input, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "mode,first_operation",
+    [
+        (MoEMode.LATENCY, "get_dispatch_output_buffer"),
+        (MoEMode.THROUGHPUT, "prepare"),
+        (MoEMode.THROUGHPUT, "dispatch"),
+    ],
+)
+def test_lazy_initialization_device_scope(ep_group, monkeypatch, mode, first_operation):
+    device = torch.cuda.current_device()
+    other_device = (device + 1) % torch.cuda.device_count()
+    hidden = 4096 if mode == MoEMode.LATENCY else 136
+    stream = torch.cuda.Stream(device=device)
+    with torch.cuda.stream(stream):
+        input = torch.ones((1, hidden), dtype=torch.bfloat16, device=device)
+        routes = torch.full((1, 1), ep_group.my_rank, dtype=torch.int64, device=device)
+
+    def forbidden():
+        raise AssertionError("The Python wrapper must not query graph capture state")
+
+    with torch.cuda.device(other_device), monkeypatch.context() as patch:
+        patch.setattr(torch.cuda, "is_current_stream_capturing", forbidden)
+        runtime = MoECommunicator(
+            comm=ep_group,
+            device=device,
+            mode=mode,
+            hidden_size=hidden,
+            num_experts=ep_group.nranks,
+            topk=1,
+            max_tokens_per_rank=2,
+        )
+        assert runtime.is_available()
+        assert not runtime.is_initialized()
+        assert torch.cuda.current_device() == other_device
+        preparation = None
+        if first_operation == "get_dispatch_output_buffer":
+            runtime.get_dispatch_output_buffer()
+        elif first_operation == "prepare":
+            preparation = runtime.prepare(routes, stream=stream)
+        result, handle = runtime.dispatch(input, routes, stream=stream, prepare_handle=preparation)
+        output = runtime.combine(result.tokens, handle, stream=stream)
+        assert runtime.is_initialized()
+        runtime.initialize()
+        assert torch.cuda.current_device() == other_device
+    stream.synchronize()
+    ep_group.barrier()
+    torch.testing.assert_close(output, input, rtol=0, atol=0)
