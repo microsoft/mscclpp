@@ -91,8 +91,8 @@ struct LatencyDispatchRequest {
   int invalidTokenExpertId = -1;
   /// Requested dispatch payload format.
   DispatchDataType dispatchDataType;
-  /// Dispatch grid block count.
-  int numBlocks;
+  /// Dispatch grid block count. Zero uses the default number of blocks.
+  int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
 };
@@ -137,8 +137,8 @@ struct LatencyCombineRequest {
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
-  /// Combine grid block count.
-  int numBlocks;
+  /// Combine grid block count. Zero uses the default number of blocks.
+  int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
 };

@@ -17,6 +17,8 @@ namespace ep {
 inline constexpr int DispatchControlBlocks = 2;
 inline constexpr int MaxWorkerBlocks = 128;
 inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
+inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 inline constexpr int MaxNumTopk = 8;
 
 inline constexpr bool isSupportedHidden(int hidden) {

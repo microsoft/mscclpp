@@ -175,7 +175,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const int invalidTokenExpertId = request.invalidTokenExpertId;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = request.dispatchDataType;
-  const int numBlocks = request.numBlocks;
+  const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
   EP_HOST_ASSERT(context.available_);
@@ -253,7 +253,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
   const CombineMode mode = context.combineMode_;
-  const int numBlocks = request.numBlocks;
+  const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
   EP_HOST_ASSERT(context.available_);

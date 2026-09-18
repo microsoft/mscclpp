@@ -539,12 +539,12 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
 
 TEST(MoERuntimeTest, DispatchCombineCorrectness) {
   for (const auto combineMode : {mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE, mscclpp::ep::CombineMode::DIRECT_SEND}) {
-    runCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
-                       mscclpp::ep::DispatchLayout::EXPERT_MAJOR, combineMode, mscclpp::ep::DispatchDataType::BF16);
-    runCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
-                       mscclpp::ep::DispatchLayout::EXPERT_MAJOR, combineMode, mscclpp::ep::DispatchDataType::FP8_E4M3);
-    runCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
-                       mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode, mscclpp::ep::DispatchDataType::BF16);
+    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, combineMode,
+                       mscclpp::ep::DispatchDataType::BF16);
+    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, combineMode,
+                       mscclpp::ep::DispatchDataType::FP8_E4M3);
+    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                       mscclpp::ep::DispatchDataType::BF16);
   }
 }
 
