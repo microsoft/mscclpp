@@ -16,17 +16,16 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
       mode_(mode),
       rank_(bootstrap_->getRank()),
       numRanks_(bootstrap_->getNranks()),
-      numNvlRanks_(std::min(numRanks_, bootstrap_->getNranksPerNode())),
-      numRanksPerIpcDomain_(std::max(numNvlRanks_, std::min(numRanks_, bootstrap_->getNranksPerIpcDomain()))) {
+      numRanksPerIpcDomain_(std::min(numRanks_, bootstrap_->getNranksPerIpcDomain())) {
   EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
-  EP_HOST_ASSERT(numNvlRanks_ > 0);
+  EP_HOST_ASSERT(numRanksPerIpcDomain_ > 0);
 
   if (mode_ != MoEMode::LATENCY) {
     EP_THROW("This build only supports MoEMode::LATENCY");
   }
   latencyContext_ =
-      std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numNvlRanks_, numRanksPerIpcDomain_,
-                                              maxTokensPerRank, hidden, numExperts, numTopk, outputLayout, combineMode);
+      std::make_shared<LatencyRuntimeContext>(communicator, rank_, numRanks_, numRanksPerIpcDomain_, maxTokensPerRank,
+                                              hidden, numExperts, numTopk, outputLayout, combineMode);
   available_ = latencyContext_->available_;
 }
 

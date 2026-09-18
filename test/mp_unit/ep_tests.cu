@@ -507,7 +507,6 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   ASSERT_TRUE(runtime->isAvailable());
   ASSERT_EQ(runtime->rank(), gEnv->rank);
   ASSERT_EQ(runtime->numRanks(), NumRanks);
-  ASSERT_EQ(runtime->numNvlRanks(), NumRanks);
   ASSERT_EQ(runtime->numRanksPerIpcDomain(), NumRanks);
   runtime->initialize();
 

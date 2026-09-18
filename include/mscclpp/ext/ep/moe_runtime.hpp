@@ -63,8 +63,6 @@ class MoERuntime {
   int rank() const { return rank_; }
   /// Return the global rank count.
   int numRanks() const { return numRanks_; }
-  /// Return the NVLink-local rank count.
-  int numNvlRanks() const { return numNvlRanks_; }
   /// Return the rank count in one CUDA IPC domain.
   int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
 
@@ -111,7 +109,6 @@ class MoERuntime {
   MoEMode mode_;
   int rank_;
   int numRanks_;
-  int numNvlRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
   std::shared_ptr<LatencyRuntimeContext> latencyContext_;

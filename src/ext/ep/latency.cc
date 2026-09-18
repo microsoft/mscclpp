@@ -15,9 +15,8 @@ namespace mscclpp {
 namespace ep {
 
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
-                                             int numNvlRanks, int numRanksPerIpcDomain, int maxTokensPerRank,
-                                             int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                                             CombineMode combineMode)
+                                             int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
+                                             int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -43,9 +42,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode));
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
-  EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = numRanksPerIpcDomain_ >= numRanks_;
 }
