@@ -188,9 +188,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   const PrepareRequest prepareRequest{request.topkIdx, request.numTokens, request.maxTokensPerRank, request.numBlocks,
                                       request.stream};
   context.validatePrepareRequest(prepareRequest);
-  EP_HOST_ASSERT(request.output != nullptr || request.numTokens == 0);
   EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
-  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
   EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(request.dispatchDataType));
 
@@ -244,10 +242,10 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
-  throughputDispatch(request.output, request.outputTopkIdx, request.outputTopkWeights,
-                     static_cast<float*>(request.outputScales), request.input, request.topkIdx, request.topkWeights,
-                     request.inputScales, workload, workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_,
-                     context.deviceContext_, request.numBlocks, request.stream);
+  throughputDispatch(request.outputTopkIdx, request.outputTopkWeights, static_cast<float*>(request.outputScales),
+                     request.input, request.topkIdx, request.topkWeights, request.inputScales, workload,
+                     workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_,
+                     request.numBlocks, request.stream);
 
   return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, request));
 }
@@ -274,15 +272,14 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
   EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
-  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
-  throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
-                          storageLayout.payload_, storageLayout.recvBuffer_, storageLayout.combineBuffer_,
-                          context.deviceContext_, request.numBlocks, request.stream);
+  throughputReduceCombine(request.output, request.outputTopkWeights, workload, workspaceLayout, storageLayout.payload_,
+                          storageLayout.recvBuffer_, storageLayout.combineBuffer_, context.deviceContext_,
+                          request.numBlocks, request.stream);
 }
 
 }  // namespace ep

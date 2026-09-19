@@ -25,13 +25,11 @@ constexpr int COMBINE_TMA_WIDE_MAX_BLOCKS = 24;
 
 template <int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    throughputReduceCombineKernel(int4* output, float* outputTopkWeights, const void* input, Workload workload,
+    throughputReduceCombineKernel(int4* output, float* outputTopkWeights, Workload workload,
                                   ThroughputWorkspaceLayout workspace, ThroughputPayloadView payload,
                                   void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   const int numTopk = workload.numTopk_;
-  const int maxTokensPerRank = workload.maxTokensPerRank_;
-  const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const TransportView transport(context);
   const int numRanks = context->numRanks_;
   // MaxContributors is min(numTopk, numRanks) rounded up to 2, 4, or 8 slots.
@@ -45,19 +43,6 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   const int laneId = getLaneId();
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const int hiddenInt4 = workload.hidden_ / Bf16PerInt4;
-  const int receivedTokens = *workspace.numRecvTokens_;
-  EP_DEVICE_ASSERT(receivedTokens >= 0 && receivedTokens <= numRanks * maxTokensPerRank);
-  EP_DEVICE_ASSERT(input != nullptr || receivedTokens == 0);
-
-  auto* localTokens = payload.data<int4>(combineBuffer);
-  // Peers can read the runtime's symmetric storage, not an arbitrary caller allocation.
-  if (receivedTokens > 0 && input != localTokens) {
-    const int rows = rankMajor ? numRanks * maxTokensPerRank : receivedTokens;
-    copyThroughputRows(localTokens, input, rows, hiddenInt4 * sizeof(int4), workspace.recvCounts_, maxTokensPerRank,
-                       rankMajor, blockIdx.x * blockDim.x + threadIdx.x, gridDim.x * blockDim.x);
-    // Every staging block must finish before block 0 publishes readiness to peers.
-    cooperative_groups::this_grid().sync();
-  }
 
   extern __shared__ uint8_t sharedMemory[];
   const size_t warpStageBytes = static_cast<size_t>(NumStages) * MaxContributors * ChunkBytes;
@@ -178,7 +163,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
 }
 
 template <int MaxContributors, int NumWarps>
-void launchThroughputCombine(void* output, float* outputTopkWeights, const void* input, const Workload& workload,
+void launchThroughputCombine(void* output, float* outputTopkWeights, const Workload& workload,
                              const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
                              void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext& context, int numBlocks,
                              cudaStream_t stream) {
@@ -196,11 +181,11 @@ void launchThroughputCombine(void* output, float* outputTopkWeights, const void*
   attribute.id = cudaLaunchAttributeCooperative;
   attribute.val.cooperative = 1;
   cudaLaunchConfig_t config{dim3(numBlocks), dim3(NumThreads), SharedBytes, stream, &attribute, 1};
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, static_cast<int4*>(output), outputTopkWeights, input, workload,
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, static_cast<int4*>(output), outputTopkWeights, workload,
                                        workspace, payload, dispatchRecvBuffer, combineBuffer, context.devicePtr_));
 }
 
-void throughputReduceCombine(void* output, float* outputTopkWeights, const void* input, const Workload& workload,
+void throughputReduceCombine(void* output, float* outputTopkWeights, const Workload& workload,
                              const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
                              void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext& context, int numBlocks,
                              cudaStream_t stream) {
@@ -224,8 +209,8 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const void*
   } else if (maxContributors > 2) {
     launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
   }
-  launch(output, outputTopkWeights, input, workload, workspace, payload, dispatchRecvBuffer, combineBuffer, context,
-         numBlocks, stream);
+  launch(output, outputTopkWeights, workload, workspace, payload, dispatchRecvBuffer, combineBuffer, context, numBlocks,
+         stream);
 }
 
 }  // namespace ep

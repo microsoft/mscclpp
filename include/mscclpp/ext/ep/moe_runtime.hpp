@@ -111,10 +111,10 @@ class MoERuntime {
   ///
   /// @p request must contain the request type matching mode(): a
   /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
-  /// THROUGHPUT. Output buffers remain owned by the caller unless obtained
-  /// through a runtime buffer accessor. Hidden size, expert count, top-k count,
-  /// and output layout come from the runtime. Token count and active capacity
-  /// may vary between dispatches, with
+  /// THROUGHPUT. Throughput payload output is always written to
+  /// dispatchOutputBuffer(); optional metadata outputs remain caller-owned.
+  /// Hidden size, expert count, top-k count, and output layout come from the
+  /// runtime. Token count and active capacity may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
   /// Dispatch and combine must alternate in the same order on all ranks. The
   /// caller must enqueue or capture the matching combine before starting the
@@ -132,6 +132,9 @@ class MoERuntime {
   DispatchHandle dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
+  ///
+  /// In throughput mode, local expert output must be written to
+  /// combineInputBuffer() before this call.
   ///
   /// The request's handle supplies routing metadata, token count, active
   /// capacity, and epoch. Fixed dimensions, layout, and algorithm come from the

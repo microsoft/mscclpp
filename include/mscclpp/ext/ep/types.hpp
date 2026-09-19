@@ -142,15 +142,12 @@ struct LatencyDispatchRequest {
 
 /// Arguments for throughput-mode dispatch.
 ///
-/// The caller must keep input and output buffers valid until the GPU work
-/// using them, including graph replays, has completed. The returned
-/// DispatchHandle must stay alive until the matching combine has been enqueued.
+/// The dispatched payload is written to MoERuntime::dispatchOutputBuffer().
+/// The caller must keep input and optional metadata output buffers valid until
+/// the GPU work using them, including graph replays, has completed. The
+/// returned DispatchHandle must stay alive until the matching combine has been
+/// enqueued.
 struct ThroughputDispatchRequest {
-  /// Dispatch output buffer, 16-byte aligned.
-  ///
-  /// This may alias MoERuntime::dispatchOutputBuffer() to use the runtime-owned
-  /// receive buffer directly.
-  void* output;
   /// Optional dispatch scale output.
   void* outputScales;
   /// Optional dispatched local-expert IDs.
@@ -238,14 +235,8 @@ struct ThroughputCombineRequest {
   void* output;
   /// Optional combined top-k weights.
   float* outputTopkWeights;
-  /// Local expert output in the dispatch output layout, 16-byte aligned when non-null.
-  ///
-  /// This may alias MoERuntime::combineInputBuffer() to use the runtime-owned
-  /// peer-visible combine buffer directly.
-  ///
-  /// A null pointer is valid only when the device receive count is zero; this
-  /// data-dependent condition is checked on the GPU.
-  const void* input;
+  /// Local expert output must be written to MoERuntime::combineInputBuffer()
+  /// in the dispatch output layout before combine is enqueued.
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
   /// Combine grid block count.

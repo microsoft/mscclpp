@@ -78,23 +78,6 @@ MSCCLPP_DEVICE_INLINE bool isActiveThroughputRow(int row, const int* recvCounts,
   return !rankMajor || row % maxTokensPerRank < recvCounts[row / maxTokensPerRank];
 }
 
-// Copy int4-aligned rows, skipping rank-major padding.
-MSCCLPP_DEVICE_INLINE void copyThroughputRows(void* dst, const void* src, int rows, int rowBytes, const int* recvCounts,
-                                              int maxTokensPerRank, bool rankMajor, uint32_t threadId,
-                                              uint32_t numThreads) {
-  EP_DEVICE_ASSERT((reinterpret_cast<uintptr_t>(dst) | reinterpret_cast<uintptr_t>(src)) % alignof(int4) == 0);
-  EP_DEVICE_ASSERT(rowBytes % sizeof(int4) == 0);
-  auto* dstVectors = static_cast<int4*>(dst);
-  const auto* srcVectors = static_cast<const int4*>(src);
-  const int vectorsPerRow = rowBytes / sizeof(int4);
-  const uint64_t elements = static_cast<uint64_t>(rows) * vectorsPerRow;
-  for (uint64_t index = threadId; index < elements; index += numThreads) {
-    if (isActiveThroughputRow(static_cast<int>(index / vectorsPerRow), recvCounts, maxTokensPerRank, rankMajor)) {
-      dstVectors[index] = srcVectors[index];
-    }
-  }
-}
-
 // All block threads participate; one thread publishes to and waits for each peer.
 MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
   constexpr int64_t MaxSpinCount = 100'000'000;

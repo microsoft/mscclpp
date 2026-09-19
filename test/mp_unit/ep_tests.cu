@@ -527,17 +527,13 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   }
 
   const size_t elements = static_cast<size_t>(expectation.totalRows) * hidden;
-  mscclpp::GpuBuffer<Bf16> dispatchStorage(prepared ? std::max<size_t>(elements, 1) : 1);
-  // FP8 dispatch output cannot be expanded to BF16 in place.
-  const bool externalCombineInput = prepared || useFp8;
-  mscclpp::GpuBuffer<Bf16> combineStorage(externalCombineInput ? std::max<size_t>(elements, 1) : 1);
   const size_t metadataElements = static_cast<size_t>(expectation.totalRows) * NumTopk;
   mscclpp::GpuBuffer<int> receivedTopkIdx(std::max<size_t>(metadataElements, 1));
   mscclpp::GpuBuffer<float> receivedTopkWeights(std::max<size_t>(metadataElements, 1));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(receivedTopkIdx.data(), 0xff, receivedTopkIdx.bytes(), stream));
   MSCCLPP_CUDATHROW(cudaMemsetAsync(receivedTopkWeights.data(), 0, receivedTopkWeights.bytes(), stream));
-  void* dispatchOutput = prepared ? dispatchStorage.data() : runtime->dispatchOutputBuffer();
-  auto* combineInput = externalCombineInput ? combineStorage.data() : static_cast<Bf16*>(runtime->combineInputBuffer());
+  void* dispatchOutput = runtime->dispatchOutputBuffer();
+  auto* combineInput = static_cast<Bf16*>(runtime->combineInputBuffer());
   mscclpp::ep::PrepareHandle preparation;
   auto prepare = [&] {
     return runtime->prepare({buffers.topkIdx.data(), numTokens, numTokens, dispatchBlocks, stream});
@@ -546,7 +542,6 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
 
   auto operation = [&] {
     const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{
-        .output = dispatchOutput,
         .outputScales = useFp8 ? buffers.outputScales.data() : nullptr,
         .outputTopkIdx = receivedTopkIdx.data(),
         .outputTopkWeights = receivedTopkWeights.data(),
@@ -578,7 +573,6 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
     runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::ThroughputCombineRequest{
         .output = buffers.output.data(),
         .outputTopkWeights = nullptr,
-        .input = combineInput,
         .handle = handle,
         .numBlocks = combineBlocks,
         .stream = stream,
@@ -770,7 +764,6 @@ void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communi
 
   const size_t elements = static_cast<size_t>(numTokens) * PerfHidden;
   mscclpp::GpuBuffer<Bf16> input(elements);
-  mscclpp::GpuBuffer<Bf16> expertInput(static_cast<size_t>(NumRanks) * elements);
   mscclpp::GpuBuffer<Bf16> output(elements);
   mscclpp::GpuBuffer<Fp8E4M3> fp8Input(fp8 ? elements : 1);
   mscclpp::GpuBuffer<float> inputScales(fp8 ? static_cast<size_t>(numTokens) * (PerfHidden / 128) : 1);
@@ -791,14 +784,14 @@ void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communi
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
   // Prepare representative BF16 expert results outside timing, including for FP8 dispatch.
+  auto* expertInput = static_cast<Bf16*>(runtime.combineInputBuffer());
   for (int peer = 0; peer < NumRanks; ++peer) {
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(expertInput.data() + static_cast<size_t>(peer) * elements, input.data(),
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(expertInput + static_cast<size_t>(peer) * elements, input.data(),
                                       elements * sizeof(Bf16), cudaMemcpyDeviceToDevice, stream));
   }
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
   ThroughputDispatchRequest request{
-      .output = runtime.dispatchOutputBuffer(),
       .outputScales = nullptr,
       .outputTopkIdx = nullptr,
       .outputTopkWeights = nullptr,
@@ -819,7 +812,6 @@ void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communi
     runtime.combine(CombineRequest{ThroughputCombineRequest{
         .output = output.data(),
         .outputTopkWeights = nullptr,
-        .input = expertInput.data(),
         .handle = handle,
         .numBlocks = combineBlocks,
         .stream = stream,
@@ -1030,7 +1022,6 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       mscclpp::GpuBuffer<float> deviceWeights(routes.size());
       mscclpp::gpuMemcpy<int64_t>(deviceRoutes.data(), routes.data(), routes.size(), cudaMemcpyHostToDevice);
       const auto handle = runtime->dispatch(DispatchRequest{ThroughputDispatchRequest{
-          .output = runtime->dispatchOutputBuffer(),
           .outputScales = nullptr,
           .outputTopkIdx = nullptr,
           .outputTopkWeights = nullptr,
@@ -1052,7 +1043,6 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       runtime->combine(CombineRequest{ThroughputCombineRequest{
           .output = deviceOutput.data(),
           .outputTopkWeights = deviceWeights.data(),
-          .input = runtime->combineInputBuffer(),
           .handle = handle,
           .numBlocks = numTopk == 5 ? std::min(combineBlocks_, 24) : combineBlocks_,
           .stream = stream,

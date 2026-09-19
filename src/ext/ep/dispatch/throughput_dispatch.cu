@@ -39,10 +39,10 @@ void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t strea
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
 __global__ void __launch_bounds__(NumThreads, 1)
-    throughputDispatchKernel(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
-                             const int4* input, const int64_t* topkIdx, const float* topkWeights,
-                             const float* inputScales, Workload workload, ThroughputWorkspaceLayout workspace,
-                             ThroughputPayloadView payload, void* recvBuffer, const DeviceContext* context) {
+    throughputDispatchKernel(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const int4* input,
+                             const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+                             Workload workload, ThroughputWorkspaceLayout workspace, ThroughputPayloadView payload,
+                             void* recvBuffer, const DeviceContext* context) {
   static_assert(NumThreads == ThroughputDispatchThreads);
   const int numTopk = workload.numTopk_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
@@ -52,7 +52,6 @@ __global__ void __launch_bounds__(NumThreads, 1)
   const int numRanks = context->numRanks_;
   const int receivedTokens = *workspace.numRecvTokens_;
   EP_DEVICE_ASSERT(receivedTokens >= 0 && receivedTokens <= numRanks * maxTokensPerRank);
-  EP_DEVICE_ASSERT(output != nullptr || receivedTokens == 0);
   const int numBlocks = static_cast<int>(gridDim.x);
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = getLaneId();
@@ -141,14 +140,9 @@ __global__ void __launch_bounds__(NumThreads, 1)
   // All receiving blocks must wait for block 0's peer acquires.
   cooperative_groups::this_grid().sync();
 
-  const void* localTokens = payload.data<int4>(recvBuffer);
   const int globalThreadId = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   const int gridThreads = static_cast<int>(gridDim.x * blockDim.x);
   const int outputRows = Layout == DispatchLayout::RANK_MAJOR ? numRanks * maxTokensPerRank : receivedTokens;
-  if (output != nullptr && output != localTokens) {
-    copyThroughputRows(output, localTokens, outputRows, hiddenInt4 * sizeof(int4), workspace.recvCounts_,
-                       maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR, globalThreadId, gridThreads);
-  }
   for (int token = globalThreadId; token < outputRows; token += gridThreads) {
     if (!isActiveThroughputRow(token, workspace.recvCounts_, maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR))
       continue;
@@ -192,8 +186,8 @@ int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceCo
                                                          DispatchDataType::FP8_E4M3>(context));
 }
 
-void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
-                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const void* input,
+                        const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
                         const Workload& workload, const ThroughputWorkspaceLayout& workspace,
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream) {
@@ -218,7 +212,7 @@ void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeigh
   attribute.id = cudaLaunchAttributeCooperative;
   attribute.val.cooperative = 1;
   cudaLaunchConfig_t config{dim3(numBlocks), dim3(NumThreads), 0, stream, &attribute, 1};
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, output, outputTopkIdx, outputTopkWeights, outputScales,
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, outputTopkIdx, outputTopkWeights, outputScales,
                                        reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales,
                                        workload, workspace, payload, recvBuffer, context.devicePtr_));
 }
