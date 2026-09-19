@@ -115,14 +115,13 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   const int nRanks = context.numRanks_;
   const int numWorkerBlocks = numBlocks - DispatchControlBlocks;
 
-  EP_HOST_ASSERT(nRanks > 0);
+  EP_HOST_ASSERT(isSupportedRanks(nRanks));
   EP_HOST_ASSERT(nExperts > 0);
   EP_HOST_ASSERT(nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
   EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);

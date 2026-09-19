@@ -35,10 +35,14 @@ message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
 set(MSCCLPP_EP_SOURCES
     combine/direct_send_combine.cu
     combine/rank_local_reduce_combine.cu
+    combine/throughput_reduce_combine.cu
     dispatch/expert_major_dispatch.cu
     dispatch/rank_major_dispatch.cu
+    dispatch/throughput_dispatch.cu
+    dispatch/throughput_prepare.cu
     latency.cc
     moe_runtime.cc
+    throughput.cc
 )
 
 add_library(mscclpp_ep SHARED ${MSCCLPP_EP_SOURCES})

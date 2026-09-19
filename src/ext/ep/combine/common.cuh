@@ -270,7 +270,7 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(context.workspace_ != nullptr);
   EP_HOST_ASSERT(context.devicePtr_ != nullptr);
-  EP_HOST_ASSERT(nRanks > 0 && nRanks <= 2 * WARP_SIZE);
+  EP_HOST_ASSERT(isSupportedRanks(nRanks));
   EP_HOST_ASSERT(nExperts > 0 && nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(workload.numTokens_ >= 0 && workload.numTokens_ <= workload.maxTokensPerRank_);
