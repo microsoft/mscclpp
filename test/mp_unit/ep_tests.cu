@@ -907,7 +907,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   throughputRuntime->initialize();
   ASSERT_NE(throughputRuntime->dispatchOutputBuffer(), nullptr);
   ASSERT_NE(throughputRuntime->combineInputBuffer(), nullptr);
-  ASSERT_EQ(throughputRuntime->combineInputBuffer(), throughputRuntime->dispatchOutputBuffer());
+  ASSERT_NE(throughputRuntime->combineInputBuffer(), throughputRuntime->dispatchOutputBuffer());
 
   auto runtime = createRuntime(*communicator, CorrectnessTokens, CorrectnessHidden,
                                mscclpp::ep::DispatchLayout::RANK_MAJOR, mscclpp::ep::CombineMode::DIRECT_SEND);
@@ -1046,6 +1046,9 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
           .stream = stream,
           .prepareHandle = {},
       }});
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(runtime->combineInputBuffer(), runtime->dispatchOutputBuffer(),
+                                        static_cast<size_t>(NumRanks) * Tokens * Hidden * sizeof(Bf16),
+                                        cudaMemcpyDeviceToDevice, stream));
       runtime->combine(CombineRequest{ThroughputCombineRequest{
           .output = deviceOutput.data(),
           .outputTopkWeights = deviceWeights.data(),

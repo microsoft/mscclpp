@@ -101,7 +101,7 @@ struct LatencyRuntimeContext {
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 1;
-  void* symmetricBuffer_ = nullptr;
+  mscclpp::detail::UniqueGpuPhysicalPtr<uint8_t> symmetricBuffer_;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};
   mscclpp::Communicator& communicator_;
@@ -141,7 +141,7 @@ struct ThroughputRuntimeContext {
   // Epoch zero means no routing has been prepared; prepared routing remains reusable
   // across dispatch/combine pairs until the next preparation.
   uint64_t routingEpoch_ = 0;
-  void* symmetricBuffer_ = nullptr;
+  mscclpp::detail::UniqueGpuPhysicalPtr<uint8_t> symmetricBuffer_;
   void* workspace_ = nullptr;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;

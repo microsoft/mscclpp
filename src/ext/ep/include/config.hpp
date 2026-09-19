@@ -311,11 +311,12 @@ struct ThroughputPayloadView {
 };
 
 struct ThroughputStorageLayout {
-  // Peer-visible registered allocation: count-exchange scratch followed by the receive payload.
+  // Peer-visible registered allocation: count-exchange scratch, receive payload, then combine data.
   // Allocation-derived offsets stay fixed when a request uses a smaller active capacity.
   ThroughputPayloadView payload_;
   size_t totalBytes_;
   void* recvBuffer_ = nullptr;
+  void* combineBuffer_ = nullptr;
 
   ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                           int numTopk)
@@ -328,9 +329,15 @@ struct ThroughputStorageLayout {
     const size_t prefixBytes = ranks * ranks * sizeof(int);
     const size_t expertScratchBytes = static_cast<size_t>(numExperts) * sizeof(int);
     const size_t recvOffset = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
-    totalBytes_ = configAlign<size_t>(recvOffset + payload_.numBytes_, BufferAlignmentBytes);
+    const size_t recvBytes = configAlign<size_t>(payload_.numBytes_, BufferAlignmentBytes);
+    const size_t combineOffset = recvOffset + recvBytes;
+    const size_t maxRows = ranks * static_cast<size_t>(maxTokensPerRank);
+    const size_t combineBytes =
+        configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes);
+    totalBytes_ = combineOffset + combineBytes;
     if (symmetricBuffer != nullptr) {
       recvBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + recvOffset;
+      combineBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + combineOffset;
     }
   }
 };

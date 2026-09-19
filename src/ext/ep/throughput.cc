@@ -55,7 +55,7 @@ ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
 
   peerBufferMemories_.clear();
-  if (symmetricBuffer_ != nullptr) mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
+  symmetricBuffer_.reset();
 }
 
 void ThroughputRuntimeContext::initialize() {
@@ -65,15 +65,15 @@ void ThroughputRuntimeContext::initialize() {
 
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
   const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-  symmetricBuffer_ =
-      mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
+  symmetricBuffer_ = mscclpp::detail::gpuCallocPhysicalUnique<uint8_t>(symmetricBufferBytes_, allocationGranularity,
+                                                                       allocationGranularity);
 
   constexpr int BufferTag = 17;
   constexpr int ConnectionTag = 19;
   const auto transport = mscclpp::Transport::CudaIpc;
   const mscclpp::EndpointConfig ipcConfig(transport);
   peerBufferMemories_.resize(numRanks_);
-  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, transport);
+  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> connections(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
@@ -90,7 +90,7 @@ void ThroughputRuntimeContext::initialize() {
     if (peer != rank_) {
       peerBufferMemories_[peer] = remoteMemories[peer].get();
     }
-    peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_ : peerBufferMemories_[peer].data();
+    peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_.get() : peerBufferMemories_[peer].data();
     if (peer != rank_) {
       auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connections[peer].get());
       baseMemoryChannels_.emplace_back(semaphore);
@@ -112,7 +112,7 @@ void ThroughputRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId));
-  deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
+  deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
@@ -135,7 +135,7 @@ bool ThroughputRuntimeContext::fitsReceiveBuffer(int maxTokensPerRank) const {
 }
 
 ThroughputStorageLayout ThroughputRuntimeContext::storageLayout() const {
-  return {symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_};
+  return {symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_};
 }
 
 Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
@@ -281,8 +281,8 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
                                                   context.numExperts_, context.numTopk_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
   throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
-                          storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks,
-                          request.stream);
+                          storageLayout.payload_, storageLayout.recvBuffer_, storageLayout.combineBuffer_,
+                          context.deviceContext_, request.numBlocks, request.stream);
 }
 
 }  // namespace ep

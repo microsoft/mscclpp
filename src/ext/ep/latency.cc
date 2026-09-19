@@ -52,9 +52,7 @@ LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
-  if (symmetricBuffer_ != nullptr) {
-    mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
-  }
+  symmetricBuffer_.reset();
 }
 
 void LatencyRuntimeContext::initialize() {
@@ -66,8 +64,8 @@ void LatencyRuntimeContext::initialize() {
 
   const auto ipcTransport = mscclpp::Transport::CudaIpc;
   const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-  symmetricBuffer_ =
-      mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
+  symmetricBuffer_ = mscclpp::detail::gpuCallocPhysicalUnique<uint8_t>(static_cast<size_t>(symmetricBufferBytes_),
+                                                                       allocationGranularity, allocationGranularity);
 
   const mscclpp::EndpointConfig ipcConfig(ipcTransport);
   const int ipcDomainSize = numRanksPerIpcDomain_;
@@ -77,7 +75,8 @@ void LatencyRuntimeContext::initialize() {
 
   constexpr int IpcTag = 1;
   peerBufferMemories_.resize(numRanks_);
-  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, ipcTransport);
+  peerBufferMemories_[rank_] =
+      communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ipcTransport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
@@ -88,7 +87,7 @@ void LatencyRuntimeContext::initialize() {
   }
 
   peerMappedBufferBases_.assign(numRanks_, nullptr);
-  peerMappedBufferBases_[rank_] = symmetricBuffer_;
+  peerMappedBufferBases_[rank_] = symmetricBuffer_.get();
   std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isMappedPeer(r)) continue;
@@ -112,7 +111,7 @@ void LatencyRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
-  deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
+  deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
@@ -130,8 +129,9 @@ void* MoERuntime::outputTopkIdsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
+                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                              context.combineMode_)
       .rankMajorTopkIdsBuffer_;
 }
 
@@ -140,8 +140,9 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
+                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                              context.combineMode_)
       .rankMajorTopkWeightsBuffer_;
 }
 
@@ -177,8 +178,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
+                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
+                                        context.combineMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
@@ -263,8 +265,9 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .dispatchDataType_ = dispatchDataType};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
+                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
+                                        context.combineMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;

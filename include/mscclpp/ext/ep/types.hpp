@@ -240,6 +240,9 @@ struct ThroughputCombineRequest {
   float* outputTopkWeights;
   /// Local expert output in the dispatch output layout, 16-byte aligned when non-null.
   ///
+  /// This may alias MoERuntime::combineInputBuffer() to use the runtime-owned
+  /// peer-visible combine buffer directly.
+  ///
   /// A null pointer is valid only when the device receive count is zero; this
   /// data-dependent condition is checked on the GPU.
   const void* input;
