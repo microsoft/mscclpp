@@ -432,6 +432,12 @@ class MoECommunicator:
         """
         self._validate_handle(handle, DispatchHandle)
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), torch.bfloat16)
+        if (
+            self.mode == MoEMode.LATENCY
+            and self.output_layout == DispatchLayout.RANK_MAJOR
+            and ptr(expert_output) != self._runtime.combine_input_buffer_ptr()
+        ):
+            raise ValueError("latency RANK_MAJOR expert_output must be DispatchOutput.combine_input_buffer")
         output_shape = (handle._num_tokens, self.hidden_size)
         if out is not None:
             self._check(out, "out", output_shape, torch.bfloat16)

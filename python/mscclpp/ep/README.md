@@ -92,20 +92,27 @@ Storage is allocated once at configured capacity; returned views and strides
 use **active** capacity. No host sizing, receive-pool resizing, or compaction
 kernel is introduced.
 
-| Mode / layout | `tokens` shape | Valid rows | Expert-output contract |
-| --- | --- | --- | --- |
-| LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | BF16 per-expert results; native combine applies the original routing weights |
-| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | BF16 already-weighted local expert sums |
-| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | private native routing metadata | BF16 already-weighted local expert sums |
-| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | BF16 already-weighted local expert sums |
+| Mode / layout | `tokens` shape | Returned counts | Physical row grouping | Expert-output contract |
+| --- | --- | --- | --- | --- |
+| LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | One fixed slice per local expert | BF16 per-expert results; native combine applies the original routing weights |
+| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 already-weighted local expert sums |
+| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | `layout.num_tokens_per_expert` | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
+| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
-Counts are CUDA int32 tensors. TOKEN_MAJOR per-expert counts count routes, not
-disjoint row ranges. Its output remains capacity-sized, and native combine uses
-private routing metadata to ignore unused tail rows; no compact row count is
-exposed to Python. `offsets` is not populated. For RANK_MAJOR, a GPU mask can be formed with
+Counts are CUDA int32 tensors. In TOKEN_MAJOR, `num_tokens_per_expert` is an
+expert workload statistic, not a description of physical row ranges. One token
+row can route to multiple local experts, so it increments multiple expert
+counts while occupying only one physical row. Consequently, expert counts
+cannot determine the number of valid rows or their offsets.
+
+TOKEN_MAJOR rows are grouped by source rank and then by source token order.
+Describing those segments would require `num_tokens_per_rank`; their offsets
+would be `exclusive_cumsum(num_tokens_per_rank)`. That metadata is not currently
+exposed. The output remains capacity-sized, and native combine uses private
+routing metadata to ignore unused tail rows. For RANK_MAJOR, a GPU mask can be
+formed with
 `torch.arange(A, device=device)[None, :] < layout.num_tokens_per_rank[:, None]`.
-Consumers must honor these counts; capacity tails and padded metadata are
-unspecified.
+Capacity tails and padded metadata are unspecified.
 
 Input `topk_ids` is contiguous CUDA int64 `[num_input_tokens, K]`, using global
 expert IDs in `[0, num_experts)` or negative values for dropped routes.
@@ -122,10 +129,10 @@ Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
 the required BF16 `combine_input_buffer`. With `CombineMode.DIRECT_SEND`, that
 buffer and expert outputs have shape `[R, A, K, H]`: write already-weighted
 per-topk results, with zero for absent routes. Otherwise write local expert
-sums. Native combine stages external latency rank-major expert outputs into the
-required buffer on the caller stream after validating the dispatch handle.
-Throughput also accepts external expert outputs and lets native combine stage
-them; neither path adds a second Python staging copy.
+sums. Expert computation must write directly into this runtime-owned buffer;
+latency rank-major combine rejects external expert-output tensors rather than
+performing a hidden staging copy. Throughput accepts external expert outputs
+and lets native combine stage them.
 Its optional `combine(..., output_topk_weights=buffer)` writes combined weights
 to a contiguous CUDA FP32 `[num_input_tokens, K]` buffer.
 
@@ -154,10 +161,11 @@ a correctly shaped runtime view without moving data.
 **Buffer aliasing is the caller's responsibility and is not checked.**
 Dispatch payload, routing, and scale inputs must not overlap its output or
 runtime receive storage written by the operation. Combine outputs must be
-disjoint from each other, expert inputs, and runtime combine storage. Expert
-results may use the exact runtime `combine_input_buffer`; otherwise they must
-not overlap it. These restrictions apply on a single stream too: arbitrary
-in-place operations and partially overlapping copies are unsupported.
+disjoint from each other, expert inputs, and runtime combine storage. Latency
+RANK_MAJOR requires the exact runtime `combine_input_buffer`; other inputs must
+not partially overlap runtime storage. These restrictions apply on a single
+stream too: arbitrary in-place operations and partially overlapping copies are
+unsupported.
 
 Throughput's runtime dispatch and BF16 combine views **share physical storage**.
 After FP8 dispatch, consume the FP8 data into separate expert-output storage
