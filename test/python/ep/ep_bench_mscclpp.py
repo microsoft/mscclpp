@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import torch
 
 from ep_bench_common import (
@@ -48,7 +49,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    num_blocks = args.num_sms or 130
+    num_blocks = args.num_sms or int(os.environ.get("MSCCLPP_EP_LL_BLOCKS", "130"))
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
@@ -68,6 +69,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     requested_layout = args.ep_layout or "expert_major"
     rank_major = requested_layout == "rank_major"
     rank_major_topk_expanded = requested_layout == "rank_major_topk_expanded"
+    expanded = rank_major_topk_expanded
     if requested_layout == "token_major":
         raise ValueError("MSCCL++ latency TOKEN_MAJOR was renamed to rank_major_topk_expanded")
     if (rank_major or rank_major_topk_expanded) and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
@@ -89,7 +91,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LATENCY,
-        num_blocks=args.num_sms or None,
+        num_blocks=num_blocks,
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=num_experts,
@@ -99,7 +101,8 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if rank == 0:
         print(
             f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
-            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} cuda_graph={args.cuda_graph}",
+            f"dispatch_dtype={args.dispatch_dtype} combine_mode={args.combine_mode} ll_blocks={num_blocks} "
+            f"cuda_graph={args.cuda_graph}",
             flush=True,
         )
         print(f"[cfg] mscclpp output_layout={requested_layout}", flush=True)
@@ -120,21 +123,29 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
 
     def _combine(dispatch_out, handle):
         nonlocal expert_output_initialized
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         # Rank-major MoE writes directly into the runtime-owned registered output
         # buffer. Pre-fill it once to benchmark communication without timing a copy.
         combine_input = dispatch_out.combine_input_buffer
         if combine_input is None:
             combine_input = simulated_gemm_output(dispatch_out)
-        elif not expert_output_initialized:
-            combine_input.normal_()
-            expert_output_initialized = True
+        elif not expanded:
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] enter", flush=True)
+            if not expert_output_initialized:
+                combine_input.normal_()
+                expert_output_initialized = True
+                if debug_combine:
+                    print(f"[rank_major_input][rank {rank}] initialized", flush=True)
+            if debug_combine:
+                print(f"[rank_major_input][rank {rank}] buffer ready", flush=True)
         moe_comm.combine(combine_input, handle, out=out)
 
     # Optional one-time correctness check (mirrors test_latency_multirank).
     if args.validate:
         v_dispatch_out, v_handle = _dispatch()
         v_out = torch.empty_like(out)
-        validation_input = _simulated_latency_expert_output(v_dispatch_out, ep)
+        validation_input = v_dispatch_out.tokens if expanded else simulated_gemm_output(v_dispatch_out)
         if v_dispatch_out.combine_input_buffer is not None:
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
@@ -146,7 +157,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         if dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
             x_f = x.float()
-            if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+            if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE and not expanded:
                 # Rank-local reduce rounds each destination rank's partial sum to
                 # BF16 before the cross-rank accumulation.
                 for destination_rank in range(num_ranks):
@@ -158,7 +169,10 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
                     expected_f += rank_partial.to(torch.bfloat16).float()
             else:
                 for j in range(num_topk):
-                    weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] < 0, 0.0).view(-1, 1)
+                    selected = (topk_idx[:, j] >= 0) & (topk_idx[:, j] < num_experts)
+                    weight_j = (
+                        selected.float() if topk_weights is None else topk_weights[:, j].masked_fill(~selected, 0.0)
+                    ).view(-1, 1)
                     expected_f = torch.addcmul(expected_f, x_f, weight_j)
             gdiff = validate_combine_output_mpi(
                 v_out, expected_f.to(torch.bfloat16), comm, exact=args.combine_mode == "direct_send"
@@ -185,7 +199,12 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(dout):
         dispatch_out, handle = dout
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[combfn][rank {rank}] enter", flush=True)
         _combine(dispatch_out, handle)
+        if debug_combine:
+            print(f"[combfn][rank {rank}] exit", flush=True)
 
     # Capture-safe ops for the harness's single-graph capture: dispatch+combine run
     # as ONE graph (one replay does both, so combine_fn becomes a no-op), matching
@@ -202,7 +221,17 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             _cap["out"], _cap["handle"] = moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
 
         def _graph_combine():
-            moe_comm.combine(_simulated_latency_expert_output(_cap["out"], ep), _cap["handle"], out=out)
+            debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+            if debug_combine:
+                print(f"[graph_combfn][rank {rank}] enter", flush=True)
+                if rank_major:
+                    print(f"[rank_major_input][rank {rank}] enter", flush=True)
+            graph_input = _cap["out"].combine_input_buffer if expanded else simulated_gemm_output(_cap["out"])
+            if debug_combine and rank_major:
+                print(f"[rank_major_input][rank {rank}] simulated", flush=True)
+            moe_comm.combine(graph_input, _cap["handle"], out=out)
+            if debug_combine:
+                print(f"[graph_combfn][rank {rank}] exit", flush=True)
 
         graph_spec = {
             "dispatch": _graph_dispatch,
@@ -234,7 +263,7 @@ def _setup_mscclpp_throughput(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_blocks = args.num_sms or 20
-    if args.ep_layout == "expert_major":
+    if args.ep_layout in ("expert_major", "rank_major_topk_expanded"):
         raise ValueError("MSCCL++ throughput mode supports token_major or rank_major layout")
     output_layout = ep.DispatchLayout.RANK_MAJOR if args.ep_layout == "rank_major" else ep.DispatchLayout.TOKEN_MAJOR
 

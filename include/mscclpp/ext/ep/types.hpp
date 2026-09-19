@@ -30,7 +30,7 @@ enum class DispatchLayout {
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
   RANK_MAJOR,
-  /// Fixed-stride source-rank rows expanded by original token and top-k slot.
+  /// Fixed [source rank, original token, top-k slot, hidden] rows with flat metadata.
   RANK_MAJOR_TOPK_EXPANDED
 };
 

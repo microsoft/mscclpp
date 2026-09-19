@@ -17,6 +17,11 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 
+// Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
+inline constexpr int GpuNetIoStagingSlots = 32768;
+inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
+inline constexpr int GpuNetIoFlushInterval = 128;
+
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
@@ -136,8 +141,12 @@ struct PayloadView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet),
-                             BufferAlignmentBytes);
+  // Rank-major counts use [R,2R), with dedicated count send scratch at [2R,3R).
+  // Reserve all three ranges even when there is only one expert per rank.
+  const size_t metadataPackets = static_cast<size_t>(numRanks) + numExperts;
+  const size_t countPackets = static_cast<size_t>(3) * numRanks;
+  const size_t packets = metadataPackets > countPackets ? metadataPackets : countPackets;
+  return configAlign<size_t>(packets * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
@@ -171,52 +180,97 @@ struct LatencyStorageLayout {
   void* rankMajorTokenBuffer_ = nullptr;
   void* rankMajorTopkExpandedTokenBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
+  // GPU-initiated networking (GPUNetIO) inter-domain staging, appended after the
+  // existing regions so their offsets are unchanged. Reserved only when the
+  // communicator collectively enables the network backend. Expanded IPC also
+  // uses the small dispatch/combine completion flag regions.
+  //   - gpuNetIoStagingBuffer_: serialized ring of GpuNetIoStagingSlots slots.
+  //   - gpuNetIoFlagsBuffer_: per-source, per-QP dispatch completion flags.
+  //   - gpuNetIoCombineFlagsBuffer_: independent per-source, per-QP combine flags.
+  void* gpuNetIoStagingBuffer_ = nullptr;
+  void* gpuNetIoFlagsBuffer_ = nullptr;
+  void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  void* gpuNetIoCombineLandingBuffer_ = nullptr;
+  size_t gpuNetIoSlotStride_ = 0;
+  void* expandedSendIds_ = nullptr;
+  void* expandedSendWeights_ = nullptr;
+  void* expandedSyncFlags_ = nullptr;
+  void* expandedSyncEpoch_ = nullptr;
+  void* expandedCounts_ = nullptr;
+  void* expandedCountStaging_ = nullptr;
 
-  LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
-    const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
-    const bool rankMajorTopkExpanded = outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
-    const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
-    const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
-    const bool rankMajorTopkExpandedLocalReduce =
-        rankMajorTopkExpanded && combineMode == CombineMode::RANK_LOCAL_REDUCE;
+  MSCCLPP_HOST_DEVICE_INLINE LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
+                                                  int numExperts, int numTopk, DispatchLayout outputLayout,
+                                                  CombineMode combineMode, bool useGpuNetIo = false) {
+    const bool topkExpanded = outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
+    const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR || topkExpanded;
+    const bool rankMajorDirectSend = !topkExpanded && rankMajor && combineMode == CombineMode::DIRECT_SEND;
+    const bool rankMajorLocalReduce = topkExpanded || (rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE);
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
-    const size_t dispatchPayloadStride =
-        configAlign<size_t>(std::max(bf16Payload.numBytes_, fp8Payload128.numBytes_), BufferAlignmentBytes);
+    const size_t dispatchPayloadStride = configAlign<size_t>(
+        bf16Payload.numBytes_ > fp8Payload128.numBytes_ ? bf16Payload.numBytes_ : fp8Payload128.numBytes_,
+        BufferAlignmentBytes);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
     const size_t rankMajorDispatchOutputBytes =
-        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
+        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16) * (topkExpanded ? numTopk : 1);
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorTopkExpandedTokenOffsetBytes =
-        rankMajorTopkExpandedTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-    const size_t rankMajorTopkExpandedDispatchOutputBytes =
-        static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
-    const size_t rankMajorTopkExpandedDispatchBufferBytes =
-        rankMajorTopkExpandedTokenOffsetBytes + rankMajorTopkExpandedDispatchOutputBytes;
-    dispatchOutputBytes_ = rankMajor               ? rankMajorDispatchOutputBytes
-                           : rankMajorTopkExpanded ? rankMajorTopkExpandedDispatchOutputBytes
-                                                   : expertMajorDispatchOutputBytes;
-    const size_t selectedLayoutDispatchBufferBytes =
-        rankMajor ? rankMajorDispatchBufferBytes
-                  : (rankMajorTopkExpanded ? rankMajorTopkExpandedDispatchBufferBytes : dispatchOutputBytes_);
-    const size_t dispatchRecvBufferBytes = std::max(dispatchBufferBytes, selectedLayoutDispatchBufferBytes);
-    const size_t combineRecvBufferBytes = rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes
-                                          : (rankMajorLocalReduce || rankMajorTopkExpandedLocalReduce)
-                                              ? 0
-                                              : dispatchOutputBytes_;
+    dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
+    const size_t dispatchWireBytes =
+        dispatchBufferBytes > rankMajorDispatchBufferBytes ? dispatchBufferBytes : rankMajorDispatchBufferBytes;
+    const size_t dispatchRecvBufferBytes =
+        dispatchWireBytes > dispatchOutputBytes_ ? dispatchWireBytes : dispatchOutputBytes_;
+    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
+                                          : rankMajorLocalReduce ? 0
+                                                                 : dispatchOutputBytes_;
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ =
-        dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
-        ((rankMajor || rankMajorTopkExpanded) ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+    const size_t baseBytes = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
+                             (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes_, BufferAlignmentBytes));
+
+    gpuNetIoSlotStride_ = useGpuNetIo
+                              ? configAlign<size_t>(static_cast<size_t>(hidden) * sizeof(Bf16) +
+                                                        static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
+                                                    BufferAlignmentBytes)
+                              : 0;
+    const int gpuNetIoStagingRows =
+        topkExpanded && maxTokensPerRank > GpuNetIoStagingSlots ? maxTokensPerRank : GpuNetIoStagingSlots;
+    const size_t gpuNetIoStagingBytes =
+        configAlign<size_t>(static_cast<size_t>(gpuNetIoStagingRows) * gpuNetIoSlotStride_, BufferAlignmentBytes);
+    const size_t gpuNetIoFlagsBytes =
+        (useGpuNetIo || topkExpanded)
+            ? configAlign<size_t>(static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t),
+                                  BufferAlignmentBytes)
+            : 0;
+    const size_t gpuNetIoCombineFlagsBytes = gpuNetIoFlagsBytes;
+    const size_t gpuNetIoCombineLandingBytes =
+        useGpuNetIo ? configAlign<size_t>(rankMajorDispatchOutputBytes, BufferAlignmentBytes) : 0;
+    const size_t gpuNetIoRegionBytes =
+        gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
+    totalBytes_ = baseBytes + gpuNetIoRegionBytes;
+    const size_t expandedIdsOffset = totalBytes_;
+    const size_t metadataEntries = static_cast<size_t>(numRanks) * maxTokensPerRank * numTopk;
+    const size_t expandedWeightsOffset =
+        expandedIdsOffset +
+        (useGpuNetIo ? configAlign<size_t>(metadataEntries * sizeof(int), BufferAlignmentBytes) : 0);
+    const size_t expandedSyncOffset =
+        expandedWeightsOffset +
+        (useGpuNetIo ? configAlign<size_t>(metadataEntries * sizeof(float), BufferAlignmentBytes) : 0);
+    const size_t expandedEpochOffset =
+        expandedSyncOffset +
+        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(uint64_t), BufferAlignmentBytes);
+    const size_t expandedCountsOffset = expandedEpochOffset + BufferAlignmentBytes;
+    const size_t expandedCountBytes =
+        configAlign<size_t>(static_cast<size_t>(numRanks) * sizeof(int), BufferAlignmentBytes);
+    const size_t expandedCountStagingOffset = expandedCountsOffset + expandedCountBytes;
+    if (topkExpanded) totalBytes_ = expandedCountStagingOffset + (useGpuNetIo ? expandedCountBytes : 0);
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -224,21 +278,37 @@ struct LatencyStorageLayout {
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
-      rankMajorTopkExpandedTokenBuffer_ = base + rankMajorTopkExpandedTokenOffsetBytes;
-      dispatchOutputBuffer_ = rankMajor               ? rankMajorTokenBuffer_
-                              : rankMajorTopkExpanded ? rankMajorTopkExpandedTokenBuffer_
-                                                      : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
-      combineRecvBuffer_ = (rankMajorLocalReduce || rankMajorTopkExpandedLocalReduce) ? dispatchOutputBuffer_
-                                                                                      : base + dispatchRecvBufferBytes_;
+      rankMajorTopkExpandedTokenBuffer_ = rankMajorTokenBuffer_;
+      dispatchOutputBuffer_ =
+          rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
+      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      if (useGpuNetIo) {
+        auto* gpuNetIoBase = base + baseBytes;
+        gpuNetIoStagingBuffer_ = gpuNetIoBase;
+        gpuNetIoCombineLandingBuffer_ =
+            gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
+      }
+      if (useGpuNetIo || topkExpanded) {
+        gpuNetIoFlagsBuffer_ = base + baseBytes + gpuNetIoStagingBytes;
+        gpuNetIoCombineFlagsBuffer_ = base + baseBytes + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
+      }
+      if (topkExpanded) {
+        expandedSendIds_ = useGpuNetIo ? base + expandedIdsOffset : nullptr;
+        expandedSendWeights_ = useGpuNetIo ? base + expandedWeightsOffset : nullptr;
+        expandedSyncFlags_ = base + expandedSyncOffset;
+        expandedSyncEpoch_ = base + expandedEpochOffset;
+        expandedCounts_ = base + expandedCountsOffset;
+        expandedCountStaging_ = useGpuNetIo ? base + expandedCountStagingOffset : nullptr;
+      }
     }
   }
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode) {
-  const auto numBytes =
-      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
-          .totalBytes_;
+                                 DispatchLayout outputLayout, CombineMode combineMode, bool useGpuNetIo = false) {
+  const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
+                                             outputLayout, combineMode, useGpuNetIo)
+                            .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 

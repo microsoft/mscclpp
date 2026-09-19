@@ -37,14 +37,44 @@ struct TransportView {
   void* const* peerMappedBufferBases_;
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
+  int numRanks_;
+  // GPU-initiated networking (GPUNetIO) cross-domain resources. gpuNetIo_ is null
+  // unless the backend is active for this rank; peers with a null mapped-buffer
+  // base (see isNvlinkPeer) are served over GPUNetIO instead of NVLink/IPC.
+  mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
+  void* gpuNetIoStagingBuffer_;
+  void* gpuNetIoFlagsBuffer_;
+  void* gpuNetIoCombineFlagsBuffer_;
+  void* gpuNetIoCombineLandingBuffer_;
+  size_t gpuNetIoSlotStride_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
         peerMappedBufferBases_(context->peerBufferBases_),
         baseMemoryChannels_(context->channels_),
-        rank_(context->rank_) {}
+        rank_(context->rank_),
+        numRanks_(context->numRanks_),
+        gpuNetIo_(context->gpuNetIo_),
+        gpuNetIoStagingBuffer_(context->gpuNetIoStagingBuffer_),
+        gpuNetIoFlagsBuffer_(context->gpuNetIoFlagsBuffer_),
+        gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
+        gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_),
+        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  // Byte offset of a symmetric-buffer pointer from this rank's base; the same
+  // offset addresses the identical region on any peer (used by GPUNetIO puts).
+  MSCCLPP_HOST_DEVICE_INLINE uint64_t symmetricOffset(const void* ptr) const {
+    return static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(ptr) -
+                                 reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
+  }
+
+  // A peer is NVLink/IPC-reachable if it is self or its symmetric buffer is
+  // directly mapped; otherwise it is a cross-domain peer served over GPUNetIO.
+  MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
+    return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
     if (isSelf(peerRank)) return localBuffer;
@@ -122,9 +152,22 @@ struct WorkspaceView {
   uint32_t* combineReadyEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
+  // GPUNetIO cross-domain: cumulative per-source arrival baseline (dispatch recv
+  // flag poll target, never reset) and persisted per-source recv counts (read by
+  // the combine PUSH sender after the recvBuffer count packet is cleared).
+  uint64_t* dispatchArrivedBaseline_;
+  uint64_t* combineArrivedBaseline_;
+  int* dispatchRecvCounts_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
+    // 8-byte-aligned field first (workspace base is allocation-aligned).
+    dispatchArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
+    combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
+    dispatchRecvCounts_ = cursor;
+    cursor += nRanks;
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
     dispatchRankPayloadCompletions_ = cursor;
@@ -147,7 +190,10 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
+    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // dispatchArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // combineArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRecvCounts_
+           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
            static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_

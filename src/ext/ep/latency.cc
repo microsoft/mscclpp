@@ -4,13 +4,22 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
+#include <string>
 
 #include "exception.hpp"
 #include "kernels.hpp"
 #include "moe_runtime_context.hpp"
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/utils.hpp>
+
+#include "host/gpu_net_io_service.hpp"
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {
 namespace ep {
@@ -27,26 +36,57 @@ LatencyContext::LatencyContext(mscclpp::Communicator& communicator, int rank, in
       numTopk_(numTopk),
       outputLayout_(outputLayout),
       combineMode_(combineMode),
-      symmetricBufferBytes_(static_cast<int64_t>(
-          latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode))),
+      symmetricBufferBytes_(0),
       workspaceBytes_(workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
-  EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
                  outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  if (outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE);
+    EP_HOST_ASSERT(numTopk <= 9);
+    EP_HOST_ASSERT(static_cast<int64_t>(maxTokensPerRank) * numTopk <= INT32_MAX);
+  }
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks == 0);
+  numNvlRanks_ = numNvlRanks;
+  // Optional override to shrink the IPC/NVLink domain (e.g. to the physical node)
+  // so cross-physical-node traffic is served by GPUNetIO instead of MNNVL IPC.
+  if (const char* e = std::getenv("MSCCLPP_EP_IPC_DOMAIN_SIZE")) {
+    const int forced = std::atoi(e);
+    if (forced >= 1 && forced <= numRanks_ && numRanks_ % forced == 0) numRanksPerIpcDomain_ = forced;
+  }
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = numRanksPerIpcDomain_ >= numRanks_;
+#if defined(MSCCLPP_USE_GPUNETIO)
+  // Cross-domain GPUNetIO makes the runtime available even when the IPC domain
+  // does not span all ranks, provided the backend is explicitly enabled.
+  if (numRanksPerIpcDomain_ < numRanks_) {
+    const char* enableGpuNetIo = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
+    // The ported network protocol carries one pre-reduced BF16 row per rank.
+    // Expert-major and the newer per-route DIRECT_SEND layout are IPC-only.
+    if (enableGpuNetIo != nullptr && std::atoi(enableGpuNetIo) != 0) {
+      available_ =
+          (outputLayout_ == DispatchLayout::RANK_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
+          combineMode_ == CombineMode::RANK_LOCAL_REDUCE;
+      useGpuNetIo_ = available_;
+    }
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+  symmetricBufferBytes_ = static_cast<int64_t>(latencyStorageSize(maxTokensPerRank_, hidden_, numRanks_, numExperts_,
+                                                                  numTopk_, outputLayout_, combineMode_, useGpuNetIo_));
+  EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
 }
 
 LatencyContext::~LatencyContext() noexcept(false) {
   CUDA_CHECK(cudaDeviceSynchronize());
+#if defined(MSCCLPP_USE_GPUNETIO)
+  gpuNetIoService_.reset();
+#endif
   if (deviceContext_.devicePtr_ != nullptr) CUDA_CHECK(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) CUDA_CHECK(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) CUDA_CHECK(cudaFree(workspace_));
@@ -56,9 +96,21 @@ LatencyContext::~LatencyContext() noexcept(false) {
 }
 
 void LatencyContext::initialize() {
-  EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   EP_HOST_ASSERT(communicator_ != nullptr);
+  struct StorageConfig {
+    uint64_t bytes;
+    int ipcDomainSize;
+    int useGpuNetIo;
+  };
+  std::vector<StorageConfig> storageConfigs(numRanks_);
+  storageConfigs[rank_] = {static_cast<uint64_t>(symmetricBufferBytes_), numRanksPerIpcDomain_, useGpuNetIo_ ? 1 : 0};
+  communicator_->bootstrap()->allGather(storageConfigs.data(), sizeof(StorageConfig));
+  for (const auto& config : storageConfigs) {
+    EP_HOST_ASSERT(config.bytes == static_cast<uint64_t>(symmetricBufferBytes_) &&
+                   config.ipcDomainSize == numRanksPerIpcDomain_ && config.useGpuNetIo == (useGpuNetIo_ ? 1 : 0));
+  }
+  EP_HOST_ASSERT(available_);
   AvoidCudaGraphCaptureGuard captureGuard;
 
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
@@ -124,6 +176,79 @@ void LatencyContext::initialize() {
                     .deviceId_ = deviceId_,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  // Bring up the GPU-initiated networking service for peers outside this rank's
+  // NVLink/IPC domain (opt-in via MSCCLPP_EP_ENABLE_GPUNETIO). Publishes the
+  // device context + symmetric staging/flags regions onto deviceContext_.
+  if (useGpuNetIo_) {
+    std::string hca;
+    if (const char* devices = std::getenv("MSCCLPP_EP_GPUNETIO_HCAS")) {
+      hca = devices;
+    } else if (const char* device = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
+      hca = device;
+    }
+    auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
+    svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
+    gpuNetIoService_ = svc;
+    deviceContext_.gpuNetIo_ = svc->deviceContext();
+    LatencyStorageLayout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
+                                outputLayout_, combineMode_, useGpuNetIo_);
+    deviceContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
+    deviceContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
+    deviceContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
+    deviceContext_.gpuNetIoCombineLandingBuffer_ = layout.gpuNetIoCombineLandingBuffer_;
+    deviceContext_.gpuNetIoSlotStride_ = layout.gpuNetIoSlotStride_;
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize >= numRanks_) {
+    const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_IPC_FASTPATH");
+    const bool allMapped = std::all_of(peerMappedBufferBases_.begin(), peerMappedBufferBases_.end(),
+                                       [](void* base) { return base != nullptr; });
+    std::vector<int> enabled(numRanks_, 0);
+    enabled[rank_] =
+        (requested == nullptr || std::atoi(requested) != 0) && allMapped && deviceContext_.gpuNetIo_ == nullptr;
+    communicator_->bootstrap()->allGather(enabled.data(), sizeof(int));
+    deviceContext_.expandedIpcFastPath_ =
+        std::all_of(enabled.begin(), enabled.end(), [](int value) { return value != 0; });
+  }
+  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize < numRanks_) {
+    const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_GPUNETIO_FASTPATH");
+    std::vector<int> enabled(numRanks_, 0);
+    enabled[rank_] = (requested == nullptr || std::atoi(requested) != 0) && deviceContext_.gpuNetIo_ != nullptr;
+    communicator_->bootstrap()->allGather(enabled.data(), sizeof(int));
+    deviceContext_.expandedGpuNetIoFastPath_ =
+        std::all_of(enabled.begin(), enabled.end(), [](int value) { return value != 0; });
+  }
+
+  // Host-side topology dump (opt-in via MSCCLPP_EP_DEBUG_TOPO): nvlinkPeerMap[r]
+  // ='1' => peer r is NVLink/IPC-mapped; '0' => cross-domain (served via GPUNetIO).
+  if (std::getenv("MSCCLPP_EP_DEBUG_TOPO") != nullptr) {
+    std::string nvmap(static_cast<size_t>(numRanks_), '0');
+    for (int r = 0; r < numRanks_; ++r) {
+      if (r == rank_ || peerMappedBufferBases_[r] != nullptr) nvmap[r] = '1';
+    }
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const int ginOn = (gpuNetIoService_ != nullptr) ? 1 : 0;
+#else
+    const int ginOn = 0;
+#endif
+    std::fprintf(stderr,
+                 "[EPTOPO] rank=%d numRanks=%d nRanksPerIpcDomain=%d numNvlRanks=%d crossDomain=%d ginOn=%d "
+                 "available=%d nvlinkPeerMap=%s\n",
+                 rank_, numRanks_, numRanksPerIpcDomain_, numNvlRanks_, (numRanksPerIpcDomain_ < numRanks_) ? 1 : 0,
+                 ginOn, available_ ? 1 : 0, nvmap.c_str());
+    std::fflush(stderr);
+    if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+      std::fprintf(stderr, "[EPEXPANDED] rank=%d ipcFastPath=%d hidden=%d topk=%d\n", rank_,
+                   deviceContext_.expandedIpcFastPath_ ? 1 : 0, hidden_, numTopk_);
+      std::fprintf(stderr, "[EPEXPANDED_GPUNETIO] rank=%d gpuNetIoFastPath=%d\n", rank_,
+                   deviceContext_.expandedGpuNetIoFastPath_ ? 1 : 0);
+      std::fflush(stderr);
+    }
+  }
+
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }
@@ -133,7 +258,8 @@ void* MoERuntime::outputTopkIdsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.useGpuNetIo_)
       .rankMajorTopkIdsBuffer_;
 }
 
@@ -142,17 +268,20 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.useGpuNetIo_)
       .rankMajorTopkWeightsBuffer_;
 }
 
 void* MoERuntime::combineInputBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                 context.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
   return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.useGpuNetIo_)
       .combineRecvBuffer_;
 }
 
@@ -188,21 +317,27 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
 
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&
+                   numTopk == context.numTopk_ && numExperts == context.numExperts_);
+    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16);
+  }
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+                                        numExperts, numTopk, context.outputLayout_, context.combineMode_,
+                                        context.useGpuNetIo_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
-  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
   }
 
   ++context.epoch_;
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    std::fprintf(stderr, "[EPOCHDBG] rank=%d dispatch epoch=%u numTokens=%d\n", rank_, context.epoch_, numTokens);
+    std::fflush(stderr);
+  }
   const Workload workload{.epoch_ = context.epoch_,
                           .numTokens_ = numTokens,
                           .hidden_ = hidden,
@@ -214,14 +349,13 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
                           .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    topk_expanded::dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                            workload, context.deviceContext_, numBlocks, stream);
+  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
                       input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
                       stream);
-  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    rankMajorTopkExpandedDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
-                                  outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer,
-                                  context.deviceContext_, numBlocks, stream);
   } else {
     expertMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                         outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_,
@@ -255,18 +389,33 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&
+                   numTopk == context.numTopk_ && numExperts == context.numExperts_);
+    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 && mode == CombineMode::RANK_LOCAL_REDUCE);
+    EP_HOST_ASSERT(numTokens >= 0 && numTokens <= maxTokensPerRank && numBlocks > context.numRanks_);
+  }
+  if (context.deviceContext_.gpuNetIo_ != nullptr) {
+    EP_HOST_ASSERT(
+        (dispatchLayout == DispatchLayout::RANK_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
+        mode == CombineMode::RANK_LOCAL_REDUCE);
+    EP_HOST_ASSERT(numBlocks >= context.numRanks_);
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+                                        numExperts, numTopk, context.outputLayout_, context.combineMode_,
+                                        context.useGpuNetIo_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
-  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    EP_HOST_ASSERT(input == allocationLayout.dispatchOutputBuffer_);
   }
 
+  if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
+    std::fprintf(stderr, "[EPOCHDBG] rank=%d combine  epoch=%u\n", rank_, context.epoch_);
+    std::fflush(stderr);
+  }
   const Workload workload{.epoch_ = context.epoch_,
                           .numTokens_ = numTokens,
                           .hidden_ = hidden,
@@ -278,7 +427,9 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context.deviceContext_, numBlocks, stream);
+  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {
       rankMajorDirectSendCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
                                  context.deviceContext_, numBlocks, stream);
@@ -287,10 +438,6 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
       rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
                                    combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
     }
-  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-    rankMajorTopkExpandedGatherReduceCombine(output, input, topkIdx, topkWeights, workload, combineRecvBuffer,
-                                             dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   } else if (mode == CombineMode::DIRECT_SEND) {
     expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
                                  dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);

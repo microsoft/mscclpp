@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional, Tuple
 
 import torch
@@ -178,7 +179,13 @@ class MoECommunicator:
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
-        return self._runtime.combine(expert_output, handle, out=out, stream=stream)
+        debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
+        if debug_combine:
+            print(f"[py_comm_combine] enter runtime={type(self._runtime).__name__}", flush=True)
+        result = self._runtime.combine(expert_output, handle, out=out, stream=stream)
+        if debug_combine:
+            print("[py_comm_combine] exit", flush=True)
+        return result
 
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
@@ -195,6 +202,8 @@ class MoECommunicator:
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
+        if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            raise NotImplementedError("expanded output does not support overlapping calls")
         return OverlapConfig(operation=OperationOverlapConfig())
 
 

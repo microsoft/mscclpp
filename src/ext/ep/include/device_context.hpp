@@ -6,6 +6,10 @@
 #include <mscclpp/memory_channel_device.hpp>
 
 namespace mscclpp {
+
+// Forward declaration; full definition in the GPUNetIO device header.
+struct GpuNetIoDeviceContext;
+
 namespace ep {
 
 /// Persistent device resources shared by every dispatch and combine algorithm.
@@ -36,6 +40,25 @@ struct DeviceContext {
   int rank_;
   /// Number of ranks.
   int numRanks_;
+  /// GPU-initiated networking (GPUNetIO/GDAKI) device context for peers outside
+  /// this rank's NVLink/IPC domain, or nullptr when every peer is NVLink-mapped
+  /// (single-domain) or the GPUNetIO backend is disabled.
+  mscclpp::GpuNetIoDeviceContext* gpuNetIo_ = nullptr;
+  /// Symmetric inter-domain send-staging ring base (GpuNetIoStagingSlots slots).
+  void* gpuNetIoStagingBuffer_ = nullptr;
+  /// Symmetric per-source-rank, per-QP dispatch completion flag array base.
+  void* gpuNetIoFlagsBuffer_ = nullptr;
+  /// Symmetric per-peer-rank combine completion flag array base (kept separate
+  /// from gpuNetIoFlagsBuffer_ so dispatch and combine signal counts never alias).
+  void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  /// Symmetric payload-only combine landing rows, null unless active.
+  void* gpuNetIoCombineLandingBuffer_ = nullptr;
+  /// Byte stride of one staging-ring slot (token + top-k metadata).
+  size_t gpuNetIoSlotStride_ = 0;
+  /// Expanded IPC specialization, collectively enabled when all peers are mapped.
+  bool expandedIpcFastPath_ = false;
+  /// Expanded network specialization, collectively enabled only with active GPUNetIO.
+  bool expandedGpuNetIoFastPath_ = false;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
 };
