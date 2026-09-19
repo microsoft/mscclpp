@@ -41,6 +41,10 @@ struct GpuNetIoDeviceContext {
   int numHcas = 1;
   /// Per-HCA local keys, or nullptr to use lkey for the single-HCA path.
   const uint32_t* lkeys = nullptr;
+  /// Registered backend-owned fetch-add result slots, one uint64_t per flat QP.
+  uintptr_t atomicResultBase = 0;
+  /// Per-HCA local registration keys for atomicResultBase, in host byte order.
+  const uint32_t* atomicResultLkeys = nullptr;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local

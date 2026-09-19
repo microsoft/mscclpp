@@ -342,10 +342,13 @@ template <enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SY
 __device__ static __forceinline__ void doca_gpu_dev_verbs_ring_bf(struct doca_gpu_dev_verbs_qp *qp,
                                                                   struct doca_gpu_dev_verbs_wqe *wqe_ptr) {
   void *bf_ptr = (void *)__ldg((uintptr_t *)&qp->sq_db);
-  uint64_t *wqe = (uint64_t *)wqe_ptr;
+  const uint32_t wqe = static_cast<uint32_t>(__cvta_generic_to_shared(wqe_ptr));
 
   doca_gpu_dev_verbs_fence_release<sync_scope>();
-  asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], 64;" : : "l"(bf_ptr), "l"(wqe));
+  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+  asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], 64;" : : "l"(bf_ptr), "r"(wqe) : "memory");
+  asm volatile("cp.async.bulk.commit_group;" ::: "memory");
+  asm volatile("cp.async.bulk.wait_group.read 0;" ::: "memory");
 }
 #endif
 
@@ -713,6 +716,7 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_prepare_inl_rdma_write
 template <typename T>
 __device__ static __forceinline__ void doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_wqe *wqe_ptr, T data) {
+  static_assert(sizeof(T) <= sizeof(uint64_t), "GPUNetIO inline values must not exceed 8 bytes");
   struct doca_gpunetio_ib_mlx5_wqe_inl_data_seg *data_seg_ptr =
       (struct doca_gpunetio_ib_mlx5_wqe_inl_data_seg *)((uintptr_t)wqe_ptr +
                                                         sizeof(struct doca_gpunetio_ib_mlx5_wqe_ctrl_seg) +

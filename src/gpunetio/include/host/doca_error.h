@@ -37,6 +37,7 @@
 #define DOCA_ERROR_H
 
 #include <errno.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {

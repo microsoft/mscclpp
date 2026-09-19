@@ -655,10 +655,11 @@ doca_error_t doca_gpu_verbs_create_qp_hl(struct doca_gpu_verbs_qp_init_attr_hl *
   doca_error_t status = DOCA_SUCCESS;
 
   if (qp_init_attr == nullptr || qp == nullptr) {
-    DOCA_LOG(LOG_ERR, "Invalid input value: qp_init_attr %p qp %p", (void *)qp_init_attr, (void *)*qp);
+    DOCA_LOG(LOG_ERR, "Invalid input value: qp_init_attr %p qp %p", (void *)qp_init_attr, (void *)qp);
     return DOCA_ERROR_INVALID_VALUE;
   }
 
+  *qp = nullptr;
   if (qp_init_attr->gpu_dev == nullptr || qp_init_attr->ibpd == nullptr || qp_init_attr->sq_nwqe == 0) {
     DOCA_LOG(LOG_ERR, "Invalid input value: gpu_dev %p ibpd %p sq_nwqe %d", (void *)qp_init_attr->gpu_dev,
              (void *)qp_init_attr->ibpd, qp_init_attr->sq_nwqe);
@@ -723,7 +724,7 @@ doca_error_t doca_gpu_verbs_create_qp_hl(struct doca_gpu_verbs_qp_init_attr_hl *
                                     qp_->send_dbr_mode_ext, &qp_->qp_gverbs);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
-    return status;
+    goto exit_error;
   }
 
   *qp = qp_;
@@ -753,10 +754,11 @@ doca_error_t doca_gpu_verbs_create_qp_group_hl(struct doca_gpu_verbs_qp_init_att
   doca_error_t status = DOCA_SUCCESS;
 
   if (qp_init_attr == nullptr || qpg == nullptr) {
-    DOCA_LOG(LOG_ERR, "Invalid input value: qp_init_attr %p qp %p", (void *)qp_init_attr, (void *)*qpg);
+    DOCA_LOG(LOG_ERR, "Invalid input value: qp_init_attr %p qp %p", (void *)qp_init_attr, (void *)qpg);
     return DOCA_ERROR_INVALID_VALUE;
   }
 
+  *qpg = nullptr;
   if (qp_init_attr->gpu_dev == nullptr || qp_init_attr->ibpd == nullptr || qp_init_attr->sq_nwqe == 0) {
     DOCA_LOG(LOG_ERR, "Invalid input value: gpu_dev %p ibpd %p sq_nwqe %d", (void *)qp_init_attr->gpu_dev,
              (void *)qp_init_attr->ibpd, qp_init_attr->sq_nwqe);
@@ -824,7 +826,7 @@ doca_error_t doca_gpu_verbs_create_qp_group_hl(struct doca_gpu_verbs_qp_init_att
                                     &qpg_->qp_main.qp_gverbs);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
-    return status;
+    goto exit_error;
   }
 
   /********** Create companion QP **********/
@@ -861,7 +863,7 @@ doca_error_t doca_gpu_verbs_create_qp_group_hl(struct doca_gpu_verbs_qp_init_att
                                     qpg_->qp_companion.send_dbr_mode_ext, &qpg_->qp_companion.qp_gverbs);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
-    return status;
+    goto exit_error;
   }
 
   *qpg = qpg_;
@@ -870,9 +872,9 @@ doca_error_t doca_gpu_verbs_create_qp_group_hl(struct doca_gpu_verbs_qp_init_att
 
 exit_error:
   if (qpg_) {
-    doca_gpu_verbs_destroy_qp_hl_internal(&qpg_->qp_main);
     qpg_->qp_companion.external_uar = nullptr;
     doca_gpu_verbs_destroy_qp_hl_internal(&qpg_->qp_companion);
+    doca_gpu_verbs_destroy_qp_hl_internal(&qpg_->qp_main);
   }
 
   free(qpg_);
@@ -882,9 +884,9 @@ exit_error:
 doca_error_t doca_gpu_verbs_destroy_qp_group_hl(struct doca_gpu_verbs_qp_group_hl *qpg) {
   if (qpg == nullptr) return DOCA_ERROR_INVALID_VALUE;
 
-  doca_gpu_verbs_destroy_qp_hl_internal(&qpg->qp_main);
   qpg->qp_companion.external_uar = nullptr;
   doca_gpu_verbs_destroy_qp_hl_internal(&qpg->qp_companion);
+  doca_gpu_verbs_destroy_qp_hl_internal(&qpg->qp_main);
 
   memset(qpg, 0, sizeof(*qpg));
 

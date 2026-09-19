@@ -38,8 +38,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <new>
 #include <set>
 #include <unordered_map>
 
@@ -71,7 +73,7 @@ struct doca_gpu_mtable {
 struct doca_gpu_verbs_service {
   pthread_t service_thread;
   pthread_rwlock_t service_lock;
-  bool running;
+  std::atomic<bool> running{false};
   std::set<struct doca_gpu_verbs_qp *> *qps;
 };
 
@@ -196,6 +198,8 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
   unsigned int flag = 1;
   const char *err_string;
   void *memptr_cpu_ = nullptr;
+  bool hostRegistered = false;
+  bool gdrMapped = false;
   doca_error_t status = DOCA_SUCCESS;
 
   if (gpu_dev == nullptr) {
@@ -225,7 +229,16 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
     return DOCA_ERROR_INVALID_VALUE;
   }
 
+  if (mtype != DOCA_GPU_MEM_TYPE_GPU && mtype != DOCA_GPU_MEM_TYPE_GPU_CPU && mtype != DOCA_GPU_MEM_TYPE_CPU_GPU)
+    return DOCA_ERROR_INVALID_VALUE;
+  *memptr_gpu = nullptr;
+  if (memptr_cpu) *memptr_cpu = nullptr;
+  if (mtype == DOCA_GPU_MEM_TYPE_GPU_CPU && !gpu_dev->support_gdrcopy) mtype = DOCA_GPU_MEM_TYPE_CPU_GPU;
+  if (mtype == DOCA_GPU_MEM_TYPE_GPU_CPU) alignment = GPU_PAGE_SIZE;
+  if (size > SIZE_MAX - alignment) return DOCA_ERROR_INVALID_VALUE;
+
   mentry = (struct doca_gpu_mtable *)calloc(1, sizeof(struct doca_gpu_mtable));
+  if (mentry == nullptr) return DOCA_ERROR_NO_MEMORY;
   mentry->mtype = mtype;
   mentry->size = size;
 
@@ -252,7 +265,6 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
     res_drv = doca_verbs_wrapper_cuPointerSetAttribute(&flag, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
                                                        (CUdeviceptr)cudev_memptr_gpu_);
     if (res_drv != CUDA_SUCCESS) {
-      DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaFree(cudev_memptr_gpu_orig_));
       DOCA_LOG(LOG_ERR, "Could not set SYNC MEMOP attribute for GPU memory at %lx, err %d",
                (uintptr_t)cudev_memptr_gpu_, res);
       status = DOCA_ERROR_DRIVER;
@@ -284,7 +296,6 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
       res_drv = doca_verbs_wrapper_cuPointerSetAttribute(&flag, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
                                                          (CUdeviceptr)cudev_memptr_gpu_);
       if (res_drv != CUDA_SUCCESS) {
-        DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaFree(cudev_memptr_gpu_orig_));
         DOCA_LOG(LOG_ERR, "Could not set SYNC MEMOP attribute for GPU memory at %lx, err %d",
                  (uintptr_t)cudev_memptr_gpu_, res);
         status = DOCA_ERROR_DRIVER;
@@ -302,68 +313,33 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
         status = DOCA_ERROR_DRIVER;
         goto error;
       }
-    } else {
-      DOCA_LOG(LOG_WARNING,
-               "GDRCopy not enabled, can't allocate memory type DOCA_GPU_MEM_TYPE_GPU_CPU. "
-               "Using DOCA_GPU_MEM_TYPE_CPU_GPU mode instead");
-
-      mentry->size_orig = mentry->size;
-
-      memptr_cpu_ = (uint8_t *)calloc(alignment, mentry->size_orig);
-      if (memptr_cpu_ == nullptr) {
-        DOCA_LOG(LOG_ERR, "Failed to allocate CPU memory.");
-        status = DOCA_ERROR_DRIVER;
-        goto error;
-      }
-
-      res = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(
-          cudaHostRegister(memptr_cpu_, mentry->size_orig, cudaHostRegisterPortable | cudaHostRegisterMapped));
-      if (res != cudaSuccess) {
-        DOCA_LOG(LOG_ERR, "Could register CPU memory to CUDA %lx, err %d", (uintptr_t)memptr_cpu_, res);
-        free(memptr_cpu_);
-        status = DOCA_ERROR_DRIVER;
-        goto error;
-      }
-
-      mentry->base_addr = (uintptr_t)memptr_cpu_;
-
-      res = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaHostGetDevicePointer(&cudev_memptr_gpu_, memptr_cpu_, 0));
-      if (res != cudaSuccess) {
-        DOCA_LOG(LOG_ERR, "Could get GPU device ptr for CPU memory %lx, err %d", (uintptr_t)memptr_cpu_, res);
-        free(memptr_cpu_);
-        status = DOCA_ERROR_DRIVER;
-        goto error;
-      }
-
-      mentry->align_addr_gpu = (uintptr_t)cudev_memptr_gpu_;
-      mentry->align_addr_cpu = (uintptr_t)memptr_cpu_;
+      gdrMapped = true;
     }
 
   } else if (mtype == DOCA_GPU_MEM_TYPE_CPU_GPU) {
     mentry->size_orig = mentry->size;
 
-    memptr_cpu_ = (uint8_t *)calloc(alignment, mentry->size_orig);
-    if (memptr_cpu_ == nullptr) {
+    if (posix_memalign(&memptr_cpu_, std::max(alignment, sizeof(void *)), mentry->size_orig) != 0) {
       DOCA_LOG(LOG_ERR, "Failed to allocate CPU memory.");
       status = DOCA_ERROR_DRIVER;
       goto error;
     }
+    memset(memptr_cpu_, 0, mentry->size_orig);
 
     res = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(
         cudaHostRegister(memptr_cpu_, mentry->size_orig, cudaHostRegisterPortable | cudaHostRegisterMapped));
     if (res != cudaSuccess) {
       DOCA_LOG(LOG_ERR, "Could register CPU memory to CUDA %lx, err %d", (uintptr_t)memptr_cpu_, res);
-      free(memptr_cpu_);
       status = DOCA_ERROR_DRIVER;
       goto error;
     }
+    hostRegistered = true;
 
     mentry->base_addr = (uintptr_t)memptr_cpu_;
 
     res = DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaHostGetDevicePointer(&cudev_memptr_gpu_, memptr_cpu_, 0));
     if (res != cudaSuccess) {
       DOCA_LOG(LOG_ERR, "Could get GPU device ptr for CPU memory %lx, err %d", (uintptr_t)memptr_cpu_, res);
-      free(memptr_cpu_);
       status = DOCA_ERROR_DRIVER;
       goto error;
     }
@@ -371,9 +347,6 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
     mentry->align_addr_gpu = (uintptr_t)cudev_memptr_gpu_;
     mentry->align_addr_cpu = (uintptr_t)memptr_cpu_;
   }
-
-  *memptr_gpu = (void *)mentry->align_addr_gpu;
-  if (memptr_cpu) *memptr_cpu = (void *)mentry->align_addr_cpu;
 
   // DOCA_LOG(LOG_DEBUG, "New memory: Orig %lx GPU %lx CPU %lx type %d size %zd\n",
   // 	      mentry->base_addr,
@@ -390,9 +363,15 @@ doca_error_t doca_gpu_mem_alloc(struct doca_gpu *gpu_dev, size_t size, size_t al
     goto error;
   }
 
+  *memptr_gpu = (void *)mentry->align_addr_gpu;
+  if (memptr_cpu) *memptr_cpu = (void *)mentry->align_addr_cpu;
   return DOCA_SUCCESS;
 
 error:
+  if (gdrMapped) doca_gpu_gdrcopy_destroy_mapping(mentry->gdr_mh, (void *)mentry->align_addr_cpu, mentry->size);
+  if (hostRegistered) DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaHostUnregister(memptr_cpu_));
+  if (memptr_cpu_) free(memptr_cpu_);
+  if (cudev_memptr_gpu_orig_) DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(cudaFree(cudev_memptr_gpu_orig_));
   free(mentry);
   return status;
 }
@@ -1006,16 +985,17 @@ static void *priv_service_mainloop(void *args) {
   struct doca_gpu_verbs_service *service = (struct doca_gpu_verbs_service *)args;
   bool progressed = false;
 
-  while (service->running) {
+  while (service->running.load(std::memory_order_acquire)) {
     pthread_rwlock_rdlock(&service->service_lock);
     do {
       progressed = false;
       for (auto qp : *service->qps) {
+        if (!service->running.load(std::memory_order_acquire)) break;
         bool qp_progressed = false;
         doca_gpu_verbs_cpu_proxy_progress(qp, &qp_progressed);
         progressed |= qp_progressed;
       }
-    } while (progressed);
+    } while (progressed && service->running.load(std::memory_order_acquire));
     pthread_rwlock_unlock(&service->service_lock);
     sched_yield();
   }
@@ -1027,10 +1007,12 @@ doca_error_t doca_gpu_verbs_create_service(doca_gpu_verbs_service_t *out_service
   int status = 0;
   doca_error_t doca_status = DOCA_SUCCESS;
   struct doca_gpu_verbs_service *service = nullptr;
+  bool lockInitialized = false;
 
   if (out_service == nullptr) return DOCA_ERROR_INVALID_VALUE;
+  *out_service = nullptr;
 
-  service = (struct doca_gpu_verbs_service *)calloc(1, sizeof(struct doca_gpu_verbs_service));
+  service = new (std::nothrow) doca_gpu_verbs_service{};
   if (service == nullptr) {
     DOCA_LOG(LOG_ERR, "Failed to allocate memory for service");
     doca_status = DOCA_ERROR_NO_MEMORY;
@@ -1044,8 +1026,13 @@ doca_error_t doca_gpu_verbs_create_service(doca_gpu_verbs_service_t *out_service
     goto out;
   }
 
-  service->running = true;
-  service->qps = new std::set<struct doca_gpu_verbs_qp *>();
+  lockInitialized = true;
+  service->running.store(true, std::memory_order_release);
+  service->qps = new (std::nothrow) std::set<struct doca_gpu_verbs_qp *>();
+  if (service->qps == nullptr) {
+    doca_status = DOCA_ERROR_NO_MEMORY;
+    goto out;
+  }
   status = pthread_create(&service->service_thread, nullptr, priv_service_mainloop, service);
   if (status != 0) {
     DOCA_LOG(LOG_ERR, "Failed to create service thread");
@@ -1056,9 +1043,10 @@ doca_error_t doca_gpu_verbs_create_service(doca_gpu_verbs_service_t *out_service
   *out_service = service;
 
 out:
-  if (status) {
-    if (service->qps) delete service->qps;
-    if (service) free(service);
+  if (doca_status != DOCA_SUCCESS && service) {
+    delete service->qps;
+    if (lockInitialized) pthread_rwlock_destroy(&service->service_lock);
+    delete service;
   }
   return doca_status;
 }
@@ -1078,11 +1066,11 @@ doca_error_t doca_gpu_verbs_destroy_service(doca_gpu_verbs_service_t service) {
   struct doca_gpu_verbs_service *service_ = (struct doca_gpu_verbs_service *)service;
   if (service == nullptr) return DOCA_ERROR_INVALID_VALUE;
 
-  service_->running = false;
+  service_->running.store(false, std::memory_order_release);
   pthread_join(service_->service_thread, nullptr);
   pthread_rwlock_destroy(&service_->service_lock);
   delete service_->qps;
-  free(service_);
+  delete service_;
 
   return DOCA_SUCCESS;
 }

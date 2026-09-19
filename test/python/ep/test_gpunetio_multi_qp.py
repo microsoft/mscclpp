@@ -110,6 +110,7 @@ struct Host2DeviceSemaphoreDeviceHandle{
 namespace detail{void waitFlush(uint64_t*,uint64_t,int64_t){}}
 struct GpuNetIoDeviceContext{
  int numPeers=4,puts=0,signals=0,flushes=0;uint64_t payload=99,counter=0;
+ int status=0;uint64_t budget=0;
  void put(int peer,uint64_t,uint64_t,uint64_t){require(peer==3,"put peer");++puts;}
  void atomicAdd(int peer,uint64_t offset,int64_t value){
   require(peer==3,"atomic peer");
@@ -120,6 +121,7 @@ struct GpuNetIoDeviceContext{
   put(peer,dst,src,bytes);atomicAdd(peer,offset,value);
  }
  void flush(int peer){require(peer==3,"flush peer");++flushes;}
+ int tryFlush(int peer,uint64_t spins){budget=spins;flush(peer);return status;}
 };
 """
         native += header[header.index("struct BasePortChannelDeviceHandle") : header.rindex("}  // namespace mscclpp")]
@@ -136,6 +138,12 @@ int main(){
  PortChannelDeviceHandle derived(&gin,3,64,&gin.counter,&expected);
  derived.putWithSignalAndFlush(uint64_t(0),uint64_t(0),uint64_t(4),int64_t(100));derived.wait();
  require(gin.flushes==3,"derived fused flush");
+ for(int status:{0,16,-5})for(uint64_t budget:{uint64_t(0),uint64_t(17)}){
+  gin.status=status;bool rejected=false;
+  try{channel.flush(budget);}catch(const std::runtime_error&){rejected=true;}
+  require(rejected==(status!=0)&&gin.budget==budget,"finite flush status/budget");
+ }
+ gin.budget=123;channel.flush(-1);require(gin.budget==123,"negative flush uses blocking path");
  BasePortChannelDeviceHandle proxy(99,{&gin.counter,&expected},{},nullptr);
  proxy.put(0,0,8,0,4);proxy.signal();proxy.putWithSignalAndFlush(0,0,8,0,4,100);
  require(proxy.fifo_.count==3,"proxy fallback");
@@ -581,7 +589,10 @@ int main() {
             self.assertIn("detail::ginQp(qps,peer*numQpsPerPeer+qpIndex)", code(native))
             if name in ("put", "putWithSignal", "atomicAdd", "get", "putBatched3"):
                 self.assertIn("detail::ginRemoteKey(*this,peer,qpIndex)", code(native))
-                self.assertIn("detail::ginHtobe32(detail::ginLocalKey(*this,qpIndex))", code(native))
+                if name == "atomicAdd":
+                    self.assertIn("detail::ginAtomicResult(*this,peer,qpIndex)", code(native))
+                else:
+                    self.assertIn("detail::ginHtobe32(detail::ginLocalKey(*this,qpIndex))", code(native))
                 self.assertNotIn("rkeys[peer]", code(native))
         native = code(function(source(SERVICE), "GpuNetIoService::setup"))
         self.assertIn("qpAll[static_cast<size_t>(r)*rowLen+static_cast<size_t>(s.rank)*nQp+qpIndex]", native)
@@ -842,6 +853,344 @@ int main(){
             )
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             subprocess.run([binary], check=True, timeout=10)
+
+
+class ResourceLifetimeTests(unittest.TestCase):
+    run_native = MultiQpTests.run_native
+
+    def test_inline_size_limit_and_blueflame_source_lifetime(self):
+        text = source("src/gpunetio/include/device/doca_gpunetio_dev_verbs_qp.cuh")
+        symbol = "doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data"
+        position = text.index("void " + symbol)
+        definition = text[text.rindex("template <typename T>", 0, position) : text.index("\n}", position) + 2]
+        preamble = HOST_PREAMBLE + r"""
+#define __device__
+#define __forceinline__ inline
+struct doca_gpu_dev_verbs_qp{};struct doca_gpu_dev_verbs_wqe{};
+struct doca_gpunetio_ib_mlx5_wqe_inl_data_seg{uint32_t byte_count;};
+struct doca_gpunetio_ib_mlx5_wqe_ctrl_seg{uint64_t words[2];};
+struct doca_gpunetio_ib_mlx5_wqe_raddr_seg{uint64_t words[2];};
+constexpr uint32_t DOCA_GPUNETIO_IB_MLX5_INLINE_SEG=1u<<31;
+uint32_t doca_gpu_dev_verbs_bswap32(uint32_t value){return __builtin_bswap32(value);}
+"""
+        for size in (1, 2, 4, 8, 16):
+            invocation = (
+                f"struct Value{{unsigned char data[{size}];}};int main(){{{symbol}(nullptr,nullptr,Value{{}});}}"
+            )
+            result = subprocess.run(
+                ["g++", "-std=c++17", "-fsyntax-only", "-x", "c++", "-"],
+                input=preamble + definition + invocation,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode == 0, size <= 8, result.stderr)
+            if size > 8:
+                self.assertIn("must not exceed 8 bytes", result.stderr)
+        body = function(text, "doca_gpu_dev_verbs_ring_bf")
+        offset = -1
+        for instruction in (
+            "fence.proxy.async.shared::cta",
+            "cp.async.bulk.global.shared::cta.bulk_group",
+            "cp.async.bulk.commit_group",
+            "cp.async.bulk.wait_group.read 0",
+        ):
+            position = body.index(instruction)
+            self.assertGreater(position, offset)
+            offset = position
+        self.assertIn("__cvta_generic_to_shared", body)
+
+    def test_qp_export_failure_cleanup_and_null_outputs(self):
+        text = source("src/gpunetio/src/doca_gpunetio_high_level.cpp")
+        actual = text[
+            text.index("doca_error_t doca_gpu_verbs_create_qp_hl(") : text.index(
+                "doca_error_t doca_gpu_verbs_qp_flat_list_create_hl("
+            )
+        ]
+        native = HOST_PREAMBLE + r"""
+#include <cstdio>
+template<class... Args>void log_error(int,const char*,Args... arguments){(void)sizeof...(arguments);}
+#define DOCA_LOG log_error
+constexpr int LOG_ERR=1;
+enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_NO_MEMORY,DOCA_ERROR_DRIVER};
+constexpr int DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_NO_DBR_SW_EMULATED=9;
+constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO=0,DOCA_GPUNETIO_VERBS_NIC_HANDLER_CPU_PROXY=1;
+constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB=2,DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF=3;
+struct doca_gpu{bool support_gdrcopy=true;};struct ibv_pd{void* context=nullptr;};
+struct doca_gpu_verbs_qp_init_attr_hl{
+ doca_gpu* gpu_dev;ibv_pd* ibpd;uint32_t sq_nwqe=8;int send_dbr_mode_ext=0,nic_handler=0,mreg_type=0;bool cq_collapsed=false;
+};
+struct doca_gpu_verbs_qp_hl{
+ doca_gpu* gpu_dev;int send_dbr_mode_ext,nic_handler;
+ void* cq_sq_umem_gpu_ptr;void* cq_sq_umem;void* cq_sq_umem_dbr_gpu_ptr;void* cq_sq_umem_dbr;
+ void* cq_sq;void* external_uar;void* qp_umem_gpu_ptr;void* qp_umem;void* qp_umem_dbr_gpu_ptr;void* qp_umem_dbr;
+ void* qp;void* qp_gverbs;
+};
+struct doca_gpu_verbs_qp_group_hl{doca_gpu_verbs_qp_hl qp_main,qp_companion;};
+int exportCount=0,failExport=1,cleaned=0;
+uint32_t doca_internal_utils_next_power_of_two(uint32_t value){return value;}
+template<class... Args>doca_error_t create_cq(Args...){return DOCA_SUCCESS;}
+template<class... Args>doca_error_t create_uar(Args...){return DOCA_SUCCESS;}
+template<class... Args>doca_error_t create_qp(Args...){return DOCA_SUCCESS;}
+template<class... Args>doca_error_t doca_gpu_verbs_export_qp(Args...){return ++exportCount==failExport?DOCA_ERROR_DRIVER:DOCA_SUCCESS;}
+void doca_gpu_verbs_destroy_qp_hl_internal(doca_gpu_verbs_qp_hl* qp){if(qp->gpu_dev)++cleaned;}
+"""
+        native += actual + r"""
+int main(){
+ doca_gpu gpu;ibv_pd pd;doca_gpu_verbs_qp_init_attr_hl attr{&gpu,&pd};
+ require(doca_gpu_verbs_create_qp_hl(nullptr,nullptr)==DOCA_ERROR_INVALID_VALUE,"null QP output");
+ require(doca_gpu_verbs_create_qp_group_hl(nullptr,nullptr)==DOCA_ERROR_INVALID_VALUE,"null group output");
+ doca_gpu_verbs_qp_hl* qp=reinterpret_cast<doca_gpu_verbs_qp_hl*>(1);
+ require(doca_gpu_verbs_create_qp_hl(&attr,&qp)==DOCA_ERROR_DRIVER&&!qp&&cleaned==1,"single export cleanup");
+ for(int failure:{1,2,3}){
+  exportCount=0;cleaned=0;failExport=failure;
+  doca_gpu_verbs_qp_group_hl* group=reinterpret_cast<doca_gpu_verbs_qp_group_hl*>(1);
+  auto status=doca_gpu_verbs_create_qp_group_hl(&attr,&group);
+  if(failure<3)require(status==DOCA_ERROR_DRIVER&&!group&&cleaned==failure,"group export cleanup");
+  else{require(status==DOCA_SUCCESS&&group,"group success");doca_gpu_verbs_destroy_qp_group_hl(group);require(cleaned==2,"group success cleanup");}
+ }
+}
+"""
+        self.run_native(native)
+
+    def test_internal_uar_type_tracks_fallback(self):
+        text = source("src/gpunetio/src/doca_verbs_qp.cpp")
+        internal = block(text, r"if\s*\(m_init_attr.external_uar == nullptr\)")
+        getter_start = text.index("enum doca_verbs_uar_allocation_type doca_verbs_qp::get_uar_mtype()")
+        getter = text[getter_start : text.index("\n}", getter_start) + 2]
+        native = HOST_PREAMBLE + r"""
+#define DOCA_LOG(...) ((void)0)
+enum doca_verbs_uar_allocation_type{DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME,DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE};
+constexpr int DOCA_SUCCESS=0,DOCA_ERROR_DRIVER=1,MLX5DV_UAR_ALLOC_TYPE_BF=0,MLX5DV_UAR_ALLOC_TYPE_NC=1;
+int failure=0,calls=0;struct Uar{void* reg_addr=nullptr;int page_id=3;}uar;
+int doca_verbs_wrapper_mlx5dv_devx_alloc_uar(void*,int type,Uar** output){++calls;if(failure==2||(failure==1&&type==0))return 1;*output=&uar;return 0;}
+struct External{doca_verbs_uar_allocation_type get_uar_mtype(){return DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE;}};
+struct doca_verbs_qp{
+ struct{External* external_uar=nullptr;}m_init_attr;
+ doca_verbs_uar_allocation_type m_internal_uar_type=DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME;
+ void* m_ibv_ctx=nullptr;Uar* m_uar_obj=nullptr;uint64_t* m_uar_db_reg=nullptr;
+ doca_verbs_uar_allocation_type get_uar_mtype()const noexcept;
+ void allocate(){uint32_t uar_id=0;
+"""
+        native += internal + "}};\n" + getter
+        native += r"""
+int main(){for(failure=0;failure<3;++failure){doca_verbs_qp qp;calls=0;bool rejected=false;
+ try{qp.allocate();}catch(int){rejected=true;}
+ require(rejected==(failure==2),"UAR allocation failure");
+ if(!rejected)require(qp.get_uar_mtype()==failure&&calls==failure+1,"internal UAR allocation type");
+ }External external;doca_verbs_qp qp;qp.m_init_attr.external_uar=&external;require(qp.get_uar_mtype()==1,"external UAR type");}
+"""
+        self.run_native(native)
+
+    def test_unsupported_warp_verbs_fail_compilation(self):
+        text = source("src/gpunetio/include/device/doca_gpunetio_dev_verbs_onesided.cuh")
+        for name, arguments in (
+            ("p", "nullptr,{},1,nullptr"),
+            ("put_signal", "nullptr,{},{},0,{},{},1,nullptr"),
+            ("signal", "nullptr,{},{},1,nullptr"),
+        ):
+            symbol = "doca_gpu_dev_verbs_" + name + "_warp"
+            position = text.index("void " + symbol)
+            definition = text[text.rindex("template <", 0, position) : text.index("\n}", position) + 2]
+            preamble = "#include <cstdint>\n#include <cstddef>\n#define __device__\n#define __forceinline__ inline\n"
+            preamble += "enum doca_gpu_dev_verbs_resource_sharing_mode{DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU};enum doca_gpu_dev_verbs_nic_handler{DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO};enum doca_gpu_dev_verbs_signal_op{ADD};"
+            preamble += "constexpr int DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT=0;struct doca_gpu_dev_verbs_qp{};struct doca_gpu_dev_verbs_addr{};using doca_gpu_dev_verbs_ticket_t=uint64_t;"
+            invocation = f"int main(){{{symbol}<{('int' if name == 'p' else 'ADD')}>({arguments});}}"
+            compiled = subprocess.run(
+                ["g++", "-std=c++17", "-fsyntax-only", "-x", "c++", "-"],
+                input=preamble + definition + invocation,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(compiled.returncode, 0)
+            self.assertIn("does not support warp scope", compiled.stderr)
+
+    def test_host_allocations_and_failure_cleanup(self):
+        text = source("src/gpunetio/src/doca_gpunetio.cpp")
+        actual = text[text.index("doca_error_t doca_gpu_mem_alloc(") : text.index("doca_error_t doca_gpu_dmabuf_fd(")]
+        native = HOST_PREAMBLE + r"""
+#include <unordered_map>
+#define DOCA_LOG(...) ((void)0)
+#define DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(call) (call)
+constexpr int GPU_PAGE_SIZE=65536,cudaSuccess=0,CUDA_SUCCESS=0,CU_POINTER_ATTRIBUTE_SYNC_MEMOPS=0;
+constexpr int cudaHostRegisterPortable=1,cudaHostRegisterMapped=2;
+using cudaError_t=int;using CUresult=int;using CUdeviceptr=uintptr_t;
+enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_DRIVER,DOCA_ERROR_NO_MEMORY};
+enum doca_gpu_mem_type{DOCA_GPU_MEM_TYPE_GPU,DOCA_GPU_MEM_TYPE_GPU_CPU,DOCA_GPU_MEM_TYPE_CPU_GPU};
+struct doca_gpu_mtable{doca_gpu_mem_type mtype;size_t size,size_orig;uintptr_t base_addr,align_addr_gpu,align_addr_cpu;int gdr_mh;};
+struct doca_gpu{bool support_gdrcopy=false;std::unordered_map<uint64_t,doca_gpu_mtable*>*mtable;};
+int registered=0,gpuFrees=0,gpuAllocations=0,failure=0;size_t registeredBytes=0;
+size_t priv_get_page_size(){return 4096;}
+bool priv_is_power_of_two(size_t value){return value&&!(value&(value-1));}
+const char* cudaGetErrorString(int){return "injected";}
+int cudaMalloc(void**pointer,size_t bytes){*pointer=malloc(bytes);++gpuAllocations;return 0;}
+int cudaFree(void*pointer){++gpuFrees;free(pointer);return 0;}
+int cudaHostRegister(void*,size_t bytes,int){if(failure==1)return 1;++registered;registeredBytes=bytes;return 0;}
+int cudaHostUnregister(void*){--registered;return 0;}
+int cudaHostGetDevicePointer(void**device,void*host,int){if(failure==2)return 1;*device=host;return 0;}
+int doca_verbs_wrapper_cuPointerSetAttribute(void*,int,uintptr_t){return failure==3;}
+int doca_gpu_gdrcopy_create_mapping(void*device,size_t,int*,void**host){*host=device;return failure==4;}
+void doca_gpu_gdrcopy_destroy_mapping(int,void*,size_t){}
+"""
+        native += actual + r"""
+int main(){
+ std::unordered_map<uint64_t,doca_gpu_mtable*> table;doca_gpu gpu{false,&table};
+ for(auto type:{DOCA_GPU_MEM_TYPE_GPU_CPU,DOCA_GPU_MEM_TYPE_CPU_GPU})
+ for(size_t alignment:{size_t(1),size_t(4096),size_t(65536)})for(failure=0;failure<3;++failure){
+  void* device=nullptr;void* host=nullptr;
+  auto result=doca_gpu_mem_alloc(&gpu,1048576,alignment,type,&device,&host);
+  if(failure)require(result!=DOCA_SUCCESS&&!device&&!host&&registered==0&&table.empty(),"host failure cleanup");
+  else{
+   require(result==DOCA_SUCCESS&&device==host&&uintptr_t(host)%alignment==0&&registeredBytes==1048576,"host size/alignment");
+   for(size_t offset=0;offset<1048576;++offset)require(static_cast<unsigned char*>(host)[offset]==0,"zero initialization");
+   require(table.at(uintptr_t(device))->mtype==DOCA_GPU_MEM_TYPE_CPU_GPU,"effective backing type");
+   require(doca_gpu_mem_free(&gpu,device)==DOCA_SUCCESS&&registered==0&&table.empty(),"host free");
+  }
+ }
+ require(gpuFrees==0,"cudaFree received host allocation");gpu.support_gdrcopy=true;
+ for(auto type:{DOCA_GPU_MEM_TYPE_GPU,DOCA_GPU_MEM_TYPE_GPU_CPU})for(int injected:{0,3,4}){
+  failure=injected;void* device=nullptr;void* host=nullptr;
+  auto result=doca_gpu_mem_alloc(&gpu,1024,4096,type,&device,&host);
+  if(result==DOCA_SUCCESS)require(doca_gpu_mem_free(&gpu,device)==DOCA_SUCCESS,"GPU free");
+  require(gpuAllocations==gpuFrees&&table.empty(),"partial GPU allocation leak");
+ }
+}
+"""
+        self.run_native(native)
+
+    def test_atomic_results_never_alias_payload(self):
+        text = source(IMPL)
+        helper = text[
+            text.index("MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr ginAtomicResult") : text.index(
+                "}  // namespace detail"
+            )
+        ]
+        native = HOST_PREAMBLE + r"""
+#include <set>
+#define MSCCLPP_DEVICE_INLINE inline
+#define MSCCLPP_ASSERT_DEVICE(test,message) require(test,message)
+using __be32=uint32_t;
+struct doca_gpu_dev_verbs_addr{uintptr_t addr;uint32_t key;};
+struct GpuNetIoDeviceContext{
+ int numPeers=8,numQpsPerPeer=4,numHcas=1;uintptr_t localBase,atomicResultBase;
+ const uintptr_t* peerBase;const uint32_t* rkeys;const uint32_t* lkeys;uint32_t lkey;const uint32_t* atomicResultLkeys;
+ void* qps=nullptr;
+ void putWithSignal(int,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,int);
+ void atomicAdd(int,uint64_t,int64_t,int);
+};
+namespace detail{
+int ginHcaIndex(const GpuNetIoDeviceContext& context,int queue){return queue%context.numHcas;}
+uint32_t ginHtobe32(uint32_t key){return __builtin_bswap32(key);}
+uint32_t ginLocalKey(const GpuNetIoDeviceContext& context,int queue){return context.lkeys[queue%context.numHcas];}
+uint32_t ginRemoteKey(const GpuNetIoDeviceContext& context,int peer,int queue){return context.rkeys[(queue%context.numHcas)*8+peer];}
+int ginQp(void*,int flat){return flat;}
+"""
+        native += helper + r"""
+}
+using doca_gpu_dev_verbs_ticket_t=uint64_t;
+constexpr int DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD=0,DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU=0;
+uintptr_t scratchBase;uint32_t scratchKeys[4]={101,202,303,404};int hcas;
+template<int,int>void doca_gpu_dev_verbs_put_signal(int flat,doca_gpu_dev_verbs_addr,doca_gpu_dev_verbs_addr,size_t,
+ doca_gpu_dev_verbs_addr,doca_gpu_dev_verbs_addr result,uint64_t,doca_gpu_dev_verbs_ticket_t*){
+ require(result.addr==scratchBase+flat*8&&result.key==__builtin_bswap32(scratchKeys[flat%hcas]),"atomic result MR");
+ *reinterpret_cast<uint64_t*>(result.addr)=0xfeed;
+}
+"""
+        native += function(text, "GpuNetIoDeviceContext::putWithSignal")
+        native += function(text, "GpuNetIoDeviceContext::atomicAdd")
+        native += r"""
+int main(){
+ uint64_t payload[16];std::fill_n(payload,16,0x1234);uint64_t scratch[8*64]{};
+ uint32_t dataKeys[4]={11,22,33,44},remoteKeys[32]{};uintptr_t peers[8]{};
+ scratchBase=reinterpret_cast<uintptr_t>(scratch);
+ for(int count:{1,2,4})for(int queues:{4,8,64}){
+  hcas=count;GpuNetIoDeviceContext context;context.numHcas=hcas;context.numQpsPerPeer=queues;
+  context.localBase=reinterpret_cast<uintptr_t>(payload);context.atomicResultBase=scratchBase;
+  context.atomicResultLkeys=scratchKeys;context.lkeys=dataKeys;context.rkeys=remoteKeys;context.peerBase=peers;
+  std::set<uintptr_t> addresses;
+  for(int peer=0;peer<8;++peer)for(int queue=0;queue<queues;++queue){
+   require(addresses.insert(detail::ginAtomicResult(context,peer,queue).addr).second,"shared QP scratch");
+   context.putWithSignal(peer,0,0,8,64,1,queue);context.atomicAdd(peer,64,1,queue);
+  }
+ }
+ for(auto value:payload)require(value==0x1234,"atomic result corrupted payload");
+}
+"""
+        self.run_native(native)
+        service = source(SERVICE)
+        setup = function(service, "GpuNetIoService::setup")
+        self.assertLess(setup.index("CudaDeviceGuard deviceGuard(s.cudaDeviceId)"), setup.index("cudaMalloc("))
+        self.assertIn("registerMr(s.atomicResultsGpu, atomicResultBytes)", setup)
+        destructor = block(service, r"~Impl\(\)")
+        self.assertLess(destructor.index("CudaDeviceGuard"), destructor.index("cudaFree("))
+        self.assertLess(destructor.index("doca_gpu_verbs_destroy_qp_hl"), destructor.index("hcas.clear()"))
+        self.assertLess(destructor.index("hcas.clear()"), destructor.index("cudaFree(atomicResultsGpu)"))
+
+    def test_service_shutdown_with_continuous_progress(self):
+        text = source("src/gpunetio/src/doca_gpunetio.cpp")
+        native = HOST_PREAMBLE + r"""
+#include <atomic>
+#include <set>
+#include <new>
+#include <pthread.h>
+#include <sched.h>
+#define DOCA_LOG(...) ((void)0)
+enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_NO_MEMORY,DOCA_ERROR_DRIVER};
+struct doca_gpu_verbs_qp{};using doca_gpu_verbs_service_t=void*;
+std::atomic<int> progress{0};
+void doca_gpu_verbs_cpu_proxy_progress(doca_gpu_verbs_qp*,bool* advanced){++progress;*advanced=true;}
+"""
+        native += "struct doca_gpu_verbs_service " + block(text, r"struct doca_gpu_verbs_service(?=\s*\{)") + ";"
+        native += text[
+            text.index("static void *priv_service_mainloop") : text.index(
+                "doca_error_t doca_gpu_verbs_query_last_error"
+            )
+        ]
+        native += r"""
+int main(){for(int round=0;round<100;++round){
+ progress=0;void* handle=nullptr;doca_gpu_verbs_qp qp;
+ require(doca_gpu_verbs_create_service(&handle)==DOCA_SUCCESS,"create service");
+ require(doca_gpu_verbs_service_monitor_qp(handle,&qp)==DOCA_SUCCESS,"monitor QP");
+ while(progress.load()==0)sched_yield();
+ require(doca_gpu_verbs_destroy_service(handle)==DOCA_SUCCESS,"stop continuously progressing service");
+}}
+"""
+        self.run_native(native)
+
+    def test_public_c_headers_and_current_python_api(self):
+        compiler = shutil.which("gcc")
+        if compiler is None:
+            self.skipTest("gcc unavailable")
+        for header in ("doca_gpunetio.h", "doca_gpunetio_high_level.h", "doca_verbs.h"):
+            result = subprocess.run(
+                [
+                    compiler,
+                    "-std=c11",
+                    "-Werror",
+                    "-fsyntax-only",
+                    "-x",
+                    "c",
+                    "-I" + str(ROOT / "src/gpunetio/include"),
+                    "-",
+                ],
+                input=f'#include "host/{header}"\nint main(void) {{ bool enabled = false; return enabled; }}',
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+        tree = ast.parse(source("test/python/ep/test_low_latency_multirank.py"))
+        call = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "MoECommunicator"
+        )
+        self.assertEqual(next(keyword.value.attr for keyword in call.keywords if keyword.arg == "mode"), "LATENCY")
+        self.assertTrue({"num_blocks", "combine_mode"} <= {keyword.arg for keyword in call.keywords})
+        obsolete = {"combine_context", "get_expert_output_buffer", "LOW_LATENCY", "HIGH_THROUGHPUT"}
+        self.assertFalse({node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} & obsolete)
+        for module in ("low_latency.py", "high_throughput.py"):
+            self.assertFalse((ROOT / "python/mscclpp/ep" / module).exists())
 
 
 if __name__ == "__main__":

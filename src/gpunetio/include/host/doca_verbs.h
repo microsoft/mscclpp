@@ -37,12 +37,17 @@
 #define DOCA_VERBS_H
 
 #include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "doca_error.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct ibv_context;
+struct ibv_pd;
 
 /**********************************************************************************************************************
  * DOCA Verbs opaque types

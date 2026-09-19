@@ -200,7 +200,12 @@ struct BasePortChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
-      gin_->flush(ginPeer_);
+      if (maxSpinCount < 0) {
+        gin_->flush(ginPeer_);
+      } else {
+        const int status = gin_->tryFlush(ginPeer_, static_cast<uint64_t>(maxSpinCount));
+        MSCCLPP_ASSERT_DEVICE(status == 0, "GPUNetIO flush timed out or reported a CQ error");
+      }
       return;
     }
     uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 0, semaphoreId_});

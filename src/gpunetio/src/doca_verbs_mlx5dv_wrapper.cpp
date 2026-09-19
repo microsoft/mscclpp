@@ -52,7 +52,7 @@
 static void *mlx5dv_handle = NULL;
 
 /* Function pointer types */
-typedef int (*mlx5dv_init_obj_func_t)(struct mlx5dv_obj *obj, enum mlx5dv_obj_type obj_type);
+typedef int (*mlx5dv_init_obj_func_t)(struct mlx5dv_obj *obj, uint64_t obj_type);
 typedef struct mlx5dv_devx_obj *(*mlx5dv_devx_obj_create_func_t)(struct ibv_context *context, const void *in,
                                                                  size_t inlen, void *out, size_t outlen);
 typedef int (*mlx5dv_devx_obj_destroy_func_t)(struct mlx5dv_devx_obj *obj);

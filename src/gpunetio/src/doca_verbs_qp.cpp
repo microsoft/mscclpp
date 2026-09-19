@@ -1335,6 +1335,7 @@ void doca_verbs_qp::create(struct ibv_context *ibv_ctx) {
     /* Case of internal UAR */
     auto uar_status = doca_verbs_wrapper_mlx5dv_devx_alloc_uar(m_ibv_ctx, MLX5DV_UAR_ALLOC_TYPE_BF, &m_uar_obj);
     if (uar_status != DOCA_SUCCESS) {
+      m_internal_uar_type = DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE;
       uar_status = doca_verbs_wrapper_mlx5dv_devx_alloc_uar(m_ibv_ctx, MLX5DV_UAR_ALLOC_TYPE_NC, &m_uar_obj);
       if (uar_status != DOCA_SUCCESS) {
         DOCA_LOG(LOG_ERR, "Failed to create UAR");
@@ -1508,7 +1509,7 @@ void *doca_verbs_qp::get_dbr_addr() const noexcept { return (void *)m_db_buffer;
 void *doca_verbs_qp::get_uar_addr() const noexcept { return (void *)m_uar_db_reg; }
 
 enum doca_verbs_uar_allocation_type doca_verbs_qp::get_uar_mtype() const noexcept {
-  return m_init_attr.external_uar->get_uar_mtype();
+  return m_init_attr.external_uar ? m_init_attr.external_uar->get_uar_mtype() : m_internal_uar_type;
 }
 
 void *doca_verbs_qp::get_sq_buf() const noexcept { return m_sq_buf; }

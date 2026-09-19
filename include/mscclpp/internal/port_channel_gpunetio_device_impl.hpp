@@ -43,6 +43,14 @@ MSCCLPP_DEVICE_INLINE uint32_t ginLocalKey(const GpuNetIoDeviceContext& context,
   return context.lkeys == nullptr ? context.lkey : context.lkeys[ginHcaIndex(context, qpIndex)];
 }
 MSCCLPP_DEVICE_INLINE __be32 ginHtobe32(uint32_t v) { return static_cast<__be32>(__byte_perm(v, 0, 0x0123)); }
+MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr ginAtomicResult(const GpuNetIoDeviceContext& context, int peer,
+                                                              int qpIndex) {
+  MSCCLPP_ASSERT_DEVICE(context.atomicResultBase != 0 && context.atomicResultLkeys != nullptr,
+                        "GPUNetIO atomics require registered result scratch");
+  const size_t flatIndex = static_cast<size_t>(peer) * context.numQpsPerPeer + qpIndex;
+  return {context.atomicResultBase + flatIndex * sizeof(uint64_t),
+          ginHtobe32(context.atomicResultLkeys[ginHcaIndex(context, qpIndex)])};
+}
 }  // namespace detail
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
@@ -62,7 +70,7 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int peer, uint64
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, remoteKey};
   doca_gpu_dev_verbs_addr laddr{localBase + srcOffset, localKey};
   doca_gpu_dev_verbs_addr sigR{peerBase[peer] + signalOffset, remoteKey};
-  doca_gpu_dev_verbs_addr sigL{localBase, localKey};
+  const auto sigL = detail::ginAtomicResult(*this, peer, qpIndex);
   doca_gpu_dev_verbs_ticket_t ticket;
   doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
       detail::ginQp(qps, peer * numQpsPerPeer + qpIndex), raddr, laddr, size, sigR, sigL, signalValue, &ticket);
@@ -70,7 +78,7 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int peer, uint64
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex) {
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, detail::ginRemoteKey(*this, peer, qpIndex)};
-  doca_gpu_dev_verbs_addr laddr{localBase, detail::ginHtobe32(detail::ginLocalKey(*this, qpIndex))};
+  const auto laddr = detail::ginAtomicResult(*this, peer, qpIndex);
   doca_gpu_dev_verbs_ticket_t ticket;
   // Fused zero-byte write + remote atomic-add expresses a standalone atomic add.
   doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(

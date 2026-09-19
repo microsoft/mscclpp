@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -182,7 +183,7 @@ struct GpuNetIoService::Impl {
   std::shared_ptr<Bootstrap> bootstrap;
   std::vector<std::string> ibDeviceNames;
   bool automaticHcaSelection = false;
-  int cudaDeviceId;
+  int cudaDeviceId = -1;
   int rank = -1;
   int worldSize = 0;
   bool didSetup = false;
@@ -191,6 +192,7 @@ struct GpuNetIoService::Impl {
     std::string deviceName;
     std::unique_ptr<IbCtx> ibCtx;
     std::unique_ptr<const IbMr> mr;
+    std::unique_ptr<const IbMr> atomicResultMr;
   };
   std::vector<HcaContext> hcas;
 
@@ -209,8 +211,11 @@ struct GpuNetIoService::Impl {
   uint32_t* lkeysGpu = nullptr;
   uintptr_t* peerBaseGpu = nullptr;
   GpuNetIoDeviceContext* ctxGpu = nullptr;
+  uint64_t* atomicResultsGpu = nullptr;
+  uint32_t* atomicResultLkeysGpu = nullptr;
 
   ~Impl() {
+    CudaDeviceGuard deviceGuard(cudaDeviceId);
     if (cpuProxyService) (void)doca_gpu_verbs_destroy_service(cpuProxyService);
     if (ctxGpu) (void)cudaFree(ctxGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
@@ -220,6 +225,9 @@ struct GpuNetIoService::Impl {
     for (auto* q : qpHl) {
       if (q) (void)doca_gpu_verbs_destroy_qp_hl(q);
     }
+    hcas.clear();
+    if (atomicResultLkeysGpu) (void)cudaFree(atomicResultLkeysGpu);
+    if (atomicResultsGpu) (void)cudaFree(atomicResultsGpu);
     if (gpuDev) (void)doca_gpu_destroy(gpuDev);
   }
 
@@ -355,6 +363,7 @@ GpuNetIoService::~GpuNetIoService() = default;
 
 void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   auto& s = *pimpl_;
+  CudaDeviceGuard deviceGuard(s.cudaDeviceId);
   if (s.didSetup) {
     throw Error("GpuNetIoService::setup called more than once", ErrorCode::InvalidUsage);
   }
@@ -407,6 +416,17 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
     hca.mr = hca.ibCtx->registerMr(symmetricBuffer, bytes);
     s.hcas.emplace_back(std::move(hca));
   }
+
+  const size_t atomicResultBytes = static_cast<size_t>(s.worldSize) * nQp * sizeof(uint64_t);
+  MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, atomicResultBytes));
+  std::vector<uint32_t> atomicResultLkeys(nHcas);
+  for (int hca = 0; hca < nHcas; ++hca) {
+    s.hcas[hca].atomicResultMr = s.hcas[hca].ibCtx->registerMr(s.atomicResultsGpu, atomicResultBytes);
+    atomicResultLkeys[hca] = s.hcas[hca].atomicResultMr->getLkey();
+  }
+  MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultLkeysGpu, nHcas * sizeof(uint32_t)));
+  MSCCLPP_CUDA_THROW(
+      cudaMemcpy(s.atomicResultLkeysGpu, atomicResultLkeys.data(), nHcas * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
   // 2. DOCA GPU device handle from the CUDA device's PCI bus id.
   char pciBusId[32] = {0};
@@ -519,6 +539,8 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   ctxHost.numQpsPerPeer = s.numQpsPerPeer;
   ctxHost.numHcas = nHcas;
   ctxHost.lkeys = s.lkeysGpu;
+  ctxHost.atomicResultBase = reinterpret_cast<uintptr_t>(s.atomicResultsGpu);
+  ctxHost.atomicResultLkeys = s.atomicResultLkeysGpu;
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
   MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
 }

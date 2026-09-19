@@ -188,6 +188,7 @@ struct doca_verbs_qp {
   struct mlx5dv_devx_obj *m_qp_obj{};
   struct mlx5dv_devx_umem *m_umem_obj{};
   struct mlx5dv_devx_uar *m_uar_obj{};
+  doca_verbs_uar_allocation_type m_internal_uar_type{DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME};
   uint8_t *m_umem_buf{};
   uint8_t *m_wq_buf{};
   struct ibv_context *m_ibv_ctx{};

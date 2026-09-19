@@ -217,7 +217,7 @@ template <
 __device__ static __forceinline__ void doca_gpu_dev_verbs_p_warp(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr raddr, T value,
     doca_gpu_dev_verbs_ticket_t *out_ticket, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  *out_ticket = 0;
+  static_assert(resource_sharing_mode != resource_sharing_mode, "GPUNetIO scalar put does not support warp scope");
 }
 
 template <
@@ -228,9 +228,9 @@ template <
 __device__ static __forceinline__ void doca_gpu_dev_verbs_p(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr raddr, T value,
     doca_gpu_dev_verbs_ticket_t *out_ticket, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
     doca_gpu_dev_verbs_p_thread<T, resource_sharing_mode, nic_handler>(qp, raddr, value, out_ticket, code_opt);
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
     doca_gpu_dev_verbs_p_warp<T, resource_sharing_mode, nic_handler>(qp, raddr, value, out_ticket, code_opt);
 }
 
@@ -319,7 +319,7 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_put_signal_warp(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr raddr, struct doca_gpu_dev_verbs_addr laddr,
     size_t size, struct doca_gpu_dev_verbs_addr sig_raddr, struct doca_gpu_dev_verbs_addr sig_laddr, uint64_t sig_val,
     doca_gpu_dev_verbs_ticket_t *out_ticket, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  *out_ticket = 0;
+  static_assert(resource_sharing_mode != resource_sharing_mode, "GPUNetIO put-with-signal does not support warp scope");
 }
 
 template <
@@ -331,10 +331,10 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_put_signal(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr raddr, struct doca_gpu_dev_verbs_addr laddr,
     size_t size, struct doca_gpu_dev_verbs_addr sig_raddr, struct doca_gpu_dev_verbs_addr sig_laddr, uint64_t sig_val,
     doca_gpu_dev_verbs_ticket_t *out_ticket, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
     doca_gpu_dev_verbs_put_signal_thread<sig_op, resource_sharing_mode, nic_handler>(
         qp, raddr, laddr, size, sig_raddr, sig_laddr, sig_val, out_ticket, code_opt);
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
     doca_gpu_dev_verbs_put_signal_warp<sig_op, resource_sharing_mode, nic_handler>(
         qp, raddr, laddr, size, sig_raddr, sig_laddr, sig_val, out_ticket, code_opt);
 }
@@ -452,7 +452,7 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_signal_warp(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr sig_raddr,
     struct doca_gpu_dev_verbs_addr sig_laddr, uint64_t sig_val, doca_gpu_dev_verbs_ticket_t *out_ticket,
     uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  *out_ticket = 0;
+  static_assert(resource_sharing_mode != resource_sharing_mode, "GPUNetIO signal does not support warp scope");
 }
 
 template <
@@ -464,10 +464,10 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_signal(
     struct doca_gpu_dev_verbs_qp *qp, struct doca_gpu_dev_verbs_addr sig_raddr,
     struct doca_gpu_dev_verbs_addr sig_laddr, uint64_t sig_val, doca_gpu_dev_verbs_ticket_t *out_ticket,
     uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD)
     doca_gpu_dev_verbs_signal_thread<sig_op, resource_sharing_mode, nic_handler>(qp, sig_raddr, sig_laddr, sig_val,
                                                                                  out_ticket, code_opt);
-  if (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
+  if constexpr (exec_scope == DOCA_GPUNETIO_VERBS_EXEC_SCOPE_WARP)
     doca_gpu_dev_verbs_signal_warp<sig_op, resource_sharing_mode, nic_handler>(qp, sig_raddr, sig_laddr, sig_val,
                                                                                out_ticket, code_opt);
 }
