@@ -236,8 +236,9 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-// Unlike latency's packed per-token payload, throughput keeps token data
-// and fixed-stride metadata in separate slabs so GEMM can use the rows directly.
+// Peer-visible receive-payload view. Unlike latency's packed per-token payload,
+// throughput keeps token data and fixed-stride metadata in separate slabs so
+// GEMM can use the rows directly. Private routing state is not part of this view.
 //
 // TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
 //   [dense data: DataType[numRecvTokens][hidden]]
@@ -245,11 +246,11 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
 //   [metadata row 0] ... [metadata row numRecvTokens - 1]
 //   [unused metadata capacity up to numBytes_]
 //
-// Each metadata row has a 128-byte-aligned stride of metadataSlotBytes_:
+// Each metadata row has a 128-byte-aligned stride of metadataRowStrideBytes_:
 //   [topKIndices: int[topK]]
 //   [topKValues: float[topK]]
 //   [optional FP8 scales: float[hidden / 128]]
-//   [padding to metadataSlotBytes_]
+//   [padding to metadataRowStrideBytes_]
 //
 // maxRows = numRanks * configuredMaxTokensPerRank is capacity, not a per-rank stride.
 // The BF16-sized data reservation keeps metadataOffset_ fixed for FP8 too.
@@ -258,16 +259,16 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
 struct ThroughputPayloadView {
   int topK_;
   size_t metadataOffset_;
-  size_t metadataSlotBytes_;
+  size_t metadataRowStrideBytes_;
   size_t numBytes_;
 
   MSCCLPP_HOST_DEVICE_INLINE ThroughputPayloadView(size_t maxRows, int hidden, int topK)
       : topK_(topK),
         metadataOffset_(
             configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes)),
-        metadataSlotBytes_(configAlign<size_t>(metadataBytes(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)),
-                                               BufferAlignmentBytes)),
-        numBytes_(metadataOffset_ + maxRows * metadataSlotBytes_) {}
+        metadataRowStrideBytes_(configAlign<size_t>(
+            metadataBytes(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)), BufferAlignmentBytes)),
+        numBytes_(metadataOffset_ + maxRows * metadataRowStrideBytes_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE size_t metadataBytes(int numScales) const {
     return static_cast<size_t>(topK_) * (sizeof(int) + sizeof(float)) + static_cast<size_t>(numScales) * sizeof(float);
@@ -284,11 +285,12 @@ struct ThroughputPayloadView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base, int64_t row) const {
-    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + metadataOffset_ + row * metadataSlotBytes_);
+    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + metadataOffset_ + row * metadataRowStrideBytes_);
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base, int64_t row) const {
-    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + metadataOffset_ + row * metadataSlotBytes_);
+    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + metadataOffset_ +
+                                        row * metadataRowStrideBytes_);
   }
 
   MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base, int64_t row) const {
@@ -309,6 +311,7 @@ struct ThroughputPayloadView {
 };
 
 struct ThroughputStorageLayout {
+  // Peer-visible registered allocation: count-exchange scratch followed by the receive payload.
   // Allocation-derived offsets stay fixed when a request uses a smaller active capacity.
   ThroughputPayloadView payload_;
   size_t totalBytes_;

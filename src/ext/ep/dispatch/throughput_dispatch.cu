@@ -204,7 +204,7 @@ void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeigh
   EP_HOST_ASSERT(numBlocks > 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   EP_HOST_ASSERT(payload.metadataBytes(dispatchNumScales(workload.dispatchDataType_, workload.hidden_)) <=
-                 payload.metadataSlotBytes_);
+                 payload.metadataRowStrideBytes_);
 
   const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const bool fp8 = workload.dispatchDataType_ == DispatchDataType::FP8_E4M3;

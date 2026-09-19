@@ -139,8 +139,7 @@ ThroughputStorageLayout ThroughputRuntimeContext::storageLayout() const {
 }
 
 Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
-  return {.epoch_ = 0,
-          .numTokens_ = numTokens,
+  return {.numTokens_ = numTokens,
           .hidden_ = hidden_,
           .numTopk_ = numTopk_,
           .numExperts_ = numExperts_,
@@ -173,11 +172,11 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
-  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.routingEpoch_ + 1, request);
+  const uint64_t nextRoutingEpoch = context.routingEpoch_ + 1;
+  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, nextRoutingEpoch, request);
 
-  // Rebuilding routing invalidates both handle types; dispatch alone only expires dispatch results.
-  ++context.routingEpoch_;
-  ++context.dispatchEpoch_;
+  // Rebuilding routing invalidates handles that borrow the runtime workspace.
+  context.routingEpoch_ = nextRoutingEpoch;
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
   throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
   throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.stream);
@@ -230,7 +229,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   if (reusePreparation) {
-    // Replays still need a peer handshake before overwriting the previous payload.
+    // Reused routing skips the collective prepare phase, so synchronize explicitly
+    // before overwriting payload storage that peers consumed in the previous pair.
     throughputSynchronizePeers(context.deviceContext_, request.stream);
   }
   if (request.outputCount != nullptr) {
@@ -249,9 +249,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
                      request.inputScales, workload, workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_,
                      context.deviceContext_, request.numBlocks, request.stream);
 
-  ++context.dispatchEpoch_;
-  return DispatchHandle(
-      std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.dispatchEpoch_, request));
+  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, request));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -266,9 +264,6 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   }
   if (owner != throughputContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
-  }
-  if (handle.epoch_ != context.dispatchEpoch_) {
-    EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
   }
   if (!std::holds_alternative<std::monostate>(handle.metadata_)) {
     EP_THROW("Dispatch handle does not contain throughput metadata");
