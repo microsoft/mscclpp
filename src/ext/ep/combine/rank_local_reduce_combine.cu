@@ -231,19 +231,19 @@ __global__ __launch_bounds__(CombineNThreads,
           output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch, transport,
           workspaceView, sharedMemory);
     }
-    return;
+  } else {
+    static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
+    dispatchSend<Hidden, DispatchType, ScaleBlockSize>(expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank,
+                                                       combineRecvBuffer, dispatchRecvBuffer, transport, workspaceView,
+                                                       sharedMemory);
+
+    workspaceView.combineSyncer_->sync(gridDim.x);
+    exchangeCombineReady(transport, nRanks);
+    workspaceView.combineSyncer_->sync(gridDim.x);
+
+    dispatchRecv<Hidden>(output, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, combineRecvBuffer,
+                         sharedMemory);
   }
-
-  dispatchSend<Hidden, DispatchType, ScaleBlockSize>(expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank,
-                                                     combineRecvBuffer, dispatchRecvBuffer, transport, workspaceView,
-                                                     sharedMemory);
-
-  workspaceView.combineSyncer_->sync(gridDim.x);
-  exchangeCombineReady(transport, nRanks);
-  workspaceView.combineSyncer_->sync(gridDim.x);
-
-  dispatchRecv<Hidden>(output, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, combineRecvBuffer,
-                       sharedMemory);
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
