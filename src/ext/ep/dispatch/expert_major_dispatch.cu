@@ -16,18 +16,22 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void expertMajorDispatchKernel
       topkWeights, inputTokens, workload, recvBuffer, context);
 }
 
-struct ExpertMajorDispatchKernelSelector {
+namespace {
+
+struct KernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
     return expertMajorDispatchKernel<Hidden, DataType, ScaleBlockSize>;
   }
 };
 
+}  // namespace
+
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                          const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                          const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  dispatchAlgorithm<DispatchLayout::EXPERT_MAJOR, ExpertMajorDispatchKernelSelector>(
+  dispatchAlgorithm<DispatchLayout::EXPERT_MAJOR, KernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }
