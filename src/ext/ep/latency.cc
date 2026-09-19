@@ -269,13 +269,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR && input != combineBuffer) {
-    EP_HOST_ASSERT(input != nullptr);
-    const size_t rows = static_cast<size_t>(context.numRanks_) * maxTokensPerRank;
-    const size_t elements = rows * hidden * (mode == CombineMode::DIRECT_SEND ? numTopk : 1);
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(combineBuffer, input, elements * sizeof(Bf16), cudaMemcpyDeviceToDevice, stream));
-    input = combineBuffer;
-  }
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(input == combineBuffer);
 
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {

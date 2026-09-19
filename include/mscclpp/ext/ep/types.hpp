@@ -224,12 +224,9 @@ struct LatencyCombineRequest {
   void* output;
   /// Local BF16 results produced by expert computation.
   ///
-  /// MoERuntime preallocates rank-major communication storage. Input may use
-  /// combineInputBuffer() directly or supply external expert results, which are
-  /// staged there on the caller stream after handle validation. It must contain [numRanks,
-  /// active capacity, hidden] elements, with an extra top-k dimension before
-  /// hidden for DIRECT_SEND. It may alias the runtime buffer exactly, but
-  /// must not overlap it partially.
+  /// Rank-major input must be the runtime-owned combineInputBuffer(), with
+  /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
+  /// before hidden for DIRECT_SEND.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
