@@ -237,9 +237,9 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-// Peer-visible receive-payload view. Throughput keeps token data and each
-// metadata kind in separate contiguous slabs so kernels and callers can use the
-// runtime-owned buffers directly. Private routing state is not part of this view.
+// Peer-visible token and metadata slabs within recvBuffer_.
+// TOKEN_MAJOR is compact; RANK_MAJOR reserves source-rank ranges.
+// maxRows is capacity; private routing state lives in ThroughputWorkspaceLayout.
 //
 // TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
 //   [dense data: DataType[numRecvTokens][hidden]]
@@ -247,11 +247,6 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
 //   [topKIndices: int[maxRows][topK]]
 //   [topKValues: float[maxRows][topK]]
 //   [FP8 scales: float[maxRows][hidden / 128]]
-//
-// maxRows = numRanks * configuredMaxTokensPerRank is capacity, not a per-rank stride.
-// The BF16-sized data reservation keeps metadata offsets fixed for FP8 too.
-// RANK_MAJOR uses explicit source-rank row ranges instead of the compact view above.
-// Inverse routing stays in the workspace; there is no source-token ID in this payload.
 struct ThroughputPayloadView {
   int topK_;
   int numScales_;
@@ -308,8 +303,7 @@ struct ThroughputPayloadView {
 };
 
 struct ThroughputStorageLayout {
-  // Peer-visible registered allocation: count-exchange scratch, receive payload, then combine data.
-  // Allocation-derived offsets stay fixed when a request uses a smaller active capacity.
+  // Peer-visible storage: count scratch, dispatch payload, and combine rows.
   ThroughputPayloadView payload_;
   size_t totalBytes_;
   void* recvBuffer_ = nullptr;
@@ -351,18 +345,21 @@ struct alignas(8) ThroughputTokenRoute {
   int offset_;
 };
 
+// Local-only routing state produced by prepare() and consumed by dispatch/combine.
 struct ThroughputWorkspaceLayout {
   size_t totalBytes_;
-  // Local routing histograms produced before communicating with peers.
+  // Local route counts by destination rank and global expert.
   int* numTokensPerRank_ = nullptr;
   int* numTokensPerExpert_ = nullptr;
-  // Beginning of this source rank's receive range on each destination rank.
+  // This source rank's compact receive offset on each destination rank.
   int* rankOffsets_ = nullptr;
-  // numTopk entries per token: distinct ranks in ascending order, followed by {-1, -1} padding.
+  // Distinct destination ranks and stable offsets for each local token.
   ThroughputTokenRoute* tokenRoutes_ = nullptr;
+  // Active TOKEN_MAJOR rows received by this rank.
   int* numRecvTokens_ = nullptr;
-  // Receive counts indexed by local expert or source rank, depending on output layout.
+  // Counts by local expert (TOKEN_MAJOR) or source rank (RANK_MAJOR).
   int* recvCounts_ = nullptr;
+  // Local software grid barrier.
   mscclpp::DeviceSyncer* syncer_ = nullptr;
 
   ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
