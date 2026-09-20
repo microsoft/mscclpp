@@ -207,8 +207,10 @@ in-place while reading it. Runtime views are reused, not independent results.
   Throughput BF16 hidden size is a multiple of 8; FP8 requires a multiple of 128.
   Default dispatch/combine blocks are `(130, 128)` for latency or `(24, 32)` for
   throughput, clipped to SM count. Latency dispatch needs at least `R+2` blocks;
-  native cooperative occupancy checks still apply. A scalar latency block count
-  `N` means `(N, N-2)`; throughput means `(N, N)`.
+  native cooperative occupancy checks still apply. `num_blocks=(D, C)` sets the
+  dispatch and combine grid sizes explicitly. A scalar `N` sets the dispatch
+  grid to `N`; latency dispatch reserves two control blocks, so combine uses the
+  remaining `N-2` worker blocks, while throughput uses `N` for both operations.
 * This port does not include the donor's notify/count caches, receive pools,
   overlap/event stubs, `previous_handle`, `enable_overlap`, or
   `expert_alignment`. There is no automatic autograd integration.
