@@ -205,13 +205,16 @@ struct LatencyStorageLayout {
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankLocalReduceCombineRecvBytes =
+        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
     const size_t combineBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
                                       : rankMajorLocalReduce ? 0
-                                                             : dispatchOutputBytes;
+                                      : combineMode == CombineMode::RANK_LOCAL_REDUCE ? rankLocalReduceCombineRecvBytes
+                                                                                      : expertMajorDispatchOutputBytes;
     const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     const size_t alignedCombineBufferBytes = configAlign<size_t>(combineBufferBytes, BufferAlignmentBytes);
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
