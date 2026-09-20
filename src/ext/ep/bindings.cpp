@@ -64,6 +64,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
            [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.outputTopkIdsBuffer()); })
       .def("output_topk_weights_buffer_ptr",
            [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.outputTopkWeightsBuffer()); })
+      .def("output_scales_buffer_ptr",
+           [](const MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.outputScalesBuffer()); })
       .def(
           "prepare",
           [](MoERuntime& self, uintptr_t topkIdxPtr, int numTokens, int maxTokensPerRank, int numBlocks,
@@ -107,14 +109,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def(
           "dispatch_throughput",
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t inputScalesPtr, uintptr_t topkIdxPtr,
-             uintptr_t topkWeightsPtr, uintptr_t outputPtr, uintptr_t outputScalesPtr, uintptr_t outputTopkIdxPtr,
-             uintptr_t outputTopkWeightsPtr, uintptr_t outputCountPtr, int numTokens, int maxTokensPerRank,
+             uintptr_t topkWeightsPtr, uintptr_t outputCountPtr, int numTokens, int maxTokensPerRank,
              DispatchDataType dataType, int numBlocks, uintptr_t streamPtr, PrepareHandle preparation) {
             return self.dispatch(DispatchRequest{ThroughputDispatchRequest{
-                .output = pointer(outputPtr),
-                .outputScales = pointer(outputScalesPtr),
-                .outputTopkIdx = pointer<int>(outputTopkIdxPtr),
-                .outputTopkWeights = pointer<float>(outputTopkWeightsPtr),
                 .outputCount = pointer<int>(outputCountPtr),
                 .input = pointer<const void>(inputPtr),
                 .inputScales = pointer<const float>(inputScalesPtr),
@@ -129,9 +126,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
             }});
           },
           nb::arg("input_ptr"), nb::arg("input_scales_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"),
-          nb::arg("output_ptr"), nb::arg("output_scales_ptr"), nb::arg("output_topk_idx_ptr"),
-          nb::arg("output_topk_weights_ptr"), nb::arg("output_count_ptr"), nb::arg("num_tokens"),
-          nb::arg("max_tokens_per_rank"), nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"),
+          nb::arg("output_count_ptr"), nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"),
+          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"),
           nb::arg("prepare_handle") = PrepareHandle{}, nb::keep_alive<0, 1>())
       .def(
           "combine_latency",
@@ -149,17 +145,13 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("stream_ptr"))
       .def(
           "combine_throughput",
-          [](MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t outputPtr, uintptr_t outputTopkWeightsPtr,
-             const DispatchHandle& handle, int numBlocks, uintptr_t streamPtr) {
+          [](MoERuntime& self, uintptr_t outputPtr, const DispatchHandle& handle, int numBlocks, uintptr_t streamPtr) {
             self.combine(CombineRequest{ThroughputCombineRequest{
                 .output = pointer(outputPtr),
-                .outputTopkWeights = pointer<float>(outputTopkWeightsPtr),
-                .input = pointer<const void>(expertOutputPtr),
                 .handle = handle,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
             }});
           },
-          nb::arg("expert_output_ptr"), nb::arg("output_ptr"), nb::arg("output_topk_weights_ptr"), nb::arg("handle"),
-          nb::arg("num_blocks"), nb::arg("stream_ptr"));
+          nb::arg("output_ptr"), nb::arg("handle"), nb::arg("num_blocks"), nb::arg("stream_ptr"));
 }

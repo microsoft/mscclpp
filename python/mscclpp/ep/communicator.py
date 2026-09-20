@@ -63,18 +63,6 @@ class MoECommunicator:
                 output_layout=self.output_layout,
                 combine_mode=self.combine_mode,
             )
-        self._signature = (
-            self.device,
-            self.mode,
-            self.output_layout,
-            self.num_experts,
-            self.hidden_size,
-            self.topk,
-            self.max_tokens_per_rank,
-            self.num_blocks,
-            self.combine_mode,
-            self.invalid_token_expert_id,
-        )
 
     @property
     def comm(self) -> CommGroup:
@@ -215,11 +203,7 @@ class MoECommunicator:
         return PrepareHandle(
             _native=native,
             _runtime=self._runtime,
-            _config=self._signature,
             _topk_ids=topk_ids,
-            _topk_ptr=ptr(topk_ids),
-            _num_tokens=num_tokens,
-            _active_capacity=active,
             _stream=caller_stream,
         )
 
@@ -242,6 +226,8 @@ class MoECommunicator:
         global expert IDs or negative dropped routes. Optional weights are
         CUDA FP32 with the same shape; omitted weights mean one per valid route.
         Routing values are not copied to or inspected on the host.
+        Only latency EXPERT_MAJOR accepts an external ``output_buffer``; other
+        layouts require the view returned by ``get_dispatch_output_buffer``.
         Inputs must not overlap the output or runtime receive storage written
         by this operation. Aliasing is a caller precondition and is not checked.
         """
@@ -267,23 +253,16 @@ class MoECommunicator:
             if self.mode != MoEMode.THROUGHPUT:
                 raise ValueError("prepare_handle is supported only in THROUGHPUT mode")
             self._validate_handle(prepare_handle, PrepareHandle)
-            if (
-                prepare_handle._topk_ptr != ptr(topk_ids)
-                or prepare_handle._num_tokens != num_tokens
-                or prepare_handle._active_capacity != active
-            ):
-                raise ValueError("prepare_handle routing pointer, token count, and active capacity must match dispatch")
         caller_stream = self._resolve_stream(stream)
 
         with torch.cuda.stream(caller_stream):
             runtime_output_ptr = self._runtime.dispatch_output_buffer_ptr()
             if (
-                self.mode == MoEMode.LATENCY
-                and self.output_layout == DispatchLayout.RANK_MAJOR
+                self.output_layout != DispatchLayout.EXPERT_MAJOR
                 and output_buffer is not None
                 and ptr(output_buffer) != runtime_output_ptr
             ):
-                raise ValueError("latency RANK_MAJOR output_buffer must be the runtime-owned dispatch buffer")
+                raise ValueError("output_buffer must be the runtime-owned dispatch buffer for this mode/layout")
             tokens = (
                 self._view(runtime_output_ptr, output_shape, output_dtype)
                 if output_buffer is None or ptr(output_buffer) == runtime_output_ptr
@@ -302,14 +281,8 @@ class MoECommunicator:
                 )
             else:
                 metadata_shape = output_shape[:-1] + (self.topk,)
-                if self.mode == MoEMode.LATENCY:
-                    recv_ids = self._view(self._runtime.output_topk_ids_buffer_ptr(), metadata_shape, torch.int32)
-                    recv_weights = self._view(
-                        self._runtime.output_topk_weights_buffer_ptr(), metadata_shape, torch.float32
-                    )
-                else:
-                    recv_ids = torch.empty(metadata_shape, dtype=torch.int32, device=self.device)
-                    recv_weights = torch.empty(metadata_shape, dtype=torch.float32, device=self.device)
+                recv_ids = self._view(self._runtime.output_topk_ids_buffer_ptr(), metadata_shape, torch.int32)
+                recv_weights = self._view(self._runtime.output_topk_weights_buffer_ptr(), metadata_shape, torch.float32)
             if data_type == DispatchDataType.FP8_E4M3:
                 num_scales = self.hidden_size // 128
                 if self.mode == MoEMode.LATENCY:
@@ -319,7 +292,9 @@ class MoECommunicator:
                         device=self.device,
                     ).transpose(1, 2)
                 else:
-                    scales = torch.empty(output_shape[:-1] + (num_scales,), dtype=torch.float32, device=self.device)
+                    scales = self._view(
+                        self._runtime.output_scales_buffer_ptr(), output_shape[:-1] + (num_scales,), torch.float32
+                    )
             combine_input = (
                 None
                 if self.output_layout == DispatchLayout.EXPERT_MAJOR
@@ -369,10 +344,6 @@ class MoECommunicator:
                     input_scales_ptr=ptr(input_scales),
                     topk_idx_ptr=ptr(topk_ids),
                     topk_weights_ptr=ptr(weights),
-                    output_ptr=ptr(tokens),
-                    output_scales_ptr=ptr(scales),
-                    output_topk_idx_ptr=ptr(recv_ids),
-                    output_topk_weights_ptr=ptr(recv_weights),
                     output_count_ptr=ptr(count),
                     num_tokens=num_tokens,
                     max_tokens_per_rank=active,
@@ -402,7 +373,6 @@ class MoECommunicator:
             output_info=output_info,
             _native=native,
             _runtime=self._runtime,
-            _config=self._signature,
             _num_tokens=num_tokens,
             _active_capacity=active,
             _tensors=retained,
@@ -417,39 +387,31 @@ class MoECommunicator:
         *,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
-        output_topk_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Combine BF16 expert outputs into ``[local_num_tokens, hidden_size]``.
 
         EXPERT_MAJOR applies the dispatch's original weights natively. Other
         layouts require already-weighted local expert sums (per-topk results
-        for latency DIRECT_SEND). Throughput optionally writes combined weights
-        into ``output_topk_weights``, a CUDA FP32 ``[local_num_tokens, topk]`` tensor.
-        Outputs must not overlap each other, expert inputs, or runtime combine
-        storage. Expert inputs may exactly reuse ``combine_input_buffer``, but
-        partial overlap is unsupported. The caller must ensure these conditions;
-        buffer aliasing is not checked.
+        for latency DIRECT_SEND) in ``DispatchOutput.combine_input_buffer``.
+        There is no implicit copy from external expert-output tensors.
+        The output must not overlap expert inputs or runtime combine storage.
+        The caller must ensure these conditions; buffer aliasing is not checked.
         """
         self._validate_handle(handle, DispatchHandle)
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), torch.bfloat16)
         if (
-            self.mode == MoEMode.LATENCY
-            and self.output_layout == DispatchLayout.RANK_MAJOR
+            self.output_layout != DispatchLayout.EXPERT_MAJOR
             and ptr(expert_output) != self._runtime.combine_input_buffer_ptr()
         ):
-            raise ValueError("latency RANK_MAJOR expert_output must be DispatchOutput.combine_input_buffer")
+            raise ValueError("expert_output must be DispatchOutput.combine_input_buffer for this mode/layout")
         output_shape = (handle._num_tokens, self.hidden_size)
         if out is not None:
             self._check(out, "out", output_shape, torch.bfloat16)
-        if output_topk_weights is not None:
-            if self.mode != MoEMode.THROUGHPUT:
-                raise ValueError("output_topk_weights is supported only in THROUGHPUT mode")
-            self._check(output_topk_weights, "output_topk_weights", (handle._num_tokens, self.topk), torch.float32, 4)
         caller_stream = self._resolve_stream(stream)
         with torch.cuda.stream(caller_stream):
             if out is None:
                 out = torch.empty(output_shape, dtype=torch.bfloat16, device=self.device)
-            record_stream((*handle._tensors, expert_output, out, output_topk_weights), caller_stream)
+            record_stream((*handle._tensors, expert_output, out), caller_stream)
             if self.mode == MoEMode.LATENCY:
                 self._runtime.combine_latency(
                     expert_output_ptr=ptr(expert_output),
@@ -460,9 +422,7 @@ class MoECommunicator:
                 )
             else:
                 self._runtime.combine_throughput(
-                    expert_output_ptr=ptr(expert_output),
                     output_ptr=ptr(out),
-                    output_topk_weights_ptr=ptr(output_topk_weights),
                     handle=handle._native,
                     num_blocks=self.num_blocks[1],
                     stream_ptr=caller_stream.cuda_stream,
@@ -525,25 +485,15 @@ class MoECommunicator:
     def _validate_handle(self, handle: Union[PrepareHandle, DispatchHandle], expected_type: type) -> None:
         if not isinstance(handle, expected_type):
             raise TypeError(f"handle must be a Python {expected_type.__name__}")
-        if handle._runtime is not self._runtime or handle._config != self._signature:
-            raise ValueError(f"{expected_type.__name__} belongs to another MoECommunicator or configuration")
-        native_type = _cpp.PrepareHandle if expected_type is PrepareHandle else _cpp.DispatchHandle
-        if not isinstance(handle._native, native_type):
-            raise ValueError(f"{expected_type.__name__} does not contain a native handle")
-        if (
+        if handle._runtime is not self._runtime:
+            raise ValueError(f"{expected_type.__name__} belongs to another MoECommunicator")
+        if isinstance(handle, DispatchHandle) and (
             type(handle._num_tokens) is not int
             or type(handle._active_capacity) is not int
             or not 0 < handle._active_capacity <= self.max_tokens_per_rank
             or not 0 <= handle._num_tokens <= handle._active_capacity
         ):
             raise ValueError(f"{expected_type.__name__} has an invalid token count or capacity")
-        if isinstance(handle, DispatchHandle):
-            if (
-                not isinstance(handle.output_info, DispatchOutputInfo)
-                or not isinstance(handle.output_info.layout, DispatchLayoutInfo)
-                or handle.output_info.layout.kind != self.output_layout
-            ):
-                raise ValueError("DispatchHandle output layout does not match this MoECommunicator")
 
 
 def _payload_dtype(data_type: DispatchDataType) -> torch.dtype:

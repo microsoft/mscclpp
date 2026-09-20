@@ -53,8 +53,8 @@ def main():
 
         # Identity expert, topk=1, weight=1. The tensor is capacity-sized;
         # native combine ignores rows outside its private routing metadata.
-        expert_output = received.tokens
-        result = moe.combine(expert_output, handle, stream=stream)
+        received.combine_input_buffer.copy_(received.tokens)
+        result = moe.combine(received.combine_input_buffer, handle, stream=stream)
 
     # Caller-owned completion, only for checking the example and safe teardown.
     stream.synchronize()
@@ -131,10 +131,13 @@ buffer and expert outputs have shape `[R, A, K, H]`: write already-weighted
 per-topk results, with zero for absent routes. Otherwise write local expert
 sums. Expert computation must write directly into this runtime-owned buffer;
 latency rank-major combine rejects external expert-output tensors rather than
-performing a hidden staging copy. Throughput accepts external expert outputs
-and lets native combine stage them.
-Its optional `combine(..., output_topk_weights=buffer)` writes combined weights
-to a contiguous CUDA FP32 `[num_input_tokens, K]` buffer.
+performing a hidden staging copy. Both throughput layouts likewise require
+`combine_input_buffer`: write expert results there directly or copy them there
+explicitly before calling `combine`. Passing an external tensor to `combine`
+is rejected. Throughput dispatch payload, top-k IDs, weights, and FP8 scales
+are also runtime-owned views.
+Combine returns token outputs only; the native runtime no longer produces
+combined top-k weights, so `output_topk_weights` is not a supported argument.
 
 ## Formats and buffers
 
@@ -155,22 +158,23 @@ Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
 There are no implicit casts or contiguous copies to accept incompatible input.
 Payload pointers must be 16-byte aligned. `output_buffer` and `combine(out=...)`
 must have the exact active shape, dtype, device, and contiguous layout.
+Only latency EXPERT_MAJOR permits an external dispatch `output_buffer`. Other
+layouts require the exact runtime-owned dispatch buffer.
 `get_dispatch_output_buffer(quant=..., runtime_max_tokens_per_rank=...)` returns
 a correctly shaped runtime view without moving data.
 
 **Buffer aliasing is the caller's responsibility and is not checked.**
 Dispatch payload, routing, and scale inputs must not overlap its output or
 runtime receive storage written by the operation. Combine outputs must be
-disjoint from each other, expert inputs, and runtime combine storage. Latency
-RANK_MAJOR requires the exact runtime `combine_input_buffer`; other inputs must
-not partially overlap runtime storage. These restrictions apply on a single
-stream too: arbitrary in-place operations and partially overlapping copies are
-unsupported.
+disjoint from expert inputs and runtime combine storage. Latency RANK_MAJOR and
+both throughput layouts require the exact runtime `combine_input_buffer`.
+These restrictions apply on a single stream too: arbitrary in-place operations
+and partially overlapping copies are unsupported.
 
-Throughput's runtime dispatch and BF16 combine views **share physical storage**.
-After FP8 dispatch, consume the FP8 data into separate expert-output storage
-before writing BF16 into `combine_input_buffer`; never expand FP8 to BF16
-in-place while reading it. Runtime views are reused, not independent results.
+Throughput's runtime dispatch and BF16 combine views use **separate storage**.
+Expert computation can read BF16 or FP8 dispatch data while writing BF16 results
+into `combine_input_buffer` without overwriting the dispatched payload.
+Runtime views are reused by later operations, not independent results.
 
 ## Streams, handles, and limitations
 
@@ -187,6 +191,9 @@ in-place while reading it. Runtime views are reused, not independent results.
   and dispatch handles. Every successful dispatch invalidates earlier dispatch
   handles but can retain its explicitly reused preparation. Native code checks
   ownership and generations; invalid Python tensor metadata is rejected first.
+  Preparation pointer, token count, capacity, and block-count mismatches are
+  rejected by the native runtime with an MSCCL++ error rather than a Python
+  `ValueError`.
 * Keep routing and borrowed metadata unchanged through matching combine work.
   Python handles retain the native runtime and borrowed tensors; tensor storage
   retains native owners even across slices and views, without owner cycles.
@@ -214,3 +221,9 @@ in-place while reading it. Runtime views are reused, not independent results.
 * This port does not include the donor's notify/count caches, receive pools,
   overlap/event stubs, `previous_handle`, `enable_overlap`, or
   `expert_alignment`. There is no automatic autograd integration.
+
+Python tests can use `@pytest.mark.nranks(N)` to require a specific positive MPI
+rank count; other world sizes skip the test before fixture setup. The
+`test_dispatch_combine_correctness` case uses `@pytest.mark.nranks(8)`, with one GPU
+per rank. Run it from the repository root with
+`mpirun -np 8 python3 -m pytest python/test/test_ep.py -k dispatch_combine_correctness`.
