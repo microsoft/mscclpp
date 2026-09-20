@@ -276,9 +276,8 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
-  throughputReduceCombine(request.output, request.outputTopkWeights, workload, workspaceLayout, storageLayout.payload_,
-                          storageLayout.recvBuffer_, storageLayout.combineBuffer_, context.deviceContext_,
-                          request.numBlocks, request.stream);
+  throughputReduceCombine(request.output, workload, workspaceLayout, storageLayout.payload_,
+                          storageLayout.combineBuffer_, context.deviceContext_, request.numBlocks, request.stream);
 }
 
 }  // namespace ep

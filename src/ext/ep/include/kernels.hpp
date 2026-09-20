@@ -96,10 +96,9 @@ void throughputDispatch(const void* input, const int64_t* topkIdx, const float* 
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream);
 
-void throughputReduceCombine(void* output, float* outputTopkWeights, const Workload& workload,
-                             const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
-                             void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext& context, int numBlocks,
-                             cudaStream_t stream);
+void throughputReduceCombine(void* output, const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                             const ThroughputPayloadView& payload, void* combineBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream);
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 

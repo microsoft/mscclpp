@@ -568,7 +568,6 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
 
     runtime->combine(mscclpp::ep::CombineRequest{mscclpp::ep::ThroughputCombineRequest{
         .output = buffers.output.data(),
-        .outputTopkWeights = nullptr,
         .handle = handle,
         .numBlocks = combineBlocks,
         .stream = stream,
@@ -803,7 +802,6 @@ void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communi
     const auto handle = runtime.dispatch(DispatchRequest{request});
     runtime.combine(CombineRequest{ThroughputCombineRequest{
         .output = output.data(),
-        .outputTopkWeights = nullptr,
         .handle = handle,
         .numBlocks = combineBlocks,
         .stream = stream,
@@ -1014,7 +1012,6 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
         }
       }
       mscclpp::GpuBuffer<int64_t> deviceRoutes(routes.size());
-      mscclpp::GpuBuffer<float> deviceWeights(routes.size());
       mscclpp::gpuMemcpy<int64_t>(deviceRoutes.data(), routes.data(), routes.size(), cudaMemcpyHostToDevice);
       const auto handle = runtime->dispatch(DispatchRequest{ThroughputDispatchRequest{
           .outputCount = nullptr,
@@ -1034,7 +1031,6 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
                                         cudaMemcpyDeviceToDevice, stream));
       runtime->combine(CombineRequest{ThroughputCombineRequest{
           .output = deviceOutput.data(),
-          .outputTopkWeights = deviceWeights.data(),
           .handle = handle,
           .numBlocks = numTopk == 5 ? std::min(combineBlocks_, 24) : combineBlocks_,
           .stream = stream,
@@ -1042,15 +1038,10 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
       communicator->bootstrap()->barrier();
       std::vector<Bf16> output(input.size());
-      std::vector<float> weights(routes.size());
       mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
-      mscclpp::gpuMemcpy<float>(weights.data(), deviceWeights.data(), weights.size(), cudaMemcpyDeviceToHost);
       for (size_t index = 0; index < output.size(); ++index) {
         ASSERT_EQ(static_cast<float>(output[index]),
                   static_cast<float>(input[index]) * numDestinations[index / Hidden]);
-      }
-      for (size_t index = 0; index < weights.size(); ++index) {
-        ASSERT_EQ(weights[index], routes[index] >= 0 ? 1.0f : 0.0f);
       }
       runtime.reset();
       communicator->bootstrap()->barrier();

@@ -3,8 +3,6 @@
 
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 
-#include <cooperative_groups.h>
-
 #include <algorithm>
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
@@ -25,9 +23,8 @@ constexpr int COMBINE_TMA_WIDE_MAX_BLOCKS = 24;
 
 template <int MaxContributors, int NumWarps>
 __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
-    throughputReduceCombineKernel(int4* output, float* outputTopkWeights, Workload workload,
-                                  ThroughputWorkspaceLayout workspace, ThroughputPayloadView payload,
-                                  void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext* context) {
+    throughputReduceCombineKernel(int4* output, Workload workload, ThroughputWorkspaceLayout workspace,
+                                  ThroughputPayloadView payload, void* combineBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   const int numTopk = workload.numTopk_;
   const TransportView transport(context);
@@ -56,7 +53,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   uint32_t barrierPhases[NumStages] = {};
 
   if (blockIdx.x == 0) blockPeerBarrier(context->channels_, context->rank_, numRanks);
-  cooperative_groups::this_grid().sync();
+  workspace.syncer_->sync(gridDim.x);
   if (laneId == 0) {
 #pragma unroll
     for (int stageIdx = 0; stageIdx < NumStages; ++stageIdx) barriers[stageIdx].relaxedInit();
@@ -146,27 +143,14 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
       reduceStore(stageIdx, chunkOffset, chunkSize);
       __syncwarp();
     }
-
-    if (outputTopkWeights != nullptr && laneId < numTopk) {
-      float weight = 0.0f;
-#pragma unroll
-      for (int contributor = 0; contributor < MaxContributors; ++contributor) {
-        if (contributor >= numContributors) break;
-        const void* peerBuffer = transport.mappedBuffer(dispatchRecvBuffer, contributorRanks[contributor]);
-        const auto* weights = payload.topKValues(peerBuffer, contributorSlots[contributor]);
-        weight += __ldg(weights + laneId);
-      }
-      outputTopkWeights[static_cast<int64_t>(token) * numTopk + laneId] = weight;
-    }
   }
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
 template <int MaxContributors, int NumWarps>
-void launchThroughputCombine(void* output, float* outputTopkWeights, const Workload& workload,
-                             const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
-                             void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext& context, int numBlocks,
-                             cudaStream_t stream) {
+void launchThroughputCombine(void* output, const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                             const ThroughputPayloadView& payload, void* combineBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream) {
   constexpr int NumStages = COMBINE_TMA_STAGES;
   constexpr int ChunkInt4 = COMBINE_TMA_CHUNK_INT4;
   constexpr int NumThreads = NumWarps * WARP_SIZE;
@@ -177,22 +161,19 @@ void launchThroughputCombine(void* output, float* outputTopkWeights, const Workl
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(kernel, NumThreads, SharedBytes, context, kernelConfig);
   EP_HOST_ASSERT(numBlocks <= residentBlocks);
-  cudaLaunchAttribute attribute{};
-  attribute.id = cudaLaunchAttributeCooperative;
-  attribute.val.cooperative = 1;
-  cudaLaunchConfig_t config{dim3(numBlocks), dim3(NumThreads), SharedBytes, stream, &attribute, 1};
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, static_cast<int4*>(output), outputTopkWeights, workload,
-                                       workspace, payload, dispatchRecvBuffer, combineBuffer, context.devicePtr_));
+  kernel<<<dim3(numBlocks), dim3(NumThreads), SharedBytes, stream>>>(static_cast<int4*>(output), workload, workspace,
+                                                                     payload, combineBuffer, context.devicePtr_);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-void throughputReduceCombine(void* output, float* outputTopkWeights, const Workload& workload,
-                             const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
-                             void* dispatchRecvBuffer, void* combineBuffer, const DeviceContext& context, int numBlocks,
-                             cudaStream_t stream) {
+void throughputReduceCombine(void* output, const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                             const ThroughputPayloadView& payload, void* combineBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(output != nullptr || workload.numTokens_ == 0);
   EP_HOST_ASSERT(workspace.tokenRoutes_ != nullptr && workspace.rankOffsets_ != nullptr);
   EP_HOST_ASSERT(workspace.numRecvTokens_ != nullptr && workspace.recvCounts_ != nullptr);
-  EP_HOST_ASSERT(dispatchRecvBuffer != nullptr && combineBuffer != nullptr && context.peerBufferBases_ != nullptr);
+  EP_HOST_ASSERT(workspace.syncer_ != nullptr);
+  EP_HOST_ASSERT(combineBuffer != nullptr && context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
   EP_HOST_ASSERT(isSupportedRanks(context.numRanks_));
@@ -209,8 +190,7 @@ void throughputReduceCombine(void* output, float* outputTopkWeights, const Workl
   } else if (maxContributors > 2) {
     launch = launchThroughputCombine<4, COMBINE_TMA_WARPS>;
   }
-  launch(output, outputTopkWeights, workload, workspace, payload, dispatchRecvBuffer, combineBuffer, context, numBlocks,
-         stream);
+  launch(output, workload, workspace, payload, combineBuffer, context, numBlocks, stream);
 }
 
 }  // namespace ep

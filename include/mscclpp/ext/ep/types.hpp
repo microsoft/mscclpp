@@ -227,8 +227,6 @@ struct LatencyCombineRequest {
 struct ThroughputCombineRequest {
   /// Combined token output, 16-byte aligned.
   void* output;
-  /// Optional combined top-k weights.
-  float* outputTopkWeights;
   /// Local expert output must be written to MoERuntime::combineInputBuffer()
   /// in the dispatch output layout before combine is enqueued.
   /// Handle returned by the matching dispatch.
