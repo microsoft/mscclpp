@@ -237,43 +237,40 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-// Peer-visible receive-payload view. Unlike latency's packed per-token payload,
-// throughput keeps token data and fixed-stride metadata in separate slabs so
-// GEMM can use the rows directly. Private routing state is not part of this view.
+// Peer-visible receive-payload view. Throughput keeps token data and each
+// metadata kind in separate contiguous slabs so kernels and callers can use the
+// runtime-owned buffers directly. Private routing state is not part of this view.
 //
 // TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
 //   [dense data: DataType[numRecvTokens][hidden]]
-//   [unused allocation tail up to metadataOffset_]
-//   [metadata row 0] ... [metadata row numRecvTokens - 1]
-//   [unused metadata capacity up to numBytes_]
-//
-// Each metadata row has a 128-byte-aligned stride of metadataRowStrideBytes_:
-//   [topKIndices: int[topK]]
-//   [topKValues: float[topK]]
-//   [optional FP8 scales: float[hidden / 128]]
-//   [padding to metadataRowStrideBytes_]
+//   [unused data capacity]
+//   [topKIndices: int[maxRows][topK]]
+//   [topKValues: float[maxRows][topK]]
+//   [FP8 scales: float[maxRows][hidden / 128]]
 //
 // maxRows = numRanks * configuredMaxTokensPerRank is capacity, not a per-rank stride.
-// The BF16-sized data reservation keeps metadataOffset_ fixed for FP8 too.
+// The BF16-sized data reservation keeps metadata offsets fixed for FP8 too.
 // RANK_MAJOR uses explicit source-rank row ranges instead of the compact view above.
 // Inverse routing stays in the workspace; there is no source-token ID in this payload.
 struct ThroughputPayloadView {
   int topK_;
-  size_t metadataOffset_;
-  size_t metadataRowStrideBytes_;
+  int numScales_;
+  size_t topKIndicesOffset_;
+  size_t topKValuesOffset_;
+  size_t scaleFactorsOffset_;
   size_t numBytes_;
 
   MSCCLPP_HOST_DEVICE_INLINE ThroughputPayloadView(size_t maxRows, int hidden, int topK)
       : topK_(topK),
-        metadataOffset_(
+        numScales_(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)),
+        topKIndicesOffset_(
             configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes)),
-        metadataRowStrideBytes_(configAlign<size_t>(
-            metadataBytes(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)), BufferAlignmentBytes)),
-        numBytes_(metadataOffset_ + maxRows * metadataRowStrideBytes_) {}
-
-  MSCCLPP_HOST_DEVICE_INLINE size_t metadataBytes(int numScales) const {
-    return static_cast<size_t>(topK_) * (sizeof(int) + sizeof(float)) + static_cast<size_t>(numScales) * sizeof(float);
-  }
+        topKValuesOffset_(configAlign<size_t>(topKIndicesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(int),
+                                              BufferAlignmentBytes)),
+        scaleFactorsOffset_(configAlign<size_t>(
+            topKValuesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(float), BufferAlignmentBytes)),
+        numBytes_(configAlign<size_t>(scaleFactorsOffset_ + maxRows * static_cast<size_t>(numScales_) * sizeof(float),
+                                      BufferAlignmentBytes)) {}
 
   template <typename T>
   MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
@@ -286,28 +283,27 @@ struct ThroughputPayloadView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base, int64_t row) const {
-    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + metadataOffset_ + row * metadataRowStrideBytes_);
+    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base, int64_t row) const {
-    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + metadataOffset_ +
-                                        row * metadataRowStrideBytes_);
+    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base, int64_t row) const {
-    return reinterpret_cast<float*>(topKIndices(base, row) + topK_);
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + topKValuesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base, int64_t row) const {
-    return reinterpret_cast<const float*>(topKIndices(base, row) + topK_);
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + topKValuesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE float* scaleFactors(void* base, int64_t row) const {
-    return topKValues(base, row) + topK_;
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const float* scaleFactors(const void* base, int64_t row) const {
-    return topKValues(base, row) + topK_;
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
   }
 };
 
@@ -318,6 +314,9 @@ struct ThroughputStorageLayout {
   size_t totalBytes_;
   void* recvBuffer_ = nullptr;
   void* combineBuffer_ = nullptr;
+  int* outputTopkIdsBuffer_ = nullptr;
+  float* outputTopkWeightsBuffer_ = nullptr;
+  float* outputScalesBuffer_ = nullptr;
 
   ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                           int numTopk)
@@ -339,6 +338,9 @@ struct ThroughputStorageLayout {
     if (symmetricBuffer != nullptr) {
       recvBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + recvOffset;
       combineBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + combineOffset;
+      outputTopkIdsBuffer_ = payload_.topKIndices(recvBuffer_, 0);
+      outputTopkWeightsBuffer_ = payload_.topKValues(recvBuffer_, 0);
+      outputScalesBuffer_ = payload_.scaleFactors(recvBuffer_, 0);
     }
   }
 };

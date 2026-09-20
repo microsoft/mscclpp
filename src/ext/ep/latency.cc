@@ -125,6 +125,11 @@ void LatencyRuntimeContext::initialize() {
 }
 
 void* MoERuntime::outputTopkIdsBuffer() const {
+  if (mode_ == MoEMode::THROUGHPUT) {
+    const auto& context = *throughputContext_;
+    EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+    return context.storageLayout().outputTopkIdsBuffer_;
+  }
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
@@ -136,6 +141,11 @@ void* MoERuntime::outputTopkIdsBuffer() const {
 }
 
 void* MoERuntime::outputTopkWeightsBuffer() const {
+  if (mode_ == MoEMode::THROUGHPUT) {
+    const auto& context = *throughputContext_;
+    EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+    return context.storageLayout().outputTopkWeightsBuffer_;
+  }
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
@@ -144,6 +154,13 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
                               context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                               context.combineMode_)
       .rankMajorTopkWeightsBuffer_;
+}
+
+void* MoERuntime::outputScalesBuffer() const {
+  requireMode(MoEMode::THROUGHPUT);
+  const auto& context = *throughputContext_;
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+  return context.storageLayout().outputScalesBuffer_;
 }
 
 DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {

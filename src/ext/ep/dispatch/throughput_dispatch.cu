@@ -37,19 +37,15 @@ void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t strea
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
 __global__ void __launch_bounds__(NumThreads, 1)
-    throughputDispatchKernel(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const int4* input,
-                             const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
-                             Workload workload, ThroughputWorkspaceLayout workspace, ThroughputPayloadView payload,
-                             void* recvBuffer, const DeviceContext* context) {
+    throughputDispatchKernel(const int4* input, const int64_t* topkIdx, const float* topkWeights,
+                             const float* inputScales, Workload workload, ThroughputWorkspaceLayout workspace,
+                             ThroughputPayloadView payload, void* recvBuffer, const DeviceContext* context) {
   static_assert(NumThreads == ThroughputDispatchThreads);
   const int numTopk = workload.numTopk_;
-  const int maxTokensPerRank = workload.maxTokensPerRank_;
   const int hiddenInt4 = workload.hidden_ * dispatchElementBytes(DataType) / sizeof(int4);
   const int numScales = dispatchNumScales(DataType, workload.hidden_);
   const TransportView transport(context);
   const int numRanks = context->numRanks_;
-  const int receivedTokens = *workspace.numRecvTokens_;
-  EP_DEVICE_ASSERT(receivedTokens >= 0 && receivedTokens <= numRanks * maxTokensPerRank);
   const int numBlocks = static_cast<int>(gridDim.x);
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = getLaneId();
@@ -135,33 +131,6 @@ __global__ void __launch_bounds__(NumThreads, 1)
   // Join all writers before block 0 publishes their stores with system-release signals.
   workspace.syncer_->sync(numBlocks);
   if (blockIdx.x == 0) blockPeerBarrier(context->channels_, context->rank_, numRanks);
-  // All receiving blocks must wait for block 0's peer acquires.
-  workspace.syncer_->sync(numBlocks);
-
-  const int globalThreadId = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-  const int gridThreads = static_cast<int>(gridDim.x * blockDim.x);
-  const int outputRows = Layout == DispatchLayout::RANK_MAJOR ? numRanks * maxTokensPerRank : receivedTokens;
-  for (int token = globalThreadId; token < outputRows; token += gridThreads) {
-    if (!isActiveThroughputRow(token, workspace.recvCounts_, maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR))
-      continue;
-    if (outputTopkIdx != nullptr || outputTopkWeights != nullptr) {
-      const auto* metadataTopkIdx = payload.topKIndices(recvBuffer, token);
-      const auto* metadataTopkWeights = payload.topKValues(recvBuffer, token);
-      for (int topk = 0; topk < numTopk; ++topk) {
-        if (outputTopkIdx != nullptr)
-          outputTopkIdx[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkIdx[topk];
-        if (outputTopkWeights != nullptr) {
-          outputTopkWeights[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkWeights[topk];
-        }
-      }
-    }
-    if (outputScales != nullptr) {
-      const auto* metadataScales = payload.scaleFactors(recvBuffer, token);
-      for (int scale = 0; scale < numScales; ++scale) {
-        outputScales[static_cast<int64_t>(token) * numScales + scale] = metadataScales[scale];
-      }
-    }
-  }
 }
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
@@ -184,8 +153,7 @@ int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceConte
                                                       DispatchDataType::FP8_E4M3>(context));
 }
 
-void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const void* input,
-                        const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+void throughputDispatch(const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
                         const Workload& workload, const ThroughputWorkspaceLayout& workspace,
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream) {
@@ -196,8 +164,6 @@ void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* out
   EP_HOST_ASSERT(workspace.syncer_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
-  EP_HOST_ASSERT(payload.metadataBytes(dispatchNumScales(workload.dispatchDataType_, workload.hidden_)) <=
-                 payload.metadataRowStrideBytes_);
 
   const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const bool fp8 = workload.dispatchDataType_ == DispatchDataType::FP8_E4M3;
@@ -207,9 +173,9 @@ void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* out
                        : throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::BF16>)
                 : (fp8 ? throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::FP8_E4M3>
                        : throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::BF16>);
-  kernel<<<dim3(numBlocks), dim3(NumThreads), 0, stream>>>(
-      outputTopkIdx, outputTopkWeights, outputScales, reinterpret_cast<const int4*>(input), topkIdx, topkWeights,
-      inputScales, workload, workspace, payload, recvBuffer, context.devicePtr_);
+  kernel<<<dim3(numBlocks), dim3(NumThreads), 0, stream>>>(reinterpret_cast<const int4*>(input), topkIdx, topkWeights,
+                                                           inputScales, workload, workspace, payload, recvBuffer,
+                                                           context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 

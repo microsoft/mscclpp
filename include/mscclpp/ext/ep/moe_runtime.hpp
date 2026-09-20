@@ -72,10 +72,12 @@ class MoERuntime {
   /// Return the rank count in one CUDA IPC domain.
   int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
 
-  /// Return the runtime-owned rank-major top-k ID buffer.
+  /// Return the runtime-owned dispatched top-k ID buffer.
   void* outputTopkIdsBuffer() const;
-  /// Return the runtime-owned rank-major top-k weight buffer.
+  /// Return the runtime-owned dispatched top-k weight buffer.
   void* outputTopkWeightsBuffer() const;
+  /// Return the runtime-owned throughput dispatch scale buffer.
+  void* outputScalesBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
@@ -112,7 +114,8 @@ class MoERuntime {
   /// @p request must contain the request type matching mode(): a
   /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
   /// THROUGHPUT. Throughput payload output is always written to
-  /// dispatchOutputBuffer(); optional metadata outputs remain caller-owned.
+  /// dispatchOutputBuffer(); dispatch metadata is written to the corresponding
+  /// runtime-owned metadata buffers.
   /// Hidden size, expert count, top-k count, and output layout come from the
   /// runtime. Token count and active capacity may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.

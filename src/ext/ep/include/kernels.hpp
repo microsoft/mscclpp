@@ -91,8 +91,7 @@ void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t strea
 // be reused by either data format, so use their lower occupancy limit.
 int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
 
-void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const void* input,
-                        const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+void throughputDispatch(const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
                         const Workload& workload, const ThroughputWorkspaceLayout& workspace,
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream);

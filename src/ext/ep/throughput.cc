@@ -242,8 +242,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
-  throughputDispatch(request.outputTopkIdx, request.outputTopkWeights, static_cast<float*>(request.outputScales),
-                     request.input, request.topkIdx, request.topkWeights, request.inputScales, workload,
+  throughputDispatch(request.input, request.topkIdx, request.topkWeights, request.inputScales, workload,
                      workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_,
                      request.numBlocks, request.stream);
 

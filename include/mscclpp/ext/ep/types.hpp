@@ -143,17 +143,11 @@ struct LatencyDispatchRequest {
 /// Arguments for throughput-mode dispatch.
 ///
 /// The dispatched payload is written to MoERuntime::dispatchOutputBuffer().
-/// The caller must keep input and optional metadata output buffers valid until
-/// the GPU work using them, including graph replays, has completed. The
-/// returned DispatchHandle must stay alive until the matching combine has been
-/// enqueued.
+/// Dispatch metadata is written to the runtime-owned metadata buffers. The
+/// caller must keep input buffers valid until the GPU work using them,
+/// including graph replays, has completed. The returned DispatchHandle must
+/// stay alive until the matching combine has been enqueued.
 struct ThroughputDispatchRequest {
-  /// Optional dispatch scale output.
-  void* outputScales;
-  /// Optional dispatched local-expert IDs.
-  int* outputTopkIdx;
-  /// Optional dispatched top-k weights.
-  float* outputTopkWeights;
   /// Per-expert or per-rank output counts.
   int* outputCount;
   /// Input token payload, 16-byte aligned.
