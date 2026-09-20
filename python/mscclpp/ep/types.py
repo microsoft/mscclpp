@@ -90,9 +90,9 @@ class DispatchOutput:
     """Capacity-sized activations and routing metadata for local expert compute.
 
     Runtime-owned views retain native storage even after slicing, but their
-    contents are reused by later operations. Throughput's BF16 combine buffer
-    aliases its dispatch buffer, including when dispatch emits FP8. Consume FP8
-    tokens before writing BF16 results into that allocation.
+    contents are reused by later operations. Throughput uses separate dispatch
+    and BF16 combine buffers, including when dispatch emits FP8. Except for
+    latency EXPERT_MAJOR, write expert results into ``combine_input_buffer``.
     """
 
     tokens: torch.Tensor
@@ -109,16 +109,13 @@ class PrepareHandle:
 
     Keep routing IDs unchanged until all dispatches using this preparation have
     finished. A new preparation (including automatic preparation by dispatch)
-    invalidates this handle. The native runtime validates freshness.
+    invalidates this handle. The native runtime validates freshness and matching
+    routing pointer, token count, active capacity, and dispatch block count.
     """
 
     _native: _cpp.PrepareHandle = field(repr=False)
     _runtime: _cpp.MoERuntime = field(repr=False)
-    _config: tuple = field(repr=False)
     _topk_ids: torch.Tensor = field(repr=False)
-    _topk_ptr: int = field(repr=False)
-    _num_tokens: int = field(repr=False)
-    _active_capacity: int = field(repr=False)
     _stream: torch.cuda.Stream = field(repr=False)
 
 
@@ -135,7 +132,6 @@ class DispatchHandle:
     output_info: DispatchOutputInfo
     _native: _cpp.DispatchHandle = field(repr=False)
     _runtime: _cpp.MoERuntime = field(repr=False)
-    _config: tuple = field(repr=False)
     _num_tokens: int = field(repr=False)
     _active_capacity: int = field(repr=False)
     _tensors: Tuple[torch.Tensor, ...] = field(repr=False)
