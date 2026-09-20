@@ -158,7 +158,7 @@ void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& requ
   }
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(numExperts_ / numRanks_ <= ThroughputCountThreads && numRanks_ <= ThroughputCountThreads);
-  EP_HOST_ASSERT(request.numBlocks <= maxCooperativeThroughputDispatchBlocks(outputLayout_, deviceContext_));
+  EP_HOST_ASSERT(request.numBlocks <= maxResidentThroughputDispatchBlocks(outputLayout_, deviceContext_));
   EP_HOST_ASSERT(request.topkIdx != nullptr || request.numTokens == 0);
   if (!fitsReceiveBuffer(request.maxTokensPerRank)) {
     EP_THROW("Throughput receive-buffer capacity exceeded for this runtime configuration");

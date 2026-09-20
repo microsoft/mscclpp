@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/device.hpp>
 #include <mscclpp/ext/ep/types.hpp>
 #include <mscclpp/gpu_data_types.hpp>
@@ -360,6 +361,7 @@ struct ThroughputWorkspaceLayout {
   int* numRecvTokens_ = nullptr;
   // Receive counts indexed by local expert or source rank, depending on output layout.
   int* recvCounts_ = nullptr;
+  mscclpp::DeviceSyncer* syncer_ = nullptr;
 
   ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
     size_t offset = 0;
@@ -378,6 +380,7 @@ struct ThroughputWorkspaceLayout {
     numRecvTokens_ = static_cast<int*>(place(sizeof(int), alignof(int)));
     recvCounts_ = static_cast<int*>(
         place(static_cast<size_t>(std::max(numRanks, numExperts / numRanks)) * sizeof(int), alignof(int)));
+    syncer_ = static_cast<mscclpp::DeviceSyncer*>(place(sizeof(mscclpp::DeviceSyncer), alignof(mscclpp::DeviceSyncer)));
     totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
   }
 

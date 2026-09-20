@@ -87,9 +87,9 @@ void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const 
 // Wait until peers have finished consuming the previous payload before overwriting it.
 void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream);
 
-// Grid-wide synchronization requires all blocks to be resident, not just an SM-count cap.
-// Preparation can be reused by either data format, so use their lower occupancy limit.
-int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
+// The software grid barrier requires all blocks to be resident. Preparation can
+// be reused by either data format, so use their lower occupancy limit.
+int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
 
 void throughputDispatch(int* outputTopkIdx, float* outputTopkWeights, float* outputScales, const void* input,
                         const int64_t* topkIdx, const float* topkWeights, const float* inputScales,

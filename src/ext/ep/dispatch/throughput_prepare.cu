@@ -48,10 +48,8 @@ __global__ void __launch_bounds__(NumThreads, 1)
   if (expertBegin < expertEnd) {
 #pragma unroll
     for (int i = 0; i < NumExpertsPerBlock; ++i) shared.perExpert[threadId][i] = 0;
-#pragma unroll
     for (int token = threadId; token < numTokens; token += NumThreads) {
       const int64_t* tokenTopk = topkIdx + token * numTopk;
-#pragma unroll
       for (int i = 0; i < numTopk; ++i) {
         const int expert = static_cast<int>(tokenTopk[i]);
         if (expertBegin <= expert && expert < expertEnd) ++shared.perExpert[threadId][expert - expertBegin];
@@ -82,7 +80,6 @@ __global__ void __launch_bounds__(NumThreads, 1)
     const int token = tokenBase + threadId;
     uint64_t destinationMask = 0;
     if (token < numTokens) {
-#pragma unroll
       for (int topk = 0; topk < numTopk; ++topk) {
         const int64_t expert = __ldg(topkIdx + static_cast<size_t>(token) * numTopk + topk);
         if (expert >= 0 && expert < numExperts) {
