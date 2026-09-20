@@ -34,10 +34,13 @@ class QuantConfig:
 class MoECommunicatorConfig:
     """Fixed runtime configuration, which must agree across participating ranks.
 
-    Experts are partitioned evenly into contiguous rank-local ranges. A scalar
-    ``num_blocks=N`` resolves to ``(N, N - 2)`` for latency or ``(N, N)`` for
-    throughput; either entry of a pair may be ``None`` for its mode default.
-    ``quant`` supplies a default which a dispatch's explicit quant config overrides.
+    Experts are partitioned evenly into contiguous rank-local ranges.
+    ``num_blocks`` is ``(dispatch_grid_blocks, combine_grid_blocks)``. A scalar
+    ``N`` sets the dispatch grid to ``N`` blocks. Latency dispatch reserves two
+    of those blocks for control, so combine uses the remaining ``N - 2`` worker
+    blocks; throughput uses ``N`` blocks for both operations. Either entry of a
+    pair may be ``None`` for its mode default. ``quant`` supplies a default
+    which a dispatch's explicit quant config overrides.
     """
 
     comm: Optional[CommGroup] = None
