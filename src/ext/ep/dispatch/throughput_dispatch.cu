@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <cooperative_groups.h>
-
 #include "common/device_helpers.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
@@ -39,20 +37,15 @@ void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t strea
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
 __global__ void __launch_bounds__(NumThreads, 1)
-    throughputDispatchKernel(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
-                             const int4* input, const int64_t* topkIdx, const float* topkWeights,
+    throughputDispatchKernel(const int4* input, const int64_t* topkIdx, const float* topkWeights,
                              const float* inputScales, Workload workload, ThroughputWorkspaceLayout workspace,
                              ThroughputPayloadView payload, void* recvBuffer, const DeviceContext* context) {
   static_assert(NumThreads == ThroughputDispatchThreads);
   const int numTopk = workload.numTopk_;
-  const int maxTokensPerRank = workload.maxTokensPerRank_;
   const int hiddenInt4 = workload.hidden_ * dispatchElementBytes(DataType) / sizeof(int4);
   const int numScales = dispatchNumScales(DataType, workload.hidden_);
   const TransportView transport(context);
   const int numRanks = context->numRanks_;
-  const int receivedTokens = *workspace.numRecvTokens_;
-  EP_DEVICE_ASSERT(receivedTokens >= 0 && receivedTokens <= numRanks * maxTokensPerRank);
-  EP_DEVICE_ASSERT(output != nullptr || receivedTokens == 0);
   const int numBlocks = static_cast<int>(gridDim.x);
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = getLaneId();
@@ -136,64 +129,31 @@ __global__ void __launch_bounds__(NumThreads, 1)
   }
 
   // Join all writers before block 0 publishes their stores with system-release signals.
-  cooperative_groups::this_grid().sync();
+  workspace.syncer_->sync(numBlocks);
   if (blockIdx.x == 0) blockPeerBarrier(context->channels_, context->rank_, numRanks);
-  // All receiving blocks must wait for block 0's peer acquires.
-  cooperative_groups::this_grid().sync();
-
-  const void* localTokens = payload.data<int4>(recvBuffer);
-  const int globalThreadId = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-  const int gridThreads = static_cast<int>(gridDim.x * blockDim.x);
-  const int outputRows = Layout == DispatchLayout::RANK_MAJOR ? numRanks * maxTokensPerRank : receivedTokens;
-  if (output != nullptr && output != localTokens) {
-    copyThroughputRows(output, localTokens, outputRows, hiddenInt4 * sizeof(int4), workspace.recvCounts_,
-                       maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR, globalThreadId, gridThreads);
-  }
-  for (int token = globalThreadId; token < outputRows; token += gridThreads) {
-    if (!isActiveThroughputRow(token, workspace.recvCounts_, maxTokensPerRank, Layout == DispatchLayout::RANK_MAJOR))
-      continue;
-    if (outputTopkIdx != nullptr || outputTopkWeights != nullptr) {
-      const auto* metadataTopkIdx = payload.topKIndices(recvBuffer, token);
-      const auto* metadataTopkWeights = payload.topKValues(recvBuffer, token);
-      for (int topk = 0; topk < numTopk; ++topk) {
-        if (outputTopkIdx != nullptr)
-          outputTopkIdx[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkIdx[topk];
-        if (outputTopkWeights != nullptr) {
-          outputTopkWeights[static_cast<int64_t>(token) * numTopk + topk] = metadataTopkWeights[topk];
-        }
-      }
-    }
-    if (outputScales != nullptr) {
-      const auto* metadataScales = payload.scaleFactors(recvBuffer, token);
-      for (int scale = 0; scale < numScales; ++scale) {
-        outputScales[static_cast<int64_t>(token) * numScales + scale] = metadataScales[scale];
-      }
-    }
-  }
 }
 
 template <int NumThreads, DispatchLayout Layout, DispatchDataType DataType>
-int maxCooperativeThroughputDispatchBlocks(const DeviceContext& context) {
+int maxResidentThroughputDispatchBlocks(const DeviceContext& context) {
   static thread_local KernelConfigCache kernelConfig;
   auto kernel = throughputDispatchKernel<NumThreads, Layout, DataType>;
   return configureKernel(kernel, NumThreads, 0, context, kernelConfig);
 }
 
-int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context) {
+int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context) {
   if (layout == DispatchLayout::RANK_MAJOR) {
-    return std::min(maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::RANK_MAJOR,
-                                                           DispatchDataType::BF16>(context),
-                    maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::RANK_MAJOR,
-                                                           DispatchDataType::FP8_E4M3>(context));
+    return std::min(maxResidentThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::RANK_MAJOR,
+                                                        DispatchDataType::BF16>(context),
+                    maxResidentThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::RANK_MAJOR,
+                                                        DispatchDataType::FP8_E4M3>(context));
   }
-  return std::min(maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::TOKEN_MAJOR,
-                                                         DispatchDataType::BF16>(context),
-                  maxCooperativeThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::TOKEN_MAJOR,
-                                                         DispatchDataType::FP8_E4M3>(context));
+  return std::min(maxResidentThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::TOKEN_MAJOR,
+                                                      DispatchDataType::BF16>(context),
+                  maxResidentThroughputDispatchBlocks<ThroughputDispatchThreads, DispatchLayout::TOKEN_MAJOR,
+                                                      DispatchDataType::FP8_E4M3>(context));
 }
 
-void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
-                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+void throughputDispatch(const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
                         const Workload& workload, const ThroughputWorkspaceLayout& workspace,
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream) {
@@ -201,26 +161,22 @@ void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeigh
   EP_HOST_ASSERT(recvBuffer != nullptr && context.peerBufferBases_ != nullptr);
   EP_HOST_ASSERT(workspace.tokenRoutes_ != nullptr && workspace.rankOffsets_ != nullptr);
   EP_HOST_ASSERT(workspace.numRecvTokens_ != nullptr && workspace.recvCounts_ != nullptr);
+  EP_HOST_ASSERT(workspace.syncer_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
-  EP_HOST_ASSERT(payload.metadataBytes(dispatchNumScales(workload.dispatchDataType_, workload.hidden_)) <=
-                 payload.metadataSlotBytes_);
 
   const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const bool fp8 = workload.dispatchDataType_ == DispatchDataType::FP8_E4M3;
-  EP_HOST_ASSERT(numBlocks <= maxCooperativeThroughputDispatchBlocks(workload.outputLayout_, context));
+  EP_HOST_ASSERT(numBlocks <= maxResidentThroughputDispatchBlocks(workload.outputLayout_, context));
   auto kernel =
       rankMajor ? (fp8 ? throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::FP8_E4M3>
                        : throughputDispatchKernel<NumThreads, DispatchLayout::RANK_MAJOR, DispatchDataType::BF16>)
                 : (fp8 ? throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::FP8_E4M3>
                        : throughputDispatchKernel<NumThreads, DispatchLayout::TOKEN_MAJOR, DispatchDataType::BF16>);
-  cudaLaunchAttribute attribute{};
-  attribute.id = cudaLaunchAttributeCooperative;
-  attribute.val.cooperative = 1;
-  cudaLaunchConfig_t config{dim3(numBlocks), dim3(NumThreads), 0, stream, &attribute, 1};
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&config, kernel, output, outputTopkIdx, outputTopkWeights, outputScales,
-                                       reinterpret_cast<const int4*>(input), topkIdx, topkWeights, inputScales,
-                                       workload, workspace, payload, recvBuffer, context.devicePtr_));
+  kernel<<<dim3(numBlocks), dim3(NumThreads), 0, stream>>>(reinterpret_cast<const int4*>(input), topkIdx, topkWeights,
+                                                           inputScales, workload, workspace, payload, recvBuffer,
+                                                           context.devicePtr_);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
 }  // namespace ep

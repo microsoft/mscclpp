@@ -60,12 +60,51 @@ void MoERuntime::initialize() {
   }
 }
 
+void* MoERuntime::outputTopkIdsBuffer() const {
+  if (mode_ == MoEMode::THROUGHPUT) {
+    const auto& context = *throughputContext_;
+    EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+    return context.storageLayout().outputTopkIdsBuffer_;
+  }
+  requireMode(MoEMode::LATENCY);
+  const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
+                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                              context.combineMode_)
+      .rankMajorTopkIdsBuffer_;
+}
+
+void* MoERuntime::outputTopkWeightsBuffer() const {
+  if (mode_ == MoEMode::THROUGHPUT) {
+    const auto& context = *throughputContext_;
+    EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+    return context.storageLayout().outputTopkWeightsBuffer_;
+  }
+  requireMode(MoEMode::LATENCY);
+  const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
+                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                              context.combineMode_)
+      .rankMajorTopkWeightsBuffer_;
+}
+
+void* MoERuntime::outputScalesBuffer() const {
+  requireMode(MoEMode::THROUGHPUT);
+  const auto& context = *throughputContext_;
+  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+  return context.storageLayout().outputScalesBuffer_;
+}
+
 void* MoERuntime::dispatchOutputBuffer() const {
   switch (mode_) {
     case MoEMode::LATENCY: {
       const auto& context = *latencyContext_;
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
+      return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                                   context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                                   context.combineMode_)
           .dispatchOutputBuffer_;
@@ -86,7 +125,7 @@ void* MoERuntime::combineInputBuffer() const {
       const auto& context = *latencyContext_;
       EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-      return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_,
+      return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                                   context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                                   context.combineMode_)
           .combineBuffer_;
@@ -94,7 +133,7 @@ void* MoERuntime::combineInputBuffer() const {
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
       EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-      return context.storageLayout().recvBuffer_;
+      return context.storageLayout().combineBuffer_;
     }
     default:
       EP_THROW("Unsupported MoE runtime mode");

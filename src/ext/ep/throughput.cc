@@ -55,7 +55,7 @@ ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
 
   peerBufferMemories_.clear();
-  if (symmetricBuffer_ != nullptr) mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
+  symmetricBuffer_.reset();
 }
 
 void ThroughputRuntimeContext::initialize() {
@@ -65,15 +65,15 @@ void ThroughputRuntimeContext::initialize() {
 
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
   const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-  symmetricBuffer_ =
-      mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
+  symmetricBuffer_ = mscclpp::detail::gpuCallocPhysicalUnique<uint8_t>(symmetricBufferBytes_, allocationGranularity,
+                                                                       allocationGranularity);
 
   constexpr int BufferTag = 17;
   constexpr int ConnectionTag = 19;
   const auto transport = mscclpp::Transport::CudaIpc;
   const mscclpp::EndpointConfig ipcConfig(transport);
   peerBufferMemories_.resize(numRanks_);
-  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, transport);
+  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> connections(numRanks_);
   for (int peer = 0; peer < numRanks_; ++peer) {
@@ -90,7 +90,7 @@ void ThroughputRuntimeContext::initialize() {
     if (peer != rank_) {
       peerBufferMemories_[peer] = remoteMemories[peer].get();
     }
-    peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_ : peerBufferMemories_[peer].data();
+    peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_.get() : peerBufferMemories_[peer].data();
     if (peer != rank_) {
       auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connections[peer].get());
       baseMemoryChannels_.emplace_back(semaphore);
@@ -112,7 +112,7 @@ void ThroughputRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId));
-  deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
+  deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
@@ -135,12 +135,11 @@ bool ThroughputRuntimeContext::fitsReceiveBuffer(int maxTokensPerRank) const {
 }
 
 ThroughputStorageLayout ThroughputRuntimeContext::storageLayout() const {
-  return {symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_};
+  return {symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_};
 }
 
 Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerRank, DispatchDataType dataType) const {
-  return {.epoch_ = 0,
-          .numTokens_ = numTokens,
+  return {.numTokens_ = numTokens,
           .hidden_ = hidden_,
           .numTopk_ = numTopk_,
           .numExperts_ = numExperts_,
@@ -159,7 +158,7 @@ void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& requ
   }
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(numExperts_ / numRanks_ <= ThroughputCountThreads && numRanks_ <= ThroughputCountThreads);
-  EP_HOST_ASSERT(request.numBlocks <= maxCooperativeThroughputDispatchBlocks(outputLayout_, deviceContext_));
+  EP_HOST_ASSERT(request.numBlocks <= maxResidentThroughputDispatchBlocks(outputLayout_, deviceContext_));
   EP_HOST_ASSERT(request.topkIdx != nullptr || request.numTokens == 0);
   if (!fitsReceiveBuffer(request.maxTokensPerRank)) {
     EP_THROW("Throughput receive-buffer capacity exceeded for this runtime configuration");
@@ -173,11 +172,11 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   EP_HOST_ASSERT(workspaceLayout.totalBytes_ <= context.workspaceBytes_);
-  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, context.routingEpoch_ + 1, request);
+  const uint64_t nextRoutingEpoch = context.routingEpoch_ + 1;
+  auto metadata = std::make_shared<PrepareHandle::Impl>(throughputContext_, nextRoutingEpoch, request);
 
-  // Rebuilding routing invalidates both handle types; dispatch alone only expires dispatch results.
-  ++context.routingEpoch_;
-  ++context.dispatchEpoch_;
+  // Rebuilding routing invalidates handles that borrow the runtime workspace.
+  context.routingEpoch_ = nextRoutingEpoch;
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
   throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
   throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.stream);
@@ -189,9 +188,7 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   const PrepareRequest prepareRequest{request.topkIdx, request.numTokens, request.maxTokensPerRank, request.numBlocks,
                                       request.stream};
   context.validatePrepareRequest(prepareRequest);
-  EP_HOST_ASSERT(request.output != nullptr || request.numTokens == 0);
   EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
-  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
   EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
   EP_HOST_ASSERT(isSupportedDispatchDataType(request.dispatchDataType));
 
@@ -230,7 +227,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   if (reusePreparation) {
-    // Replays still need a peer handshake before overwriting the previous payload.
+    // Reused routing skips the collective prepare phase, so synchronize explicitly
+    // before overwriting payload storage that peers consumed in the previous pair.
     throughputSynchronizePeers(context.deviceContext_, request.stream);
   }
   if (request.outputCount != nullptr) {
@@ -244,14 +242,11 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
-  throughputDispatch(request.output, request.outputTopkIdx, request.outputTopkWeights,
-                     static_cast<float*>(request.outputScales), request.input, request.topkIdx, request.topkWeights,
-                     request.inputScales, workload, workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_,
-                     context.deviceContext_, request.numBlocks, request.stream);
+  throughputDispatch(request.input, request.topkIdx, request.topkWeights, request.inputScales, workload,
+                     workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_,
+                     request.numBlocks, request.stream);
 
-  ++context.dispatchEpoch_;
-  return DispatchHandle(
-      std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.dispatchEpoch_, request));
+  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, request));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -267,9 +262,6 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   if (owner != throughputContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
-  if (handle.epoch_ != context.dispatchEpoch_) {
-    EP_THROW("Stale dispatch handle: a newer dispatch has replaced its metadata");
-  }
   if (!std::holds_alternative<std::monostate>(handle.metadata_)) {
     EP_THROW("Dispatch handle does not contain throughput metadata");
   }
@@ -279,15 +271,13 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(request.output != nullptr || handle.numTokens_ == 0);
   EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.output) % alignof(int4) == 0);
-  EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
 
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const ThroughputWorkspaceLayout workspaceLayout(context.workspace_, context.maxTokensPerRank_, context.numRanks_,
                                                   context.numExperts_, context.numTopk_);
   const Workload workload = context.makeWorkload(handle.numTokens_, handle.maxTokensPerRank_, handle.dispatchDataType_);
-  throughputReduceCombine(request.output, request.outputTopkWeights, request.input, workload, workspaceLayout,
-                          storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_, request.numBlocks,
-                          request.stream);
+  throughputReduceCombine(request.output, workload, workspaceLayout, storageLayout.payload_,
+                          storageLayout.combineBuffer_, context.deviceContext_, request.numBlocks, request.stream);
 }
 
 }  // namespace ep

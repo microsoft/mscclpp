@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/device.hpp>
 #include <mscclpp/ext/ep/types.hpp>
 #include <mscclpp/gpu_data_types.hpp>
@@ -236,42 +237,35 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
-// Unlike latency's packed per-token payload, throughput keeps token data
-// and fixed-stride metadata in separate slabs so GEMM can use the rows directly.
+// Peer-visible token and metadata slabs within recvBuffer_.
+// TOKEN_MAJOR is compact; RANK_MAJOR reserves source-rank ranges.
+// maxRows is capacity; private routing state lives in ThroughputWorkspaceLayout.
 //
 // TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
 //   [dense data: DataType[numRecvTokens][hidden]]
-//   [unused allocation tail up to metadataOffset_]
-//   [metadata row 0] ... [metadata row numRecvTokens - 1]
-//   [unused metadata capacity up to numBytes_]
-//
-// Each metadata row has a 128-byte-aligned stride of metadataSlotBytes_:
-//   [topKIndices: int[topK]]
-//   [topKValues: float[topK]]
-//   [optional FP8 scales: float[hidden / 128]]
-//   [padding to metadataSlotBytes_]
-//
-// maxRows = numRanks * configuredMaxTokensPerRank is capacity, not a per-rank stride.
-// The BF16-sized data reservation keeps metadataOffset_ fixed for FP8 too.
-// RANK_MAJOR uses explicit source-rank row ranges instead of the compact view above.
-// Inverse routing stays in the workspace; there is no source-token ID in this payload.
+//   [unused data capacity]
+//   [topKIndices: int[maxRows][topK]]
+//   [topKValues: float[maxRows][topK]]
+//   [FP8 scales: float[maxRows][hidden / 128]]
 struct ThroughputPayloadView {
   int topK_;
-  size_t metadataOffset_;
-  size_t metadataSlotBytes_;
+  int numScales_;
+  size_t topKIndicesOffset_;
+  size_t topKValuesOffset_;
+  size_t scaleFactorsOffset_;
   size_t numBytes_;
 
   MSCCLPP_HOST_DEVICE_INLINE ThroughputPayloadView(size_t maxRows, int hidden, int topK)
       : topK_(topK),
-        metadataOffset_(
+        numScales_(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)),
+        topKIndicesOffset_(
             configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes)),
-        metadataSlotBytes_(configAlign<size_t>(metadataBytes(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)),
-                                               BufferAlignmentBytes)),
-        numBytes_(metadataOffset_ + maxRows * metadataSlotBytes_) {}
-
-  MSCCLPP_HOST_DEVICE_INLINE size_t metadataBytes(int numScales) const {
-    return static_cast<size_t>(topK_) * (sizeof(int) + sizeof(float)) + static_cast<size_t>(numScales) * sizeof(float);
-  }
+        topKValuesOffset_(configAlign<size_t>(topKIndicesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(int),
+                                              BufferAlignmentBytes)),
+        scaleFactorsOffset_(configAlign<size_t>(
+            topKValuesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(float), BufferAlignmentBytes)),
+        numBytes_(configAlign<size_t>(scaleFactorsOffset_ + maxRows * static_cast<size_t>(numScales_) * sizeof(float),
+                                      BufferAlignmentBytes)) {}
 
   template <typename T>
   MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
@@ -284,35 +278,39 @@ struct ThroughputPayloadView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base, int64_t row) const {
-    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + metadataOffset_ + row * metadataSlotBytes_);
+    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base, int64_t row) const {
-    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + metadataOffset_ + row * metadataSlotBytes_);
+    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base, int64_t row) const {
-    return reinterpret_cast<float*>(topKIndices(base, row) + topK_);
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + topKValuesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base, int64_t row) const {
-    return reinterpret_cast<const float*>(topKIndices(base, row) + topK_);
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + topKValuesOffset_) + row * topK_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE float* scaleFactors(void* base, int64_t row) const {
-    return topKValues(base, row) + topK_;
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE const float* scaleFactors(const void* base, int64_t row) const {
-    return topKValues(base, row) + topK_;
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
   }
 };
 
 struct ThroughputStorageLayout {
-  // Allocation-derived offsets stay fixed when a request uses a smaller active capacity.
+  // Peer-visible storage: count scratch, dispatch payload, and combine rows.
   ThroughputPayloadView payload_;
   size_t totalBytes_;
   void* recvBuffer_ = nullptr;
+  void* combineBuffer_ = nullptr;
+  int* outputTopkIdsBuffer_ = nullptr;
+  float* outputTopkWeightsBuffer_ = nullptr;
+  float* outputScalesBuffer_ = nullptr;
 
   ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                           int numTopk)
@@ -325,9 +323,18 @@ struct ThroughputStorageLayout {
     const size_t prefixBytes = ranks * ranks * sizeof(int);
     const size_t expertScratchBytes = static_cast<size_t>(numExperts) * sizeof(int);
     const size_t recvOffset = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
-    totalBytes_ = configAlign<size_t>(recvOffset + payload_.numBytes_, BufferAlignmentBytes);
+    const size_t recvBytes = configAlign<size_t>(payload_.numBytes_, BufferAlignmentBytes);
+    const size_t combineOffset = recvOffset + recvBytes;
+    const size_t maxRows = ranks * static_cast<size_t>(maxTokensPerRank);
+    const size_t combineBytes =
+        configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes);
+    totalBytes_ = combineOffset + combineBytes;
     if (symmetricBuffer != nullptr) {
       recvBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + recvOffset;
+      combineBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + combineOffset;
+      outputTopkIdsBuffer_ = payload_.topKIndices(recvBuffer_, 0);
+      outputTopkWeightsBuffer_ = payload_.topKValues(recvBuffer_, 0);
+      outputScalesBuffer_ = payload_.scaleFactors(recvBuffer_, 0);
     }
   }
 };
@@ -338,18 +345,22 @@ struct alignas(8) ThroughputTokenRoute {
   int offset_;
 };
 
+// Local-only routing state produced by prepare() and consumed by dispatch/combine.
 struct ThroughputWorkspaceLayout {
   size_t totalBytes_;
-  // Local routing histograms produced before communicating with peers.
+  // Local route counts by destination rank and global expert.
   int* numTokensPerRank_ = nullptr;
   int* numTokensPerExpert_ = nullptr;
-  // Beginning of this source rank's receive range on each destination rank.
+  // This source rank's compact receive offset on each destination rank.
   int* rankOffsets_ = nullptr;
-  // numTopk entries per token: distinct ranks in ascending order, followed by {-1, -1} padding.
+  // Distinct destination ranks and stable offsets for each local token.
   ThroughputTokenRoute* tokenRoutes_ = nullptr;
+  // Active TOKEN_MAJOR rows received by this rank.
   int* numRecvTokens_ = nullptr;
-  // Receive counts indexed by local expert or source rank, depending on output layout.
+  // Counts by local expert (TOKEN_MAJOR) or source rank (RANK_MAJOR).
   int* recvCounts_ = nullptr;
+  // Local software grid barrier.
+  mscclpp::DeviceSyncer* syncer_ = nullptr;
 
   ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
     size_t offset = 0;
@@ -368,6 +379,7 @@ struct ThroughputWorkspaceLayout {
     numRecvTokens_ = static_cast<int*>(place(sizeof(int), alignof(int)));
     recvCounts_ = static_cast<int*>(
         place(static_cast<size_t>(std::max(numRanks, numExperts / numRanks)) * sizeof(int), alignof(int)));
+    syncer_ = static_cast<mscclpp::DeviceSyncer*>(place(sizeof(mscclpp::DeviceSyncer), alignof(mscclpp::DeviceSyncer)));
     totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
   }
 

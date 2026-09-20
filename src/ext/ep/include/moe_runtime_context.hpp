@@ -58,16 +58,16 @@ struct DispatchHandle::Impl {
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
-  Impl(std::weak_ptr<void> owner, uint32_t epoch, const ThroughputDispatchRequest& request)
+  Impl(std::weak_ptr<void> owner, const ThroughputDispatchRequest& request)
       : owner_(std::move(owner)),
-        epoch_(epoch),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.dispatchDataType),
         metadata_(std::monostate{}) {}
 
   std::weak_ptr<void> owner_;
-  uint32_t epoch_;
+  // Latency packet/handle generation; throughput does not use this field.
+  uint32_t epoch_ = 0;
   int numTokens_;
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
@@ -100,8 +100,8 @@ struct LatencyRuntimeContext {
   CombineMode combineMode_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
-  uint32_t epoch_ = 0;
-  void* symmetricBuffer_ = nullptr;
+  uint32_t epoch_ = 1;
+  mscclpp::detail::UniqueGpuPhysicalPtr<uint8_t> symmetricBuffer_;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};
   mscclpp::Communicator& communicator_;
@@ -138,11 +138,10 @@ struct ThroughputRuntimeContext {
   size_t symmetricBufferBytes_ = 0;
   size_t workspaceBytes_ = 0;
   mscclpp::Communicator& communicator_;
-  // Dispatch results expire on either a new dispatch or a new preparation.
-  uint32_t dispatchEpoch_ = 0;
-  // Prepared routing remains reusable across dispatches until the next preparation.
+  // Epoch zero means no routing has been prepared; prepared routing remains reusable
+  // across dispatch/combine pairs until the next preparation.
   uint64_t routingEpoch_ = 0;
-  void* symmetricBuffer_ = nullptr;
+  mscclpp::detail::UniqueGpuPhysicalPtr<uint8_t> symmetricBuffer_;
   void* workspace_ = nullptr;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;

@@ -17,9 +17,10 @@ struct ThroughputRuntimeContext;
 
 /// Unified host runtime for expert-parallel dispatch and combine.
 ///
-/// Both modes own fixed-capacity symmetric storage sized from the runtime
-/// configuration. LATENCY exposes expert-major or rank-major rows. THROUGHPUT
-/// exposes compact token-major or fixed-stride rank-major rows within that storage.
+/// Both modes own fixed-capacity peer-mapped symmetric communication storage
+/// sized from the runtime configuration. LATENCY exposes expert-major or
+/// rank-major rows. THROUGHPUT exposes compact token-major or fixed-stride
+/// rank-major rows within that storage and keeps routing workspace private.
 /// Operations enqueue asynchronously on the supplied CUDA stream. All GPU work
 /// sharing a runtime, including expert computation, must use that same stream.
 /// Cross-stream execution is not supported.
@@ -71,10 +72,12 @@ class MoERuntime {
   /// Return the rank count in one CUDA IPC domain.
   int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
 
-  /// Return the runtime-owned rank-major top-k ID buffer.
+  /// Return the runtime-owned dispatched top-k ID buffer.
   void* outputTopkIdsBuffer() const;
-  /// Return the runtime-owned rank-major top-k weight buffer.
+  /// Return the runtime-owned dispatched top-k weight buffer.
   void* outputTopkWeightsBuffer() const;
+  /// Return the runtime-owned throughput dispatch scale buffer.
+  void* outputScalesBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
@@ -109,23 +112,31 @@ class MoERuntime {
   ///
   /// @p request must contain the request type matching mode(): a
   /// LatencyDispatchRequest for LATENCY or a ThroughputDispatchRequest for
-  /// THROUGHPUT. Output buffers remain owned by the caller unless obtained
-  /// through a runtime buffer accessor. Hidden size, expert count, top-k count,
-  /// and output layout come from the runtime. Token count and active capacity
-  /// may vary between dispatches, with
+  /// THROUGHPUT. Throughput payload output is always written to
+  /// dispatchOutputBuffer(); dispatch metadata is written to the corresponding
+  /// runtime-owned metadata buffers.
+  /// Hidden size, expert count, top-k count, and output layout come from the
+  /// runtime. Token count and active capacity may vary between dispatches, with
   /// 0 <= numTokens <= maxTokensPerRank <= the runtime's capacity.
+  /// Dispatch and combine must alternate in the same order on all ranks. The
+  /// caller must enqueue or capture the matching combine before starting the
+  /// next dispatch; the runtime does not enforce this ordering.
   /// Throughput requests may reuse routing through prepareHandle. An empty
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
-  /// @return A non-owning handle identifying this dispatch. A successful new
-  /// dispatch or throughput preparation invalidates prior dispatch handles;
-  /// a request rejected by host validation does not.
+  /// @return A non-owning handle identifying this dispatch. The matching
+  /// successful combine consumes the handle. In THROUGHPUT mode, starting a
+  /// valid preparation also invalidates an earlier dispatch handle; a request
+  /// rejected by host validation does not.
   /// @throws EPException If @p request is invalid or does not match mode().
   DispatchHandle dispatch(const DispatchRequest& request);
 
   /// Combine expert outputs using the configured runtime mode.
+  ///
+  /// In throughput mode, local expert output must be written to
+  /// combineInputBuffer() before this call.
   ///
   /// The request's handle supplies routing metadata, token count, active
   /// capacity, and epoch. Fixed dimensions, layout, and algorithm come from the

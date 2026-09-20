@@ -29,8 +29,8 @@ inline constexpr bool isSupportedHidden(int hidden) {
 }
 
 struct Workload {
-  /// Latency packet epoch; throughput kernels do not consume this field.
-  uint32_t epoch_;
+  /// Latency packet epoch; throughput kernels leave the default value unused.
+  uint32_t epoch_ = 0;
   /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.
@@ -87,19 +87,18 @@ void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const 
 // Wait until peers have finished consuming the previous payload before overwriting it.
 void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream);
 
-// Grid-wide synchronization requires all blocks to be resident, not just an SM-count cap.
-// Preparation can be reused by either data format, so use their lower occupancy limit.
-int maxCooperativeThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
+// The software grid barrier requires all blocks to be resident. Preparation can
+// be reused by either data format, so use their lower occupancy limit.
+int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
 
-void throughputDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, float* outputScales,
-                        const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+void throughputDispatch(const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
                         const Workload& workload, const ThroughputWorkspaceLayout& workspace,
                         const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
                         int numBlocks, cudaStream_t stream);
 
-void throughputReduceCombine(void* output, float* outputTopkWeights, const void* input, const Workload& workload,
-                             const ThroughputWorkspaceLayout& workspace, const ThroughputPayloadView& payload,
-                             void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void throughputReduceCombine(void* output, const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                             const ThroughputPayloadView& payload, void* combineBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream);
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
