@@ -306,6 +306,11 @@ class Comm:
                 accum_dtype=accum_dtype,
                 symmetric_memory=symmetric_memory,
             )
+        if self._comm_group.nranks > self._comm_group.nranks_per_node and config.algorithm not in self._dsl_algorithms:
+            raise RuntimeError(
+                f"Algorithm '{config.algorithm}' does not support multi-node execution. "
+                "Select a compiled multi-node DSL algorithm."
+            )
         symmetric_memory = symmetric_memory or config.symmetric_memory
         algorithm = self._algorithms_by_collective[collective][config.algorithm]
         output = buffer if output_tensor is None else output_tensor
