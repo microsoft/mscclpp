@@ -188,3 +188,37 @@ def reducescatter_multi_nodes(
             )
 
     return prog
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--name", type=str, help="name of the program")
+    parser.add_argument("--num_gpus", type=int, help="total number of gpus")
+    parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
+    parser.add_argument("--tbg", type=int, default=1, help="thread block group size")
+    parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
+    parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
+    parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
+
+    args = parser.parse_args()
+
+    spec = AlgoSpec(
+        name=args.name,
+        collective=ReduceScatter(args.num_gpus, 1, True),
+        nranks_per_node=args.gpus_per_node,
+        world_size=args.num_gpus,
+        in_place=True,
+        instances=1,
+        protocol="LL",
+        auto_sync=False,
+        num_threads_per_block=args.num_threads_per_block,
+        reuse_resources=True,
+        use_double_scratch_buffer=True,
+        min_message_size=args.min_message_size,
+        max_message_size=args.max_message_size,
+    )
+
+    prog = reducescatter_multi_nodes(spec, args.tbg)
+    print(prog.to_json())

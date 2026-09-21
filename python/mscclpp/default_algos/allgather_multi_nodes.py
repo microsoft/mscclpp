@@ -7,11 +7,16 @@ from mscclpp.language.channel import MemoryChannel, PortChannel
 from mscclpp.language.collectives import AllGather
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.rank import Buffer, Rank
+from mscclpp.language.thread_block_group import ThreadBlockGroup
 from mscclpp.language.utils import AlgoSpec
 
 
-def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
-    """Build a hierarchical AllGather across nodes and local GPUs."""
+def allgather_multi_nodes(spec: AlgoSpec, thread_block_group_size: int = 1) -> CollectiveProgram:
+    """Build a hierarchical AllGather across nodes and local GPUs.
+
+    ``thread_block_group_size`` partitions each transfer and local copy across that many
+    thread blocks. The default of one preserves the original thread block layout.
+    """
     if not isinstance(spec.collective, AllGather):
         raise ValueError("allgather_multi_nodes requires an AllGather collective")
     if spec.protocol != "LL":
@@ -22,6 +27,8 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
         raise ValueError("allgather_multi_nodes requires chunk_factor=1")
     if spec.in_place != spec.collective.inplace:
         raise ValueError("spec.in_place must match spec.collective.inplace")
+    if thread_block_group_size <= 0:
+        raise ValueError("thread_block_group_size must be positive")
     num_nodes = spec.world_size // spec.nranks_per_node
     gpus_per_node = spec.nranks_per_node
     total_gpus = spec.world_size
@@ -29,6 +36,13 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
     with CollectiveProgram.from_spec(spec) as prog:
         scratch_slots = (gpus_per_node - 1) + 2 * (num_nodes - 1) + (gpus_per_node - 1) * (num_nodes - 1)
         scratch_buffers = [Buffer(rank, scratch_slots) for rank in range(total_gpus)]
+        # Each peer contribution has a send group and an unpack group.
+        thread_block_groups = [
+            ThreadBlockGroup(
+                tb_list=list(range(group * thread_block_group_size, (group + 1) * thread_block_group_size))
+            )
+            for group in range(max(1, 2 * (total_gpus - 1)))
+        ]
 
         intra_node_channels: dict[tuple[int, int], MemoryChannel] = {}
         for node_id in range(num_nodes):
@@ -65,7 +79,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                 local_sources.append(output_chunk)
             else:
                 input_chunk = rank.get_input_buffer()[0:1]
-                rank.copy(output_chunk, input_chunk, tb=0)
+                rank.copy(output_chunk, input_chunk, tb_group=thread_block_groups[0])
                 local_sources.append(input_chunk)
 
         # Phase 0: exchange contributions within each node.
@@ -82,7 +96,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     intra_node_channels[(dst_rank, src_rank)].put_packets(
                         scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
                         local_sources[src_rank],
-                        tb=phase_0_send_offset + thread_block,
+                        tb_group=thread_block_groups[phase_0_send_offset + thread_block],
                     )
 
         phase_0_unpack_offset = phase_0_send_offset + gpus_per_node - 1
@@ -98,7 +112,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     rank.unpack_packets(
                         rank.get_output_buffer()[src_rank : src_rank + 1],
                         scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
-                        tb=phase_0_unpack_offset + scratch_slot,
+                        tb_group=thread_block_groups[phase_0_unpack_offset + scratch_slot],
                     )
 
         # Phase 1: exchange same-local-rank contributions across nodes.
@@ -117,7 +131,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     rank.copy_packets(
                         scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
                         local_sources[src_rank],
-                        tb=phase_1_send_offset + thread_block,
+                        tb_group=thread_block_groups[phase_1_send_offset + thread_block],
                     )
 
                     dst_rank = local_rank + dst_node_id * gpus_per_node
@@ -127,7 +141,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     inter_node_channels[(dst_rank, src_rank)].read_put_packets(
                         scratch_buffers[dst_rank][remote_scratch_slot : remote_scratch_slot + 1],
                         scratch_buffers[src_rank][local_packet_slot : local_packet_slot + 1],
-                        tb=phase_1_send_offset + thread_block,
+                        tb_group=thread_block_groups[phase_1_send_offset + thread_block],
                     )
 
         phase_1_unpack_offset = phase_1_send_offset + num_nodes - 1
@@ -144,7 +158,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                     rank.unpack_packets(
                         rank.get_output_buffer()[src_rank : src_rank + 1],
                         scratch_buffers[dst_rank][scratch_slot : scratch_slot + 1],
-                        tb=phase_1_unpack_offset + remote_node_slot,
+                        tb_group=thread_block_groups[phase_1_unpack_offset + remote_node_slot],
                     )
 
         # Phase 2: fan out remote-node contributions within each node.
@@ -170,7 +184,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         intra_node_channels[(dst_rank, src_rank)].read_put_packets(
                             scratch_buffers[dst_rank][fanout_slot : fanout_slot + 1],
                             scratch_buffers[src_rank][remote_scratch_slot : remote_scratch_slot + 1],
-                            tb=phase_2_send_offset + thread_block,
+                            tb_group=thread_block_groups[phase_2_send_offset + thread_block],
                         )
 
         phase_2_unpack_offset = phase_2_send_offset + (num_nodes - 1) * (gpus_per_node - 1)
@@ -192,7 +206,7 @@ def allgather_multi_nodes(spec: AlgoSpec) -> CollectiveProgram:
                         rank.unpack_packets(
                             rank.get_output_buffer()[src_rank : src_rank + 1],
                             scratch_buffers[dst_rank][fanout_slot : fanout_slot + 1],
-                            tb=phase_2_unpack_offset + thread_block,
+                            tb_group=thread_block_groups[phase_2_unpack_offset + thread_block],
                         )
 
     return prog
@@ -205,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--num_gpus", type=int, required=True)
     parser.add_argument("--gpus_per_node", type=int, required=True)
+    parser.add_argument("--tbg", type=int, default=1, help="thread block group size")
     parser.add_argument("--num_threads_per_block", type=int, default=1024)
     parser.add_argument("--min_message_size", type=int, default=1 << 10)
     parser.add_argument("--max_message_size", type=int, default=8 << 20)
@@ -231,5 +246,5 @@ if __name__ == "__main__":
         max_message_size=args.max_message_size,
         tags={"default": 1},
     )
-    program = allgather_multi_nodes(algo_spec)
+    program = allgather_multi_nodes(algo_spec, args.tbg)
     print(program.to_json())
