@@ -24,6 +24,14 @@ MegaMoE is disabled by default. CMake fetches CUTLASS at
 The native library is compiled for `sm_100a` independently of the core library's
 architecture list. Install a compatible Torch CUDA wheel separately.
 
+`src/ext/megamoe/megamoe.cu` contains task scheduling, warp roles, and pipeline
+orchestration. `megamoe_launch.cu` owns workspace layout, weight packing, plans,
+and launches; `megamoe_jit.cu` owns the JIT C ABI entrypoint. Internal headers
+separate device state (`megamoe_device.cuh`), routing/dispatch
+(`megamoe_routing.cuh`), and SwiGLU/epilogue/top-k combine
+(`megamoe_epilogue.cuh`). All three CUDA files and their headers ship in the JIT
+source bundle.
+
 ## API
 
 Set the process's CUDA device before constructing its MSCCL++ bootstrap and

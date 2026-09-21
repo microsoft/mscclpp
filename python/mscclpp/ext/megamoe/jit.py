@@ -267,6 +267,10 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         return CompiledKernel(config, "", "builtin", True)
     environment = runtime_fingerprint()
     source_root = _source_root()
+    sources = [source_root / name for name in ("megamoe.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(f"Required MegaMoE JIT source not found: {source}")
     include_root = _package_root() / "include"
     if not (include_root / "mscclpp/version.hpp").is_file():
         raise FileNotFoundError(f"Installed MSCCL++ development headers are required: {include_root}")
@@ -321,7 +325,8 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
             return _load_cached(key, root, environment)
         with tempfile.TemporaryDirectory(prefix=f".{key}.", dir=root) as temporary:
             stage = Path(temporary)
-            obj, module = stage / "kernel.o", stage / "kernel.so"
+            objects = [stage / f"{source.stem}.o" for source in sources]
+            module = stage / "kernel.so"
             command = [
                 compiler,
                 "-ccbin",
@@ -343,12 +348,14 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
             ]
             for include in (*extra_includes, include_root, source_root / "include", cutlass):
                 command.extend(["-I", str(include)])
-            command.extend(["-c", str(source_root / "megamoe.cu"), "-o", str(obj)])
+            commands = [
+                [*command, "-c", str(source), "-o", str(obj)] for source, obj in zip(sources, objects, strict=True)
+            ]
             library_root = _package_root() / "lib"
             link = [
                 cxx,
                 "-shared",
-                str(obj),
+                *(str(obj) for obj in objects),
                 "-o",
                 str(module),
                 f"-L{library_root}",
@@ -359,10 +366,12 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 f"-Wl,-rpath,{library_root}:{cuda_lib}",
             ]
             with (root / f"{key}.build.log").open("w") as log:
-                log.write(json.dumps({"compile": command, "link": link}) + "\n")
-                _run(command, log, timeout)
+                log.write(json.dumps({"compile": commands, "link": link}) + "\n")
+                for command in commands:
+                    _run(command, log, timeout)
                 _run(link, log, timeout)
-            obj.unlink()
+            for obj in objects:
+                obj.unlink()
             manifest = {"version": 1, "key": key, "build": build, "module_sha256": _file_hash(module)}
             (stage / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             os.replace(stage, destination)

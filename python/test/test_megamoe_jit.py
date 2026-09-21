@@ -56,6 +56,8 @@ def compiler_fixture(tmp_path, monkeypatch):
         package / "include/mscclpp/version.hpp",
         package / "lib/libmscclpp.so",
         source / "megamoe.cu",
+        source / "megamoe_launch.cu",
+        source / "megamoe_jit.cu",
         source / "include/megamoe_kernel.hpp",
         cutlass / "include/cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp",
         cuda / "lib64/libcudart.so",
@@ -84,15 +86,32 @@ def test_compile_is_cached_and_uses_native_sm100a(compiler_fixture):
     cache, commands, _ = compiler_fixture
     config = jit.KernelConfig(64, 6, 6)
     first = jit.compile_kernel(config, cache_dir=cache)
-    assert not first.cache_hit and len(commands) == 2
-    assert "--generate-code=arch=compute_100a,code=sm_100a" in commands[0]
-    assert "-DMSCCLPP_MEGAMOE_TILE_N=64" in commands[0]
-    assert "-DMSCCLPP_MEGAMOE_LOAD_STAGES=6" in commands[0]
-    assert "-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES=6" in commands[0]
-    assert "-Xcompiler=-fPIC,-fvisibility=hidden" in commands[0]
+    assert not first.cache_hit and len(commands) == 4
+    assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
+        "megamoe.cu",
+        "megamoe_launch.cu",
+        "megamoe_jit.cu",
+    ]
+    for command in commands[:-1]:
+        assert "--generate-code=arch=compute_100a,code=sm_100a" in command
+        assert "-DMSCCLPP_MEGAMOE_TILE_N=64" in command
+        assert "-DMSCCLPP_MEGAMOE_LOAD_STAGES=6" in command
+        assert "-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES=6" in command
+        assert "-Xcompiler=-fPIC,-fvisibility=hidden" in command
+        assert command[command.index("-o") + 1] in commands[-1]
+    assert not list(Path(first.path).parent.glob("*.o"))
     again = jit.compile_kernel(config, cache_dir=cache)
-    assert again.cache_hit and again.key == first.key and len(commands) == 2
+    assert again.cache_hit and again.key == first.key and len(commands) == 4
     assert not list(cache.glob(".*"))
+
+
+@pytest.mark.parametrize("name", ["megamoe.cu", "megamoe_launch.cu", "megamoe_jit.cu"])
+def test_missing_translation_unit_is_reported(compiler_fixture, name):
+    _, commands, _ = compiler_fixture
+    (jit._source_root() / name).unlink()
+    with pytest.raises(FileNotFoundError, match="Required MegaMoE JIT source"):
+        jit.compile_kernel(jit.KernelConfig(64, 6, 6))
+    assert not commands
 
 
 def test_concurrent_requests_publish_only_one_build(compiler_fixture):
@@ -104,7 +123,7 @@ def test_concurrent_requests_publish_only_one_build(compiler_fixture):
         kernels = [future.result() for future in futures]
     assert kernels[0].key == kernels[1].key
     assert sorted(kernel.cache_hit for kernel in kernels) == [False, True]
-    assert len(commands) == 2
+    assert len(commands) == 4
 
 
 def test_cache_lock_timeout_is_reported(tmp_path):
@@ -136,7 +155,7 @@ def test_changed_headers_or_config_get_new_cache_key(compiler_fixture):
     second = jit.compile_kernel(config, cache_dir=cache)
     third = jit.compile_kernel(jit.KernelConfig(128, 4, 4), cache_dir=cache)
     assert len({first.key, second.key, third.key}) == 3
-    assert len(commands) == 6
+    assert len(commands) == 12
 
 
 def test_corrupt_module_is_not_silently_reused_or_rebuilt(compiler_fixture):
@@ -148,7 +167,7 @@ def test_corrupt_module_is_not_silently_reused_or_rebuilt(compiler_fixture):
         jit.load_cached_kernel(module.key, cache_dir=cache)
     with pytest.raises(ValueError, match="checksum"):
         jit.compile_kernel(config, cache_dir=cache)
-    assert len(commands) == 2
+    assert len(commands) == 4
 
 
 @pytest.mark.parametrize("invalid", [[], {}, {"version": 1, "build": {}}])

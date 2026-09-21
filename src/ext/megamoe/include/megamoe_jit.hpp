@@ -10,7 +10,8 @@
 // Internal, versioned C ABI. No C++ objects, CUDA headers, ownership transfer of
 // caller buffers, or exceptions cross the module boundary. Changing any layout
 // or its semantics requires a new ABI version and exported entrypoint.
-// Compile megamoe.cu (not runtime.cc) with C++20, PIC/hidden visibility,
+// Compile megamoe.cu, megamoe_launch.cu, and megamoe_jit.cu (not runtime.cc)
+// with C++20, PIC/hidden visibility,
 // -gencode=arch=compute_100a,code=sm_100a, --expt-relaxed-constexpr,
 // --expt-extended-lambda, MSCCLPP_USE_CUDA, MSCCLPP_MEGAMOE_JIT_MODULE=1,
 // the three specialization definitions, and a quoted MSCCLPP_MEGAMOE_JIT_ID.
