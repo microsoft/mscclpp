@@ -205,7 +205,9 @@ class Comm:
             # reducescatter_multi_nodes lays out its thread block groups from this value.
             pass_thread_block_group_size = True
         else:
-            return
+            message = f"Unsupported collective for DSL algorithms: {collective}"
+            logger.error(message)
+            raise ValueError(message)
 
         for tbg in tbg_values:
             for tpb in tpb_values:
