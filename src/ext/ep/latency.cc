@@ -44,7 +44,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
-  available_ = numRanksPerIpcDomain_ >= numRanks_;
+  available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
@@ -52,9 +52,7 @@ LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
-  if (symmetricBuffer_ != nullptr) {
-    mscclpp::detail::gpuFreePhysical(symmetricBuffer_);
-  }
+  symmetricBuffer_.reset();
 }
 
 void LatencyRuntimeContext::initialize() {
@@ -66,8 +64,8 @@ void LatencyRuntimeContext::initialize() {
 
   const auto ipcTransport = mscclpp::Transport::CudaIpc;
   const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
-  symmetricBuffer_ =
-      mscclpp::detail::gpuCallocPhysical(symmetricBufferBytes_, allocationGranularity, allocationGranularity);
+  symmetricBuffer_ = mscclpp::detail::gpuCallocPhysicalUnique<uint8_t>(static_cast<size_t>(symmetricBufferBytes_),
+                                                                       allocationGranularity, allocationGranularity);
 
   const mscclpp::EndpointConfig ipcConfig(ipcTransport);
   const int ipcDomainSize = numRanksPerIpcDomain_;
@@ -77,7 +75,8 @@ void LatencyRuntimeContext::initialize() {
 
   constexpr int IpcTag = 1;
   peerBufferMemories_.resize(numRanks_);
-  peerBufferMemories_[rank_] = communicator_.registerMemory(symmetricBuffer_, symmetricBufferBytes_, ipcTransport);
+  peerBufferMemories_[rank_] =
+      communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ipcTransport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
@@ -88,7 +87,7 @@ void LatencyRuntimeContext::initialize() {
   }
 
   peerMappedBufferBases_.assign(numRanks_, nullptr);
-  peerMappedBufferBases_[rank_] = symmetricBuffer_;
+  peerMappedBufferBases_[rank_] = symmetricBuffer_.get();
   std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isMappedPeer(r)) continue;
@@ -112,7 +111,7 @@ void LatencyRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
-  deviceContext_ = {.localBufferBase_ = symmetricBuffer_,
+  deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
@@ -123,36 +122,6 @@ void LatencyRuntimeContext::initialize() {
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
-}
-
-void* MoERuntime::outputTopkIdsBuffer() const {
-  requireMode(MoEMode::LATENCY);
-  const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
-      .rankMajorTopkIdsBuffer_;
-}
-
-void* MoERuntime::outputTopkWeightsBuffer() const {
-  requireMode(MoEMode::LATENCY);
-  const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
-      .rankMajorTopkWeightsBuffer_;
-}
-
-void* MoERuntime::combineInputBuffer() const {
-  requireMode(MoEMode::LATENCY);
-  const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
-                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_)
-      .combineRecvBuffer_;
 }
 
 DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
@@ -187,8 +156,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
+                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
+                                        context.combineMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
@@ -238,12 +208,17 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     EP_THROW("Stale dispatch handle: its dispatch has already been combined");
   }
 
+  const auto* metadata = std::get_if<DispatchHandle::Impl::LatencyMetadata>(&handle.metadata_);
+  if (metadata == nullptr) {
+    EP_THROW("Dispatch handle does not contain latency metadata");
+  }
+
   void* output = request.output;
   const void* input = request.input;
-  const int64_t* topkIdx = handle.topkIdx_;
-  const float* topkWeights = handle.topkWeights_;
-  const int* srcInfo = handle.srcInfo_;
-  const int64_t* layoutRange = handle.layoutRange_;
+  const int64_t* topkIdx = metadata->topkIdx_;
+  const float* topkWeights = metadata->topkWeights_;
+  const int* srcInfo = metadata->srcInfo_;
+  const int64_t* layoutRange = metadata->layoutRange_;
   const int numTokens = handle.numTokens_;
   const int hidden = context.hidden_;
   const int numTopk = context.numTopk_;
@@ -268,30 +243,31 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .dispatchDataType_ = dispatchDataType};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
-                                        numExperts, numTopk, context.outputLayout_, context.combineMode_);
+  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
+                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
+                                        context.combineMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
-  void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
+  void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
+    EP_HOST_ASSERT(input == allocationLayout.combineBuffer_);
   }
 
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {
-      rankMajorDirectSendCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
+      rankMajorDirectSendCombine(output, input, topkIdx, workload, combineBuffer, dispatchRecvBuffer,
                                  context.deviceContext_, numBlocks, stream);
     } else {
       EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-      rankMajorGatherReduceCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
+      rankMajorGatherReduceCombine(output, input, topkIdx, workload, combineBuffer, dispatchRecvBuffer,
                                    context.deviceContext_, numBlocks, stream);
     }
   } else if (mode == CombineMode::DIRECT_SEND) {
-    expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+    expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                  dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   } else {
-    expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
-                                  combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
+    expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
+                                  dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
   ++context.epoch_;
 }

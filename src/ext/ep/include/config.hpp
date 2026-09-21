@@ -6,16 +6,22 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/device.hpp>
 #include <mscclpp/ext/ep/types.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
+#include "exception.hpp"
+
 namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
+inline constexpr int MaxNumTopk = 8;
+
+inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -30,7 +36,24 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 
-// Rank-deduplicated dispatch payload layout:
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementBytes(DispatchDataType dispatchDataType) {
+  return dispatchDataType == DispatchDataType::BF16 ? static_cast<int>(sizeof(Bf16))
+                                                    : static_cast<int>(sizeof(Fp8E4M3));
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementsPerScale(DispatchDataType dispatchDataType) {
+  return dispatchDataType == DispatchDataType::FP8_E4M3 ? 128 : 0;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNumScales(DispatchDataType dispatchDataType, int hidden) {
+  return dispatchDataType == DispatchDataType::FP8_E4M3 ? hidden / dispatchElementsPerScale(dispatchDataType) : 0;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+}
+
+// Latency rank-deduplicated dispatch payload layout:
 //
 //   [data: DataType[hidden]]
 //   [optional scales: ScaleType[hidden / format scale block size]]
@@ -40,7 +63,7 @@ using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
 //
 // The payload is 32-byte aligned as a whole.
 template <typename DataType, typename ScaleType = void>
-struct PayloadView {
+struct LatencyPayloadView {
   static constexpr bool HasScales = !std::is_void_v<ScaleType>;
 
   int topK_;
@@ -89,7 +112,7 @@ struct PayloadView {
     return configAlign<size_t>(metadataOffset(hidden, scaleBlockSize) + metadataBytes(topK), 32);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE PayloadView(int hidden, int topK, int scaleBlockSize = (HasScales ? 128 : 0))
+  MSCCLPP_HOST_DEVICE_INLINE LatencyPayloadView(int hidden, int topK, int scaleBlockSize = (HasScales ? 128 : 0))
       : topK_(topK),
         scaleOffset_(scaleOffset(hidden)),
         metadataOffset_(metadataOffset(hidden, scaleBlockSize)),
@@ -157,7 +180,8 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 struct LatencyStorageLayout {
   size_t totalBytes_;
   void* dispatchRecvBuffer_ = nullptr;
-  void* combineRecvBuffer_ = nullptr;
+  // Rank-major expert input or expert-major receive staging.
+  void* combineBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
@@ -167,8 +191,8 @@ struct LatencyStorageLayout {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
-    const PayloadView<Bf16> bf16Payload(hidden, numTopk);
-    const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
+    const LatencyPayloadView<Bf16> bf16Payload(hidden, numTopk);
+    const LatencyPayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t dispatchPayloadStride =
@@ -187,14 +211,13 @@ struct LatencyStorageLayout {
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
-    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                          : rankMajorLocalReduce ? 0
-                                          : combineMode == CombineMode::RANK_LOCAL_REDUCE
-                                              ? rankLocalReduceCombineRecvBytes
-                                              : expertMajorDispatchOutputBytes;
+    const size_t combineBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
+                                      : rankMajorLocalReduce ? 0
+                                      : combineMode == CombineMode::RANK_LOCAL_REDUCE ? rankLocalReduceCombineRecvBytes
+                                                                                      : expertMajorDispatchOutputBytes;
     const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
-    const size_t alignedCombineRecvBufferBytes = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
-    totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineRecvBufferBytes +
+    const size_t alignedCombineBufferBytes = configAlign<size_t>(combineBufferBytes, BufferAlignmentBytes);
+    totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
     if (symmetricBuffer != nullptr) {
@@ -203,8 +226,8 @@ struct LatencyStorageLayout {
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
-                                        : base + alignedDispatchRecvBufferBytes + alignedCombineRecvBufferBytes;
-      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
+                                        : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
+      combineBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
     }
   }
 };
@@ -215,6 +238,161 @@ inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks,
       LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
           .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
+}
+
+// Peer-visible token and metadata slabs within recvBuffer_.
+// TOKEN_MAJOR is compact; RANK_MAJOR reserves source-rank ranges.
+// maxRows is capacity; private routing state lives in ThroughputWorkspaceLayout.
+//
+// TOKEN_MAJOR: one dense tensor, with no gaps between source-rank batches.
+//   [dense data: DataType[numRecvTokens][hidden]]
+//   [unused data capacity]
+//   [topKIndices: int[maxRows][topK]]
+//   [topKValues: float[maxRows][topK]]
+//   [FP8 scales: float[maxRows][hidden / 128]]
+struct ThroughputPayloadView {
+  int topK_;
+  int numScales_;
+  size_t topKIndicesOffset_;
+  size_t topKValuesOffset_;
+  size_t scaleFactorsOffset_;
+  size_t numBytes_;
+
+  MSCCLPP_HOST_DEVICE_INLINE ThroughputPayloadView(size_t maxRows, int hidden, int topK)
+      : topK_(topK),
+        numScales_(dispatchNumScales(DispatchDataType::FP8_E4M3, hidden)),
+        topKIndicesOffset_(
+            configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes)),
+        topKValuesOffset_(configAlign<size_t>(topKIndicesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(int),
+                                              BufferAlignmentBytes)),
+        scaleFactorsOffset_(configAlign<size_t>(
+            topKValuesOffset_ + maxRows * static_cast<size_t>(topK_) * sizeof(float), BufferAlignmentBytes)),
+        numBytes_(configAlign<size_t>(scaleFactorsOffset_ + maxRows * static_cast<size_t>(numScales_) * sizeof(float),
+                                      BufferAlignmentBytes)) {}
+
+  template <typename T>
+  MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
+    return static_cast<T*>(base);
+  }
+
+  template <typename T>
+  MSCCLPP_HOST_DEVICE_INLINE const T* data(const void* base) const {
+    return static_cast<const T*>(base);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base, int64_t row) const {
+    return reinterpret_cast<int*>(static_cast<uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base, int64_t row) const {
+    return reinterpret_cast<const int*>(static_cast<const uint8_t*>(base) + topKIndicesOffset_) + row * topK_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base, int64_t row) const {
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + topKValuesOffset_) + row * topK_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base, int64_t row) const {
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + topKValuesOffset_) + row * topK_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE float* scaleFactors(void* base, int64_t row) const {
+    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const float* scaleFactors(const void* base, int64_t row) const {
+    return reinterpret_cast<const float*>(static_cast<const uint8_t*>(base) + scaleFactorsOffset_) + row * numScales_;
+  }
+};
+
+struct ThroughputStorageLayout {
+  // Peer-visible storage: count scratch, dispatch payload, and combine rows.
+  ThroughputPayloadView payload_;
+  size_t totalBytes_;
+  void* recvBuffer_ = nullptr;
+  void* combineBuffer_ = nullptr;
+  int* outputTopkIdsBuffer_ = nullptr;
+  float* outputTopkWeightsBuffer_ = nullptr;
+  float* outputScalesBuffer_ = nullptr;
+
+  ThroughputStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
+                          int numTopk)
+      : payload_(static_cast<size_t>(numRanks) * maxTokensPerRank, hidden, numTopk) {
+    EP_HOST_ASSERT(isSupportedRanks(numRanks));
+    EP_HOST_ASSERT(maxTokensPerRank > 0 && hidden > 0 && numExperts > 0 && numExperts % numRanks == 0);
+    EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
+
+    const size_t ranks = static_cast<size_t>(numRanks);
+    const size_t prefixBytes = ranks * ranks * sizeof(int);
+    const size_t expertScratchBytes = static_cast<size_t>(numExperts) * sizeof(int);
+    const size_t recvOffset = configAlign<size_t>(prefixBytes + expertScratchBytes, BufferAlignmentBytes);
+    const size_t recvBytes = configAlign<size_t>(payload_.numBytes_, BufferAlignmentBytes);
+    const size_t combineOffset = recvOffset + recvBytes;
+    const size_t maxRows = ranks * static_cast<size_t>(maxTokensPerRank);
+    const size_t combineBytes =
+        configAlign<size_t>(maxRows * static_cast<size_t>(hidden) * sizeof(Bf16), BufferAlignmentBytes);
+    totalBytes_ = combineOffset + combineBytes;
+    if (symmetricBuffer != nullptr) {
+      recvBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + recvOffset;
+      combineBuffer_ = static_cast<uint8_t*>(symmetricBuffer) + combineOffset;
+      outputTopkIdsBuffer_ = payload_.topKIndices(recvBuffer_, 0);
+      outputTopkWeightsBuffer_ = payload_.topKValues(recvBuffer_, 0);
+      outputScalesBuffer_ = payload_.scaleFactors(recvBuffer_, 0);
+    }
+  }
+};
+
+struct alignas(8) ThroughputTokenRoute {
+  int rank_;
+  // Stable token offset within this source rank's receive range.
+  int offset_;
+};
+
+// Local-only routing state produced by prepare() and consumed by dispatch/combine.
+struct ThroughputWorkspaceLayout {
+  size_t totalBytes_;
+  // Local route counts by destination rank and global expert.
+  int* numTokensPerRank_ = nullptr;
+  int* numTokensPerExpert_ = nullptr;
+  // This source rank's compact receive offset on each destination rank.
+  int* rankOffsets_ = nullptr;
+  // Distinct destination ranks and stable offsets for each local token.
+  ThroughputTokenRoute* tokenRoutes_ = nullptr;
+  // Active TOKEN_MAJOR rows received by this rank.
+  int* numRecvTokens_ = nullptr;
+  // Counts by local expert (TOKEN_MAJOR) or source rank (RANK_MAJOR).
+  int* recvCounts_ = nullptr;
+  // Local software grid barrier.
+  mscclpp::DeviceSyncer* syncer_ = nullptr;
+
+  ThroughputWorkspaceLayout(void* workspace, int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
+    size_t offset = 0;
+    auto place = [&](size_t bytes, size_t alignment) -> void* {
+      offset = configAlign<size_t>(offset, alignment);
+      void* ptr = workspace == nullptr ? nullptr : reinterpret_cast<uint8_t*>(workspace) + offset;
+      offset += bytes;
+      return ptr;
+    };
+
+    numTokensPerRank_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
+    numTokensPerExpert_ = static_cast<int*>(place(static_cast<size_t>(numExperts) * sizeof(int), alignof(int)));
+    rankOffsets_ = static_cast<int*>(place(static_cast<size_t>(numRanks) * sizeof(int), alignof(int)));
+    tokenRoutes_ = static_cast<ThroughputTokenRoute*>(place(
+        static_cast<size_t>(maxTokensPerRank) * numTopk * sizeof(ThroughputTokenRoute), alignof(ThroughputTokenRoute)));
+    numRecvTokens_ = static_cast<int*>(place(sizeof(int), alignof(int)));
+    recvCounts_ = static_cast<int*>(
+        place(static_cast<size_t>(std::max(numRanks, numExperts / numRanks)) * sizeof(int), alignof(int)));
+    syncer_ = static_cast<mscclpp::DeviceSyncer*>(place(sizeof(mscclpp::DeviceSyncer), alignof(mscclpp::DeviceSyncer)));
+    totalBytes_ = configAlign<size_t>(offset, BufferAlignmentBytes);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE int recvTokenIndex(const ThroughputTokenRoute& route) const {
+    return route.offset_ < 0 ? -1 : rankOffsets_[route.rank_] + route.offset_;
+  }
+};
+
+inline size_t throughputWorkspaceSize(int maxTokensPerRank, int numRanks, int numExperts, int numTopk) {
+  return ThroughputWorkspaceLayout(nullptr, maxTokensPerRank, numRanks, numExperts, numTopk).totalBytes_;
 }
 
 }  // namespace ep

@@ -3,6 +3,8 @@
 #ifndef MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 #define MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 
+#include <mscclpp/memory_channel_device.hpp>
+
 #include "exception.hpp"
 
 #ifndef WARP_SIZE
@@ -49,6 +51,9 @@ MSCCLPP_DEVICE_INLINE T warpBroadcast(T value, int sourceLane) {
   return result;
 }
 
+// All warp lanes participate; bit i is set exactly when lane i's predicate is true.
+MSCCLPP_DEVICE_INLINE unsigned warpLaneMask(bool predicate) { return __ballot_sync(0xffffffffu, predicate); }
+
 MSCCLPP_DEVICE_INLINE int warpInclusiveSum(int value, int laneId) {
 #pragma unroll
   for (int offset = 1; offset < WARP_SIZE; offset *= 2) {
@@ -67,6 +72,23 @@ MSCCLPP_DEVICE_INLINE int getLaneId() {
   int laneId;
   asm("mov.s32 %0, %laneid;" : "=r"(laneId));
   return laneId;
+}
+
+MSCCLPP_DEVICE_INLINE bool isActiveThroughputRow(int row, const int* recvCounts, int maxTokensPerRank, bool rankMajor) {
+  return !rankMajor || row % maxTokensPerRank < recvCounts[row / maxTokensPerRank];
+}
+
+// All block threads participate; one thread publishes to and waits for each peer.
+MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
+  constexpr int64_t MaxSpinCount = 100'000'000;
+  const int peer = static_cast<int>(threadIdx.x);
+  EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= static_cast<int>(blockDim.x));
+
+  if (peer < numRanks && peer != rank) {
+    channels[peer].signal();
+    channels[peer].wait(MaxSpinCount);
+  }
+  __syncthreads();
 }
 
 }  // namespace ep
