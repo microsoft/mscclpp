@@ -220,7 +220,7 @@ class Comm:
                     num_threads_per_block=tpb,
                     reuse_resources=True,
                     use_double_scratch_buffer=True,
-                    min_message_size=tbg * (1 << 10),
+                    min_message_size=1 << 10,
                     max_message_size=8 << 20,
                 )
                 compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
