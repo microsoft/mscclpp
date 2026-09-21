@@ -121,8 +121,6 @@ class Comm:
         _ensure_device()
         self._mscclpp = _mscclpp()
         self._scratch_buffer = self._mscclpp.RawGpuBuffer(scratch_buffer_size)
-        # DSL algorithms execute through the Executor and fail without one; native algorithms
-        # ignore it, so it is safe to pass unconditionally in run().
         self._executor = self._mscclpp.Executor(comm_group.communicator)
         self._config_store = TunedConfigStore.empty() if config_store is None else config_store
         self._hardware_profile = (
