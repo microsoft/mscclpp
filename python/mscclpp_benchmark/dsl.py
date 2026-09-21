@@ -53,8 +53,6 @@ def compile_dsl_algorithms(
         builder = allreduce_multi_nodes
         collective_op = AllReduce(world_size, 1, True)
         name_prefix = "dsl_allreduce"
-        # allreduce_multi_nodes lays out its thread block groups from this value.
-        pass_thread_block_group_size = True
     elif collective == "allgather":
         from mscclpp.default_algos import allgather_multi_nodes
         from mscclpp.language.collectives import AllGather
@@ -62,8 +60,6 @@ def compile_dsl_algorithms(
         builder = allgather_multi_nodes
         collective_op = AllGather(world_size, 1, in_place)
         name_prefix = "dsl_allgather"
-        # allgather_multi_nodes derives its geometry from the spec alone.
-        pass_thread_block_group_size = False
     elif collective == "reducescatter":
         if not in_place:
             return []
@@ -73,8 +69,6 @@ def compile_dsl_algorithms(
         builder = reducescatter_multi_nodes
         collective_op = ReduceScatter(world_size, 1, True)
         name_prefix = "dsl_reducescatter"
-        # reducescatter_multi_nodes lays out its thread block groups from this value.
-        pass_thread_block_group_size = True
     else:
         message = f"Unsupported collective for DSL algorithms: {collective}"
         logger.error(message)
@@ -98,6 +92,5 @@ def compile_dsl_algorithms(
                 min_message_size=1 << 10,
                 max_message_size=8 << 20,
             )
-            compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
-            algorithms.append(mscclpp.compile(builder, spec, rank, **compile_kwargs))
+            algorithms.append(mscclpp.compile(builder, spec, rank, thread_block_group_size=tbg))
     return algorithms

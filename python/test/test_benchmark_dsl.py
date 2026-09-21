@@ -64,7 +64,7 @@ def test_compiles_dsl_variants(dsl_runtime, collective, in_place):
         builder, spec, rank = call.args
         assert builder is getattr(sys.modules["mscclpp.default_algos"], f"{collective}_multi_nodes")
         assert rank == 3
-        assert call.kwargs == ({} if collective == "allgather" else {"thread_block_group_size": tbg})
+        assert call.kwargs == {"thread_block_group_size": tbg}
         assert algorithm.name == f"dsl_{collective}_2node_{tbg}TBG_{tpb}TPB_{'ip' if in_place else 'oop'}"
         assert algorithm.collective == collective
         assert vars(spec) == {
