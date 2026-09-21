@@ -179,7 +179,6 @@ class Comm:
             builder = allreduce_multi_nodes
             collective_op = AllReduce(world_size, 1, True)
             name_prefix = "dsl_allreduce"
-            tags: dict = {}
             # allreduce_multi_nodes lays out its thread block groups from this value.
             pass_thread_block_group_size = True
         elif collective == _ALLGATHER_COLLECTIVE:
@@ -189,7 +188,6 @@ class Comm:
             builder = allgather_multi_nodes
             collective_op = AllGather(world_size, 1, in_place)
             name_prefix = "dsl_allgather"
-            tags = {"default": 1}
             # allgather_multi_nodes derives its geometry from the spec alone.
             pass_thread_block_group_size = False
         elif collective == _REDUCESCATTER_COLLECTIVE:
@@ -201,7 +199,6 @@ class Comm:
             builder = reducescatter_multi_nodes
             collective_op = ReduceScatter(world_size, 1, True)
             name_prefix = "dsl_reducescatter"
-            tags = {}
             # reducescatter_multi_nodes lays out its thread block groups from this value.
             pass_thread_block_group_size = True
         else:
@@ -225,7 +222,6 @@ class Comm:
                     use_double_scratch_buffer=True,
                     min_message_size=tbg * (1 << 10),
                     max_message_size=8 << 20,
-                    tags=tags,
                 )
                 compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
                 algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
