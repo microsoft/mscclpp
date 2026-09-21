@@ -12,12 +12,13 @@ from mpi4py import MPI
 
 _mscclpp_module = None
 
-from mscclpp_benchmark.comm import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, Comm
+from mscclpp_benchmark.comm import Comm
 from mscclpp_benchmark.correctness import (
     CorrectnessStats,
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
+from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB
 from mscclpp_benchmark.gpu import capture_graph, init_runtime, runtime_name, version
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku

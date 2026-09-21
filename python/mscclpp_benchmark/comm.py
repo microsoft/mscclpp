@@ -10,10 +10,9 @@ logger = logging.getLogger(__name__)
 _ALLREDUCE_COLLECTIVE = "allreduce"
 _ALLGATHER_COLLECTIVE = "allgather"
 _REDUCESCATTER_COLLECTIVE = "reducescatter"
-DEFAULT_DSL_TBG = (1, 2, 4, 8)
-DEFAULT_DSL_TPB = (256, 512, 768, 1024)
 _mscclpp_module = None
 
+from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, compile_dsl_algorithms
 from mscclpp_benchmark.gpu import current_device, device_name, set_device
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -139,92 +138,15 @@ class Comm:
 
         self._dsl_algorithms: set[str] = set()
         if enable_dsl:
-            self._compile_dsl_algorithms(collective, dsl_tbg, dsl_tpb, in_place=buffer_mode == "in-place")
-
-    def _compile_dsl_algorithms(
-        self,
-        collective: str,
-        tbg_values: Iterable[int],
-        tpb_values: Iterable[int],
-        *,
-        in_place: bool = True,
-    ) -> None:
-        """Compile the multi-node DSL variants for ``collective`` and register them alongside the natives.
-
-        Each (thread_block_group_size, num_threads_per_block) pair is a separate compiled plan, since
-        DSL algorithms bake their launch geometry into the plan and ignore the nblocks/nthreads passed
-        to execute(). The variant name must encode those values and the buffer mode: the plan cache
-        key includes none of them, so variants sharing a name would silently resolve to the same
-        cached plan.
-
-        Only allgather_multi_nodes has an out-of-place form; the allreduce and reducescatter builders
-        reduce into the input buffer, so nothing is compiled for them when ``in_place`` is False.
-        """
-        from mscclpp.language.utils import AlgoSpec
-
-        world_size = self._comm_group.nranks
-        nranks_per_node = self._comm_group.nranks_per_node
-        if nranks_per_node <= 0 or world_size % nranks_per_node != 0:
-            return
-        n_nodes = world_size // nranks_per_node
-        if n_nodes < 2:
-            return
-
-        if collective == _ALLREDUCE_COLLECTIVE:
-            if not in_place:
-                return
-            from mscclpp.default_algos import allreduce_multi_nodes
-            from mscclpp.language.collectives import AllReduce
-
-            builder = allreduce_multi_nodes
-            collective_op = AllReduce(world_size, 1, True)
-            name_prefix = "dsl_allreduce"
-            # allreduce_multi_nodes lays out its thread block groups from this value.
-            pass_thread_block_group_size = True
-        elif collective == _ALLGATHER_COLLECTIVE:
-            from mscclpp.default_algos import allgather_multi_nodes
-            from mscclpp.language.collectives import AllGather
-
-            builder = allgather_multi_nodes
-            collective_op = AllGather(world_size, 1, in_place)
-            name_prefix = "dsl_allgather"
-            # allgather_multi_nodes derives its geometry from the spec alone.
-            pass_thread_block_group_size = False
-        elif collective == _REDUCESCATTER_COLLECTIVE:
-            if not in_place:
-                return
-            from mscclpp.default_algos import reducescatter_multi_nodes
-            from mscclpp.language.collectives import ReduceScatter
-
-            builder = reducescatter_multi_nodes
-            collective_op = ReduceScatter(world_size, 1, True)
-            name_prefix = "dsl_reducescatter"
-            # reducescatter_multi_nodes lays out its thread block groups from this value.
-            pass_thread_block_group_size = True
-        else:
-            message = f"Unsupported collective for DSL algorithms: {collective}"
-            logger.error(message)
-            raise ValueError(message)
-
-        for tbg in tbg_values:
-            for tpb in tpb_values:
-                spec = AlgoSpec(
-                    name=f"{name_prefix}_{n_nodes}node_{tbg}TBG_{tpb}TPB_{'ip' if in_place else 'oop'}",
-                    collective=collective_op,
-                    nranks_per_node=nranks_per_node,
-                    world_size=world_size,
-                    in_place=in_place,
-                    instances=1,
-                    protocol="LL",
-                    auto_sync=False,
-                    num_threads_per_block=tpb,
-                    reuse_resources=True,
-                    use_double_scratch_buffer=True,
-                    min_message_size=1 << 10,
-                    max_message_size=8 << 20,
-                )
-                compile_kwargs = {"thread_block_group_size": tbg} if pass_thread_block_group_size else {}
-                algorithm = self._mscclpp.compile(builder, spec, self._rank, **compile_kwargs)
+            for algorithm in compile_dsl_algorithms(
+                collective,
+                dsl_tbg,
+                dsl_tpb,
+                rank=self._rank,
+                world_size=comm_group.nranks,
+                nranks_per_node=comm_group.nranks_per_node,
+                in_place=buffer_mode == "in-place",
+            ):
                 self._algorithms_by_collective.setdefault(algorithm.collective, {})[algorithm.name] = algorithm
                 self._dsl_algorithms.add(algorithm.name)
 
