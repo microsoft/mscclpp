@@ -45,4 +45,11 @@ if(MSCCLPP_USE_GPUNETIO)
     target_include_directories(gpunetio_channel_multi_qp_test PRIVATE
         ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src/gpunetio/vendor/include)
     add_test(NAME gpunetio_channel_multi_qp_test COMMAND gpunetio_channel_multi_qp_test)
+
+    add_executable(gpunetio_channel_qp_table_test gpunetio_channel_test.cc)
+    target_compile_definitions(gpunetio_channel_qp_table_test PRIVATE TEST_QP_TABLE)
+    target_include_directories(gpunetio_channel_qp_table_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/gpunetio/host ${PROJECT_SOURCE_DIR}/src/gpunetio/vendor/include)
+    target_include_directories(gpunetio_channel_qp_table_test SYSTEM PRIVATE ${GPU_INCLUDE_DIRS} ${IBVERBS_INCLUDE_DIRS})
+    add_test(NAME gpunetio_channel_qp_table_test COMMAND gpunetio_channel_qp_table_test)
 endif()

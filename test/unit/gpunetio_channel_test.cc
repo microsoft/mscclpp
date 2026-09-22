@@ -4,7 +4,98 @@
 #include <type_traits>
 #include <vector>
 
-#if defined(TEST_DEVICE_QPS)
+#if defined(TEST_QP_TABLE)
+#include <cstddef>
+
+#include "gpu_net_io_qp_table.hpp"
+
+void require(bool condition, const char* message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+int main() {
+  std::cout << "Upstream qp_gverbs offset: 0x" << std::hex << offsetof(doca_gpu_verbs_qp_hl, qp_gverbs) << std::dec
+            << '\n';
+  int layouts = 0;
+  int rejectedInputs = 0;
+  for (const int peers : {1, 2, 4}) {
+    for (const int queues : {1, 2, 4, 64}) {
+      for (int rank = 0; rank < peers; ++rank) {
+        const size_t count = static_cast<size_t>(peers) * queues;
+        std::vector<doca_gpu_dev_verbs_qp> descriptors(count);
+        std::vector<doca_gpu_verbs_qp> verbs(count);
+        std::vector<doca_gpu_verbs_qp_hl> handles(count);
+        std::vector<doca_gpu_verbs_qp_hl*> qps(count, nullptr);
+        std::vector<uint64_t> doorbells(count);
+        for (size_t index = 0; index < count; ++index) {
+          auto& descriptor = descriptors[index];
+          descriptor.sq_num = static_cast<uint32_t>(1000 + index);
+          descriptor.sq_rsvd_index = 70000 + index;
+          descriptor.sq_ready_index = 60000 + index;
+          descriptor.sq_wqe_pi = 50000 + index;
+          descriptor.sq_db = &doorbells[index];
+          descriptor.cq_sq.cqe_ci = 40000 + index;
+          descriptor.cq_sq.cq_num = static_cast<uint32_t>(2000 + index);
+          descriptor.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO;
+          descriptor.mem_type = DOCA_GPUNETIO_VERBS_MEM_TYPE_GPU;
+          verbs[index].qp_cpu = &descriptor;
+          handles[index].qp_gverbs = &verbs[index];
+          if (index / queues != static_cast<size_t>(rank)) qps[index] = &handles[index];
+        }
+        const auto table = mscclpp::detail::buildGpuNetIoQpTable(qps, rank, queues);
+        require(table.size() == count, "peer-major QP table was compacted");
+        const doca_gpu_dev_verbs_qp empty{};
+        for (size_t index = 0; index < count; ++index) {
+          const bool self = index / queues == static_cast<size_t>(rank);
+          const auto& expected = self ? empty : descriptors[index];
+          require(std::memcmp(&table[index], &expected, sizeof(expected)) == 0,
+                  "self slot not zero or remote QP moved/modified");
+          require(qps[index] == (self ? nullptr : &handles[index]), "source QP list changed");
+        }
+        const auto expectRejected = [&](int testRank, int testQueues) {
+          bool rejected = false;
+          try {
+            (void)mscclpp::detail::buildGpuNetIoQpTable(qps, testRank, testQueues);
+          } catch (const std::invalid_argument&) {
+            rejected = true;
+          }
+          require(rejected, "invalid QP table accepted");
+          ++rejectedInputs;
+        };
+        expectRejected(-1, queues);
+        expectRejected(peers, queues);
+        expectRejected(rank, 0);
+        expectRejected(rank, -1);
+        expectRejected(rank, 65);
+        const size_t selfIndex = static_cast<size_t>(rank) * queues;
+        qps[selfIndex] = &handles[selfIndex];
+        expectRejected(rank, queues);
+        qps[selfIndex] = nullptr;
+        if (peers > 1) {
+          const size_t remoteIndex = static_cast<size_t>((rank + 1) % peers) * queues;
+          qps[remoteIndex] = nullptr;
+          expectRejected(rank, queues);
+          qps[remoteIndex] = &handles[remoteIndex];
+          handles[remoteIndex].qp_gverbs = nullptr;
+          expectRejected(rank, queues);
+          handles[remoteIndex].qp_gverbs = &verbs[remoteIndex];
+          verbs[remoteIndex].qp_cpu = nullptr;
+          expectRejected(rank, queues);
+          verbs[remoteIndex].qp_cpu = &descriptors[remoteIndex];
+        }
+        qps.clear();
+        expectRejected(rank, queues);
+        qps.resize(3, nullptr);
+        expectRejected(0, 2);
+        ++layouts;
+      }
+    }
+  }
+  std::cout << "GPUNetIO sparse QP table: " << layouts << " layouts passed, " << rejectedInputs
+            << " invalid inputs rejected\n";
+}
+
+#elif defined(TEST_DEVICE_QPS)
 #include <cerrno>
 #define MSCCLPP_DEVICE_HPP_
 #define MSCCLPP_DEVICE_COMPILE

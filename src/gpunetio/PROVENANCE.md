@@ -135,6 +135,30 @@ per-QP scratch, and queue-local completion, not hardware ordering or bandwidth.
 
 ## Known Upstream Merge Blockers
 
+### Sparse QP Setup Failure (2026-09-22)
+
+The user reported CPU tests passing on both nodes but `GpuNetIoP2P` crashing
+with SIGSEGV/RC=139 at address `0x58` in `doca_gpu_verbs_qp_flat_list_create_hl`,
+including explicit retries with `mlx5_ib0`, `mlx5_ib1`, `mlx5_ib2`, and `mlx5_ib3`.
+The service passed a peer-major QP list containing null entries for its own rank
+to an upstream helper that unconditionally dereferences every entry. In the
+pinned upstream ABI, `offsetof(doca_gpu_verbs_qp_hl, qp_gverbs)` is `0x58`.
+This is an integration input-contract error, independent of HCA selection.
+
+The service now builds its own peer-major descriptor table: self slots remain
+zero, every remote QP descriptor is checked and copied to its original index,
+and a service-owned CUDA allocation receives the complete table. Cleanup uses
+`cudaFree`; no NVIDIA submodule changes or self-QP connections are needed.
+`gpunetio_channel_qp_table_test` exercises this production adapter using actual
+upstream types on CPU: 28 layouts (1/2/4 ranks, 1/2/4/64 QPs, every self rank)
+and 296 invalid inputs. Earlier routing tests did not exercise host flattening.
+
+The reported hardware status remains a reproducible setup failure until both
+nodes are rebuilt with this fix and the two-rank P2P test is rerun. Passing the
+new CPU regression is not evidence of GPU/NIC runtime correctness.
+
+### Remaining Dependency Issues
+
 The official v4.0.1 pin is not equivalent to the patched DOCA snapshot in the
 EP branch. In upstream `src/doca_gpunetio.cpp`, the GPU_CPU fallback without
 GDRCopy still uses `calloc(alignment, size)` and keeps the original memory-type

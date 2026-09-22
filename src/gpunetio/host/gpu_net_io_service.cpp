@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "api.h"
+#include "gpu_net_io_qp_table.hpp"
 #include "ib.hpp"  // mscclpp core IbCtx / IbMr (ibverbs context + pd + MR)
 
 // DOCA GPUNetIO host API.
@@ -95,7 +96,7 @@ struct GpuNetIoService::Impl {
   // Peer-major QPs; all self entries are null.
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
   doca_gpu_verbs_service_t cpuProxyService = nullptr;
-  struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;  // GPU array from flat_list
+  struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;
 
   // Device-side arrays referenced by GpuNetIoDeviceContext.
   uint32_t* rkeysGpu = nullptr;
@@ -109,7 +110,7 @@ struct GpuNetIoService::Impl {
     if (ctxGpu) (void)cudaFree(ctxGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
     if (peerBaseGpu) (void)cudaFree(peerBaseGpu);
-    if (qpFlatGpu) (void)doca_gpu_verbs_qp_flat_list_destroy_hl(qpFlatGpu);
+    if (qpFlatGpu) (void)cudaFree(qpFlatGpu);
     for (auto* q : qpHl) {
       if (q) (void)doca_gpu_verbs_destroy_qp_hl(q);
     }
@@ -352,8 +353,10 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   }
 
   // 5. Flatten the per-peer device QPs into a GPU array.
-  MSCCLPP_DOCA_THROW(
-      doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(rowLength), &s.qpFlatGpu));
+  const auto qpTable = detail::buildGpuNetIoQpTable(s.qpHl, s.rank, numQps);
+  const size_t qpTableBytes = qpTable.size() * sizeof(doca_gpu_dev_verbs_qp);
+  MSCCLPP_CUDA_THROW(cudaMalloc(&s.qpFlatGpu, qpTableBytes));
+  MSCCLPP_CUDA_THROW(cudaMemcpy(s.qpFlatGpu, qpTable.data(), qpTableBytes, cudaMemcpyHostToDevice));
 
   // 6. Exchange rkeys + symmetric base addresses.
   std::vector<MemExchangeInfo> memAll(s.worldSize);
