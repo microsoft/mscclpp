@@ -67,6 +67,10 @@ class MoECommunicatorConfig:
     # Throughput receive-pool tuning (advanced)
     expert_alignment: int = 1
 
+    # Latency rank-major tuning (advanced)
+    # Apply source route weights while direct rank-major combine accumulates route rows.
+    rank_major_route_weights_in_combine: bool = False
+
 
 # MLP-facing dispatch output.
 
@@ -126,6 +130,7 @@ class _RankMajorCombineContext:
     """Combine context for fixed-stride rank-major output."""
 
     topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
     num_experts: int
     num_tokens: int
     hidden_size: int

@@ -92,9 +92,9 @@ void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, c
                                               void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
                                               cudaStream_t stream);
 
-void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
-                                void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                                cudaStream_t stream);
+void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,

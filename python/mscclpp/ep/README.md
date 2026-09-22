@@ -83,6 +83,9 @@ class MoECommunicatorConfig:
 
     # Overlap
     enable_overlap: bool = False
+
+    # Latency rank-major tuning
+    rank_major_route_weights_in_combine: bool = False
 ```
 
 The constructor can accept either a config object or keyword arguments:
@@ -147,6 +150,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Algorithm family (`MoEMode.LATENCY` or `MoEMode.THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
+| `rank_major_route_weights_in_combine` | For latency `RANK_MAJOR` with `DIRECT_SEND`, apply source route weights during combine so MM2 can provide unweighted route rows |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently, and `None` uses that entry's mode default. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
@@ -608,6 +612,10 @@ For `RANK_MAJOR_TOPK_EXPANDED`, `dispatch_out.topk_ids.reshape(-1)` and
 `dispatch_out.weights.reshape(-1)` align with the expanded token rows.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
+With route-level MM2 output, set `combine_mode=CombineMode.DIRECT_SEND` and
+`rank_major_route_weights_in_combine=True`. Combine then applies the source
+FP32 weights while accumulating top-k BF16 route rows, removing the need for a
+separate local reducer without changing the dispatch/combine call pattern.
 
 Set `combine_mode=CombineMode.DIRECT_SEND` with rank-major dispatch to move the
 top-k reduction into combine. The existing `RANK_LOCAL_REDUCE` behavior remains

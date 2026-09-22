@@ -71,6 +71,7 @@ class LatencyContext(Context):
         self.invalid_token_expert_id = (
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
         )
+        self.rank_major_route_weights_in_combine = config.rank_major_route_weights_in_combine
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout not in (
@@ -106,6 +107,10 @@ class LatencyContext(Context):
                 raise ValueError("RANK_MAJOR_TOPK_EXPANDED output requires RANK_LOCAL_REDUCE combine")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR_TOPK_EXPANDED output does not support overlapping calls yet")
+        if self.rank_major_route_weights_in_combine and (
+            self.output_layout != DispatchLayout.RANK_MAJOR or self.combine_mode != CombineMode.DIRECT_SEND
+        ):
+            raise ValueError("rank_major_route_weights_in_combine requires RANK_MAJOR DIRECT_SEND combine")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -273,6 +278,7 @@ class LatencyRuntime(Runtime):
                 output_info=output_info,
                 _context=_RankMajorCombineContext(
                     topk_ids=topk_ids,
+                    weights=weights if mode_context.rank_major_route_weights_in_combine else None,
                     num_experts=mode_context.num_experts,
                     num_tokens=input.size(0),
                     hidden_size=mode_context.hidden_size,
@@ -314,7 +320,7 @@ class LatencyRuntime(Runtime):
             active_capacity = mode_context.max_tokens_per_rank
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
-            topk_weights = None
+            topk_weights = context.weights
             src_info = None
             layout_range = None
         elif isinstance(context, _RankMajorTopkExpandedCombineContext):
