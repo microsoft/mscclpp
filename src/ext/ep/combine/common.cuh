@@ -83,8 +83,9 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
 
 template <int Hidden, CombineMode Mode>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
-                                                          const int64_t* __restrict__ topkIndices, int nTokens,
-                                                          int nTopk, int nExperts, int nRanks, int maxTokensPerRank,
+                                                          const int64_t* __restrict__ topkIndices,
+                                                          const float* __restrict__ topkWeights, int nTokens, int nTopk,
+                                                          int nExperts, int nRanks, int maxTokensPerRank,
                                                           uint32_t epoch, const TransportView& transport,
                                                           WorkspaceView& workspaceView, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
@@ -160,11 +161,18 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
         if (validRows[stage] == 0) continue;
         const int4 packed = sharedRows[stage * HiddenInt4 + hiddenIdx];
         const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+        const float sourceWeight =
+            IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
 #pragma unroll
         for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
           const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
-          reduced[pairIdx].x += value.data[0];
-          reduced[pairIdx].y += value.data[1];
+          if constexpr (IsDirectSend) {
+            reduced[pairIdx].x = fmaf(value.data[0], sourceWeight, reduced[pairIdx].x);
+            reduced[pairIdx].y = fmaf(value.data[1], sourceWeight, reduced[pairIdx].y);
+          } else {
+            reduced[pairIdx].x += value.data[0];
+            reduced[pairIdx].y += value.data[1];
+          }
         }
       }
 

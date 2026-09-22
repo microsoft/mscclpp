@@ -165,7 +165,7 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, cons
     if (directSend) {
       const int expert = topkIdx[static_cast<size_t>(row) * NumTopk + topkLane];
       if (expert >= 0 && expert < numExperts && expert / (numExperts / NumRanks) == rank) {
-        localWeight = topkWeights[static_cast<size_t>(row) * NumTopk + topkLane];
+        localWeight = 1.0f;
       }
     } else {
       for (int lane = 0; lane < NumTopk; ++lane) {

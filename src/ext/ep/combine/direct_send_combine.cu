@@ -150,9 +150,9 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
     } else {
-      recvRankMajorRemotePartialsTma<Hidden, CombineMode::DIRECT_SEND>(output, expertOutput, topkIndices, nTokens,
-                                                                       nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
-                                                                       transport, workspaceView, sharedMemory);
+      recvRankMajorRemotePartialsTma<Hidden, CombineMode::DIRECT_SEND>(
+          output, expertOutput, topkIndices, topkWeights, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
+          transport, workspaceView, sharedMemory);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
@@ -186,11 +186,11 @@ void expertMajorDirectSendCombine(void* output, const void* input, const int64_t
                                                              numBlocks, stream);
 }
 
-void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
-                                void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                                cudaStream_t stream) {
+void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  combineAlgorithm<CombineMode::DIRECT_SEND, KernelSelector>(output, input, topkIdx, nullptr, nullptr, nullptr,
+  combineAlgorithm<CombineMode::DIRECT_SEND, KernelSelector>(output, input, topkIdx, topkWeights, nullptr, nullptr,
                                                              workload, recvBuffer, dispatchRecvBuffer, context,
                                                              numBlocks, stream);
 }

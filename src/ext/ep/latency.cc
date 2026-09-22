@@ -279,7 +279,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
 
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {
-      rankMajorDirectSendCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
+      rankMajorDirectSendCombine(output, input, topkIdx, topkWeights, workload, combineRecvBuffer, dispatchRecvBuffer,
                                  context.deviceContext_, numBlocks, stream);
     } else {
       EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);

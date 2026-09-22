@@ -228,8 +228,8 @@ __global__ __launch_bounds__(CombineNThreads,
       publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
     } else {
       recvRankMajorRemotePartialsTma<Hidden, CombineMode::RANK_LOCAL_REDUCE>(
-          output, expertOutput, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch, transport,
-          workspaceView, sharedMemory);
+          output, expertOutput, topkIndices, nullptr, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
+          transport, workspaceView, sharedMemory);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
