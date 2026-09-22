@@ -17,12 +17,3 @@ add_custom_target(pytest_lib_copy ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/test/_cpp
     DEPENDS mscclpp_py mscclpp_py_test
 )
-
-if(TARGET mscclpp_ep_cpp)
-    add_custom_target(ep_py_copy ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:mscclpp_ep_cpp>
-            ${CMAKE_CURRENT_SOURCE_DIR}/mscclpp
-        DEPENDS mscclpp_ep_cpp
-    )
-endif()

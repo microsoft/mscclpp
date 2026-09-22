@@ -213,11 +213,7 @@ class DispatchHandle {
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
-  /// Local BF16 results produced by expert computation.
-  ///
-  /// Rank-major input must be the runtime-owned combineInputBuffer(), with
-  /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
-  /// before hidden for DIRECT_SEND.
+  /// Local expert output.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
