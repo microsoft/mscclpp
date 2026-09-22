@@ -86,6 +86,7 @@ class InputTests(unittest.TestCase):
             {"kernel_candidates": [autotune.DEFAULT_KERNELS[0]] * 2},
             {"kernel_candidates": [{"tile_n": 128, "load_stages": 4, "transform_stages": 7}]},
             {"kernel_candidates": [{"tile_n": True, "load_stages": 6, "transform_stages": 7}]},
+            {"kernel_candidates": [{"tile_n": 32, "load_stages": 6, "transform_stages": 7, "tile_k": 96}]},
             {"resource_splits": []},
             {"resource_splits": [{"route_sm_margin": 16, "shared_sms": 32}]},
             {"resource_splits": [{"route_sm_margin": 31, "shared_sms": 16}]},

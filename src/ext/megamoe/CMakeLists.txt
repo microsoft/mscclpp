@@ -58,6 +58,7 @@ install(FILES
     include/megamoe_device.cuh
     include/megamoe_epilogue.cuh
     include/megamoe_mma.cuh
+    include/megamoe_roles.cuh
     include/megamoe_routing.cuh
     include/megamoe_kernel.hpp
     include/megamoe_jit.hpp

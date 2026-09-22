@@ -14,7 +14,7 @@
 // with C++20, PIC/hidden visibility,
 // -gencode=arch=compute_100a,code=sm_100a, --expt-relaxed-constexpr,
 // --expt-extended-lambda, MSCCLPP_USE_CUDA, MSCCLPP_MEGAMOE_JIT_MODULE=1,
-// the three specialization definitions, and a quoted MSCCLPP_MEGAMOE_JIT_ID.
+// the tile/stage specialization definitions, and a quoted MSCCLPP_MEGAMOE_JIT_ID.
 // Link the module against mscclpp, cudart, and the CUDA driver.
 #define MSCCLPP_MEGAMOE_JIT_ABI_VERSION 1
 #define MSCCLPP_MEGAMOE_JIT_ENTRYPOINT "mscclpp_megamoe_jit_get_api_v1"

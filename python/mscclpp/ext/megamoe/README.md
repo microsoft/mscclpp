@@ -24,13 +24,18 @@ MegaMoE is disabled by default. CMake fetches CUTLASS at
 The native library is compiled for `sm_100a` independently of the core library's
 architecture list. Install a compatible Torch CUDA wheel separately.
 
-`src/ext/megamoe/megamoe.cu` contains task scheduling, warp roles, and pipeline
-orchestration. `megamoe_launch.cu` owns workspace layout, weight packing, plans,
-and launches; `megamoe_jit.cu` owns the JIT C ABI entrypoint. Internal headers
-separate device state (`megamoe_device.cuh`), routing/dispatch
-(`megamoe_routing.cuh`), and SwiGLU/epilogue/top-k combine
-(`megamoe_epilogue.cuh`). All three CUDA files and their headers ship in the JIT
-source bundle.
+`src/ext/megamoe/megamoe.cu` constructs pipelines and dispatches warp roles.
+Compile-time tuning policy is isolated in `megamoe_specialization.hpp`: routed
+N/K tiles, pipeline depths, and the routed/local warp schedules. The schedules
+assign epilogue, MMA, LoadA, LoadB, dispatch, and transform work; compile-time
+checks enforce the fixed four-warp compute groups and nonoverlapping roles.
+Fixed role implementations live in `megamoe_roles.cuh`, while
+`megamoe_collective.cuh` defines the CUTLASS pipelines. `megamoe_launch.cu` owns
+workspace layout, weight packing, plans, and launches; `megamoe_jit.cu` owns the
+JIT C ABI entrypoint. Other internal headers separate device state
+(`megamoe_device.cuh`), routing/dispatch (`megamoe_routing.cuh`), and
+SwiGLU/epilogue/top-k combine (`megamoe_epilogue.cuh`). All three CUDA files and
+their headers ship in the JIT source bundle.
 
 ## API
 
@@ -156,7 +161,8 @@ hardware HBM traffic.
 
 `--input-mode direct` initializes registered inputs before timing; it does not
 include their producer. `--no-graph` selects ordinary launches instead of CUDA
-Graphs.
+Graphs. `--tile-n`, `--tile-k`, `--load-stages`, and `--transform-stages`
+select a routed JIT specialization; defaults select the precompiled kernel.
 
 ### Complete synthetic MoE layer
 
@@ -259,22 +265,24 @@ counts. Profiler samples can be distorted and must not replace unprofiled latenc
 
 ### JIT kernel specializations
 
-JIT compiles the **same native CUDA template** with a different token tile and
-pipeline depths, leaving M256/K128, two-CTA clusters, two accumulator stages,
-packed conversion, numerical semantics, and the local shared kernel unchanged.
-The default N32/load8/transform7 kernel remains precompiled and needs no compiler.
+JIT compiles the **same native CUDA template** with different token/reduction
+tiles and pipeline depths, leaving M256, two-CTA clusters, two accumulator
+stages, packed conversion, numerical semantics, and the local shared kernel
+unchanged. Routed `tile_k` supports 32, 64, and 128; the local shared kernel
+remains K128. The default N32/K128/load8/transform7 kernel remains precompiled
+and needs no compiler.
 
 ```python
 from mscclpp.ext.megamoe import KernelConfig, compile_kernel, MegaMoE
 
-kernel = compile_kernel(KernelConfig(tile_n=64, load_stages=6, transform_stages=6))
+kernel = compile_kernel(KernelConfig(tile_n=64, load_stages=6, transform_stages=6, tile_k=64))
 moe = MegaMoE(config, communicator, fc1, fc1_scale, fc2, fc2_scale, kernel=kernel)
 ```
 
 Prepare modules outside collective construction and CUDA Graph capture.
 `load_stages` jointly controls raw weights, scales, and activation prefetch;
-`transform_stages` controls converted weights in TMEM. N and stage counts must
-fit TMEM, compiled shared memory, registers, and resident-cluster limits.
+`transform_stages` controls converted weights in TMEM. N, K, and stage counts
+must fit TMEM, compiled shared memory, registers, and resident-cluster limits.
 `moe.kernel_id`, `moe.kernel_config`, and `moe.shared_bytes` report the selection.
 
 Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
@@ -301,9 +309,10 @@ or changes the selected variant. All ranks must select the same variant.
 
 [`megamoe_tuning.json`](megamoe_tuning.json) lists kernel candidates, resource
 splits, shape overrides, and inclusive token buckets with representative samples.
-The default tunes N32/load8/transform7, N32/load6/transform7, N64/load6/transform6,
-and N128/load4/transform4 at the same 32/32 resource split. The shared kernel is
-not retuned.
+The default keeps K128 and tunes N32/load8/transform7, N32/load6/transform7,
+N64/load6/transform6, and N128/load4/transform4 at the same 32/32 resource
+split. Add `tile_k` variants to a custom tuning file to search K32 or K64. The
+shared kernel is not retuned.
 
 ```bash
 torchrun --nnodes=1 --nproc-per-node=4 \

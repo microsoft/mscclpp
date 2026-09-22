@@ -172,10 +172,9 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
 }
 
 template <bool E5M2>
-__device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, SharedStorage<E5M2>& s) {
+__device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, SharedStorage<E5M2>& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   const auto& w = p.workspace;
-  const int localWarp = threadIdx.x / 32 - 8;
   if (threadIdx.x % 32 == 0) {
     auto& barriers = s.dispatch.barriers[localWarp];
     barriers[0].relaxedInit();
@@ -184,7 +183,8 @@ __device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, Shared
     uint32_t phases[2] = {0, 0};
     int bytes = p.config.hidden * sizeof(__bfloat16);
     int chunks = 1 + (bytes - 1) / DispatchChunkBytes;
-    for (int row = blockIdx.x * 4 + localWarp; row < w.control->tokenBlocks * TileN; row += gridDim.x * 4) {
+    for (int row = blockIdx.x * DispatchWarpCount + localWarp; row < w.control->tokenBlocks * TileN;
+         row += gridDim.x * DispatchWarpCount) {
       Route route = w.routes[row];
       if (route.rank < 0) continue;
       auto src = reinterpret_cast<const uint8_t*>(peerAt<E5M2, __bfloat16>(p, route.rank, p.symmetric.input) +

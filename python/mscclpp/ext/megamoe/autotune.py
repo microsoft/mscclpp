@@ -32,11 +32,13 @@ VERSION = 1
 PROFILE_KIND = "mscclpp-native-megamoe-profiles"
 DEFAULT_RESOURCE_SPLIT = {"route_sm_margin": 32, "shared_sms": 32}
 DEFAULT_KERNELS = [
-    {"tile_n": 32, "load_stages": 8, "transform_stages": 7},
-    {"tile_n": 32, "load_stages": 6, "transform_stages": 7},
-    {"tile_n": 64, "load_stages": 6, "transform_stages": 6},
-    {"tile_n": 128, "load_stages": 4, "transform_stages": 4},
+    {"tile_n": 32, "load_stages": 8, "transform_stages": 7, "tile_k": 128},
+    {"tile_n": 32, "load_stages": 6, "transform_stages": 7, "tile_k": 128},
+    {"tile_n": 64, "load_stages": 6, "transform_stages": 6, "tile_k": 128},
+    {"tile_n": 128, "load_stages": 4, "transform_stages": 4, "tile_k": 128},
 ]
+KERNEL_FIELDS = ("tile_n", "load_stages", "transform_stages", "tile_k")
+REQUIRED_KERNEL_FIELDS = ("tile_n", "load_stages", "transform_stages")
 SHAPE_FIELDS = ("original_hidden", "hidden", "intermediate", "shared_intermediate", "top_k")
 FRONTEND_FIELDS = (
     "router_allow_tf32",
@@ -77,7 +79,7 @@ def _fields(value, allowed, required, label):
 def _kernel_config(value):
     from .jit import KernelConfig
 
-    _fields(value, DEFAULT_KERNELS[0], DEFAULT_KERNELS[0], "kernel config")
+    _fields(value, KERNEL_FIELDS, REQUIRED_KERNEL_FIELDS, "kernel config")
     for field, setting in value.items():
         _integer(setting, field, 1)
     return KernelConfig(**value)
@@ -326,11 +328,11 @@ def _validate_entry(entry):
         ("kernel_config", "kernel_key", "route_sm_margin", "shared_sms"),
         "profile winner",
     )
-    _kernel_config(winner["kernel_config"])
+    normalized_kernel_config = asdict(_kernel_config(winner["kernel_config"]))
     _split({field: winner[field] for field in ("route_sm_margin", "shared_sms")})
     if not isinstance(winner["kernel_key"], str) or not winner["kernel_key"]:
         raise ValueError("winner requires a local cache key, not a module path")
-    if (winner["kernel_key"] == "builtin") != (winner["kernel_config"] == DEFAULT_KERNELS[0]):
+    if (winner["kernel_key"] == "builtin") != (normalized_kernel_config == DEFAULT_KERNELS[0]):
         raise ValueError("builtin key and kernel configuration disagree")
     if "/" in winner["kernel_key"] or "\\" in winner["kernel_key"]:
         raise ValueError("winner kernel_key must not be a path")
@@ -454,7 +456,7 @@ def resolve_profile(path, selection_key, tokens, *, cache_dir=None):
     entry = matches[0]
     winner = entry["winner"]
     kernel = load_cached_kernel(winner["kernel_key"], cache_dir=cache_dir)
-    if asdict(kernel.config) != winner["kernel_config"] or kernel.key != winner["kernel_key"]:
+    if asdict(kernel.config) != asdict(_kernel_config(winner["kernel_config"])) or kernel.key != winner["kernel_key"]:
         raise ProfileMismatchError("local cached kernel does not match the saved selection")
     return ResolvedProfile(kernel, winner["route_sm_margin"], winner["shared_sms"], entry["token_bucket"]["max"], entry)
 

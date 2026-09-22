@@ -15,14 +15,16 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-using TileShape = cute::Shape<cute::_256, cute::Int<TileN>, cute::_128>;
+using TileShape = cute::Shape<cute::Int<TileM>, cute::Int<TileN>, cute::Int<TileK>>;
 using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;
 using ProblemShape = cute::Shape<int, int, int, int>;
 using ScaleConfig = cutlass::detail::Sm100MixedInputBlockwiseScaleConfig<1, 32>;
 
 template <bool E5M2, bool Local = false>
 struct CollectiveTypes {
-  using KernelTile = cute::conditional_t<Local, cute::Shape<cute::_256, cute::_128, cute::_128>, TileShape>;
+  using KernelTile =
+      cute::conditional_t<Local, cute::Shape<cute::Int<LocalTileM>, cute::Int<LocalTileN>, cute::Int<LocalTileK>>,
+                          TileShape>;
   using Weight = cute::conditional_t<E5M2, cutlass::float_e5m2_t, cutlass::float_e4m3_t>;
   using Scale = cutlass::float_ue8m0_t;
   using Activation = cutlass::bfloat16_t;

@@ -22,22 +22,22 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-constexpr int Threads = 512;
+constexpr int Threads = WarpSchedule<false>::NumWarps * 32;
 constexpr int EntryRegisters = 128;
 constexpr int ComputeRegisters = 224;
 constexpr int TransferRegisters = 32;
 // Reconfiguration redistributes the CTA's entry allocation, not the entire SM register file.
 static_assert(256 * ComputeRegisters + (Threads - 256) * TransferRegisters <= Threads * EntryRegisters);
-constexpr int LocalThreads = 384;
+constexpr int LocalThreads = WarpSchedule<true>::NumWarps * 32;
 constexpr int LocalEntryRegisters = 168;
 constexpr int LocalComputeRegisters = 232;
 static_assert(256 * LocalComputeRegisters + (LocalThreads - 256) * TransferRegisters <=
               LocalThreads * LocalEntryRegisters);
-constexpr int LocalTileN = 128;
 constexpr int LocalTokenAlignment = 64;
 constexpr int EpilogueTokens = 32;
 constexpr int ScratchStride = EpilogueTokens + 1;
 constexpr int DispatchChunkBytes = 2048;
+constexpr int DispatchWarpCount = 4;
 constexpr int SmallRoutingSlots = 2 * Threads;
 constexpr int SmallRoutingExperts = 128;
 constexpr int64_t SpinLimit = 1000000000;
@@ -102,8 +102,8 @@ template <bool E5M2, int LocalMode>
 KernelEntry<E5M2, LocalMode> kernelEntry();
 
 struct DispatchStorage {
-  alignas(128) uint8_t tiles[4][2][DispatchChunkBytes];
-  BulkBarrier barriers[4][2];
+  alignas(128) uint8_t tiles[DispatchWarpCount][2][DispatchChunkBytes];
+  BulkBarrier barriers[DispatchWarpCount][2];
 };
 
 struct NoDispatchStorage {};

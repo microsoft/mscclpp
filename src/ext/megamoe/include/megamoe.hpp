@@ -56,6 +56,8 @@ class MegaMoeContext {
   const std::string& kernelId() const;
   /// Return the routed token tile width (the shared expert always uses 128).
   int kernelTileN() const;
+  /// Return the routed reduction tile width (the shared expert always uses 128).
+  int kernelTileK() const;
   /// Return the routed raw-weight/scale/activation load pipeline depth.
   int kernelLoadStages() const;
   /// Return the routed transformed-weight pipeline depth.

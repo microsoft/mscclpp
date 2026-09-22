@@ -23,8 +23,12 @@ from mscclpp.ext.megamoe import jit
         {"load_stages": 4.0},
         {"transform_stages": 1},
         {"transform_stages": 8},
+        {"tile_k": 0},
+        {"tile_k": True},
+        {"tile_k": 96},
         {"tile_n": 128, "transform_stages": 7},
         {"tile_n": 64, "transform_stages": 7},
+        {"tile_n": 128, "transform_stages": 7, "tile_k": 64},
     ],
 )
 def test_kernel_config_rejects_invalid(fields):
@@ -35,7 +39,7 @@ def test_kernel_config_rejects_invalid(fields):
 @pytest.mark.parametrize("values", [(32, 8, 7), (32, 6, 7), (64, 6, 6), (128, 4, 4)])
 def test_initial_specializations_fit_tmem(values):
     config = jit.KernelConfig(*values)
-    assert 2 * config.tile_n + 64 * config.transform_stages <= 512
+    assert 2 * config.tile_n + config.tile_k // 2 * config.transform_stages <= 512
 
 
 def test_builtin_requires_neither_compiler_nor_gpu(monkeypatch):
@@ -84,7 +88,7 @@ def compiler_fixture(tmp_path, monkeypatch):
 
 def test_compile_is_cached_and_uses_native_sm100a(compiler_fixture):
     cache, commands, _ = compiler_fixture
-    config = jit.KernelConfig(64, 6, 6)
+    config = jit.KernelConfig(64, 6, 6, 64)
     first = jit.compile_kernel(config, cache_dir=cache)
     assert not first.cache_hit and len(commands) == 4
     assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
@@ -95,6 +99,7 @@ def test_compile_is_cached_and_uses_native_sm100a(compiler_fixture):
     for command in commands[:-1]:
         assert "--generate-code=arch=compute_100a,code=sm_100a" in command
         assert "-DMSCCLPP_MEGAMOE_TILE_N=64" in command
+        assert "-DMSCCLPP_MEGAMOE_TILE_K=64" in command
         assert "-DMSCCLPP_MEGAMOE_LOAD_STAGES=6" in command
         assert "-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES=6" in command
         assert "-Xcompiler=-fPIC,-fvisibility=hidden" in command
@@ -153,7 +158,7 @@ def test_changed_headers_or_config_get_new_cache_key(compiler_fixture):
     header = cutlass / "include/cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp"
     header.write_text("changed header")
     second = jit.compile_kernel(config, cache_dir=cache)
-    third = jit.compile_kernel(jit.KernelConfig(128, 4, 4), cache_dir=cache)
+    third = jit.compile_kernel(jit.KernelConfig(32, 6, 7, 64), cache_dir=cache)
     assert len({first.key, second.key, third.key}) == 3
     assert len(commands) == 12
 
@@ -231,7 +236,10 @@ def test_compiler_errors_keep_diagnostic_log(tmp_path, body, message):
     os.environ.get("MSCCLPP_TEST_MEGAMOE_JIT") != "1",
     reason="set MSCCLPP_TEST_MEGAMOE_JIT=1 to compile and exercise the CUDA specializations",
 )
-@pytest.mark.parametrize("values", [(32, 6, 7), (64, 6, 6), (128, 4, 4)])
+@pytest.mark.parametrize(
+    "values",
+    [(32, 6, 7), (64, 6, 6), (128, 4, 4), (32, 8, 7, 64), (32, 8, 7, 32)],
+)
 @pytest.mark.parametrize("e5m2", [False, True])
 def test_jit_variants_match_builtin_and_replay_graphs(values, e5m2):
     import gc
@@ -254,6 +262,7 @@ def test_jit_variants_match_builtin_and_replay_graphs(values, e5m2):
     assert variant.kernel_config == module.config
     assert variant.shared_bytes > 0
     assert variant._native.kernel_tile_n == values[0]
+    assert variant._native.kernel_tile_k == (values[3] if len(values) == 4 else 128)
     for tokens in (0, 1, 33, 65, 129):
         inputs = torch.randn(tokens, 128, device="cuda", dtype=torch.bfloat16)
         ids = torch.tensor([0, 1], dtype=torch.int32, device="cuda").expand(tokens, 2).contiguous()

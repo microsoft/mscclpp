@@ -76,6 +76,11 @@ def main():
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--tile-n", type=int, default=32)
+    parser.add_argument("--load-stages", type=int, default=8)
+    parser.add_argument("--transform-stages", type=int, default=7)
+    parser.add_argument("--tile-k", type=int, default=128)
+    parser.add_argument("--cache-dir", default=None, help="local native kernel JIT cache")
     parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
     parser.add_argument("--rtol", type=float, default=0.05)
     parser.add_argument("--atol", type=float, default=0.01)
@@ -90,6 +95,7 @@ def main():
     import torch.distributed as dist
     from mscclpp import Communicator, TcpBootstrap
     from .api import MegaMoE, MegaMoEConfig, is_available
+    from .jit import KernelConfig, compile_kernel
 
     if not is_available():
         parser.error("MSCCL++ lacks native MegaMoE: build with MSCCLPP_BUILD_EXT_MEGAMOE=ON")
@@ -100,6 +106,10 @@ def main():
     if not torch.cuda.is_available():
         parser.error("native MegaMoE requires SM100 CUDA GPUs")
     torch.cuda.set_device(local_rank)
+    kernel = compile_kernel(
+        KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k),
+        cache_dir=args.cache_dir,
+    )
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
     # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
@@ -123,7 +133,7 @@ def main():
     device = torch.device("cuda", local_rank)
     weights = _weights(config, device)
     start = time.perf_counter()
-    context = MegaMoE(config, communicator, *weights)
+    context = MegaMoE(config, communicator, *weights, kernel=kernel)
     initialization_ms = (time.perf_counter() - start) * 1000
     inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
     ids = torch.rand((args.tokens, args.experts), device=device).topk(args.top_k, dim=-1).indices.to(torch.int32)
@@ -180,6 +190,8 @@ def main():
             "cta_count": context.cta_count,
             "workspace_bytes": context.workspace_bytes,
             "initialization_ms": initialization_ms,
+            "kernel_id": context.kernel_id,
+            "kernel_config": vars(context.kernel_config),
             "samples_us": samples,
             "correctness": correctness,
         },
