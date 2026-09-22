@@ -21,9 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ep = [
-    "torch>=2.1",
-]
 cuda12 = [
     "cupy-cuda12x",
     "cuda-bindings>=12,<13",
