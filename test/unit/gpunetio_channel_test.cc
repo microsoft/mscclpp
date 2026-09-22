@@ -4,7 +4,139 @@
 #include <type_traits>
 #include <vector>
 
-#if defined(TEST_HOST_API)
+#if defined(TEST_DEVICE_QPS)
+#include <cerrno>
+#define MSCCLPP_DEVICE_HPP_
+#define MSCCLPP_DEVICE_COMPILE
+#define MSCCLPP_DEVICE_INLINE inline
+#define MSCCLPP_USE_GPUNETIO
+#define MSCCLPP_ASSERT_DEVICE_HPP_
+#define MSCCLPP_ASSERT_DEVICE(condition, message) require(condition, message)
+#define DOCA_GPUNETIO_DEVICE_H
+
+void require(bool condition, const char* message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+void __trap() { throw std::runtime_error("CQ error"); }
+using __be32 = uint32_t;
+using doca_gpu_dev_verbs_ticket_t = uint64_t;
+constexpr int DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU = 0;
+constexpr int DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD = 1;
+uint32_t __byte_perm(uint32_t value, int, int) { return __builtin_bswap32(value); }
+struct doca_gpu_dev_verbs_qp {
+  uint64_t sq_rsvd_index = 7;
+};
+struct doca_gpu_dev_verbs_addr {
+  uintptr_t addr;
+  uint32_t key;
+};
+doca_gpu_dev_verbs_qp* selectedQp;
+doca_gpu_dev_verbs_addr destination, source, signalDestination, signalResult;
+uint64_t transferredBytes, signalValue, polledTicket;
+int polls = 0;
+int completionStatus = 0;
+
+template <int Mode>
+void doca_gpu_dev_verbs_put(doca_gpu_dev_verbs_qp* qp, doca_gpu_dev_verbs_addr remote, doca_gpu_dev_verbs_addr local,
+                            uint64_t bytes, doca_gpu_dev_verbs_ticket_t* ticket) {
+  selectedQp = qp;
+  destination = remote;
+  source = local;
+  transferredBytes = bytes;
+  *ticket = 6;
+}
+template <int Operation, int Mode>
+void doca_gpu_dev_verbs_put_signal(doca_gpu_dev_verbs_qp* qp, doca_gpu_dev_verbs_addr remote,
+                                   doca_gpu_dev_verbs_addr local, uint64_t bytes, doca_gpu_dev_verbs_addr signalRemote,
+                                   doca_gpu_dev_verbs_addr signalLocal, uint64_t value,
+                                   doca_gpu_dev_verbs_ticket_t* ticket) {
+  doca_gpu_dev_verbs_put<Mode>(qp, remote, local, bytes, ticket);
+  signalDestination = signalRemote;
+  signalResult = signalLocal;
+  signalValue = value;
+  *reinterpret_cast<uint64_t*>(signalLocal.addr) = 99;
+}
+template <typename Value, int Mode>
+Value doca_gpu_dev_verbs_atomic_read(Value* pointer) {
+  return *pointer;
+}
+template <int Mode>
+int doca_gpu_dev_verbs_poll_one_cq_at(doca_gpu_dev_verbs_qp* qp, uint64_t ticket) {
+  selectedQp = qp;
+  polledTicket = ticket;
+  ++polls;
+  return completionStatus;
+}
+
+#include <mscclpp/port_channel_gpunetio_device.hpp>
+
+int main() {
+  constexpr int peers = 4;
+  const uint32_t keys[peers] = {11, 12, 13, 14};
+  const uintptr_t bases[peers] = {1024, 2048, 3072, 4096};
+  uint64_t payload[8] = {123};
+  for (const int queues : {1, 2, 4, 8, 64}) {
+    std::vector<doca_gpu_dev_verbs_qp> qps(peers * queues);
+    std::vector<uint64_t> scratch(peers * queues, 0);
+    mscclpp::GpuNetIoDeviceContext context{};
+    context.qps = qps.data();
+    context.rkeys = keys;
+    context.peerBase = bases;
+    context.localBase = reinterpret_cast<uintptr_t>(payload);
+    context.lkey = 0x01020304;
+    context.numPeers = peers;
+    context.numQpsPerPeer = queues;
+    context.atomicResultBase = reinterpret_cast<uintptr_t>(scratch.data());
+    context.atomicResultLkey = 0x05060708;
+    for (int peer = 0; peer < peers; ++peer) {
+      for (int queue = 0; queue < queues; ++queue) {
+        const int index = peer * queues + queue;
+        auto* expectedQp = &qps[index];
+        context.put(peer, 16, 24, 32, queue);
+        require(selectedQp == expectedQp && destination.addr == bases[peer] + 16 && destination.key == keys[peer] &&
+                    source.addr == context.localBase + 24 && source.key == 0x04030201 && transferredBytes == 32,
+                "multi-QP put addressing");
+        context.putWithSignal(peer, 16, 24, 32, 64, 5, queue);
+        require(selectedQp == expectedQp && signalDestination.addr == bases[peer] + 64 &&
+                    signalResult.addr == reinterpret_cast<uintptr_t>(&scratch[index]) &&
+                    signalResult.key == 0x08070605 && signalValue == 5,
+                "multi-QP signal scratch");
+        context.atomicAdd(peer, 128, -7, queue);
+        require(selectedQp == expectedQp && signalDestination.addr == bases[peer] + 128 &&
+                    signalValue == static_cast<uint64_t>(-7) && transferredBytes == 0 && payload[0] == 123,
+                "multi-QP atomic isolation");
+        context.flush(peer, queue);
+        require(selectedQp == expectedQp && polledTicket == 6, "multi-QP completion queue");
+        completionStatus = EBUSY;
+        polls = 0;
+        require(context.tryFlush(peer, 3, queue) == EBUSY && polls == 3 && selectedQp == expectedQp,
+                "bounded queue-local completion");
+        completionStatus = -EIO;
+        require(context.tryFlush(peer, 3, queue) == -EIO, "CQ error propagation");
+        completionStatus = 0;
+        require(context.tryFlush(peer, 3, queue) == 0, "CQ success");
+        expectedQp->sq_rsvd_index = 0;
+        polls = 0;
+        context.flush(peer, queue);
+        require(context.tryFlush(peer, 0, queue) == 0 && polls == 0, "empty queue completion");
+      }
+    }
+    for (const auto result : scratch) require(result == 99, "per-QP scratch coverage");
+    context.put(1, 0, 0, 8);
+    require(selectedQp == &qps[queues], "legacy default QP zero");
+    bool rejected = false;
+    try {
+      context.put(1, 0, 0, 8, queues);
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    require(rejected, "out-of-range QP accepted");
+  }
+  std::cout << "GPUNetIO multi-QP addressing and completion checks passed\n";
+}
+
+#elif defined(TEST_HOST_API)
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/port_channel.hpp>

@@ -18,8 +18,8 @@ namespace mscclpp {
 ///
 /// All remote addressing uses a symmetric-memory model: an explicit bootstrap
 /// rank selects a peer's registered buffer, with the same offset layout on
-/// every rank. `qps`, `rkeys`, and `peerBase` are indexed by peer
-/// rank; `lkey`/`localBase` describe this rank's registered buffer.
+/// every rank. `qps` is indexed by peer*numQpsPerPeer+qpIndex; `rkeys` and
+/// `peerBase` are indexed by peer rank. All QPs use the same local HCA.
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
@@ -35,30 +35,32 @@ struct GpuNetIoDeviceContext {
   uintptr_t localBase;
   /// Number of peers (== world size); indices into the arrays above.
   int numPeers;
-  /// Registered backend-owned fetch-add result slots, one uint64_t per peer.
+  /// Registered backend-owned fetch-add result slots, one uint64_t per QP.
   uintptr_t atomicResultBase;
   /// Local registration key for atomicResultBase, in host byte order.
   uint32_t atomicResultLkey;
+  /// Number of QPs per peer, laid out peer-major; existing callers use QP 0.
+  int numQpsPerPeer = 1;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
   /// symmetric buffer into peer `peer`'s symmetric buffer at dstOffset.
-  MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size);
+  MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int qpIndex = 0);
 
   /// Kernel-initiated RDMA write followed by a fused remote atomic-add signal
   /// (visible only after the payload settles).
   MSCCLPP_DEVICE_INLINE void putWithSignal(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                           uint64_t signalOffset, uint64_t signalValue);
+                                           uint64_t signalOffset, uint64_t signalValue, int qpIndex = 0);
 
   /// Kernel-initiated remote 64-bit atomic add.
-  MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value);
+  MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex = 0);
 
-  /// Wait for locally-issued RDMA to this peer to complete (device CQ poll).
-  MSCCLPP_DEVICE_INLINE void flush(int peer);
+  /// Wait for locally-issued RDMA on this peer's selected QP (device CQ poll).
+  MSCCLPP_DEVICE_INLINE void flush(int peer, int qpIndex = 0);
 
   /// Bounded version of `flush` for tests/diagnostics. Returns 0 on completion,
   /// EBUSY on timeout, or a negative CQ error status.
-  MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t maxSpinCount);
+  MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t maxSpinCount, int qpIndex = 0);
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
@@ -75,27 +77,28 @@ struct GpuNetIoDeviceContext {
 #include "internal/port_channel_gpunetio_device_impl.hpp"
 #else
 namespace mscclpp {
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int, uint64_t, uint64_t, uint64_t) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int, uint64_t, uint64_t, uint64_t, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
 }
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                                int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
 }
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int, uint64_t, int64_t) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int, uint64_t, int64_t, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
 }
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int) {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif
 }
-MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t) {
+MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif

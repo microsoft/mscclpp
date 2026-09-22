@@ -38,3 +38,11 @@ if(MSCCLPP_USE_GPUNETIO)
 endif()
 target_link_libraries(gpunetio_channel_host_test PRIVATE mscclpp)
 add_test(NAME gpunetio_channel_host_test COMMAND gpunetio_channel_host_test)
+
+if(MSCCLPP_USE_GPUNETIO)
+    add_executable(gpunetio_channel_multi_qp_test gpunetio_channel_test.cc)
+    target_compile_definitions(gpunetio_channel_multi_qp_test PRIVATE TEST_DEVICE_QPS)
+    target_include_directories(gpunetio_channel_multi_qp_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src/gpunetio/vendor/include)
+    add_test(NAME gpunetio_channel_multi_qp_test COMMAND gpunetio_channel_multi_qp_test)
+endif()

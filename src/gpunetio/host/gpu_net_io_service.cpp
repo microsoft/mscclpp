@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/gpu_utils.hpp>
@@ -65,6 +66,12 @@ struct MemExchangeInfo {
   uint32_t pad;
 };
 
+struct ConfigExchangeInfo {
+  uint64_t bytes;
+  int32_t numQpsPerPeer;
+  uint32_t pad;
+};
+
 }  // namespace
 
 struct GpuNetIoService::Impl {
@@ -73,6 +80,7 @@ struct GpuNetIoService::Impl {
   int cudaDeviceId = -1;
   int rank = -1;
   int worldSize = 0;
+  int numQpsPerPeer = 1;
   bool didSetup = false;
 
   std::unique_ptr<IbCtx> ibCtx;
@@ -84,7 +92,7 @@ struct GpuNetIoService::Impl {
   int portNum = 1;
   int gidIndex = 0;
 
-  // One high-level QP per remote rank (self entry is null).
+  // Peer-major QPs; all self entries are null.
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
   doca_gpu_verbs_service_t cpuProxyService = nullptr;
   struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;  // GPU array from flat_list
@@ -226,6 +234,10 @@ struct GpuNetIoService::Impl {
 
 MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName,
                                                  int cudaDeviceId)
+    : GpuNetIoService(bootstrap, ibDeviceName, cudaDeviceId, 1) {}
+
+MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName,
+                                                 int cudaDeviceId, int numQpsPerPeer)
     : pimpl_(std::make_unique<Impl>()) {
   if (!bootstrap || ibDeviceName.empty() || cudaDeviceId < 0) {
     throw Error("GPUNetIO requires a bootstrap, explicit IB device and CUDA device ordinal", ErrorCode::InvalidUsage);
@@ -235,6 +247,7 @@ MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> boot
   pimpl_->cudaDeviceId = cudaDeviceId;
   pimpl_->rank = bootstrap->getRank();
   pimpl_->worldSize = bootstrap->getNranks();
+  pimpl_->numQpsPerPeer = numQpsPerPeer;
 }
 
 MSCCLPP_API_CPP GpuNetIoService::~GpuNetIoService() = default;
@@ -247,13 +260,20 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   }
   s.didSetup = true;
 
-  std::vector<uint64_t> sizes(s.worldSize);
-  sizes[s.rank] = symmetricBuffer != nullptr ? bytes : 0;
-  s.bootstrap->allGather(sizes.data(), sizeof(uint64_t));
-  for (const auto size : sizes) {
-    if (size == 0 || size != bytes) {
-      throw Error("GPUNetIO requires nonempty symmetric buffers of equal size on all ranks", ErrorCode::InvalidUsage);
+  std::vector<ConfigExchangeInfo> configs(s.worldSize);
+  configs[s.rank] = {symmetricBuffer != nullptr ? bytes : 0, s.numQpsPerPeer, 0};
+  s.bootstrap->allGather(configs.data(), sizeof(ConfigExchangeInfo));
+  for (const auto& config : configs) {
+    if (config.bytes == 0 || config.bytes != bytes || config.numQpsPerPeer != s.numQpsPerPeer ||
+        config.numQpsPerPeer < 1 || config.numQpsPerPeer > 64) {
+      throw Error("GPUNetIO ranks must agree on nonzero buffer size and QPs per peer in [1, 64]",
+                  ErrorCode::InvalidUsage);
     }
+  }
+  const int numQps = s.numQpsPerPeer;
+  const size_t rowLength = static_cast<size_t>(s.worldSize) * numQps;
+  if (rowLength > static_cast<size_t>(std::numeric_limits<int>::max()) / sizeof(QpExchangeInfo)) {
+    throw Error("GPUNetIO QP exchange exceeds bootstrap size limit", ErrorCode::InvalidUsage);
   }
 
   // 1. ibverbs context + pd (reuse mscclpp's dlopen-based IbCtx), and register
@@ -261,17 +281,17 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   s.ibCtx = std::make_unique<IbCtx>(s.ibDeviceName);
   s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
   MSCCLPP_DOCA_THROW(doca_verbs_dev_open(s.ibCtx->getPd(), &s.netDev));
-  MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, static_cast<size_t>(s.worldSize) * sizeof(uint64_t)));
-  MSCCLPP_CUDA_THROW(cudaMemset(s.atomicResultsGpu, 0, static_cast<size_t>(s.worldSize) * sizeof(uint64_t)));
-  s.atomicResultMr = s.ibCtx->registerMr(s.atomicResultsGpu, static_cast<size_t>(s.worldSize) * sizeof(uint64_t));
+  MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, rowLength * sizeof(uint64_t)));
+  MSCCLPP_CUDA_THROW(cudaMemset(s.atomicResultsGpu, 0, rowLength * sizeof(uint64_t)));
+  s.atomicResultMr = s.ibCtx->registerMr(s.atomicResultsGpu, rowLength * sizeof(uint64_t));
 
   // 2. DOCA GPU device handle from the CUDA device's PCI bus id.
   char pciBusId[32] = {0};
   MSCCLPP_CUDA_THROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), s.cudaDeviceId));
   MSCCLPP_DOCA_THROW(doca_gpu_create(pciBusId, &s.gpuDev));
 
-  // 3. Create one high-level GDAKI QP per remote rank (skip self).
-  s.qpHl.assign(s.worldSize, nullptr);
+  // 3. Create high-level GDAKI QPs per remote rank (skip self).
+  s.qpHl.assign(rowLength, nullptr);
   struct doca_gpu_verbs_qp_init_attr_hl initAttr;
   std::memset(&initAttr, 0, sizeof(initAttr));
   initAttr.gpu_dev = s.gpuDev;
@@ -282,32 +302,37 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   initAttr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_qp_hl(&initAttr, &s.qpHl[r]));
+    for (int queue = 0; queue < numQps; ++queue) {
+      MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_qp_hl(&initAttr, &s.qpHl[static_cast<size_t>(r) * numQps + queue]));
+    }
   }
 
   // 4. Exchange QP info (all-gather) and connect INIT -> RTR -> RTS.
-  std::vector<QpExchangeInfo> qpInfo(s.worldSize);
+  std::vector<QpExchangeInfo> qpInfo(rowLength);
   std::memset(qpInfo.data(), 0, qpInfo.size() * sizeof(QpExchangeInfo));
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    QpExchangeInfo& info = qpInfo[r];
-    MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(s.qpHl[r]->qp, &info.qpn));
-    info.gidIndex = static_cast<uint16_t>(s.gidIndex);
-    s.queryLocalPort(info);
-    s.queryLocalGid(info.gid);
+    for (int queue = 0; queue < numQps; ++queue) {
+      const size_t index = static_cast<size_t>(r) * numQps + queue;
+      auto& info = qpInfo[index];
+      MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(s.qpHl[index]->qp, &info.qpn));
+      info.gidIndex = static_cast<uint16_t>(s.gidIndex);
+      s.queryLocalPort(info);
+      s.queryLocalGid(info.gid);
+    }
   }
   // Each rank publishes, for every peer, the QP that targets that peer. The
-  // all-gather delivers a [worldSize][worldSize] table; entry [src][dst] is the
-  // QP on src that talks to dst. We read column `rank` to get each peer's QP to us.
-  std::vector<QpExchangeInfo> qpAll(static_cast<size_t>(s.worldSize) * s.worldSize);
-  std::memcpy(&qpAll[static_cast<size_t>(s.rank) * s.worldSize], qpInfo.data(), qpInfo.size() * sizeof(QpExchangeInfo));
-  s.bootstrap->allGather(qpAll.data(), static_cast<int>(s.worldSize * sizeof(QpExchangeInfo)));
+  // all-gather delivers [source][destination][queue]; queue indices pair exactly.
+  std::vector<QpExchangeInfo> qpAll(static_cast<size_t>(s.worldSize) * rowLength);
+  std::memcpy(&qpAll[static_cast<size_t>(s.rank) * rowLength], qpInfo.data(), qpInfo.size() * sizeof(QpExchangeInfo));
+  s.bootstrap->allGather(qpAll.data(), static_cast<int>(rowLength * sizeof(QpExchangeInfo)));
 
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
-    // Remote peer r's QP that targets this rank.
-    const QpExchangeInfo& remote = qpAll[static_cast<size_t>(r) * s.worldSize + s.rank];
-    s.connectQp(s.qpHl[r], remote);
+    for (int queue = 0; queue < numQps; ++queue) {
+      const auto& remote = qpAll[static_cast<size_t>(r) * rowLength + static_cast<size_t>(s.rank) * numQps + queue];
+      s.connectQp(s.qpHl[static_cast<size_t>(r) * numQps + queue], remote);
+    }
   }
 
   bool needsCpuProxy = false;
@@ -328,7 +353,7 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
 
   // 5. Flatten the per-peer device QPs into a GPU array.
   MSCCLPP_DOCA_THROW(
-      doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(s.worldSize), &s.qpFlatGpu));
+      doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(rowLength), &s.qpFlatGpu));
 
   // 6. Exchange rkeys + symmetric base addresses.
   std::vector<MemExchangeInfo> memAll(s.worldSize);
@@ -358,6 +383,7 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   ctxHost.lkey = s.mr->getLkey();
   ctxHost.localBase = reinterpret_cast<uintptr_t>(symmetricBuffer);
   ctxHost.numPeers = s.worldSize;
+  ctxHost.numQpsPerPeer = numQps;
   ctxHost.atomicResultBase = reinterpret_cast<uintptr_t>(s.atomicResultsGpu);
   ctxHost.atomicResultLkey = s.atomicResultMr->getLkey();
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));

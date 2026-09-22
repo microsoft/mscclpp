@@ -23,8 +23,9 @@ The PortChannel implementation is derived from
 main's `accumulate` and proxy trigger APIs. It includes the reviewed explicit
 peer/signal binding, bounded flush, atomic-result scratch, CUDA-device lifetime,
 and minimum-path-MTU fixes. It does not include EP kernels, layouts, Python EP
-interfaces, benchmarks, automatic HCA selection, or multi-HCA/multi-QP policy.
-Each service uses one explicitly selected local HCA and one QP per remote rank.
+interfaces, EP benchmarks, automatic HCA selection, or multi-HCA policy.
+Each service uses one explicitly selected local HCA. It defaults to one QP per
+remote rank; the explicit four-argument constructor supports 1-64 QPs per peer.
 
 Upstream dependency: GPUNetIO **v4.0.1**, commit
 `bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`. The submodule is unmodified;
@@ -94,6 +95,43 @@ validate NIC ordering or CUDA memory visibility. The two-rank hardware check is
 Run it on a configured GPU/RDMA pair with a launcher timeout, then run existing
 proxy tests with the same build. A skipped setup is not a hardware pass;
 asymmetric setup failures during collectives can require launcher termination.
+
+### Multi-QP Bandwidth
+
+`PortChannelOneToOneTest.GpuNetIoMultiQpBandwidth` is ported from
+`qinghuazhou/gpunetio_port_channel_merge_feature_ep` at `3d796fc`. Build with
+`MSCCLPP_USE_GPUNETIO=ON` and `MSCCLPP_BUILD_TESTS=ON`, then on two configured ranks:
+
+```bash
+export MSCCLPP_GPUNETIO_QPS_PER_PEER=4
+timeout 300s mpirun -np 2 -x MSCCLPP_GPUNETIO_QPS_PER_PEER \
+  build/bin/mp_unit_tests --filter=PortChannelOneToOneTest.GpuNetIoMultiQpBandwidth
+```
+
+Set the same count on both ranks. The test accepts 1-64, defaulting to 1, and
+retains `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` as a fallback when the generic variable
+is unset. Malformed, out-of-range, or mismatched counts fail collectively before
+buffer allocation. These variables configure this test only; production service
+construction is explicit and does not read EP environment variables.
+
+The source benchmark's workload is unchanged: one GPU thread per QP sends from
+rank 0 to rank 1, with 10 warmup puts and 256 timed puts per queue, at 256 B,
+16 KiB, 256 KiB, 1 MiB, 4 MiB, and 8 MiB per QP. It reports aggregate GB/s and
+microseconds per iteration (all QPs). Timing includes launch/synchronization and
+the final queue drains. Like the source test, it transfers zero-filled buffers
+without checking received payload contents; it is not a correctness proof.
+
+The supporting API is `GpuNetIoService(bootstrap, ibDeviceName, cudaDeviceId,
+numQpsPerPeer)`. Setup validates matching QP counts and symmetric sizes before
+variable-size QP exchange, pairs matching queue indices, and allocates atomic
+result scratch per peer/QP. Device-context operations accept a final optional
+`qpIndex=0`; flushing one queue does not drain the others. The common
+`PortChannelDeviceHandle` still uses QP 0. No multi-HCA or EP scheduling policy
+is introduced, and the upstream submodule remains unchanged.
+
+`gpunetio_channel_multi_qp_test` runs the real device implementation with stubbed
+DOCA calls on CPU at QP counts 1, 2, 4, 8, and 64. It checks per-peer addressing,
+per-QP scratch, and queue-local completion, not hardware ordering or bandwidth.
 
 ## Known Upstream Merge Blockers
 

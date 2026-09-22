@@ -1,8 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
@@ -1368,6 +1371,83 @@ __global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int 
   }
 }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* context, int rank, int peer,
+                                               uint64_t bytesPerQp, int puts, int numQps) {
+  const int queue = threadIdx.x;
+  if (queue >= numQps || rank != 0) return;
+  const uint64_t offset = static_cast<uint64_t>(queue) * bytesPerQp;
+  for (int iteration = 0; iteration < puts; ++iteration) context->put(peer, offset, offset, bytesPerQp, queue);
+  context->flush(peer, queue);
+}
+#endif
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo multi-QP bandwidth requires exactly 2 ranks";
+    return;
+  }
+  int numQps = 1;
+  const char* value = std::getenv("MSCCLPP_GPUNETIO_QPS_PER_PEER");
+  if (value == nullptr) value = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER");
+  if (value != nullptr) {
+    const char* end = value + std::strlen(value);
+    const auto parsed = std::from_chars(value, end, numQps);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) numQps = 0;
+  }
+  std::vector<int> counts(worldSize);
+  counts[rank] = numQps;
+  communicator->bootstrap()->allGather(counts.data(), sizeof(int));
+  for (const int count : counts) {
+    if (count < 1 || count > 64 || count != numQps) {
+      FAIL() << "GPUNetIO ranks must agree on QPs per peer in [1, 64]";
+    }
+  }
+  int cudaDevice = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  const std::string ibDevice = mscclpp::getIBDeviceName(ibTransport);
+  constexpr uint64_t maxBytesPerQp = 8ULL * 1024 * 1024;
+  const size_t bytes = static_cast<size_t>(numQps) * maxBytesPerQp;
+  auto memory = mscclpp::GpuBuffer<char>(bytes).memory();
+  MSCCLPP_CUDATHROW(cudaMemset(memory.get(), 0, bytes));
+  auto service = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevice, cudaDevice, numQps);
+  try {
+    service->setup(memory.get(), bytes);
+  } catch (const mscclpp::Error& error) {
+    service.reset();
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << error.what();
+    return;
+  }
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  const int peer = 1 - rank;
+  constexpr int puts = 256;
+  for (uint64_t bytesPerQp :
+       {256ULL, 16ULL * 1024, 256ULL * 1024, 1024ULL * 1024, 4ULL * 1024 * 1024, 8ULL * 1024 * 1024}) {
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, 10, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+    mscclpp::Timer timer;
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, puts, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    const double elapsedUs = timer.elapsed();
+    communicator->bootstrap()->barrier();
+    if (rank == 0) {
+      const std::string label = std::to_string(bytesPerQp) + " B (" + std::to_string(numQps) + " QPs)";
+      const double totalBytes = static_cast<double>(bytesPerQp) * puts * numQps;
+      ::mscclpp::test::reportPerfResult(label + " aggregate", totalBytes / elapsedUs * 1e-3, "GB/s");
+      ::mscclpp::test::reportPerfResult(label + " per-put", elapsedUs / puts, "us");
+    }
+  }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
+}
 
 TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
 #if defined(MSCCLPP_USE_GPUNETIO)
