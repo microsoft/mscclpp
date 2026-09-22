@@ -14,3 +14,14 @@ target_sources(mp_unit_tests PRIVATE
     switch_channel_perf_tests.cu
     executor_tests.cc
 )
+
+# When the GPUNetIO (GDAKI) backend is built, compile the GpuNetIo point-to-point
+# test path into port_channel_tests.cu. Scope the define + dependency include dirs
+# to just this source so unrelated test TUs keep the trap device definitions.
+if(MSCCLPP_USE_GPUNETIO)
+    target_include_directories(mp_unit_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/gpunetio/vendor/include
+        ${PROJECT_SOURCE_DIR}/src/gpunetio/vendor/include/host)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/port_channel_tests.cu
+        TARGET_DIRECTORY mp_unit_tests PROPERTIES COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO)
+endif()

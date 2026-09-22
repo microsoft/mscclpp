@@ -1,0 +1,3 @@
+[submodule "src/gpunetio/vendor"]
+	path = src/gpunetio/vendor
+	url = https://github.com/NVIDIA-DOCA/gpunetio.git

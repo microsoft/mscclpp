@@ -101,6 +101,12 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
+  GpuNetIoDeviceContext* gpuNetIoContext_ = nullptr;
+  int gpuNetIoPeer_ = -1;
+  uint64_t gpuNetIoRemoteSignalOffset_ = UINT64_MAX;
+  uint64_t* gpuNetIoInboundSignal_ = nullptr;
+  uint64_t* gpuNetIoExpectedSignal_ = nullptr;
+
  public:
   /// Constructor.
   BasePortChannel() = default;
@@ -117,6 +123,18 @@ struct BasePortChannel {
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
+
+  /// Construct a GPU-initiated PortChannel over registered symmetric memory.
+  /// @param context Device context from a successfully initialized GpuNetIoService.
+  /// @param peer Remote bootstrap rank, not a proxy memory/semaphore ID or self.
+  /// @param remoteSignalOffset Aligned uint64_t counter offset in the peer's registered buffer.
+  /// @param inboundSignal Local registered GPU counter updated by this peer, initially zero.
+  /// @param expectedSignal Separate local GPU counter for consumed signals, initially zero.
+  /// The service, buffers and counters must outlive all channels and their GPU work.
+  /// Signal counters must not overlap payloads. MemoryId arguments are ignored:
+  /// data offsets address the service's symmetric buffers, not arbitrary registrations.
+  BasePortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+                  uint64_t* expectedSignal);
 
   /// Copy constructor.
   /// @param other The other BasePortChannel to copy from.
@@ -162,6 +180,11 @@ struct PortChannel : public BasePortChannel {
   /// @param src The source memory region.
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
               MemoryId src);
+
+  /// Construct a GPU-initiated PortChannel over registered symmetric memory.
+  /// @copydetails BasePortChannel::BasePortChannel(GpuNetIoDeviceContext*, int, uint64_t, uint64_t*, uint64_t*)
+  PortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+              uint64_t* expectedSignal);
 
   /// Copy constructor.
   /// @param other The other PortChannel to copy from.

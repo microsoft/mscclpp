@@ -11,6 +11,11 @@
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/gpu_net_io_service.hpp>
+#include <mscclpp/utils.hpp>
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
 // Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
 // On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
 // IbMode::Default is used and the IB device does not support RDMA atomics, the endpoint falls
@@ -1338,3 +1343,91 @@ TEST(PortChannelFanInTest, AccumulateIb) {
 }
 
 TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }
+
+// GPU-initiated networking (GPUNetIO / GDAKI) point-to-point smoke test.
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int rank, int* buff, int* ret) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  constexpr uint64_t kMaxSpins = 100000000ULL;
+  if (rank == 0) {
+    ret[0] = 10;
+    buff[0] = 42;
+    __threadfence_system();
+    channel.putWithSignal(/*dstOffset=*/0, /*srcOffset=*/0, sizeof(int));
+    ret[0] = 20;
+    channel.flush(kMaxSpins);
+    ret[1] = channel.gin_->tryFlush(channel.ginPeer_, kMaxSpins);
+    ret[0] = (ret[1] == 0) ? 30 : 31;
+  } else {
+    uint64_t spin = 0;
+    bool ready = false;
+    while (!(ready = channel.poll()) && spin++ < kMaxSpins) {
+    }
+    ret[0] = ready ? 50 : 40;
+    ret[1] = ready ? buff[0] : 0;
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo P2P test requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const size_t bytes = 4096;
+  const uint64_t signalOffset = 64;
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, bytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, bytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, bytes);
+  } catch (const mscclpp::Error& e) {
+    svc.reset();
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  communicator->bootstrap()->barrier();
+
+  const int peer = (rank == 0) ? 1 : 0;
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, 2 * sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, 2 * sizeof(int)));
+
+  auto* inbound = reinterpret_cast<uint64_t*>(static_cast<char*>(symBuf) + signalOffset);
+  auto* expected = inbound + 1;
+  mscclpp::PortChannel channel(svc->deviceContext(), peer, signalOffset, inbound, expected);
+  kernelGpuNetIoP2P<<<1, 1>>>(channel.deviceHandle(), rank, reinterpret_cast<int*>(symBuf), retDev);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  int ret[2] = {-1, -1};
+  MSCCLPP_CUDATHROW(cudaMemcpy(ret, retDev, sizeof(ret), cudaMemcpyDeviceToHost));
+  if (rank == 0) {
+    EXPECT_EQ(ret[0], 30);
+    EXPECT_EQ(ret[1], 0);
+  } else {
+    EXPECT_EQ(ret[0], 50);
+    EXPECT_EQ(ret[1], 42);
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  svc.reset();
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}

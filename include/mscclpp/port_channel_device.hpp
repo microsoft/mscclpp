@@ -5,9 +5,20 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
+#include "port_channel_gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
+
+/// Backend that services a PortChannel's device-side operations.
+/// Mirrors NCCL GIN's backend selection: the same device API (`put`, `signal`,
+/// `putWithSignal`, `flush`, `accumulate`) is serviced either by the CPU proxy
+/// (FIFO + ProxyService thread) or by GPU-initiated networking (GPUNetIO/GDAKI,
+/// kernel-issued RDMA). The backend is chosen at channel creation.
+enum class PortChannelBackend : uint8_t {
+  Proxy = 0,     ///< CPU proxy: device pushes ProxyTrigger to the host FIFO.
+  GpuNetIo = 1,  ///< GPU-initiated: device issues RDMA WQEs directly (DOCA GDAKI).
+};
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
 /// actual semaphores.
@@ -43,14 +54,55 @@ struct BasePortChannelDeviceHandle {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
+  // Backend that services this channel's device operations. Defaults to the CPU
+  // proxy so existing (FIFO-based) construction paths are unchanged.
+  PortChannelBackend backend_;
+
+  // GPU-initiated networking context; only used when backend_ == GpuNetIo.
+  GpuNetIoDeviceContext* gin_;
+  /// Remote bootstrap rank, independent of proxy IDs.
+  int ginPeer_;
+  /// Peer's registered uint64_t inbound counter offset.
+  uint64_t ginSignalOffset_;
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
                                                          FifoDeviceHandle fifo, uint64_t* flushDonePos)
-      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
+      : semaphoreId_(semaphoreId),
+        semaphore_(semaphore),
+        fifo_(fifo),
+        flushDonePos_(flushDonePos),
+        backend_(PortChannelBackend::Proxy),
+        gin_(nullptr),
+        ginPeer_(-1),
+        ginSignalOffset_(UINT64_MAX) {}
+
+  /// Build a GDAKI handle; counters start at zero and must be disjoint from payloads.
+  /// Resources must outlive GPU use. MemoryId arguments are ignored for this backend.
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(GpuNetIoDeviceContext* gin, int peer,
+                                                         uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+                                                         uint64_t* expectedSignal)
+      : semaphoreId_(0),
+        semaphore_{inboundSignal, expectedSignal},
+        fifo_{},
+        flushDonePos_(nullptr),
+        backend_(PortChannelBackend::GpuNetIo),
+        gin_(gin),
+        ginPeer_(peer),
+        ginSignalOffset_(remoteSignalOffset) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Check the configured peer and registered signal resources in debug builds.
+  MSCCLPP_DEVICE_INLINE void validateGpuNetIo() const {
+    MSCCLPP_ASSERT_DEVICE(gin_ != nullptr, "GPUNetIO channel requires a context");
+    MSCCLPP_ASSERT_DEVICE(ginPeer_ >= 0 && ginPeer_ < gin_->numPeers, "GPUNetIO channel requires a valid peer");
+    MSCCLPP_ASSERT_DEVICE(ginSignalOffset_ != UINT64_MAX && ginSignalOffset_ % sizeof(uint64_t) == 0,
+                          "GPUNetIO channel requires an aligned signal offset");
+    MSCCLPP_ASSERT_DEVICE(semaphore_.inboundToken != nullptr && semaphore_.expectedInboundToken != nullptr,
+                          "GPUNetIO channel requires receive counters");
+  }
   /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
@@ -59,6 +111,11 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      gin_->put(ginPeer_, dstOffset, srcOffset, size);
+      return;
+    }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -72,7 +129,14 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a TriggerSignal to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_}); }
+  MSCCLPP_DEVICE_INLINE void signal() {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      gin_->atomicAdd(ginPeer_, ginSignalOffset_, 1);
+      return;
+    }
+    fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
+  }
 
   /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
@@ -82,6 +146,11 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      gin_->putWithSignal(ginPeer_, dstOffset, srcOffset, size, ginSignalOffset_, 1);
+      return;
+    }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -103,6 +172,11 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      putWithSignal(dstId, dstOffset, srcId, srcOffset, size);
+      flush(maxSpinCount);
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -121,6 +195,16 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      if (maxSpinCount < 0) {
+        gin_->flush(ginPeer_);
+      } else {
+        [[maybe_unused]] const int status = gin_->tryFlush(ginPeer_, static_cast<uint64_t>(maxSpinCount));
+        MSCCLPP_ASSERT_DEVICE(status == 0, "GPUNetIO flush timed out or reported a CQ error");
+      }
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -131,6 +215,11 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      gin_->atomicAdd(ginPeer_, dstOffset, value);
+      return;
+    }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
     uint64_t operand = static_cast<uint64_t>(value);
     ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
@@ -159,6 +248,11 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
                                                      MemoryId dst, MemoryId src, uint64_t* flushDonePos)
       : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
+
+  /// Build a GDAKI handle with the same resource contract as BasePortChannelDeviceHandle.
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(GpuNetIoDeviceContext* gin, int peer, uint64_t remoteSignalOffset,
+                                                     uint64_t* inboundSignal, uint64_t* expectedSignal)
+      : BasePortChannelDeviceHandle(gin, peer, remoteSignalOffset, inboundSignal, expectedSignal), dst_(0), src_(0) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
