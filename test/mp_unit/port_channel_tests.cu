@@ -2,11 +2,18 @@
 // Licensed under the MIT License.
 
 #include <cstdint>
+#include <cstdlib>
 #include <mscclpp/concurrency_device.hpp>
 
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <mscclpp/utils.hpp>
+
+#include "host/gpu_net_io_service.hpp"
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 // Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
 // On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
@@ -120,10 +127,17 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
   registeredMemories.push_back(recvBufRegMem);
 }
 
-__constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
+using PortChannelHandle = DeviceHandle<mscclpp::PortChannel>;
+
+__constant__ __align__(
+    alignof(PortChannelHandle)) unsigned char gChannelOneToOneTestConstPortChans[sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& channelOneToOneTestPortChan() {
+  return *reinterpret_cast<PortChannelHandle*>(gChannelOneToOneTestConstPortChans);
+}
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -339,7 +353,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -544,7 +558,7 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
 // Bandwidth test: bidirectional bulk transfer matching the tutorial pattern.
 // Both ranks do signal+wait+putWithSignal+wait per iteration.
 __global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   if (threadIdx.x != 0) return;
   const uint64_t srcOffset = rank * nElem * sizeof(int);
   const uint64_t dstOffset = srcOffset;
@@ -633,7 +647,7 @@ PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
 // both ranks simultaneously send numBlocks atomic adds per iteration.
 __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer,
                                                      int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  PortChannelHandle& portChan = channelOneToOneTestPortChan();
   const int numBlocks = gridDim.x;
 
   for (int iter = 0; iter < nTries; iter++) {
@@ -665,7 +679,11 @@ __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTr
 }
 
 static constexpr int kMaxQps = 4;
-__constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
+__constant__ __align__(alignof(PortChannelHandle)) unsigned char gMultiQpPortChans[kMaxQps * sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& multiQpPortChan(int q) {
+  return reinterpret_cast<PortChannelHandle*>(gMultiQpPortChans)[q];
+}
 
 // Multi-QP bandwidth kernel: one thread per QP, putWithSignal per QP, parallel waits.
 __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps) {
@@ -673,12 +691,12 @@ __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps)
   if (q >= numQps) return;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      multiQpPortChan(0).signal();
+      multiQpPortChan(0).wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignal(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    multiQpPortChan(q).putWithSignal(0, nElemPerChan * sizeof(int));
+    multiQpPortChan(q).wait();
     __syncthreads();
   }
 }
@@ -920,12 +938,12 @@ __global__ void kernelMultiQpFlushStress(int nElemPerChan, int nIters, int numQp
   if (q >= numQps) return;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      multiQpPortChan(0).signal();
+      multiQpPortChan(0).wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    multiQpPortChan(q).putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
+    multiQpPortChan(q).wait();
     __syncthreads();
   }
 }
@@ -1024,10 +1042,15 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
 // each caller waits on its own TriggerSync rather than on a globally-incrementing counter
 // that could be assigned out-of-order relative to the FIFO push order.
-__constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
+__constant__ __align__(
+    alignof(PortChannelHandle)) unsigned char gSingleChanForConcurrentFlush[sizeof(PortChannelHandle)];
+
+__device__ PortChannelHandle& singleChanForConcurrentFlush() {
+  return *reinterpret_cast<PortChannelHandle*>(gSingleChanForConcurrentFlush);
+}
 
 __global__ void kernelSameChanConcurrentFlush(int nIters) {
-  auto& chan = gSingleChanForConcurrentFlush;
+  auto& chan = singleChanForConcurrentFlush();
   int tid = threadIdx.x;
   for (int i = 0; i < nIters; i++) {
     // Each thread writes to a distinct slot (so puts don't overlap on remote side),
@@ -1083,4 +1106,468 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbHostMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testSameChanConcurrentFlush(IbMode::Host);
+}
+
+// ===========================================================================
+// GPU-initiated networking (GPUNetIO / GDAKI) point-to-point smoke test.
+//
+// Exercises the PortChannel GpuNetIo backend's device context end to end:
+// rank 0 writes a payload into rank 1's symmetric buffer and sets a remote
+// signal (fused RDMA write + atomic) straight from the kernel -- no CPU proxy --
+// and rank 1 spins on the signal, then verifies the payload. The test is gated
+// behind MSCCLPP_USE_GPUNETIO at compile time and skips at runtime whenever the
+// GDAKI resources cannot be brought up (no IB / no GPUNetIO-capable NIC).
+// ===========================================================================
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoP2P(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer, int* buff,
+                                  uint64_t signalOffset, int* ret) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  constexpr uint64_t kMaxSpins = 100000000ULL;
+  auto* inbound = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(buff) + signalOffset);
+  mscclpp::PortChannelDeviceHandle channel(ctx, peer, signalOffset, inbound, inbound + 1);
+  if (rank == 0) {
+    ret[0] = 10;
+    buff[0] = 42;
+    __threadfence_system();
+    // RDMA-write the 4-byte payload to the peer's symmetric buffer and fuse a
+    // remote atomic-add signal that becomes visible only after the payload.
+    channel.putWithSignal(uint64_t{0}, uint64_t{0}, sizeof(int));
+    ret[0] = 20;
+    ret[1] = ctx->tryFlush(peer, kMaxSpins);
+    ret[0] = (ret[1] == 0) ? 30 : 31;
+  } else {
+    uint64_t spin = 0;
+    bool signaled = false;
+    while (!(signaled = channel.poll()) && spin++ < kMaxSpins) {
+    }
+    ret[0] = signaled ? 50 : 40;
+    ret[1] = signaled ? buff[0] : 0;
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo P2P test requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const size_t bytes = 4096;
+  const uint64_t signalOffset = 64;  // keep payload (offset 0) and signal distinct
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, bytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, bytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, bytes);
+  } catch (const mscclpp::Error& e) {
+    svc.reset();
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  communicator->bootstrap()->barrier();
+
+  const int peer = (rank == 0) ? 1 : 0;
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, 2 * sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, 2 * sizeof(int)));
+
+  kernelGpuNetIoP2P<<<1, 1>>>(svc->deviceContext(), rank, peer, reinterpret_cast<int*>(symBuf), signalOffset, retDev);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  int ret[2] = {-1, -1};
+  MSCCLPP_CUDATHROW(cudaMemcpy(ret, retDev, sizeof(ret), cudaMemcpyDeviceToHost));
+  if (rank == 0) {
+    EXPECT_EQ(ret[0], 30);
+    EXPECT_EQ(ret[1], 0);
+  } else {
+    EXPECT_EQ(ret[0], 50);
+    EXPECT_EQ(ret[1], 42);
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  svc.reset();
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+// ===========================================================================
+// GPU-initiated networking (GPUNetIO / GDAKI) LL-packet ping-pong.
+//
+// A device-initiated analogue of PacketPingPong (kernelProxyLLPingPong): instead
+// of pushing a ProxyTrigger to a CPU proxy, the sending rank packs its payload
+// into LL packets in its own symmetric buffer and RDMA-writes them straight into
+// the peer's symmetric buffer from the kernel (ctx->put + ctx->tryFlush). The
+// receiver spins on the LL-packet flags (self-synchronizing, no separate signal)
+// and verifies the payload.
+//
+// Both the put-side flush and the receive-side flag wait are BOUNDED: on timeout
+// they record diagnostics into `ret` (iteration, packet index, expected vs.
+// observed flag) and the whole block returns, so an intermittent cross-domain
+// delivery failure surfaces as a test failure instead of a deadlock.
+//
+// Symmetric-buffer layout (identical offsets on every rank):
+//   [0,           pktRegionBytes):  getPktBuf   (the peer RDMA-writes here)
+//   [pktRegionBytes, 2*..):         putPktBuf   (local pack source for our put)
+// `buff` is a separate local (non-symmetric) int scratch used as the pack source.
+// ===========================================================================
+#if defined(MSCCLPP_USE_GPUNETIO)
+static constexpr int kGpuNetIoLLRetInts = 8;
+
+// Called only after GPU synchronization, with the tests' two-rank bootstrap.
+static std::string gpuNetIoLLPingPongError(mscclpp::Bootstrap& bootstrap, const int* retDev) {
+  int ret[2][kGpuNetIoLLRetInts] = {};
+  MSCCLPP_CUDATHROW(cudaMemcpy(ret[bootstrap.getRank()], retDev, sizeof(ret[0]), cudaMemcpyDeviceToHost));
+  bootstrap.allGather(ret, sizeof(ret[0]));
+
+  std::string error;
+  for (int rank = 0; rank < 2; ++rank) {
+    // ret[rank][0]: 0 ok, 1 payload mismatch, 100 flush-fail, 200 receive-timeout.
+    if (ret[rank][0] == 0) continue;
+    if (!error.empty()) error += "; ";
+    error += "rank " + std::to_string(rank) + " code " + std::to_string(ret[rank][0]) + " iter " +
+             std::to_string(ret[rank][1]) + " pkt/flush " + std::to_string(ret[rank][2]) + " expFlag/data " +
+             std::to_string(ret[rank][3]) + " gotFlag1/expected " + std::to_string(ret[rank][4]) + " gotFlag2 " +
+             std::to_string(ret[rank][5]);
+  }
+  return error;
+}
+
+template <bool CheckCorrectness>
+__global__ void kernelGpuNetIoLLPingPong(mscclpp::GpuNetIoDeviceContext* ctx, int rank, int peer, int* buff,
+                                         mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf,
+                                         uint64_t putPktOffset, uint64_t getPktOffset, int nElem, int nTries,
+                                         uint64_t maxSpins, int* ret) {
+  if (rank > 1) return;
+  volatile int* buffPtr = (volatile int*)buff;
+  const int putOffset = (rank == 0) ? 0 : 10000000;
+  const int getOffset = (rank == 0) ? 10000000 : 0;
+  const int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+  const int numThreads = blockDim.x * gridDim.x;
+  const int nPkt = nElem / 2;
+  __shared__ int sAbort;
+
+  for (int i = 0; i < nTries; i++) {
+    const uint64_t flag = (uint64_t)i + 1;
+    if (threadId == 0) sAbort = 0;
+    __syncthreads();
+
+    // rank 0 sends on even i, rank 1 sends on odd i (strict alternation).
+    if ((rank ^ (i & 1)) == 0) {
+      // ---- SEND ----
+      if constexpr (CheckCorrectness) {
+        // Each thread writes its own 8 bytes; copyToPackets packs the same packet
+        // from the same thread, so no barrier is needed before it.
+        for (int j = threadId; j < nPkt; j += numThreads) {
+          buffPtr[2 * j] = putOffset + i + 2 * j;
+          buffPtr[2 * j + 1] = putOffset + i + 2 * j + 1;
+        }
+      }
+      mscclpp::copyToPackets(putPktBuf, buff, nElem * sizeof(int), threadId, numThreads, flag);
+      __syncthreads();  // thread 0 puts the whole region, so it must see every thread's packets
+      if (threadId == 0) {
+        __threadfence_system();  // make the packed packets visible to the NIC
+        ctx->put(peer, getPktOffset, putPktOffset, (uint64_t)nPkt * sizeof(mscclpp::LLPacket));
+        const int fr = ctx->tryFlush(peer, maxSpins);
+        if (fr != 0) {
+          if (ret != nullptr) {
+            ret[0] = 100;  // local flush failed / timed out
+            ret[1] = i;
+            ret[2] = fr;
+          }
+          sAbort = 1;
+        }
+      }
+      __syncthreads();
+    } else {
+      // ---- RECEIVE ---- bounded, diagnostic unpack (no infinite spin).
+      // `spin` is a per-thread budget shared across all of this thread's packets,
+      // so total work stays bounded even if the whole buffer never arrives.
+      uint64_t spin = 0;
+      for (int j = threadId; j < nPkt; j += numThreads) {
+        uint2 data;
+        bool ready = true;
+        while (getPktBuf[j].readOnce((uint32_t)flag, data)) {
+          if (++spin > maxSpins) {
+            ready = false;
+            break;
+          }
+        }
+        if (!ready) {
+          if (atomicCAS(&sAbort, 0, 1) == 0 && ret != nullptr) {
+            volatile uint32_t* raw = reinterpret_cast<volatile uint32_t*>(&getPktBuf[j]);
+            ret[0] = 200;          // receive timeout: cross-domain delivery miss
+            ret[1] = i;            // iteration
+            ret[2] = j;            // stuck packet index
+            ret[3] = (int)flag;    // expected flag
+            ret[4] = (int)raw[1];  // observed flag1
+            ret[5] = (int)raw[3];  // observed flag2
+          }
+          break;
+        }
+        if constexpr (CheckCorrectness) {
+          if (data.x != (uint32_t)(getOffset + i + 2 * j) || data.y != (uint32_t)(getOffset + i + 2 * j + 1)) {
+            if (atomicCAS(&sAbort, 0, 1) == 0 && ret != nullptr) {
+              ret[0] = 1;  // payload mismatch
+              ret[1] = i;
+              ret[2] = j;
+              ret[3] = (int)data.x;
+              ret[4] = getOffset + i + 2 * j;
+            }
+            break;
+          }
+        }
+      }
+      __syncthreads();
+    }
+    if (sAbort) return;  // uniform across the block after the __syncthreads above
+  }
+}
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, GpuNetIoLLPingPong) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  if (gEnv->rank >= numRanksToUse) return;
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  // Size the symmetric buffer for the largest nElem we exercise.
+  const int maxElem = 4 * 1024 * 1024;
+  const size_t maxPkt = (size_t)maxElem / 2;
+  const size_t pktRegionBytes = maxPkt * sizeof(mscclpp::LLPacket);
+  const uint64_t getPktOffset = 0;
+  const uint64_t putPktOffset = pktRegionBytes;
+  const size_t symBytes = pktRegionBytes * 2;
+
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, symBytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, symBytes);
+  } catch (const mscclpp::Error& e) {
+    svc.reset();  // release the MR before freeing its registered buffer
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  auto* getPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + getPktOffset);
+  auto* putPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + putPktOffset);
+
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(maxElem).memory();
+
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, kGpuNetIoLLRetInts * sizeof(int)));
+
+  const int peer = (rank == 0) ? 1 : 0;
+  const int nTries = 1000;
+  const uint64_t maxSpins = 100000000ULL;
+  std::string error;
+
+  // The least nElem is 2 for packet ping pong.
+  for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, kGpuNetIoLLRetInts * sizeof(int)));
+    MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));  // clear stale flags between sizes
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());          // finish clearing before the peer can RDMA-write
+    communicator->bootstrap()->barrier();
+
+    kernelGpuNetIoLLPingPong<true><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                               putPktOffset, getPktOffset, nElem, nTries, maxSpins, retDev);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+    error = gpuNetIoLLPingPongError(*communicator->bootstrap(), retDev);
+    if (!error.empty()) {
+      error = "nElem " + std::to_string(nElem) + ": " + error;
+      break;  // both ranks clean up before FAIL() can throw
+    }
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  svc.reset();  // release the MR before freeing its registered buffer
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+  if (!error.empty()) FAIL() << error;
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  if (gEnv->rank >= numRanksToUse) return;
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong perf requires exactly 2 ranks";
+    return;
+  }
+
+  int cudaDev = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDev));
+  const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
+
+  const int nElem = 2;  // single-packet latency ping-pong
+  const size_t pktRegionBytes = ((size_t)nElem / 2) * sizeof(mscclpp::LLPacket);
+  const uint64_t getPktOffset = 0;
+  const uint64_t putPktOffset = 256;  // keep the two regions distinct and aligned
+  const size_t symBytes = putPktOffset + pktRegionBytes;
+
+  void* symBuf = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, symBytes));
+  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, symBytes));
+
+  std::unique_ptr<mscclpp::GpuNetIoService> svc;
+  try {
+    svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
+    svc->setup(symBuf, symBytes);
+  } catch (const mscclpp::Error& e) {
+    svc.reset();  // release the MR before freeing its registered buffer
+    MSCCLPP_CUDATHROW(cudaFree(symBuf));
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
+    return;
+  }
+
+  auto* getPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + getPktOffset);
+  auto* putPktBuf = reinterpret_cast<mscclpp::LLPacket*>(reinterpret_cast<char*>(symBuf) + putPktOffset);
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
+
+  int* retDev = nullptr;
+  MSCCLPP_CUDATHROW(cudaMalloc(&retDev, kGpuNetIoLLRetInts * sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, kGpuNetIoLLRetInts * sizeof(int)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());  // finish initialization before the peer can RDMA-write
+  communicator->bootstrap()->barrier();
+
+  const int peer = (rank == 0) ? 1 : 0;
+  const int nTries = 100000;
+  const uint64_t maxSpins = 100000000ULL;
+
+  // Warm-up.
+  kernelGpuNetIoLLPingPong<false><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                              putPktOffset, getPktOffset, nElem, nTries, maxSpins, retDev);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  std::string error = gpuNetIoLLPingPongError(*communicator->bootstrap(), retDev);
+  double elapsedUs = 0;
+  if (!error.empty()) {
+    error = "warm-up: " + error;
+  } else {
+    MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, kGpuNetIoLLRetInts * sizeof(int)));
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+
+    // Measure only the kernel and GPU synchronization, not diagnostic copies or collectives.
+    mscclpp::Timer timer;
+    kernelGpuNetIoLLPingPong<false><<<1, 512>>>(svc->deviceContext(), rank, peer, buff.get(), putPktBuf, getPktBuf,
+                                                putPktOffset, getPktOffset, nElem, nTries, maxSpins, retDev);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    elapsedUs = timer.elapsed();
+
+    error = gpuNetIoLLPingPongError(*communicator->bootstrap(), retDev);
+    if (!error.empty()) error = "timing: " + error;
+  }
+
+  MSCCLPP_CUDATHROW(cudaFree(retDev));
+  svc.reset();  // release the MR before freeing its registered buffer
+  MSCCLPP_CUDATHROW(cudaFree(symBuf));
+  if (!error.empty()) FAIL() << error;
+
+  if (rank == 0) {
+    ::mscclpp::test::reportPerfResult("latency", (float)elapsedUs / (float)nTries, "us/iter");
+  }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* context, int rank, int peer,
+                                               uint64_t bytesPerQp, int puts, int numQps) {
+  const int queue = threadIdx.x;
+  if (queue >= numQps || rank != 0) return;
+  const uint64_t offset = static_cast<uint64_t>(queue) * bytesPerQp;
+  for (int iteration = 0; iteration < puts; ++iteration) context->put(peer, offset, offset, bytesPerQp, queue);
+  context->flush(peer, queue);
+}
+#endif
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  if (gEnv->rank >= numRanksToUse) return;
+  REQUIRE_IBVERBS;
+  const int worldSize = communicator->bootstrap()->getNranks();
+  const int rank = communicator->bootstrap()->getRank();
+  if (worldSize != 2) {
+    SKIP_TEST() << "GpuNetIo multi-QP bandwidth requires exactly 2 ranks";
+    return;
+  }
+  int numQps = 1;
+  if (const char* value = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER")) numQps = std::max(1, std::atoi(value));
+  if (numQps > 64) {
+    FAIL() << "GPUNetIO QPs per peer must be in [1, 64]";
+  }
+  int cudaDevice = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  const std::string ibDevice = mscclpp::getIBDeviceName(ibTransport);
+  constexpr uint64_t maxBytesPerQp = 8ULL * 1024 * 1024;
+  const size_t bytes = static_cast<size_t>(numQps) * maxBytesPerQp;
+  auto memory = mscclpp::GpuBuffer<char>(bytes).memory();
+  MSCCLPP_CUDATHROW(cudaMemset(memory.get(), 0, bytes));
+  auto service = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevice, cudaDevice);
+  try {
+    service->setup(memory.get(), bytes);
+  } catch (const mscclpp::Error& error) {
+    service.reset();
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << error.what();
+    return;
+  }
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  const int peer = 1 - rank;
+  constexpr int puts = 256;
+  for (uint64_t bytesPerQp :
+       {256ULL, 16ULL * 1024, 256ULL * 1024, 1024ULL * 1024, 4ULL * 1024 * 1024, 8ULL * 1024 * 1024}) {
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, 10, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+    mscclpp::Timer timer;
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, puts, numQps);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    const double elapsedUs = timer.elapsed();
+    communicator->bootstrap()->barrier();
+    if (rank == 0) {
+      const std::string label = std::to_string(bytesPerQp) + " B (" + std::to_string(numQps) + " QPs)";
+      const double totalBytes = static_cast<double>(bytesPerQp) * puts * numQps;
+      ::mscclpp::test::reportPerfResult(label + " aggregate", totalBytes / elapsedUs * 1e-3, "GB/s");
+      ::mscclpp::test::reportPerfResult(label + " per-put", elapsedUs / puts, "us");
+    }
+  }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
 }
