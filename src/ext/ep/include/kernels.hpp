@@ -58,6 +58,8 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Whether expanded rank-major dispatch deduplicates payloads by destination rank.
+  bool deduplicateExpandedRoutes_ = false;
 };
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);

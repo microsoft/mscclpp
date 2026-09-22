@@ -71,6 +71,7 @@ class LatencyContext(Context):
         self.invalid_token_expert_id = (
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
         )
+        self.deduplicate_expanded_routes = config.deduplicate_expanded_routes
         self.rank_major_route_weights_in_combine = config.rank_major_route_weights_in_combine
         self.enable_overlap = config.enable_overlap
 
@@ -107,6 +108,8 @@ class LatencyContext(Context):
                 raise ValueError("RANK_MAJOR_TOPK_EXPANDED output requires RANK_LOCAL_REDUCE combine")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR_TOPK_EXPANDED output does not support overlapping calls yet")
+        elif self.deduplicate_expanded_routes:
+            raise ValueError("deduplicate_expanded_routes requires RANK_MAJOR_TOPK_EXPANDED output")
         if self.rank_major_route_weights_in_combine and (
             self.output_layout != DispatchLayout.RANK_MAJOR or self.combine_mode != CombineMode.DIRECT_SEND
         ):
@@ -216,6 +219,7 @@ class LatencyRuntime(Runtime):
             mode_context.dispatch_data_type,
             mode_context.dispatch_blocks,
             cuda_stream_ptr(stream),
+            mode_context.deduplicate_expanded_routes,
         )
         output_quant = (
             None

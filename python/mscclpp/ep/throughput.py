@@ -79,6 +79,8 @@ class ThroughputContext(Context):
             raise NotImplementedError("THROUGHPUT mode supports TOKEN_MAJOR or RANK_MAJOR output")
         if config.invalid_token_expert_id is not None:
             raise ValueError("invalid_token_expert_id is only supported in latency mode")
+        if config.deduplicate_expanded_routes:
+            raise ValueError("deduplicate_expanded_routes is only supported in latency mode")
         if config.rank_major_route_weights_in_combine:
             raise ValueError("rank_major_route_weights_in_combine is only supported in latency mode")
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(

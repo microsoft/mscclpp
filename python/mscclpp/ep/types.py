@@ -67,7 +67,8 @@ class MoECommunicatorConfig:
     # Throughput receive-pool tuning (advanced)
     expert_alignment: int = 1
 
-    # Latency rank-major tuning (advanced)
+    # Latency expanded-layout tuning (advanced)
+    deduplicate_expanded_routes: bool = False
     # Apply source route weights while direct rank-major combine accumulates route rows.
     rank_major_route_weights_in_combine: bool = False
 

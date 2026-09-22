@@ -173,6 +173,7 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   const int maxTokensPerRank = request.maxTokensPerRank;
   const int numExperts = request.numExperts;
   const int invalidTokenExpertId = request.invalidTokenExpertId;
+  const bool deduplicateExpandedRoutes = request.deduplicateExpandedRoutes;
   const DispatchLayout dispatchLayout = request.dispatchLayout;
   const DispatchDataType dispatchDataType = request.dispatchDataType;
   const int numBlocks = request.numBlocks;
@@ -187,6 +188,7 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
+  EP_HOST_ASSERT(!deduplicateExpandedRoutes || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
                                         numExperts, numTopk, context.outputLayout_, context.combineMode_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
@@ -210,7 +212,8 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
                           .invalidTokenExpertId_ = invalidTokenExpertId,
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
-                          .dispatchDataType_ = dispatchDataType};
+                          .dispatchDataType_ = dispatchDataType,
+                          .deduplicateExpandedRoutes_ = deduplicateExpandedRoutes};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
@@ -274,7 +277,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .invalidTokenExpertId_ = numExperts,
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
-                          .dispatchDataType_ = dispatchDataType};
+                          .dispatchDataType_ = dispatchDataType,
+                          .deduplicateExpandedRoutes_ = false};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {

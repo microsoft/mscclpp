@@ -129,6 +129,16 @@ def parse_args():
         help="Sentinel expert ID for rank-major non-local and padding rows (default: num_experts)",
     )
     parser.add_argument(
+        "--force-duplicate-routes",
+        action="store_true",
+        help="Force two routes for token 0 onto rank 0 to exercise expanded-layout payload deduplication",
+    )
+    parser.add_argument(
+        "--deduplicate-expanded-routes",
+        action="store_true",
+        help="Send one expanded-layout payload per destination rank and copy duplicate routes locally",
+    )
+    parser.add_argument(
         "--rank-major-route-weights-in-combine",
         action="store_true",
         help="Pass unweighted route rows and apply source weights in direct rank-major combine",
@@ -433,9 +443,14 @@ def validate_rank_major_topk_expanded_dispatch(
                 expert = int(all_topk_idx[source_rank, token_idx, topk_slot].item())
                 expected_local = local_expert_begin <= expert < local_expert_end
                 expected_id = expert if expected_local else invalid_token_expert_id
-                expected_weight = all_topk_weights[source_rank, token_idx, topk_slot] if expected_local else 0.0
+                actual_weight = dispatch_out.weights[metadata_row, topk_slot]
+                expected_weight = (
+                    all_topk_weights[source_rank, token_idx, topk_slot]
+                    if expected_local
+                    else torch.zeros_like(actual_weight)
+                )
                 assert int(dispatch_out.topk_ids[metadata_row, topk_slot].item()) == expected_id
-                torch.testing.assert_close(dispatch_out.weights[metadata_row, topk_slot], expected_weight)
+                torch.testing.assert_close(actual_weight, expected_weight)
                 if expected_local:
                     assert torch.equal(dispatch_out.tokens[route_idx], all_x[source_rank, token_idx])
 
@@ -606,6 +621,13 @@ def main():
         assert num_topk <= args.num_active_ranks * num_local_experts
         scores[:, args.num_active_ranks * num_local_experts :] = float("-inf")
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
+    if args.force_duplicate_routes:
+        duplicate_rank_routes = min(2, num_topk, num_local_experts)
+        topk_idx[0, :duplicate_rank_routes] = torch.arange(
+            duplicate_rank_routes,
+            dtype=topk_idx.dtype,
+            device=topk_idx.device,
+        )
     topk_weights = (
         None if args.no_weights else torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
     )
@@ -626,6 +648,7 @@ def main():
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=invalid_token_expert_id,
+        deduplicate_expanded_routes=args.deduplicate_expanded_routes,
         rank_major_route_weights_in_combine=args.rank_major_route_weights_in_combine,
         quant=dispatch_quant,
     )
