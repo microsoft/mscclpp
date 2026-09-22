@@ -199,12 +199,19 @@ def simulated_gemm_output(dispatch_out):
 
 
 def simulated_rank_major_route_output(dispatch_out):
-    """Return one weighted BF16 output row per rank-major top-k route."""
+    """Return one unweighted BF16 output row per rank-major top-k route."""
     tokens = dequantized_dispatch_tokens(dispatch_out)
     assert dispatch_out.topk_ids is not None
-    assert dispatch_out.weights is not None
-    weights = dispatch_out.weights.masked_fill(dispatch_out.topk_ids < 0, 0.0)
-    return (tokens.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
+    valid_routes = dispatch_out.topk_ids >= 0
+    return (
+        tokens.unsqueeze(1)
+        .expand(-1, valid_routes.size(1), -1)
+        .masked_fill(
+            ~valid_routes.unsqueeze(-1),
+            0.0,
+        )
+        .contiguous()
+    )
 
 
 def stage_simulated_gemm_output(dispatch_out):
@@ -484,13 +491,6 @@ def expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_r
     return expected.to(torch.bfloat16)
 
 
-def expected_rank_major_route_output(reference_x, topk_idx, topk_weights):
-    """Reference for BF16 route stores followed by source-local FP32 reduction."""
-    weights = (topk_idx >= 0).float() if topk_weights is None else topk_weights.masked_fill(topk_idx < 0, 0.0)
-    routes = (reference_x.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
-    return routes.float().sum(dim=1).to(torch.bfloat16)
-
-
 def main():
     args = parse_args()
     rank, num_ranks, _, group = init_dist()
@@ -729,9 +729,7 @@ def main():
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
     # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
-    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
-        expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
-    elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+    if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
         expected = expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
     else:
         expected = expected_direct_send_output(reference_x, topk_idx, topk_weights)

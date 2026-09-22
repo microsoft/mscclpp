@@ -38,8 +38,9 @@ enum class CombineMode {
   RANK_LOCAL_REDUCE,
   /// Reduce all contributions on the source rank.
   ///
-  /// Expert-major sends every expert row. Rank-major consumes one weighted
-  /// route row per top-k lane and performs the top-k reduction in combine.
+  /// Expert-major sends every expert row. Rank-major consumes one unweighted
+  /// BF16 route row per top-k lane, applies its routing weight, and performs
+  /// the top-k reduction in combine.
   DIRECT_SEND
 };
 

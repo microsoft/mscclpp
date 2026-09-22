@@ -126,6 +126,7 @@ class _RankMajorCombineContext:
     """Combine context for fixed-stride rank-major output."""
 
     topk_ids: torch.Tensor
+    weights: Optional[torch.Tensor]
     num_experts: int
     num_tokens: int
     hidden_size: int

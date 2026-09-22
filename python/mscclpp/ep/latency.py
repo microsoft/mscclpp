@@ -251,6 +251,7 @@ class LatencyRuntime(Runtime):
                 output_info=output_info,
                 _context=_RankMajorCombineContext(
                     topk_ids=topk_ids,
+                    weights=weights,
                     num_experts=mode_context.num_experts,
                     num_tokens=input.size(0),
                     hidden_size=mode_context.hidden_size,
@@ -280,7 +281,7 @@ class LatencyRuntime(Runtime):
             active_capacity = mode_context.max_tokens_per_rank
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
-            topk_weights = None
+            topk_weights = context.weights
             src_info = None
             layout_range = None
         else:
