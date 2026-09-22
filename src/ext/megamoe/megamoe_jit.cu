@@ -136,7 +136,7 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.tileK = jit::detail::TileK;
   api.loadStages = jit::detail::LoadStages;
   api.transformStages = jit::detail::TransformStages;
-  api.clusterSize = 2;
+  api.clusterSize = jit::detail::ClusterM;
   api.accumulatorStages = 2;
   api.architecture = 1000;
   std::memcpy(api.kernelId, JitId, sizeof(JitId));

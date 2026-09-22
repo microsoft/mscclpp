@@ -24,8 +24,8 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   auto& s = *reinterpret_cast<SharedStorage<E5M2, Local>*>(storage);
   int warp = threadIdx.x / 32;
   int lane = threadIdx.x % 32;
-  int cta = blockIdx.x % 2;
-  int cluster = blockIdx.x / 2;
+  int cta = blockIdx.x % ClusterM;
+  int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
   const int intermediate = p.config.intermediate;
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
@@ -89,7 +89,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   auto acc = Mainloop::TiledMma::make_fragment_C(append(fc1.partition_accumulator_shape(), _2{}));
   acc.data() = s.tmem;
   int tokenBlocks = Local ? (tokens + KernelTileN - 1) / KernelTileN : p.workspace.control->tokenBlocks;
-  int tasks = tokenBlocks * (intermediate / 128 + (hidden + 255) / 256);
+  int tasks = tokenBlocks * (fc1TaskTiles<Local>(intermediate) + fc2TaskTiles<Local>(hidden));
   int localExperts = p.config.numExperts / p.config.worldSize;
   ProblemShape shape1{2 * intermediate, p.workspace.poolRows, hidden, localExperts};
   ProblemShape shape2{hidden, p.workspace.poolRows, intermediate, localExperts};

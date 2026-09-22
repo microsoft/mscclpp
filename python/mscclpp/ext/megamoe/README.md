@@ -26,7 +26,7 @@ architecture list. Install a compatible Torch CUDA wheel separately.
 
 `src/ext/megamoe/megamoe.cu` constructs pipelines and dispatches warp roles.
 Compile-time tuning policy is isolated in `megamoe_specialization.hpp`: routed
-N/K tiles, pipeline depths, and the routed/local warp schedules. The schedules
+M/N/K tiles, pipeline depths, and the routed/local warp schedules. The schedules
 assign epilogue, MMA, LoadA, LoadB, dispatch, and transform work; compile-time
 checks enforce the fixed four-warp compute groups and nonoverlapping roles.
 Fixed role implementations live in `megamoe_roles.cuh`, while
@@ -161,8 +161,9 @@ hardware HBM traffic.
 
 `--input-mode direct` initializes registered inputs before timing; it does not
 include their producer. `--no-graph` selects ordinary launches instead of CUDA
-Graphs. `--tile-n`, `--tile-k`, `--load-stages`, and `--transform-stages`
-select a routed JIT specialization; defaults select the precompiled kernel.
+Graphs. `--tile-m`, `--tile-n`, `--tile-k`, `--load-stages`, and
+`--transform-stages` select a routed JIT specialization; defaults select the
+precompiled kernel.
 
 ### Complete synthetic MoE layer
 
@@ -265,23 +266,26 @@ counts. Profiler samples can be distorted and must not replace unprofiled latenc
 
 ### JIT kernel specializations
 
-JIT compiles the **same native CUDA template** with different token/reduction
-tiles and pipeline depths, leaving M256, two-CTA clusters, two accumulator
-stages, packed conversion, numerical semantics, and the local shared kernel
-unchanged. Routed `tile_k` supports 32, 64, and 128; the local shared kernel
-remains K128. The default N32/K128/load8/transform7 kernel remains precompiled
-and needs no compiler.
+JIT compiles the **same native CUDA template** with different output-feature,
+token, and reduction tiles plus pipeline depths, leaving two-CTA clusters, two
+accumulator stages, packed conversion, numerical semantics, and the local shared
+kernel unchanged. Routed `tile_m` supports 128 and 256, and `tile_k` supports
+32, 64, and 128; M128 requires K64 or K128 so every scale transaction remains
+128-byte aligned. The local shared kernel remains M256/K128. The default
+M256/N32/K128/load8/transform7 kernel remains precompiled and needs no compiler.
 
 ```python
 from mscclpp.ext.megamoe import KernelConfig, compile_kernel, MegaMoE
 
-kernel = compile_kernel(KernelConfig(tile_n=64, load_stages=6, transform_stages=6, tile_k=64))
+kernel = compile_kernel(
+    KernelConfig(tile_m=128, tile_n=64, load_stages=6, transform_stages=6, tile_k=64)
+)
 moe = MegaMoE(config, communicator, fc1, fc1_scale, fc2, fc2_scale, kernel=kernel)
 ```
 
 Prepare modules outside collective construction and CUDA Graph capture.
 `load_stages` jointly controls raw weights, scales, and activation prefetch;
-`transform_stages` controls converted weights in TMEM. N, K, and stage counts
+`transform_stages` controls converted weights in TMEM. M, N, K, and stage counts
 must fit TMEM, compiled shared memory, registers, and resident-cluster limits.
 `moe.kernel_id`, `moe.kernel_config`, and `moe.shared_bytes` report the selection.
 
@@ -309,10 +313,12 @@ or changes the selected variant. All ranks must select the same variant.
 
 [`megamoe_tuning.json`](megamoe_tuning.json) lists kernel candidates, resource
 splits, shape overrides, and inclusive token buckets with representative samples.
-The default keeps K128 and tunes N32/load8/transform7, N32/load6/transform7,
-N64/load6/transform6, and N128/load4/transform4 at the same 32/32 resource
-split. Add `tile_k` variants to a custom tuning file to search K32 or K64. The
-shared kernel is not retuned.
+The default keeps M256/K128 and tunes N32/load8/transform7,
+N32/load6/transform7, N64/load6/transform6, and N128/load4/transform4 at the
+same 32/32 resource split. Add `tile_m` or `tile_k` variants to a custom tuning
+file to search workload-specific M128, K32, or K64 variants. M128 is not in the
+default search because it increases task count substantially for the default
+H4096/I4352 shape. The shared kernel is not retuned.
 
 ```bash
 torchrun --nnodes=1 --nproc-per-node=4 \

@@ -16,7 +16,7 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 using TileShape = cute::Shape<cute::Int<TileM>, cute::Int<TileN>, cute::Int<TileK>>;
-using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;
+using ClusterShape = cute::Shape<cute::Int<ClusterM>, cute::_1, cute::_1>;
 using ProblemShape = cute::Shape<int, int, int, int>;
 using ScaleConfig = cutlass::detail::Sm100MixedInputBlockwiseScaleConfig<1, 32>;
 

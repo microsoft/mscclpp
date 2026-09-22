@@ -103,9 +103,9 @@ struct JitModule {
     if (!api || api->abiVersion != MSCCLPP_MEGAMOE_JIT_ABI_VERSION || api->structBytes != sizeof(MegaMoeJitApiV1))
       throw std::invalid_argument("MegaMoE JIT module ABI version or function-table size mismatch");
     if (api->configBytes != sizeof(MegaMoeJitConfigV1) || api->weightsBytes != sizeof(MegaMoeJitWeightsV1) ||
-        api->layoutBytes != sizeof(MegaMoeJitLayoutV1) || api->tileM != detail::TileM ||
-        (api->tileK != 32 && api->tileK != 64 && api->tileK != 128) || api->clusterSize != 2 ||
-        api->accumulatorStages != 2 || api->architecture != 1000)
+        api->layoutBytes != sizeof(MegaMoeJitLayoutV1) || (api->tileM != 128 && api->tileM != 256) ||
+        (api->tileM == 128 && api->tileK == 32) || (api->tileK != 32 && api->tileK != 64 && api->tileK != 128) ||
+        api->clusterSize != detail::ClusterM || api->accumulatorStages != 2 || api->architecture != 1000)
       throw std::invalid_argument("MegaMoE JIT module metadata does not match the native ABI");
     if (std::memcmp(api->kernelId, id.c_str(), MSCCLPP_MEGAMOE_JIT_ID_CAPACITY))
       throw std::invalid_argument("MegaMoE JIT module kernel_id does not match the requested specialization");
@@ -143,7 +143,7 @@ size_t product(std::initializer_list<size_t> factors) {
 struct RankInfo {
   std::array<int, 9> config;
   int tag = 0;
-  std::array<int, 4> specialization;
+  std::array<int, 5> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
   size_t symmetricBytes = 0;
   size_t privateBytes = 0;
@@ -316,13 +316,13 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
                                  size_t(layout.tokenCount)};
       p.workspaceBytes = size_t(layout.privateBytes);
       p.resources = KernelResources{layout.ctaCount, p.device, size_t(layout.sharedBytes)};
-      if (!p.layout.bytes || !p.workspaceBytes || !p.resources.sharedBytes || p.resources.ctas < 2 ||
-          p.resources.ctas % 2 || layout.reserved)
+      if (!p.layout.bytes || !p.workspaceBytes || !p.resources.sharedBytes || p.resources.ctas < detail::ClusterM ||
+          p.resources.ctas % detail::ClusterM || layout.reserved)
         throw std::invalid_argument("MegaMoE JIT preflight returned invalid workspace or occupancy metadata");
     }
     info = rankInfo(c, p.device);
     info.tag = tag;
-    info.specialization = {kernelTileN(), kernelTileK(), kernelLoadStages(), kernelTransformStages()};
+    info.specialization = {kernelTileM(), kernelTileN(), kernelTileK(), kernelLoadStages(), kernelTransformStages()};
     std::memcpy(info.kernelId, p.kernelId.c_str(), p.kernelId.size() + 1);
     info.symmetricBytes = p.layout.bytes;
     info.privateBytes = p.workspaceBytes;
@@ -416,6 +416,7 @@ size_t MegaMoeContext::sharedBytes() const { return impl_->resources.sharedBytes
 size_t MegaMoeContext::symmetricBytes() const { return impl_->layout.bytes; }
 size_t MegaMoeContext::privateBytes() const { return impl_->workspaceBytes; }
 const std::string& MegaMoeContext::kernelId() const { return impl_->kernelId; }
+int MegaMoeContext::kernelTileM() const { return impl_->module ? impl_->module->api->tileM : detail::TileM; }
 int MegaMoeContext::kernelTileN() const { return impl_->module ? impl_->module->api->tileN : detail::TileN; }
 int MegaMoeContext::kernelTileK() const { return impl_->module ? impl_->module->api->tileK : detail::TileK; }
 int MegaMoeContext::kernelLoadStages() const {

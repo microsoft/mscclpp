@@ -32,12 +32,12 @@ VERSION = 1
 PROFILE_KIND = "mscclpp-native-megamoe-profiles"
 DEFAULT_RESOURCE_SPLIT = {"route_sm_margin": 32, "shared_sms": 32}
 DEFAULT_KERNELS = [
-    {"tile_n": 32, "load_stages": 8, "transform_stages": 7, "tile_k": 128},
-    {"tile_n": 32, "load_stages": 6, "transform_stages": 7, "tile_k": 128},
-    {"tile_n": 64, "load_stages": 6, "transform_stages": 6, "tile_k": 128},
-    {"tile_n": 128, "load_stages": 4, "transform_stages": 4, "tile_k": 128},
+    {"tile_m": 256, "tile_n": 32, "load_stages": 8, "transform_stages": 7, "tile_k": 128},
+    {"tile_m": 256, "tile_n": 32, "load_stages": 6, "transform_stages": 7, "tile_k": 128},
+    {"tile_m": 256, "tile_n": 64, "load_stages": 6, "transform_stages": 6, "tile_k": 128},
+    {"tile_m": 256, "tile_n": 128, "load_stages": 4, "transform_stages": 4, "tile_k": 128},
 ]
-KERNEL_FIELDS = ("tile_n", "load_stages", "transform_stages", "tile_k")
+KERNEL_FIELDS = ("tile_m", "tile_n", "load_stages", "transform_stages", "tile_k")
 REQUIRED_KERNEL_FIELDS = ("tile_n", "load_stages", "transform_stages")
 SHAPE_FIELDS = ("original_hidden", "hidden", "intermediate", "shared_intermediate", "top_k")
 FRONTEND_FIELDS = (

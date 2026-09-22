@@ -7,6 +7,9 @@
 #ifndef MSCCLPP_MEGAMOE_TILE_N
 #define MSCCLPP_MEGAMOE_TILE_N 32
 #endif
+#ifndef MSCCLPP_MEGAMOE_TILE_M
+#define MSCCLPP_MEGAMOE_TILE_M 256
+#endif
 #ifndef MSCCLPP_MEGAMOE_TILE_K
 #define MSCCLPP_MEGAMOE_TILE_K 128
 #endif
@@ -26,7 +29,8 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 // Performance-tunable tile and pipeline policy.
-constexpr int TileM = 256;
+constexpr int ClusterM = 2;
+constexpr int TileM = MSCCLPP_MEGAMOE_TILE_M;
 constexpr int TileN = MSCCLPP_MEGAMOE_TILE_N;
 constexpr int TileK = MSCCLPP_MEGAMOE_TILE_K;
 constexpr int LoadStages = MSCCLPP_MEGAMOE_LOAD_STAGES;
@@ -34,8 +38,11 @@ constexpr int TransformStages = MSCCLPP_MEGAMOE_TRANSFORM_STAGES;
 constexpr int LocalTileM = 256;
 constexpr int LocalTileN = 128;
 constexpr int LocalTileK = 128;
+static_assert(TileM == 128 || TileM == 256, "MegaMoE routed M must be 128 or 256");
 static_assert(TileN > 0 && TileN % 32 == 0, "MegaMoE routed N must be a positive multiple of 32");
 static_assert(TileK == 32 || TileK == 64 || TileK == 128, "MegaMoE routed K must be 32, 64, or 128");
+static_assert(TileM == 256 || TileK >= 64, "MegaMoE M128 requires K64 or K128 for 128B scale transactions");
+static_assert(TileM % (ClusterM * 32) == 0, "MegaMoE per-CTA M must preserve gate/up K32 packing");
 static_assert(LoadStages > 0 && TransformStages > 0, "MegaMoE pipeline depths must be positive");
 static_assert(2 * TileN + TileK / 2 * TransformStages <= 512, "MegaMoE specialization exceeds 512 TMEM columns");
 static_assert((TileN == 32 && LoadStages == 8 && TransformStages == 7) ||
@@ -43,6 +50,16 @@ static_assert((TileN == 32 && LoadStages == 8 && TransformStages == 7) ||
                   (TileN == 64 && LoadStages == 6 && TransformStages == 6) ||
                   (TileN == 128 && LoadStages == 4 && TransformStages == 4),
               "Unsupported MegaMoE routed specialization");
+
+template <bool Local>
+struct TilePolicy {
+  static constexpr int M = Local ? LocalTileM : TileM;
+  static constexpr int N = Local ? LocalTileN : TileN;
+  static constexpr int K = Local ? LocalTileK : TileK;
+  static constexpr int CtaM = M / ClusterM;
+  static constexpr int Fc1M = M / 2;
+  static constexpr int CtaFc1M = CtaM / 2;
+};
 
 // Performance-tunable warp assignments. The role implementations and pipeline
 // types are independent of these physical warp IDs.

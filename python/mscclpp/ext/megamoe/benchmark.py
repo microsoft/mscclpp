@@ -76,6 +76,7 @@ def main():
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--tile-m", type=int, default=256)
     parser.add_argument("--tile-n", type=int, default=32)
     parser.add_argument("--load-stages", type=int, default=8)
     parser.add_argument("--transform-stages", type=int, default=7)
@@ -107,7 +108,7 @@ def main():
         parser.error("native MegaMoE requires SM100 CUDA GPUs")
     torch.cuda.set_device(local_rank)
     kernel = compile_kernel(
-        KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k),
+        KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m),
         cache_dir=args.cache_dir,
     )
     torch.manual_seed(args.seed + rank)

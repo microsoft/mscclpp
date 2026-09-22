@@ -21,7 +21,7 @@ import time
 
 @dataclass(frozen=True)
 class KernelConfig:
-    """Routed-kernel specialization; M256, local shared, and precision stay fixed.
+    """Routed-kernel specialization; local shared and precision stay fixed.
 
     ``load_stages`` controls raw weights, scales, and activations together.
     ``transform_stages`` controls the converted BF16 weights in TMEM.
@@ -31,9 +31,11 @@ class KernelConfig:
     load_stages: int = 8
     transform_stages: int = 7
     tile_k: int = 128
+    tile_m: int = 256
 
     def __post_init__(self):
         for name, allowed in (
+            ("tile_m", (128, 256)),
             ("tile_n", (32, 64, 128)),
             ("load_stages", (4, 6, 8)),
             ("transform_stages", (2, 3, 4, 5, 6, 7)),
@@ -49,6 +51,8 @@ class KernelConfig:
             (128, 4, 4),
         ):
             raise ValueError("unsupported tile_n/load_stages/transform_stages combination")
+        if self.tile_m == 128 and self.tile_k == 32:
+            raise ValueError("tile_m=128 requires tile_k=64 or 128")
         if 2 * self.tile_n + self.tile_k // 2 * self.transform_stages > 512:
             raise ValueError("kernel configuration exceeds the 512-column TMEM budget")
 
@@ -353,6 +357,7 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 f'-DMSCCLPP_MEGAMOE_JIT_ID="{key}"',
                 f"-DMSCCLPP_MEGAMOE_TILE_N={config.tile_n}",
                 f"-DMSCCLPP_MEGAMOE_TILE_K={config.tile_k}",
+                f"-DMSCCLPP_MEGAMOE_TILE_M={config.tile_m}",
                 f"-DMSCCLPP_MEGAMOE_LOAD_STAGES={config.load_stages}",
                 f"-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES={config.transform_stages}",
             ]

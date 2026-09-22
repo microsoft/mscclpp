@@ -29,19 +29,25 @@ __device__ __forceinline__ void epilogue(
     __bfloat16* directOutput, int hidden, int intermediate) {
 #if MSCCLPP_BULK_AVAILABLE
   using namespace cute;
-  constexpr int KernelTileN = LocalMode ? LocalTileN : TileN;
-  auto matrix = coalesce(accumulators(_, _, _, state.index()));
-  CUTE_STATIC_ASSERT_V(size<0>(matrix) == _128{});
+  constexpr bool Local = LocalMode != 0;
+  using Tiles = TilePolicy<Local>;
+  constexpr int KernelTileN = Tiles::N;
+  constexpr int CtaTileM = Tiles::CtaM;
+  constexpr int CtaFc1M = Tiles::CtaFc1M;
+  constexpr int FoldedValuesPerThread = EpilogueTokens * CtaFc1M / 128;
+  static_assert(EpilogueTokens * CtaFc1M % 128 == 0);
+  auto matrix = accumulators(make_coord(_, _), _0{}, _0{}, state.index());
+  CUTE_STATIC_ASSERT_V(size<0>(matrix) == Int<CtaTileM>{});
   CUTE_STATIC_ASSERT_V(size<1>(matrix) == Int<KernelTileN>{});
   pipeline.consumer_wait(state);
   for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += EpilogueTokens) {
     int validRows = min(int(EpilogueTokens), task.tokens.rows - tokenOffset);
-    auto acc =
-        local_tile(matrix, make_shape(_128{}, Int<EpilogueTokens>{}), make_coord(0, tokenOffset / EpilogueTokens));
+    auto acc = local_tile(matrix, make_shape(Int<CtaTileM>{}, Int<EpilogueTokens>{}),
+                          make_coord(0, tokenOffset / EpilogueTokens));
     auto copyOp = make_tmem_copy(SM100_TMEM_LOAD_32dp32b8x{}, acc);
     auto threadCopy = copyOp.get_slice(threadIdx.x);
     auto source = threadCopy.partition_S(acc);
-    auto identity = make_identity_tensor(make_shape(_128{}, Int<EpilogueTokens>{}));
+    auto identity = make_identity_tensor(make_shape(Int<CtaTileM>{}, Int<EpilogueTokens>{}));
     auto coordinates = threadCopy.partition_D(identity);
     auto values = make_tensor<float>(shape(coordinates));
     copy(copyOp, source, values);
@@ -51,15 +57,15 @@ __device__ __forceinline__ void epilogue(
       CUTE_UNROLL
       for (int i = 0; i < size(values); ++i) {
         auto coord = coordinates(i);
-        s.epilogue.scratch[(int(get<0>(coord)) % 128) * ScratchStride + int(get<1>(coord))] = values(i);
+        s.epilogue.scratch[(int(get<0>(coord)) % CtaTileM) * ScratchStride + int(get<1>(coord))] = values(i);
       }
       cutlass::arch::NamedBarrier::sync(128, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-      __bfloat16 folded[EpilogueTokens / 2];
+      __bfloat16 folded[FoldedValuesPerThread];
       CUTE_UNROLL
-      for (int j = 0; j < EpilogueTokens / 2; ++j) {
+      for (int j = 0; j < FoldedValuesPerThread; ++j) {
         int i = threadIdx.x + j * 128;
-        int token = i / 64;
-        int feature = i % 64;
+        int token = i / CtaFc1M;
+        int feature = i % CtaFc1M;
         if (token < validRows) {
           int gateRow = feature / 16 * 32 + feature % 16;
           float gate = s.epilogue.scratch[gateRow * ScratchStride + token];
@@ -84,7 +90,7 @@ __device__ __forceinline__ void epilogue(
           }
           folded[j] = active ? __bfloat16(swiglu(gate, up, probability)) : __bfloat16(0.0f);
           if constexpr (LocalMode != 0) {
-            int column = task.m * 128 + (blockIdx.x % 2) * 64 + feature;
+            int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
             p.workspace.hidden[size_t(row) * intermediate + column] = folded[j];
           }
         }
@@ -98,9 +104,9 @@ __device__ __forceinline__ void epilogue(
       // Every FP32 reader must finish before the same storage becomes a BF16 tile.
       cutlass::arch::NamedBarrier::sync(128, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
       CUTE_UNROLL
-      for (int j = 0; j < EpilogueTokens / 2; ++j) {
+      for (int j = 0; j < FoldedValuesPerThread; ++j) {
         int i = threadIdx.x + j * 128;
-        if (i < validRows * 64) s.epilogue.packed[i] = folded[j];
+        if (i < validRows * CtaFc1M) s.epilogue.packed[i] = folded[j];
       }
     } else {
       CUTE_UNROLL
@@ -111,7 +117,7 @@ __device__ __forceinline__ void epilogue(
           int row = task.block * KernelTileN + tokenOffset + int(get<1>(coord));
           if (int(get<1>(coord)) < validRows) active = at<int>(p.local, p.symmetric.topkIds)[row] == 0;
         }
-        s.epilogue.packed[int(get<1>(coord)) * 128 + int(get<0>(coord)) % 128] =
+        s.epilogue.packed[int(get<1>(coord)) * CtaTileM + int(get<0>(coord)) % CtaTileM] =
             active ? __bfloat16(values(i)) : __bfloat16(0.0f);
       }
     }
@@ -119,14 +125,14 @@ __device__ __forceinline__ void epilogue(
     cutlass::arch::NamedBarrier::sync(128, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
     if constexpr (LocalMode != 0) {
       if (!task.fc1 && (reinterpret_cast<uintptr_t>(directOutput) & 15) != 0) {
-        int feature = task.m * 256 + (blockIdx.x % 2) * 128;
+        int feature = task.m * Tiles::M + (blockIdx.x % ClusterM) * CtaTileM;
         if (feature < hidden) {
           for (int token = threadIdx.x / 32; token < validRows; token += 4) {
             size_t offset = size_t(task.block * KernelTileN + tokenOffset + token) * hidden + feature;
             auto* destination = directOutput + offset;
-            auto* source = s.epilogue.packed + token * 128;
+            auto* source = s.epilogue.packed + token * CtaTileM;
             // Preserve support for contiguous BF16 views with unaligned storage offsets.
-            mscclpp::detail::copy<__bfloat16>(destination, source, 128, threadIdx.x % 32, 32);
+            mscclpp::detail::copy<__bfloat16>(destination, source, CtaTileM, threadIdx.x % 32, 32);
           }
         }
         cutlass::arch::NamedBarrier::sync(128, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
@@ -134,8 +140,8 @@ __device__ __forceinline__ void epilogue(
       }
     }
     if (threadIdx.x % 32 == 0) {
-      int width = task.fc1 ? 64 : 128;
-      int feature = task.m * width * 2 + (blockIdx.x % 2) * width;
+      int width = task.fc1 ? CtaFc1M : CtaTileM;
+      int feature = task.m * width * ClusterM + (blockIdx.x % ClusterM) * width;
       for (int token = threadIdx.x / 32; token < validRows; token += 4) {
         if (task.fc1) {
           auto output =

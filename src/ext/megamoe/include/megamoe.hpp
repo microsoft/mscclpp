@@ -54,6 +54,8 @@ class MegaMoeContext {
   size_t privateBytes() const;
   /// Return the specialization digest, or "builtin" for the builtin module.
   const std::string& kernelId() const;
+  /// Return the routed output-feature tile width (the shared expert always uses 256).
+  int kernelTileM() const;
   /// Return the routed token tile width (the shared expert always uses 128).
   int kernelTileN() const;
   /// Return the routed reduction tile width (the shared expert always uses 128).

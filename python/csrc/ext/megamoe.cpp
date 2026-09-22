@@ -90,6 +90,7 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("symmetric_bytes", &MegaMoeContext::symmetricBytes)
       .def_prop_ro("private_bytes", &MegaMoeContext::privateBytes)
       .def_prop_ro("kernel_id", &MegaMoeContext::kernelId)
+      .def_prop_ro("kernel_tile_m", &MegaMoeContext::kernelTileM)
       .def_prop_ro("kernel_tile_n", &MegaMoeContext::kernelTileN)
       .def_prop_ro("kernel_tile_k", &MegaMoeContext::kernelTileK)
       .def_prop_ro("kernel_load_stages", &MegaMoeContext::kernelLoadStages)

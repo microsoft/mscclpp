@@ -32,11 +32,13 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   const size_t experts = c.numExperts / c.worldSize;
   const size_t routes = size_t(c.worldSize) * c.maxTokens * c.topK;
   const bool local = isLocalExpert(c);
+  const int tileM = local ? LocalTileM : TileM;
   const int tileN = local ? LocalTileN : TileN;
   const size_t rows =
       local ? aligned(c.maxTokens, LocalTokenAlignment) : aligned(routes + experts * (tileN - 1), tileN);
   if (rows > size_t(std::numeric_limits<int>::max()) ||
-      (rows + tileN - 1) / tileN * ((2 * size_t(c.intermediate) + 255) / 256 + (size_t(c.hidden) + 255) / 256) >
+      (rows + tileN - 1) / tileN *
+              ((2 * size_t(c.intermediate) + tileM - 1) / tileM + (size_t(c.hidden) + tileM - 1) / tileM) >
           size_t(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("MegaMoE routing workspace exceeds 32-bit tile indexing");
   }
@@ -196,7 +198,7 @@ KernelResources preflightKernel(const NativeConfig& c) {
     throw std::invalid_argument("Native MegaMoE currently requires an SM100 GPU");
   if (c.smMargin > properties.multiProcessorCount - 2)
     throw std::invalid_argument("MegaMoE smMargin must leave at least two SMs");
-  resources.ctas = (properties.multiProcessorCount - c.smMargin) / 2 * 2;
+  resources.ctas = (properties.multiProcessorCount - c.smMargin) / detail::ClusterM * detail::ClusterM;
   auto configure = [&]<bool E5M2, int LocalMode>() {
     constexpr bool Local = LocalMode != 0;
     constexpr int Entry = Local ? detail::LocalEntryRegisters : detail::EntryRegisters;
@@ -212,7 +214,7 @@ KernelResources preflightKernel(const NativeConfig& c) {
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
     cudaLaunchAttribute attribute{};
     attribute.id = cudaLaunchAttributeClusterDimension;
-    attribute.val.clusterDim = {2, 1, 1};
+    attribute.val.clusterDim = {detail::ClusterM, 1, 1};
     cudaLaunchConfig_t launch{};
     launch.gridDim = dim3(resources.ctas);
     launch.blockDim = dim3(Local ? detail::LocalThreads : detail::Threads);
@@ -221,8 +223,8 @@ KernelResources preflightKernel(const NativeConfig& c) {
     launch.numAttrs = 1;
     int clusters = 0;
     MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
-    resources.ctas = std::min(resources.ctas, clusters * 2);
-    if (resources.ctas < 2) throw std::runtime_error("MegaMoE cannot keep a two-CTA cluster resident");
+    resources.ctas = std::min(resources.ctas, clusters * detail::ClusterM);
+    if (resources.ctas < detail::ClusterM) throw std::runtime_error("MegaMoE cannot keep a two-CTA cluster resident");
   };
   if (detail::isLocalExpert(c)) {
     if (c.weightE5M2) {
@@ -285,7 +287,7 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
         }
         cudaLaunchAttribute attribute{};
         attribute.id = cudaLaunchAttributeClusterDimension;
-        attribute.val.clusterDim = {2, 1, 1};
+        attribute.val.clusterDim = {detail::ClusterM, 1, 1};
         cudaLaunchConfig_t launch{};
         launch.gridDim = dim3(plan->ctas);
         launch.blockDim = dim3(plan->localExpert ? detail::LocalThreads : detail::Threads);

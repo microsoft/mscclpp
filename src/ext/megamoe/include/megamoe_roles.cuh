@@ -10,11 +10,26 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
+template <bool Local>
+__device__ __forceinline__ int fc1TaskTiles(int intermediate) {
+  return 2 * intermediate / TilePolicy<Local>::M;
+}
+
+template <bool Local>
+__device__ __forceinline__ int fc2TaskTiles(int hidden) {
+  return (hidden + TilePolicy<Local>::M - 1) / TilePolicy<Local>::M;
+}
+
+template <bool Local>
+__device__ __forceinline__ int fc1CompletionCount(int intermediate) {
+  return ClusterM * fc1TaskTiles<Local>(intermediate);
+}
+
 template <bool E5M2, bool Local>
 __device__ Task taskAt(const Parameters<E5M2, Local>& p, int ordinal, int tokens, int hidden, int intermediate) {
   constexpr int KernelTileN = Local ? LocalTileN : TileN;
-  int fc1Tiles = intermediate / 128;
-  int fc2Tiles = (hidden + 255) / 256;
+  int fc1Tiles = fc1TaskTiles<Local>(intermediate);
+  int fc2Tiles = fc2TaskTiles<Local>(hidden);
   int tokenBlocks = Local ? (tokens + KernelTileN - 1) / KernelTileN : p.workspace.control->tokenBlocks;
   int fc1Tasks = tokenBlocks * fc1Tiles;
   bool fc1 = ordinal < fc1Tasks;
@@ -46,7 +61,7 @@ __device__ __forceinline__ void runEpilogueRole(const Parameters<E5M2, (LocalMod
   constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
   typename Accumulate::PipelineState state;
-  for (int i = cluster; i < tasks; i += gridDim.x / 2)
+  for (int i = cluster; i < tasks; i += gridDim.x / ClusterM)
     epilogue<E5M2, LocalMode>(p, taskAt<E5M2, Local>(p, i, tokens, hidden, intermediate), s, pipeline, state,
                               accumulators, output, hidden, intermediate);
 #if MSCCLPP_BULK_AVAILABLE
@@ -69,7 +84,7 @@ __device__ __forceinline__ void runTransformRole(const Parameters<E5M2, Local>& 
   typename LoadA::PipelineState loadState;
   auto transformState = cutlass::make_producer_start_state<Transform>();
   auto inputs = fc1.transform_init(p.fc1, shape1, accumulators, s.tensors);
-  for (int i = cluster; i < tasks; i += gridDim.x / 2) {
+  for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
     Task task = taskAt<E5M2, Local>(p, i, tokens, hidden, intermediate);
     transformWeights<E5M2, Local>(loadPipeline, loadState, transformPipeline, transformState, inputs,
                                   taskKTiles<Local>(task, hidden, intermediate));
@@ -98,9 +113,9 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
     auto state = cutlass::make_producer_start_state<LoadA>();
     auto load1 = fc1.load_init(shape1, p.fc1, s.tensors);
     auto load2 = fc2.load_init(shape2, p.fc2, s.tensors);
-    for (int i = cluster; i < tasks; i += gridDim.x / 2) {
+    for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
       Task task = taskAt<E5M2, Local>(p, i, tokens, hidden, intermediate);
-      auto coord = make_coord(task.m * 2 + cta, task.block, 0, task.tokens.expert);
+      auto coord = make_coord(task.m * ClusterM + cta, task.block, 0, task.tokens.expert);
       int kTiles = taskKTiles<Local>(task, hidden, intermediate);
       auto iterator = cute::make_coord_iterator(0, kTiles);
       auto result = task.fc1 ? fc1.load_A(p.fc1, aPipeline, state, load1, coord, iterator, kTiles)
@@ -112,15 +127,16 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
     auto state = cutlass::make_producer_start_state<LoadB>();
     auto load1 = fc1.load_init(shape1, p.fc1, s.tensors);
     auto load2 = fc2.load_init(shape2, p.fc2, s.tensors);
-    for (int i = cluster; i < tasks; i += gridDim.x / 2) {
+    for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
       Task task = taskAt<E5M2, Local>(p, i, tokens, hidden, intermediate);
       if constexpr (Local) {
-        if (!task.fc1) waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + task.block, 2 * (intermediate / 128));
+        if (!task.fc1)
+          waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + task.block, fc1CompletionCount<Local>(intermediate));
       } else {
         waitAtLeast<int, scopeDevice>((task.fc1 ? p.workspace.inputReady : p.workspace.hiddenReady) + task.block,
-                                      task.fc1 ? task.tokens.rows : 2 * (intermediate / 128));
+                                      task.fc1 ? task.tokens.rows : fc1CompletionCount<Local>(intermediate));
       }
-      auto coord = make_coord(task.m * 2 + cta, task.block, 0, task.tokens.expert);
+      auto coord = make_coord(task.m * ClusterM + cta, task.block, 0, task.tokens.expert);
       int kTiles = taskKTiles<Local>(task, hidden, intermediate);
       auto iterator = cute::make_coord_iterator(0, kTiles);
       auto result = task.fc1 ? fc1.load_B(p.fc1, bPipeline, state, load1, coord, iterator, kTiles)
@@ -133,7 +149,7 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
     typename Transform::PipelineState tState;
     auto cState = cutlass::make_producer_start_state<Accumulate>();
     auto inputs = fc1.mma_init(accumulators, s.tensors);
-    for (int i = cluster; i < tasks; i += gridDim.x / 2) {
+    for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
       Task task = taskAt<E5M2, Local>(p, i, tokens, hidden, intermediate);
       auto result = mmaTiles<E5M2, Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
                                           taskKTiles<Local>(task, hidden, intermediate));
