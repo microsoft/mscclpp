@@ -78,7 +78,11 @@ class MoECommunicatorConfig:
 
 @dataclass
 class DispatchLayoutInfo:
-    """Physical layout of dispatched tokens and optional rank/expert metadata."""
+    """Physical layout of dispatched tokens and optional rank/expert metadata.
+
+    Expanded per-rank counts include every valid local selection, including
+    duplicates and zero weights; the fixed-stride rows are not compacted.
+    """
 
     kind: DispatchLayout
     num_tokens_per_expert: Optional[Union[torch.Tensor, List[int]]] = None
@@ -98,8 +102,15 @@ class DispatchOutputInfo:
 class DispatchOutput:
     """Dispatch result consumed by the local MLP.
 
-    ``RANK_MAJOR`` tensors alias runtime-owned registered buffers that are
+    ``RANK_MAJOR`` and ``RANK_MAJOR_TOPK_EXPANDED`` alias registered buffers that are
     reused by every dispatch. Clone any result that must outlive the next call.
+
+    Expanded tokens have shape [world_size * capacity * topk, hidden_size],
+    with flat int32 IDs and FP32 weights aligned to each row. Row
+    (source_rank * capacity + source_token) * topk + slot preserves duplicates.
+    Nonlocal, invalid and padding rows carry the invalid ID and zero weight;
+    their payload is unspecified. Write unweighted expert results into the
+    aliased combine_input_buffer. Combine applies original weights once in FP32.
     """
 
     tokens: torch.Tensor
@@ -131,11 +142,11 @@ class _RankMajorCombineContext:
     """Combine context for fixed-stride rank-major output."""
 
     topk_ids: torch.Tensor
-    weights: Optional[torch.Tensor]
     num_experts: int
     num_tokens: int
     hidden_size: int
     max_tokens_per_rank: int
+    weights: Optional[torch.Tensor] = None
 
 
 @dataclass

@@ -193,7 +193,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--ep-layout",
-        choices=["token_major", "rank_major", "rank_major_topk_expanded", "expert_major"],
+        choices=["token_major", "rank_major", "expert_major", "rank_major_topk_expanded"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
         "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
@@ -440,13 +440,34 @@ def run_backend(
     comb_bytes = num_valid_selections * hidden * 2  # BF16 combine output (per ep_bench)
 
     stream = torch.cuda.current_stream()
+    _sync_each_iter_env = os.environ.get("EP_SYNC_EACH_ITER")
+    sync_each_iter = (
+        _sync_each_iter_env == "1"
+        if _sync_each_iter_env is not None
+        else name == "mscclpp"
+        and args.mode == "latency"
+        and args.ep_layout in ("rank_major", "rank_major_topk_expanded")
+        and os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0") == "1"
+    )
+    _debug_pair_env = os.environ.get("EP_DEBUG_PAIR")
+    debug_pair = _debug_pair_env == "1" if _debug_pair_env is not None else sync_each_iter
 
     # --- Warmup (paired). ---
-    for _ in range(warmup):
+    for warmup_idx in range(warmup):
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] warmup {warmup_idx} pair start", flush=True)
         dout = dispatch_fn()
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] warmup {warmup_idx} dispatch returned", flush=True)
         combine_fn(dout)
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] warmup {warmup_idx} combine returned", flush=True)
         stream.synchronize()
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] warmup {warmup_idx} stream synced", flush=True)
         comm.Barrier()
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] warmup {warmup_idx} barrier done", flush=True)
 
     # Kernel-only timing (EP_KERNEL_TIMER=kineto, the default): DeepEP bench_kineto-style
     # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
@@ -459,16 +480,34 @@ def run_backend(
     c_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     c_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
 
-    # --- Timed loop (paired); no per-iter sync/barrier -- kernels pipeline back-to-back. ---
+    # --- Timed loop (paired); no per-iter sync/barrier by default -- kernels pipeline back-to-back. ---
     for i in range(iters):
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] iter {i} pair start", flush=True)
         d_start[i].record(stream)
         dout = dispatch_fn()
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] iter {i} dispatch returned", flush=True)
         d_end[i].record(stream)
         c_start[i].record(stream)
         combine_fn(dout)
+        if debug_pair:
+            print(f"[pairdbg][{name}][rank {rank}] iter {i} combine returned", flush=True)
         c_end[i].record(stream)
+        if sync_each_iter:
+            comm.Barrier()
+            stream.synchronize()
+            if debug_pair:
+                print(f"[pairdbg][{name}][rank {rank}] iter {i} stream synced", flush=True)
+            comm.Barrier()
+            if debug_pair:
+                print(f"[pairdbg][{name}][rank {rank}] iter {i} barrier done", flush=True)
 
+    if debug_pair:
+        print(f"[pairdbg][{name}][rank {rank}] final stream sync start", flush=True)
     torch.cuda.synchronize()
+    if debug_pair:
+        print(f"[pairdbg][{name}][rank {rank}] final stream sync done", flush=True)
 
     ck_disp = ck_comb = 0.0
     inproc_ok = False
@@ -614,6 +653,8 @@ _PARSE_KINETO = {
 
 def main() -> None:
     args = parse_args()
+    if args.ep_layout == "rank_major_topk_expanded" and (args.backend != "mscclpp" or args.mode != "latency"):
+        raise ValueError("rank_major_topk_expanded requires --backend mscclpp --mode latency")
     comm, rank, num_ranks, local_rank = init_mpi()
     # Debug aid: EP_FAULTHANDLER_SECS>0 dumps every thread's Python traceback if the
     # process is still alive after N seconds (surfaces the exact hang location under

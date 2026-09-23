@@ -55,6 +55,7 @@ option(MSCCLPP_BUILD_EXT_EP "Build Expert-Parallel (MoE dispatch/combine) extens
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
+option(MSCCLPP_USE_GPUNETIO "Build the vendored DOCA GPUNetIO (GDAKI) GPU-initiated networking backend for PortChannel." OFF)
 option(MSCCLPP_USE_MRC "Enable MRC support" OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
@@ -102,6 +103,10 @@ else()
     else()
         message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
     endif()
+endif()
+
+if(MSCCLPP_USE_GPUNETIO AND (NOT MSCCLPP_USE_CUDA OR MSCCLPP_USE_ROCM OR NOT MSCCLPP_USE_IB))
+    message(FATAL_ERROR "MSCCLPP_USE_GPUNETIO requires CUDA and InfiniBand (MSCCLPP_USE_CUDA=ON, MSCCLPP_USE_ROCM=OFF, MSCCLPP_USE_IB=ON).")
 endif()
 
 # Code coverage setup

@@ -40,6 +40,19 @@ if(MSCCLPP_USE_GDRCOPY)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_GDRCOPY)
 endif()
 
+if(MSCCLPP_USE_GPUNETIO)
+    # GPU-initiated networking backend for PortChannel (vendored DOCA GPUNetIO).
+    # Link the vendored host object library so the host-side GpuNetIo service can
+    # create QPs / register MRs. The device-side DOCA verbs are opt-in per kernel
+    # (see internal/port_channel_gpunetio_device_impl.hpp) and are intentionally
+    # NOT enabled library-wide, so unrelated device TUs keep the trap definitions.
+    target_link_libraries(mscclpp_obj PRIVATE mscclpp_gpunetio_obj)
+    target_include_directories(mscclpp_obj PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/gpunetio/include
+        ${PROJECT_SOURCE_DIR}/src/gpunetio/include/host)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_HAS_GPUNETIO)
+endif()
+
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 if(MSCCLPP_USE_CUDA)
@@ -66,10 +79,16 @@ endif()
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_link_libraries(mscclpp PUBLIC mscclpp_gpunetio_obj)
+endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
 target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_link_libraries(mscclpp_static PUBLIC mscclpp_gpunetio_obj)
+endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp
