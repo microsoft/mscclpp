@@ -38,35 +38,42 @@ def parse_dtype(dtype_str):
 
 
 def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
-    """Benchmark execution time. `funcs` is a list of callables; iteration i runs funcs[i % len(funcs)]."""
+    """Benchmark execution time, passing a native stream pointer to funcs[i % len(funcs)] each iteration."""
     from mscclpp_benchmark.gpu import (
+        capture_graph,
+        create_stream,
         event_create,
         event_destroy,
         event_elapsed_time,
         event_record,
         event_synchronize,
+        stream_destroy,
     )
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(n_iters):
-            funcs[i % len(funcs)](stream)
-        graph = stream.end_capture()
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    # now run a warm up round
-    graph.launch(stream)
+        def capture_ops() -> None:
+            for i in range(n_iters):
+                funcs[i % len(funcs)](stream_ptr)
 
-    # now run the benchmark and measure time
-    with ExitStack() as events:
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
+
+        # now run a warm up round
+        graph.launch(stream_ptr)
+
+        # now run the benchmark and measure time
         start = event_create()[0]
-        events.callback(event_destroy, start)
+        resources.callback(event_destroy, start)
         end = event_create()[0]
-        events.callback(event_destroy, end)
-        event_record(start, stream.ptr)
+        resources.callback(event_destroy, end)
+        event_record(start, stream_ptr)
         for _ in range(n_graph_iters):
-            graph.launch(stream)
-        event_record(end, stream.ptr)
+            graph.launch(stream_ptr)
+        event_record(end, stream_ptr)
         event_synchronize(end)
 
         return event_elapsed_time(start, end)[0] / n_iters * 1000.0 / n_graph_iters
@@ -84,7 +91,17 @@ def bench_correctness(
     funcs: list[Callable],
     split_mask: int = 0,
 ):
-    """Validate correctness. Buffers and funcs are parallel lists; iteration i uses index i % len(funcs)."""
+    """Validate correctness. Buffers and funcs are parallel lists; iteration i uses index i % len(funcs).
+
+    Callables receive a native stream pointer.
+    """
+    from mscclpp_benchmark.gpu import (
+        capture_graph,
+        create_stream,
+        stream_destroy,
+        stream_synchronize,
+    )
+
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
@@ -112,29 +129,34 @@ def bench_correctness(
     nblocks = 64
     nthreads = 1024
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(n_iters):
-            idx = i % len(funcs)
-            cur_input = input_bufs[idx]
-            cur_result = result_bufs[idx]
-            cur_test = test_bufs[idx]
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-            fill_data_params = (
-                pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
-            )
-            fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
-            funcs[idx](stream)
-            test_data_params = (
-                pack(cur_result, cur_test)
-                + struct.pack("Q", cur_input.nbytes // type_size)
-                + pack(num_ranks, rank, i, split_mask)
-            )
-            test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
-        graph = stream.end_capture()
-    graph.launch(stream)
-    stream.synchronize()
+        def capture_ops() -> None:
+            for i in range(n_iters):
+                idx = i % len(funcs)
+                cur_input = input_bufs[idx]
+                cur_result = result_bufs[idx]
+                cur_test = test_bufs[idx]
+
+                fill_data_params = (
+                    pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
+                )
+                fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream_ptr)
+                funcs[idx](stream_ptr)
+                test_data_params = (
+                    pack(cur_result, cur_test)
+                    + struct.pack("Q", cur_input.nbytes // type_size)
+                    + pack(num_ranks, rank, i, split_mask)
+                )
+                test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream_ptr)
+
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
+        graph.launch(stream_ptr)
+        stream_synchronize(stream)
 
 
 def parse_size(size_str):
@@ -260,7 +282,7 @@ def main(
                 res.nbytes,
                 dtype_to_mscclpp_dtype(dtype_str),
                 execution_plan,
-                stream.ptr,
+                stream,
                 packet_type,
             )
         )

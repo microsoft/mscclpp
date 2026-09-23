@@ -76,7 +76,7 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Union[cp.cuda.Stream, None],
+        stream: Union[int, cp.cuda.Stream, None],
     ):
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
@@ -91,7 +91,9 @@ class Kernel:
             dtype=np.uint64,
         )
         cuda_stream = 0
-        if stream:
+        if isinstance(stream, int):
+            cuda_stream = stream
+        elif stream:
             cuda_stream = stream.ptr if isinstance(stream, cp.cuda.Stream) else stream.cuda_stream
         cp.cuda.driver.launchKernel(
             self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
