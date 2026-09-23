@@ -17,6 +17,8 @@ import pytest
 from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp, is_nvls_supported
 from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
+from mscclpp.utils import get_device_arch
+from mscclpp_benchmark.gpu import device_synchronize
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
@@ -34,7 +36,7 @@ if _is_hip:
         _gcn_arch_name = _gcn_arch_name.decode()
     _gcn_arch_name = _gcn_arch_name.split(":", maxsplit=1)[0]
 _is_cdna4 = _gcn_arch_name.startswith("gfx95")
-_skip_fp8 = not _is_hip and int(cp.cuda.Device().compute_capability) < 89
+_skip_fp8 = not _is_hip and int(get_device_arch().removeprefix("sm_")) < 89
 pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA")
 
 # ---------------------------------------------------------------------------
@@ -265,7 +267,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
         symmetric_memory=True,
         accum_dtype=accum_dtype,
     )
-    cp.cuda.Device().synchronize()
+    device_synchronize()
     assert ret == 0, f"Allreduce failed with error code {ret}"
     return buffer.copy()
 
@@ -329,7 +331,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
         # Copy into symmetric buffer
         buf[:] = src_fp8
-        cp.cuda.Device().synchronize()
+        device_synchronize()
 
         # Run allreduce
         result = run_allreduce(
@@ -425,7 +427,7 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
         # Copy into symmetric buffer
         buf[:] = src_uint8
-        cp.cuda.Device().synchronize()
+        device_synchronize()
 
         # Run allreduce
         result = run_allreduce(
