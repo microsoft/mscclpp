@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from contextlib import ExitStack
+
 import cupy as cp
 from mscclpp_op import (
     MscclppAllReduce1,
@@ -14,7 +16,15 @@ from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
-from mscclpp_benchmark.gpu import device_synchronize, set_device
+from mscclpp_benchmark.gpu import (
+    device_synchronize,
+    event_create,
+    event_destroy,
+    event_elapsed_time,
+    event_record,
+    event_synchronize,
+    set_device,
+)
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
@@ -118,15 +128,17 @@ def bench_time(niter: int, func):
     graph.launch(stream)
 
     # now run the benchmark and measure time
-    start = cp.cuda.Event()
-    end = cp.cuda.Event()
+    with ExitStack() as events:
+        start = event_create()[0]
+        events.callback(event_destroy, start)
+        end = event_create()[0]
+        events.callback(event_destroy, end)
+        event_record(start, stream.ptr)
+        graph.launch(stream)
+        event_record(end, stream.ptr)
+        event_synchronize(end)
 
-    start.record(stream)
-    graph.launch(stream)
-    end.record(stream)
-    end.synchronize()
-
-    return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
+        return event_elapsed_time(start, end)[0] / niter * 1000.0
 
 
 def find_best_algo(mscclpp_algos, niter):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,11 @@ from mscclpp_benchmark.gpu import (
     capture_graph,
     device_name,
     device_synchronize,
+    event_create,
+    event_destroy,
+    event_elapsed_time,
+    event_record,
+    event_synchronize,
     get_device_count,
     init_runtime,
     runtime_name,
@@ -444,16 +450,19 @@ def _measure_case(
         stream.synchronize()
         comm.comm_group.barrier()
 
-        start = cp.cuda.Event()
-        end = cp.cuda.Event()
-        start.record(stream)
-        for _ in range(n_graph_launches):
-            graph.launch(stream)
-        end.record(stream)
-        end.synchronize()
+        with ExitStack() as events:
+            start = event_create()[0]
+            events.callback(event_destroy, start)
+            end = event_create()[0]
+            events.callback(event_destroy, end)
+            event_record(start, stream.ptr)
+            for _ in range(n_graph_launches):
+                graph.launch(stream)
+            event_record(end, stream.ptr)
+            event_synchronize(end)
 
-        elapsed_us = cp.cuda.get_elapsed_time(start, end) * 1000.0 / (n_graph_launches * n_ops_per_graph)
-        return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
+            elapsed_us = event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
+            return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
     finally:
         if graph is not None:
             graph.close()

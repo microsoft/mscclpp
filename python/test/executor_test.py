@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 
 import argparse
+from contextlib import ExitStack
+
 from mscclpp import (
     DataType,
     Executor,
@@ -37,6 +39,14 @@ def parse_dtype(dtype_str):
 
 def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
     """Benchmark execution time. `funcs` is a list of callables; iteration i runs funcs[i % len(funcs)]."""
+    from mscclpp_benchmark.gpu import (
+        event_create,
+        event_destroy,
+        event_elapsed_time,
+        event_record,
+        event_synchronize,
+    )
+
     stream = cp.cuda.Stream(non_blocking=True)
     with stream:
         stream.begin_capture()
@@ -48,16 +58,18 @@ def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
     graph.launch(stream)
 
     # now run the benchmark and measure time
-    start = cp.cuda.Event()
-    end = cp.cuda.Event()
+    with ExitStack() as events:
+        start = event_create()[0]
+        events.callback(event_destroy, start)
+        end = event_create()[0]
+        events.callback(event_destroy, end)
+        event_record(start, stream.ptr)
+        for _ in range(n_graph_iters):
+            graph.launch(stream)
+        event_record(end, stream.ptr)
+        event_synchronize(end)
 
-    start.record(stream)
-    for _ in range(n_graph_iters):
-        graph.launch(stream)
-    end.record(stream)
-    end.synchronize()
-
-    return cp.cuda.get_elapsed_time(start, end) / n_iters * 1000.0 / n_graph_iters
+        return event_elapsed_time(start, end)[0] / n_iters * 1000.0 / n_graph_iters
 
 
 def bench_correctness(
