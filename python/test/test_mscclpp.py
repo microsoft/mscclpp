@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -32,6 +32,7 @@ from mscclpp import (
 )
 from mscclpp import CommGroup, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
+from mscclpp_benchmark.gpu import device_synchronize
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -219,7 +220,7 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
         time.sleep(0.1)
     for conn in connections:
         connections[conn].flush()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     group.barrier()
     assert all_correct
 
@@ -243,7 +244,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     else:
         memory = xp.zeros(nelem, dtype=xp.float32)
     if device == "cuda":
-        cp.cuda.runtime.deviceSynchronize()
+        device_synchronize()
 
     signal_memory = xp.zeros(1, dtype=xp.int64)
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
@@ -262,7 +263,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     if group.my_rank == 0:
         memory[:] = 0
         if device == "cuda":
-            cp.cuda.runtime.deviceSynchronize()
+            device_synchronize()
     connections[next_rank].update_and_sync(
         all_signal_memories[next_rank], 0, dummy_memory_on_cpu.ctypes.data, signal_val
     )
@@ -468,7 +469,7 @@ def test_h2d_semaphores(mpi_group: MpiGroup, connection_type: str):
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(signal, semaphores)
 
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     group.barrier()
 
 
@@ -481,7 +482,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
     group.barrier()
     kernel = MscclppKernel("d2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     group.barrier()
 
 
@@ -511,7 +512,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
 
     group.barrier()
     kernel()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     group.barrier()
     assert cp.array_equal(memory, memory_expected)
 
@@ -576,7 +577,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     proxy.start()
     group.barrier()
     kernel()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     proxy.stop()
     group.barrier()
     assert cp.array_equal(memory, memory_expected)
@@ -621,7 +622,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     proxy_service.start_proxy()
     group.barrier()
     kernel()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     proxy_service.stop_proxy()
     group.barrier()
     assert cp.array_equal(memory, memory_expected)
@@ -649,7 +650,7 @@ def test_nvls(mpi_group: MpiGroup):
     )
 
     kernel()
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     group.barrier()
 
 

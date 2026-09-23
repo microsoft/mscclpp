@@ -10,6 +10,8 @@ from typing import Any
 import cupy as cp
 from mpi4py import MPI
 
+from mscclpp_benchmark.gpu import device_synchronize
+
 _mscclpp_module = None
 
 
@@ -63,7 +65,7 @@ def check_correctness(
     for iteration in range(niter):
         _fill_case_for_correctness(case, comm.rank, iteration)
         ret = comm.run(case, config)
-        cp.cuda.runtime.deviceSynchronize()
+        device_synchronize()
         comm.comm_group.barrier()
         if ret != 0:
             all_ok = False

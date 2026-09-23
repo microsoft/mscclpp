@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 import cupy as cp
 from mscclpp_op import (
@@ -14,6 +14,7 @@ from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
+from mscclpp_benchmark.gpu import device_synchronize
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
@@ -83,9 +84,9 @@ def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
         memory[:] = cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
-        cp.cuda.runtime.deviceSynchronize()
+        device_synchronize()
         output_memory = func(None)
-        cp.cuda.runtime.deviceSynchronize()
+        device_synchronize()
         expected = cp.zeros_like(memory)
         for i in range(MPI.COMM_WORLD.size):
             expected += cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
@@ -161,7 +162,7 @@ def find_best_config(mscclpp_call, niter):
 def run_benchmark(mscclpp_group: CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int):
     memory = GpuBuffer(nelem, dtype=data_type)
     memory_out = GpuBuffer(nelem, dtype=data_type)
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
 
     proxy_service = ProxyService()
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:

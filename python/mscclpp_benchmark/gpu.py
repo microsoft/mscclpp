@@ -11,6 +11,7 @@ _API_NAMES = {
     "get_device": ("hipGetDevice", "cudaGetDevice"),
     "get_device_properties": ("hipGetDeviceProperties", "cudaGetDeviceProperties"),
     "set_device": ("hipSetDevice", "cudaSetDevice"),
+    "device_synchronize": ("hipDeviceSynchronize", "cudaDeviceSynchronize"),
     "stream_begin_capture": ("hipStreamBeginCapture", "cudaStreamBeginCapture"),
     "stream_end_capture": ("hipStreamEndCapture", "cudaStreamEndCapture"),
     "graph_instantiate": ("hipGraphInstantiate", "cudaGraphInstantiate"),

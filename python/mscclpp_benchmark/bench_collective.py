@@ -18,7 +18,7 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
-from mscclpp_benchmark.gpu import capture_graph, init_runtime, runtime_name, version
+from mscclpp_benchmark.gpu import capture_graph, device_synchronize, init_runtime, runtime_name, version
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -418,7 +418,7 @@ def _measure_case(
     _fill_case_for_benchmark(case, comm.rank)
     if comm.run(case, config) != 0:
         raise RuntimeError("algorithm returned non-zero status")
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     comm.comm_group.barrier()
 
     stream = cp.cuda.Stream(non_blocking=True)
@@ -692,7 +692,7 @@ def main(argv: list[str] | None = None) -> None:
             )
     finally:
         comm_group.barrier()
-        cp.cuda.runtime.deviceSynchronize()
+        device_synchronize()
         comm.close()
 
 

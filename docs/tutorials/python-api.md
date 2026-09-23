@@ -15,6 +15,7 @@ from mscclpp import (
     Transport,
 )
 from mscclpp.utils import GpuBuffer
+from mscclpp_benchmark.gpu import device_synchronize
 
 
 def create_connection(group: mscclpp.CommGroup, transport: str):
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     proxy_service.start_proxy()
     mscclpp_group.barrier()
     launch_kernel(mscclpp_group.my_rank, mscclpp_group.nranks, simple_channels, memory)
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
     mscclpp_group.barrier()
 ```
 
