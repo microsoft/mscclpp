@@ -49,11 +49,11 @@ MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr ginAtomicResult(const GpuNetIoDevi
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                       int qpIndex) {
+  auto* qp = detail::ginQp(*this, peer, qpIndex);
   doca_gpu_dev_verbs_addr raddr{peerBase[peer] + dstOffset, rkeys[peer]};
   doca_gpu_dev_verbs_addr laddr{localBase + srcOffset, detail::ginHtobe32(lkey)};
   doca_gpu_dev_verbs_ticket_t ticket;
-  doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(detail::ginQp(*this, peer, qpIndex), raddr,
-                                                                        laddr, size, &ticket);
+  doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, raddr, laddr, size, &ticket);
 }
 
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int peer, uint64_t dstOffset, uint64_t srcOffset,
