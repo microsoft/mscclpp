@@ -35,9 +35,30 @@ __all__ = [
 
 def get_device_arch() -> str:
     if is_hip:
-        return cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8")
+        from hip import hip
+
+        error, device = hip.hipGetDevice()
+        if error != hip.hipError_t.hipSuccess:
+            raise RuntimeError(f"hipGetDevice failed with error {int(error)}")
+
+        error, props = hip.hipGetDeviceProperties(device)
+        if error != hip.hipError_t.hipSuccess:
+            raise RuntimeError(f"hipGetDeviceProperties failed with error {int(error)}")
+
+        arch = props.gcnArchName
+        return arch.decode("utf-8") if isinstance(arch, bytes) else arch
     else:
-        return f"sm_{cp.cuda.Device().compute_capability}"
+        from cuda.bindings import runtime
+
+        error, device = runtime.cudaGetDevice()
+        if error != runtime.cudaError_t.cudaSuccess:
+            raise RuntimeError(f"cudaGetDevice failed with error {int(error)}")
+
+        error, props = runtime.cudaGetDeviceProperties(device)
+        if error != runtime.cudaError_t.cudaSuccess:
+            raise RuntimeError(f"cudaGetDeviceProperties failed with error {int(error)}")
+
+        return f"sm_{props.major}{props.minor}"
 
 
 class Kernel:
