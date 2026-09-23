@@ -83,6 +83,10 @@ class MoECommunicatorConfig:
 
     # Overlap
     enable_overlap: bool = False
+
+    # Latency rank-major tuning
+    deduplicate_expanded_routes: bool = False
+    rank_major_route_weights_in_combine: bool = False
 ```
 
 The constructor can accept either a config object or keyword arguments:
@@ -147,6 +151,8 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Algorithm family (`MoEMode.LATENCY` or `MoEMode.THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
+| `deduplicate_expanded_routes` | For latency `RANK_MAJOR_TOPK_EXPANDED`, send one payload per destination rank and expand duplicate route rows locally; disabled by default |
+| `rank_major_route_weights_in_combine` | For latency `RANK_MAJOR` with `DIRECT_SEND`, apply source route weights during combine so MM2 can provide unweighted route rows |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently, and `None` uses that entry's mode default. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
@@ -611,6 +617,13 @@ unweighted and must reuse `dispatch_out.combine_input_buffer`, which aliases
 `dispatch_out.tokens`; combine applies the original routing weights once.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
+With route-level MM2 output, set `combine_mode=CombineMode.DIRECT_SEND` and
+`rank_major_route_weights_in_combine=True`. Combine then applies the source
+FP32 weights while accumulating top-k BF16 route rows, removing the need for a
+separate local reducer without changing the dispatch/combine call pattern.
+Setting `deduplicate_expanded_routes=True` preserves these tensor shapes while
+transmitting one activation per unique destination rank. A local follow-up
+kernel copies that activation into duplicate top-k route rows.
 
 Set `combine_mode=CombineMode.DIRECT_SEND` with rank-major dispatch to move the
 top-k reduction into combine. The existing `RANK_LOCAL_REDUCE` behavior remains

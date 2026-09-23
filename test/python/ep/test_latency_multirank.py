@@ -130,6 +130,21 @@ def parse_args():
         help="Sentinel expert ID for rank-major non-local and padding rows (default: num_experts)",
     )
     parser.add_argument(
+        "--force-duplicate-routes",
+        action="store_true",
+        help="Force two routes for token 0 onto rank 0 to exercise expanded-layout payload deduplication",
+    )
+    parser.add_argument(
+        "--deduplicate-expanded-routes",
+        action="store_true",
+        help="Send one expanded-layout payload per destination rank and copy duplicate routes locally",
+    )
+    parser.add_argument(
+        "--rank-major-route-weights-in-combine",
+        action="store_true",
+        help="Pass unweighted route rows and apply source weights in direct rank-major combine",
+    )
+    parser.add_argument(
         "--bench",
         action="store_true",
         help="Run dispatch/combine benchmark after correctness",
@@ -154,6 +169,10 @@ def parse_args():
             args.num_blocks = tuple(args.num_blocks)
         else:
             parser.error("--num-blocks accepts one value or a dispatch/combine pair")
+    if args.rank_major_route_weights_in_combine and (
+        args.output_layout != "rank_major" or args.combine_mode != "direct_send"
+    ):
+        parser.error("--rank-major-route-weights-in-combine requires rank_major direct_send")
     return args
 
 
@@ -218,7 +237,7 @@ def simulated_rank_major_route_output(dispatch_out):
     return (tokens.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
 
 
-def stage_simulated_gemm_output(dispatch_out):
+def stage_simulated_gemm_output(dispatch_out, *, route_weights_in_combine=False):
     """Build simulated GEMM output in the runtime-owned buffer when required."""
     import mscclpp.ep as ep
 
@@ -228,6 +247,18 @@ def stage_simulated_gemm_output(dispatch_out):
     if combine_input is None:
         return simulated_gemm_output(dispatch_out)
     if dispatch_out.topk_ids.dim() == 1:
+        return combine_input
+    if combine_input.dim() == 3 and route_weights_in_combine:
+        assert dispatch_out.topk_ids is not None
+        assert dispatch_out.weights is not None
+        valid_routes = (dispatch_out.topk_ids >= 0) & (dispatch_out.weights != 0.0)
+        combine_input.copy_(
+            torch.where(
+                valid_routes.unsqueeze(-1),
+                dequantized_dispatch_tokens(dispatch_out).unsqueeze(1),
+                torch.zeros((), dtype=torch.bfloat16, device=combine_input.device),
+            )
+        )
         return combine_input
     combine_input.copy_(
         simulated_rank_major_route_output(dispatch_out)
@@ -334,6 +365,56 @@ def validate_expert_major_dispatch(
             )
 
 
+def validate_rank_major_dispatch(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    num_topk,
+    num_local_experts,
+    dispatch_out,
+    packed_recv_count,
+    all_topk_idx,
+    all_topk_weights,
+    all_x,
+    invalid_token_expert_id,
+):
+    assert all_x is not None
+    assert dispatch_out.topk_ids is not None
+    assert dispatch_out.weights is not None
+    assert dispatch_out.topk_ids.shape == (num_ranks * num_tokens, num_topk)
+    assert dispatch_out.weights.shape == (num_ranks * num_tokens, num_topk)
+    local_expert_begin = rank * num_local_experts
+    local_expert_end = local_expert_begin + num_local_experts
+
+    for source_rank in range(num_ranks):
+        expected_local_routes = (all_topk_idx[source_rank] >= local_expert_begin) & (
+            all_topk_idx[source_rank] < local_expert_end
+        )
+        expected_tokens = expected_local_routes.any(dim=-1).nonzero().flatten()
+        source_count = int(packed_recv_count[source_rank].item())
+        assert source_count == expected_tokens.numel()
+        if source_count == 0:
+            continue
+
+        row_begin = source_rank * num_tokens
+        row_end = row_begin + source_count
+        source_tokens = decode_token_ids(dispatch_out.tokens[row_begin:row_end])
+        assert torch.equal(source_tokens.sort().values, expected_tokens)
+        assert torch.equal(dispatch_out.tokens[row_begin:row_end], all_x[source_rank, source_tokens])
+
+        actual_ids = dispatch_out.topk_ids[row_begin:row_end]
+        actual_weights = dispatch_out.weights[row_begin:row_end]
+        expected_ids = all_topk_idx[source_rank, source_tokens].masked_fill(
+            ~expected_local_routes[source_tokens], invalid_token_expert_id
+        )
+        expected_weights = all_topk_weights[source_rank, source_tokens].masked_fill(
+            ~expected_local_routes[source_tokens], 0.0
+        )
+        assert torch.equal(actual_ids, expected_ids)
+        torch.testing.assert_close(actual_weights, expected_weights)
+
+
 def validate_rank_major_topk_expanded_dispatch(
     *,
     rank,
@@ -369,9 +450,14 @@ def validate_rank_major_topk_expanded_dispatch(
                 expert = int(all_topk_idx[source_rank, token_idx, topk_slot].item())
                 expected_local = local_expert_begin <= expert < local_expert_end
                 expected_id = expert if expected_local else invalid_token_expert_id
-                expected_weight = all_topk_weights[source_rank, token_idx, topk_slot] if expected_local else 0.0
+                actual_weight = dispatch_out.weights[metadata_row, topk_slot]
+                expected_weight = (
+                    all_topk_weights[source_rank, token_idx, topk_slot]
+                    if expected_local
+                    else torch.zeros_like(actual_weight)
+                )
                 assert int(dispatch_out.topk_ids[metadata_row, topk_slot].item()) == expected_id
-                torch.testing.assert_close(dispatch_out.weights[metadata_row, topk_slot], expected_weight)
+                torch.testing.assert_close(actual_weight, expected_weight)
                 if expected_local:
                     assert torch.equal(dispatch_out.tokens[route_idx], all_x[source_rank, token_idx])
 
@@ -511,7 +597,6 @@ def main():
     import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
-
     num_tokens = args.num_tokens
     hidden = args.hidden
     num_topk = args.num_topk
@@ -532,6 +617,10 @@ def main():
     capacity = num_tokens if args.capacity is None else args.capacity
     if args.capacity is not None and (not expanded or capacity < num_tokens or capacity <= 0):
         raise ValueError("--capacity requires expanded layout and capacity >= num-tokens > 0")
+    if output_layout == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+        assert combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE
+    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
+        assert args.rank_major_route_weights_in_combine
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
         assert combine_mode in (
             ep.CombineMode.RANK_LOCAL_REDUCE,
@@ -566,6 +655,13 @@ def main():
         assert num_topk <= args.num_active_ranks * num_local_experts
         scores[:, args.num_active_ranks * num_local_experts :] = float("-inf")
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
+    if args.force_duplicate_routes:
+        duplicate_rank_routes = min(2, num_topk, num_local_experts)
+        topk_idx[0, :duplicate_rank_routes] = torch.arange(
+            duplicate_rank_routes,
+            dtype=topk_idx.dtype,
+            device=topk_idx.device,
+        )
     topk_weights = (
         None if args.no_weights else torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
     )
@@ -594,6 +690,8 @@ def main():
         combine_mode=combine_mode,
         output_layout=output_layout,
         invalid_token_expert_id=invalid_token_expert_id,
+        deduplicate_expanded_routes=args.deduplicate_expanded_routes,
+        rank_major_route_weights_in_combine=args.rank_major_route_weights_in_combine,
         quant=dispatch_quant,
     )
     if rank == 0:
@@ -722,7 +820,6 @@ def main():
                 num_topk=num_topk,
                 num_local_experts=num_local_experts,
                 dispatch_out=dispatch_out,
-                handle=handle,
                 packed_recv_count=packed_recv_count,
                 all_topk_idx=all_topk_idx,
                 all_topk_weights=all_topk_weights,
@@ -751,7 +848,10 @@ def main():
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
     # returns sum(x * weight) across experts.
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
-    simulated_gemm_x = stage_simulated_gemm_output(dispatch_out)
+    simulated_gemm_x = stage_simulated_gemm_output(
+        dispatch_out,
+        route_weights_in_combine=args.rank_major_route_weights_in_combine,
+    )
     if expanded:
         simulated_gemm_x[dispatch_out.weights == 0] = float("nan")
     reference_x = x
@@ -792,7 +892,11 @@ def main():
     if expanded:
         valid_ids = topk_idx.masked_fill((topk_idx < 0) | (topk_idx >= num_experts), -1)
         expected = expected_direct_send_output(reference_x, valid_ids, topk_weights)
-    elif output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
+    elif (
+        output_layout == ep.DispatchLayout.RANK_MAJOR
+        and combine_mode == ep.CombineMode.DIRECT_SEND
+        and not args.rank_major_route_weights_in_combine
+    ):
         expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
     elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
         expected = expected_rank_local_reduce_output(reference_x, topk_idx, topk_weights, num_ranks, num_local_experts)
@@ -804,6 +908,21 @@ def main():
         exact=combine_mode == ep.CombineMode.DIRECT_SEND,
         group=group,
     )
+    if args.rank_major_route_weights_in_combine and topk_weights is not None:
+        updated_weights = topk_weights * 0.5
+        updated_dispatch_out, updated_handle = moe_comm.dispatch(
+            x,
+            topk_idx,
+            updated_weights,
+            output_buffer=dispatch_output_buffer,
+        )
+        updated_gemm_x = stage_simulated_gemm_output(
+            updated_dispatch_out,
+            route_weights_in_combine=True,
+        )
+        updated_combined_x = moe_comm.combine(updated_gemm_x, updated_handle, out=out)
+        updated_expected = expected_direct_send_output(reference_x, topk_idx, updated_weights)
+        validate_combine_output(updated_combined_x, updated_expected, exact=True, group=group)
     max_exp = expected.float().abs().max().item()
     print(
         f"[combine r{rank}] max|got-expected|={local_diff:.4e} max|expected|={max_exp:.4e}",
@@ -831,7 +950,12 @@ def main():
                 )
                 dispatch_end.record()
                 graph_expert_output = (
-                    stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+                    stage_simulated_gemm_output(
+                        graph_dout[0],
+                        route_weights_in_combine=args.rank_major_route_weights_in_combine,
+                    )
+                    if expert_output is None
+                    else expert_output
                 )
                 graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
             graph_end.record()
@@ -950,7 +1074,10 @@ def main():
     else:
         for _ in range(warmup):
             warmup_dout = _dispatch()
-            warmup_expert_output = stage_simulated_gemm_output(warmup_dout[0])
+            warmup_expert_output = stage_simulated_gemm_output(
+                warmup_dout[0],
+                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+            )
             _combine(warmup_expert_output, warmup_dout[1], bench_out)
         torch.cuda.synchronize()
         dist.barrier(group=group)
@@ -962,7 +1089,10 @@ def main():
             dispatch_start_events[i].record()
             dout = _dispatch()
             dispatch_end_events[i].record()
-            bench_expert_output = stage_simulated_gemm_output(dout[0])
+            bench_expert_output = stage_simulated_gemm_output(
+                dout[0],
+                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+            )
             _combine(bench_expert_output, dout[1], bench_out)
         torch.cuda.synchronize()
         disp_us = sum(start.elapsed_time(end) for start, end in zip(dispatch_start_events, dispatch_end_events)) * 1e3
@@ -974,7 +1104,10 @@ def main():
         combine_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
         for i in range(iters):
             dout = _dispatch()
-            bench_expert_output = stage_simulated_gemm_output(dout[0])
+            bench_expert_output = stage_simulated_gemm_output(
+                dout[0],
+                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+            )
             combine_start_events[i].record()
             _combine(bench_expert_output, dout[1], bench_out)
             combine_end_events[i].record()

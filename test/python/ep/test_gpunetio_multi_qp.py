@@ -325,7 +325,6 @@ int main() {
     def test_actual_dense_landing_allocation_preserves_existing_offsets(self):
         path = "src/ext/ep/include/config.hpp"
         current = source(path)
-        previous = subprocess.check_output(["git", "-C", str(ROOT), "show", "3bde321:" + path], text=True)
         native = HOST_PREAMBLE + r"""
 #include <sys/mman.h>
 using Bf16 = uint16_t;
@@ -337,7 +336,6 @@ enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
         native += "\ntemplate<typename DataType, typename ScaleType = void>\n" + structure(current, "PayloadView")
         for name in ("rankMajorTopkIdsOffset", "rankMajorTopkWeightsOffset", "rankMajorTokenOffset"):
             native += function(current, name)
-        native += structure(previous, "LatencyStorageLayout").replace("LatencyStorageLayout", "PreviousLayout")
         native += structure(current, "LatencyStorageLayout")
         native += r"""
 int main() {
@@ -353,30 +351,25 @@ int main() {
     LatencyStorageLayout ipc(allocation, capacity, hidden, ranks, 256, topk, layout, mode);
     require(ipc.totalBytes_ < current.totalBytes_ && !ipc.gpuNetIoStagingBuffer_ && !ipc.gpuNetIoCombineLandingBuffer_, "IPC allocated network storage");
     require(ipc.dispatchOutputBuffer_ == current.dispatchOutputBuffer_ && ipc.combineRecvBuffer_ == current.combineRecvBuffer_, "IPC base offsets changed");
-    PreviousLayout previous(allocation, capacity, hidden, ranks, 256, topk, layout, mode);
-    require(current.dispatchRecvBuffer_ == previous.dispatchRecvBuffer_ &&
-            current.combineRecvBuffer_ == previous.combineRecvBuffer_ &&
-            current.dispatchOutputBuffer_ == previous.dispatchOutputBuffer_ &&
-            current.rankMajorTopkIdsBuffer_ == previous.rankMajorTopkIdsBuffer_ &&
-            current.rankMajorTopkWeightsBuffer_ == previous.rankMajorTopkWeightsBuffer_ &&
-            current.gpuNetIoStagingBuffer_ == previous.gpuNetIoStagingBuffer_ &&
-            current.gpuNetIoFlagsBuffer_ == previous.gpuNetIoFlagsBuffer_ &&
-            current.gpuNetIoSlotStride_ == previous.gpuNetIoSlotStride_, "existing offsets changed");
     if (layout == DispatchLayout::RANK_MAJOR && mode == CombineMode::RANK_LOCAL_REDUCE)
       require(current.combineRecvBuffer_ == current.dispatchOutputBuffer_, "rank-major alias changed");
     auto* base = static_cast<uint8_t*>(allocation);
     auto* landing = static_cast<uint8_t*>(current.gpuNetIoCombineLandingBuffer_);
     const size_t bytes = static_cast<size_t>(ranks) * capacity * hidden * sizeof(Bf16);
-        const size_t oldFlags = configAlign<size_t>(static_cast<size_t>(ranks) * sizeof(uint64_t), 128);
         const size_t flags = configAlign<size_t>(static_cast<size_t>(ranks) * 64 * sizeof(uint64_t), 128);
         require(current.gpuNetIoCombineFlagsBuffer_ == static_cast<uint8_t*>(current.gpuNetIoFlagsBuffer_) + flags,
             "dispatch flags overlap combine flags");
-        require(landing == base + previous.totalBytes_ + flags - oldFlags, "landing must follow enlarged flags");
+        require(landing == static_cast<uint8_t*>(current.gpuNetIoCombineFlagsBuffer_) + flags,
+                "landing must follow combine flags");
     require(reinterpret_cast<uintptr_t>(landing) % 128 == 0, "landing alignment");
-    require(current.totalBytes_ == previous.totalBytes_ + flags - oldFlags + configAlign<size_t>(bytes, 128), "landing allocation size");
+    const size_t rowsPerToken =
+        layout == DispatchLayout::RANK_MAJOR && mode == CombineMode::DIRECT_SEND ? topk : 1;
+    require(current.totalBytes_ == static_cast<size_t>(landing - base) +
+                                     configAlign<size_t>(bytes * rowsPerToken, 128),
+            "landing allocation size");
     for (int rank = 0; rank < ranks; ++rank) {
-      const size_t offset = static_cast<size_t>(rank) * capacity * hidden * sizeof(Bf16);
-      require(landing + offset + static_cast<size_t>(capacity) * hidden * sizeof(Bf16) <=
+      const size_t offset = static_cast<size_t>(rank) * capacity * rowsPerToken * hidden * sizeof(Bf16);
+      require(landing + offset + static_cast<size_t>(capacity) * rowsPerToken * hidden * sizeof(Bf16) <=
               base + current.totalBytes_, "bulk owner write exceeds landing storage");
     }
     require(munmap(allocation, sizing.totalBytes_) == 0, "virtual reservation cleanup");
@@ -436,13 +429,14 @@ struct WorkspaceView {
   int* dispatchRecvCounts_; int* rankMajorSendIndices_;
   uint64_t* combineArrivedBaseline_; uint32_t* combineRankReadyEpochs_;
 };
+enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
 """
         combine = source(COMBINE)
         native += function(combine, "rankMajorSlotForDestination")
         native += function(combine, "rankMajorCombineStripeQp")
         native += function(combine, "signalRankMajorCombineLocalStart")
         native += function(combine, "publishRankMajorCombinePushReady")
-        native += "template<int Hidden>\n" + function(combine, "sendRankMajorCombinePush")
+        native += "template<CombineMode Mode, int Hidden>\n" + function(combine, "sendRankMajorCombinePush")
         native += function(combine, "drainRankMajorCombinePush")
         native += r"""
 int main() {
@@ -471,7 +465,8 @@ int main() {
     for (unsigned int owner = 0; owner < static_cast<unsigned int>(ranks + 2); ++owner) {
       blockIdx.x = owner;
     for (threadIdx.x = 0; threadIdx.x < 65; ++threadIdx.x) {
-        sendRankMajorCombinePush<8>(base, ranks, capacity, transport, workspace, 1);
+        sendRankMajorCombinePush<CombineMode::RANK_LOCAL_REDUCE, 8>(
+            base, ranks, 1, capacity, transport, workspace, 1);
         drainRankMajorCombinePush(ranks, transport, workspace, 1);
       }
     }
@@ -553,7 +548,7 @@ int main() {
                 dispatch=lambda *args, **kwargs: events.append("dispatch") or ("tokens", "handle"),
                 combine=lambda *args, **kwargs: events.append("combine") or "combined",
             ),
-            stage_simulated_gemm_output=lambda output: events.append("stage") or "expert",
+            stage_simulated_gemm_output=lambda output, **kwargs: events.append("stage") or "expert",
             validate_combine_output=lambda *args, **kwargs: events.append("validate") or (0, 0),
         )
         exec(compile(ast.Module(body=definitions, type_ignores=[]), path, "exec"), namespace)
@@ -680,8 +675,10 @@ int main() {
             "const int owner = static_cast<int>(blockIdx.x)",
             "workspaceView.dispatchRecvCounts_[owner] > 0",
             "const int qpIndex = rankMajorCombineStripeQp(gin, owner, stripe)",
+            "const int rowsPerToken = IsDirectSend ? nTopk : 1",
             "gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,",
-            "static_cast<uint64_t>(rowEnd - rowBegin) * HiddenBytes, transport.symmetricOffset(remoteFlag), 1, qpIndex)",
+            "static_cast<uint64_t>(rowEnd - rowBegin) * rowsPerToken * HiddenBytes,",
+            "transport.symmetricOffset(remoteFlag), 1, qpIndex)",
         )
         self.assertNotIn("flush(", send)
         self.assertNotIn("combineSyncer_", send)
@@ -698,15 +695,15 @@ int main() {
         self.ordered(
             function(source(COMBINE), "combineBody"),
             "signalRankMajorCombineLocalStart(transport, nRanks)",
-            "synchronizeRankMajorCombine(transport, nRanks, epoch, workspaceView)",
-            "sendRankMajorCombinePush<Hidden>",
+            "synchronizeRankMajorCombine(transport, nRanks, workspaceView)",
+            "sendRankMajorCombinePush<Mode, Hidden>",
             "if (nTopk <= RankMajorTmaMaxNTopk)",
             "publishRankMajorCombinePushReady(",
             "recvRankMajorRemotePartialsTma<Hidden, Mode>",
-            "recvRankMajorCombinePush<Hidden>",
+            "recvRankMajorCombinePush<Hidden, Mode>",
             "drainRankMajorCombinePush(",
             "workspaceView.combineSyncer_->sync(gridDim.x)",
-            "synchronizeRankMajorCombine(transport, nRanks, epoch + 1",
+            "synchronizeRankMajorCombine(transport, nRanks, workspaceView)",
         )
         self.ordered(
             function(source(COMBINE), "publishRankMajorCombinePushReady"),

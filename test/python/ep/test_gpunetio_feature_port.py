@@ -328,16 +328,16 @@ class NativeSourceTests(unittest.TestCase):
         self.assertEqual(code(host).count("cudaMemsetAsync("), 1)
         self.assertNotIn("cudaMemsetAsync(context.workspace_", code(host))
 
-    def test_combine_network_uses_two_distinct_epoch_phases(self):
+    def test_combine_network_uses_replay_safe_grid_barriers(self):
         body = function(source(COMBINE), "combineBody")
         remote = block(body, r"if\s*\(transport.gpuNetIo_\s*!=\s*nullptr\)")
         self.assert_ordered(
             remote,
-            "const uint32_t epoch = workload.epoch_ * 2;",
-            "synchronizeRankMajorCombine(transport, nRanks, epoch, workspaceView);",
-            "sendRankMajorCombinePush<Hidden>(",
-            "recvRankMajorCombinePush<Hidden>(",
-            "synchronizeRankMajorCombine(transport, nRanks, epoch + 1, workspaceView);",
+            "synchronizeRankMajorCombine(transport, nRanks, workspaceView);",
+            "sendRankMajorCombinePush<Mode, Hidden>(",
+            "recvRankMajorCombinePush<Hidden, Mode>(",
+            "workspaceView.combineSyncer_->sync(gridDim.x);",
+            "synchronizeRankMajorCombine(transport, nRanks, workspaceView);",
             "return;",
         )
         self.assertEqual(code(remote).count("synchronizeRankMajorCombine("), 2)
@@ -359,7 +359,7 @@ class NativeSourceTests(unittest.TestCase):
               }
             }"""),
         )
-        self.assert_ordered(sync, control, "__syncthreads();", "workspaceView.combineReadyEpoch_, epoch,")
+        self.assert_ordered(sync, control, "workspaceView.combineSyncer_->sync(gridDim.x, -1);")
 
     def test_combine_push_defers_owner_qp_drain_and_uses_dense_landing(self):
         send = function(source(COMBINE), "sendRankMajorCombinePush")
@@ -370,14 +370,21 @@ class NativeSourceTests(unittest.TestCase):
             "const int qpIndex = rankMajorCombineStripeQp(gin, owner, stripe);",
             "gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,",
         )
-        self.assertIn("(static_cast<size_t>(transport.rank_)*maxTokensPerRank+rowBegin)*HiddenBytes", code(send))
-        self.assertIn("static_cast<uint64_t>(rowEnd-rowBegin)*HiddenBytes", code(send))
+        self.assertIn("constintrowsPerToken=IsDirectSend?nTopk:1", code(send))
+        self.assertIn(
+            "(static_cast<size_t>(transport.rank_)*maxTokensPerRank+rowBegin)*rowsPerToken*HiddenBytes",
+            code(send),
+        )
+        self.assertIn("static_cast<uint64_t>(rowEnd-rowBegin)*rowsPerToken*HiddenBytes", code(send))
         drain = function(source(COMBINE), "drainRankMajorCombinePush")
         self.assertIn(
             "gin->flush(owner,rankMajorCombineStripeQp(gin,owner,static_cast<int>(threadIdx.x)))", code(drain)
         )
         recv = function(source(COMBINE), "recvRankMajorCombinePush")
-        self.assertIn("(static_cast<size_t>(destinationRank)*maxTokensPerRank+destinationSlot)*HiddenBytes", code(recv))
+        self.assertIn(
+            "constsize_tlandingInputRow=IsDirectSend?landingRow*nTopk+topkLane:landingRow",
+            code(recv),
+        )
         self.assert_ordered(
             recv,
             "if (!sendsToRank) continue;",
@@ -389,7 +396,7 @@ class NativeSourceTests(unittest.TestCase):
         )
         self.assertNotRegex(code(recv), r"flags\[destinationRank\](?:=(?!=)|\+=|-=|\+\+|--)")
 
-    def test_host_disallows_expert_major_and_direct_send_over_network(self):
+    def test_host_allows_rank_major_combine_modes_over_network(self):
         context = source(HOST_CONTEXT)
         cross_domain = block(context, r"if\s*\(numRanksPerIpcDomain_\s*<\s*numRanks_\)")
         enabled = block(
@@ -398,8 +405,8 @@ class NativeSourceTests(unittest.TestCase):
         self.assertEqual(
             code(enabled),
             code("""{
-              available_ = (outputLayout_ == DispatchLayout::RANK_MAJOR || outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
-                           combineMode_ == CombineMode::RANK_LOCAL_REDUCE;
+              available_ = outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                           outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
               useGpuNetIo_ = available_;
             }"""),
         )
