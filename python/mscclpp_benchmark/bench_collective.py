@@ -18,7 +18,7 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
-from mscclpp_benchmark.gpu import capture_graph, device_synchronize, init_runtime, runtime_name, version
+from mscclpp_benchmark.gpu import capture_graph, device_name, device_synchronize, init_runtime, runtime_name, version
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -95,11 +95,7 @@ class BenchmarkCase:
 
 
 def _device_name() -> str:
-    props = cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)
-    name = props.get("name", "UNKNOWN")
-    if isinstance(name, bytes):
-        return name.decode("utf-8")
-    return str(name)
+    return device_name()
 
 
 def _detect_hardware_profile(scale: int) -> HardwareProfile:
