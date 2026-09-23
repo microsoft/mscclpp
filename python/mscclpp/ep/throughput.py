@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 
@@ -257,6 +257,7 @@ class ThroughputRuntime(Runtime):
         *,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
+        **_kwargs: Any,
     ) -> torch.Tensor:
         mode_context = self.context
         stream_scope = torch.cuda.stream(stream) if stream is not None else nullcontext()

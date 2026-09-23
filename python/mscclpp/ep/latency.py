@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 
@@ -270,18 +270,20 @@ class LatencyRuntime(Runtime):
         *,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
+        **kwargs: Any,
     ) -> torch.Tensor:
         mode_context = self.context
         self._validate_combine(expert_output, handle, out)
         context = handle._context
+        apply_router_weights = kwargs.pop("apply_router_weights", mode_context.combine_mode == CombineMode.DIRECT_SEND)
         if isinstance(context, _ExpertMajorCombineContext):
-            topk_weights = context.weights
+            topk_weights = context.weights if apply_router_weights else None
             src_info = context.src_info
             layout_range = context.layout_range
             active_capacity = mode_context.max_tokens_per_rank
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
-            topk_weights = context.weights
+            topk_weights = context.weights if apply_router_weights else None
             src_info = None
             layout_range = None
         else:

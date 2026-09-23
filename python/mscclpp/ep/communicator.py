@@ -177,8 +177,15 @@ class MoECommunicator:
         *,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
-        return self._runtime.combine(expert_output, handle, out=out, stream=stream)
+        return self._runtime.combine(
+            expert_output,
+            handle,
+            out=out,
+            stream=stream,
+            **kwargs,
+        )
 
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
