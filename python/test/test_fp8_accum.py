@@ -23,7 +23,13 @@ from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
 _gcn_arch_name = ""
 if _is_hip:
-    _gcn_arch_name = cp.cuda.runtime.getDeviceProperties(0).get("gcnArchName", b"")
+    from hip import hip
+
+    _error, _props = hip.hipGetDeviceProperties(0)
+    if _error != hip.hipError_t.hipSuccess:
+        raise RuntimeError(f"hipGetDeviceProperties failed with error {int(_error)}")
+
+    _gcn_arch_name = _props.gcnArchName
     if isinstance(_gcn_arch_name, bytes):
         _gcn_arch_name = _gcn_arch_name.decode()
     _gcn_arch_name = _gcn_arch_name.split(":", maxsplit=1)[0]
