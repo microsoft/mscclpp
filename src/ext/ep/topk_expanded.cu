@@ -174,8 +174,7 @@ __device__ void dispatchSendRankMajorTopkExpandedBf16(void* output, int* outputI
     const size_t selection = static_cast<size_t>(token) * topk + lane;
     const int64_t expert = lane < topk ? topkIds[selection] : -1;
     const int destination = validExpert(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
-    const bool sendsPayload =
-        !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
+    const bool sendsPayload = !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
     const float weight = lane < topk ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
     const size_t row = static_cast<size_t>(transport.rank_) * rowsPerRank + selection;
     if (lane == 0) send.bulkBarrier_->wait(send.bulkPhase_);

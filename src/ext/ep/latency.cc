@@ -397,9 +397,9 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     EP_HOST_ASSERT(numTokens >= 0 && numTokens <= maxTokensPerRank && numBlocks > context.numRanks_);
   }
   if (context.deviceContext_.gpuNetIo_ != nullptr) {
-    EP_HOST_ASSERT(dispatchLayout == DispatchLayout::RANK_MAJOR ||
-                   (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED &&
-                    mode == CombineMode::RANK_LOCAL_REDUCE));
+    EP_HOST_ASSERT(
+        dispatchLayout == DispatchLayout::RANK_MAJOR ||
+        (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && mode == CombineMode::RANK_LOCAL_REDUCE));
     EP_HOST_ASSERT(numBlocks >= context.numRanks_);
   }
 
