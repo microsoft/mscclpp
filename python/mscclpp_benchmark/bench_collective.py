@@ -25,6 +25,7 @@ from mscclpp_benchmark.gpu import (
     get_device_count,
     init_runtime,
     runtime_name,
+    set_device,
     version,
 )
 from mscclpp_benchmark.tuner import OfflineTuner
@@ -554,7 +555,7 @@ def main(argv: list[str] | None = None) -> None:
         visible_devices = get_device_count()[0]
         if visible_devices <= 0:
             raise RuntimeError("MSCCL++ benchmark requires at least one visible GPU")
-        cp.cuda.Device(local_comm.Get_rank() % visible_devices).use()
+        set_device(local_comm.Get_rank() % visible_devices)
     finally:
         local_comm.Free()
 

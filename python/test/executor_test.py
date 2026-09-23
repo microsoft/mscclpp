@@ -218,7 +218,9 @@ def main(
             f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
             f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
         )
-    cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
+    from mscclpp_benchmark.gpu import set_device
+
+    set_device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node)
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":

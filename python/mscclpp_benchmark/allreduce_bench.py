@@ -14,7 +14,7 @@ from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
-from mscclpp_benchmark.gpu import device_synchronize
+from mscclpp_benchmark.gpu import device_synchronize, set_device
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     N_GPUS_PER_NODE = shm_comm.size
     shm_comm.Free()
-    cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
+    set_device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE)
 
     # create a MscclppGroup (MPI-based bootstrap; ephemeral port, matches executor_test.py)
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
