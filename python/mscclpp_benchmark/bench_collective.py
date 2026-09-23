@@ -21,6 +21,7 @@ from mscclpp_benchmark.correctness import (
 )
 from mscclpp_benchmark.gpu import (
     capture_graph,
+    create_stream,
     device_name,
     device_synchronize,
     event_create,
@@ -32,6 +33,8 @@ from mscclpp_benchmark.gpu import (
     init_runtime,
     runtime_name,
     set_device,
+    stream_destroy,
+    stream_synchronize,
     version,
 )
 from mscclpp_benchmark.tuner import OfflineTuner
@@ -432,40 +435,37 @@ def _measure_case(
     device_synchronize()
     comm.comm_group.barrier()
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    graph = None
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    def capture_ops() -> None:
-        for _ in range(n_ops_per_graph):
-            ret = comm.run(case, config, stream)
-            if ret != 0:
-                raise RuntimeError("algorithm returned non-zero status during graph capture")
+        def capture_ops() -> None:
+            for _ in range(n_ops_per_graph):
+                ret = comm.run(case, config, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError("algorithm returned non-zero status during graph capture")
 
-    try:
-        with stream:
-            graph = capture_graph(stream, capture_ops)
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
 
         for _ in range(n_warmup):
-            graph.launch(stream)
-        stream.synchronize()
+            graph.launch(stream_ptr)
+        stream_synchronize(stream)
         comm.comm_group.barrier()
 
-        with ExitStack() as events:
-            start = event_create()[0]
-            events.callback(event_destroy, start)
-            end = event_create()[0]
-            events.callback(event_destroy, end)
-            event_record(start, stream.ptr)
-            for _ in range(n_graph_launches):
-                graph.launch(stream)
-            event_record(end, stream.ptr)
-            event_synchronize(end)
+        start = event_create()[0]
+        resources.callback(event_destroy, start)
+        end = event_create()[0]
+        resources.callback(event_destroy, end)
+        event_record(start, stream_ptr)
+        for _ in range(n_graph_launches):
+            graph.launch(stream_ptr)
+        event_record(end, stream_ptr)
+        event_synchronize(end)
 
-            elapsed_us = event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
-            return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
-    finally:
-        if graph is not None:
-            graph.close()
+        elapsed_us = event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
+        return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
 
 
 def _bandwidth_gbps(num_bytes: int, time_us: float) -> float:
