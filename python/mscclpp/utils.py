@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 import ctypes
 import os
@@ -12,6 +12,7 @@ import cupy as cp
 import numpy as np
 
 from mscclpp._mscclpp import CppDataType as DataType
+from mscclpp._mscclpp import is_hip
 
 try:
     import torch
@@ -33,7 +34,7 @@ __all__ = [
 
 
 def get_device_arch() -> str:
-    if cp.cuda.runtime.is_hip:
+    if is_hip:
         return cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8")
     else:
         return f"sm_{cp.cuda.Device().compute_capability}"
@@ -42,7 +43,7 @@ def get_device_arch() -> str:
 class Kernel:
     CU_LAUNCH_PARAM_BUFFER_POINTER = 0x01
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
-    CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
+    CU_LAUNCH_PARAM_END = 0x00 if not is_hip else 0x03
 
     def __init__(self, cubin: bytes, kernel_name: str):
         self._module = cp.cuda.driver.moduleLoadData(cubin)
@@ -102,7 +103,7 @@ class KernelBuilder:
     def _compile_cuda(self, source_file, output_file, std_version="c++20"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
-        if not cp.cuda.runtime.is_hip:
+        if not is_hip:
             arch = get_device_arch()
             compute_capability = arch.replace("sm_", "")
             cuda_home = os.environ.get("CUDA_HOME")

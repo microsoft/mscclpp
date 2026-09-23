@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
@@ -112,6 +112,7 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
 }
 
 void register_gpu_utils(nb::module_& m) {
+  m.attr("is_hip") = getDeviceType() == kDLROCM;
   m.def("is_nvls_supported", &isNvlsSupported);
   m.def("is_bulk_supported", &isBulkSupported);
 

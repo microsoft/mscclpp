@@ -15,12 +15,12 @@ import numpy as np
 import pytest
 
 from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp, is_nvls_supported
+from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
-_is_hip = hasattr(cp.cuda.runtime, "is_hip") and cp.cuda.runtime.is_hip
 _gcn_arch_name = ""
 if _is_hip:
     _gcn_arch_name = cp.cuda.runtime.getDeviceProperties(0).get("gcnArchName", b"")

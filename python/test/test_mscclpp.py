@@ -31,12 +31,20 @@ from mscclpp import (
     DeviceType,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp.utils import KernelBuilder, pack
-from mscclpp_benchmark.gpu import device_synchronize
+from mscclpp._mscclpp import is_hip
+from mscclpp.utils import Kernel, KernelBuilder, pack
+from mscclpp_benchmark.gpu import device_synchronize, runtime_name
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 ethernet_interface_name = "eth0"
+
+
+@parametrize_mpi_groups(1)
+def test_gpu_backend(mpi_group: MpiGroup):
+    assert isinstance(is_hip, bool)
+    assert is_hip == (runtime_name() == "hip")
+    assert Kernel.CU_LAUNCH_PARAM_END == (0x03 if is_hip else 0x00)
 
 
 @parametrize_mpi_groups(1)
