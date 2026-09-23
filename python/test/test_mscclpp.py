@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import os
 import time
 import threading
@@ -33,7 +34,13 @@ from mscclpp import (
 from mscclpp import CommGroup, GpuBuffer
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
-from mscclpp_benchmark.gpu import device_synchronize, runtime_name
+from mscclpp_benchmark.gpu import (
+    create_stream,
+    device_synchronize,
+    runtime_name,
+    stream_destroy,
+    stream_synchronize,
+)
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -690,38 +697,41 @@ def test_executor(mpi_group: MpiGroup, filename: str):
         expected += sub_arrays[i]
     mscclpp_group.barrier()
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    executor.execute(
-        mpi_group.comm.rank,
-        sendbuf.data.ptr,
-        sendbuf.data.ptr,
-        sendbuf.nbytes,
-        sendbuf.nbytes,
-        DataType.float16,
-        execution_plan,
-        stream.ptr,
-    )
-    stream.synchronize()
-    assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
+    with ExitStack() as streams:
+        stream = create_stream(non_blocking=True)
+        streams.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
+        executor.execute(
+            mpi_group.comm.rank,
+            sendbuf.data.ptr,
+            sendbuf.data.ptr,
+            sendbuf.nbytes,
+            sendbuf.nbytes,
+            DataType.float16,
+            execution_plan,
+            stream_ptr,
+        )
+        stream_synchronize(stream)
+        assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
 
-    mscclpp_group.barrier()
-    executor.reset()
-    mscclpp_group.barrier()
-    for i in range(nelems_per_rank):
-        sendbuf[i] = sub_arrays[mpi_group.comm.rank][i]
-    executor.execute(
-        mpi_group.comm.rank,
-        sendbuf.data.ptr,
-        sendbuf.data.ptr,
-        sendbuf.nbytes,
-        sendbuf.nbytes,
-        DataType.float16,
-        execution_plan,
-        stream.ptr,
-    )
-    stream.synchronize()
-    assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
+        mscclpp_group.barrier()
+        executor.reset()
+        mscclpp_group.barrier()
+        for i in range(nelems_per_rank):
+            sendbuf[i] = sub_arrays[mpi_group.comm.rank][i]
+        executor.execute(
+            mpi_group.comm.rank,
+            sendbuf.data.ptr,
+            sendbuf.data.ptr,
+            sendbuf.nbytes,
+            sendbuf.nbytes,
+            DataType.float16,
+            execution_plan,
+            stream_ptr,
+        )
+        stream_synchronize(stream)
+        assert cp.allclose(sendbuf, expected, atol=1e-3 * mpi_group.comm.size)
 
-    if npkit_dump_dir is not None:
-        npkit.dump(npkit_dump_dir)
-        npkit.shutdown()
+        if npkit_dump_dir is not None:
+            npkit.dump(npkit_dump_dir)
+            npkit.shutdown()

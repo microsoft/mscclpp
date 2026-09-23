@@ -12,6 +12,9 @@ _API_NAMES = {
     "get_device_properties": ("hipGetDeviceProperties", "cudaGetDeviceProperties"),
     "set_device": ("hipSetDevice", "cudaSetDevice"),
     "device_synchronize": ("hipDeviceSynchronize", "cudaDeviceSynchronize"),
+    "stream_create_with_flags": ("hipStreamCreateWithFlags", "cudaStreamCreateWithFlags"),
+    "stream_synchronize": ("hipStreamSynchronize", "cudaStreamSynchronize"),
+    "stream_destroy": ("hipStreamDestroy", "cudaStreamDestroy"),
     "stream_begin_capture": ("hipStreamBeginCapture", "cudaStreamBeginCapture"),
     "stream_end_capture": ("hipStreamEndCapture", "cudaStreamEndCapture"),
     "event_create": ("hipEventCreate", "cudaEventCreate"),
@@ -33,6 +36,7 @@ class _Runtime:
     name: str
     success: Any
     capture_mode_relaxed: Any
+    stream_non_blocking: Any
     funcs: dict[str, Callable[..., Any] | None]
 
     @classmethod
@@ -42,7 +46,14 @@ class _Runtime:
             attr: (None if names[index] is None else getattr(module, names[index]))
             for attr, names in _API_NAMES.items()
         }
-        return cls(name=name, success=success, capture_mode_relaxed=capture_mode_relaxed, funcs=funcs)
+        stream_non_blocking = module.hipStreamNonBlocking if name == "hip" else module.cudaStreamNonBlocking
+        return cls(
+            name=name,
+            success=success,
+            capture_mode_relaxed=capture_mode_relaxed,
+            stream_non_blocking=stream_non_blocking,
+            funcs=funcs,
+        )
 
     def call(self, name: str, *args: Any) -> tuple[Any, ...]:
         fn = self.funcs[name]
@@ -138,6 +149,12 @@ def version() -> tuple[int, int, int]:
     if _RUNTIME.name == "hip":
         return version_value // 10_000_000, (version_value // 100_000) % 100, version_value % 100_000
     return version_value // 1000, (version_value % 1000) // 10, version_value % 10
+
+
+def create_stream(non_blocking: bool = False) -> Any:
+    """Create a stream on the current device; the caller must destroy it."""
+    flags = _RUNTIME.stream_non_blocking if non_blocking else 0
+    return _api("stream_create_with_flags")(flags)[0]
 
 
 def capture_graph(stream: Any, capture_fn: Callable[[], None]) -> Graph:
