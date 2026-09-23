@@ -18,7 +18,15 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
-from mscclpp_benchmark.gpu import capture_graph, device_name, device_synchronize, init_runtime, runtime_name, version
+from mscclpp_benchmark.gpu import (
+    capture_graph,
+    device_name,
+    device_synchronize,
+    get_device_count,
+    init_runtime,
+    runtime_name,
+    version,
+)
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -543,7 +551,7 @@ def main(argv: list[str] | None = None) -> None:
 
     local_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     try:
-        visible_devices = cp.cuda.runtime.getDeviceCount()
+        visible_devices = get_device_count()[0]
         if visible_devices <= 0:
             raise RuntimeError("MSCCL++ benchmark requires at least one visible GPU")
         cp.cuda.Device(local_comm.Get_rank() % visible_devices).use()
