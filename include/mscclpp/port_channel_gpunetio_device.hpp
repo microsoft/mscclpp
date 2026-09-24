@@ -21,8 +21,7 @@ struct GpuNetIoMemoryDeviceHandle {
 /// Device-side context for the GPU-initiated networking (GPUNetIO / GDAKI)
 /// PortChannel backend. This is the kernel-issued RDMA path: instead of pushing
 /// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
-/// rings the NIC doorbell directly (via the DOCA GPUNetIO device
-/// verbs), mirroring NCCL GIN's `gdaki` backend.
+/// rings the NIC doorbell directly via the DOCA GPUNetIO device verbs.
 ///
 /// All remote addressing uses a symmetric-memory model: an explicit bootstrap
 /// rank selects a peer's registered buffer, with the same offset layout on

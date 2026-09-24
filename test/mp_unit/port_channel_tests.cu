@@ -1359,7 +1359,7 @@ __global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int 
     channel.putWithSignal(/*dstOffset=*/0, /*srcOffset=*/0, sizeof(int));
     ret[0] = 20;
     channel.flush(kMaxSpins);
-    ret[1] = channel.gin_->tryFlush(channel.ginPeer_, kMaxSpins, channel.ginQpIndex_);
+    ret[1] = channel.gpuNetIo_->tryFlush(channel.gpuNetIoPeer_, kMaxSpins, channel.gpuNetIoQpIndex_);
     ret[0] = (ret[1] == 0) ? 30 : 31;
   } else {
     uint64_t spin = 0;
@@ -1568,11 +1568,11 @@ TEST(PortChannelOneToOneTest, GpuNetIoBoundChannels) {
   }
   const auto first = channels[0].deviceHandle();
   const auto second = channels[1].deviceHandle();
-  EXPECT_EQ(first.ginPeer_, second.ginPeer_);
-  EXPECT_EQ(first.ginQpIndex_, 0);
-  EXPECT_EQ(second.ginQpIndex_, 1);
+  EXPECT_EQ(first.gpuNetIoPeer_, second.gpuNetIoPeer_);
+  EXPECT_EQ(first.gpuNetIoQpIndex_, 0);
+  EXPECT_EQ(second.gpuNetIoQpIndex_, 1);
   EXPECT_NE(first.semaphore_.inboundToken, second.semaphore_.inboundToken);
-  EXPECT_NE(first.ginMemories_, second.ginMemories_);
+  EXPECT_NE(first.gpuNetIoMemories_, second.gpuNetIoMemories_);
   service.reset();
   kernelGpuNetIoBoundChannel<<<1, 1>>>(first, 1);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());

@@ -11,7 +11,7 @@
 namespace mscclpp {
 
 /// Backend that services a PortChannel's device-side operations.
-/// Mirrors NCCL GIN's backend selection: the same device API (`put`, `signal`,
+/// The same device API (`put`, `signal`,
 /// `putWithSignal`, `flush`, `accumulate`) is serviced either by the CPU proxy
 /// (FIFO + ProxyService thread) or by GPU-initiated networking (GPUNetIO/GDAKI,
 /// kernel-issued RDMA). The backend is chosen at channel creation.
@@ -59,18 +59,18 @@ struct BasePortChannelDeviceHandle {
   PortChannelBackend backend_;
 
   // GPU-initiated networking context; only used when backend_ == GpuNetIo.
-  GpuNetIoDeviceContext* gin_;
+  GpuNetIoDeviceContext* gpuNetIo_;
   /// Remote bootstrap rank, independent of proxy IDs.
-  int ginPeer_;
+  int gpuNetIoPeer_;
   /// Queue selected by the connection binding.
-  int ginQpIndex_;
+  int gpuNetIoQpIndex_;
   /// Owner of local memory registrations.
-  int ginLocalRank_;
+  int gpuNetIoLocalRank_;
   /// Peer's private registered signal counter.
-  GpuNetIoMemoryDeviceHandle ginSignal_;
+  GpuNetIoMemoryDeviceHandle gpuNetIoSignal_;
   /// Per-channel table indexed by MemoryId.
-  const GpuNetIoMemoryDeviceHandle* ginMemories_;
-  uint32_t ginMemoryCount_;
+  const GpuNetIoMemoryDeviceHandle* gpuNetIoMemories_;
+  uint32_t gpuNetIoMemoryCount_;
 
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
@@ -82,17 +82,17 @@ struct BasePortChannelDeviceHandle {
         fifo_(fifo),
         flushDonePos_(flushDonePos),
         backend_(PortChannelBackend::Proxy),
-        gin_(nullptr),
-        ginPeer_(-1),
-        ginQpIndex_(0),
-        ginLocalRank_(-1),
-        ginSignal_{},
-        ginMemories_(nullptr),
-        ginMemoryCount_(0) {}
+        gpuNetIo_(nullptr),
+        gpuNetIoPeer_(-1),
+        gpuNetIoQpIndex_(0),
+        gpuNetIoLocalRank_(-1),
+        gpuNetIoSignal_{},
+        gpuNetIoMemories_(nullptr),
+        gpuNetIoMemoryCount_(0) {}
 
   /// Build a handle from an owned host connection/semaphore binding and memory table.
   /// MemoryIds index this table; all resources must outlive GPU use.
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(GpuNetIoDeviceContext* gin, int peer, int qpIndex,
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(GpuNetIoDeviceContext* gpuNetIo, int peer, int qpIndex,
                                                          int localRank, GpuNetIoMemoryDeviceHandle signal,
                                                          uint64_t* inboundSignal, uint64_t* expectedSignal,
                                                          const GpuNetIoMemoryDeviceHandle* memories,
@@ -102,21 +102,22 @@ struct BasePortChannelDeviceHandle {
         fifo_{},
         flushDonePos_(nullptr),
         backend_(PortChannelBackend::GpuNetIo),
-        gin_(gin),
-        ginPeer_(peer),
-        ginQpIndex_(qpIndex),
-        ginLocalRank_(localRank),
-        ginSignal_(signal),
-        ginMemories_(memories),
-        ginMemoryCount_(memoryCount) {}
+        gpuNetIo_(gpuNetIo),
+        gpuNetIoPeer_(peer),
+        gpuNetIoQpIndex_(qpIndex),
+        gpuNetIoLocalRank_(localRank),
+        gpuNetIoSignal_(signal),
+        gpuNetIoMemories_(memories),
+        gpuNetIoMemoryCount_(memoryCount) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Check the connection/semaphore binding in every device build mode.
   MSCCLPP_DEVICE_INLINE void validateGpuNetIo() const {
-    requireGpuNetIo(gin_ != nullptr);
-    requireGpuNetIo(ginPeer_ >= 0 && ginPeer_ < gin_->numPeers && ginPeer_ != ginLocalRank_ && ginQpIndex_ >= 0 &&
-                    ginQpIndex_ < gin_->numQpsPerPeer && ginSignal_.rank == ginPeer_ && ginSignal_.base != 0 &&
-                    ginSignal_.base % sizeof(uint64_t) == 0 && ginSignal_.bytes == sizeof(uint64_t) &&
+    requireGpuNetIo(gpuNetIo_ != nullptr);
+    requireGpuNetIo(gpuNetIoPeer_ >= 0 && gpuNetIoPeer_ < gpuNetIo_->numPeers && gpuNetIoPeer_ != gpuNetIoLocalRank_ &&
+                    gpuNetIoQpIndex_ >= 0 && gpuNetIoQpIndex_ < gpuNetIo_->numQpsPerPeer &&
+                    gpuNetIoSignal_.rank == gpuNetIoPeer_ && gpuNetIoSignal_.base != 0 &&
+                    gpuNetIoSignal_.base % sizeof(uint64_t) == 0 && gpuNetIoSignal_.bytes == sizeof(uint64_t) &&
                     semaphore_.inboundToken && semaphore_.expectedInboundToken);
   }
 
@@ -135,8 +136,8 @@ struct BasePortChannelDeviceHandle {
   /// Resolve a memory ID and validate its owner and range before issuing a WQE.
   MSCCLPP_DEVICE_INLINE GpuNetIoMemoryDeviceHandle gpuNetIoMemory(MemoryId id, int rank, uint64_t offset,
                                                                   uint64_t bytes) const {
-    requireGpuNetIo(ginMemories_ != nullptr && id < ginMemoryCount_);
-    const auto memory = ginMemories_[id];
+    requireGpuNetIo(gpuNetIoMemories_ != nullptr && id < gpuNetIoMemoryCount_);
+    const auto memory = gpuNetIoMemories_[id];
     requireGpuNetIo(memory.rank == rank && memory.base != 0 && offset <= memory.bytes &&
                     bytes <= memory.bytes - offset && memory.bytes <= UINTPTR_MAX - memory.base);
     return memory;
@@ -151,9 +152,9 @@ struct BasePortChannelDeviceHandle {
                                  uint64_t size) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
-      const auto dst = gpuNetIoMemory(dstId, ginPeer_, dstOffset, size);
-      const auto src = gpuNetIoMemory(srcId, ginLocalRank_, srcOffset, size);
-      gin_->putRegistered(ginPeer_, ginQpIndex_, dst, dstOffset, src, srcOffset, size);
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, size);
+      const auto src = gpuNetIoMemory(srcId, gpuNetIoLocalRank_, srcOffset, size);
+      gpuNetIo_->putRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, src, srcOffset, size);
       return;
     }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
@@ -172,7 +173,7 @@ struct BasePortChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void signal() {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
-      gin_->atomicAddRegistered(ginPeer_, ginQpIndex_, ginSignal_, 0, 1);
+      gpuNetIo_->atomicAddRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, gpuNetIoSignal_, 0, 1);
       return;
     }
     fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
@@ -188,9 +189,10 @@ struct BasePortChannelDeviceHandle {
                                            uint64_t size) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
-      const auto dst = gpuNetIoMemory(dstId, ginPeer_, dstOffset, size);
-      const auto src = gpuNetIoMemory(srcId, ginLocalRank_, srcOffset, size);
-      gin_->putRegisteredWithSignal(ginPeer_, ginQpIndex_, dst, dstOffset, src, srcOffset, size, ginSignal_);
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, size);
+      const auto src = gpuNetIoMemory(srcId, gpuNetIoLocalRank_, srcOffset, size);
+      gpuNetIo_->putRegisteredWithSignal(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, src, srcOffset, size,
+                                         gpuNetIoSignal_);
       return;
     }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
@@ -240,12 +242,12 @@ struct BasePortChannelDeviceHandle {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
       if (maxSpinCount < 0) {
-        gin_->flush(ginPeer_, ginQpIndex_);
+        gpuNetIo_->flush(gpuNetIoPeer_, gpuNetIoQpIndex_);
       } else {
-        const int status = gin_->tryFlush(ginPeer_, static_cast<uint64_t>(maxSpinCount), ginQpIndex_);
+        const int status = gpuNetIo_->tryFlush(gpuNetIoPeer_, static_cast<uint64_t>(maxSpinCount), gpuNetIoQpIndex_);
         if (status != 0) {
           MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO flush timed out or reported a CQ error");
-          gin_->flush(ginPeer_, ginQpIndex_);
+          gpuNetIo_->flush(gpuNetIoPeer_, gpuNetIoQpIndex_);
         }
       }
       return;
@@ -262,9 +264,9 @@ struct BasePortChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
-      const auto dst = gpuNetIoMemory(dstId, ginPeer_, dstOffset, sizeof(uint64_t));
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, sizeof(uint64_t));
       requireGpuNetIo((dst.base + dstOffset) % sizeof(uint64_t) == 0);
-      gin_->atomicAddRegistered(ginPeer_, ginQpIndex_, dst, dstOffset, value);
+      gpuNetIo_->atomicAddRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, value);
       return;
     }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
