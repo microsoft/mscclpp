@@ -43,6 +43,13 @@ def _parse_args(argv=None, *, parser=None):
     parser.add_argument("--shared-intermediate", type=int, default=2048, help="shared post-SwiGLU width")
     parser.add_argument("--route-sm-margin", type=int, default=32)
     parser.add_argument("--shared-sms", type=int, default=32, help="requested shared persistent CTA count")
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=MODES,
+        default=list(MODES),
+        help="schedule modes to measure, in execution order",
+    )
     parser.add_argument("--router-allow-tf32", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--router-weight-layout", choices=("expert-major", "hidden-major"), default="expert-major")
     parser.add_argument(
@@ -86,6 +93,8 @@ def _parse_args(argv=None, *, parser=None):
         parser.error("--trace-eager requires --trace-path")
     if args.tuned_profile and (not args.topology_id or not args.topology_id.strip()):
         parser.error("--tuned-profile requires an explicit --topology-id")
+    if len(args.modes) != len(set(args.modes)):
+        parser.error("--modes must not contain duplicates")
     return args
 
 
@@ -897,7 +906,7 @@ def main(argv=None):
         correctness = _check(layer, routed_weights, shared_weights, args, dist.barrier)
         _phase(rank, "check_done")
     del routed_weights, shared_weights
-    samples = {mode: _time_mode(layer, mode, args, dist.barrier, rank) for mode in MODES}
+    samples = {mode: _time_mode(layer, mode, args, dist.barrier, rank) for mode in args.modes}
     trace = _trace(layer, args.trace_path, dist.barrier, rank, args.trace_eager) if args.trace_path else None
     report = {
         "rank": rank,
@@ -915,7 +924,7 @@ def main(argv=None):
     reports = [None] * world
     dist.all_gather_object(reports, report)
     if rank == 0:
-        summaries = {mode: _summarize_samples(reports, mode) for mode in MODES}
+        summaries = {mode: _summarize_samples(reports, mode) for mode in args.modes}
         result = {
             "implementation": "mscclpp-native-cuda-megamoe-shared",
             **_scope_report(args),
@@ -944,7 +953,11 @@ def main(argv=None):
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
             "latency_us_max_across_ranks": summaries,
-            "serial_same_cap_over_overlap_speedup": summaries["serial"]["median"] / summaries["overlap"]["median"],
+            "serial_same_cap_over_overlap_speedup": (
+                summaries["serial"]["median"] / summaries["overlap"]["median"]
+                if {"serial", "overlap"} <= summaries.keys()
+                else None
+            ),
             "comparison_caveat": (
                 "same-cap native serial baseline, not a production shared kernel or previous router-free run"
             ),

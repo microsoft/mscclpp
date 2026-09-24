@@ -422,7 +422,7 @@ def main(argv=None):
         )
         _phase(rank, "check_done")
     del routed_weights, shared_weights
-    samples = {mode: _time_mode(layer, mode, args, dist.barrier, rank) for mode in MODES}
+    samples = {mode: _time_mode(layer, mode, args, dist.barrier, rank) for mode in args.modes}
     report = {
         "rank": rank,
         "physical_sms": physical_sms,
@@ -441,7 +441,7 @@ def main(argv=None):
     reports = [None] * world
     dist.all_gather_object(reports, report)
     if rank == 0:
-        summaries = {mode: _summarize_samples(reports, mode) for mode in MODES}
+        summaries = {mode: _summarize_samples(reports, mode) for mode in args.modes}
         result = {
             "implementation": "flashinfer-routed-plus-mscclpp-native-shared-megamoe",
             **_scope_report(args),
@@ -486,7 +486,11 @@ def main(argv=None):
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
             "latency_us_max_across_ranks": summaries,
-            "serial_over_overlap_speedup": summaries["serial"]["median"] / summaries["overlap"]["median"],
+            "serial_over_overlap_speedup": (
+                summaries["serial"]["median"] / summaries["overlap"]["median"]
+                if {"serial", "overlap"} <= summaries.keys()
+                else None
+            ),
             "comparison_caveat": (
                 "frontend and native shared branch match benchmark_shared; FlashInfer overlap is enqueue-first rather "
                 "than native kernel-entry-gated and routed SM capacity is not capped"

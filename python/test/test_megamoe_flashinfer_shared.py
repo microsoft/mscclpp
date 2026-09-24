@@ -14,6 +14,7 @@ def test_defaults_match_native_shared_benchmark():
     assert args.experts is None and args.top_k == 7
     assert args.shared_intermediate == 2048 and args.shared_sms == 32
     assert not args.e5m2 and not args.in_kernel_fc2_reduce
+    assert args.modes == list(benchmark_flashinfer_shared.MODES)
 
 
 @pytest.mark.parametrize(
@@ -30,11 +31,17 @@ def test_defaults_match_native_shared_benchmark():
         ["--intermediate", "65"],
         ["--original-hidden", "129"],
         ["--shared-intermediate", "129"],
+        ["--modes", "overlap", "overlap"],
     ],
 )
 def test_argument_rejection(argv):
     with pytest.raises(SystemExit):
         benchmark_flashinfer_shared._parse_args(argv)
+
+
+def test_mode_selection_matches_native_parser():
+    args = benchmark_flashinfer_shared._parse_args(["--modes", "overlap"])
+    assert args.modes == ["overlap"]
 
 
 def test_e5m2_uses_relaxed_default_reference_threshold():

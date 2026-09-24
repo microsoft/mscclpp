@@ -38,6 +38,7 @@ def test_default_geometry_and_independent_shared_config(world):
     assert (shared.hidden, shared.intermediate, shared.sm_margin) == (8704, 2048, 120)
     assert args.post_norm and args.residual
     assert args.residual_dtype == "fp32" and args.rms_eps == 1e-6
+    assert args.modes == list(MODES)
 
 
 @pytest.mark.parametrize(
@@ -59,11 +60,17 @@ def test_default_geometry_and_independent_shared_config(world):
         ["--rms-eps", "nan"],
         ["--rms-eps", "inf"],
         ["--residual-dtype", "fp16"],
+        ["--modes", "overlap", "overlap"],
     ],
 )
 def test_argument_rejection(argv):
     with pytest.raises(SystemExit):
         _parse_args(argv)
+
+
+def test_mode_selection():
+    assert _parse_args(["--modes", "overlap"]).modes == ["overlap"]
+    assert _parse_args(["--modes", "serial", "overlap"]).modes == ["serial", "overlap"]
 
 
 @pytest.mark.parametrize(

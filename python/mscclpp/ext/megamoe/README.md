@@ -232,6 +232,9 @@ input/router/squash producers, rather than after routed kernel entry. JSON
 records this distinction; `routed-only`, `shared-only`, and `serial` have the
 same stage boundaries as the native benchmark.
 
+Use `--modes overlap --graph-batch 20 --warmup 10 --iterations 30` on both
+shared benchmarks to reproduce the overlap-only EP32 measurement protocol.
+
 ### Complete synthetic MoE layer
 
 ```bash
