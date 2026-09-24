@@ -31,6 +31,7 @@ endforeach()
 
 add_executable(gpunetio_channel_host_test gpunetio_channel_test.cc)
 target_include_directories(gpunetio_channel_host_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(gpunetio_channel_host_test PRIVATE ${PROJECT_SOURCE_DIR}/src/gpunetio/host)
 target_include_directories(gpunetio_channel_host_test SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 target_compile_definitions(gpunetio_channel_host_test PRIVATE TEST_HOST_API)
 if(MSCCLPP_USE_GPUNETIO)

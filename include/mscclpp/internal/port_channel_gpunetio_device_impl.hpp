@@ -30,6 +30,35 @@ MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr ginAtomicResult(const GpuNetIoDevi
 }
 }  // namespace detail
 
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
+                                                                uint64_t dstOffset, GpuNetIoMemoryDeviceHandle src,
+                                                                uint64_t srcOffset, uint64_t size) {
+  doca_gpu_dev_verbs_ticket_t ticket;
+  doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      detail::ginQp(*this, peer, qpIndex), {dst.base + dstOffset, detail::ginHtobe32(dst.key)},
+      {src.base + srcOffset, detail::ginHtobe32(src.key)}, size, &ticket);
+}
+
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegisteredWithSignal(
+    int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst, uint64_t dstOffset, GpuNetIoMemoryDeviceHandle src,
+    uint64_t srcOffset, uint64_t size, GpuNetIoMemoryDeviceHandle signal) {
+  doca_gpu_dev_verbs_ticket_t ticket;
+  doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      detail::ginQp(*this, peer, qpIndex), {dst.base + dstOffset, detail::ginHtobe32(dst.key)},
+      {src.base + srcOffset, detail::ginHtobe32(src.key)}, size, {signal.base, detail::ginHtobe32(signal.key)},
+      detail::ginAtomicResult(*this, peer, qpIndex), 1, &ticket);
+}
+
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAddRegistered(int peer, int qpIndex,
+                                                                      GpuNetIoMemoryDeviceHandle dst,
+                                                                      uint64_t dstOffset, int64_t value) {
+  const doca_gpu_dev_verbs_addr remote{dst.base + dstOffset, detail::ginHtobe32(dst.key)};
+  const auto scratch = detail::ginAtomicResult(*this, peer, qpIndex);
+  doca_gpu_dev_verbs_ticket_t ticket;
+  doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+      detail::ginQp(*this, peer, qpIndex), remote, scratch, 0, remote, scratch, static_cast<uint64_t>(value), &ticket);
+}
+
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                       int qpIndex) {
   auto* qp = detail::ginQp(*this, peer, qpIndex);

@@ -11,10 +11,12 @@
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <stdexcept>
 #include <vector>
 
 #include "api.h"
+#include "gpu_net_io_binding.hpp"
 #include "gpu_net_io_policy.hpp"
 #include "gpu_net_io_qp_table.hpp"
 #include "ib.hpp"  // mscclpp core IbCtx / IbMr (ibverbs context + pd + MR)
@@ -240,7 +242,7 @@ MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> boot
 
 MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& ibDeviceName,
                                                  int cudaDeviceId, int numQpsPerPeer)
-    : pimpl_(std::make_unique<Impl>()) {
+    : pimpl_(std::make_shared<Impl>()) {
   if (!bootstrap || ibDeviceName.empty() || cudaDeviceId < 0) {
     throw Error("GPUNetIO requires a bootstrap, explicit IB device and CUDA device ordinal", ErrorCode::InvalidUsage);
   }
@@ -254,6 +256,8 @@ MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> boot
 
 MSCCLPP_API_CPP GpuNetIoService::~GpuNetIoService() = default;
 
+MSCCLPP_API_CPP void GpuNetIoService::setup() { setup(nullptr, 0); }
+
 MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   auto& s = *pimpl_;
   CudaDeviceGuard deviceGuard(s.cudaDeviceId);
@@ -263,12 +267,13 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   s.didSetup = true;
 
   std::vector<ConfigExchangeInfo> configs(s.worldSize);
-  configs[s.rank] = {symmetricBuffer != nullptr ? bytes : 0, s.numQpsPerPeer, 0};
+  const bool validBuffer = (symmetricBuffer == nullptr) == (bytes == 0);
+  configs[s.rank] = {validBuffer ? bytes : UINT64_MAX, s.numQpsPerPeer, 0};
   s.bootstrap->allGather(configs.data(), sizeof(ConfigExchangeInfo));
   for (const auto& config : configs) {
-    if (config.bytes == 0 || config.bytes != bytes || config.numQpsPerPeer != s.numQpsPerPeer ||
+    if (config.bytes == UINT64_MAX || config.bytes != bytes || config.numQpsPerPeer != s.numQpsPerPeer ||
         config.numQpsPerPeer < 1 || config.numQpsPerPeer > 64) {
-      throw Error("GPUNetIO ranks must agree on nonzero buffer size and QPs per peer in [1, 64]",
+      throw Error("GPUNetIO ranks must agree on optional buffer size and QPs per peer in [1, 64]",
                   ErrorCode::InvalidUsage);
     }
   }
@@ -281,7 +286,7 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   // 1. ibverbs context + pd (reuse mscclpp's dlopen-based IbCtx), and register
   //    the symmetric buffer (IbMr already handles DMA-BUF / Data Direct on GB200).
   s.ibCtx = std::make_unique<IbCtx>(s.ibDeviceName);
-  s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
+  if (bytes != 0) s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
   MSCCLPP_DOCA_THROW(doca_verbs_dev_open(s.ibCtx->getPd(), &s.netDev));
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, rowLength * sizeof(uint64_t)));
   MSCCLPP_CUDA_THROW(cudaMemset(s.atomicResultsGpu, 0, rowLength * sizeof(uint64_t)));
@@ -354,7 +359,7 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   std::vector<MemExchangeInfo> memAll(s.worldSize);
   std::memset(memAll.data(), 0, memAll.size() * sizeof(MemExchangeInfo));
   memAll[s.rank].base = reinterpret_cast<uint64_t>(symmetricBuffer);
-  memAll[s.rank].rkey = s.mr->getInfo().rkey;
+  memAll[s.rank].rkey = s.mr ? s.mr->getInfo().rkey : 0;
   s.bootstrap->allGather(memAll.data(), static_cast<int>(sizeof(MemExchangeInfo)));
 
   std::vector<uint32_t> rkeysHost(s.worldSize);
@@ -371,11 +376,11 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   MSCCLPP_CUDA_THROW(
       cudaMemcpy(s.peerBaseGpu, baseHost.data(), sizeof(uintptr_t) * s.worldSize, cudaMemcpyHostToDevice));
 
-  GpuNetIoDeviceContext ctxHost;
+  GpuNetIoDeviceContext ctxHost{};
   ctxHost.qps = s.qpFlatGpu;
   ctxHost.rkeys = s.rkeysGpu;
   ctxHost.peerBase = s.peerBaseGpu;
-  ctxHost.lkey = s.mr->getLkey();
+  ctxHost.lkey = s.mr ? s.mr->getLkey() : 0;
   ctxHost.localBase = reinterpret_cast<uintptr_t>(symmetricBuffer);
   ctxHost.numPeers = s.worldSize;
   ctxHost.numQpsPerPeer = numQps;
@@ -398,6 +403,177 @@ MSCCLPP_API_CPP GpuNetIoDeviceContext* GpuNetIoService::deviceContext(int peer) 
     throw Error("GPUNetIO channel requires successful service setup", ErrorCode::InvalidUsage);
   }
   return pimpl_->ctxGpu;
+}
+
+namespace detail {
+struct GpuNetIoConnectionState {
+  std::shared_ptr<GpuNetIoService::Impl> service;
+  int peer;
+  int qpIndex;
+};
+
+struct GpuNetIoMemoryState {
+  std::shared_ptr<GpuNetIoService::Impl> service;
+  std::shared_ptr<void> owner;
+  std::shared_ptr<GpuNetIoMemoryState> exportedLocal;
+  std::unique_ptr<const IbMr> registration;
+  GpuNetIoMemoryDeviceHandle descriptor{};
+  bool local = false;
+  ~GpuNetIoMemoryState() {
+    CudaDeviceGuard guard(service->cudaDeviceId);
+    registration.reset();
+    owner.reset();
+  }
+};
+
+struct GpuNetIoSemaphoreState {
+  std::shared_ptr<GpuNetIoConnectionState> connection;
+  GpuNetIoMemory inbound;
+  GpuNetIoMemory remote;
+  uint64_t* inboundCounter;
+  uint64_t* expectedCounter;
+  GpuNetIoMemoryDeviceHandle remoteSignal;
+};
+
+struct GpuNetIoChannelState {
+  std::shared_ptr<GpuNetIoSemaphoreState> semaphore;
+  std::vector<GpuNetIoMemory> memories;
+  GpuNetIoMemoryDeviceHandle* table = nullptr;
+  ~GpuNetIoChannelState() {
+    CudaDeviceGuard guard(semaphore->connection->service->cudaDeviceId);
+    if (table) (void)cudaFree(table);
+  }
+};
+}  // namespace detail
+
+MSCCLPP_API_CPP GpuNetIoConnection GpuNetIoService::connect(int peer, int qpIndex) const {
+  (void)deviceContext(peer);
+  if (qpIndex < 0 || qpIndex >= pimpl_->numQpsPerPeer) {
+    throw Error("GPUNetIO connection QP index out of range", ErrorCode::InvalidUsage);
+  }
+  GpuNetIoConnection connection;
+  connection.state_ =
+      std::make_shared<detail::GpuNetIoConnectionState>(detail::GpuNetIoConnectionState{pimpl_, peer, qpIndex});
+  return connection;
+}
+
+MSCCLPP_API_CPP GpuNetIoMemory GpuNetIoService::registerMemory(void* buffer, size_t bytes,
+                                                               std::shared_ptr<void> owner) const {
+  if (!pimpl_->setupComplete || buffer == nullptr || bytes == 0 ||
+      bytes > UINTPTR_MAX - reinterpret_cast<uintptr_t>(buffer)) {
+    throw Error("GPUNetIO registration requires setup and a valid nonempty CUDA buffer", ErrorCode::InvalidUsage);
+  }
+  CudaDeviceGuard guard(pimpl_->cudaDeviceId);
+  cudaPointerAttributes attributes{};
+  MSCCLPP_CUDA_THROW(cudaPointerGetAttributes(&attributes, buffer));
+  if (attributes.type != cudaMemoryTypeDevice || attributes.device != pimpl_->cudaDeviceId) {
+    throw Error("GPUNetIO buffer must belong to the service CUDA device", ErrorCode::InvalidUsage);
+  }
+  GpuNetIoMemory memory;
+  memory.state_ = std::make_shared<detail::GpuNetIoMemoryState>();
+  memory.state_->service = pimpl_;
+  memory.state_->owner = std::move(owner);
+  memory.state_->registration = pimpl_->ibCtx->registerMr(buffer, bytes);
+  memory.state_->descriptor = {reinterpret_cast<uintptr_t>(buffer), bytes, memory.state_->registration->getLkey(),
+                               pimpl_->rank};
+  memory.state_->local = true;
+  return memory;
+}
+
+GpuNetIoMemory GpuNetIoService::exchangeMemoryImpl(const GpuNetIoConnection& connection, const GpuNetIoMemory& local,
+                                                   int tag, uint32_t kind) const {
+  if (!connection.state_ || connection.state_->service != pimpl_ || !local.state_ || local.state_->service != pimpl_ ||
+      !local.state_->local || tag < 0) {
+    throw Error("GPUNetIO exchange requires a local registration and connection from this service",
+                ErrorCode::InvalidUsage);
+  }
+  const auto& binding = *connection.state_;
+  detail::GpuNetIoMemoryExchange outgoing{local.state_->descriptor.base,
+                                          local.state_->descriptor.bytes,
+                                          local.state_->registration->getInfo().rkey,
+                                          kind,
+                                          pimpl_->rank,
+                                          binding.peer,
+                                          binding.qpIndex,
+                                          1};
+  const auto incoming = detail::exchangeGpuNetIoMemory(*pimpl_->bootstrap, outgoing, tag);
+  GpuNetIoMemory memory;
+  memory.state_ = std::make_shared<detail::GpuNetIoMemoryState>();
+  memory.state_->service = pimpl_;
+  memory.state_->exportedLocal = local.state_;
+  memory.state_->descriptor = {incoming.base, incoming.bytes, incoming.rkey, incoming.rank};
+  return memory;
+}
+
+MSCCLPP_API_CPP GpuNetIoMemory GpuNetIoService::exchangeMemory(const GpuNetIoConnection& connection,
+                                                               const GpuNetIoMemory& local, int tag) const {
+  return exchangeMemoryImpl(connection, local, tag, 1);
+}
+
+MSCCLPP_API_CPP GpuNetIoSemaphore GpuNetIoService::buildSemaphore(const GpuNetIoConnection& connection, int tag) const {
+  if (!connection.state_ || connection.state_->service != pimpl_ || tag < 0) {
+    throw Error("GPUNetIO semaphore requires a connection from this service and a valid tag", ErrorCode::InvalidUsage);
+  }
+  CudaDeviceGuard guard(pimpl_->cudaDeviceId);
+  uint64_t* counters = nullptr;
+  MSCCLPP_CUDA_THROW(cudaMalloc(&counters, 2 * sizeof(uint64_t)));
+  std::shared_ptr<void> owner(counters, [device = pimpl_->cudaDeviceId](void* pointer) {
+    CudaDeviceGuard deviceGuard(device);
+    (void)cudaFree(pointer);
+  });
+  MSCCLPP_CUDA_THROW(cudaMemset(counters, 0, 2 * sizeof(uint64_t)));
+  MSCCLPP_CUDA_THROW(cudaStreamSynchronize(nullptr));
+  auto inbound = registerMemory(counters, sizeof(uint64_t), owner);
+  auto remote = exchangeMemoryImpl(connection, inbound, tag, 2);
+  if (remote.state_->descriptor.bytes != sizeof(uint64_t) || remote.state_->descriptor.base % alignof(uint64_t) != 0) {
+    throw Error("Invalid GPUNetIO semaphore counter metadata", ErrorCode::InvalidUsage);
+  }
+  GpuNetIoSemaphore semaphore;
+  semaphore.state_ = std::make_shared<detail::GpuNetIoSemaphoreState>(detail::GpuNetIoSemaphoreState{
+      connection.state_, inbound, remote, counters, counters + 1, remote.state_->descriptor});
+  return semaphore;
+}
+
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore& semaphore) : BasePortChannel(semaphore, {}) {}
+
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore& semaphore,
+                                                 const std::vector<GpuNetIoMemory>& memories)
+    : semaphoreId_(0) {
+  if (!semaphore.state_ || memories.size() > std::numeric_limits<uint32_t>::max()) {
+    throw Error("Invalid GPUNetIO semaphore or memory table", ErrorCode::InvalidUsage);
+  }
+  const auto& binding = *semaphore.state_;
+  const auto& connection = *binding.connection;
+  const auto& service = *connection.service;
+  std::vector<GpuNetIoMemoryDeviceHandle> descriptors;
+  for (const auto& memory : memories) {
+    if (!memory.state_ || memory.state_->service != connection.service ||
+        (memory.state_->descriptor.rank != service.rank && memory.state_->descriptor.rank != connection.peer)) {
+      throw Error("GPUNetIO channel memory belongs to another service or peer", ErrorCode::InvalidUsage);
+    }
+    descriptors.push_back(memory.state_->descriptor);
+  }
+  auto state = std::make_shared<detail::GpuNetIoChannelState>();
+  state->semaphore = semaphore.state_;
+  state->memories = memories;
+  CudaDeviceGuard guard(service.cudaDeviceId);
+  if (!descriptors.empty()) {
+    MSCCLPP_CUDA_THROW(cudaMalloc(&state->table, descriptors.size() * sizeof(GpuNetIoMemoryDeviceHandle)));
+    MSCCLPP_CUDA_THROW(cudaMemcpy(state->table, descriptors.data(),
+                                  descriptors.size() * sizeof(GpuNetIoMemoryDeviceHandle), cudaMemcpyHostToDevice));
+  }
+  gpuNetIoHandle_ = BasePortChannelDeviceHandle(service.ctxGpu, connection.peer, connection.qpIndex, service.rank,
+                                                binding.remoteSignal, binding.inboundCounter, binding.expectedCounter,
+                                                state->table, static_cast<uint32_t>(memories.size()));
+  gpuNetIoState_ = std::move(state);
+}
+
+MSCCLPP_API_CPP PortChannel::PortChannel(const GpuNetIoSemaphore& semaphore, const GpuNetIoMemory& dst,
+                                         const GpuNetIoMemory& src)
+    : BasePortChannel(semaphore, {dst, src}), dst_(0), src_(1) {
+  if (dst.state_->local || !src.state_->local) {
+    throw Error("GPUNetIO PortChannel requires a remote destination and local source", ErrorCode::InvalidUsage);
+  }
 }
 
 }  // namespace mscclpp

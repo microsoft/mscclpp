@@ -68,37 +68,60 @@ removing that obsolete checkout. Reconfigure the build after applying the patch.
 
 Existing `ProxyService::portChannel(...)` calls remain CPU-proxy channels.
 No environment variable changes their backend. For GDAKI, initialize a service
-collectively on every bootstrap rank, then construct the same `PortChannel`
-type from the service (not a raw device-context pointer):
+collectively on every bootstrap rank, select an already-connected QP, build a
+semaphore for it, and bind separately chosen registrations to `PortChannel`:
 
 ```cpp
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/port_channel.hpp>
 
 mscclpp::GpuNetIoService service(bootstrap, ibDeviceName, cudaDeviceId);
-service.setup(symmetricBuffer, symmetricBytes);
-mscclpp::PortChannel channel(service, peerRank,
-                            remoteSignalOffset, localInboundCounter,
-                            localExpectedCounter);
+service.setup();
+auto connection = service.connect(peerRank, 0);
+auto source = service.registerMemory(sendBuffer, sendBytes, sendOwner);
+auto receive = service.registerMemory(recvBuffer, recvBytes, recvOwner);
+auto destination = service.exchangeMemory(connection, receive, memoryTag);
+auto semaphore = service.buildSemaphore(connection, semaphoreTag);
+mscclpp::PortChannel channel(semaphore, destination, source);
 auto handle = channel.deviceHandle();
 ```
 
 The kernel uses the existing `put`, `signal`, `putWithSignal`,
 `putWithSignalAndFlush`, `accumulate`, `flush`, `poll`, and `wait` methods.
-Offsets are relative to the registered symmetric buffer; arbitrary proxy
-`MemoryId` registrations are not interchangeable with GDAKI registrations.
-All ranks must use equal buffer sizes and the same offset layout. Signal
-counters are aligned 64-bit values, initially zero, disjoint from payloads;
-each peer/channel pair needs its own inbound/expected pair. `peerRank` is a
-remote bootstrap rank, not self. Producers must make payload writes visible
-before issuing network operations. Stop all GPU use and synchronize streams
-before destroying the service, then free the buffers and counters.
+Offsets are relative to each selected registration, not a service-wide symmetric
+payload. `sendOwner` and `recvOwner` are optional shared allocation owners;
+without them, the caller must keep buffers alive while any handle uses them.
+Peers can register different sizes and addresses. `exchangeMemory` exchanges a
+local destination registration with the selected peer/QP; it is not collective.
+Both peers call with matching tags and queue indices. Use distinct nonnegative
+tags for simultaneous setup operations and other bootstrap traffic, and serialize
+setup calls in matching order. Local registration/allocation failures before an
+exchange can still leave the peer waiting; use a launcher timeout for recovery.
 
-Host channel construction validates `peerRank` against the service's retained
-rank/world-size metadata, rejecting negative, self, and out-of-range peers in
-release and debug builds. It also rejects incomplete setup. The service exposes
-no device context until upload completes; the host never dereferences a GPU
-context pointer to obtain validation metadata.
+`buildSemaphore` allocates/zeros/registers private uint64 inbound and expected
+counters, completes initialization, and exchanges signal metadata on the selected
+connection. Payload and signal registrations are independent. Writes, signals,
+accumulates, and flushes all use that connection's QP. `poll` and `wait` use its
+semaphore counters. Multiple semaphores may share a QP, but ordering/completion
+on that QP is shared; select distinct QPs for independent queues.
+
+For explicit memory IDs, construct `BasePortChannel(semaphore, {remote, local,
+otherRemote, otherLocal})`. IDs index that immutable per-channel table; they are
+not ignored or interpreted as peer ranks. Every device operation validates the
+ID, owner rank, and bounds before posting; atomics also require 8-byte alignment.
+Host construction rejects foreign-service/foreign-peer handles and requires a
+remote destination/local source for `PortChannel`. Proxy-service memory IDs and
+GPUNetIO channel-table IDs are separate namespaces.
+
+Connections validate self/out-of-range peers, queue indices and completed setup
+using retained host metadata. Channels retain their semaphore, connection,
+registrations and transport even if the service wrapper is destroyed. Remote
+registrations also retain the local buffer exported in their exchange. Device
+handles alone do not retain host resources: synchronize GPU work before releasing
+the final channel and allocation owners. Producers must make payload writes
+visible before issuing network operations. The legacy `setup(buffer, bytes)`
+and raw context operations remain available with their symmetric-layout contract,
+but ordinary channels no longer need that path or raw signal pointers.
 
 The pinned dependency is restricted to direct `GPU_SM_DB` doorbells, valid DBRs,
 and non-collapsed GPU-resident CQs. `AUTO`, CPU-proxy/free-flow handlers,
@@ -147,13 +170,33 @@ The supporting API is `GpuNetIoService(bootstrap, ibDeviceName, cudaDeviceId,
 numQpsPerPeer)`. Setup validates matching QP counts and symmetric sizes before
 variable-size QP exchange, pairs matching queue indices, and allocates atomic
 result scratch per peer/QP. Device-context operations accept a final optional
-`qpIndex=0`; flushing one queue does not drain the others. The common
-`PortChannelDeviceHandle` still uses QP 0. No multi-HCA or EP scheduling policy
+`qpIndex=0`; flushing one queue does not drain the others. The benchmark now
+constructs real PortChannels with separate registrations and semaphores on each
+QP; its kernel does not bypass PortChannel. No multi-HCA or EP scheduling policy
 is introduced, and the upstream dependency remains unmodified.
 
 `gpunetio_channel_multi_qp_test` runs the real device implementation with stubbed
 DOCA calls on CPU at QP counts 1, 2, 4, 8, and 64. It checks per-peer addressing,
 per-QP scratch, and queue-local completion, not hardware ordering or bandwidth.
+
+### Two Independent Channels
+
+`PortChannelOneToOneTest.GpuNetIoBoundChannels` creates one transport service,
+two connections to the same peer on QPs 0/1, two owned semaphores, and separate
+send/receive registrations with differing per-rank sizes. It releases the service
+wrapper before using the channels, exercises one channel while checking the other
+buffer/counter stays untouched, then verifies both payloads, guard bytes and
+33 consumed signals per channel through the PortChannel API. Run on two ranks:
+
+```bash
+timeout 300s mpirun -np 2 build/bin/mp_unit_tests \
+  --filter=PortChannelOneToOneTest.GpuNetIoBoundChannels
+```
+
+The hardware test is compiled but not executed by the CPU validation suite.
+CPU tests exercise actual registered device operations through two handles and
+check exact addresses, keys, QPs, atomic scratch, signal counters, invalid IDs,
+owner/range/alignment rejection, and both peer-order branches of metadata exchange.
 
 ## Upstream Limitations
 
@@ -207,8 +250,8 @@ restricted configuration.
 
 The linked host API test exercises real service metadata for 1/2/4 ranks and
 rejects negative, self, world-size, INT_MAX, and valid-but-not-initialized peers
-through both BasePortChannel and PortChannel. Compile-time checks prevent the
-raw device-pointer host constructor from returning. The QP-table test also
+at connection selection. Empty semaphore bindings are rejected by both channel
+types. Compile-time checks prevent raw device-pointer host construction. The QP-table test also
 checks the production direct-QP policy using actual upstream types and a stubbed
 create call: 13 cases cover exact requested attributes, error propagation,
 unsupported returned modes, null descriptors, and absence of fallback retries.
@@ -246,3 +289,24 @@ These historical checks predate the FetchContent migration.
   SM90 using installed headers only. The installed upstream license matches.
 - C++ lint and all 131 Python formatting checks pass. These changes do not alter
   runtime protocol or dependency revision; no GPU/NIC workloads were executed.
+
+## Channel Binding Verification (2026-09-24)
+
+- This patch replaces the service/peer/raw-counter host constructors with
+  `PortChannel(semaphore, remoteDestination, localSource)` and
+  `BasePortChannel(semaphore, memoryTable)`. Update callers to the connection,
+  registration exchange and semaphore flow above. The CPU-proxy API is unchanged.
+- Release CUDA 13.0.88 ON/OFF core, `unit_tests`, and `mp_unit_tests` compile and
+  link for SM80/90/100/120; both macro compile probes still pass.
+- Five ON and three OFF CPU tests pass. Coverage includes two real device handles
+  on different QPs/registrations, 12 valid paired metadata exchanges and 96
+  mismatched exchanges, invalid access rejection before DOCA calls, and existing
+  peer-validation, sparse QP-table and direct-only policy regressions.
+- Installed host binding API syntax checks and SM90 device-header compilation
+  pass. Device handles remain trivially copyable/default-constructible.
+- `GpuNetIoBoundChannels` and the migrated P2P/bandwidth tests are compiled but
+  not run on GPU/NIC hardware. Allocation, RDMA ordering, remote lifetime and
+  teardown require cluster verification; CPU tests do not establish those results.
+- Transport setup still preconnects a collective, uniform-QP-count mesh on one
+  HCA. Per-channel memory sizes/addresses and semaphore creation are independent
+  thereafter. On-demand QP creation and concurrent setup calls are not introduced.

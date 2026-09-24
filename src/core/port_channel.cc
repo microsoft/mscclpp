@@ -22,26 +22,16 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const 
                                                  std::shared_ptr<Proxy> proxy)
     : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
 
-MSCCLPP_API_CPP BasePortChannel::BasePortChannel([[maybe_unused]] const GpuNetIoService& service, int peer,
-                                                 uint64_t remoteSignalOffset, uint64_t* inboundSignal,
-                                                 uint64_t* expectedSignal)
-    : semaphoreId_(0),
-      gpuNetIoPeer_(peer),
-      gpuNetIoRemoteSignalOffset_(remoteSignalOffset),
-      gpuNetIoInboundSignal_(inboundSignal),
-      gpuNetIoExpectedSignal_(expectedSignal) {
 #if !defined(MSCCLPP_HAS_GPUNETIO)
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore& semaphore) : BasePortChannel(semaphore, {}) {}
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore&, const std::vector<GpuNetIoMemory>&)
+    : semaphoreId_(0) {
   throw Error("MSCCL++ was built without GPUNetIO", ErrorCode::InvalidUsage);
-#else
-  gpuNetIoContext_ = service.deviceContext(peer);
-  if (remoteSignalOffset == UINT64_MAX || remoteSignalOffset % sizeof(uint64_t) != 0 || inboundSignal == nullptr ||
-      expectedSignal == nullptr || inboundSignal == expectedSignal ||
-      reinterpret_cast<uintptr_t>(inboundSignal) % alignof(uint64_t) != 0 ||
-      reinterpret_cast<uintptr_t>(expectedSignal) % alignof(uint64_t) != 0) {
-    throw Error("Invalid GPUNetIO channel context, peer or signal counters", ErrorCode::InvalidUsage);
-  }
-#endif
 }
+MSCCLPP_API_CPP PortChannel::PortChannel(const GpuNetIoSemaphore& semaphore, const GpuNetIoMemory& dst,
+                                         const GpuNetIoMemory& src)
+    : BasePortChannel(semaphore, {dst, src}), dst_(0), src_(1) {}
+#endif
 
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
@@ -50,10 +40,6 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
-
-MSCCLPP_API_CPP PortChannel::PortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset,
-                                         uint64_t* inboundSignal, uint64_t* expectedSignal)
-    : BasePortChannel(service, peer, remoteSignalOffset, inboundSignal, expectedSignal), dst_(0), src_(0) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   int cudaDevice;
@@ -213,9 +199,8 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  if (gpuNetIoContext_ != nullptr) {
-    return BasePortChannel::DeviceHandle(gpuNetIoContext_, gpuNetIoPeer_, gpuNetIoRemoteSignalOffset_,
-                                         gpuNetIoInboundSignal_, gpuNetIoExpectedSignal_);
+  if (gpuNetIoState_) {
+    return gpuNetIoHandle_;
   }
   auto& conn = semaphore_->connection();
   return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
@@ -223,9 +208,8 @@ MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() co
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
-  if (gpuNetIoContext_ != nullptr) {
-    return PortChannel::DeviceHandle(gpuNetIoContext_, gpuNetIoPeer_, gpuNetIoRemoteSignalOffset_,
-                                     gpuNetIoInboundSignal_, gpuNetIoExpectedSignal_);
+  if (gpuNetIoState_) {
+    return PortChannel::DeviceHandle(gpuNetIoHandle_, dst_, src_);
   }
   auto& conn = semaphore_->connection();
   return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,

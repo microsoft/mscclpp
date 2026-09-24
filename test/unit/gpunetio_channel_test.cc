@@ -247,6 +247,45 @@ int doca_gpu_dev_verbs_poll_one_cq_at(doca_gpu_dev_verbs_qp* qp, uint64_t ticket
 
 #include <mscclpp/port_channel_gpunetio_device.hpp>
 
+#define MSCCLPP_FIFO_DEVICE_HPP_
+#define MSCCLPP_SEMAPHORE_DEVICE_HPP_
+#define MSCCLPP_INLINE inline
+#define MSCCLPP_HOST_DEVICE_INLINE inline
+#define MSCCLPP_DEVICE_CUDA
+#define POLL_MAYBE_JAILBREAK(condition, budget) require(!(condition), "unexpected proxy polling")
+namespace mscclpp {
+enum { scopeSystem, memoryOrderAcquire };
+enum { TriggerPut, TriggerSignal, TriggerPutWithSignal, TriggerPutWithSignalAndFlush, TriggerFlush, TriggerAccumulate };
+constexpr int TriggerBitsSize = 32;
+template <typename Value, int Scope>
+Value atomicLoad(Value* pointer, int) {
+  return *pointer;
+}
+struct ProxyTrigger {
+  int type;
+  uint32_t dst;
+  uint64_t dstOffset;
+  uint32_t src;
+  uint64_t srcOffset;
+  uint64_t bytes;
+  uint32_t sem;
+};
+struct FifoDeviceHandle {
+  uint64_t push(ProxyTrigger) { throw std::runtime_error("unexpected proxy operation"); }
+};
+struct Host2DeviceSemaphoreDeviceHandle {
+  uint64_t* inboundToken;
+  uint64_t* expectedInboundToken;
+  bool poll() {
+    if (*inboundToken <= *expectedInboundToken) return false;
+    ++*expectedInboundToken;
+    return true;
+  }
+  void wait(int64_t) { require(poll(), "missing signal"); }
+};
+}  // namespace mscclpp
+#include <mscclpp/port_channel_device.hpp>
+
 int main() {
   constexpr int peers = 4;
   const uint32_t keys[peers] = {11, 12, 13, 14};
@@ -309,13 +348,70 @@ int main() {
     }
     require(rejected, "out-of-range QP accepted");
   }
-  std::cout << "GPUNetIO multi-QP addressing and completion checks passed\n";
+  std::vector<doca_gpu_dev_verbs_qp> boundQps(4);
+  uint64_t scratch[4]{};
+  uint64_t counters[4]{};
+  mscclpp::GpuNetIoDeviceContext bound{};
+  bound.qps = boundQps.data();
+  bound.numPeers = 2;
+  bound.numQpsPerPeer = 2;
+  bound.atomicResultBase = reinterpret_cast<uintptr_t>(scratch);
+  bound.atomicResultLkey = 0x12345678;
+  mscclpp::GpuNetIoMemoryDeviceHandle memories[4] = {{0x1000, 256, 0x11223344, 1},
+                                                     {0x2000, 512, 0x22334455, 0},
+                                                     {0x3000, 128, 0x33445566, 1},
+                                                     {0x4000, 384, 0x44556677, 0}};
+  for (int queue = 0; queue < 2; ++queue) {
+    const mscclpp::GpuNetIoMemoryDeviceHandle signal{static_cast<uintptr_t>(0x8000 + queue * 64), 8, 0x55667788U, 1};
+    mscclpp::BasePortChannelDeviceHandle base(&bound, 1, queue, 0, signal, &counters[queue * 2],
+                                              &counters[queue * 2 + 1], memories, 4);
+    mscclpp::PortChannelDeviceHandle channel(base, queue * 2, queue * 2 + 1);
+    auto* expectedQp = &boundQps[2 + queue];
+    channel.put(8, 16, 32);
+    require(selectedQp == expectedQp && destination.addr == memories[queue * 2].base + 8 &&
+                destination.key == __builtin_bswap32(memories[queue * 2].key) &&
+                source.addr == memories[queue * 2 + 1].base + 16 &&
+                source.key == __builtin_bswap32(memories[queue * 2 + 1].key),
+            "channel memory/QP binding");
+    channel.putWithSignalAndFlush(0, 16, 8, 7);
+    require(selectedQp == expectedQp && signalDestination.addr == signal.base &&
+                signalResult.addr == reinterpret_cast<uintptr_t>(&scratch[2 + queue]),
+            "channel signal/QP binding");
+    channel.signal();
+    require(selectedQp == expectedQp && signalDestination.addr == signal.base, "standalone signal changed QP");
+    channel.accumulate(64, -1);
+    require(selectedQp == expectedQp && signalDestination.addr == memories[queue * 2].base + 64, "accumulate binding");
+    channel.flush(-1);
+    require(selectedQp == expectedQp, "flush changed QP");
+    base.put(queue * 2, 8, queue * 2 + 1, 16, 8);
+    require(destination.addr == memories[queue * 2].base + 8, "base memory IDs ignored");
+    require(!channel.poll(), "semaphore falsely ready");
+    counters[queue * 2] = 1;
+    channel.wait();
+    require(counters[queue * 2 + 1] == 1, "channel expected counter");
+    for (int invalid = 0; invalid < 4; ++invalid) {
+      bool rejected = false;
+      selectedQp = nullptr;
+      try {
+        if (invalid == 0) base.put(4, 0, 1, 0, 8);
+        if (invalid == 1) base.put(1, 0, 0, 0, 8);
+        if (invalid == 2) channel.put(UINT64_MAX, 0, 8);
+        if (invalid == 3) channel.accumulate(1, 1);
+      } catch (const std::runtime_error&) {
+        rejected = true;
+      }
+      require(rejected && selectedQp == nullptr, "invalid bound access reached DOCA");
+    }
+  }
+  std::cout << "GPUNetIO multi-QP and two-channel binding checks passed\n";
 }
 
 #elif defined(TEST_HOST_API)
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/port_channel.hpp>
+
+#include "gpu_net_io_binding.hpp"
 
 static_assert(std::is_trivially_default_constructible_v<mscclpp::PortChannelDeviceHandle>);
 static_assert(std::is_trivially_copyable_v<mscclpp::PortChannelDeviceHandle>);
@@ -340,6 +436,28 @@ class PeerTestBootstrap : public mscclpp::Bootstrap {
   int rank_;
   int worldSize_;
 };
+
+class ExchangeTestBootstrap : public PeerTestBootstrap {
+ public:
+  ExchangeTestBootstrap(int rank, mscclpp::detail::GpuNetIoMemoryExchange response)
+      : PeerTestBootstrap(rank, 2), response_(response) {}
+  std::string order;
+  mscclpp::detail::GpuNetIoMemoryExchange sent{};
+  void send(void* data, int bytes, int peer, int tag) override {
+    if (bytes != sizeof(sent) || peer != 1 - getRank() || tag != 123) throw std::runtime_error("invalid send envelope");
+    sent = *static_cast<mscclpp::detail::GpuNetIoMemoryExchange*>(data);
+    order += 'S';
+  }
+  void recv(void* data, int bytes, int peer, int tag) override {
+    if (bytes != sizeof(response_) || peer != 1 - getRank() || tag != 123)
+      throw std::runtime_error("invalid recv envelope");
+    *static_cast<mscclpp::detail::GpuNetIoMemoryExchange*>(data) = response_;
+    order += 'R';
+  }
+
+ private:
+  mscclpp::detail::GpuNetIoMemoryExchange response_;
+};
 #endif
 
 #if defined(__NVCC__)
@@ -356,24 +474,67 @@ __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel)
 
 int main() {
 #if defined(TEST_GPUNETIO_ENABLED)
-  uint64_t inbound = 0;
-  uint64_t expected = 0;
+  for (int rank = 0; rank < 2; ++rank) {
+    for (const uint32_t kind : {1U, 2U}) {
+      for (const int queue : {0, 1, 63}) {
+        const mscclpp::detail::GpuNetIoMemoryExchange local{0x1000, 512, 17, kind, rank, 1 - rank, queue, 1};
+        const mscclpp::detail::GpuNetIoMemoryExchange remote{0x2000, 1024, 29, kind, 1 - rank, rank, queue, 1};
+        ExchangeTestBootstrap bootstrap(rank, remote);
+        const auto result = mscclpp::detail::exchangeGpuNetIoMemory(bootstrap, local, 123);
+        if (result.base != remote.base || result.bytes != remote.bytes || result.rkey != remote.rkey ||
+            bootstrap.sent.base != local.base || bootstrap.sent.rkey != local.rkey ||
+            bootstrap.order != (rank == 0 ? "SR" : "RS"))
+          return 4;
+        for (int failure = 0; failure < 8; ++failure) {
+          auto bad = remote;
+          switch (failure) {
+            case 0:
+              bad.version = 0;
+              break;
+            case 1:
+              bad.kind = 3 - kind;
+              break;
+            case 2:
+              bad.rank = rank;
+              break;
+            case 3:
+              bad.peer = 1 - rank;
+              break;
+            case 4:
+              bad.qpIndex = queue + 1;
+              break;
+            case 5:
+              bad.base = 0;
+              break;
+            case 6:
+              bad.bytes = 0;
+              break;
+            case 7:
+              bad.bytes = UINT64_MAX;
+              break;
+          }
+          ExchangeTestBootstrap mismatch(rank, bad);
+          bool rejected = false;
+          try {
+            (void)mscclpp::detail::exchangeGpuNetIoMemory(mismatch, local, 123);
+          } catch (const mscclpp::Error&) {
+            rejected = true;
+          }
+          if (!rejected || mismatch.order != (rank == 0 ? "SR" : "RS")) return 5;
+        }
+      }
+    }
+  }
   for (const int worldSize : {1, 2, 4}) {
     for (int rank = 0; rank < worldSize; ++rank) {
       auto bootstrap = std::make_shared<PeerTestBootstrap>(rank, worldSize);
       mscclpp::GpuNetIoService service(bootstrap, "test-device", 0);
       for (const int peer : {-1, rank, worldSize, std::numeric_limits<int>::max(), (rank + 1) % worldSize}) {
         const bool invalid = peer < 0 || peer >= worldSize || peer == rank;
-        for (const bool base : {false, true}) {
+        for (const int queue : {-1, 0, 64}) {
           bool rejected = false;
           try {
-            if (base) {
-              mscclpp::BasePortChannel channel(service, peer, 64, &inbound, &expected);
-              (void)channel.deviceHandle();
-            } else {
-              mscclpp::PortChannel channel(service, peer, 64, &inbound, &expected);
-              (void)channel.deviceHandle();
-            }
+            (void)service.connect(peer, queue);
           } catch (const mscclpp::Error& error) {
             const std::string message = error.what();
             rejected =
@@ -383,6 +544,19 @@ int main() {
         }
       }
     }
+  }
+  for (const bool base : {false, true}) {
+    bool rejected = false;
+    try {
+      if (base) {
+        mscclpp::BasePortChannel channel(mscclpp::GpuNetIoSemaphore{});
+      } else {
+        mscclpp::PortChannel channel(mscclpp::GpuNetIoSemaphore{}, {}, {});
+      }
+    } catch (const mscclpp::Error&) {
+      rejected = true;
+    }
+    if (!rejected) return 3;
   }
 #else
   mscclpp::PortChannelDeviceHandle handle(0, {}, {}, 0, 0, nullptr);
@@ -450,8 +624,16 @@ struct Host2DeviceSemaphoreDeviceHandle {
   void wait(int64_t) { require(poll(), "signal not received"); }
 };
 
+struct GpuNetIoMemoryDeviceHandle {
+  uintptr_t base;
+  uint64_t bytes;
+  uint32_t key;
+  int rank;
+};
 struct GpuNetIoDeviceContext {
   int numPeers = 4;
+  int numQpsPerPeer = 2;
+  int queue = -1;
   int peer = -1;
   int puts = 0;
   int atomics = 0;
@@ -464,29 +646,36 @@ struct GpuNetIoDeviceContext {
   uint64_t signalOffset = 0;
   int64_t value = 0;
   uint64_t budget = 0;
-  void put(int remotePeer, uint64_t dst, uint64_t src, uint64_t size) {
+  void putRegistered(int remotePeer, int qp, GpuNetIoMemoryDeviceHandle dstMemory, uint64_t dst,
+                     GpuNetIoMemoryDeviceHandle srcMemory, uint64_t src, uint64_t size) {
+    queue = qp;
     peer = remotePeer;
-    destination = dst;
-    source = src;
+    destination = dstMemory.base + dst;
+    source = srcMemory.base + src;
     bytes = size;
     ++puts;
   }
-  void putWithSignal(int remotePeer, uint64_t dst, uint64_t src, uint64_t size, uint64_t signal, uint64_t add) {
-    put(remotePeer, dst, src, size);
-    signalOffset = signal;
-    value = static_cast<int64_t>(add);
+  void putRegisteredWithSignal(int remotePeer, int qp, GpuNetIoMemoryDeviceHandle dstMemory, uint64_t dst,
+                               GpuNetIoMemoryDeviceHandle srcMemory, uint64_t src, uint64_t size,
+                               GpuNetIoMemoryDeviceHandle signal) {
+    putRegistered(remotePeer, qp, dstMemory, dst, srcMemory, src, size);
+    signalOffset = signal.base;
+    value = 1;
   }
-  void atomicAdd(int remotePeer, uint64_t dst, int64_t add) {
+  void atomicAddRegistered(int remotePeer, int qp, GpuNetIoMemoryDeviceHandle memory, uint64_t dst, int64_t add) {
+    queue = qp;
     peer = remotePeer;
-    destination = dst;
+    destination = memory.base + dst;
     value = add;
     ++atomics;
   }
-  void flush(int remotePeer) {
+  void flush(int remotePeer, int qp) {
+    queue = qp;
     peer = remotePeer;
     ++flushes;
   }
-  int tryFlush(int remotePeer, uint64_t spins) {
+  int tryFlush(int remotePeer, uint64_t spins, int qp) {
+    queue = qp;
     peer = remotePeer;
     budget = spins;
     ++boundedFlushes;
@@ -525,10 +714,14 @@ int main() {
           "proxy truncated signed 64-bit accumulate");
 
   GpuNetIoDeviceContext context;
-  PortChannelDeviceHandle network(&context, 3, 64, &inbound, &expected);
+  const GpuNetIoMemoryDeviceHandle memories[] = {{1024, 512, 11, 3}, {2048, 512, 12, 0}};
+  BasePortChannelDeviceHandle base(&context, 3, 1, 0, {64, 8, 13, 3}, &inbound, &expected, memories, 2);
+  PortChannelDeviceHandle network(base, 0, 1);
   require(network.backend_ == PortChannelBackend::GpuNetIo, "GDAKI selection");
   network.put(8, 16, 32);
-  require(context.peer == 3 && context.destination == 8 && context.source == 16 && context.bytes == 32, "GDAKI put");
+  require(context.peer == 3 && context.queue == 1 && context.destination == 1032 && context.source == 2064 &&
+              context.bytes == 32,
+          "GDAKI put");
   network.signal();
   require(context.peer == 3 && context.destination == 64 && context.value == 1, "GDAKI signal address");
   network.putWithSignal(24, 40, 64);
@@ -540,10 +733,9 @@ int main() {
   network.flush(-1);
   require(context.flushes == 1, "unbounded flush");
   network.accumulate(56, operand);
-  require(context.destination == 56 && context.value == operand, "GDAKI accumulate");
-  BasePortChannelDeviceHandle base(&context, 3, 64, &inbound, &expected);
-  base.put(99, 8, 77, 16, 32);
-  require(context.peer == 3, "proxy memory ID used as GDAKI peer");
+  require(context.destination == 1080 && context.value == operand, "GDAKI accumulate");
+  base.put(0, 8, 1, 16, 32);
+  require(context.peer == 3 && context.queue == 1, "memory ID used as GDAKI peer/QP");
   require(!network.poll(), "unsignaled counter");
   inbound = 2;
   require(network.poll(), "signal polling");

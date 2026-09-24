@@ -1359,7 +1359,7 @@ __global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int 
     channel.putWithSignal(/*dstOffset=*/0, /*srcOffset=*/0, sizeof(int));
     ret[0] = 20;
     channel.flush(kMaxSpins);
-    ret[1] = channel.gin_->tryFlush(channel.ginPeer_, kMaxSpins);
+    ret[1] = channel.gin_->tryFlush(channel.ginPeer_, kMaxSpins, channel.ginQpIndex_);
     ret[0] = (ret[1] == 0) ? 30 : 31;
   } else {
     uint64_t spin = 0;
@@ -1373,13 +1373,13 @@ __global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int 
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* context, int rank, int peer,
+__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::PortChannelDeviceHandle* channels, int rank,
                                                uint64_t bytesPerQp, int puts, int numQps) {
   const int queue = threadIdx.x;
   if (queue >= numQps || rank != 0) return;
-  const uint64_t offset = static_cast<uint64_t>(queue) * bytesPerQp;
-  for (int iteration = 0; iteration < puts; ++iteration) context->put(peer, offset, offset, bytesPerQp, queue);
-  context->flush(peer, queue);
+  auto channel = channels[queue];
+  for (int iteration = 0; iteration < puts; ++iteration) channel.put(0, 0, bytesPerQp);
+  channel.flush(-1);
 }
 #endif
 
@@ -1412,12 +1412,9 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
   const std::string ibDevice = mscclpp::getIBDeviceName(ibTransport);
   constexpr uint64_t maxBytesPerQp = 8ULL * 1024 * 1024;
-  const size_t bytes = static_cast<size_t>(numQps) * maxBytesPerQp;
-  auto memory = mscclpp::GpuBuffer<char>(bytes).memory();
-  MSCCLPP_CUDATHROW(cudaMemset(memory.get(), 0, bytes));
   auto service = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevice, cudaDevice, numQps);
   try {
-    service->setup(memory.get(), bytes);
+    service->setup();
   } catch (const mscclpp::Error& error) {
     service.reset();
     SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << error.what();
@@ -1426,14 +1423,29 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
   const int peer = 1 - rank;
+  std::vector<mscclpp::PortChannel> channels;
+  std::vector<mscclpp::PortChannelDeviceHandle> handles;
+  for (int queue = 0; queue < numQps; ++queue) {
+    auto buffer = mscclpp::GpuBuffer<char>(maxBytesPerQp).memory();
+    MSCCLPP_CUDATHROW(cudaMemset(buffer.get(), 0, maxBytesPerQp));
+    auto connection = service->connect(peer, queue);
+    auto local = service->registerMemory(buffer.get(), maxBytesPerQp, buffer);
+    auto remote = service->exchangeMemory(connection, local, 17000 + queue * 2);
+    auto semaphore = service->buildSemaphore(connection, 17001 + queue * 2);
+    channels.emplace_back(semaphore, remote, local);
+    handles.push_back(channels.back().deviceHandle());
+  }
+  auto deviceHandles = mscclpp::GpuBuffer<mscclpp::PortChannelDeviceHandle>(numQps).memory();
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(deviceHandles.get(), handles.data(), handles.size() * sizeof(handles[0]), cudaMemcpyHostToDevice));
   constexpr int puts = 256;
   for (uint64_t bytesPerQp :
        {256ULL, 16ULL * 1024, 256ULL * 1024, 1024ULL * 1024, 4ULL * 1024 * 1024, 8ULL * 1024 * 1024}) {
-    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, 10, numQps);
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(deviceHandles.get(), rank, bytesPerQp, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
     mscclpp::Timer timer;
-    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, puts, numQps);
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(deviceHandles.get(), rank, bytesPerQp, puts, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     const double elapsedUs = timer.elapsed();
     communicator->bootstrap()->barrier();
@@ -1464,18 +1476,15 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
   const std::string ibDevName = mscclpp::getIBDeviceName(ibTransport);
 
   const size_t bytes = 4096;
-  const uint64_t signalOffset = 64;
-  void* symBuf = nullptr;
-  MSCCLPP_CUDATHROW(cudaMalloc(&symBuf, bytes));
-  MSCCLPP_CUDATHROW(cudaMemset(symBuf, 0, bytes));
+  auto buffer = mscclpp::GpuBuffer<char>(bytes).memory();
+  MSCCLPP_CUDATHROW(cudaMemset(buffer.get(), 0, bytes));
 
   std::unique_ptr<mscclpp::GpuNetIoService> svc;
   try {
     svc = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(), ibDevName, cudaDev);
-    svc->setup(symBuf, bytes);
+    svc->setup();
   } catch (const mscclpp::Error& e) {
     svc.reset();
-    MSCCLPP_CUDATHROW(cudaFree(symBuf));
     SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << e.what();
     return;
   }
@@ -1487,10 +1496,12 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
   MSCCLPP_CUDATHROW(cudaMalloc(&retDev, 2 * sizeof(int)));
   MSCCLPP_CUDATHROW(cudaMemset(retDev, 0, 2 * sizeof(int)));
 
-  auto* inbound = reinterpret_cast<uint64_t*>(static_cast<char*>(symBuf) + signalOffset);
-  auto* expected = inbound + 1;
-  mscclpp::PortChannel channel(*svc, peer, signalOffset, inbound, expected);
-  kernelGpuNetIoP2P<<<1, 1>>>(channel.deviceHandle(), rank, reinterpret_cast<int*>(symBuf), retDev);
+  auto connection = svc->connect(peer);
+  auto local = svc->registerMemory(buffer.get(), bytes, buffer);
+  auto remote = svc->exchangeMemory(connection, local, 16000);
+  auto semaphore = svc->buildSemaphore(connection, 16001);
+  mscclpp::PortChannel channel(semaphore, remote, local);
+  kernelGpuNetIoP2P<<<1, 1>>>(channel.deviceHandle(), rank, reinterpret_cast<int*>(buffer.get()), retDev);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
@@ -1506,8 +1517,89 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
 
   MSCCLPP_CUDATHROW(cudaFree(retDev));
   svc.reset();
-  MSCCLPP_CUDATHROW(cudaFree(symBuf));
 #else
   SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
+}
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+__global__ void kernelGpuNetIoBoundChannel(mscclpp::PortChannelDeviceHandle channel, int iterations) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    channel.putWithSignalAndFlush(0, 0, 256, -1);
+    channel.wait(-1);
+  }
+}
+#endif
+
+TEST(PortChannelOneToOneTest, GpuNetIoBoundChannels) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  if (communicator->bootstrap()->getNranks() != 2) {
+    SKIP_TEST() << "GPUNetIO bound channels require exactly two ranks";
+    return;
+  }
+  const int rank = communicator->bootstrap()->getRank();
+  int device = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  auto service = std::make_unique<mscclpp::GpuNetIoService>(communicator->bootstrap(),
+                                                            mscclpp::getIBDeviceName(ibTransport), device, 2);
+  try {
+    service->setup();
+  } catch (const mscclpp::Error& error) {
+    SKIP_TEST() << error.what();
+    return;
+  }
+  std::vector<mscclpp::PortChannel> channels;
+  std::vector<std::shared_ptr<unsigned char>> receivers;
+  for (int queue = 0; queue < 2; ++queue) {
+    const size_t bytes = 512 + rank * 128 + queue * 256;
+    auto send = mscclpp::GpuBuffer<unsigned char>(bytes).memory();
+    auto receive = mscclpp::GpuBuffer<unsigned char>(bytes + 64).memory();
+    MSCCLPP_CUDATHROW(cudaMemset(send.get(), 0x11 + rank * 16 + queue, bytes));
+    MSCCLPP_CUDATHROW(cudaMemset(receive.get(), 0xa5, bytes + 64));
+    auto connection = service->connect(1 - rank, queue);
+    auto source = service->registerMemory(send.get(), bytes, send);
+    auto destination = service->registerMemory(receive.get(), bytes + 64, receive);
+    auto remote = service->exchangeMemory(connection, destination, 18000 + queue * 2);
+    auto semaphore = service->buildSemaphore(connection, 18001 + queue * 2);
+    channels.emplace_back(semaphore, remote, source);
+    receivers.push_back(receive);
+  }
+  const auto first = channels[0].deviceHandle();
+  const auto second = channels[1].deviceHandle();
+  EXPECT_EQ(first.ginPeer_, second.ginPeer_);
+  EXPECT_EQ(first.ginQpIndex_, 0);
+  EXPECT_EQ(second.ginQpIndex_, 1);
+  EXPECT_NE(first.semaphore_.inboundToken, second.semaphore_.inboundToken);
+  EXPECT_NE(first.ginMemories_, second.ginMemories_);
+  service.reset();
+  kernelGpuNetIoBoundChannel<<<1, 1>>>(first, 1);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  unsigned char untouched[256];
+  MSCCLPP_CUDATHROW(cudaMemcpy(untouched, receivers[1].get(), sizeof(untouched), cudaMemcpyDeviceToHost));
+  for (const auto byte : untouched) EXPECT_EQ(byte, 0xa5);
+  uint64_t counter = 1;
+  MSCCLPP_CUDATHROW(cudaMemcpy(&counter, second.semaphore_.inboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
+  EXPECT_EQ(counter, 0);
+  kernelGpuNetIoBoundChannel<<<1, 1>>>(second, 33);
+  kernelGpuNetIoBoundChannel<<<1, 1>>>(first, 32);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  for (int queue = 0; queue < 2; ++queue) {
+    unsigned char received[320];
+    MSCCLPP_CUDATHROW(cudaMemcpy(received, receivers[queue].get(), sizeof(received), cudaMemcpyDeviceToHost));
+    for (int index = 0; index < 320; ++index)
+      EXPECT_EQ(received[index], index < 256 ? 0x11 + (1 - rank) * 16 + queue : 0xa5);
+    auto handle = channels[queue].deviceHandle();
+    MSCCLPP_CUDATHROW(cudaMemcpy(&counter, handle.semaphore_.inboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(counter, 33);
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(&counter, handle.semaphore_.expectedInboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(counter, 33);
+  }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
 }

@@ -10,6 +10,14 @@
 
 namespace mscclpp {
 
+/// One local or remote registration. Keys are stored in host byte order.
+struct GpuNetIoMemoryDeviceHandle {
+  uintptr_t base;
+  uint64_t bytes;
+  uint32_t key;
+  int rank;
+};
+
 /// Device-side context for the GPU-initiated networking (GPUNetIO / GDAKI)
 /// PortChannel backend. This is the kernel-issued RDMA path: instead of pushing
 /// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
@@ -43,6 +51,17 @@ struct GpuNetIoDeviceContext {
   int numQpsPerPeer = 1;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Write between explicit registrations on the selected peer/QP.
+  MSCCLPP_DEVICE_INLINE void putRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst, uint64_t dstOffset,
+                                           GpuNetIoMemoryDeviceHandle src, uint64_t srcOffset, uint64_t size);
+  /// Write and signal using independent data and signal registrations on one QP.
+  MSCCLPP_DEVICE_INLINE void putRegisteredWithSignal(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
+                                                     uint64_t dstOffset, GpuNetIoMemoryDeviceHandle src,
+                                                     uint64_t srcOffset, uint64_t size,
+                                                     GpuNetIoMemoryDeviceHandle signal);
+  /// Add to an explicit registered destination on the selected peer/QP.
+  MSCCLPP_DEVICE_INLINE void atomicAddRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
+                                                 uint64_t dstOffset, int64_t value);
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
   /// symmetric buffer into peer `peer`'s symmetric buffer at dstOffset.
   MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int qpIndex = 0);
@@ -77,6 +96,26 @@ struct GpuNetIoDeviceContext {
 #include "internal/port_channel_gpunetio_device_impl.hpp"
 #else
 namespace mscclpp {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
+                                                                GpuNetIoMemoryDeviceHandle, uint64_t, uint64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegisteredWithSignal(int, int, GpuNetIoMemoryDeviceHandle,
+                                                                          uint64_t, GpuNetIoMemoryDeviceHandle,
+                                                                          uint64_t, uint64_t,
+                                                                          GpuNetIoMemoryDeviceHandle) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAddRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
+                                                                      int64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int, uint64_t, uint64_t, uint64_t, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();

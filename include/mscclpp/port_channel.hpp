@@ -14,6 +14,11 @@ namespace mscclpp {
 struct BasePortChannel;
 struct PortChannel;
 class GpuNetIoService;
+class GpuNetIoSemaphore;
+class GpuNetIoMemory;
+namespace detail {
+struct GpuNetIoChannelState;
+}
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -102,11 +107,8 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
-  GpuNetIoDeviceContext* gpuNetIoContext_ = nullptr;
-  int gpuNetIoPeer_ = -1;
-  uint64_t gpuNetIoRemoteSignalOffset_ = UINT64_MAX;
-  uint64_t* gpuNetIoInboundSignal_ = nullptr;
-  uint64_t* gpuNetIoExpectedSignal_ = nullptr;
+  std::shared_ptr<detail::GpuNetIoChannelState> gpuNetIoState_;
+  BasePortChannelDeviceHandle gpuNetIoHandle_{};
 
  public:
   /// Constructor.
@@ -125,17 +127,13 @@ struct BasePortChannel {
   /// @param proxy The proxy used for communication.
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
 
-  /// Construct a GPU-initiated PortChannel over registered symmetric memory.
-  /// @param service Successfully initialized service supplying trusted rank metadata.
-  /// @param peer Remote bootstrap rank, not a proxy memory/semaphore ID or self.
-  /// @param remoteSignalOffset Aligned uint64_t counter offset in the peer's registered buffer.
-  /// @param inboundSignal Local registered GPU counter updated by this peer, initially zero.
-  /// @param expectedSignal Separate local GPU counter for consumed signals, initially zero.
-  /// The service, buffers and counters must outlive all channels and their GPU work.
-  /// Signal counters must not overlap payloads. MemoryId arguments are ignored:
-  /// data offsets address the service's symmetric buffers, not arbitrary registrations.
-  BasePortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
-                  uint64_t* expectedSignal);
+  /// Construct from a connection-bound semaphore and an immutable registration table.
+  /// MemoryId is the index in memories. Empty tables support signal/wait/flush only.
+  /// Registrations must belong to the semaphore's service and either local rank or its peer.
+  /// Retains transport, semaphore and registration ownership. Synchronize GPU work before release.
+  BasePortChannel(const GpuNetIoSemaphore& semaphore, const std::vector<GpuNetIoMemory>& memories);
+  /// Construct a signal/wait/flush-only channel on the semaphore's QP.
+  explicit BasePortChannel(const GpuNetIoSemaphore& semaphore);
 
   /// Copy constructor.
   /// @param other The other BasePortChannel to copy from.
@@ -182,10 +180,9 @@ struct PortChannel : public BasePortChannel {
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
               MemoryId src);
 
-  /// Construct a GPU-initiated PortChannel over registered symmetric memory.
-  /// @copydetails BasePortChannel::BasePortChannel(const GpuNetIoService&, int, uint64_t, uint64_t*, uint64_t*)
-  PortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
-              uint64_t* expectedSignal);
+  /// Bind one remote destination and local source registration to a QP-bound semaphore.
+  /// Retains all resources; device offsets are relative to these registrations.
+  PortChannel(const GpuNetIoSemaphore& semaphore, const GpuNetIoMemory& dst, const GpuNetIoMemory& src);
 
   /// Copy constructor.
   /// @param other The other PortChannel to copy from.
