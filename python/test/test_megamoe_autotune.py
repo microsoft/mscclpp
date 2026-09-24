@@ -138,6 +138,19 @@ class InputTests(unittest.TestCase):
         self.assertEqual(args.router_probability_order, "selected-logits")
         self.assertEqual((args.trials, args.graph_batch, args.cache_dir), (2, 3, "cache"))
         self.assertTrue(args._cli_resource_split)
+        self.assertFalse(args.full_edge_references)
+
+    def test_cli_can_enable_full_edge_references(self):
+        args = autotune._parse_args(
+            [
+                "--profile-output",
+                "profiles.json",
+                "--topology-id",
+                "fabric-A",
+                "--full-edge-references",
+            ]
+        )
+        self.assertTrue(args.full_edge_references)
 
     def test_cli_requires_topology_and_rejects_replay_or_trace(self):
         for extra in (
@@ -270,6 +283,7 @@ class CollectiveTests(unittest.TestCase):
                 0,
                 1,
                 check=False,
+                independent_reference=False,
             )
 
     def test_native_constructor_infeasibility_is_rejected_collectively(self):
@@ -427,7 +441,14 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(args.tokens, 7)
 
     def test_mocked_cli_compiles_before_bootstraps_and_persists_winner(self):
-        plan = {**_input(), "kernel_candidates": autotune.DEFAULT_KERNELS[:2]}
+        plan = {
+            **_input(),
+            "kernel_candidates": autotune.DEFAULT_KERNELS[:2],
+            "resource_splits": [
+                {"route_sm_margin": 32, "shared_sms": 32},
+                {"route_sm_margin": 48, "shared_sms": 48},
+            ],
+        }
         config_path = self.directory / "input.json"
         config_path.write_text(json.dumps(plan))
         profile_path = self.directory / "cli-profiles.json"
@@ -477,8 +498,8 @@ class ProfileTests(unittest.TestCase):
                 return CompiledKernel(config, "", "builtin", True)
             return CompiledKernel(config, str(self.directory / "local.so"), "a" * 64, True)
 
-        def run_trial(args, bucket, kernel, *unused, check):
-            trials.append((kernel.key, args.max_tokens, args.tokens, check))
+        def run_trial(args, bucket, kernel, *unused, check, independent_reference):
+            trials.append((kernel.key, args.max_tokens, args.tokens, check, independent_reference))
             latency = 10 if kernel.key == "builtin" else 9
             return {
                 "correctness": {"checked": check},
@@ -514,8 +535,23 @@ class ProfileTests(unittest.TestCase):
             )
         self.assertEqual(phases[:2], ["compile", "compile"])
         self.assertEqual(phases[2:], ["bootstrap", "bootstrap"])
-        self.assertEqual([trial[0] for trial in trials], ["builtin", "a" * 64, "a" * 64, "builtin"])
-        self.assertEqual([trial[3] for trial in trials], [True, True, False, False])
+        self.assertEqual(
+            [trial[0] for trial in trials],
+            ["builtin", "a" * 64, "builtin", "a" * 64, "a" * 64, "builtin", "a" * 64, "builtin"],
+        )
+        self.assertEqual(
+            [trial[3:] for trial in trials],
+            [
+                (True, True),
+                (True, True),
+                (True, False),
+                (True, False),
+                (False, False),
+                (False, False),
+                (False, False),
+                (False, False),
+            ],
+        )
         self.assertTrue(all(trial[1:3] == (32, 32) for trial in trials))
         entry = autotune._read_profiles(profile_path)["entries"][0]
         self.assertEqual(entry["winner"]["kernel_key"], "a" * 64)

@@ -531,7 +531,17 @@ def _capture(layer, mode, repetitions, barrier=lambda: None):
     return graph
 
 
-def _check(layer, routed_weights, shared_weights, args, barrier, *, routed_reference=None, error_guard=nullcontext):
+def _check(
+    layer,
+    routed_weights,
+    shared_weights,
+    args,
+    barrier,
+    *,
+    routed_reference=None,
+    error_guard=nullcontext,
+    independent_reference=True,
+):
     graphs = {}
     try:
         return _check_impl(
@@ -543,6 +553,7 @@ def _check(layer, routed_weights, shared_weights, args, barrier, *, routed_refer
             graphs,
             routed_reference=routed_reference,
             error_guard=error_guard,
+            independent_reference=independent_reference,
         )
     finally:
         for graph in graphs.values():
@@ -552,7 +563,16 @@ def _check(layer, routed_weights, shared_weights, args, barrier, *, routed_refer
 
 
 def _check_impl(
-    layer, routed_weights, shared_weights, args, barrier, graphs, *, routed_reference=None, error_guard=nullcontext
+    layer,
+    routed_weights,
+    shared_weights,
+    args,
+    barrier,
+    graphs,
+    *,
+    routed_reference=None,
+    error_guard=nullcontext,
+    independent_reference=True,
 ):
     import torch
     from .benchmark import _reference
@@ -562,10 +582,12 @@ def _check_impl(
     for mode in ("serial", "overlap"):
         _phase(layer.routed.config.rank, "check_capture", mode=mode)
         graphs[mode] = _capture(layer, mode, args.graph_batch, barrier)
-    _phase(layer.routed.config.rank, "check_cpu_reference_setup")
-    routed_weights_cpu = [weight.cpu() for weight in routed_weights]
-    shared_weights_cpu = [weight.cpu() for weight in shared_weights]
-    unsquash_weight_cpu = f.unsquash_weight.cpu()
+    routed_weights_cpu = shared_weights_cpu = unsquash_weight_cpu = None
+    if independent_reference:
+        _phase(layer.routed.config.rank, "check_cpu_reference_setup")
+        routed_weights_cpu = [weight.cpu() for weight in routed_weights]
+        shared_weights_cpu = [weight.cpu() for weight in shared_weights]
+        unsquash_weight_cpu = f.unsquash_weight.cpu()
     original = f.inputs.clone()
     original_residual = f.postprocess.residual.clone()
     layer.stream.wait_stream(torch.cuda.current_stream(layer.device))
@@ -588,26 +610,41 @@ def _check_impl(
                 if torch.equal(ids, previous_ids):
                     raise AssertionError("changed synthetic input did not change routing")
         previous_ids = ids
-        # The routed oracle intentionally uses the actual global Gloo group.
-        # The shared oracle is local even when the benchmark runs at EP32.
-        route_reference = routed_reference(
-            layer.routed.config, f.squashed.cpu(), ids, f.scores.cpu(), routed_weights_cpu
-        )
-        shared_reference = _shared_reference(f.inputs.cpu(), shared_weights_cpu)
-        combined_reference = (route_reference @ unsquash_weight_cpu) + shared_reference
-        normalized_reference = f.postprocess._reference_normalized(combined_reference)
-        final_reference = f.postprocess.reference(combined_reference)
         with error_guard():
-            metrics = {
-                "routed": _error_stats(routed_output, route_reference),
-                "shared": _error_stats(shared_output, shared_reference),
-                "combined": _error_stats(combined, combined_reference),
-                "normalized": _error_stats(normalized, normalized_reference),
-                "final": _error_stats(expected, final_reference),
-            }
-            for branch, error in metrics.items():
-                if error["relative_l2"] > args.reference_relative_l2:
-                    raise AssertionError(f"{branch} sample {sample}: relative L2 {error} exceeds tolerance")
+            metrics = {}
+            if independent_reference:
+                assert routed_weights_cpu is not None
+                assert shared_weights_cpu is not None
+                assert unsquash_weight_cpu is not None
+                # The routed oracle intentionally uses the actual global Gloo group.
+                # The shared oracle is local even when the benchmark runs at EP32.
+                route_reference = routed_reference(
+                    layer.routed.config, f.squashed.cpu(), ids, f.scores.cpu(), routed_weights_cpu
+                )
+                shared_reference = _shared_reference(f.inputs.cpu(), shared_weights_cpu)
+                combined_reference = (route_reference @ unsquash_weight_cpu) + shared_reference
+                normalized_reference = f.postprocess._reference_normalized(combined_reference)
+                final_reference = f.postprocess.reference(combined_reference)
+                metrics = {
+                    "routed": _error_stats(routed_output, route_reference),
+                    "shared": _error_stats(shared_output, shared_reference),
+                    "combined": _error_stats(combined, combined_reference),
+                    "normalized": _error_stats(normalized, normalized_reference),
+                    "final": _error_stats(expected, final_reference),
+                }
+                for branch, error in metrics.items():
+                    if error["relative_l2"] > args.reference_relative_l2:
+                        raise AssertionError(f"{branch} sample {sample}: relative L2 {error} exceeds tolerance")
+            else:
+                for branch, value in (
+                    ("routed", routed_output),
+                    ("shared", shared_output),
+                    ("combined", combined),
+                    ("normalized", normalized),
+                    ("final", expected),
+                ):
+                    if not bool(torch.isfinite(value).all()):
+                        raise AssertionError(f"{branch} sample {sample}: nonfinite output")
             if f.inputs.numel():
                 if not bool(torch.count_nonzero(shared_output)):
                     raise AssertionError("shared branch produced no contribution")
@@ -630,7 +667,14 @@ def _check_impl(
                 torch.testing.assert_close(f.output, expected, rtol=0, atol=0)
                 torch.testing.assert_close(f.combined, combined, rtol=0, atol=0)
                 torch.testing.assert_close(f.postprocess.normalized, normalized, rtol=0, atol=0)
-        results.append({"sample": sample, "oracles": metrics, "eager_and_graph_schedules_bitwise_equal": True})
+        results.append(
+            {
+                "sample": sample,
+                "oracles": metrics,
+                "independent_reference_checked": independent_reference,
+                "eager_and_graph_schedules_bitwise_equal": True,
+            }
+        )
     with torch.cuda.stream(layer.stream):
         f.inputs.copy_(original)
         f.postprocess.residual.copy_(original_residual)
@@ -640,7 +684,8 @@ def _check_impl(
     gc.collect()
     return {
         "samples": results,
-        "reference_device": "cpu",
+        "reference_device": "cpu" if independent_reference else None,
+        "independent_reference_checked": independent_reference,
         "changed_inputs_checked": True,
         "changed_residuals_checked": f.postprocess.residual_enabled,
         "zero_tokens": not bool(f.inputs.shape[0]),

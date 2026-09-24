@@ -157,7 +157,6 @@ def runtime_fingerprint(device=None):
         "core_library_sha256": _file_hash(_library("mscclpp")),
         "jit_source_sha256": _tree_hash(_source_root(), {".cu", ".cuh", ".hpp"}),
         "jit_builder_sha256": _file_hash(Path(__file__)),
-        "frontend_code_sha256": _file_hash(Path(__file__).with_name("benchmark_shared.py")),
         "cache_tag": os.environ.get("MSCCLPP_MEGAMOE_CACHE_TAG", ""),
         "tf32_override": os.environ.get("NVIDIA_TF32_OVERRIDE"),
     }

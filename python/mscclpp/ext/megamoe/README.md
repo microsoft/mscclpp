@@ -300,10 +300,14 @@ The cache defaults to `$XDG_CACHE_HOME/mscclpp/megamoe` (or
 `~/.cache/mscclpp/megamoe`); override it with `MSCCLPP_MEGAMOE_CACHE_DIR`.
 File locking avoids duplicate builds on a host. Modules and manifests use
 content-addressed keys and checksums; compilation failures are explicit and
-logs are retained. `load_cached_kernel(key)` reuses a compatible module without
-nvcc or a CUTLASS checkout. Installed JIT sources must remain available for
-fingerprint validation. Change `MSCCLPP_MEGAMOE_CACHE_TAG` when changing an
-external performance policy such as GPU clocks or power limits.
+logs are retained. Kernel cache keys cover native libraries, JIT sources,
+headers, and toolchains, but not benchmark-only frontend code. Offline profile
+selection separately fingerprints the frontend, so a frontend change rejects a
+stale profile without recompiling an otherwise identical kernel.
+`load_cached_kernel(key)` reuses a compatible module without nvcc or a CUTLASS
+checkout. Installed JIT sources must remain available for fingerprint
+validation. Change `MSCCLPP_MEGAMOE_CACHE_TAG` when changing an external
+performance policy such as GPU clocks or power limits.
 
 Different variants require separate contexts and workspace layouts. Keep their
 graphs/contexts alive while in use; neither forward nor replay compiles, tunes,
@@ -338,9 +342,14 @@ Graph: capture separate graphs when actual input shapes or launch arguments chan
 Run separately for each EP size. Multi-host runs use the same rendezvous pattern
 as the benchmark, a shared topology identifier, and identical source/toolchains.
 
-The tuner first prepares modules and agrees on their IDs across ranks, then
-checks numerical correctness, changed-input graph replay, empty and unequal-rank
-token counts. It rotates candidate order across trials and measures complete
+The tuner first prepares modules and agrees on their IDs across ranks. Before
+timing, every candidate checks changed-input eager/graph and serial/overlap
+equivalence. Each kernel specialization runs one independent CPU oracle for the
+representative samples, even when the same kernel is paired with multiple
+resource splits. Empty and unequal-rank cases check finite outputs and schedule
+equivalence without repeating the expensive CPU oracle; add
+`--full-edge-references` to restore independent CPU oracles for those edge
+cases. It rotates candidate order across trials and measures complete
 routed-first layers. The objective minimizes the worst representative-sample
 latency ratio against one common builtin reference. Raw timings, failures,
 actual resource usage, and the selected configuration are saved atomically on

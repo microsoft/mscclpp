@@ -582,7 +582,19 @@ def _make_layer(args, count, routed, shared, device, rank):
     return _Layer(frontend, routed, shared)
 
 
-def _run_trial(args, bucket, kernel, routed_communicator, shared_communicator, weights, device, rank, world, check):
+def _run_trial(
+    args,
+    bucket,
+    kernel,
+    routed_communicator,
+    shared_communicator,
+    weights,
+    device,
+    rank,
+    world,
+    check,
+    independent_reference,
+):
     import torch
     import torch.distributed as dist
     from .api import MegaMoE
@@ -641,6 +653,8 @@ def _run_trial(args, bucket, kernel, routed_communicator, shared_communicator, w
                     dist.barrier,
                     routed_reference=_ragged_reference,
                     error_guard=lambda: collective_error_guard(phase=f"correctness {label}"),
+                    independent_reference=independent_reference
+                    and (label not in ("empty", "ragged") or args.full_edge_references),
                 )
                 result["correctness"][label] = _all_gather(correctness)
                 del layer
@@ -680,6 +694,12 @@ def _parse_args(argv=None):
     parser.add_argument("--nvcc", default=None)
     parser.add_argument("--cutlass-root", default=None)
     parser.add_argument("--compile-timeout", type=int, default=600)
+    parser.add_argument(
+        "--full-edge-references",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="also run independent CPU oracles for empty and unequal-rank checks",
+    )
     argv = sys.argv[1:] if argv is None else list(argv)
     args = benchmark_shared._parse_args(argv, parser=parser)
     options = {argument.split("=", 1)[0] for argument in argv}
@@ -797,6 +817,7 @@ def main(argv=None):
                         candidates.append(candidate)
                 weights = None
                 schedule = []
+                referenced_kernels = set()
                 try:
                     weight_args = SimpleNamespace(**{**vars(workload_args), "route_sm_margin": 0, "shared_sms": 2})
                     configs = collective_call(
@@ -821,6 +842,8 @@ def main(argv=None):
                             trial_args = SimpleNamespace(**{**vars(workload_args), **candidate["resource_split"]})
                             _phase(rank, "tuning_trial", candidate=candidate["candidate"], trial=trial, bucket=bucket)
                             try:
+                                check = not candidate["trials"]
+                                independent_reference = check and kernel.key not in referenced_kernels
                                 result = _run_trial(
                                     trial_args,
                                     bucket,
@@ -831,10 +854,13 @@ def main(argv=None):
                                     device,
                                     rank,
                                     world,
-                                    check=not candidate["trials"],
+                                    check=check,
+                                    independent_reference=independent_reference,
                                 )
                                 candidate["trials"].append(result)
                                 candidate["status"] = "ok"
+                                if independent_reference:
+                                    referenced_kernels.add(kernel.key)
                             except CollectiveTuningError as error:
                                 candidate.update(status="rejected", error=str(error))
                                 if candidate["kernel_config"] == DEFAULT_KERNELS[0] and "correctness" in str(error):
@@ -869,7 +895,11 @@ def main(argv=None):
                             "iterations": args.iterations,
                             "trials": args.trials,
                             "reference_relative_l2": args.reference_relative_l2,
-                            "correctness": "every candidate/sample checked before timing; changed input/residual graph replay; empty/ragged checks",
+                            "correctness": (
+                                "every candidate checked before timing; one independent representative-sample "
+                                "CPU oracle per kernel specialization; changed input/residual graph replay; "
+                                f"empty/ragged schedule checks; full_edge_references={args.full_edge_references}"
+                            ),
                             "limits": "synthetic seeded weights/routes; only measured samples in this bucket, not a global optimum",
                         },
                     }
