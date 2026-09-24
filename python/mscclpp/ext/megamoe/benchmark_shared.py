@@ -528,6 +528,9 @@ def _capture(layer, mode, repetitions, barrier=lambda: None):
     with torch.cuda.graph(graph, stream=layer.stream):
         for _ in range(repetitions):
             layer.launch(mode)
+    # Capture records without executing. Keep all ranks in lockstep so none
+    # replays a device-synchronized collective while a peer is still capturing.
+    barrier()
     return graph
 
 

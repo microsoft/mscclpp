@@ -165,6 +165,73 @@ Graphs. `--tile-m`, `--tile-n`, `--tile-k`, `--load-stages`, and
 `--transform-stages` select a routed JIT specialization; defaults select the
 precompiled kernel.
 
+### FlashInfer MegaMoE comparison
+
+The GB200-only companion benchmark uses FlashInfer's latest public
+`Sm100_Bf16_Mxfp8_Bf16_Cutedsl_MegaMoeConfig` backend with the same default
+tokens, H/I, expert count, top-k, routing weights, graph batching, and
+cross-rank latency reduction:
+
+```bash
+torchrun --nnodes=1 --nproc-per-node=4 \
+  --master-addr=127.0.0.1 --master-port=29500 \
+  -m mscclpp.ext.megamoe.benchmark_flashinfer \
+  --flashinfer-root /home/azhpcuser/mai/flashinfer \
+  --flashinfer-cache-root /tmp/flashinfer-megamoe-cache \
+  --tokens 32 --hidden 4096 --intermediate 4352 --experts 64 --top-k 7 \
+  --check --json-output results/flashinfer-megamoe-ep4.json
+```
+
+`--flashinfer-root` defaults to `FLASHINFER_ROOT` and then a sibling
+`../flashinfer` checkout. The benchmark requires the checkout's current Python
+dependencies and records its exact git commit in JSON. FlashInfer's collective
+`warmup()` performs compilation, symmetric-workspace setup, and optional
+`--autotune` before timing. The timed public API uses
+`return_workspace_view=True`, so it includes BF16 input staging, fused
+dispatch/expert/return work, and top-k reduction without an output allocation.
+Use `--knobs-json` for pinned FlashInfer kernel knobs and
+`--in-kernel-fc2-reduce` to enable the corresponding candidate family.
+For a single-node launch, the benchmark defaults NVSHMEM to local P2P transport
+(`NVSHMEM_REMOTE_TRANSPORT=none`) and NCCL bootstrap to sockets; explicit
+environment values override these defaults.
+The GB200 validation environment follows FlashInfer's SM100 tuning notes and
+uses `nvshmem4py-cu13==0.3.1`; JSON records the actual runtime package versions.
+For multi-node GB200 MNNVL/IMEX runs, keep the expert data path off IB:
+
+```bash
+export NCCL_GIN_TYPE=3
+export NCCL_MNNVL_ENABLE=1
+export NCCL_IB_DISABLE=1
+export NVSHMEM_REMOTE_TRANSPORT=none
+```
+
+Launch one `torchrun` process group across the nodes with four local processes
+per node. The Ethernet interface is used only for rendezvous/control-plane
+traffic. If the distributed FlashInfer source copy omits `.git`, set
+`FLASHINFER_SOURCE_COMMIT` to the source checkout's full commit so the JSON
+still records it.
+
+For an end-to-end synthetic-layer comparison against `benchmark_shared`, use
+the same router, squash/unsquash projections, native local shared expert,
+post-RMSNorm, residual, graph batching, and four schedule modes while replacing
+only the routed expert backend with FlashInfer:
+
+```bash
+torchrun --nnodes=1 --nproc-per-node=4 \
+  --master-addr=127.0.0.1 --master-port=29500 \
+  -m mscclpp.ext.megamoe.benchmark_flashinfer_shared \
+  --flashinfer-root /home/azhpcuser/mai/flashinfer \
+  --flashinfer-cache-root /tmp/flashinfer-megamoe-cache \
+  --check --json-output results/flashinfer-megamoe-layer-ep4.json
+```
+
+The frontend and shared branch are identical to `benchmark_shared`. FlashInfer
+does not expose the native routed CTA/SM cap or kernel-entry signal, so its
+`overlap` schedule is routed-enqueue-first and gates the shared stream after
+input/router/squash producers, rather than after routed kernel entry. JSON
+records this distinction; `routed-only`, `shared-only`, and `serial` have the
+same stage boundaries as the native benchmark.
+
 ### Complete synthetic MoE layer
 
 ```bash
