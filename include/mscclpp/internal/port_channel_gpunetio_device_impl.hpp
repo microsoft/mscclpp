@@ -8,23 +8,6 @@
 #ifndef MSCCLPP_INTERNAL_PORT_CHANNEL_GPUNETIO_DEVICE_IMPL_HPP_
 #define MSCCLPP_INTERNAL_PORT_CHANNEL_GPUNETIO_DEVICE_IMPL_HPP_
 
-// The DOCA GPUNetIO device headers depend on a few loop-unroll pragma
-// macros that upstream NCCL supplies from its own nccl_device/utility.h (not part
-// of the GPUNetIO repository). Provide them here before including the
-// DOCA device umbrella so the headers are self-contained in mscclpp.
-#ifndef DO_PRAGMA
-#define DO_PRAGMA(x) _Pragma(#x)
-#endif
-#ifndef NVCC_PRAGMA_UNROLL
-#define NVCC_PRAGMA_UNROLL(trip_count) DO_PRAGMA(unroll trip_count)
-#endif
-#ifndef NVCC_PRAGMA_UNROLL_AUTO
-#define NVCC_PRAGMA_UNROLL_AUTO DO_PRAGMA(unroll)
-#endif
-#ifndef NVCC_PRAGMA_UNROLL_DISABLED
-#define NVCC_PRAGMA_UNROLL_DISABLED NVCC_PRAGMA_UNROLL(1)
-#endif
-
 #include "../assert_device.hpp"
 #include "doca_gpunetio_device.h"
 

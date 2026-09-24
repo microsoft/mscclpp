@@ -1,10 +1,10 @@
 # Dependency: DOCA GPUNetIO (GDAKI) device verbs
 
-The third-party GPUNetIO sources are provided by the `vendor` Git submodule:
+The third-party GPUNetIO sources are provided by CMake FetchContent from:
 https://github.com/NVIDIA-DOCA/gpunetio.
 
 - **License:** BSD-3-Clause (NVIDIA CORPORATION & AFFILIATES).
-- **Revision:** pinned by the submodule gitlink; update it explicitly and test
+- **Revision:** pinned by a full `GIT_TAG` commit SHA in `src/gpunetio/CMakeLists.txt`; update it explicitly and test
   both the CPU-proxy and GDAKI PortChannel backends before advancing the pin.
 - **Build:** gated behind the `MSCCLPP_USE_GPUNETIO` CMake option. Host sources
   compile into the `mscclpp_gpunetio_obj` object library with
@@ -13,8 +13,9 @@ https://github.com/NVIDIA-DOCA/gpunetio.
   PortChannel backend implementation
   (`include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp`).
 
-Clone with `--recurse-submodules`, or run `git submodule update --init --recursive`
-before configuring with `MSCCLPP_USE_GPUNETIO=ON`.
+Configuring with `MSCCLPP_USE_GPUNETIO=ON` fetches the dependency automatically.
+No Git submodule initialization is required. OFF builds do not declare, fetch,
+or add GPUNetIO dependency targets.
 
 ## Main-Targeted Scope
 
@@ -28,7 +29,7 @@ Each service uses one explicitly selected local HCA. It defaults to one QP per
 remote rank; the explicit four-argument constructor supports 1-64 QPs per peer.
 
 Upstream dependency: GPUNetIO **v4.0.1**, commit
-`bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`. The submodule is unmodified;
+`bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`. The fetched sources are unmodified;
 MSCCL++ does not carry patches to NVIDIA's implementation. Its source list and
 host API differ from the old snapshot, so dependency updates require new build
 and hardware validation. No installed DOCA SDK is required; upstream can load
@@ -37,19 +38,31 @@ DOCA SDK libraries when available according to its own runtime policy.
 ## Build
 
 ```bash
-git submodule update --init --recursive src/gpunetio/vendor
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_USE_IB=ON -DMSCCLPP_USE_GPUNETIO=ON
 cmake --build build -j
 ```
 
-The option defaults to OFF. OFF builds do not require the submodule or DOCA
+The option defaults to OFF. OFF builds do not require GPUNetIO sources or DOCA
 headers. GDAKI host channel construction is rejected by an OFF library.
 Compile each CUDA translation unit using GDAKI with `-DMSCCLPP_USE_GPUNETIO`
-and `-I<source>/src/gpunetio/vendor/include`, or with
+and `-I<build>/_deps/gpunetio-src/include` for the default FetchContent layout, or with
 `-I<prefix>/include/mscclpp/gpunetio` after installation. Do not enable the
 device macro globally for unrelated core kernels. Normal public headers remain
 usable without any DOCA includes when the macro is absent.
+
+The first ON configure needs Git and network access to the upstream repository.
+For offline builds, provide an existing checkout at the pinned SHA using
+`-DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/absolute/path/to/gpunetio`.
+This standard FetchContent override bypasses fetching and pin enforcement;
+the operator must verify its revision and cleanliness. `FETCHCONTENT_BASE_DIR`
+may also relocate the download cache. In-tree targets use
+`mscclpp_gpunetio_headers` for dependency include paths, including overrides.
+
+For existing submodule checkouts, applying the migration patch removes the
+gitlink and `.gitmodules`. Git may leave the old populated directory on disk;
+it is no longer used by the build. Preserve any local upstream changes before
+removing that obsolete checkout. Reconfigure the build after applying the patch.
 
 ## Select a Backend
 
@@ -136,7 +149,7 @@ variable-size QP exchange, pairs matching queue indices, and allocates atomic
 result scratch per peer/QP. Device-context operations accept a final optional
 `qpIndex=0`; flushing one queue does not drain the others. The common
 `PortChannelDeviceHandle` still uses QP 0. No multi-HCA or EP scheduling policy
-is introduced, and the upstream submodule remains unchanged.
+is introduced, and the upstream dependency remains unmodified.
 
 `gpunetio_channel_multi_qp_test` runs the real device implementation with stubbed
 DOCA calls on CPU at QP counts 1, 2, 4, 8, and 64. It checks per-peer addressing,
@@ -157,7 +170,7 @@ This is an integration input-contract error, independent of HCA selection.
 The service now builds its own peer-major descriptor table: self slots remain
 zero, every remote QP descriptor is checked and copied to its original index,
 and a service-owned CUDA allocation receives the complete table. Cleanup uses
-`cudaFree`; no NVIDIA submodule changes or self-QP connections are needed.
+`cudaFree`; no NVIDIA source changes or self-QP connections are needed.
 `gpunetio_channel_qp_table_test` exercises this production adapter using actual
 upstream types on CPU: 28 layouts (1/2/4 ranks, 1/2/4/64 QPs, every self rank)
 and 296 invalid inputs. Earlier routing tests did not exercise host flattening.
@@ -175,7 +188,7 @@ bookkeeping; upstream's CPU doorbell service also shares a plain `bool running`
 between its worker and shutdown thread. The EP branch corrected these paths.
 Upstream `main` at `586453728bcab2d4c50574924dc6cf43543c9ed4` does not contain
 those corrections either. This integration deliberately does not patch the
-submodule or maintain a local fork.
+upstream sources or maintain a local fork.
 
 The service explicitly excludes these affected paths while retaining the
 unmodified pin. In v4.0.1, explicit GPU_SM_DB fails UAR export rather than entering
@@ -201,7 +214,15 @@ create call: 13 cases cover exact requested attributes, error propagation,
 unsupported returned modes, null descriptors, and absence of fallback retries.
 These checks execute on CPU and do not initialize GPU/NIC resources.
 
+Two CUDA compile-only targets, `gpunetio_header_clean_compile` and
+`gpunetio_header_existing_macros_compile`, check that the public PortChannel
+header neither defines the unused `DO_PRAGMA`/`NVCC_PRAGMA_UNROLL*` macros nor
+changes caller-provided definitions. The pinned upstream headers use native
+unroll pragmas and require no compatibility shim.
+
 ## Integration Verification (2026-09-21)
+
+These historical checks predate the FetchContent migration.
 
 - CUDA 13.0.88: core library, `unit_tests`, and `mp_unit_tests` compile and link
   with GPUNetIO ON and OFF for SM80/90/100/120. Existing test warnings remain.
@@ -211,3 +232,17 @@ These checks execute on CPU and do not initialize GPU/NIC resources.
 - OFF configures without the submodule; ON rejects a missing submodule or IB OFF.
 - Repository C++ lint and all 131 Python files pass the formatting check.
 - GPU/NIC runtime correctness, performance, and ROCm compilation are unverified.
+
+## FetchContent Verification (2026-09-24)
+
+- Clean source snapshot contains neither `.gitmodules` nor `src/gpunetio/vendor`.
+  ON configuration fetched exactly `bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`.
+- CUDA 13.0.88 Release builds of the core, `unit_tests`, and `mp_unit_tests`
+  pass with GPUNetIO ON/OFF for SM80/90/100/120. Five ON and three OFF CPU tests
+  pass; existing test warnings remain.
+- A disconnected OFF configure/build creates no GPUNetIO download or targets.
+  A disconnected ON source override compiles the QP-table and both header probes.
+- Both macro probes compile across the configured CUDA architectures, and at
+  SM90 using installed headers only. The installed upstream license matches.
+- C++ lint and all 131 Python formatting checks pass. These changes do not alter
+  runtime protocol or dependency revision; no GPU/NIC workloads were executed.

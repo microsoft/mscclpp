@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# DOCA GPUNetIO (GDAKI) sources from the pinned NVIDIA-DOCA/gpunetio submodule.
+# DOCA GPUNetIO (GDAKI) sources from the pinned NVIDIA-DOCA/gpunetio repository.
 # Provides GPU-initiated networking (kernel-issued RDMA WRITE/atomic) used by
 # the GPUNetIO PortChannel backend.
 #
@@ -9,14 +9,22 @@
 # linked into mscclpp_obj.
 
 set(GPUNETIO_HOME ${CMAKE_CURRENT_SOURCE_DIR})
-set(GPUNETIO_VENDOR_HOME ${GPUNETIO_HOME}/vendor)
+
+include(FetchContent)
+FetchContent_Declare(gpunetio
+    GIT_REPOSITORY https://github.com/NVIDIA-DOCA/gpunetio.git
+    GIT_TAG bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4
+    GIT_SUBMODULES ""
+)
+FetchContent_MakeAvailable(gpunetio)
+set(GPUNETIO_VENDOR_HOME ${gpunetio_SOURCE_DIR})
 
 message(STATUS "GPUNetIO: direct GPU doorbells and GPU-resident CQs required; CPU-assisted fallback disabled")
 
-if(NOT EXISTS ${GPUNETIO_VENDOR_HOME}/include/doca_gpunetio_host.h)
-    message(FATAL_ERROR
-        "GPUNetIO submodule is not initialized. Run: git submodule update --init --recursive")
-endif()
+add_library(mscclpp_gpunetio_headers INTERFACE)
+target_include_directories(mscclpp_gpunetio_headers INTERFACE
+    ${GPUNETIO_VENDOR_HOME}/include
+    ${GPUNETIO_VENDOR_HOME}/include/host)
 
 set(GPUNETIO_SOURCES
     ${GPUNETIO_VENDOR_HOME}/src/doca_verbs_dev.cpp
@@ -54,10 +62,7 @@ target_include_directories(mscclpp_gpunetio_obj
     ${IBVERBS_INCLUDE_DIRS}
     ${MLX5_INCLUDE_DIRS})
 
-# Expose upstream and MSCCL++ service headers.
-target_include_directories(mscclpp_gpunetio_obj PUBLIC
-    ${GPUNETIO_VENDOR_HOME}/include
-    ${GPUNETIO_VENDOR_HOME}/include/host)
+target_link_libraries(mscclpp_gpunetio_obj PUBLIC mscclpp_gpunetio_headers)
 
 target_include_directories(mscclpp_gpunetio_obj PRIVATE
     ${GPUNETIO_VENDOR_HOME}/src

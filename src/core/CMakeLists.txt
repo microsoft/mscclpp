@@ -41,7 +41,7 @@ if(MSCCLPP_USE_GDRCOPY)
 endif()
 
 if(MSCCLPP_USE_GPUNETIO)
-    # GPU-initiated networking backend for PortChannel (DOCA GPUNetIO submodule).
+    # GPU-initiated networking backend for PortChannel (DOCA GPUNetIO dependency).
     # Link the host object library so the host-side GpuNetIo service can
     # create QPs / register MRs. The device-side DOCA verbs are opt-in per kernel
     # (see internal/port_channel_gpunetio_device_impl.hpp) and are intentionally
