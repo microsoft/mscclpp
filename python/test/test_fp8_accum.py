@@ -252,7 +252,7 @@ def setup_algorithms(mpi_group):
 
 
 def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, nthreads_per_block=0):
-    """Run allreduce in-place on buffer and return a copy of the result."""
+    """Run allreduce in-place on the default stream and return a copy; input writes must be synchronized."""
     ret = algo.execute(
         comm=comm_group.communicator,
         input_buffer=buffer.data.ptr,
@@ -261,7 +261,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
         output_size=buffer.nbytes,
         dtype=dtype,
         op=ReduceOp.SUM,
-        stream=cp.cuda.get_current_stream().ptr,
+        stream=0,
         nblocks=nblocks,
         nthreads_per_block=nthreads_per_block,
         symmetric_memory=True,

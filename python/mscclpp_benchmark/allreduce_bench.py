@@ -17,6 +17,8 @@ from mpi4py import MPI
 import cupy.cuda.nccl as nccl
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
 from mscclpp_benchmark.gpu import (
+    capture_graph,
+    create_stream,
     device_synchronize,
     event_create,
     event_destroy,
@@ -24,6 +26,7 @@ from mscclpp_benchmark.gpu import (
     event_record,
     event_synchronize,
     set_device,
+    stream_destroy,
 )
 from prettytable import PrettyTable
 import netifaces as ni
@@ -116,26 +119,30 @@ def check_correctness(memory, func, niter=100):
 
 
 def bench_time(niter: int, func):
-    # capture cuda graph for nites of the kernel launch
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(niter):
-            func(stream)
-        graph = stream.end_capture()
+    """Benchmark func, passing a native stream pointer to each captured invocation."""
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    # now run a warm up round
-    graph.launch(stream)
+        def capture_ops() -> None:
+            for _ in range(niter):
+                func(stream_ptr)
 
-    # now run the benchmark and measure time
-    with ExitStack() as events:
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
+
+        # now run a warm up round
+        graph.launch(stream_ptr)
+
+        # now run the benchmark and measure time
         start = event_create()[0]
-        events.callback(event_destroy, start)
+        resources.callback(event_destroy, start)
         end = event_create()[0]
-        events.callback(event_destroy, end)
-        event_record(start, stream.ptr)
-        graph.launch(stream)
-        event_record(end, stream.ptr)
+        resources.callback(event_destroy, end)
+        event_record(start, stream_ptr)
+        graph.launch(stream_ptr)
+        event_record(end, stream_ptr)
         event_synchronize(end)
 
         return event_elapsed_time(start, end)[0] / niter * 1000.0

@@ -76,8 +76,9 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Union[int, cp.cuda.Stream, None],
+        stream: Union[int, "torch.cuda.Stream", None],
     ):
+        """Launch on a native stream pointer, a PyTorch stream, or the default stream (None)."""
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
         config = np.array(
@@ -93,8 +94,8 @@ class Kernel:
         cuda_stream = 0
         if isinstance(stream, int):
             cuda_stream = stream
-        elif stream:
-            cuda_stream = stream.ptr if isinstance(stream, cp.cuda.Stream) else stream.cuda_stream
+        elif stream is not None:
+            cuda_stream = stream.cuda_stream
         cp.cuda.driver.launchKernel(
             self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
         )

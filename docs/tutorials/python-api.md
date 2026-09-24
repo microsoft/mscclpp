@@ -76,6 +76,10 @@ def launch_kernel(my_rank: int, nranks: int, simple_channels: List[PortChannel],
     kernel.launch_kernel(params, nblocks, nthreads, 0, None)
 ```
 
+The final argument to `Kernel.launch_kernel()` accepts an integer CUDA/HIP stream
+pointer, a PyTorch stream, or `None` for the default stream. CuPy stream objects
+must be passed as their integer `.ptr` value instead.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
