@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
 
@@ -21,10 +22,10 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const 
                                                  std::shared_ptr<Proxy> proxy)
     : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
 
-MSCCLPP_API_CPP BasePortChannel::BasePortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset,
-                                                 uint64_t* inboundSignal, uint64_t* expectedSignal)
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel([[maybe_unused]] const GpuNetIoService& service, int peer,
+                                                 uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+                                                 uint64_t* expectedSignal)
     : semaphoreId_(0),
-      gpuNetIoContext_(context),
       gpuNetIoPeer_(peer),
       gpuNetIoRemoteSignalOffset_(remoteSignalOffset),
       gpuNetIoInboundSignal_(inboundSignal),
@@ -32,9 +33,10 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(GpuNetIoDeviceContext* context,
 #if !defined(MSCCLPP_HAS_GPUNETIO)
   throw Error("MSCCL++ was built without GPUNetIO", ErrorCode::InvalidUsage);
 #else
-  if (context == nullptr || peer < 0 || remoteSignalOffset == UINT64_MAX ||
-      remoteSignalOffset % sizeof(uint64_t) != 0 || inboundSignal == nullptr || expectedSignal == nullptr ||
-      inboundSignal == expectedSignal || reinterpret_cast<uintptr_t>(inboundSignal) % alignof(uint64_t) != 0 ||
+  gpuNetIoContext_ = service.deviceContext(peer);
+  if (remoteSignalOffset == UINT64_MAX || remoteSignalOffset % sizeof(uint64_t) != 0 || inboundSignal == nullptr ||
+      expectedSignal == nullptr || inboundSignal == expectedSignal ||
+      reinterpret_cast<uintptr_t>(inboundSignal) % alignof(uint64_t) != 0 ||
       reinterpret_cast<uintptr_t>(expectedSignal) % alignof(uint64_t) != 0) {
     throw Error("Invalid GPUNetIO channel context, peer or signal counters", ErrorCode::InvalidUsage);
   }
@@ -49,9 +51,9 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphor
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
 
-MSCCLPP_API_CPP PortChannel::PortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset,
+MSCCLPP_API_CPP PortChannel::PortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset,
                                          uint64_t* inboundSignal, uint64_t* expectedSignal)
-    : BasePortChannel(context, peer, remoteSignalOffset, inboundSignal, expectedSignal), dst_(0), src_(0) {}
+    : BasePortChannel(service, peer, remoteSignalOffset, inboundSignal, expectedSignal), dst_(0), src_(0) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   int cudaDevice;

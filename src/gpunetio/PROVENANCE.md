@@ -56,7 +56,7 @@ usable without any DOCA includes when the macro is absent.
 Existing `ProxyService::portChannel(...)` calls remain CPU-proxy channels.
 No environment variable changes their backend. For GDAKI, initialize a service
 collectively on every bootstrap rank, then construct the same `PortChannel`
-type from its device context:
+type from the service (not a raw device-context pointer):
 
 ```cpp
 #include <mscclpp/gpu_net_io_service.hpp>
@@ -64,7 +64,7 @@ type from its device context:
 
 mscclpp::GpuNetIoService service(bootstrap, ibDeviceName, cudaDeviceId);
 service.setup(symmetricBuffer, symmetricBytes);
-mscclpp::PortChannel channel(service.deviceContext(), peerRank,
+mscclpp::PortChannel channel(service, peerRank,
                             remoteSignalOffset, localInboundCounter,
                             localExpectedCounter);
 auto handle = channel.deviceHandle();
@@ -81,10 +81,19 @@ remote bootstrap rank, not self. Producers must make payload writes visible
 before issuing network operations. Stop all GPU use and synchronize streams
 before destroying the service, then free the buffers and counters.
 
-The backend preserves DOCA's `AUTO` NIC-handler selection. Kernels post WQEs,
-but DOCA can use CPU doorbell assistance when direct GPU doorbells are not
-available. This is separate from MSCCL++'s FIFO/CPU-proxy backend; selecting
-GPUNetIO alone does not promise a CPU-free doorbell path on every machine.
+Host channel construction validates `peerRank` against the service's retained
+rank/world-size metadata, rejecting negative, self, and out-of-range peers in
+release and debug builds. It also rejects incomplete setup. The service exposes
+no device context until upload completes; the host never dereferences a GPU
+context pointer to obtain validation metadata.
+
+The pinned dependency is restricted to direct `GPU_SM_DB` doorbells, valid DBRs,
+and non-collapsed GPU-resident CQs. `AUTO`, CPU-proxy/free-flow handlers,
+software-emulated DBRs, host CQs, and CPU UMEM are not selected. If direct GPU
+doorbells are unavailable, setup fails instead of falling back. QP-creation
+status is exchanged before the QP-info collective so every rank rejects an
+unsupported peer. The service never starts a DOCA CPU progress thread. The
+existing MSCCL++ FIFO/CPU-proxy backend remains available and unchanged.
 
 ## Validation
 
@@ -133,7 +142,7 @@ is introduced, and the upstream submodule remains unchanged.
 DOCA calls on CPU at QP counts 1, 2, 4, 8, and 64. It checks per-peer addressing,
 per-QP scratch, and queue-local completion, not hardware ordering or bandwidth.
 
-## Known Upstream Merge Blockers
+## Upstream Limitations
 
 ### Sparse QP Setup Failure (2026-09-22)
 
@@ -168,11 +177,29 @@ Upstream `main` at `586453728bcab2d4c50574924dc6cf43543c9ed4` does not contain
 those corrections either. This integration deliberately does not patch the
 submodule or maintain a local fork.
 
-Before merging into main, obtain an upstream revision that resolves these
-issues or explicitly review and qualify a supported configuration that excludes
-the affected paths. Successful compilation and CPU routing tests do not qualify
-GPU/NIC resource allocation, fallback progress, shutdown, or wire correctness.
-Real two-rank GDAKI and existing proxy runtime tests remain required.
+The service explicitly excludes these affected paths while retaining the
+unmodified pin. In v4.0.1, explicit GPU_SM_DB fails UAR export rather than entering
+the AUTO-to-CPU fallback. Valid DBRs with a GPU CQ keep QP descriptor allocation
+in GPU memory instead of GPU_CPU; CPU UMEM and host CQ options remain off.
+Returned QPs are also checked for direct handler/CQ/DBR state before publication,
+and all CPU-service creation/progress code has been removed from the integration.
+
+The upstream defects themselves are not fixed. Do not enable any excluded mode
+without a corrected upstream revision and renewed validation. Successful builds
+and CPU policy tests do not qualify hardware compatibility or wire correctness;
+real two-rank GDAKI and existing proxy runtime tests remain required for this
+restricted configuration.
+
+## Review Regression Coverage
+
+The linked host API test exercises real service metadata for 1/2/4 ranks and
+rejects negative, self, world-size, INT_MAX, and valid-but-not-initialized peers
+through both BasePortChannel and PortChannel. Compile-time checks prevent the
+raw device-pointer host constructor from returning. The QP-table test also
+checks the production direct-QP policy using actual upstream types and a stubbed
+create call: 13 cases cover exact requested attributes, error propagation,
+unsupported returned modes, null descriptors, and absence of fallback retries.
+These checks execute on CPU and do not initialize GPU/NIC resources.
 
 ## Integration Verification (2026-09-21)
 

@@ -14,8 +14,9 @@
 namespace mscclpp {
 
 /// Collective setup of GPUNetIO queue pairs per remote bootstrap rank.
-/// Unlike ProxyService, the GPU posts RDMA operations directly. DOCA's AUTO
-/// handler may use a CPU doorbell service when direct GPU doorbells are unavailable.
+/// Unlike ProxyService, the GPU posts RDMA operations and rings NIC doorbells directly.
+/// Requires GPU_SM_DB, valid DBRs and GPU-resident non-collapsed CQs. CPU-assisted
+/// fallback is disabled for the pinned upstream version; unsupported systems fail setup.
 /// All ranks must call setup with the same buffer size and offset layout.
 /// Synchronize every using stream before destruction, and destroy the service
 /// before freeing its symmetric buffer or any channel signal counters.
@@ -39,8 +40,13 @@ class GpuNetIoService {
   /// @param bytes Common buffer size across all ranks.
   void setup(void* symmetricBuffer, size_t bytes);
 
-  /// Device context for PortChannel construction, valid after successful setup.
+  /// Device context for low-level operations, or nullptr until setup succeeds.
+  /// Host PortChannel construction takes the service itself for peer validation.
   GpuNetIoDeviceContext* deviceContext() const;
+
+  /// Validate a remote bootstrap rank using host metadata and return the device context.
+  /// Rejects self, out-of-range peers and incomplete setup in every build mode.
+  GpuNetIoDeviceContext* deviceContext(int peer) const;
 
  private:
   struct Impl;

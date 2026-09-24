@@ -11,6 +11,8 @@
 set(GPUNETIO_HOME ${CMAKE_CURRENT_SOURCE_DIR})
 set(GPUNETIO_VENDOR_HOME ${GPUNETIO_HOME}/vendor)
 
+message(STATUS "GPUNetIO: direct GPU doorbells and GPU-resident CQs required; CPU-assisted fallback disabled")
+
 if(NOT EXISTS ${GPUNETIO_VENDOR_HOME}/include/doca_gpunetio_host.h)
     message(FATAL_ERROR
         "GPUNetIO submodule is not initialized. Run: git submodule update --init --recursive")

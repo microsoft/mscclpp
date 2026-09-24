@@ -13,6 +13,7 @@ namespace mscclpp {
 
 struct BasePortChannel;
 struct PortChannel;
+class GpuNetIoService;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -125,7 +126,7 @@ struct BasePortChannel {
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
 
   /// Construct a GPU-initiated PortChannel over registered symmetric memory.
-  /// @param context Device context from a successfully initialized GpuNetIoService.
+  /// @param service Successfully initialized service supplying trusted rank metadata.
   /// @param peer Remote bootstrap rank, not a proxy memory/semaphore ID or self.
   /// @param remoteSignalOffset Aligned uint64_t counter offset in the peer's registered buffer.
   /// @param inboundSignal Local registered GPU counter updated by this peer, initially zero.
@@ -133,7 +134,7 @@ struct BasePortChannel {
   /// The service, buffers and counters must outlive all channels and their GPU work.
   /// Signal counters must not overlap payloads. MemoryId arguments are ignored:
   /// data offsets address the service's symmetric buffers, not arbitrary registrations.
-  BasePortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+  BasePortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
                   uint64_t* expectedSignal);
 
   /// Copy constructor.
@@ -182,8 +183,8 @@ struct PortChannel : public BasePortChannel {
               MemoryId src);
 
   /// Construct a GPU-initiated PortChannel over registered symmetric memory.
-  /// @copydetails BasePortChannel::BasePortChannel(GpuNetIoDeviceContext*, int, uint64_t, uint64_t*, uint64_t*)
-  PortChannel(GpuNetIoDeviceContext* context, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
+  /// @copydetails BasePortChannel::BasePortChannel(const GpuNetIoService&, int, uint64_t, uint64_t*, uint64_t*)
+  PortChannel(const GpuNetIoService& service, int peer, uint64_t remoteSignalOffset, uint64_t* inboundSignal,
               uint64_t* expectedSignal);
 
   /// Copy constructor.

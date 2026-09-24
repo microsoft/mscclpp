@@ -1489,7 +1489,7 @@ TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
 
   auto* inbound = reinterpret_cast<uint64_t*>(static_cast<char*>(symBuf) + signalOffset);
   auto* expected = inbound + 1;
-  mscclpp::PortChannel channel(svc->deviceContext(), peer, signalOffset, inbound, expected);
+  mscclpp::PortChannel channel(*svc, peer, signalOffset, inbound, expected);
   kernelGpuNetIoP2P<<<1, 1>>>(channel.deviceHandle(), rank, reinterpret_cast<int*>(symBuf), retDev);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();

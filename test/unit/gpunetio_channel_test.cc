@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -10,13 +11,94 @@
 #if defined(TEST_QP_TABLE)
 #include <cstddef>
 
+#include "gpu_net_io_policy.hpp"
 #include "gpu_net_io_qp_table.hpp"
 
 void require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+int qpCreationCalls = 0;
+int qpFailureCase = 0;
+doca_gpu_verbs_qp_hl policyQp{};
+doca_gpu_verbs_qp policyVerbs{};
+doca_gpu_dev_verbs_qp policyDeviceQp{};
+
+extern "C" doca_error_t doca_gpu_verbs_create_qp_hl(doca_gpu_verbs_qp_init_attr_hl* attributes,
+                                                    doca_gpu_verbs_qp_hl** output) {
+  ++qpCreationCalls;
+  require(attributes->nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB &&
+              attributes->send_dbr_mode_ext == DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR &&
+              attributes->cq_type == DOCA_GPUNETIO_VERBS_CQ_64B && !attributes->cq_collapsed &&
+              !attributes->enable_umem_cpu && attributes->flags == 0 && attributes->comp_channel == nullptr &&
+              attributes->sq_nwqe == 1024 && attributes->ordering_semantic == DOCA_VERBS_QP_ORDERING_SEMANTIC_IBTA,
+          "unsafe attributes reached upstream QP creation");
+  require(*output == nullptr, "QP output not cleared before create");
+  if (qpFailureCase == 1) return DOCA_ERROR_DRIVER;
+  if (qpFailureCase == 2) return DOCA_SUCCESS;
+  policyQp = {};
+  policyVerbs = {};
+  policyDeviceQp = {};
+  policyQp.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+  policyQp.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR;
+  policyQp.qp_gverbs = &policyVerbs;
+  policyVerbs.qp_cpu = &policyDeviceQp;
+  policyVerbs.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR;
+  policyVerbs.cq_type = DOCA_GPUNETIO_VERBS_CQ_64B;
+  policyDeviceQp.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+  policyDeviceQp.mem_type = DOCA_GPUNETIO_VERBS_MEM_TYPE_GPU;
+  switch (qpFailureCase) {
+    case 3:
+      policyQp.qp_gverbs = nullptr;
+      break;
+    case 4:
+      policyVerbs.qp_cpu = nullptr;
+      break;
+    case 5:
+      policyQp.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_CPU_PROXY;
+      break;
+    case 6:
+      policyQp.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_NO_DBR_SW_EMULATED;
+      break;
+    case 7:
+      policyVerbs.cpu_proxy = true;
+      break;
+    case 8:
+      policyVerbs.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_NO_DBR_SW_EMULATED;
+      break;
+    case 9:
+      policyVerbs.cq_type = DOCA_GPUNETIO_VERBS_CQ_64B_COLLAPSED_HOST;
+      break;
+    case 10:
+      policyDeviceQp.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_CPU_PROXY;
+      break;
+    case 11:
+      policyDeviceQp.mem_type = DOCA_GPUNETIO_VERBS_MEM_TYPE_HOST;
+      break;
+    default:
+      break;
+  }
+  *output = &policyQp;
+  return DOCA_SUCCESS;
+}
+
 int main() {
+  doca_gpu_t gpu{};
+  doca_dev_t device{};
+  for (qpFailureCase = 0; qpFailureCase < 12; ++qpFailureCase) {
+    doca_gpu_verbs_qp_hl* output = &policyQp;
+    const auto status = mscclpp::detail::createDirectGpuNetIoQp(&gpu, &device, nullptr, &output);
+    const auto expected = qpFailureCase == 0   ? DOCA_SUCCESS
+                          : qpFailureCase == 1 ? DOCA_ERROR_DRIVER
+                                               : DOCA_ERROR_NOT_SUPPORTED;
+    require(status == expected, "unsupported fallback accepted or error lost");
+    require(qpCreationCalls == qpFailureCase + 1, "unsafe fallback retry");
+    if (qpFailureCase >= 3) require(output == &policyQp, "rejected QP unavailable for owner cleanup");
+  }
+  require(mscclpp::detail::createDirectGpuNetIoQp(&gpu, &device, nullptr, nullptr) == DOCA_ERROR_INVALID_VALUE &&
+              qpCreationCalls == 12,
+          "invalid output reached upstream create");
+  std::cout << "Direct GPU QP policy: 13 admission cases passed\n";
   std::cout << "Upstream qp_gverbs offset: 0x" << std::hex << offsetof(doca_gpu_verbs_qp_hl, qp_gverbs) << std::dec
             << '\n';
   int layouts = 0;
@@ -237,6 +319,28 @@ int main() {
 
 static_assert(std::is_trivially_default_constructible_v<mscclpp::PortChannelDeviceHandle>);
 static_assert(std::is_trivially_copyable_v<mscclpp::PortChannelDeviceHandle>);
+static_assert(!std::is_constructible_v<mscclpp::PortChannel, mscclpp::GpuNetIoDeviceContext*, int, uint64_t, uint64_t*,
+                                       uint64_t*>);
+static_assert(!std::is_constructible_v<mscclpp::BasePortChannel, mscclpp::GpuNetIoDeviceContext*, int, uint64_t,
+                                       uint64_t*, uint64_t*>);
+
+#if defined(TEST_GPUNETIO_ENABLED)
+class PeerTestBootstrap : public mscclpp::Bootstrap {
+ public:
+  PeerTestBootstrap(int rank, int worldSize) : rank_(rank), worldSize_(worldSize) {}
+  int getRank() const override { return rank_; }
+  int getNranks() const override { return worldSize_; }
+  int getNranksPerNode() const override { return worldSize_; }
+  void send(void*, int, int, int) override { throw std::runtime_error("unexpected send"); }
+  void recv(void*, int, int, int) override { throw std::runtime_error("unexpected recv"); }
+  void allGather(void*, int) override { throw std::runtime_error("unexpected allGather"); }
+  void barrier() override { throw std::runtime_error("unexpected barrier"); }
+
+ private:
+  int rank_;
+  int worldSize_;
+};
+#endif
 
 #if defined(__NVCC__)
 __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel) {
@@ -251,39 +355,38 @@ __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel)
 #endif
 
 int main() {
-  mscclpp::GpuNetIoDeviceContext context{};
+#if defined(TEST_GPUNETIO_ENABLED)
   uint64_t inbound = 0;
   uint64_t expected = 0;
-#if defined(TEST_GPUNETIO_ENABLED)
-  mscclpp::PortChannel channel(&context, 3, 64, &inbound, &expected);
-  auto handle = channel.deviceHandle();
-  if (handle.backend_ != mscclpp::PortChannelBackend::GpuNetIo || handle.gin_ != &context || handle.ginPeer_ != 3 ||
-      handle.ginSignalOffset_ != 64 || handle.semaphore_.inboundToken != &inbound ||
-      handle.semaphore_.expectedInboundToken != &expected)
-    return 1;
-  mscclpp::BasePortChannel base(&context, 2, 128, &inbound, &expected);
-  if (base.deviceHandle().ginPeer_ != 2 || base.deviceHandle().ginSignalOffset_ != 128) return 2;
-  for (int invalid = 0; invalid < 6; ++invalid) {
-    bool rejected = false;
-    try {
-      mscclpp::PortChannel bad(invalid == 0 ? nullptr : &context, invalid == 1 ? -1 : 3, invalid == 2 ? 65 : 64,
-                               invalid == 3 ? nullptr : &inbound,
-                               invalid == 4   ? nullptr
-                               : invalid == 5 ? &inbound
-                                              : &expected);
-    } catch (const mscclpp::Error&) {
-      rejected = true;
+  for (const int worldSize : {1, 2, 4}) {
+    for (int rank = 0; rank < worldSize; ++rank) {
+      auto bootstrap = std::make_shared<PeerTestBootstrap>(rank, worldSize);
+      mscclpp::GpuNetIoService service(bootstrap, "test-device", 0);
+      for (const int peer : {-1, rank, worldSize, std::numeric_limits<int>::max(), (rank + 1) % worldSize}) {
+        const bool invalid = peer < 0 || peer >= worldSize || peer == rank;
+        for (const bool base : {false, true}) {
+          bool rejected = false;
+          try {
+            if (base) {
+              mscclpp::BasePortChannel channel(service, peer, 64, &inbound, &expected);
+              (void)channel.deviceHandle();
+            } else {
+              mscclpp::PortChannel channel(service, peer, 64, &inbound, &expected);
+              (void)channel.deviceHandle();
+            }
+          } catch (const mscclpp::Error& error) {
+            const std::string message = error.what();
+            rejected =
+                message.find(invalid ? "remote bootstrap rank" : "successful service setup") != std::string::npos;
+          }
+          if (!rejected) return 1;
+        }
+      }
     }
-    if (!rejected) return 3;
   }
 #else
-  bool rejected = false;
-  try {
-    mscclpp::PortChannel channel(&context, 3, 64, &inbound, &expected);
-  } catch (const mscclpp::Error&) {
-    rejected = true;
-  }
-  if (!rejected) return 4;
+  mscclpp::PortChannelDeviceHandle handle(0, {}, {}, 0, 0, nullptr);
+  if (handle.backend_ != mscclpp::PortChannelBackend::Proxy) return 2;
 #endif
   std::cout << "PortChannel linked host API checks passed\n";
 }

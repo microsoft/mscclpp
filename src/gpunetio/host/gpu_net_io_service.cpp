@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "api.h"
+#include "gpu_net_io_policy.hpp"
 #include "gpu_net_io_qp_table.hpp"
 #include "ib.hpp"  // mscclpp core IbCtx / IbMr (ibverbs context + pd + MR)
 
@@ -83,6 +84,7 @@ struct GpuNetIoService::Impl {
   int worldSize = 0;
   int numQpsPerPeer = 1;
   bool didSetup = false;
+  bool setupComplete = false;
 
   std::unique_ptr<IbCtx> ibCtx;
   std::unique_ptr<const IbMr> mr;  // registration of the symmetric buffer
@@ -95,7 +97,6 @@ struct GpuNetIoService::Impl {
 
   // Peer-major QPs; all self entries are null.
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
-  doca_gpu_verbs_service_t cpuProxyService = nullptr;
   struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;
 
   // Device-side arrays referenced by GpuNetIoDeviceContext.
@@ -105,8 +106,8 @@ struct GpuNetIoService::Impl {
   uint64_t* atomicResultsGpu = nullptr;
 
   ~Impl() {
+    if (!didSetup) return;
     CudaDeviceGuard deviceGuard(cudaDeviceId);
-    if (cpuProxyService) (void)doca_gpu_verbs_destroy_service(cpuProxyService);
     if (ctxGpu) (void)cudaFree(ctxGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
     if (peerBaseGpu) (void)cudaFree(peerBaseGpu);
@@ -293,18 +294,25 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
 
   // 3. Create high-level GDAKI QPs per remote rank (skip self).
   s.qpHl.assign(rowLength, nullptr);
-  struct doca_gpu_verbs_qp_init_attr_hl initAttr;
-  std::memset(&initAttr, 0, sizeof(initAttr));
-  initAttr.gpu_dev = s.gpuDev;
-  initAttr.net_dev = s.netDev;
-  initAttr.ibpd = s.ibCtx->getPd();
-  initAttr.sq_nwqe = 1024;
-  initAttr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO;
-  initAttr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
+  int localQpStatus = DOCA_SUCCESS;
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
     for (int queue = 0; queue < numQps; ++queue) {
-      MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_qp_hl(&initAttr, &s.qpHl[static_cast<size_t>(r) * numQps + queue]));
+      if (localQpStatus != DOCA_SUCCESS) break;
+      localQpStatus = detail::createDirectGpuNetIoQp(s.gpuDev, s.netDev, s.ibCtx->getPd(),
+                                                     &s.qpHl[static_cast<size_t>(r) * numQps + queue]);
+    }
+  }
+  std::vector<int> qpStatuses(s.worldSize);
+  qpStatuses[s.rank] = localQpStatus;
+  s.bootstrap->allGather(qpStatuses.data(), sizeof(int));
+  for (int peer = 0; peer < s.worldSize; ++peer) {
+    if (qpStatuses[peer] != DOCA_SUCCESS) {
+      throw Error(
+          "GPUNetIO requires direct GPU doorbells and GPU-resident CQs; CPU-assisted fallback is disabled. "
+          "QP creation failed on rank " +
+              std::to_string(peer) + " with DOCA status " + std::to_string(qpStatuses[peer]),
+          ErrorCode::SystemError);
     }
   }
 
@@ -333,22 +341,6 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
     for (int queue = 0; queue < numQps; ++queue) {
       const auto& remote = qpAll[static_cast<size_t>(r) * rowLength + static_cast<size_t>(s.rank) * numQps + queue];
       s.connectQp(s.qpHl[static_cast<size_t>(r) * numQps + queue], remote);
-    }
-  }
-
-  bool needsCpuProxy = false;
-  for (auto* q : s.qpHl) {
-    if (q && q->qp_gverbs && q->qp_gverbs->cpu_proxy) {
-      needsCpuProxy = true;
-      break;
-    }
-  }
-  if (needsCpuProxy) {
-    MSCCLPP_DOCA_THROW(doca_gpu_verbs_create_service(&s.cpuProxyService));
-    for (auto* q : s.qpHl) {
-      if (q && q->qp_gverbs && q->qp_gverbs->cpu_proxy) {
-        MSCCLPP_DOCA_THROW(doca_gpu_verbs_service_monitor_qp(s.cpuProxyService, q->qp_gverbs));
-      }
     }
   }
 
@@ -391,8 +383,21 @@ MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes)
   ctxHost.atomicResultLkey = s.atomicResultMr->getLkey();
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
   MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
+  s.setupComplete = true;
 }
 
-MSCCLPP_API_CPP GpuNetIoDeviceContext* GpuNetIoService::deviceContext() const { return pimpl_->ctxGpu; }
+MSCCLPP_API_CPP GpuNetIoDeviceContext* GpuNetIoService::deviceContext() const {
+  return pimpl_->setupComplete ? pimpl_->ctxGpu : nullptr;
+}
+
+MSCCLPP_API_CPP GpuNetIoDeviceContext* GpuNetIoService::deviceContext(int peer) const {
+  if (peer < 0 || peer >= pimpl_->worldSize || peer == pimpl_->rank) {
+    throw Error("GPUNetIO channel requires a remote bootstrap rank within the world size", ErrorCode::InvalidUsage);
+  }
+  if (!pimpl_->setupComplete) {
+    throw Error("GPUNetIO channel requires successful service setup", ErrorCode::InvalidUsage);
+  }
+  return pimpl_->ctxGpu;
+}
 
 }  // namespace mscclpp
