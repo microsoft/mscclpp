@@ -1349,6 +1349,172 @@ TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); 
 
 // GPU-initiated networking (GPUNetIO / GDAKI) point-to-point smoke test.
 #if defined(MSCCLPP_USE_GPUNETIO)
+static constexpr int kGpuNetIoLLRetInts = 8;
+
+static std::string gpuNetIoLLPingPongError(mscclpp::Bootstrap& bootstrap, const int* retDev) {
+  int results[2][kGpuNetIoLLRetInts] = {};
+  MSCCLPP_CUDATHROW(cudaMemcpy(results[bootstrap.getRank()], retDev, sizeof(results[0]), cudaMemcpyDeviceToHost));
+  bootstrap.allGather(results, sizeof(results[0]));
+  std::string error;
+  for (int rank = 0; rank < 2; ++rank) {
+    const auto& result = results[rank];
+    if (result[0] == 0) continue;
+    if (!error.empty()) error += "; ";
+    error += "rank " + std::to_string(rank) + " code " + std::to_string(result[0]) + " iter " +
+             std::to_string(result[1]) + " pkt/flush " + std::to_string(result[2]) + " data/expectedFlag " +
+             std::to_string(result[3]) + " expectedData/flag1 " + std::to_string(result[4]) + " flag2 " +
+             std::to_string(result[5]);
+    if (result[0] == 1) {
+      error += " secondData " + std::to_string(result[6]) + " expectedSecondData " + std::to_string(result[7]);
+    }
+  }
+  return error;
+}
+
+template <bool CheckCorrectness>
+__global__ void kernelGpuNetIoLLPingPong(mscclpp::PortChannelDeviceHandle channel, int rank, int* buffer,
+                                         mscclpp::LLPacket* sendPackets, mscclpp::LLPacket* recvPackets, int elements,
+                                         int iterations, uint64_t maxSpins, int* result) {
+  const int thread = threadIdx.x;
+  const int threads = blockDim.x;
+  const int packets = elements / 2;
+  const int sendBase = rank == 0 ? 0 : 10000000;
+  const int recvBase = rank == 0 ? 10000000 : 0;
+  __shared__ int abortBlock;
+
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    const uint32_t flag = static_cast<uint32_t>(iteration) + 1;
+    if (thread == 0) abortBlock = 0;
+    __syncthreads();
+    if ((rank ^ (iteration & 1)) == 0) {
+      if constexpr (CheckCorrectness) {
+        for (int packet = thread; packet < packets; packet += threads) {
+          buffer[2 * packet] = sendBase + iteration + 2 * packet;
+          buffer[2 * packet + 1] = sendBase + iteration + 2 * packet + 1;
+        }
+      }
+      mscclpp::copyToPackets(sendPackets, buffer, elements * sizeof(int), thread, threads, flag);
+      __syncthreads();
+      if (thread == 0) {
+        __threadfence_system();
+        channel.put(0, 0, static_cast<uint64_t>(packets) * sizeof(mscclpp::LLPacket));
+        const int status = channel.gpuNetIo_->tryFlush(channel.gpuNetIoPeer_, maxSpins, channel.gpuNetIoQpIndex_);
+        if (status != 0) {
+          result[0] = 100;
+          result[1] = iteration;
+          result[2] = status;
+          abortBlock = 1;
+        }
+      }
+      __syncthreads();
+    } else {
+      uint64_t spins = 0;
+      for (int packet = thread; packet < packets; packet += threads) {
+        uint2 data;
+        bool ready = true;
+        while (recvPackets[packet].readOnce(flag, data)) {
+          if (++spins > maxSpins) {
+            ready = false;
+            break;
+          }
+        }
+        if (!ready) {
+          if (atomicCAS(&abortBlock, 0, 1) == 0) {
+            volatile uint32_t* raw = reinterpret_cast<volatile uint32_t*>(&recvPackets[packet]);
+            result[0] = 200;
+            result[1] = iteration;
+            result[2] = packet;
+            result[3] = static_cast<int>(flag);
+            result[4] = static_cast<int>(raw[1]);
+            result[5] = static_cast<int>(raw[3]);
+          }
+          break;
+        }
+        if constexpr (CheckCorrectness) {
+          if (data.x != static_cast<uint32_t>(recvBase + iteration + 2 * packet) ||
+              data.y != static_cast<uint32_t>(recvBase + iteration + 2 * packet + 1)) {
+            if (atomicCAS(&abortBlock, 0, 1) == 0) {
+              result[0] = 1;
+              result[1] = iteration;
+              result[2] = packet;
+              result[3] = static_cast<int>(data.x);
+              result[4] = recvBase + iteration + 2 * packet;
+              result[6] = static_cast<int>(data.y);
+              result[7] = recvBase + iteration + 2 * packet + 1;
+            }
+            break;
+          }
+        }
+      }
+      __syncthreads();
+    }
+    if (abortBlock) return;
+  }
+}
+
+template <bool CheckCorrectness>
+static void runGpuNetIoLLPingPong(std::shared_ptr<mscclpp::Bootstrap> bootstrap, const std::string& ibDevice,
+                                  int cudaDevice) {
+  constexpr int maxElements = CheckCorrectness ? 4 * 1024 * 1024 : 2;
+  constexpr size_t packetBytes = static_cast<size_t>(maxElements / 2) * sizeof(mscclpp::LLPacket);
+  constexpr int iterations = CheckCorrectness ? 1000 : 100000;
+  constexpr uint64_t maxSpins = 100000000ULL;
+  auto send = mscclpp::GpuBuffer<mscclpp::LLPacket>(maxElements / 2).memory();
+  auto receive = mscclpp::GpuBuffer<mscclpp::LLPacket>(maxElements / 2).memory();
+  auto buffer = mscclpp::GpuBuffer<int>(maxElements).memory();
+  auto result = mscclpp::GpuBuffer<int>(kGpuNetIoLLRetInts).memory();
+  auto service = std::make_unique<mscclpp::GpuNetIoService>(bootstrap, ibDevice, cudaDevice);
+  try {
+    service->setup();
+  } catch (const mscclpp::Error& error) {
+    service.reset();
+    SKIP_TEST() << "GpuNetIo setup unavailable on this system: " << error.what();
+    return;
+  }
+  const int rank = bootstrap->getRank();
+  auto connection = service->connect(1 - rank);
+  auto source = service->registerMemory(send.get(), packetBytes, send);
+  auto localDestination = service->registerMemory(receive.get(), packetBytes, receive);
+  auto destination = service->exchangeMemory(connection, localDestination, 19000);
+  auto semaphore = service->buildSemaphore(connection, 19001);
+  mscclpp::PortChannel channel(semaphore, destination, source);
+  const auto handle = channel.deviceHandle();
+  const auto prepare = [&]() {
+    MSCCLPP_CUDATHROW(cudaMemset(result.get(), 0, kGpuNetIoLLRetInts * sizeof(int)));
+    MSCCLPP_CUDATHROW(cudaMemset(send.get(), 0, packetBytes));
+    MSCCLPP_CUDATHROW(cudaMemset(receive.get(), 0, packetBytes));
+    MSCCLPP_CUDATHROW(cudaMemset(buffer.get(), 0, maxElements * sizeof(int)));
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    bootstrap->barrier();
+  };
+  if constexpr (CheckCorrectness) {
+    for (const int elements : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+      prepare();
+      kernelGpuNetIoLLPingPong<true><<<1, 512>>>(handle, rank, buffer.get(), send.get(), receive.get(), elements,
+                                                 iterations, maxSpins, result.get());
+      MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+      const auto error = gpuNetIoLLPingPongError(*bootstrap, result.get());
+      if (!error.empty()) FAIL() << "nElem " << elements << ": " << error;
+    }
+  } else {
+    prepare();
+    kernelGpuNetIoLLPingPong<false>
+        <<<1, 512>>>(handle, rank, buffer.get(), send.get(), receive.get(), 2, iterations, maxSpins, result.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    const auto warmupError = gpuNetIoLLPingPongError(*bootstrap, result.get());
+    if (!warmupError.empty()) FAIL() << "warm-up: " << warmupError;
+    prepare();
+    mscclpp::Timer timer;
+    kernelGpuNetIoLLPingPong<false>
+        <<<1, 512>>>(handle, rank, buffer.get(), send.get(), receive.get(), 2, iterations, maxSpins, result.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    const double elapsedUs = timer.elapsed();
+    const auto error = gpuNetIoLLPingPongError(*bootstrap, result.get());
+    if (!error.empty()) FAIL() << "timing: " << error;
+    if (rank == 0) ::mscclpp::test::reportPerfResult("latency", elapsedUs / iterations, "us/iter");
+  }
+}
+
 __global__ void kernelGpuNetIoP2P(mscclpp::PortChannelDeviceHandle channel, int rank, int* buff, int* ret) {
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
   constexpr uint64_t kMaxSpins = 100000000ULL;
@@ -1456,6 +1622,36 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
       ::mscclpp::test::reportPerfResult(label + " per-put", elapsedUs / puts, "us");
     }
   }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
+}
+
+TEST(PortChannelOneToOneTest, GpuNetIoLLPingPong) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  if (communicator->bootstrap()->getNranks() != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong requires exactly 2 ranks";
+    return;
+  }
+  int device = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  runGpuNetIoLLPingPong<true>(communicator->bootstrap(), mscclpp::getIBDeviceName(ibTransport), device);
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
+}
+
+PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  if (communicator->bootstrap()->getNranks() != 2) {
+    SKIP_TEST() << "GpuNetIo LL ping-pong perf requires exactly 2 ranks";
+    return;
+  }
+  int device = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  runGpuNetIoLLPingPong<false>(communicator->bootstrap(), mscclpp::getIBDeviceName(ibTransport), device);
 #else
   SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
 #endif

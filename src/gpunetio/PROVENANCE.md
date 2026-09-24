@@ -141,6 +141,42 @@ Run it on a configured GPU/RDMA pair with a launcher timeout, then run existing
 proxy tests with the same build. A skipped setup is not a hardware pass;
 asymmetric setup failures during collectives can require launcher termination.
 
+### LL Ping-Pong
+
+`PortChannelOneToOneTest.GpuNetIoLLPingPong` and
+`PortChannelOneToOneTest.GpuNetIoLLPingPongPerf` are ported from
+`feature/ep-experimental` at `672e30d733bca64b13c2976bc0353f74d3f6dca9`.
+Both use separately registered send/receive buffers bound to a PortChannel on
+QP 0. LL packet flags provide receive readiness; no separate signal is posted.
+Each launch uses one block of 512 threads with alternating send/receive ranks.
+
+The correctness test checks both payload words in every packet for 1,000
+iterations at logical payload sizes 8 B, 4 KiB, 4 MiB, and 16 MiB. LL16 packet
+flags double the wire bytes. The performance test uses an 8 B payload with
+100,000 warmup iterations and 100,000 timed iterations. It reports `us/iter`,
+including launch and device synchronization, not isolated one-way wire latency.
+Performance mode does not check payload values. Packet flags are cleared and
+initialization is synchronized across ranks before every launch, including
+between warmup and timing.
+
+Build with GPUNetIO and tests enabled, then on two configured GPU/RDMA ranks:
+
+```bash
+timeout 300s mpirun -np 2 build/bin/mp_unit_tests \
+  --filter=PortChannelOneToOneTest.GpuNetIoLLPingPong --exclude-perf-tests
+timeout 300s mpirun -np 2 build/bin/mp_unit_tests \
+  --filter=PortChannelOneToOneTest.GpuNetIoLLPingPongPerf
+```
+
+The filter is a substring match: omitting `--exclude-perf-tests` from the first
+command runs both tests. Both require exactly two ranks and skip in OFF builds.
+Diagnostics from both ranks include payload mismatches (code 1), bounded CQ
+completion failures (code 100), and receive flag timeouts (code 200). The tests
+use the channel's selected QP for bounded `tryFlush`, since ordinary `flush`
+may fall back to a blocking drain. These spin bounds do not bound setup or
+upstream posting waits; retain an external launcher timeout. Compilation and
+CPU checks do not establish hardware correctness or latency for these tests.
+
 ### Multi-QP Bandwidth
 
 `PortChannelOneToOneTest.GpuNetIoMultiQpBandwidth` is ported from
