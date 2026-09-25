@@ -98,7 +98,7 @@ struct GpuNetIoService::Impl {
   int portNum = 1;
   int gidIndex = 0;
 
-  // Peer-major QPs; all self entries are null.
+  // Compact QPs indexed by peerQpOffsets; peers with no requested queues have no entries.
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
   struct doca_gpu_dev_verbs_qp* qpFlatGpu = nullptr;
   int* peerQpOffsetsGpu = nullptr;
