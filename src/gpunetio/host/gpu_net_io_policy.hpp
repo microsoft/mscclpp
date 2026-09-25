@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #ifndef MSCCLPP_GPUNETIO_HOST_GPU_NET_IO_POLICY_HPP_
 #define MSCCLPP_GPUNETIO_HOST_GPU_NET_IO_POLICY_HPP_
 
