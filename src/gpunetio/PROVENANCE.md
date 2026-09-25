@@ -76,7 +76,9 @@ semaphore for it, and bind separately chosen registrations to `PortChannel`:
 #include <mscclpp/port_channel.hpp>
 
 mscclpp::GpuNetIoService service(bootstrap, ibDeviceName, cudaDeviceId);
-service.setup();
+std::vector<int> peerQpCounts(bootstrap->getNranks(), 0);
+peerQpCounts[peerRank] = 1;
+service.setup(peerQpCounts, setupTag);
 auto connection = service.connect(peerRank, 0);
 auto source = service.registerMemory(sendBuffer, sendBytes, sendOwner);
 auto receive = service.registerMemory(recvBuffer, recvBytes, recvOwner);
@@ -85,6 +87,30 @@ auto semaphore = service.buildSemaphore(connection, semaphoreTag);
 mscclpp::PortChannel channel(semaphore, destination, source);
 auto handle = channel.deviceHandle();
 ```
+
+The plan contains one count per bootstrap rank, zero for self and 0-64 for each
+peer. Both ends of an edge must request the same count, but different edges may
+request different counts. All ranks participate once, including idle ranks with
+all-zero plans, using the same nonnegative `setupTag`. Plans and tags are
+validated collectively before QP creation. Reserve the tag until setup completes
+and serialize setup calls with other bootstrap traffic. The example requests
+only one peer; its peer must request the reciprocal edge.
+
+Only requested QPs/CQs and their atomic-result slots are allocated. The QP
+descriptor table is compact: `peerQpOffsets[peer] + qpIndex` selects both the QP
+and scratch slot. Idle ranks allocate no QPs, CQs or atomic scratch, although
+they still initialize a local IB context/protection domain and device metadata.
+QP connection metadata is sent directly to requested peers, not all-gathered.
+The count-plan validation still all-gathers `worldSize` integers per rank,
+requiring O(worldSize squared) control metadata per rank; this is sparse
+collective setup, not fully noncollective or dynamically extensible setup.
+
+The existing `setup()` and `setup(buffer, bytes)` overloads retain full-mesh
+behavior with the constructor's uniform count (and reserve bootstrap tag zero).
+The explicit sparse overload ignores that constructor default and registers
+channel payloads separately. `connect(peer, qpIndex)` selects only QPs in the
+completed plan; it cannot add new connections. Unrequested peers and excess
+queue indices are rejected by host and device checks.
 
 The kernel uses the existing `put`, `signal`, `putWithSignal`,
 `putWithSignalAndFlush`, `accumulate`, `flush`, `poll`, and `wait` methods.
@@ -203,8 +229,8 @@ the final queue drains. Like the source test, it transfers zero-filled buffers
 without checking received payload contents; it is not a correctness proof.
 
 The supporting API is `GpuNetIoService(bootstrap, ibDeviceName, cudaDeviceId,
-numQpsPerPeer)`. Setup validates matching QP counts and symmetric sizes before
-variable-size QP exchange, pairs matching queue indices, and allocates atomic
+numQpsPerPeer)`. Legacy setup validates matching QP counts and symmetric sizes,
+exchanges requested peer metadata, pairs matching queue indices, and allocates atomic
 result scratch per peer/QP. Device-context operations accept a final optional
 `qpIndex=0`; flushing one queue does not drain the others. The benchmark now
 constructs real PortChannels with separate registrations and semaphores on each
@@ -326,7 +352,7 @@ These historical checks predate the FetchContent migration.
 - C++ lint and all 131 Python formatting checks pass. These changes do not alter
   runtime protocol or dependency revision; no GPU/NIC workloads were executed.
 
-## Channel Binding Verification (2026-09-24)
+## Channel Binding Verification (2026-09-24, Historical)
 
 - This patch replaces the service/peer/raw-counter host constructors with
   `PortChannel(semaphore, remoteDestination, localSource)` and
@@ -343,6 +369,32 @@ These historical checks predate the FetchContent migration.
 - `GpuNetIoBoundChannels` and the migrated P2P/bandwidth tests are compiled but
   not run on GPU/NIC hardware. Allocation, RDMA ordering, remote lifetime and
   teardown require cluster verification; CPU tests do not establish those results.
-- Transport setup still preconnects a collective, uniform-QP-count mesh on one
+- At that revision, transport setup preconnected a collective, uniform-QP-count mesh on one
   HCA. Per-channel memory sizes/addresses and semaphore creation are independent
   thereafter. On-demand QP creation and concurrent setup calls are not introduced.
+
+## Sparse Connection Plans
+
+`setup(peerQpCounts, tag)` removes the mandatory full mesh while retaining the
+existing binding API and explicit one-HCA service. CPU coverage includes 45
+empty/ring/unequal-star plan cases, asymmetric and invalid count rejection,
+compact descriptor copies, blocking eight-rank peer exchanges with an idle rank,
+and actual device QP/atomic-scratch lookup with missing-peer and excess-queue
+rejection. These checks do not establish GPU/NIC ordering or hardware resource
+availability. Setup is still collective, and failures during local resource
+allocation or peer exchanges can require external launcher termination.
+
+The four-rank hardware test requests one QP between ranks 0/1, three between
+ranks 1/2, and none for rank 3. It checks compact offsets, idle-rank resources,
+unrequested connection rejection, and payload/guard bytes plus five signals on
+each requested channel. Compile with tests and GPUNetIO enabled, then run on
+four configured GPU/RDMA ranks:
+
+```bash
+timeout 300s mpirun -np 4 build/bin/mp_unit_tests \
+  --filter=PortChannelSparseTest.GpuNetIoSparseConnections
+```
+
+This test is compiled but has not been executed as part of CPU validation.
+Rebuild all consumers when updating the device-context layout; raw contexts
+without an offsets table retain the legacy peer-major indexing convention.

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core.hpp"
 #include "port_channel_gpunetio_device.hpp"
@@ -62,7 +63,8 @@ class GpuNetIoSemaphore {
 /// Unlike ProxyService, the GPU posts RDMA operations and rings NIC doorbells directly.
 /// Requires GPU_SM_DB, valid DBRs and GPU-resident non-collapsed CQs. CPU-assisted
 /// fallback is disabled for the pinned upstream version; unsupported systems fail setup.
-/// All ranks call setup with the same QP count. Channels select connections,
+/// All ranks call setup with reciprocal per-peer counts, or use the legacy uniform plan.
+/// Channels select requested connections,
 /// semaphores and separately registered buffers after transport setup.
 /// Handles retain the transport and registrations; synchronize every using
 /// stream before releasing the last channel/registration/buffer owner.
@@ -82,16 +84,24 @@ class GpuNetIoService {
   GpuNetIoService& operator=(const GpuNetIoService&) = delete;
 
   /// Legacy symmetric-buffer setup for low-level device-context operations.
-  /// New PortChannels should use setup() and separate memory registrations.
+  /// New PortChannels should use a sparse plan and separate memory registrations.
   /// @param symmetricBuffer This rank's buffer, which must outlive the service.
   /// @param bytes Common buffer size across all ranks.
   void setup(void* symmetricBuffer, size_t bytes);
 
-  /// Collectively connect transport QPs without registering a symmetric payload.
+  /// Legacy full-mesh setup without registering a symmetric payload; uses bootstrap tag zero.
   /// All ranks call once with the same QP count. Channel buffers are registered separately.
   void setup();
 
-  /// Select an existing QP after setup; rejects self, invalid peers and queue indices.
+  /// Collectively create only the QPs requested by this rank's connection plan.
+  /// @param peerQpCounts One count per bootstrap rank, in [0, 64], with zero for self.
+  /// Each pair must request the same count; different peers may have different counts.
+  /// Ranks with no connections still participate with all-zero counts. No payload is registered.
+  /// @param tag Common nonnegative bootstrap tag reserved for this setup's QP metadata exchange.
+  /// All ranks call once in matching order; do not overlap setup with other traffic using this tag.
+  void setup(const std::vector<int>& peerQpCounts, int tag);
+
+  /// Select a requested QP after setup; rejects self, unrequested peers and queue indices.
   GpuNetIoConnection connect(int peer, int qpIndex = 0) const;
 
   /// Register a local CUDA buffer with this transport's protection domain.
@@ -112,12 +122,13 @@ class GpuNetIoService {
   GpuNetIoDeviceContext* deviceContext() const;
 
   /// Validate a remote bootstrap rank using host metadata and return the device context.
-  /// Rejects self, out-of-range peers and incomplete setup in every build mode.
+  /// Rejects self, unrequested/out-of-range peers and incomplete setup in every build mode.
   GpuNetIoDeviceContext* deviceContext(int peer) const;
 
  private:
   struct Impl;
   std::shared_ptr<Impl> pimpl_;
+  void setupImpl(void* symmetricBuffer, size_t bytes, const std::vector<int>& peerQpCounts, int tag);
   GpuNetIoMemory exchangeMemoryImpl(const GpuNetIoConnection&, const GpuNetIoMemory&, int tag, uint32_t kind) const;
   friend struct detail::GpuNetIoConnectionState;
   friend struct detail::GpuNetIoMemoryState;

@@ -1728,6 +1728,96 @@ __global__ void kernelGpuNetIoBoundChannel(mscclpp::PortChannelDeviceHandle chan
 }
 #endif
 
+class PortChannelSparseTest : public CommunicatorTestBase {};
+
+TEST(PortChannelSparseTest, GpuNetIoSparseConnections) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+  REQUIRE_IBVERBS;
+  const auto bootstrap = communicator->bootstrap();
+  if (bootstrap->getNranks() != 4) {
+    SKIP_TEST() << "GPUNetIO sparse connections require exactly four ranks";
+    return;
+  }
+  const int rank = bootstrap->getRank();
+  const int plans[4][4] = {{0, 1, 0, 0}, {1, 0, 3, 0}, {0, 3, 0, 0}, {0, 0, 0, 0}};
+  std::vector<int> counts(plans[rank], plans[rank] + 4);
+  int device = 0;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  auto service = std::make_unique<mscclpp::GpuNetIoService>(bootstrap, mscclpp::getIBDeviceName(ibTransport), device);
+  try {
+    service->setup(counts, 20000);
+  } catch (const mscclpp::Error& error) {
+    SKIP_TEST() << error.what();
+    return;
+  }
+  mscclpp::GpuNetIoDeviceContext context{};
+  MSCCLPP_CUDATHROW(cudaMemcpy(&context, service->deviceContext(), sizeof(context), cudaMemcpyDeviceToHost));
+  int offsets[5] = {};
+  MSCCLPP_CUDATHROW(cudaMemcpy(offsets, context.peerQpOffsets, sizeof(offsets), cudaMemcpyDeviceToHost));
+  EXPECT_EQ(offsets[0], 0);
+  for (int peer = 0; peer < 4; ++peer) {
+    EXPECT_EQ(offsets[peer + 1] - offsets[peer], counts[peer]);
+    bool rejected = false;
+    try {
+      (void)service->connect(peer, counts[peer]);
+    } catch (const mscclpp::Error&) {
+      rejected = true;
+    }
+    EXPECT_TRUE(rejected);
+  }
+  if (rank == 3) {
+    EXPECT_EQ(offsets[4], 0);
+    EXPECT_TRUE(context.qps == nullptr);
+    EXPECT_EQ(context.atomicResultBase, uintptr_t{0});
+  }
+  std::vector<mscclpp::PortChannel> channels;
+  std::vector<std::shared_ptr<unsigned char>> receivers;
+  std::vector<int> expected;
+  for (int first = 0; first < 4; ++first) {
+    for (int second = first + 1; second < 4; ++second) {
+      for (int queue = 0; queue < plans[first][second]; ++queue) {
+        if (rank == first || rank == second) {
+          const int peer = rank == first ? second : first;
+          auto send = mscclpp::GpuBuffer<unsigned char>(320).memory();
+          auto receive = mscclpp::GpuBuffer<unsigned char>(320).memory();
+          MSCCLPP_CUDATHROW(cudaMemset(send.get(), 0x11 + rank * 16 + queue, 320));
+          MSCCLPP_CUDATHROW(cudaMemset(receive.get(), 0xa5, 320));
+          const auto connection = service->connect(peer, queue);
+          const auto source = service->registerMemory(send.get(), 320, send);
+          const auto local = service->registerMemory(receive.get(), 320, receive);
+          const auto remote = service->exchangeMemory(connection, local, 20100 + queue * 2);
+          const auto semaphore = service->buildSemaphore(connection, 20101 + queue * 2);
+          channels.emplace_back(semaphore, remote, source);
+          receivers.push_back(receive);
+          expected.push_back(0x11 + peer * 16 + queue);
+        }
+        bootstrap->barrier();
+        if (rank == first || rank == second) {
+          kernelGpuNetIoBoundChannel<<<1, 1>>>(channels.back().deviceHandle(), 5);
+          MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        }
+        bootstrap->barrier();
+      }
+    }
+  }
+  service.reset();
+  for (size_t index = 0; index < channels.size(); ++index) {
+    unsigned char received[320];
+    MSCCLPP_CUDATHROW(cudaMemcpy(received, receivers[index].get(), sizeof(received), cudaMemcpyDeviceToHost));
+    for (int offset = 0; offset < 320; ++offset) EXPECT_EQ(received[offset], offset < 256 ? expected[index] : 0xa5);
+    const auto handle = channels[index].deviceHandle();
+    uint64_t counter = 0;
+    MSCCLPP_CUDATHROW(cudaMemcpy(&counter, handle.semaphore_.inboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(counter, uint64_t{5});
+    MSCCLPP_CUDATHROW(
+        cudaMemcpy(&counter, handle.semaphore_.expectedInboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(counter, uint64_t{5});
+  }
+#else
+  SKIP_TEST() << "Built without MSCCLPP_USE_GPUNETIO";
+#endif
+}
+
 TEST(PortChannelOneToOneTest, GpuNetIoBoundChannels) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
