@@ -72,7 +72,7 @@ target_include_directories(mscclpp_gpunetio_obj PRIVATE
     ${PROJECT_SOURCE_DIR}/src/core/include)
 
 # Third-party code: do not enforce mscclpp's -Wall -Wextra -Werror.
-target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
+set_source_files_properties(${GPUNETIO_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 
 # DOCA_VERBS_USE_NET_WRAPPER selects the dlopen-based ibverbs/mlx5dv wrappers.
 target_compile_definitions(mscclpp_gpunetio_obj PRIVATE DOCA_VERBS_USE_NET_WRAPPER)
