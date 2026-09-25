@@ -201,21 +201,20 @@ class NativeSourceTests(unittest.TestCase):
             "uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, "
             "DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_rsvd_index);",
             "if (ticket == 0) return;",
-            "doca_gpu_dev_verbs_cq* cq = doca_gpu_dev_verbs_qp_get_cq_sq(qp);",
-            "while (doca_gpu_dev_verbs_poll_one_cq_at<"
-            "DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(cq, ticket - 1) == EBUSY)",
+            "doca_gpu_dev_verbs_poll_one_cq_at<" "DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, ticket - 1)",
         )
         self.assertNotIn("doca_gpu_dev_verbs_wait(", code(flush))
-        get = function(native, "GpuNetIoDeviceContext::get")
+        bounded = function(native, "GpuNetIoDeviceContext::tryFlush")
         self.assert_ordered(
-            get,
-            "doca_gpu_dev_verbs_ticket_t ticket;",
-            "doca_gpu_dev_verbs_get_thread<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>"
-            "(qp, raddr, laddr, size, laddr, &ticket);",
-            "doca_gpu_dev_verbs_wait(qp, ticket);",
+            bounded,
+            "if (ticket == 0) return 0;",
+            "--ticket;",
+            "for (uint64_t spin = 0; spin < maxSpinCount; ++spin)",
+            "DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, ticket)",
+            "if (status != EBUSY) return status;",
+            "return EBUSY;",
         )
-        self.assertNotIn("sq_rsvd_index", code(get))
-        self.assertNotIn("flush(", code(get))
+        self.assertIn("if (status != 0) __trap();", flush)
 
     def test_registered_sender_stores_are_system_fenced_before_nic_puts(self):
         send = function(source(DISPATCH), "sendRankMajorGpuNetIo")

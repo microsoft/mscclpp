@@ -41,7 +41,7 @@ struct TransportView {
   // GPU-initiated networking (GPUNetIO) cross-domain resources. gpuNetIo_ is null
   // unless the backend is active for this rank; peers with a null mapped-buffer
   // base (see isNvlinkPeer) are served over GPUNetIO instead of NVLink/IPC.
-  mscclpp::GpuNetIoDeviceContext* gpuNetIo_;
+  EpGpuNetIoDeviceContext* gpuNetIo_;
   void* gpuNetIoStagingBuffer_;
   void* gpuNetIoFlagsBuffer_;
   void* gpuNetIoCombineFlagsBuffer_;

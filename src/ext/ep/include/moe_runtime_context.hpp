@@ -20,7 +20,9 @@
 namespace mscclpp {
 
 // Forward declaration; full definition in the GPUNetIO host service header.
-class GpuNetIoService;
+namespace ep {
+class EpGpuNetIoService;
+}
 
 namespace ep {
 
@@ -61,7 +63,7 @@ struct LatencyContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-  std::shared_ptr<mscclpp::GpuNetIoService> gpuNetIoService_;
+  std::shared_ptr<EpGpuNetIoService> gpuNetIoService_;
 };
 
 struct ThroughputContext {

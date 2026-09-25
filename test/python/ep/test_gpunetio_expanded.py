@@ -377,7 +377,7 @@ void __threadfence_system(){}
 constexpr int DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU=0;
 constexpr int DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT=0;
 constexpr int DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD=0;
-constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO=0;
+constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB=0;
 constexpr int DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE=8;
 constexpr int DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE=2;
 struct Wqe {uint64_t ticket=0,dst=0,src=0;uint32_t rkey=0,lkey=0;int flags=0;};
@@ -403,23 +403,37 @@ template<int Mode,int Scope,int Handler> void doca_gpu_dev_verbs_submit(doca_gpu
 }
 namespace mscclpp {
 """
-        native += structure(source("include/mscclpp/port_channel_gpunetio_device.hpp"), "GpuNetIoDeviceContext")
-        native += "namespace detail {\n"
-        native += "doca_gpu_dev_verbs_qp* ginQp(void* ptr,int index){return static_cast<doca_gpu_dev_verbs_qp*>(ptr)+index;}\n"
-        native += "uint32_t ginHtobe32(uint32_t key){return __builtin_bswap32(key);}\n"
-        for name in ("ginHcaIndex", "ginRemoteKey", "ginLocalKey"):
-            native += function(source("include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"), name)
-        native += "}}\n" + function(source(NETWORK_FAST), "putWarpRows")
+        native += r"""
+    struct GpuNetIoDeviceContext { doca_gpu_dev_verbs_qp* qps; int numQpsPerPeer; };
+    struct Memory {uintptr_t base;uint64_t bytes;uint32_t key;int rank;};
+    struct Channel {
+     GpuNetIoDeviceContext* gpuNetIo_;int gpuNetIoQpIndex_,gpuNetIoLocalRank_=0;int dst_=0,src_=1;Memory memory[2];
+     Memory gpuNetIoMemory(int id,int rank,uint64_t offset,uint64_t bytes)const{
+      require(id>=0&&id<2&&memory[id].rank==rank&&offset<=memory[id].bytes&&bytes<=memory[id].bytes-offset,"binding bounds");return memory[id];
+     }
+    };
+    namespace detail {
+    doca_gpu_dev_verbs_qp* gpuNetIoQp(const GpuNetIoDeviceContext& context,int peer,int queue){return context.qps+peer*context.numQpsPerPeer+queue;}
+    uint32_t gpuNetIoHtobe32(uint32_t key){return __builtin_bswap32(key);}
+    }}
+    struct EpGpuNetIoDeviceContext {
+     mscclpp::Channel channels[8];
+     mscclpp::Channel channel(int peer,int queue)const{return channels[peer*4+queue];}
+    };
+    """
+        native += function(source(NETWORK_FAST), "putWarpRows")
         native += r"""
 int main() {
   std::vector<doca_gpu_dev_verbs_qp> queues(8);expected=&queues[7];
   uint32_t remote[8]={0,0x1234,0,0x5678,0,0x9abc,0,0xdef0};
   uint32_t local[4]={0x12345678,0x23456789,0x3456789a,0x456789ab};
-  uintptr_t bases[2]={0,0x100000};
-  mscclpp::GpuNetIoDeviceContext context{queues.data(),remote,bases,local[0],0x200000,2,4};
+    EpGpuNetIoDeviceContext context;
+    mscclpp::GpuNetIoDeviceContext services[4];
   for(int hcas:{1,2,4}) for(unsigned mask:{0u,1u,2u,0x80000000u,0xaaaaaaaa,0x80000001u,0xffffffffu}) {
     activeMask=mask;expected->next=1023;reserved=marked=submitted=0;
-    context.numHcas=hcas;context.lkeys=hcas==1?nullptr:local;
+    const int hca=3%hcas,physical=3/hcas;
+    services[hca]={expected-(4/hcas+physical),4/hcas};
+    context.channels[7]={&services[hca],physical,0,0,1,{{0x100000,1<<20,__builtin_bswap32(remote[hca*2+1]),1},{0x200000,1<<20,local[hca],0}}};
     std::vector<std::thread> lanes;
     for(int lane=0;lane<32;++lane) lanes.emplace_back([&,lane]{
       laneId=lane;
@@ -618,8 +632,8 @@ int main() {
         batch = function(source(NETWORK_FAST), "putWarpRows")
         self.assertIn("DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE", batch)
         self.assertLess(batch.index("__threadfence_system"), batch.index("doca_gpu_dev_verbs_mark_wqes_ready"))
-        self.assertIn("ginRemoteKey(*gin, peer, queue)", batch)
-        self.assertIn("ginLocalKey(*gin, queue)", batch)
+        self.assertIn("gpuNetIoHtobe32(remote.key)", batch)
+        self.assertIn("gpuNetIoHtobe32(local.key)", batch)
 
 
 if __name__ == "__main__":

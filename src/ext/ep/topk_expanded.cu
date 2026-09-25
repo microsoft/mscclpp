@@ -7,7 +7,7 @@
 #include "topk_expanded_ipc.cuh"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-#include <mscclpp/port_channel_gpunetio_device.hpp>
+#include "gpu_net_io.hpp"
 #endif
 
 namespace mscclpp::ep::topk_expanded {

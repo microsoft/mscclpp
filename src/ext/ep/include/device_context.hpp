@@ -8,7 +8,9 @@
 namespace mscclpp {
 
 // Forward declaration; full definition in the GPUNetIO device header.
-struct GpuNetIoDeviceContext;
+namespace ep {
+struct EpGpuNetIoDeviceContext;
+}
 
 namespace ep {
 
@@ -43,7 +45,7 @@ struct DeviceContext {
   /// GPU-initiated networking (GPUNetIO/GDAKI) device context for peers outside
   /// this rank's NVLink/IPC domain, or nullptr when every peer is NVLink-mapped
   /// (single-domain) or the GPUNetIO backend is disabled.
-  mscclpp::GpuNetIoDeviceContext* gpuNetIo_ = nullptr;
+  EpGpuNetIoDeviceContext* gpuNetIo_ = nullptr;
   /// Symmetric inter-domain send-staging ring base (GpuNetIoStagingSlots slots).
   void* gpuNetIoStagingBuffer_ = nullptr;
   /// Symmetric per-source-rank, per-QP dispatch completion flag array base.

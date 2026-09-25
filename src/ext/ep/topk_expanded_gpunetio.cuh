@@ -195,13 +195,17 @@ __device__ void postDispatch(const TransportView& transport, const LatencyStorag
 }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-__device__ int putWarpRows(mscclpp::GpuNetIoDeviceContext* gin, int peer, int queue, bool live, uint64_t dstOffset,
+__device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bool live, uint64_t dstOffset,
                            uint64_t srcOffset, uint32_t bytes) {
   const int lane = get_lane_id();
   const unsigned mask = __ballot_sync(0xffffffff, live);
   const int count = __popc(mask);
   if (count == 0) return 0;
-  auto* qp = mscclpp::detail::ginQp(gin->qps, peer * gin->numQpsPerPeer + queue);
+  const auto channel = gin->channel(peer, queue);
+  const auto remote = channel.gpuNetIoMemory(channel.dst_, peer, live ? dstOffset : 0, live ? bytes : 0);
+  const auto local =
+      channel.gpuNetIoMemory(channel.src_, channel.gpuNetIoLocalRank_, live ? srcOffset : 0, live ? bytes : 0);
+  auto* qp = mscclpp::detail::gpuNetIoQp(*channel.gpuNetIo_, peer, channel.gpuNetIoQpIndex_);
   uint64_t base = 0;
   if (lane == 0)
     base = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
@@ -212,17 +216,17 @@ __device__ int putWarpRows(mscclpp::GpuNetIoDeviceContext* gin, int peer, int qu
     const uint64_t ticket = base + offset;
     auto* wqe = doca_gpu_dev_verbs_get_wqe_ptr(qp, ticket);
     doca_gpu_dev_verbs_wqe_prepare_write(qp, wqe, ticket, DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
-                                         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, gin->peerBase[peer] + dstOffset,
-                                         mscclpp::detail::ginRemoteKey(*gin, peer, queue), gin->localBase + srcOffset,
-                                         mscclpp::detail::ginHtobe32(mscclpp::detail::ginLocalKey(*gin, queue)), bytes);
+                                         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.base + dstOffset,
+                                         mscclpp::detail::gpuNetIoHtobe32(remote.key), local.base + srcOffset,
+                                         mscclpp::detail::gpuNetIoHtobe32(local.key), bytes);
     __threadfence_system();
   }
   __syncwarp();
   if (lane == 0) {
     doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, base, base + count - 1);
     doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD,
-                              DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO>(qp, base + count,
-                                                                    DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+                              DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(qp, base + count,
+                                                                         DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
   }
   __syncwarp();
   return count;

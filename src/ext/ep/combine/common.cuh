@@ -12,7 +12,7 @@
 #include "kernels.hpp"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-#include <mscclpp/port_channel_gpunetio_device.hpp>
+#include "gpu_net_io.hpp"
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {
@@ -796,7 +796,7 @@ MSCCLPP_DEVICE_INLINE void signalRankMajorCombineLocalStart(const TransportView&
   }
 }
 
-MSCCLPP_DEVICE_INLINE int rankMajorCombineStripeQp(const mscclpp::GpuNetIoDeviceContext* gin, int owner, int stripe) {
+MSCCLPP_DEVICE_INLINE int rankMajorCombineStripeQp(const EpGpuNetIoDeviceContext* gin, int owner, int stripe) {
   EP_DEVICE_ASSERT(gin->numHcas > 0 && gin->numHcas <= gin->numQpsPerPeer);
   return (owner % gin->numQpsPerPeer + stripe) % gin->numQpsPerPeer;
 }

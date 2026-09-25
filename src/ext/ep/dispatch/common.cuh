@@ -12,7 +12,7 @@
 #include "kernels.hpp"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-#include <mscclpp/port_channel_gpunetio_device.hpp>
+#include "gpu_net_io.hpp"
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {

@@ -25,6 +25,116 @@ IMPL = "include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"
 
 
 class MultiQpTests(unittest.TestCase):
+    def test_actual_ep_service_setup_and_lifetime(self):
+        adapter = source("src/ext/ep/gpu_net_io.cc")
+        native = HOST_PREAMBLE + r"""
+    #include <charconv>
+    #include <cstdio>
+    #include <cstdlib>
+    #include <memory>
+    #include <utility>
+    #include <limits.h>
+    struct DIR{};struct dirent{char d_name[32];};
+    DIR* opendir(const char*){return nullptr;}int closedir(DIR*){return 0;}dirent* readdir(DIR*){return nullptr;}
+    std::string canonicalPath(const std::string& path){return path;}
+    int readNumber(const std::string&,int fallback){return fallback;}
+    void cudaDeviceGetPCIBusId(char* output,size_t,int){std::strcpy(output,"0000:00:00.0");}
+    void cudaDeviceSynchronize(){}
+    constexpr int cudaMemcpyHostToDevice=0;
+    void cudaMemcpy(void* destination,const void* source,size_t bytes,int){std::memcpy(destination,source,bytes);}
+    #define MSCCLPP_CUDATHROW(call) call
+    int liveServices=0,liveChannels=0,liveAllocations=0,createdServices=0,createdSemaphores=0,liveRegistrations=0;
+    int registrationFailure=-1,registrationCalls=0,semaphoreFailure=-1;
+    namespace mscclpp {
+    enum class ErrorCode{SystemError,InvalidUsage};
+    struct Error:std::runtime_error{Error(const std::string& message,ErrorCode):std::runtime_error(message){}};
+    struct CudaDeviceGuard{explicit CudaDeviceGuard(int){}};
+    struct Bootstrap {
+     int rank=0,ranks=2,mismatch=0,barriers=0;
+     int getRank(){return rank;}int getNranks(){return ranks;}
+     template<typename Value>void allGather(Value* values,size_t){
+      for(int peer=0;peer<ranks;++peer)values[peer]=values[rank];
+      if constexpr(!std::is_same_v<Value,int>){
+       const int peer=(rank+1)%ranks;
+       if(mismatch==1)values[peer].bytes++;
+       if(mismatch==2)values[peer].hcas++;
+       if(mismatch==3)values[peer].queues++;
+       if(mismatch==4)values[peer].valid=0;
+      }else if(mismatch==5)values[(rank+1)%ranks]=0;
+     }
+     void barrier(){++barriers;}
+    };
+    struct Registration{Registration(){++liveRegistrations;}~Registration(){--liveRegistrations;}};
+    struct ServiceState{int hca,queues;ServiceState(int hca,int queues):hca(hca),queues(queues){++liveServices;}~ServiceState(){--liveServices;}};
+    struct GpuNetIoMemory{int peer=-1;std::shared_ptr<Registration> owner;};
+    struct Connection{std::shared_ptr<ServiceState> service;int peer,queue;};
+    struct Semaphore{Connection connection;};
+    struct PortChannelDeviceHandle{int hca=-1,peer=-1,queue=-1;};
+    struct GpuNetIoService {
+     std::shared_ptr<ServiceState> state;
+     GpuNetIoService(std::shared_ptr<Bootstrap>,const std::string& name,int,int queues){state=std::make_shared<ServiceState>(std::stoi(name.substr(3)),queues);++createdServices;}
+     void setup(){}
+     GpuNetIoMemory registerMemory(void*,size_t){if(registrationCalls++==registrationFailure)throw Error("register",ErrorCode::SystemError);return {-1,std::make_shared<Registration>()};}
+     Connection connect(int peer,int queue){require(queue>=0&&queue<state->queues,"physical queue");return{state,peer,queue};}
+     GpuNetIoMemory exchangeMemory(Connection connection,GpuNetIoMemory memory,int tag){require(tag>=22000&&tag%2==0,"memory tag");memory.peer=connection.peer;return memory;}
+     Semaphore buildSemaphore(Connection connection,int tag){require(tag>=22001&&tag%2==1,"semaphore tag");if(createdSemaphores++==semaphoreFailure)throw Error("semaphore",ErrorCode::SystemError);return{connection};}
+    };
+    struct PortChannel {
+     Semaphore semaphore;GpuNetIoMemory remote,local;
+     PortChannel(Semaphore semaphore,GpuNetIoMemory remote,GpuNetIoMemory local):semaphore(semaphore),remote(remote),local(local){require(remote.peer==semaphore.connection.peer,"remote peer");++liveChannels;}
+     PortChannel(const PortChannel& other):semaphore(other.semaphore),remote(other.remote),local(other.local){++liveChannels;}
+     ~PortChannel(){--liveChannels;}
+     PortChannelDeviceHandle deviceHandle(){return{semaphore.connection.service->hca,semaphore.connection.peer,semaphore.connection.queue};}
+    };
+    template<typename Value>struct GpuBuffer {
+     std::shared_ptr<Value> owner;
+     explicit GpuBuffer(size_t count):owner(new Value[count],[](Value* pointer){delete[] pointer;--liveAllocations;}){++liveAllocations;}
+     std::shared_ptr<Value> memory(){return owner;}
+    };
+    namespace ep {
+    struct EpGpuNetIoDeviceContext{PortChannelDeviceHandle* channels;int numPeers,numQpsPerPeer,numHcas;};
+    """
+        native += "namespace detail::gpunetio {struct HcaTopology{std::string name,path;int numa;};"
+        native += "std::vector<std::string> selectClosestHcas(const std::string&,int,const std::vector<HcaTopology>&){return{};}}\n"
+        native += function(adapter, "selectDevices")
+        native += r"""
+    class EpGpuNetIoService {
+     public:EpGpuNetIoService(std::shared_ptr<Bootstrap>,const std::string&,int);~EpGpuNetIoService();
+     void setup(void*,size_t);EpGpuNetIoDeviceContext* deviceContext()const;
+     private:struct Impl;std::unique_ptr<Impl> impl_;
+    };
+    """
+        native += adapter[adapter.index("struct EpGpuNetIoService::Impl") : adapter.rindex("#endif")]
+        native += r"""
+    }
+    int main(){
+     using namespace mscclpp;using namespace mscclpp::ep;
+     require(selectDevices(" nic0, nic1\t, ,nic2,","gpu",0)==std::vector<std::string>{"nic0","nic1","nic2"},"list trim/order");
+     for(const auto& list:{" , \t","nic0,nic0",""}){bool rejected=false;try{selectDevices(list,"gpu",0);}catch(const Error&){rejected=true;}require(rejected,"invalid HCA list");}
+     for(int hcas:{1,2,4,8,64})for(int queues:{1,2,4,8,64})for(int rank:{0,1,3}){
+      auto bootstrap=std::make_shared<Bootstrap>();bootstrap->rank=rank;bootstrap->ranks=4;
+      std::string names;for(int hca=0;hca<hcas;++hca)names+=(hca?",":"")+std::string("nic")+std::to_string(hca);
+      const auto requested=std::to_string(queues);setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER",requested.c_str(),1);
+      const bool valid=queues>=hcas&&queues%hcas==0;createdServices=createdSemaphores=registrationCalls=0;
+      {EpGpuNetIoService service(bootstrap,names,0);bool rejected=false;
+       try{service.setup(reinterpret_cast<void*>(0x100000),4096);}catch(const Error&){rejected=true;}
+       require(rejected!=valid,"geometry rejection");
+       if(valid){auto* context=service.deviceContext();require(context&&context->numHcas==hcas&&context->numQpsPerPeer==queues&&bootstrap->barriers==1,"published context");
+        require(liveServices==hcas&&liveChannels==3*queues&&liveRegistrations==hcas,"retained ownership");
+        for(int peer=0;peer<4;++peer)for(int queue=0;queue<queues;++queue){const auto handle=context->channels[peer*queues+queue];if(peer==rank){require(handle.peer==-1,"self slot");continue;}require(handle.peer==peer&&handle.hca==queue%hcas&&handle.queue==queue/hcas,"logical mapping");}
+        bool repeated=false;try{service.setup(reinterpret_cast<void*>(0x100000),4096);}catch(const Error&){repeated=true;}require(repeated,"repeat setup");
+       }else require(createdServices==0,"invalid configuration created service");
+      }
+      require(liveServices==0&&liveChannels==0&&liveAllocations==0&&liveRegistrations==0,"leaked owner");
+     }
+     for(const char* value:{"0","-1","65","4junk",""}){setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER",value,1);auto bootstrap=std::make_shared<Bootstrap>();createdServices=0;bool rejected=false;try{EpGpuNetIoService service(bootstrap,"nic0",0);service.setup(reinterpret_cast<void*>(1),4096);}catch(const Error&){rejected=true;}require(rejected&&createdServices==0,"invalid count accepted");}
+     unsetenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER");
+     for(int mismatch=1;mismatch<=5;++mismatch){auto bootstrap=std::make_shared<Bootstrap>();bootstrap->mismatch=mismatch;createdServices=createdSemaphores=0;bool rejected=false;try{EpGpuNetIoService service(bootstrap,"nic0,nic1",0);service.setup(reinterpret_cast<void*>(1),4096);}catch(const Error&){rejected=true;}require(rejected&&createdSemaphores==0,"collective failure not stopped");if(mismatch<5)require(createdServices==0,"geometry failure posted setup");require(liveServices==0&&liveRegistrations==0,"collective failure leak");}
+     for(int mode=0;mode<2;++mode){registrationCalls=createdSemaphores=0;registrationFailure=mode==0?1:-1;semaphoreFailure=mode==1?1:-1;bool rejected=false;try{EpGpuNetIoService service(std::make_shared<Bootstrap>(),"nic0,nic1",0);service.setup(reinterpret_cast<void*>(1),4096);}catch(const Error&){rejected=true;}require(rejected&&liveServices==0&&liveChannels==0&&liveAllocations==0&&liveRegistrations==0,"partial setup cleanup");}
+    }
+    """
+        self.run_native(native)
+
     def test_cmake_gpunetio_prerequisites(self):
         cmake = source("CMakeLists.txt")
         guard = cmake[cmake.index("if(MSCCLPP_USE_GPUNETIO AND") : cmake.index("# Code coverage setup")]
@@ -79,77 +189,10 @@ class MultiQpTests(unittest.TestCase):
         self.run_native(native)
         self.ordered(
             function(service, "connectQp"),
-            "hcas[hcaIndex]",
-            "ibv_query_port(",
+            "queryLocalPort(local)",
             "pathMtu(",
             "doca_verbs_qp_attr_set_path_mtu(attr, mtu)",
         )
-
-    def test_generic_channel_peer_and_signals(self):
-        header = source("include/mscclpp/port_channel_device.hpp")
-        native = HOST_PREAMBLE + r"""
-#define MSCCLPP_DEVICE_COMPILE
-#define MSCCLPP_INLINE
-#define MSCCLPP_HOST_DEVICE_INLINE
-#define MSCCLPP_DEVICE_INLINE
-#define MSCCLPP_ASSERT_DEVICE(test,message) require(test,message)
-using SemaphoreId=uint32_t;using MemoryId=uint32_t;
-enum class PortChannelBackend{Proxy,GpuNetIo};
-enum{TriggerData=1,TriggerFlag=2,TriggerSync=4};
-struct ProxyTrigger{
- uint64_t fst=0,snd=0;struct{uint64_t dstOffset,dstMemoryId,type,semaphoreId;}fields;
- ProxyTrigger()=default;
- ProxyTrigger(int,uint32_t,uint64_t,uint32_t,uint64_t,uint64_t,uint32_t){}
-};
-struct FifoDeviceHandle{int count=0;uint64_t push(ProxyTrigger){return count++;}};
-struct Host2DeviceSemaphoreDeviceHandle{
- uint64_t* inboundToken;uint64_t* expectedInboundToken;
- bool poll(){if(*inboundToken>*expectedInboundToken){++*expectedInboundToken;return true;}return false;}
- void wait(int64_t){require(poll(),"receive signal missing");}
-};
-namespace detail{void waitFlush(uint64_t*,uint64_t,int64_t){}}
-struct GpuNetIoDeviceContext{
- int numPeers=4,puts=0,signals=0,flushes=0;uint64_t payload=99,counter=0;
- int status=0;uint64_t budget=0;
- void put(int peer,uint64_t,uint64_t,uint64_t){require(peer==3,"put peer");++puts;}
- void atomicAdd(int peer,uint64_t offset,int64_t value){
-  require(peer==3,"atomic peer");
-  if(offset==64){counter+=value;++signals;}
-  else require(offset==128&&value==7,"atomic offset/value");
- }
- void putWithSignal(int peer,uint64_t dst,uint64_t src,uint64_t bytes,uint64_t offset,uint64_t value){
-  put(peer,dst,src,bytes);atomicAdd(peer,offset,value);
- }
- void flush(int peer){require(peer==3,"flush peer");++flushes;}
- int tryFlush(int peer,uint64_t spins){budget=spins;flush(peer);return status;}
-};
-"""
-        native += header[header.index("struct BasePortChannelDeviceHandle") : header.rindex("}  // namespace mscclpp")]
-        native += r"""
-int main(){
- GpuNetIoDeviceContext gin;uint64_t expected=0;
- BasePortChannelDeviceHandle channel(&gin,3,64,&gin.counter,&expected);
- channel.semaphoreId_=12;
- channel.put(0,0,8,0,4);channel.putWithSignal(0,0,8,0,4);
- require(channel.poll()&&!channel.poll(),"poll consumes exactly one signal");
- channel.signal();channel.wait();channel.putWithSignalAndFlush(0,0,8,0,4,100);channel.wait();
- channel.atomicAdd(0,128,7);channel.flush();
- require(gin.payload==99&&gin.puts==3&&gin.signals==3&&gin.flushes==2&&channel.fifo_.count==0,"network routing");
- PortChannelDeviceHandle derived(&gin,3,64,&gin.counter,&expected);
- derived.putWithSignalAndFlush(uint64_t(0),uint64_t(0),uint64_t(4),int64_t(100));derived.wait();
- require(gin.flushes==3,"derived fused flush");
- for(int status:{0,16,-5})for(uint64_t budget:{uint64_t(0),uint64_t(17)}){
-  gin.status=status;bool rejected=false;
-  try{channel.flush(budget);}catch(const std::runtime_error&){rejected=true;}
-  require(rejected==(status!=0)&&gin.budget==budget,"finite flush status/budget");
- }
- gin.budget=123;channel.flush(-1);require(gin.budget==123,"negative flush uses blocking path");
- BasePortChannelDeviceHandle proxy(99,{&gin.counter,&expected},{},nullptr);
- proxy.put(0,0,8,0,4);proxy.signal();proxy.putWithSignalAndFlush(0,0,8,0,4,100);
- require(proxy.fifo_.count==3,"proxy fallback");
-}
-"""
-        self.run_native(native)
 
     def test_storage_geometry_agreement_before_allocation(self):
         initialize = function(source("src/ext/ep/latency.cc"), "LatencyContext::initialize")
@@ -166,110 +209,6 @@ int main(){
         native += 'try{check(&comm,network);}catch(const std::runtime_error&){rejected=true;}require(rejected==(mismatch!=0),"collective storage agreement");}}'
         self.run_native(native)
         self.ordered(initialize, "allGather(storageConfigs.data()", "config.bytes ==", "gpuCallocPhysical(")
-
-    def test_actual_plural_hca_selection_and_list_parsing(self):
-        service = source(SERVICE)
-        native = HOST_PREAMBLE + "\n#include <limits>\n#include <cstdio>\n"
-        native += "enum class ErrorCode { InternalError, InvalidUsage };\n"
-        native += (
-            "struct Error : std::runtime_error { Error(const char* text, ErrorCode) : std::runtime_error(text) {} };\n"
-        )
-        native += source("src/gpunetio/host/gpu_net_io_topology.hpp")
-        native += "\nnamespace detail = mscclpp::detail;\n"
-        native += "using mscclpp::detail::gpunetio::HcaTopology;\n"
-        native += "using mscclpp::detail::gpunetio::pciPathDistance;\n"
-        native += structure(service, "TopologyExchangeInfo")
-        native += "std::vector<HcaTopology> available;\n"
-        native += "std::vector<HcaTopology> discoverActiveHcas() { return available; }\n"
-        native += "std::string canonicalPath(const std::string& path) { return path; }\n"
-        for name in ("selectAutomaticHcas", "splitIbDeviceNames"):
-            native += function(service, name)
-        native += r"""
-int main() {
-  require(splitIbDeviceNames("  nic0, nic1\t, ,nic2,") == std::vector<std::string>{"nic0","nic1","nic2"}, "list order/trim");
-  for (const std::string spec : {"", " , \t", "nic0,nic0"}) {
-    bool rejected = false;
-    try { splitIbDeviceNames(spec); } catch (const Error&) { rejected = true; }
-    require(rejected, "empty/duplicate HCA list accepted");
-  }
-  require(pciPathDistance("", "") == 1024, "unknown PCI path penalty");
-  require(pciPathDistance("/root/a/gpu", "/root/a/nic") < pciPathDistance("/root/a/gpu", "/other/b/nic"), "PCI affinity");
-  for (int gpus : {1,2,4,8}) for (int hcas : {1,2,4,8}) {
-    available.clear();
-    for (int index=0; index<hcas; ++index) available.push_back({"nic"+std::to_string(index), "/sys/bus/pci/devices/nic"+std::to_string(index),0});
-    std::vector<TopologyExchangeInfo> topology(gpus+1);
-    for (int rank=0; rank<=gpus; ++rank) {
-      topology[rank].hostHash = rank==gpus ? 2 : 1;
-      topology[rank].gpuNumaNode = 0;
-      std::snprintf(topology[rank].gpuPciBusId,32,"gpu%d",rank);
-    }
-    std::vector<int> use(hcas);
-    for (int rank=0; rank<gpus; ++rank) {
-      auto selected=selectAutomaticHcas(topology,rank);
-            require(selected.size()==static_cast<size_t>(hcas), "best-affinity set was divided among local GPUs");
-      require(selected==selectAutomaticHcas(topology,rank), "nondeterministic selection");
-      auto unique=selected;std::sort(unique.begin(),unique.end());
-            require(selected==unique, "HCA set must be sorted by name");
-      require(std::adjacent_find(unique.begin(),unique.end())==unique.end(), "duplicate HCA per GPU");
-            std::reverse(available.begin(),available.end());
-            require(selected==selectAutomaticHcas(topology,rank), "sysfs enumeration changed logical HCA indices");
-      for (const auto& name:selected) ++use[std::stoi(name.substr(3))];
-    }
-        require(std::all_of(use.begin(),use.end(),[&](int count) { return count==gpus; }), "nearby GPUs must share every best-affinity HCA");
-    topology[0].gpuNumaNode=1;
-    available.push_back({"remote-numa", "/sys/bus/pci/devices/nic-local",1});
-    require(selectAutomaticHcas(topology,0)==std::vector<std::string>{"remote-numa"}, "NUMA affinity ignored");
-  }
-}
-"""
-        self.run_native(native)
-
-    def test_actual_collective_geometry_validation(self):
-        setup = function(source(SERVICE), "GpuNetIoService::setup")
-        validation = block(setup, r"for\s*\(const auto& config : configAll\)")
-        native = HOST_PREAMBLE + "\nenum class ErrorCode { InvalidUsage };\n"
-        native += (
-            "struct Error : std::runtime_error { Error(const char* text, ErrorCode) : std::runtime_error(text) {} };\n"
-        )
-        native += structure(source(SERVICE), "ConfigExchangeInfo")
-        native += "bool valid(int nHcas,int requestedQps,ConfigExchangeInfo remote) {\n"
-        native += "std::vector<ConfigExchangeInfo> configAll={{static_cast<uint32_t>(nHcas),static_cast<uint32_t>(requestedQps)},remote};\n"
-        native += (
-            "try { for(const auto& config:configAll) "
-            + validation
-            + " } catch(const Error&) { return false; } return true; }\n"
-        )
-        native += r"""
-int main() {
-  for (int hcas : {0,1,2,3,4,8,64,65}) for (int queues : {0,1,2,3,4,8,12,64,65}) {
-    const bool expected=hcas>=1 && queues>=hcas && queues<=64 && queues%hcas==0;
-    require(valid(hcas,queues,{static_cast<uint32_t>(hcas),static_cast<uint32_t>(queues)})==expected,"geometry validation");
-    require(!valid(hcas,queues,{static_cast<uint32_t>(hcas+1),static_cast<uint32_t>(queues)}),"HCA disagreement");
-    require(!valid(hcas,queues,{static_cast<uint32_t>(hcas),static_cast<uint32_t>(queues+1)}),"QP disagreement");
-  }
-}
-"""
-        self.run_native(native)
-        self.ordered(
-            setup,
-            "allGather(configAll.data()",
-            "for (const auto& config : configAll)",
-            "hca.ibCtx = std::make_unique<IbCtx>",
-            "hca.mr = hca.ibCtx->registerMr",
-            "s.qpHl.assign",
-        )
-        self.ordered(setup, "initAttr.ibpd = s.hcas[s.hcaIndex(qpIndex)].ibCtx->getPd()", "doca_gpu_verbs_create_qp_hl")
-        self.assertIn("rkeysHost[static_cast<size_t>(hca)*s.worldSize+r]=htobe32(info.rkey)", code(setup))
-        self.assertIn("ctxHost.lkeys=s.lkeysGpu", code(setup))
-        self.assertIn("ctxHost.numHcas=nHcas", code(setup))
-        self.assertIn("if(lkeysGpu)(void)cudaFree(lkeysGpu)", code(source(SERVICE)))
-        initialize = function(source("src/ext/ep/latency.cc"), "LatencyContext::initialize")
-        self.ordered(
-            initialize,
-            'std::getenv("MSCCLPP_EP_GPUNETIO_HCAS")',
-            'std::getenv("MSCCLPP_EP_GPUNETIO_HCA")',
-            "std::make_shared<mscclpp::GpuNetIoService>",
-        )
 
     def test_all_qp_generations_and_fixed_stripe_markers(self):
         recv = function(source(DISPATCH), "dispatchRecvRankMajor")
@@ -305,6 +244,69 @@ int main() {
                     self.assertEqual([row for begin, end in intervals for row in range(begin, end)], list(range(rows)))
                     self.assertEqual(len(intervals), hcas)
 
+    def test_actual_adapter_batches_and_signal_bindings(self):
+        native = "#define TEST_DEVICE_QPS\n#define main sharedRoutingChecks\n"
+        implementation = (
+            source(IMPL)
+            .replace('#include "doca_gpunetio_device.h"', "")
+            .replace('#include "../assert_device.hpp"', "#include <mscclpp/assert_device.hpp>")
+        )
+        header = (
+            source(HEADER)
+            .replace('#include "device.hpp"', "")
+            .replace('#include "internal/port_channel_gpunetio_device_impl.hpp"', implementation)
+        )
+        native += (
+            source("test/unit/gpunetio_channel_test.cc").replace(
+                "#include <mscclpp/port_channel_gpunetio_device.hpp>", header
+            )
+            + "\n#undef main\n"
+        )
+        native += r"""
+    constexpr int DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT=0;
+    constexpr int DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD=0;
+    constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB=0;
+    constexpr uint64_t DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE=1<<20;
+    constexpr int DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE=8;
+    constexpr int DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE=2;
+    struct Wqe{uint64_t ticket,dst,src,bytes;uint32_t remote,local;};
+    Wqe entries[3];std::vector<int> events;doca_gpu_dev_verbs_qp* expectedQp;
+    template<int Mode>uint64_t doca_gpu_dev_verbs_reserve_wq_slots(doca_gpu_dev_verbs_qp* qp,int count,int){require(qp==expectedQp&&count==3,"batch reserve");events.push_back(1);return 1023;}
+    Wqe* doca_gpu_dev_verbs_get_wqe_ptr(doca_gpu_dev_verbs_qp*,uint64_t ticket){return &entries[ticket%3];}
+    void doca_gpu_dev_verbs_wqe_prepare_write(doca_gpu_dev_verbs_qp* qp,Wqe* entry,uint64_t ticket,int opcode,int flags,int,uint64_t dst,uint32_t remote,uint64_t src,uint32_t local,uint64_t bytes){require(qp==expectedQp&&opcode==8&&flags==2,"batch WQE");*entry={ticket,dst,src,bytes,remote,local};events.push_back(2);}
+    template<int Mode>void doca_gpu_dev_verbs_mark_wqes_ready(doca_gpu_dev_verbs_qp* qp,uint64_t first,uint64_t last){require(qp==expectedQp&&first==1023&&last==1025,"batch ready");events.push_back(3);}
+    template<int Mode,int Scope,int Handler>void doca_gpu_dev_verbs_submit(doca_gpu_dev_verbs_qp* qp,uint64_t end,int){require(qp==expectedQp&&end==1026,"batch submit");events.push_back(4);}
+    namespace mscclpp::ep {
+    """
+        native += structure(source("src/ext/ep/include/gpu_net_io.hpp"), "EpGpuNetIoDeviceContext")
+        native += r"""
+    }
+    int main(){
+     using namespace mscclpp;using namespace mscclpp::ep;
+     for(int hcas:{1,2,4,8,64})for(int queues:{1,4,8,64}){
+      if(queues<hcas||queues%hcas)continue;
+      std::vector<std::vector<doca_gpu_dev_verbs_qp>> qps(hcas,std::vector<doca_gpu_dev_verbs_qp>(2*queues/hcas));
+      std::vector<GpuNetIoDeviceContext> contexts(hcas);
+      std::vector<PortChannelDeviceHandle> handles(2*queues);
+      std::vector<std::array<GpuNetIoMemoryDeviceHandle,2>> memories(hcas);
+      std::vector<uint64_t> scratch(2*queues),inbound(queues),expected(queues);
+      for(int hca=0;hca<hcas;++hca){contexts[hca].qps=qps[hca].data();contexts[hca].numPeers=2;contexts[hca].numQpsPerPeer=queues/hcas;contexts[hca].atomicResultBase=reinterpret_cast<uintptr_t>(scratch.data()+hca*2*queues/hcas);contexts[hca].atomicResultLkey=100+hca;
+       memories[hca]={GpuNetIoMemoryDeviceHandle{0x100000+uint64_t(hca)*0x100000,1<<20,uint32_t(11+hca),1},GpuNetIoMemoryDeviceHandle{0x200000+uint64_t(hca)*0x100000,1<<20,uint32_t(21+hca),0}};
+      }
+      for(int queue=0;queue<queues;++queue){const int hca=queue%hcas;BasePortChannelDeviceHandle base(&contexts[hca],1,queue/hcas,0,{0x800000,8,31,1},&inbound[queue],&expected[queue],memories[hca].data(),2);handles[queues+queue]=PortChannelDeviceHandle(base,0,1);}
+      EpGpuNetIoDeviceContext adapter{handles.data(),2,queues,hcas};
+      for(int queue=0;queue<queues;++queue){const int hca=queue%hcas;expectedQp=&qps[hca][queues/hcas+queue/hcas];events.clear();
+       adapter.putBatched3(1,queue,100,200,4096,300,400,32,500,600,32);
+       require(events==std::vector<int>{1,2,2,2,3,4},"batch publication order");
+       for(int index=0;index<3;++index){const auto entry=entries[index];require(entry.ticket==uint64_t(1023+index)&&entry.dst==memories[hca][0].base+100+index*200&&entry.src==memories[hca][1].base+200+index*200,"batch addresses/wrap");require(entry.remote==__builtin_bswap32(memories[hca][0].key)&&entry.local==__builtin_bswap32(memories[hca][1].key),"batch HCA keys");}
+       events.clear();bool rejected=false;try{adapter.putBatched3(1,queue,0,0,8,0,0,8,1<<20,0,8);}catch(const std::runtime_error&){rejected=true;}require(rejected&&events.empty(),"invalid final write reserved WQEs");
+       adapter.putWithSignal(1,8,16,32,64,1,queue);require(selectedQp==expectedQp&&signalDestination.addr==memories[hca][0].base+64&&signalDestination.key==__builtin_bswap32(memories[hca][0].key),"symmetric flag binding");
+      }
+     }
+    }
+    """
+        self.run_native("#include <array>\n" + native)
+
     def run_native(self, native):
         compiler = shutil.which("g++")
         if compiler is None:
@@ -312,7 +314,7 @@ int main() {
         with tempfile.TemporaryDirectory(prefix="ep-combine-pipeline-") as directory:
             binary = str(Path(directory) / "check")
             compiled = subprocess.run(
-                [compiler, "-std=c++17", "-x", "c++", "-", "-o", binary],
+                [compiler, "-std=c++20", "-I" + str(ROOT / "include"), "-x", "c++", "-", "-o", binary],
                 input=native,
                 text=True,
                 capture_output=True,
@@ -417,7 +419,7 @@ struct Gin {
   }
   void flush(int owner, int queue) { drains.emplace_back(owner, queue); }
 };
-namespace mscclpp { using GpuNetIoDeviceContext = Gin; }
+using EpGpuNetIoDeviceContext = Gin;
 struct Channel {
     mutable int signals = 0, waits = 0;
     void relaxedSignal() const { ++signals; }
@@ -583,39 +585,6 @@ int main() {
             self.assertGreaterEqual(found, 0, fragment)
             offset = found + len(needle)
 
-    def test_peer_major_device_and_bootstrap_indexing(self):
-        for name in ("put", "putWithSignal", "atomicAdd", "get", "flush", "tryFlush", "putBatched3"):
-            native = function(source(IMPL), "GpuNetIoDeviceContext::" + name)
-            self.assertIn("detail::ginQp(qps,peer*numQpsPerPeer+qpIndex)", code(native))
-            if name in ("put", "putWithSignal", "atomicAdd", "get", "putBatched3"):
-                self.assertIn("detail::ginRemoteKey(*this,peer,qpIndex)", code(native))
-                if name == "atomicAdd":
-                    self.assertIn("detail::ginAtomicResult(*this,peer,qpIndex)", code(native))
-                else:
-                    self.assertIn("detail::ginHtobe32(detail::ginLocalKey(*this,qpIndex))", code(native))
-                self.assertNotIn("rkeys[peer]", code(native))
-        native = code(function(source(SERVICE), "GpuNetIoService::setup"))
-        self.assertIn("qpAll[static_cast<size_t>(r)*rowLen+static_cast<size_t>(s.rank)*nQp+qpIndex]", native)
-        self.assertIn("ctxHost.numQpsPerPeer=s.numQpsPerPeer;", native)
-        for ranks, queues in product((2, 8, 16, 32, 64), (1, 2, 4, 8, 64)):
-            row = ranks * queues
-            for rank, peer in ((0, ranks - 1), (ranks - 1, 0)):
-                for queue in range(queues):
-                    self.assertEqual(divmod(peer * row + rank * queues + queue, row), (peer, rank * queues + queue))
-
-    def test_configuration_agreement_precedes_variable_sized_exchange(self):
-        self.ordered(
-            function(source(SERVICE), "GpuNetIoService::setup"),
-            "int requestedQps = qpsEnv == nullptr ? nHcas : std::atoi(qpsEnv);",
-            "s.bootstrap->allGather(configAll.data(), static_cast<int>(sizeof(ConfigExchangeInfo)));",
-            "config.numQpsPerPeer > 64",
-            "config.numQpsPerPeer % config.numHcas != 0",
-            "throw Error(",
-            "s.numQpsPerPeer = requestedQps;",
-            "s.qpHl.assign(rowLen, nullptr)",
-            "s.bootstrap->allGather(qpAll.data(), static_cast<int>(rowLen * sizeof(QpExchangeInfo)))",
-        )
-
     def test_dispatch_posting_barrier_then_markers_and_parallel_drains(self):
         send = function(source(DISPATCH), "sendRankMajorGpuNetIo")
         self.ordered(
@@ -743,454 +712,6 @@ int main() {
         )
         for path in (DISPATCH, COMBINE, SERVICE):
             self.assertNotIn("putWarpRows", source(path))
-
-    def test_actual_batched_wqes_and_default_api(self):
-        compiler = shutil.which("g++")
-        if compiler is None:
-            self.skipTest("g++ unavailable")
-        api_check = r"""
-#include <mscclpp/port_channel_gpunetio_device.hpp>
-void verify(mscclpp::GpuNetIoDeviceContext& context) {
- context.put(1,0,0,4); context.put(1,0,0,4,3);
- context.putWithSignal(1,0,0,4,8,1); context.putWithSignal(1,0,0,4,8,1,3);
- context.get(1,0,0,4); context.get(1,0,0,4,3);
- context.atomicAdd(1,0,1); context.atomicAdd(1,0,1,3);
- context.flush(1); context.flush(1,3); context.tryFlush(1,10); context.tryFlush(1,10,3);
- context.putBatched3(1,3,0,0,4,4,4,4,8,8,4);
-}
-"""
-        checked = subprocess.run(
-            [
-                compiler,
-                "-std=c++17",
-                "-I" + str(ROOT / "include"),
-                "-DMSCCLPP_DEVICE_COMPILE",
-                "-DMSCCLPP_DEVICE_INLINE=inline",
-                "-x",
-                "c++",
-                "-fsyntax-only",
-                "-",
-            ],
-            input=api_check,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        self.assertEqual(checked.returncode, 0, checked.stderr)
-        preamble = r"""
-#include <cstdint>
-#include <stdexcept>
-#include <vector>
-#define MSCCLPP_DEVICE_INLINE inline
-#define MSCCLPP_DEVICE_COMPILE
-constexpr int DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU=0;
-constexpr int DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT=0;
-constexpr int DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD=0;
-constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO=0;
-constexpr int DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE=8;
-constexpr int DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE=2;
-struct Wqe { uint64_t ticket,dst,src,bytes; uint32_t rkey,lkey; int flags; };
-struct doca_gpu_dev_verbs_qp { uint64_t next=1023; Wqe entries[3]; };
-doca_gpu_dev_verbs_qp* expected;
-std::vector<int> events;
-template<int Mode> uint64_t doca_gpu_dev_verbs_reserve_wq_slots(doca_gpu_dev_verbs_qp* qp,int count,int) {
- if(qp!=expected || count!=3) throw std::runtime_error("reservation");
- events.push_back(1); uint64_t base=qp->next; qp->next+=count; return base;
-}
-Wqe* doca_gpu_dev_verbs_get_wqe_ptr(doca_gpu_dev_verbs_qp* qp,uint64_t ticket){return &qp->entries[ticket%3];}
-void doca_gpu_dev_verbs_wqe_prepare_write(doca_gpu_dev_verbs_qp*,Wqe* wqe,uint64_t ticket,int opcode,
- int flags,int,uint64_t dst,uint32_t rkey,uint64_t src,uint32_t lkey,uint64_t bytes){
- if(opcode!=8)throw std::runtime_error("opcode");
- *wqe={ticket,dst,src,bytes,rkey,lkey,flags};events.push_back(2);
-}
-template<int Mode> void doca_gpu_dev_verbs_mark_wqes_ready(doca_gpu_dev_verbs_qp* qp,uint64_t first,uint64_t last){
- if(qp!=expected || first!=1023 || last!=1025)throw std::runtime_error("mark");events.push_back(3);
-}
-template<int Mode,int Scope,int Handler> void doca_gpu_dev_verbs_submit(doca_gpu_dev_verbs_qp* qp,uint64_t end,int){
- if(qp!=expected || end!=1026)throw std::runtime_error("submit");events.push_back(4);
-}
-namespace mscclpp {
-namespace detail {
-doca_gpu_dev_verbs_qp* ginQp(void* ptr,int flat){return static_cast<doca_gpu_dev_verbs_qp*>(ptr)+flat;}
-uint32_t ginHtobe32(uint32_t key){return __builtin_bswap32(key);}
-}
-"""
-        native = structure(source(HEADER), "GpuNetIoDeviceContext") + "namespace detail {\n"
-        for name in ("ginHcaIndex", "ginRemoteKey", "ginLocalKey"):
-            native += function(source(IMPL), name)
-        native += "}\n" + function(source(IMPL), "GpuNetIoDeviceContext::putBatched3")
-        main = r"""
-}
-int main(){
- doca_gpu_dev_verbs_qp queues[8];expected=queues+7;
- uint32_t keys[8]={0,0x1234,0,0x5678,0,0x9abc,0,0xdef0};uintptr_t bases[2]={0,0x100000};
- uint32_t localKeys[4]={0x12345678,0x23456789,0x3456789a,0x456789ab};
- mscclpp::GpuNetIoDeviceContext context{queues,keys,bases,0x12345678,0x200000,2,4};
- for (int hcas : {1,2,4}) for (bool legacy : {false,true}) {
- if (legacy && hcas != 1) continue;
- context.numHcas=hcas;context.lkeys=legacy?nullptr:localKeys;
- expected->next=1023;events.clear();
- context.putBatched3(1,3,100,200,14336,300,400,32,500,600,32);
- if(events!=std::vector<int>{1,2,2,2,3,4})return 1;
- for(int index=0;index<3;++index){auto row=expected->entries[index];
-  if(row.ticket!=1023+index || row.flags!=2 || row.rkey!=keys[(3%hcas)*2+1] ||
-      row.lkey!=__builtin_bswap32(localKeys[3%hcas]))return 2;
-  if(row.dst!=0x100000+100+index*200 || row.src!=0x200000+200+index*200)return 3;
-  if(row.bytes!=(index?32:14336))return 4;
- }
- }
- return 0;
-}
-"""
-        with tempfile.TemporaryDirectory(prefix="ep-multi-qp-") as directory:
-            binary = str(Path(directory) / "batch")
-            compiled = subprocess.run(
-                [compiler, "-std=c++17", "-x", "c++", "-", "-o", binary],
-                input=preamble + native + main,
-                text=True,
-                capture_output=True,
-                timeout=30,
-            )
-            self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            subprocess.run([binary], check=True, timeout=10)
-
-
-class ResourceLifetimeTests(unittest.TestCase):
-    run_native = MultiQpTests.run_native
-
-    def test_inline_size_limit_and_blueflame_source_lifetime(self):
-        text = source("src/gpunetio/include/device/doca_gpunetio_dev_verbs_qp.cuh")
-        symbol = "doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data"
-        position = text.index("void " + symbol)
-        definition = text[text.rindex("template <typename T>", 0, position) : text.index("\n}", position) + 2]
-        preamble = HOST_PREAMBLE + r"""
-#define __device__
-#define __forceinline__ inline
-struct doca_gpu_dev_verbs_qp{};struct doca_gpu_dev_verbs_wqe{};
-struct doca_gpunetio_ib_mlx5_wqe_inl_data_seg{uint32_t byte_count;};
-struct doca_gpunetio_ib_mlx5_wqe_ctrl_seg{uint64_t words[2];};
-struct doca_gpunetio_ib_mlx5_wqe_raddr_seg{uint64_t words[2];};
-constexpr uint32_t DOCA_GPUNETIO_IB_MLX5_INLINE_SEG=1u<<31;
-uint32_t doca_gpu_dev_verbs_bswap32(uint32_t value){return __builtin_bswap32(value);}
-"""
-        for size in (1, 2, 4, 8, 16):
-            invocation = (
-                f"struct Value{{unsigned char data[{size}];}};int main(){{{symbol}(nullptr,nullptr,Value{{}});}}"
-            )
-            result = subprocess.run(
-                ["g++", "-std=c++17", "-fsyntax-only", "-x", "c++", "-"],
-                input=preamble + definition + invocation,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode == 0, size <= 8, result.stderr)
-            if size > 8:
-                self.assertIn("must not exceed 8 bytes", result.stderr)
-        body = function(text, "doca_gpu_dev_verbs_ring_bf")
-        offset = -1
-        for instruction in (
-            "fence.proxy.async.shared::cta",
-            "cp.async.bulk.global.shared::cta.bulk_group",
-            "cp.async.bulk.commit_group",
-            "cp.async.bulk.wait_group.read 0",
-        ):
-            position = body.index(instruction)
-            self.assertGreater(position, offset)
-            offset = position
-        self.assertIn("__cvta_generic_to_shared", body)
-
-    def test_qp_export_failure_cleanup_and_null_outputs(self):
-        text = source("src/gpunetio/src/doca_gpunetio_high_level.cpp")
-        actual = text[
-            text.index("doca_error_t doca_gpu_verbs_create_qp_hl(") : text.index(
-                "doca_error_t doca_gpu_verbs_qp_flat_list_create_hl("
-            )
-        ]
-        native = HOST_PREAMBLE + r"""
-#include <cstdio>
-template<class... Args>void log_error(int,const char*,Args... arguments){(void)sizeof...(arguments);}
-#define DOCA_LOG log_error
-constexpr int LOG_ERR=1;
-enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_NO_MEMORY,DOCA_ERROR_DRIVER};
-constexpr int DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_NO_DBR_SW_EMULATED=9;
-constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO=0,DOCA_GPUNETIO_VERBS_NIC_HANDLER_CPU_PROXY=1;
-constexpr int DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB=2,DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF=3;
-struct doca_gpu{bool support_gdrcopy=true;};struct ibv_pd{void* context=nullptr;};
-struct doca_gpu_verbs_qp_init_attr_hl{
- doca_gpu* gpu_dev;ibv_pd* ibpd;uint32_t sq_nwqe=8;int send_dbr_mode_ext=0,nic_handler=0,mreg_type=0;bool cq_collapsed=false;
-};
-struct doca_gpu_verbs_qp_hl{
- doca_gpu* gpu_dev;int send_dbr_mode_ext,nic_handler;
- void* cq_sq_umem_gpu_ptr;void* cq_sq_umem;void* cq_sq_umem_dbr_gpu_ptr;void* cq_sq_umem_dbr;
- void* cq_sq;void* external_uar;void* qp_umem_gpu_ptr;void* qp_umem;void* qp_umem_dbr_gpu_ptr;void* qp_umem_dbr;
- void* qp;void* qp_gverbs;
-};
-struct doca_gpu_verbs_qp_group_hl{doca_gpu_verbs_qp_hl qp_main,qp_companion;};
-int exportCount=0,failExport=1,cleaned=0;
-uint32_t doca_internal_utils_next_power_of_two(uint32_t value){return value;}
-template<class... Args>doca_error_t create_cq(Args...){return DOCA_SUCCESS;}
-template<class... Args>doca_error_t create_uar(Args...){return DOCA_SUCCESS;}
-template<class... Args>doca_error_t create_qp(Args...){return DOCA_SUCCESS;}
-template<class... Args>doca_error_t doca_gpu_verbs_export_qp(Args...){return ++exportCount==failExport?DOCA_ERROR_DRIVER:DOCA_SUCCESS;}
-void doca_gpu_verbs_destroy_qp_hl_internal(doca_gpu_verbs_qp_hl* qp){if(qp->gpu_dev)++cleaned;}
-"""
-        native += actual + r"""
-int main(){
- doca_gpu gpu;ibv_pd pd;doca_gpu_verbs_qp_init_attr_hl attr{&gpu,&pd};
- require(doca_gpu_verbs_create_qp_hl(nullptr,nullptr)==DOCA_ERROR_INVALID_VALUE,"null QP output");
- require(doca_gpu_verbs_create_qp_group_hl(nullptr,nullptr)==DOCA_ERROR_INVALID_VALUE,"null group output");
- doca_gpu_verbs_qp_hl* qp=reinterpret_cast<doca_gpu_verbs_qp_hl*>(1);
- require(doca_gpu_verbs_create_qp_hl(&attr,&qp)==DOCA_ERROR_DRIVER&&!qp&&cleaned==1,"single export cleanup");
- for(int failure:{1,2,3}){
-  exportCount=0;cleaned=0;failExport=failure;
-  doca_gpu_verbs_qp_group_hl* group=reinterpret_cast<doca_gpu_verbs_qp_group_hl*>(1);
-  auto status=doca_gpu_verbs_create_qp_group_hl(&attr,&group);
-  if(failure<3)require(status==DOCA_ERROR_DRIVER&&!group&&cleaned==failure,"group export cleanup");
-  else{require(status==DOCA_SUCCESS&&group,"group success");doca_gpu_verbs_destroy_qp_group_hl(group);require(cleaned==2,"group success cleanup");}
- }
-}
-"""
-        self.run_native(native)
-
-    def test_internal_uar_type_tracks_fallback(self):
-        text = source("src/gpunetio/src/doca_verbs_qp.cpp")
-        internal = block(text, r"if\s*\(m_init_attr.external_uar == nullptr\)")
-        getter_start = text.index("enum doca_verbs_uar_allocation_type doca_verbs_qp::get_uar_mtype()")
-        getter = text[getter_start : text.index("\n}", getter_start) + 2]
-        native = HOST_PREAMBLE + r"""
-#define DOCA_LOG(...) ((void)0)
-enum doca_verbs_uar_allocation_type{DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME,DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE};
-constexpr int DOCA_SUCCESS=0,DOCA_ERROR_DRIVER=1,MLX5DV_UAR_ALLOC_TYPE_BF=0,MLX5DV_UAR_ALLOC_TYPE_NC=1;
-int failure=0,calls=0;struct Uar{void* reg_addr=nullptr;int page_id=3;}uar;
-int doca_verbs_wrapper_mlx5dv_devx_alloc_uar(void*,int type,Uar** output){++calls;if(failure==2||(failure==1&&type==0))return 1;*output=&uar;return 0;}
-struct External{doca_verbs_uar_allocation_type get_uar_mtype(){return DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE;}};
-struct doca_verbs_qp{
- struct{External* external_uar=nullptr;}m_init_attr;
- doca_verbs_uar_allocation_type m_internal_uar_type=DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME;
- void* m_ibv_ctx=nullptr;Uar* m_uar_obj=nullptr;uint64_t* m_uar_db_reg=nullptr;
- doca_verbs_uar_allocation_type get_uar_mtype()const noexcept;
- void allocate(){uint32_t uar_id=0;
-"""
-        native += internal + "}};\n" + getter
-        native += r"""
-int main(){for(failure=0;failure<3;++failure){doca_verbs_qp qp;calls=0;bool rejected=false;
- try{qp.allocate();}catch(int){rejected=true;}
- require(rejected==(failure==2),"UAR allocation failure");
- if(!rejected)require(qp.get_uar_mtype()==failure&&calls==failure+1,"internal UAR allocation type");
- }External external;doca_verbs_qp qp;qp.m_init_attr.external_uar=&external;require(qp.get_uar_mtype()==1,"external UAR type");}
-"""
-        self.run_native(native)
-
-    def test_unsupported_warp_verbs_fail_compilation(self):
-        text = source("src/gpunetio/include/device/doca_gpunetio_dev_verbs_onesided.cuh")
-        for name, arguments in (
-            ("p", "nullptr,{},1,nullptr"),
-            ("put_signal", "nullptr,{},{},0,{},{},1,nullptr"),
-            ("signal", "nullptr,{},{},1,nullptr"),
-        ):
-            symbol = "doca_gpu_dev_verbs_" + name + "_warp"
-            position = text.index("void " + symbol)
-            definition = text[text.rindex("template <", 0, position) : text.index("\n}", position) + 2]
-            preamble = "#include <cstdint>\n#include <cstddef>\n#define __device__\n#define __forceinline__ inline\n"
-            preamble += "enum doca_gpu_dev_verbs_resource_sharing_mode{DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU};enum doca_gpu_dev_verbs_nic_handler{DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO};enum doca_gpu_dev_verbs_signal_op{ADD};"
-            preamble += "constexpr int DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT=0;struct doca_gpu_dev_verbs_qp{};struct doca_gpu_dev_verbs_addr{};using doca_gpu_dev_verbs_ticket_t=uint64_t;"
-            invocation = f"int main(){{{symbol}<{('int' if name == 'p' else 'ADD')}>({arguments});}}"
-            compiled = subprocess.run(
-                ["g++", "-std=c++17", "-fsyntax-only", "-x", "c++", "-"],
-                input=preamble + definition + invocation,
-                text=True,
-                capture_output=True,
-            )
-            self.assertNotEqual(compiled.returncode, 0)
-            self.assertIn("does not support warp scope", compiled.stderr)
-
-    def test_host_allocations_and_failure_cleanup(self):
-        text = source("src/gpunetio/src/doca_gpunetio.cpp")
-        actual = text[text.index("doca_error_t doca_gpu_mem_alloc(") : text.index("doca_error_t doca_gpu_dmabuf_fd(")]
-        native = HOST_PREAMBLE + r"""
-#include <unordered_map>
-#define DOCA_LOG(...) ((void)0)
-#define DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(call) (call)
-constexpr int GPU_PAGE_SIZE=65536,cudaSuccess=0,CUDA_SUCCESS=0,CU_POINTER_ATTRIBUTE_SYNC_MEMOPS=0;
-constexpr int cudaHostRegisterPortable=1,cudaHostRegisterMapped=2;
-using cudaError_t=int;using CUresult=int;using CUdeviceptr=uintptr_t;
-enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_DRIVER,DOCA_ERROR_NO_MEMORY};
-enum doca_gpu_mem_type{DOCA_GPU_MEM_TYPE_GPU,DOCA_GPU_MEM_TYPE_GPU_CPU,DOCA_GPU_MEM_TYPE_CPU_GPU};
-struct doca_gpu_mtable{doca_gpu_mem_type mtype;size_t size,size_orig;uintptr_t base_addr,align_addr_gpu,align_addr_cpu;int gdr_mh;};
-struct doca_gpu{bool support_gdrcopy=false;std::unordered_map<uint64_t,doca_gpu_mtable*>*mtable;};
-int registered=0,gpuFrees=0,gpuAllocations=0,failure=0;size_t registeredBytes=0;
-size_t priv_get_page_size(){return 4096;}
-bool priv_is_power_of_two(size_t value){return value&&!(value&(value-1));}
-const char* cudaGetErrorString(int){return "injected";}
-int cudaMalloc(void**pointer,size_t bytes){*pointer=malloc(bytes);++gpuAllocations;return 0;}
-int cudaFree(void*pointer){++gpuFrees;free(pointer);return 0;}
-int cudaHostRegister(void*,size_t bytes,int){if(failure==1)return 1;++registered;registeredBytes=bytes;return 0;}
-int cudaHostUnregister(void*){--registered;return 0;}
-int cudaHostGetDevicePointer(void**device,void*host,int){if(failure==2)return 1;*device=host;return 0;}
-int doca_verbs_wrapper_cuPointerSetAttribute(void*,int,uintptr_t){return failure==3;}
-int doca_gpu_gdrcopy_create_mapping(void*device,size_t,int*,void**host){*host=device;return failure==4;}
-void doca_gpu_gdrcopy_destroy_mapping(int,void*,size_t){}
-"""
-        native += actual + r"""
-int main(){
- std::unordered_map<uint64_t,doca_gpu_mtable*> table;doca_gpu gpu{false,&table};
- for(auto type:{DOCA_GPU_MEM_TYPE_GPU_CPU,DOCA_GPU_MEM_TYPE_CPU_GPU})
- for(size_t alignment:{size_t(1),size_t(4096),size_t(65536)})for(failure=0;failure<3;++failure){
-  void* device=nullptr;void* host=nullptr;
-  auto result=doca_gpu_mem_alloc(&gpu,1048576,alignment,type,&device,&host);
-  if(failure)require(result!=DOCA_SUCCESS&&!device&&!host&&registered==0&&table.empty(),"host failure cleanup");
-  else{
-   require(result==DOCA_SUCCESS&&device==host&&uintptr_t(host)%alignment==0&&registeredBytes==1048576,"host size/alignment");
-   for(size_t offset=0;offset<1048576;++offset)require(static_cast<unsigned char*>(host)[offset]==0,"zero initialization");
-   require(table.at(uintptr_t(device))->mtype==DOCA_GPU_MEM_TYPE_CPU_GPU,"effective backing type");
-   require(doca_gpu_mem_free(&gpu,device)==DOCA_SUCCESS&&registered==0&&table.empty(),"host free");
-  }
- }
- require(gpuFrees==0,"cudaFree received host allocation");gpu.support_gdrcopy=true;
- for(auto type:{DOCA_GPU_MEM_TYPE_GPU,DOCA_GPU_MEM_TYPE_GPU_CPU})for(int injected:{0,3,4}){
-  failure=injected;void* device=nullptr;void* host=nullptr;
-  auto result=doca_gpu_mem_alloc(&gpu,1024,4096,type,&device,&host);
-  if(result==DOCA_SUCCESS)require(doca_gpu_mem_free(&gpu,device)==DOCA_SUCCESS,"GPU free");
-  require(gpuAllocations==gpuFrees&&table.empty(),"partial GPU allocation leak");
- }
-}
-"""
-        self.run_native(native)
-
-    def test_atomic_results_never_alias_payload(self):
-        text = source(IMPL)
-        helper = text[
-            text.index("MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr ginAtomicResult") : text.index(
-                "}  // namespace detail"
-            )
-        ]
-        native = HOST_PREAMBLE + r"""
-#include <set>
-#define MSCCLPP_DEVICE_INLINE inline
-#define MSCCLPP_ASSERT_DEVICE(test,message) require(test,message)
-using __be32=uint32_t;
-struct doca_gpu_dev_verbs_addr{uintptr_t addr;uint32_t key;};
-struct GpuNetIoDeviceContext{
- int numPeers=8,numQpsPerPeer=4,numHcas=1;uintptr_t localBase,atomicResultBase;
- const uintptr_t* peerBase;const uint32_t* rkeys;const uint32_t* lkeys;uint32_t lkey;const uint32_t* atomicResultLkeys;
- void* qps=nullptr;
- void putWithSignal(int,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,int);
- void atomicAdd(int,uint64_t,int64_t,int);
-};
-namespace detail{
-int ginHcaIndex(const GpuNetIoDeviceContext& context,int queue){return queue%context.numHcas;}
-uint32_t ginHtobe32(uint32_t key){return __builtin_bswap32(key);}
-uint32_t ginLocalKey(const GpuNetIoDeviceContext& context,int queue){return context.lkeys[queue%context.numHcas];}
-uint32_t ginRemoteKey(const GpuNetIoDeviceContext& context,int peer,int queue){return context.rkeys[(queue%context.numHcas)*8+peer];}
-int ginQp(void*,int flat){return flat;}
-"""
-        native += helper + r"""
-}
-using doca_gpu_dev_verbs_ticket_t=uint64_t;
-constexpr int DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD=0,DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU=0;
-uintptr_t scratchBase;uint32_t scratchKeys[4]={101,202,303,404};int hcas;
-template<int,int>void doca_gpu_dev_verbs_put_signal(int flat,doca_gpu_dev_verbs_addr,doca_gpu_dev_verbs_addr,size_t,
- doca_gpu_dev_verbs_addr,doca_gpu_dev_verbs_addr result,uint64_t,doca_gpu_dev_verbs_ticket_t*){
- require(result.addr==scratchBase+flat*8&&result.key==__builtin_bswap32(scratchKeys[flat%hcas]),"atomic result MR");
- *reinterpret_cast<uint64_t*>(result.addr)=0xfeed;
-}
-"""
-        native += function(text, "GpuNetIoDeviceContext::putWithSignal")
-        native += function(text, "GpuNetIoDeviceContext::atomicAdd")
-        native += r"""
-int main(){
- uint64_t payload[16];std::fill_n(payload,16,0x1234);uint64_t scratch[8*64]{};
- uint32_t dataKeys[4]={11,22,33,44},remoteKeys[32]{};uintptr_t peers[8]{};
- scratchBase=reinterpret_cast<uintptr_t>(scratch);
- for(int count:{1,2,4})for(int queues:{4,8,64}){
-  hcas=count;GpuNetIoDeviceContext context;context.numHcas=hcas;context.numQpsPerPeer=queues;
-  context.localBase=reinterpret_cast<uintptr_t>(payload);context.atomicResultBase=scratchBase;
-  context.atomicResultLkeys=scratchKeys;context.lkeys=dataKeys;context.rkeys=remoteKeys;context.peerBase=peers;
-  std::set<uintptr_t> addresses;
-  for(int peer=0;peer<8;++peer)for(int queue=0;queue<queues;++queue){
-   require(addresses.insert(detail::ginAtomicResult(context,peer,queue).addr).second,"shared QP scratch");
-   context.putWithSignal(peer,0,0,8,64,1,queue);context.atomicAdd(peer,64,1,queue);
-  }
- }
- for(auto value:payload)require(value==0x1234,"atomic result corrupted payload");
-}
-"""
-        self.run_native(native)
-        service = source(SERVICE)
-        setup = function(service, "GpuNetIoService::setup")
-        self.assertLess(setup.index("CudaDeviceGuard deviceGuard(s.cudaDeviceId)"), setup.index("cudaMalloc("))
-        self.assertIn("registerMr(s.atomicResultsGpu, atomicResultBytes)", setup)
-        destructor = block(service, r"~Impl\(\)")
-        self.assertLess(destructor.index("CudaDeviceGuard"), destructor.index("cudaFree("))
-        self.assertLess(destructor.index("doca_gpu_verbs_destroy_qp_hl"), destructor.index("hcas.clear()"))
-        self.assertLess(destructor.index("hcas.clear()"), destructor.index("cudaFree(atomicResultsGpu)"))
-
-    def test_service_shutdown_with_continuous_progress(self):
-        text = source("src/gpunetio/src/doca_gpunetio.cpp")
-        native = HOST_PREAMBLE + r"""
-#include <atomic>
-#include <set>
-#include <new>
-#include <pthread.h>
-#include <sched.h>
-#define DOCA_LOG(...) ((void)0)
-enum doca_error_t{DOCA_SUCCESS,DOCA_ERROR_INVALID_VALUE,DOCA_ERROR_NO_MEMORY,DOCA_ERROR_DRIVER};
-struct doca_gpu_verbs_qp{};using doca_gpu_verbs_service_t=void*;
-std::atomic<int> progress{0};
-void doca_gpu_verbs_cpu_proxy_progress(doca_gpu_verbs_qp*,bool* advanced){++progress;*advanced=true;}
-"""
-        native += "struct doca_gpu_verbs_service " + block(text, r"struct doca_gpu_verbs_service(?=\s*\{)") + ";"
-        native += text[
-            text.index("static void *priv_service_mainloop") : text.index(
-                "doca_error_t doca_gpu_verbs_query_last_error"
-            )
-        ]
-        native += r"""
-int main(){for(int round=0;round<100;++round){
- progress=0;void* handle=nullptr;doca_gpu_verbs_qp qp;
- require(doca_gpu_verbs_create_service(&handle)==DOCA_SUCCESS,"create service");
- require(doca_gpu_verbs_service_monitor_qp(handle,&qp)==DOCA_SUCCESS,"monitor QP");
- while(progress.load()==0)sched_yield();
- require(doca_gpu_verbs_destroy_service(handle)==DOCA_SUCCESS,"stop continuously progressing service");
-}}
-"""
-        self.run_native(native)
-
-    def test_public_c_headers_and_current_python_api(self):
-        compiler = shutil.which("gcc")
-        if compiler is None:
-            self.skipTest("gcc unavailable")
-        for header in ("doca_gpunetio.h", "doca_gpunetio_high_level.h", "doca_verbs.h"):
-            result = subprocess.run(
-                [
-                    compiler,
-                    "-std=c11",
-                    "-Werror",
-                    "-fsyntax-only",
-                    "-x",
-                    "c",
-                    "-I" + str(ROOT / "src/gpunetio/include"),
-                    "-",
-                ],
-                input=f'#include "host/{header}"\nint main(void) {{ bool enabled = false; return enabled; }}',
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-        tree = ast.parse(source("test/python/ep/test_low_latency_multirank.py"))
-        call = next(
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "MoECommunicator"
-        )
-        self.assertEqual(next(keyword.value.attr for keyword in call.keywords if keyword.arg == "mode"), "LATENCY")
-        self.assertTrue({"num_blocks", "combine_mode"} <= {keyword.arg for keyword in call.keywords})
-        obsolete = {"combine_context", "get_expert_output_buffer", "LOW_LATENCY", "HIGH_THROUGHPUT"}
-        self.assertFalse({node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} & obsolete)
-        for module in ("low_latency.py", "high_throughput.py"):
-            self.assertFalse((ROOT / "python/mscclpp/ep" / module).exists())
 
 
 if __name__ == "__main__":

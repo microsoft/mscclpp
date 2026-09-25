@@ -83,18 +83,17 @@ endif()
 # Scope definitions/includes to the host setup and the rank-major transport TUs.
 # Unrelated expert-major/throughput TUs keep the forward-declared device context.
 if(MSCCLPP_USE_GPUNETIO)
-    set_source_files_properties(latency.cc PROPERTIES
-        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
-        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+    target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp_gpunetio_headers)
+    target_include_directories(mscclpp_ep_cpp PRIVATE ${PROJECT_SOURCE_DIR}/src/gpunetio/host)
+    set_source_files_properties(latency.cc gpu_net_io.cc PROPERTIES
+        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO)
     # The low-latency dispatch kernel issues the inter-domain GPUNetIO sends, so it
-    # needs the device context definition + the vendored DOCA device headers.
+    # needs the device context definition + the fetched DOCA device headers.
     set_source_files_properties(dispatch/rank_major_dispatch.cu topk_expanded.cu PROPERTIES
-        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
-        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO)
     # Cross-domain combine PUSHes pre-reduced rows; it does not issue RDMA reads.
     set_source_files_properties(combine/direct_send_combine.cu combine/rank_local_reduce_combine.cu PROPERTIES
-        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO
-        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src/gpunetio/include;${PROJECT_SOURCE_DIR}/src/gpunetio/include/host")
+        COMPILE_DEFINITIONS MSCCLPP_USE_GPUNETIO)
 endif()
 
 option(MSCCLPP_EP_GPUNETIO_DIAG "Enable bounded GPUNetIO rank-major count diagnostics" OFF)

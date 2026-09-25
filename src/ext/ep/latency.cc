@@ -18,7 +18,7 @@
 #if defined(MSCCLPP_USE_GPUNETIO)
 #include <mscclpp/utils.hpp>
 
-#include "host/gpu_net_io_service.hpp"
+#include "gpu_net_io.hpp"
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {
@@ -188,7 +188,7 @@ void LatencyContext::initialize() {
     } else if (const char* device = std::getenv("MSCCLPP_EP_GPUNETIO_HCA")) {
       hca = device;
     }
-    auto svc = std::make_shared<mscclpp::GpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
+    auto svc = std::make_shared<EpGpuNetIoService>(communicator_->bootstrap(), hca, deviceId_);
     svc->setup(symmetricBuffer_, static_cast<size_t>(symmetricBufferBytes_));
     gpuNetIoService_ = svc;
     deviceContext_.gpuNetIo_ = svc->deviceContext();

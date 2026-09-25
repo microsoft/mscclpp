@@ -10,22 +10,29 @@
 
 namespace mscclpp {
 
+/// One local or remote registration. Keys are stored in host byte order.
+struct GpuNetIoMemoryDeviceHandle {
+  uintptr_t base;
+  uint64_t bytes;
+  uint32_t key;
+  int rank;
+};
+
 /// Device-side context for the GPU-initiated networking (GPUNetIO / GDAKI)
 /// PortChannel backend. This is the kernel-issued RDMA path: instead of pushing
 /// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
-/// rings the NIC doorbell directly (via the vendored DOCA GPUNetIO device
-/// verbs), mirroring NCCL GIN's `gdaki` backend.
+/// rings the NIC doorbell directly via the DOCA GPUNetIO device verbs.
 ///
-/// All remote addressing uses the same symmetric-memory model as the rest of
-/// EP: a MemoryId selects a peer's registered symmetric buffer, and offsets are
-/// identical on every rank. `qps` is indexed by peer*numQpsPerPeer+qpIndex;
-/// Logical QP q uses HCA q%numHcas and that HCA's local and remote memory keys.
+/// All remote addressing uses a symmetric-memory model: an explicit bootstrap
+/// rank selects a peer's registered buffer, with the same offset layout on
+/// every rank. `qps` is indexed by peer*numQpsPerPeer+qpIndex; `rkeys` and
+/// `peerBase` are indexed by peer rank. All QPs use the same local HCA.
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
   /// headers; the implementation reinterprets it.
   void* qps;
-  /// Per-HCA, per-peer remote keys (network byte order), laid out [hca][peer].
+  /// Per-peer remote keys (network byte order), device array of length numPeers.
   const uint32_t* rkeys;
   /// Per-peer remote symmetric-buffer base addresses, device array.
   const uintptr_t* peerBase;
@@ -35,18 +42,25 @@ struct GpuNetIoDeviceContext {
   uintptr_t localBase;
   /// Number of peers (== world size); indices into the arrays above.
   int numPeers;
-  /// Number of QPs per peer; the QP array is peer-major. Existing callers use QP 0.
+  /// Registered backend-owned fetch-add result slots, one uint64_t per QP.
+  uintptr_t atomicResultBase;
+  /// Local registration key for atomicResultBase, in host byte order.
+  uint32_t atomicResultLkey;
+  /// Number of QPs per peer, laid out peer-major; existing callers use QP 0.
   int numQpsPerPeer = 1;
-  /// Number of HCA connections. Logical QP q uses HCA q%numHcas.
-  int numHcas = 1;
-  /// Per-HCA local keys, or nullptr to use lkey for the single-HCA path.
-  const uint32_t* lkeys = nullptr;
-  /// Registered backend-owned fetch-add result slots, one uint64_t per flat QP.
-  uintptr_t atomicResultBase = 0;
-  /// Per-HCA local registration keys for atomicResultBase, in host byte order.
-  const uint32_t* atomicResultLkeys = nullptr;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Write between explicit registrations on the selected peer/QP.
+  MSCCLPP_DEVICE_INLINE void putRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst, uint64_t dstOffset,
+                                           GpuNetIoMemoryDeviceHandle src, uint64_t srcOffset, uint64_t size);
+  /// Write and signal using independent data and signal registrations on one QP.
+  MSCCLPP_DEVICE_INLINE void putRegisteredWithSignal(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
+                                                     uint64_t dstOffset, GpuNetIoMemoryDeviceHandle src,
+                                                     uint64_t srcOffset, uint64_t size,
+                                                     GpuNetIoMemoryDeviceHandle signal);
+  /// Add to an explicit registered destination on the selected peer/QP.
+  MSCCLPP_DEVICE_INLINE void atomicAddRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
+                                                 uint64_t dstOffset, int64_t value);
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
   /// symmetric buffer into peer `peer`'s symmetric buffer at dstOffset.
   MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int qpIndex = 0);
@@ -59,23 +73,12 @@ struct GpuNetIoDeviceContext {
   /// Kernel-initiated remote 64-bit atomic add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex = 0);
 
-  /// Kernel-initiated blocking RDMA read of [remoteOffset, remoteOffset+size)
-  /// from peer `peer`'s symmetric buffer into this rank's symmetric buffer at
-  /// localOffset. Returns after the read has completed (device CQ poll).
-  MSCCLPP_DEVICE_INLINE void get(int peer, uint64_t remoteOffset, uint64_t localOffset, uint64_t size, int qpIndex = 0);
-
-  /// Wait for locally-issued RDMA to this peer to complete (device CQ poll).
+  /// Wait for locally-issued RDMA on this peer's selected QP (device CQ poll).
   MSCCLPP_DEVICE_INLINE void flush(int peer, int qpIndex = 0);
 
   /// Bounded version of `flush` for tests/diagnostics. Returns 0 on completion,
   /// EBUSY on timeout, or a negative CQ error status.
   MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t maxSpinCount, int qpIndex = 0);
-
-  /// Post three signaled RDMA writes on one QP with one reservation and submit.
-  /// Each size must not exceed the NIC maximum transfer size.
-  MSCCLPP_DEVICE_INLINE void putBatched3(int peer, int qpIndex, uint64_t dst0, uint64_t src0, uint64_t size0,
-                                         uint64_t dst1, uint64_t src1, uint64_t size1, uint64_t dst2, uint64_t src2,
-                                         uint64_t size2);
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
@@ -92,6 +95,26 @@ struct GpuNetIoDeviceContext {
 #include "internal/port_channel_gpunetio_device_impl.hpp"
 #else
 namespace mscclpp {
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
+                                                                GpuNetIoMemoryDeviceHandle, uint64_t, uint64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegisteredWithSignal(int, int, GpuNetIoMemoryDeviceHandle,
+                                                                          uint64_t, GpuNetIoMemoryDeviceHandle,
+                                                                          uint64_t, uint64_t,
+                                                                          GpuNetIoMemoryDeviceHandle) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAddRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
+                                                                      int64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int, uint64_t, uint64_t, uint64_t, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
@@ -108,11 +131,6 @@ MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int, uint64_t, int64
   __trap();
 #endif
 }
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::get(int, uint64_t, uint64_t, uint64_t, int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
-#endif
-}
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int, int) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
@@ -123,12 +141,6 @@ MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t, int) {
   __trap();
 #endif
   return -1;
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putBatched3(int, int, uint64_t, uint64_t, uint64_t, uint64_t,
-                                                              uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
-#endif
 }
 }  // namespace mscclpp
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
