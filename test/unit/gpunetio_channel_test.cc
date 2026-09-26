@@ -90,6 +90,76 @@ extern "C" doca_error_t doca_gpu_verbs_create_qp_hl(doca_gpu_verbs_qp_init_attr_
 int main() {
   doca_gpu_t gpu{};
   doca_dev_t device{};
+  int portCases = 0;
+  for (const int link : {IBV_LINK_LAYER_ETHERNET, IBV_LINK_LAYER_INFINIBAND}) {
+    for (const bool grh : {false, true}) {
+      for (const int gidIndex : {0, 3, 255}) {
+        for (int failure = 0; failure < 10; ++failure) {
+          int portQueries = 0;
+          int gidQueries = 0;
+          const auto queryPort = [&](ibv_context*, uint8_t port, ibv_port_attr* attributes) {
+            require(port == 1, "wrong GPUNetIO port queried");
+            ++portQueries;
+            attributes->state = failure == 1 ? IBV_PORT_DOWN : IBV_PORT_ACTIVE;
+            attributes->link_layer = failure == 2 ? IBV_LINK_LAYER_UNSPECIFIED : link;
+            attributes->active_mtu = failure == 3 ? static_cast<ibv_mtu>(IBV_MTU_4096 + 1) : IBV_MTU_4096;
+            attributes->gid_tbl_len = failure == 4 ? gidIndex : 256;
+            attributes->flags = grh ? IBV_QPF_GRH_REQUIRED : 0;
+            return failure == 5 ? -1 : 0;
+          };
+          const auto queryGid = [&](ibv_context*, uint8_t port, int selected, ibv_gid* gid) {
+            require(port == 1 && selected == gidIndex, "configured GID index replaced or truncated");
+            ++gidQueries;
+            gid->raw[15] = failure == 7 ? 0 : 42;
+            return failure == 6 ? -1 : 0;
+          };
+          const int selected = failure == 8 ? -1 : failure == 9 ? 256 : gidIndex;
+          bool rejected = false;
+          try {
+            const auto info = mscclpp::detail::queryGpuNetIoPort(nullptr, 1, selected, queryPort, queryGid);
+            require(info.port.active_mtu == IBV_MTU_4096 && info.gid.raw[15] == (failure == 7 ? 0 : 42),
+                    "validated port/GID was not retained");
+          } catch (const std::invalid_argument&) {
+            rejected = true;
+          } catch (const std::runtime_error& error) {
+            require(failure == 5 || failure == 6, error.what());
+            require(std::string(error.what()) ==
+                        (failure == 5 ? "ibv_query_port failed for GPUNetIO" : "ibv_query_gid failed for GPUNetIO"),
+                    "unexpected failure masked by query-error test");
+            rejected = true;
+          }
+          const bool valid = failure == 0 || (failure == 7 && link == IBV_LINK_LAYER_INFINIBAND && !grh);
+          require(rejected != valid, "port/GID admission mismatch");
+          require(portQueries == (failure >= 8 ? 0 : 1), "invalid index reached port query");
+          require(gidQueries == (failure == 0 || failure == 6 || failure == 7 ? 1 : 0),
+                  "invalid port/index reached GID query");
+          require(qpCreationCalls == 0, "port validation created QPs");
+          ++portCases;
+        }
+      }
+    }
+  }
+  for (const int invalidPort : {-1, 0, 256}) {
+    int queries = 0;
+    bool rejected = false;
+    try {
+      (void)mscclpp::detail::queryGpuNetIoPort(
+          nullptr, invalidPort, 0,
+          [&](ibv_context*, uint8_t, ibv_port_attr*) {
+            ++queries;
+            return 0;
+          },
+          [&](ibv_context*, uint8_t, int, ibv_gid*) {
+            ++queries;
+            return 0;
+          });
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected && queries == 0, "invalid port reached verbs queries");
+    ++portCases;
+  }
+  std::cout << "GPUNetIO port/GID preflight: " << portCases << " cases passed\n";
   int sparsePlans = 0;
   for (const int ranks : {1, 2, 4, 8}) {
     for (const int pattern : {0, 1, 2}) {

@@ -63,6 +63,8 @@ class GpuNetIoSemaphore {
 /// Unlike ProxyService, the GPU posts RDMA operations and rings NIC doorbells directly.
 /// Requires GPU_SM_DB, valid DBRs and GPU-resident non-collapsed CQs. CPU-assisted
 /// fallback is disabled for the pinned upstream version; unsupported systems fail setup.
+/// Uses port 1 and env()->ibGidIndex (MSCCLPP_IB_GID_INDEX, default 0).
+/// Port/GID validation failures are exchanged collectively before creating any QPs.
 /// All ranks call setup with reciprocal per-peer counts, or use the legacy uniform plan.
 /// Channels select requested connections,
 /// semaphores and separately registered buffers after transport setup.

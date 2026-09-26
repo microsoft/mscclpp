@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/gpu_utils.hpp>
@@ -96,7 +97,8 @@ struct GpuNetIoService::Impl {
   doca_gpu_t* gpuDev = nullptr;
   doca_dev_t* netDev = nullptr;
   int portNum = 1;
-  int gidIndex = 0;
+  int gidIndex = -1;
+  QpExchangeInfo localPortInfo{};
 
   // Compact QPs indexed by peerQpOffsets; peers with no requested queues have no entries.
   std::vector<struct doca_gpu_verbs_qp_hl*> qpHl;
@@ -128,25 +130,21 @@ struct GpuNetIoService::Impl {
     ibCtx.reset();
   }
 
-  void queryLocalPort(QpExchangeInfo& info) {
-    struct ibv_port_attr portAttr;
-    std::memset(&portAttr, 0, sizeof(portAttr));
-    if (ibv_query_port(ibCtx->getContext(), portNum, &portAttr) != 0) {
-      throw Error("ibv_query_port failed for GPUNetIO service", ErrorCode::SystemError);
-    }
-    info.lid = portAttr.lid;
-    info.linkLayer = portAttr.link_layer;
-    info.grhRequired = (portAttr.flags & IBV_QPF_GRH_REQUIRED) ? 1 : 0;
-    info.activeMtu = portAttr.active_mtu;
-  }
-
-  void queryLocalGid(uint8_t outGid[16]) {
-    union ibv_gid gid;
-    std::memset(&gid, 0, sizeof(gid));
-    if (ibv_query_gid(ibCtx->getContext(), portNum, gidIndex, &gid) != 0) {
-      throw Error("ibv_query_gid failed for GPUNetIO service", ErrorCode::SystemError);
-    }
-    std::memcpy(outGid, gid.raw, 16);
+  void validateLocalPort() {
+    const auto info = detail::queryGpuNetIoPort(
+        ibCtx->getContext(), portNum, gidIndex,
+        [](ibv_context* context, uint8_t port, ibv_port_attr* attributes) {
+          return ibv_query_port(context, port, attributes);
+        },
+        [](ibv_context* context, uint8_t port, int index, ibv_gid* gid) {
+          return ibv_query_gid(context, port, index, gid);
+        });
+    localPortInfo.gidIndex = static_cast<uint16_t>(gidIndex);
+    localPortInfo.lid = info.port.lid;
+    localPortInfo.linkLayer = info.port.link_layer;
+    localPortInfo.grhRequired = (info.port.flags & IBV_QPF_GRH_REQUIRED) ? 1 : 0;
+    localPortInfo.activeMtu = info.port.active_mtu;
+    std::memcpy(localPortInfo.gid, info.gid.raw, sizeof(localPortInfo.gid));
   }
 
   doca_verbs_mtu_size pathMtu(uint8_t localMtu, const QpExchangeInfo& remote) const {
@@ -173,9 +171,7 @@ struct GpuNetIoService::Impl {
 
   // INIT -> RTR -> RTS for one QP, targeting the given remote info.
   void connectQp(struct doca_gpu_verbs_qp_hl* qp, const QpExchangeInfo& remote) {
-    QpExchangeInfo local{};
-    queryLocalPort(local);
-    const auto mtu = pathMtu(local.activeMtu, remote);
+    const auto mtu = pathMtu(localPortInfo.activeMtu, remote);
     doca_verbs_ah_attr_t* ah = nullptr;
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_create(netDev, &ah));
     std::unique_ptr<doca_verbs_ah_attr_t, decltype(&doca_verbs_ah_attr_destroy)> ahGuard(ah,
@@ -315,7 +311,34 @@ void GpuNetIoService::setupImpl(void* symmetricBuffer, size_t bytes, const std::
 
   // 1. ibverbs context + pd (reuse mscclpp's dlopen-based IbCtx), and register
   //    the symmetric buffer (IbMr already handles DMA-BUF / Data Direct on GB200).
-  s.ibCtx = std::make_unique<IbCtx>(s.ibDeviceName);
+  s.gidIndex = env()->ibGidIndex;
+  struct PortStatus {
+    int status;
+    int gidIndex;
+  };
+  std::vector<PortStatus> portStatuses(s.worldSize);
+  portStatuses[s.rank] = {0, s.gidIndex};
+  std::string portError;
+  try {
+    s.ibCtx = std::make_unique<IbCtx>(s.ibDeviceName);
+    s.validateLocalPort();
+  } catch (const std::invalid_argument& error) {
+    portStatuses[s.rank].status = 1;
+    portError = error.what();
+  } catch (const std::exception& error) {
+    portStatuses[s.rank].status = 2;
+    portError = error.what();
+  }
+  s.bootstrap->allGather(portStatuses.data(), sizeof(PortStatus));
+  for (int peer = 0; peer < s.worldSize; ++peer) {
+    const auto& status = portStatuses[peer];
+    if (status.status != 0) {
+      throw Error("GPUNetIO port/GID validation failed on rank " + std::to_string(peer) + " (port " +
+                      std::to_string(s.portNum) + ", MSCCLPP_IB_GID_INDEX=" + std::to_string(status.gidIndex) + ")" +
+                      (peer == s.rank ? ": " + portError : ""),
+                  status.status == 1 ? ErrorCode::InvalidUsage : ErrorCode::SystemError);
+    }
+  }
   if (bytes != 0) s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
   if (rowLength != 0) {
     MSCCLPP_DOCA_THROW(doca_verbs_dev_open(s.ibCtx->getPd(), &s.netDev));
@@ -349,10 +372,8 @@ void GpuNetIoService::setupImpl(void* symmetricBuffer, size_t bytes, const std::
   std::vector<QpExchangeInfo> qpInfo(rowLength);
   for (size_t index = 0; index < rowLength; ++index) {
     auto& info = qpInfo[index];
+    info = s.localPortInfo;
     MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(s.qpHl[index]->qp, &info.qpn));
-    info.gidIndex = static_cast<uint16_t>(s.gidIndex);
-    s.queryLocalPort(info);
-    s.queryLocalGid(info.gid);
   }
   const auto remoteQps = detail::exchangeGpuNetIoQpMetadata(*s.bootstrap, qpInfo, s.peerQpOffsets, s.rank, tag);
   for (size_t index = 0; index < rowLength; ++index) {

@@ -112,6 +112,30 @@ channel payloads separately. `connect(peer, qpIndex)` selects only QPs in the
 completed plan; it cannot add new connections. Unrequested peers and excess
 queue indices are rejected by host and device checks.
 
+### Port and GID Selection
+
+The service uses port 1 on the explicitly selected HCA and reads the same
+`env()->ibGidIndex` configuration as ordinary IB endpoints (`MSCCLPP_IB_GID_INDEX`,
+default 0). Set the variable before the process initializes MSCCL++'s cached
+environment configuration. Different ranks may use different local indices;
+choose the appropriate entry for each node rather than assuming index 0 is routable.
+
+Before creating QPs, each rank checks that its port is active, has an IB or
+Ethernet link layer and valid MTU, and that the configured GID index is in the
+port's table and fits the 8-bit source-GID field (0-255). GID query failures are
+rejected; RoCE or GRH-required ports also require a nonzero GID. The validated
+local GID is cached for QP metadata exchange, and the same configured local
+index is used for address-handle programming. There is no fallback to another
+GID entry. Validating an entry does not prove network reachability or select a
+RoCE version automatically.
+
+Port/GID validation status is exchanged across all ranks, including idle ranks,
+so a failed preflight prevents QP creation everywhere. Errors identify the failing
+rank, port and configured index. Later allocation/connection failures and physical
+link changes are not covered by that preflight; retain an external launcher timeout.
+CPU regression checks exercise nonzero indices and invalid/query-failure cases;
+actual RoCE connectivity still requires testing on the intended network.
+
 The kernel uses the existing `put`, `signal`, `putWithSignal`,
 `putWithSignalAndFlush`, `accumulate`, `flush`, `poll`, and `wait` methods.
 Offsets are relative to each selected registration, not a service-wide symmetric
