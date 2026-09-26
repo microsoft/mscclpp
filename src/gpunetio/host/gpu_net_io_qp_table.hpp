@@ -38,10 +38,11 @@ inline std::vector<int> gpuNetIoQpOffsets(const std::vector<int>& plans, int ran
 }
 
 template <class BootstrapType, class Metadata>
-std::vector<Metadata> exchangeGpuNetIoQpMetadata(BootstrapType& bootstrap, std::vector<Metadata>& local,
-                                                 const std::vector<int>& offsets, int rank, int tag) {
+void exchangeGpuNetIoQpMetadata(BootstrapType& bootstrap, std::vector<Metadata>& local, std::vector<Metadata>& remote,
+                                const std::vector<int>& offsets, int rank, int tag) {
   if (offsets.empty() || rank < 0 || static_cast<size_t>(rank + 1) >= offsets.size() || offsets.front() != 0 ||
-      offsets.back() < 0 || static_cast<size_t>(offsets.back()) != local.size() || tag < 0) {
+      offsets.back() < 0 || static_cast<size_t>(offsets.back()) != local.size() || remote.size() != local.size() ||
+      tag < 0) {
     throw std::invalid_argument("Invalid GPUNetIO metadata exchange geometry");
   }
   for (size_t peer = 0; peer + 1 < offsets.size(); ++peer) {
@@ -51,7 +52,6 @@ std::vector<Metadata> exchangeGpuNetIoQpMetadata(BootstrapType& bootstrap, std::
       throw std::invalid_argument("Invalid GPUNetIO metadata exchange size");
     }
   }
-  std::vector<Metadata> remote(local.size());
   for (int peer = 0; static_cast<size_t>(peer + 1) < offsets.size(); ++peer) {
     const int count = offsets[peer + 1] - offsets[peer];
     if (peer == rank || count == 0) continue;
@@ -64,6 +64,13 @@ std::vector<Metadata> exchangeGpuNetIoQpMetadata(BootstrapType& bootstrap, std::
       bootstrap.send(local.data() + offsets[peer], bytes, peer, tag);
     }
   }
+}
+
+template <class BootstrapType, class Metadata>
+std::vector<Metadata> exchangeGpuNetIoQpMetadata(BootstrapType& bootstrap, std::vector<Metadata>& local,
+                                                 const std::vector<int>& offsets, int rank, int tag) {
+  std::vector<Metadata> remote(local.size());
+  exchangeGpuNetIoQpMetadata(bootstrap, local, remote, offsets, rank, tag);
   return remote;
 }
 

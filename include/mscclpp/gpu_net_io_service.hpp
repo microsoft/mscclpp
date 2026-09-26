@@ -65,6 +65,9 @@ class GpuNetIoSemaphore {
 /// fallback is disabled for the pinned upstream version; unsupported systems fail setup.
 /// Uses port 1 and env()->ibGidIndex (MSCCLPP_IB_GID_INDEX, default 0).
 /// Port/GID validation failures are exchanged collectively before creating any QPs.
+/// Requires HCA support for RDMA atomics; no signal/accumulate fallback is provided.
+/// Local setup phases exchange status before advancing, including QP transitions and GPU publication.
+/// Construction and bootstrap communication must succeed on all ranks; failed setup is not retryable.
 /// All ranks call setup with reciprocal per-peer counts, or use the legacy uniform plan.
 /// Channels select requested connections,
 /// semaphores and separately registered buffers after transport setup.
@@ -130,7 +133,8 @@ class GpuNetIoService {
  private:
   struct Impl;
   std::shared_ptr<Impl> pimpl_;
-  void setupImpl(void* symmetricBuffer, size_t bytes, const std::vector<int>& peerQpCounts, int tag);
+  void setupImpl(void* symmetricBuffer, size_t bytes, const std::vector<int>& peerQpCounts, int tag,
+                 bool fullMesh = false);
   GpuNetIoMemory exchangeMemoryImpl(const GpuNetIoConnection&, const GpuNetIoMemory&, int tag, uint32_t kind) const;
   friend struct detail::GpuNetIoConnectionState;
   friend struct detail::GpuNetIoMemoryState;

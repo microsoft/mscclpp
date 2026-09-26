@@ -23,8 +23,9 @@ message(STATUS "GPUNetIO: direct GPU doorbells and GPU-resident CQs required; CP
 
 add_library(mscclpp_gpunetio_headers INTERFACE)
 target_include_directories(mscclpp_gpunetio_headers INTERFACE
-    ${GPUNETIO_VENDOR_HOME}/include
-    ${GPUNETIO_VENDOR_HOME}/include/host)
+    $<BUILD_INTERFACE:${GPUNETIO_VENDOR_HOME}/include>
+    $<BUILD_INTERFACE:${GPUNETIO_VENDOR_HOME}/include/host>
+    $<INSTALL_INTERFACE:include/mscclpp/gpunetio>)
 
 set(GPUNETIO_SOURCES
     ${GPUNETIO_VENDOR_HOME}/src/doca_verbs_dev.cpp
@@ -95,3 +96,4 @@ target_link_libraries(mscclpp_gpunetio_obj PRIVATE ${GPU_LIBRARIES} dl)
 
 install(DIRECTORY ${GPUNETIO_VENDOR_HOME}/include/ DESTINATION include/mscclpp/gpunetio)
 install(FILES ${GPUNETIO_VENDOR_HOME}/LICENSE.txt DESTINATION share/licenses/mscclpp/gpunetio)
+install(TARGETS mscclpp_gpunetio_headers EXPORT mscclppTargets)

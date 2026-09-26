@@ -45,11 +45,25 @@ cmake --build build -j
 
 The option defaults to OFF. OFF builds do not require GPUNetIO sources or DOCA
 headers. GDAKI host channel construction is rejected by an OFF library.
-Compile each CUDA translation unit using GDAKI with `-DMSCCLPP_USE_GPUNETIO`
-and `-I<build>/_deps/gpunetio-src/include` for the default FetchContent layout, or with
-`-I<prefix>/include/mscclpp/gpunetio` after installation. Do not enable the
-device macro globally for unrelated core kernels. Normal public headers remain
-usable without any DOCA includes when the macro is absent.
+Both `mscclpp` and `mscclpp_static` carry the GPUNetIO feature definition and
+dependency include paths as consumer usage requirements when built ON. Linking
+either target enables the real device implementation automatically. OFF targets
+export neither the feature macro nor DOCA header paths. Internal object compilation
+is configured separately; ordinary CPU-proxy channels remain the default backend.
+
+Installed consumers can use the relocatable CMake package:
+
+```cmake
+find_package(mscclpp CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE mscclpp::mscclpp)
+# Or mscclpp::mscclpp_static for the static library.
+```
+
+Set `CMAKE_PREFIX_PATH` to the install prefix. No manual GPUNetIO compile
+definition, vendor include path or FetchContent checkout is needed by the consumer.
+For non-CMake/manual compilation against an ON library, still supply
+`-DMSCCLPP_USE_GPUNETIO` and `-I<prefix>/include/mscclpp/gpunetio` in addition
+to the normal public include path. Do not mix ON and OFF installations.
 
 The first ON configure needs Git and network access to the upstream repository.
 For offline builds, provide an existing checkout at the pinned SHA using
@@ -130,9 +144,12 @@ GID entry. Validating an entry does not prove network reachability or select a
 RoCE version automatically.
 
 Port/GID validation status is exchanged across all ranks, including idle ranks,
-so a failed preflight prevents QP creation everywhere. Errors identify the failing
-rank, port and configured index. Later allocation/connection failures and physical
-link changes are not covered by that preflight; retain an external launcher timeout.
+so a failed preflight prevents QP creation everywhere. The HCA must also report
+RDMA atomic support through `IbCtx::supportsRdmaAtomics()`, including on idle ranks;
+signals and `accumulate` require fetch-add and have no safe fallback. Errors identify
+the failed phase and rank, with the local diagnostic (bounded to 255 bytes).
+Port/GID diagnostics retain the HCA, port and configured index. Later phases use
+the status protocol below; physical link changes still require runtime handling.
 CPU regression checks exercise nonzero indices and invalid/query-failure cases;
 actual RoCE connectivity still requires testing on the intended network.
 
@@ -177,9 +194,28 @@ The pinned dependency is restricted to direct `GPU_SM_DB` doorbells, valid DBRs,
 and non-collapsed GPU-resident CQs. `AUTO`, CPU-proxy/free-flow handlers,
 software-emulated DBRs, host CQs, and CPU UMEM are not selected. If direct GPU
 doorbells are unavailable, setup fails instead of falling back. QP-creation
-status is exchanged before the QP-info collective so every rank rejects an
+status is exchanged before QP metadata exchange so every rank rejects an
 unsupported peer. The service never starts a DOCA CPU progress thread. The
 existing MSCCL++ FIFO/CPU-proxy backend remains available and unchanged.
+
+### Setup Failure Coordination
+
+Each failure-prone local phase is followed by a status all-gather before any
+rank advances: configuration preparation, plan preparation/validation, HCA and
+port/GID/atomic admission, registration/device resources, QP creation, metadata
+preparation, QP transitions, device QP-table preparation, and final device-context
+publication. Host buffers for peer exchanges are allocated in the preceding phase.
+All ranks participate, including idle ranks. A reported failure makes every rank
+throw with the same first failing rank/phase; no rank publishes a successful
+context before final agreement. Partial resources remain owned for RAII cleanup.
+
+The small status buffer is allocated during service construction. Callers must
+successfully construct services on all ranks before entering setup and must not
+retry a failed setup on the same service. This protocol coordinates exceptions
+from local work; it cannot recover a failed process, a hung driver call, or an
+exception/hang inside bootstrap send/receive/all-gather itself. Keep an external
+launcher timeout for those failures. Post-setup registration/semaphore exchanges
+remain paired operations and are not covered by the collective setup protocol.
 
 ## Validation
 
@@ -405,8 +441,8 @@ empty/ring/unequal-star plan cases, asymmetric and invalid count rejection,
 compact descriptor copies, blocking eight-rank peer exchanges with an idle rank,
 and actual device QP/atomic-scratch lookup with missing-peer and excess-queue
 rejection. These checks do not establish GPU/NIC ordering or hardware resource
-availability. Setup is still collective, and failures during local resource
-allocation or peer exchanges can require external launcher termination.
+availability. Setup is still collective. Local setup exceptions are coordinated
+at phase boundaries; bootstrap or driver hangs can require launcher termination.
 
 The four-rank hardware test requests one QP between ranks 0/1, three between
 ranks 1/2, and none for rank 3. It checks compact offsets, idle-rank resources,
@@ -422,3 +458,30 @@ timeout 300s mpirun -np 4 build/bin/mp_unit_tests \
 This test is compiled but has not been executed as part of CPU validation.
 Rebuild all consumers when updating the device-context layout; raw contexts
 without an offsets table retain the legacy peer-major indexing convention.
+
+## Consumer and Setup Regressions
+
+`gpunetio_setup_test` compiles the actual setup body extracted at CMake configure
+time with CPU resource/bootstrap stubs. It injects failures on each of four ranks
+at device selection, HCA/atomic/port admission, registration, CUDA operations, QP
+creation/metadata/transition, and final synchronization. Tests check common failure
+outcomes and no premature successful publication. Its stub cleanup is not proof
+of real CUDA/DOCA teardown behavior. The host test also covers allocation and
+unknown exceptions and threaded phase agreement. Run these CPU checks with:
+
+```bash
+ctest --test-dir build -R '^gpunetio_.*_test$' --output-on-failure
+```
+
+The installed-consumer fixture compiles and links shared/static CUDA programs
+without manually supplying GPUNetIO flags or include directories:
+
+```bash
+cmake -S test/unit/consumer -B consumer-build \
+  -DCMAKE_PREFIX_PATH=/path/to/install -DEXPECT_GPUNETIO=ON \
+  -DCMAKE_CUDA_ARCHITECTURES=90
+cmake --build consumer-build -j2
+```
+
+Use `EXPECT_GPUNETIO=OFF` for an OFF installation. Compilation is not GPU/NIC
+runtime qualification; this fixture does not launch its device kernel.

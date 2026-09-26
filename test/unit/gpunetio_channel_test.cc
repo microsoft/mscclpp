@@ -699,9 +699,12 @@ int main() {
 }
 
 #elif defined(TEST_HOST_API)
+#include <condition_variable>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mutex>
+#include <thread>
 
 #include "gpu_net_io_binding.hpp"
 
@@ -727,6 +730,65 @@ class PeerTestBootstrap : public mscclpp::Bootstrap {
  private:
   int rank_;
   int worldSize_;
+};
+
+class SetupPhaseTestBootstrap : public PeerTestBootstrap {
+ public:
+  SetupPhaseTestBootstrap(int rank, int failedPeer) : PeerTestBootstrap(rank, 4), failedPeer_(failedPeer) {}
+  int calls = 0;
+  int observedCode = 0;
+  void allGather(void* data, int size) override {
+    if (size != sizeof(mscclpp::detail::GpuNetIoSetupStatus)) throw std::runtime_error("wrong setup status size");
+    ++calls;
+    auto* statuses = static_cast<mscclpp::detail::GpuNetIoSetupStatus*>(data);
+    observedCode = statuses[getRank()].code;
+    for (int peer = 0; peer < getNranks(); ++peer) {
+      if (peer == getRank()) continue;
+      statuses[peer] = {};
+      if (peer == failedPeer_) {
+        statuses[peer].code = 2;
+        std::snprintf(statuses[peer].message, sizeof(statuses[peer].message), "%s", "remote allocation failure");
+      }
+    }
+  }
+
+ private:
+  int failedPeer_;
+};
+
+struct SetupCollective {
+  std::mutex mutex;
+  std::condition_variable changed;
+  int arrived = 0;
+  int generation = 0;
+  std::vector<mscclpp::detail::GpuNetIoSetupStatus> rows = std::vector<mscclpp::detail::GpuNetIoSetupStatus>(4);
+};
+
+class ThreadedSetupBootstrap : public PeerTestBootstrap {
+ public:
+  ThreadedSetupBootstrap(int rank, SetupCollective& collective) : PeerTestBootstrap(rank, 4), collective_(collective) {}
+  void allGather(void* data, int size) override {
+    if (size != sizeof(mscclpp::detail::GpuNetIoSetupStatus)) throw std::runtime_error("wrong status size");
+    auto* rows = static_cast<mscclpp::detail::GpuNetIoSetupStatus*>(data);
+    std::unique_lock<std::mutex> lock(collective_.mutex);
+    const auto barrier = [&] {
+      const int generation = collective_.generation;
+      if (++collective_.arrived == 4) {
+        collective_.arrived = 0;
+        ++collective_.generation;
+        collective_.changed.notify_all();
+      } else {
+        collective_.changed.wait(lock, [&] { return collective_.generation != generation; });
+      }
+    };
+    collective_.rows[getRank()] = rows[getRank()];
+    barrier();
+    std::copy(collective_.rows.begin(), collective_.rows.end(), rows);
+    barrier();
+  }
+
+ private:
+  SetupCollective& collective_;
 };
 
 class ExchangeTestBootstrap : public PeerTestBootstrap {
@@ -766,6 +828,60 @@ __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel)
 
 int main() {
 #if defined(TEST_GPUNETIO_ENABLED)
+  for (int failedPhase = -1; failedPhase < 10; ++failedPhase) {
+    for (int failedRank = 0; failedRank < 4; ++failedRank) {
+      SetupCollective collective;
+      std::vector<std::thread> threads;
+      std::vector<int> reached(4), rejected(4);
+      for (int rank = 0; rank < 4; ++rank) {
+        threads.emplace_back([&, rank] {
+          ThreadedSetupBootstrap bootstrap(rank, collective);
+          std::vector<mscclpp::detail::GpuNetIoSetupStatus> statuses(4);
+          try {
+            for (int phase = 0; phase < 10; ++phase) {
+              mscclpp::detail::runGpuNetIoSetupPhase(bootstrap, statuses, "fault injection", [&] {
+                ++reached[rank];
+                if (rank == failedRank && phase == failedPhase) throw std::bad_alloc();
+              });
+            }
+          } catch (const mscclpp::Error& error) {
+            rejected[rank] = std::string(error.what()).find("rank " + std::to_string(failedRank)) != std::string::npos;
+          }
+        });
+      }
+      for (auto& thread : threads) thread.join();
+      for (int rank = 0; rank < 4; ++rank) {
+        if (reached[rank] != (failedPhase < 0 ? 10 : failedPhase + 1) || rejected[rank] != (failedPhase >= 0)) return 7;
+      }
+    }
+  }
+  for (int rank = 0; rank < 4; ++rank) {
+    for (int failure = 0; failure < 4; ++failure) {
+      for (int failedPeer = -1; failedPeer < 4; ++failedPeer) {
+        SetupPhaseTestBootstrap bootstrap(rank, failedPeer);
+        std::vector<mscclpp::detail::GpuNetIoSetupStatus> statuses(4);
+        int operations = 0;
+        bool rejected = false;
+        try {
+          mscclpp::detail::runGpuNetIoSetupPhase(bootstrap, statuses, "allocation", [&] {
+            ++operations;
+            if (failure == 1) throw std::invalid_argument("invalid device");
+            if (failure == 2) throw std::bad_alloc();
+            if (failure == 3) throw 7;
+          });
+        } catch (const mscclpp::Error& error) {
+          const std::string text = error.what();
+          rejected = text.find("allocation") != std::string::npos && text.find("rank ") != std::string::npos;
+        }
+        if (operations != 1 || bootstrap.calls != 1 ||
+            bootstrap.observedCode != (failure == 0   ? 0
+                                       : failure == 1 ? 1
+                                                      : 2) ||
+            rejected != (failure != 0 || (failedPeer >= 0 && failedPeer != rank)))
+          return 6;
+      }
+    }
+  }
   for (int rank = 0; rank < 2; ++rank) {
     for (const uint32_t kind : {1U, 2U}) {
       for (const int queue : {0, 1, 63}) {

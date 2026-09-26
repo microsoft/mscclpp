@@ -13,6 +13,7 @@
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -87,7 +88,9 @@ struct GpuNetIoService::Impl {
   int worldSize = 0;
   int numQpsPerPeer = 1;
   std::vector<int> peerQpOffsets;
+  std::vector<detail::GpuNetIoSetupStatus> setupStatuses;
   bool didSetup = false;
+  bool deviceSelected = false;
   bool setupComplete = false;
 
   std::unique_ptr<IbCtx> ibCtx;
@@ -112,7 +115,7 @@ struct GpuNetIoService::Impl {
   uint64_t* atomicResultsGpu = nullptr;
 
   ~Impl() {
-    if (!didSetup) return;
+    if (!deviceSelected) return;
     CudaDeviceGuard deviceGuard(cudaDeviceId);
     if (ctxGpu) (void)cudaFree(ctxGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
@@ -251,6 +254,10 @@ MSCCLPP_API_CPP GpuNetIoService::GpuNetIoService(std::shared_ptr<Bootstrap> boot
   pimpl_->rank = bootstrap->getRank();
   pimpl_->worldSize = bootstrap->getNranks();
   pimpl_->numQpsPerPeer = numQpsPerPeer;
+  if (pimpl_->worldSize < 1 || pimpl_->rank < 0 || pimpl_->rank >= pimpl_->worldSize) {
+    throw Error("Invalid GPUNetIO bootstrap geometry", ErrorCode::InvalidUsage);
+  }
+  pimpl_->setupStatuses.resize(pimpl_->worldSize);
 }
 
 MSCCLPP_API_CPP GpuNetIoService::~GpuNetIoService() = default;
@@ -258,172 +265,157 @@ MSCCLPP_API_CPP GpuNetIoService::~GpuNetIoService() = default;
 MSCCLPP_API_CPP void GpuNetIoService::setup() { setup(nullptr, 0); }
 
 MSCCLPP_API_CPP void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
-  std::vector<int> counts(pimpl_->worldSize, pimpl_->numQpsPerPeer);
-  if (pimpl_->numQpsPerPeer < 1 || pimpl_->numQpsPerPeer > 64)
-    counts[pimpl_->rank] = -1;
-  else
-    counts[pimpl_->rank] = 0;
-  setupImpl(symmetricBuffer, bytes, counts, 0);
+  setupImpl(symmetricBuffer, bytes, {}, 0, true);
 }
 
 MSCCLPP_API_CPP void GpuNetIoService::setup(const std::vector<int>& peerQpCounts, int tag) {
   setupImpl(nullptr, 0, peerQpCounts, tag);
 }
 
-void GpuNetIoService::setupImpl(void* symmetricBuffer, size_t bytes, const std::vector<int>& peerQpCounts, int tag) {
+void GpuNetIoService::setupImpl(void* symmetricBuffer, size_t bytes, const std::vector<int>& peerQpCounts, int tag,
+                                bool fullMesh) {
   auto& s = *pimpl_;
-  CudaDeviceGuard deviceGuard(s.cudaDeviceId);
-  if (s.didSetup) {
-    throw Error("GpuNetIoService::setup called more than once", ErrorCode::InvalidUsage);
-  }
-  s.didSetup = true;
-
-  std::vector<ConfigExchangeInfo> configs(s.worldSize);
-  const bool validBuffer = (symmetricBuffer == nullptr) == (bytes == 0);
-  bool validPlan = peerQpCounts.size() == static_cast<size_t>(s.worldSize) && tag >= 0;
-  for (size_t peer = 0; peer < peerQpCounts.size(); ++peer) {
-    validPlan = validPlan && peerQpCounts[peer] >= 0 && peerQpCounts[peer] <= 64 &&
-                (peer != static_cast<size_t>(s.rank) || peerQpCounts[peer] == 0);
-  }
-  configs[s.rank] = {bytes, tag, validBuffer && validPlan ? 1U : 0U};
-  s.bootstrap->allGather(configs.data(), sizeof(ConfigExchangeInfo));
-  for (const auto& config : configs) {
-    if (!config.valid || config.bytes != bytes || config.tag != tag) {
-      throw Error("GPUNetIO setup requires valid per-peer counts, a common exchange tag and optional buffer size",
-                  ErrorCode::InvalidUsage);
-    }
-  }
-  const size_t ranks = static_cast<size_t>(s.worldSize);
-  if (ranks > static_cast<size_t>(std::numeric_limits<int>::max()) / sizeof(int) ||
-      ranks > std::numeric_limits<size_t>::max() / sizeof(int) / ranks) {
-    throw Error("GPUNetIO connection plan exceeds bootstrap size limit", ErrorCode::InvalidUsage);
-  }
-  std::vector<int> plans(ranks * ranks);
-  std::copy(peerQpCounts.begin(), peerQpCounts.end(), plans.begin() + static_cast<size_t>(s.rank) * ranks);
-  s.bootstrap->allGather(plans.data(), static_cast<int>(ranks * sizeof(int)));
-  try {
-    s.peerQpOffsets = detail::gpuNetIoQpOffsets(plans, s.rank, s.worldSize);
-  } catch (const std::invalid_argument& error) {
-    throw Error(error.what(), ErrorCode::InvalidUsage);
-  }
-  s.numQpsPerPeer = *std::max_element(peerQpCounts.begin(), peerQpCounts.end());
-  const size_t rowLength = static_cast<size_t>(s.peerQpOffsets.back());
-
-  // 1. ibverbs context + pd (reuse mscclpp's dlopen-based IbCtx), and register
-  //    the symmetric buffer (IbMr already handles DMA-BUF / Data Direct on GB200).
-  s.gidIndex = env()->ibGidIndex;
-  struct PortStatus {
-    int status;
-    int gidIndex;
+  const auto phase = [&](const char* name, auto operation) {
+    detail::runGpuNetIoSetupPhase(*s.bootstrap, s.setupStatuses, name, operation);
   };
-  std::vector<PortStatus> portStatuses(s.worldSize);
-  portStatuses[s.rank] = {0, s.gidIndex};
-  std::string portError;
-  try {
+  std::optional<CudaDeviceGuard> deviceGuard;
+  std::vector<int> counts;
+  std::vector<ConfigExchangeInfo> configs;
+  phase("configuration preparation", [&] {
+    if (s.didSetup) throw std::invalid_argument("GpuNetIoService::setup called more than once");
+    s.didSetup = true;
+    deviceGuard.emplace(s.cudaDeviceId);
+    s.deviceSelected = true;
+    if (fullMesh) {
+      if (s.numQpsPerPeer < 1 || s.numQpsPerPeer > 64) throw std::invalid_argument("Invalid uniform QP count");
+      counts.assign(s.worldSize, s.numQpsPerPeer);
+      counts[s.rank] = 0;
+    } else {
+      counts = peerQpCounts;
+    }
+    if (counts.size() != static_cast<size_t>(s.worldSize) || tag < 0 || (symmetricBuffer == nullptr) != (bytes == 0))
+      throw std::invalid_argument("Invalid GPUNetIO setup arguments");
+    for (size_t peer = 0; peer < counts.size(); ++peer) {
+      if (counts[peer] < 0 || counts[peer] > 64 || (peer == static_cast<size_t>(s.rank) && counts[peer] != 0))
+        throw std::invalid_argument("Invalid GPUNetIO per-peer QP count");
+    }
+    configs.resize(s.worldSize);
+    configs[s.rank] = {bytes, tag, 1};
+  });
+  s.bootstrap->allGather(configs.data(), sizeof(ConfigExchangeInfo));
+  const size_t ranks = static_cast<size_t>(s.worldSize);
+  std::vector<int> plans;
+  phase("connection plan preparation", [&] {
+    for (const auto& config : configs) {
+      if (!config.valid || config.bytes != bytes || config.tag != tag)
+        throw std::invalid_argument("GPUNetIO ranks must agree on optional buffer size and exchange tag");
+    }
+    if (ranks > static_cast<size_t>(std::numeric_limits<int>::max()) / sizeof(int) ||
+        ranks > std::numeric_limits<size_t>::max() / sizeof(int) / ranks)
+      throw std::invalid_argument("GPUNetIO connection plan exceeds bootstrap size limit");
+    plans.resize(ranks * ranks);
+    std::copy(counts.begin(), counts.end(), plans.begin() + static_cast<size_t>(s.rank) * ranks);
+  });
+  s.bootstrap->allGather(plans.data(), static_cast<int>(ranks * sizeof(int)));
+  phase("connection plan validation", [&] {
+    s.peerQpOffsets = detail::gpuNetIoQpOffsets(plans, s.rank, s.worldSize);
+    s.numQpsPerPeer = *std::max_element(counts.begin(), counts.end());
+  });
+  const size_t rowLength = static_cast<size_t>(s.peerQpOffsets.back());
+  phase("HCA, port/GID and atomic capability", [&] {
+    s.gidIndex = env()->ibGidIndex;
     s.ibCtx = std::make_unique<IbCtx>(s.ibDeviceName);
-    s.validateLocalPort();
-  } catch (const std::invalid_argument& error) {
-    portStatuses[s.rank].status = 1;
-    portError = error.what();
-  } catch (const std::exception& error) {
-    portStatuses[s.rank].status = 2;
-    portError = error.what();
-  }
-  s.bootstrap->allGather(portStatuses.data(), sizeof(PortStatus));
-  for (int peer = 0; peer < s.worldSize; ++peer) {
-    const auto& status = portStatuses[peer];
-    if (status.status != 0) {
-      throw Error("GPUNetIO port/GID validation failed on rank " + std::to_string(peer) + " (port " +
-                      std::to_string(s.portNum) + ", MSCCLPP_IB_GID_INDEX=" + std::to_string(status.gidIndex) + ")" +
-                      (peer == s.rank ? ": " + portError : ""),
-                  status.status == 1 ? ErrorCode::InvalidUsage : ErrorCode::SystemError);
+    if (!s.ibCtx->supportsRdmaAtomics()) {
+      throw std::invalid_argument("GPUNetIO requires RDMA atomics on HCA " + s.ibDeviceName +
+                                  "; no fallback is available");
     }
-  }
-  if (bytes != 0) s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
-  if (rowLength != 0) {
-    MSCCLPP_DOCA_THROW(doca_verbs_dev_open(s.ibCtx->getPd(), &s.netDev));
-    MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, rowLength * sizeof(uint64_t)));
-    MSCCLPP_CUDA_THROW(cudaMemset(s.atomicResultsGpu, 0, rowLength * sizeof(uint64_t)));
-    s.atomicResultMr = s.ibCtx->registerMr(s.atomicResultsGpu, rowLength * sizeof(uint64_t));
-
-    char pciBusId[32] = {0};
-    MSCCLPP_CUDA_THROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), s.cudaDeviceId));
-    MSCCLPP_DOCA_THROW(doca_gpu_create(pciBusId, &s.gpuDev));
-  }
-
-  s.qpHl.assign(rowLength, nullptr);
-  int localQpStatus = DOCA_SUCCESS;
-  for (size_t index = 0; index < rowLength && localQpStatus == DOCA_SUCCESS; ++index) {
-    localQpStatus = detail::createDirectGpuNetIoQp(s.gpuDev, s.netDev, s.ibCtx->getPd(), &s.qpHl[index]);
-  }
-  std::vector<int> qpStatuses(s.worldSize);
-  qpStatuses[s.rank] = localQpStatus;
-  s.bootstrap->allGather(qpStatuses.data(), sizeof(int));
-  for (int peer = 0; peer < s.worldSize; ++peer) {
-    if (qpStatuses[peer] != DOCA_SUCCESS) {
-      throw Error(
-          "GPUNetIO requires direct GPU doorbells and GPU-resident CQs; CPU-assisted fallback is disabled. "
-          "QP creation failed on rank " +
-              std::to_string(peer) + " with DOCA status " + std::to_string(qpStatuses[peer]),
-          ErrorCode::SystemError);
+    try {
+      s.validateLocalPort();
+    } catch (const std::invalid_argument& error) {
+      throw Error("HCA " + s.ibDeviceName + ", port " + std::to_string(s.portNum) +
+                      ", MSCCLPP_IB_GID_INDEX=" + std::to_string(s.gidIndex) + ": " + error.what(),
+                  ErrorCode::InvalidUsage);
+    } catch (const std::exception& error) {
+      throw Error("HCA " + s.ibDeviceName + ", port " + std::to_string(s.portNum) +
+                      ", MSCCLPP_IB_GID_INDEX=" + std::to_string(s.gidIndex) + ": " + error.what(),
+                  ErrorCode::SystemError);
     }
-  }
-
-  std::vector<QpExchangeInfo> qpInfo(rowLength);
-  for (size_t index = 0; index < rowLength; ++index) {
-    auto& info = qpInfo[index];
-    info = s.localPortInfo;
-    MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(s.qpHl[index]->qp, &info.qpn));
-  }
-  const auto remoteQps = detail::exchangeGpuNetIoQpMetadata(*s.bootstrap, qpInfo, s.peerQpOffsets, s.rank, tag);
-  for (size_t index = 0; index < rowLength; ++index) {
-    s.connectQp(s.qpHl[index], remoteQps[index]);
-  }
-
-  const auto qpTable = detail::buildGpuNetIoQpTable(s.qpHl);
-  const size_t qpTableBytes = qpTable.size() * sizeof(doca_gpu_dev_verbs_qp);
-  if (qpTableBytes != 0) {
-    MSCCLPP_CUDA_THROW(cudaMalloc(&s.qpFlatGpu, qpTableBytes));
-    MSCCLPP_CUDA_THROW(cudaMemcpy(s.qpFlatGpu, qpTable.data(), qpTableBytes, cudaMemcpyHostToDevice));
-  }
-  const size_t offsetBytes = s.peerQpOffsets.size() * sizeof(int);
-  MSCCLPP_CUDA_THROW(cudaMalloc(&s.peerQpOffsetsGpu, offsetBytes));
-  MSCCLPP_CUDA_THROW(cudaMemcpy(s.peerQpOffsetsGpu, s.peerQpOffsets.data(), offsetBytes, cudaMemcpyHostToDevice));
-
-  // 6. Exchange rkeys + symmetric base addresses.
-  std::vector<MemExchangeInfo> memAll(s.worldSize);
-  std::memset(memAll.data(), 0, memAll.size() * sizeof(MemExchangeInfo));
-  memAll[s.rank].base = reinterpret_cast<uint64_t>(symmetricBuffer);
-  memAll[s.rank].rkey = s.mr ? s.mr->getInfo().rkey : 0;
+  });
+  phase("memory registration and device resources", [&] {
+    if (bytes != 0) s.mr = s.ibCtx->registerMr(symmetricBuffer, bytes);
+    if (rowLength != 0) {
+      MSCCLPP_DOCA_THROW(doca_verbs_dev_open(s.ibCtx->getPd(), &s.netDev));
+      MSCCLPP_CUDA_THROW(cudaMalloc(&s.atomicResultsGpu, rowLength * sizeof(uint64_t)));
+      MSCCLPP_CUDA_THROW(cudaMemset(s.atomicResultsGpu, 0, rowLength * sizeof(uint64_t)));
+      s.atomicResultMr = s.ibCtx->registerMr(s.atomicResultsGpu, rowLength * sizeof(uint64_t));
+      char pciBusId[32] = {0};
+      MSCCLPP_CUDA_THROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), s.cudaDeviceId));
+      MSCCLPP_DOCA_THROW(doca_gpu_create(pciBusId, &s.gpuDev));
+    }
+  });
+  phase("direct GPU QP creation", [&] {
+    s.qpHl.assign(rowLength, nullptr);
+    for (size_t index = 0; index < rowLength; ++index)
+      MSCCLPP_DOCA_THROW(detail::createDirectGpuNetIoQp(s.gpuDev, s.netDev, s.ibCtx->getPd(), &s.qpHl[index]));
+  });
+  std::vector<QpExchangeInfo> qpInfo;
+  std::vector<QpExchangeInfo> remoteQps;
+  phase("QP metadata preparation", [&] {
+    qpInfo.resize(rowLength);
+    remoteQps.resize(rowLength);
+    for (size_t index = 0; index < rowLength; ++index) {
+      qpInfo[index] = s.localPortInfo;
+      MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(s.qpHl[index]->qp, &qpInfo[index].qpn));
+    }
+  });
+  detail::exchangeGpuNetIoQpMetadata(*s.bootstrap, qpInfo, remoteQps, s.peerQpOffsets, s.rank, tag);
+  phase("QP transitions", [&] {
+    for (size_t index = 0; index < rowLength; ++index) s.connectQp(s.qpHl[index], remoteQps[index]);
+  });
+  std::vector<MemExchangeInfo> memAll;
+  phase("device QP table and memory metadata preparation", [&] {
+    const auto qpTable = detail::buildGpuNetIoQpTable(s.qpHl);
+    const size_t qpTableBytes = qpTable.size() * sizeof(doca_gpu_dev_verbs_qp);
+    if (qpTableBytes != 0) {
+      MSCCLPP_CUDA_THROW(cudaMalloc(&s.qpFlatGpu, qpTableBytes));
+      MSCCLPP_CUDA_THROW(cudaMemcpy(s.qpFlatGpu, qpTable.data(), qpTableBytes, cudaMemcpyHostToDevice));
+    }
+    const size_t offsetBytes = s.peerQpOffsets.size() * sizeof(int);
+    MSCCLPP_CUDA_THROW(cudaMalloc(&s.peerQpOffsetsGpu, offsetBytes));
+    MSCCLPP_CUDA_THROW(cudaMemcpy(s.peerQpOffsetsGpu, s.peerQpOffsets.data(), offsetBytes, cudaMemcpyHostToDevice));
+    memAll.resize(s.worldSize);
+    memAll[s.rank].base = reinterpret_cast<uint64_t>(symmetricBuffer);
+    memAll[s.rank].rkey = s.mr ? s.mr->getInfo().rkey : 0;
+  });
   if (bytes != 0) s.bootstrap->allGather(memAll.data(), static_cast<int>(sizeof(MemExchangeInfo)));
-
-  std::vector<uint32_t> rkeysHost(s.worldSize);
-  std::vector<uintptr_t> baseHost(s.worldSize);
-  for (int r = 0; r < s.worldSize; ++r) {
-    rkeysHost[r] = htobe32(memAll[r].rkey);
-    baseHost[r] = static_cast<uintptr_t>(memAll[r].base);
-  }
-
-  // 7. Publish device-side arrays + context.
-  MSCCLPP_CUDA_THROW(cudaMalloc(&s.rkeysGpu, sizeof(uint32_t) * s.worldSize));
-  MSCCLPP_CUDA_THROW(cudaMalloc(&s.peerBaseGpu, sizeof(uintptr_t) * s.worldSize));
-  MSCCLPP_CUDA_THROW(cudaMemcpy(s.rkeysGpu, rkeysHost.data(), sizeof(uint32_t) * s.worldSize, cudaMemcpyHostToDevice));
-  MSCCLPP_CUDA_THROW(
-      cudaMemcpy(s.peerBaseGpu, baseHost.data(), sizeof(uintptr_t) * s.worldSize, cudaMemcpyHostToDevice));
-
-  GpuNetIoDeviceContext ctxHost{};
-  ctxHost.qps = s.qpFlatGpu;
-  ctxHost.rkeys = s.rkeysGpu;
-  ctxHost.peerBase = s.peerBaseGpu;
-  ctxHost.lkey = s.mr ? s.mr->getLkey() : 0;
-  ctxHost.localBase = reinterpret_cast<uintptr_t>(symmetricBuffer);
-  ctxHost.numPeers = s.worldSize;
-  ctxHost.numQpsPerPeer = s.numQpsPerPeer;
-  ctxHost.peerQpOffsets = s.peerQpOffsetsGpu;
-  ctxHost.atomicResultBase = reinterpret_cast<uintptr_t>(s.atomicResultsGpu);
-  ctxHost.atomicResultLkey = s.atomicResultMr ? s.atomicResultMr->getLkey() : 0;
-  MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
-  MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
+  phase("device context publication", [&] {
+    std::vector<uint32_t> rkeysHost(s.worldSize);
+    std::vector<uintptr_t> baseHost(s.worldSize);
+    for (int peer = 0; peer < s.worldSize; ++peer) {
+      rkeysHost[peer] = htobe32(memAll[peer].rkey);
+      baseHost[peer] = static_cast<uintptr_t>(memAll[peer].base);
+    }
+    MSCCLPP_CUDA_THROW(cudaMalloc(&s.rkeysGpu, sizeof(uint32_t) * s.worldSize));
+    MSCCLPP_CUDA_THROW(cudaMalloc(&s.peerBaseGpu, sizeof(uintptr_t) * s.worldSize));
+    MSCCLPP_CUDA_THROW(
+        cudaMemcpy(s.rkeysGpu, rkeysHost.data(), sizeof(uint32_t) * s.worldSize, cudaMemcpyHostToDevice));
+    MSCCLPP_CUDA_THROW(
+        cudaMemcpy(s.peerBaseGpu, baseHost.data(), sizeof(uintptr_t) * s.worldSize, cudaMemcpyHostToDevice));
+    GpuNetIoDeviceContext ctxHost{};
+    ctxHost.qps = s.qpFlatGpu;
+    ctxHost.rkeys = s.rkeysGpu;
+    ctxHost.peerBase = s.peerBaseGpu;
+    ctxHost.lkey = s.mr ? s.mr->getLkey() : 0;
+    ctxHost.localBase = reinterpret_cast<uintptr_t>(symmetricBuffer);
+    ctxHost.numPeers = s.worldSize;
+    ctxHost.numQpsPerPeer = s.numQpsPerPeer;
+    ctxHost.peerQpOffsets = s.peerQpOffsetsGpu;
+    ctxHost.atomicResultBase = reinterpret_cast<uintptr_t>(s.atomicResultsGpu);
+    ctxHost.atomicResultLkey = s.atomicResultMr ? s.atomicResultMr->getLkey() : 0;
+    MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
+    MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
+    MSCCLPP_CUDA_THROW(cudaDeviceSynchronize());
+  });
   s.setupComplete = true;
 }
 
