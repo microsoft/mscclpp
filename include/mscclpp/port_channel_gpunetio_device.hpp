@@ -23,11 +23,11 @@ struct GpuNetIoMemoryDeviceHandle {
 /// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
 /// rings the NIC doorbell directly via the DOCA GPUNetIO device verbs.
 ///
-/// All remote addressing uses a symmetric-memory model: an explicit bootstrap
-/// rank selects a peer's registered buffer, with the same offset layout on
-/// every rank. `qps` uses peerQpOffsets[peer]+qpIndex when offsets are supplied,
-/// otherwise peer*numQpsPerPeer+qpIndex for legacy contexts. `rkeys` and
-/// `peerBase` are indexed by peer rank. All QPs use the same local HCA.
+/// The legacy `put`, `putWithSignal`, and `atomicAdd` helpers use a symmetric-memory
+/// model: a bootstrap rank selects `rkeys[peer]` and `peerBase[peer]`. The
+/// registered-operation helpers instead use their explicit registration handles.
+/// `qps` uses peerQpOffsets[peer]+qpIndex when offsets are supplied, otherwise
+/// peer*numQpsPerPeer+qpIndex for legacy contexts. All QPs use the same local HCA.
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
