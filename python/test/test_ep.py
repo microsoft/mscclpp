@@ -18,7 +18,15 @@ if importlib.util.find_spec("mscclpp.mscclpp_ep_cpp") is None:
 
 from mscclpp import CommGroup
 from mscclpp._mscclpp import Error
-from mscclpp.ep import CombineMode, DispatchDataType, DispatchLayout, MoECommunicator, MoEMode, QuantConfig
+from mscclpp.ep import (
+    CombineMode,
+    DispatchDataType,
+    DispatchLayout,
+    MoECommunicator,
+    MoECommunicatorConfig,
+    MoEMode,
+    QuantConfig,
+)
 
 NUM_TOPK = 8
 HIDDEN = 4096
@@ -42,7 +50,7 @@ def ep_group():
 
 @contextmanager
 def initialized_runtime(group, **kwargs):
-    runtime = MoECommunicator(comm=group, device=torch.cuda.current_device(), **kwargs)
+    runtime = MoECommunicator(MoECommunicatorConfig(comm=group, device=torch.cuda.current_device(), **kwargs))
     assert runtime.is_available()
     runtime.initialize()
     runtime.initialize()
@@ -52,6 +60,36 @@ def initialized_runtime(group, **kwargs):
     finally:
         torch.cuda.synchronize()
         group.barrier()
+
+
+def test_config_validation_at_construction():
+    config = MoECommunicatorConfig(num_experts=128, hidden_size=HIDDEN, topk=NUM_TOPK, max_tokens_per_rank=4)
+    with pytest.raises(ValueError, match="topk"):
+        replace(config, topk=9)
+    with pytest.raises(ValueError, match="output_layout"):
+        replace(config, output_layout=DispatchLayout.TOKEN_MAJOR)
+
+
+@pytest.mark.parametrize("mode", [MoEMode.LATENCY, MoEMode.THROUGHPUT])
+def test_config_runtime_resolution(ep_group, mode):
+    device = torch.cuda.current_device()
+    config = MoECommunicatorConfig(
+        comm=ep_group,
+        device=device,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=4,
+        mode=mode,
+    )
+    runtime = MoECommunicator(config)
+    expected_layout = DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LATENCY else DispatchLayout.TOKEN_MAJOR
+    assert runtime.output_layout == expected_layout
+    num_sms = torch.cuda.get_device_properties(device).multi_processor_count
+    defaults = (130, 128) if mode == MoEMode.LATENCY else (24, 32)
+    assert runtime.num_blocks == tuple(min(value, num_sms) for value in defaults)
+    assert config.output_layout is None
+    assert config.num_blocks is None
 
 
 def token_routes(rank, world_size, token, num_tokens):
@@ -133,6 +171,11 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
             assert result.tokens.data_ptr() == runtime.get_dispatch_output_buffer().data_ptr()
             assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
             assert result.layout is handle.output_info.layout
+            assert result.layout.kind == layout
+            if layout == DispatchLayout.RANK_MAJOR:
+                assert result.layout.num_tokens_per_expert is None
+            else:
+                assert result.layout.num_tokens_per_rank is None
             if layout != DispatchLayout.EXPERT_MAJOR:
                 assert result.topk_ids.data_ptr() == runtime._runtime.output_topk_ids_buffer_ptr()
                 assert result.weights.data_ptr() == runtime._runtime.output_topk_weights_buffer_ptr()
@@ -293,7 +336,7 @@ def test_dispatch_handle_validation(ep_group):
         max_tokens_per_rank=capacity,
     )
     with initialized_runtime(ep_group, **config) as runtime:
-        other = MoECommunicator(comm=ep_group, device=torch.cuda.current_device(), **config)
+        other = MoECommunicator(MoECommunicatorConfig(comm=ep_group, device=torch.cuda.current_device(), **config))
         stream = torch.cuda.Stream()
         other_stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):

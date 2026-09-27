@@ -18,19 +18,21 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 
 @dataclass
 class QuantConfig:
-    """Payload format and optional FP32 scales, one per 128 hidden elements.
+    """Payload format and optional quantization scales.
 
-    Latency dispatch quantizes BF16 input and returns scales with logical shape
-    ``[local_expert, row, hidden // 128]`` and transposed physical storage.
-    Throughput FP8 dispatch requires contiguous input scales with shape
-    ``[num_tokens, hidden // 128]``. BF16 dispatch does not use scales.
+    FP8 E4M3 uses one FP32 scale per 128 hidden elements.
+    For FP8 dispatch, latency quantizes BF16 input
+    and returns scales with logical shape ``[local_expert, row, hidden // 128]``
+    and transposed physical storage. Throughput FP8 dispatch requires contiguous
+    input scales with shape ``[num_tokens, hidden // 128]``.
+    BF16 dispatch does not use scales.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class MoECommunicatorConfig:
     """Fixed runtime configuration, which must agree across participating ranks.
 
@@ -57,6 +59,33 @@ class MoECommunicatorConfig:
     quant: Optional[QuantConfig] = None
     num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
+
+    def __post_init__(self) -> None:
+        """Validate fixed dimensions and algorithm settings without GPU access."""
+        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 < value < (1 << 31):
+                raise ValueError(f"{name} must be a positive int32")
+        if self.topk > 8:
+            raise ValueError("topk must be in [1, 8]")
+        latency = self.mode == MoEMode.LATENCY
+        if self.output_layout is not None:
+            if not isinstance(self.output_layout, DispatchLayout):
+                raise TypeError("output_layout must be a DispatchLayout")
+            supported = (
+                (DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR)
+                if latency
+                else (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR)
+            )
+            if self.output_layout not in supported:
+                raise ValueError("output_layout is unsupported for the selected mode")
+        if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
+            raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
+        if latency:
+            if self.hidden_size not in (4096, 4352, 6656, 7168, 8192, 8704, 9216):
+                raise ValueError("latency hidden_size must be one of 4096, 4352, 6656, 7168, 8192, 8704, 9216")
+        elif self.hidden_size % 8:
+            raise ValueError("throughput requires 16-byte-aligned BF16 rows")
 
 
 @dataclass

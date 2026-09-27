@@ -18,7 +18,7 @@ from mpi4py import MPI
 import torch
 
 from mscclpp import CommGroup
-from mscclpp.ep import MoECommunicator, MoEMode
+from mscclpp.ep import MoECommunicator, MoECommunicatorConfig, MoEMode
 
 def main():
     world = MPI.COMM_WORLD
@@ -27,7 +27,7 @@ def main():
     device = torch.device("cuda", local.Get_rank())
     group = CommGroup(mpi_comm=world)
 
-    moe = MoECommunicator(
+    config = MoECommunicatorConfig(
         comm=group,
         device=device,
         mode=MoEMode.THROUGHPUT,  # TOKEN_MAJOR by default
@@ -36,6 +36,7 @@ def main():
         topk=1,
         max_tokens_per_rank=64,
     )
+    moe = MoECommunicator(config)
     moe.initialize()  # collective; call before CUDA graph capture
     stream = torch.cuda.current_stream(device)
 
@@ -79,8 +80,10 @@ Construction and initialization before graph capture are caller preconditions;
 the Python wrapper does not query capture state. An explicit `device` is honored
 during native construction and initialization, even when another CUDA device is
 current; the previous device is restored afterward. Operations use the caller
-stream's device scope. Passing a `MoECommunicatorConfig` instead of
-constructor keywords is equivalent.
+stream's device scope.
+
+`MoECommunicator` takes a frozen `MoECommunicatorConfig`. To change settings,
+create a new config with `dataclasses.replace(config, ...)`.
 
 ## Shapes, counts, and computation
 
@@ -142,7 +145,8 @@ combined top-k weights, so `output_topk_weights` is not a supported argument.
 ## Formats and buffers
 
 * BF16 dispatch uses BF16 inputs/outputs and no block scales.
-* Latency EXPERT_MAJOR can quantize **BF16 input** on the fly with
+* FP8 E4M3 uses one FP32 scale per 128 hidden elements. Latency EXPERT_MAJOR
+  can quantize **BF16 input** on the fly with
   `QuantConfig(format=DispatchDataType.FP8_E4M3)`. Returned FP32 scales have
   logical shape `[L, R*A, H//128]`, transposed from physical
   `[L, H//128, R*A]`; they are not contiguous in logical order.

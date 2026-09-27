@@ -44,11 +44,7 @@ class MoECommunicator:
     supplies no autograd backward.
     """
 
-    def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
-        if config is not None and kwargs:
-            raise ValueError("pass either MoECommunicatorConfig or keyword arguments, not both")
-        if config is None:
-            config = MoECommunicatorConfig(**kwargs)
+    def __init__(self, config: MoECommunicatorConfig) -> None:
         self._config = _resolve_config(config)
         self._initialized = False
         self._stream: Optional[torch.cuda.Stream] = None
@@ -516,34 +512,13 @@ def _resolve_config(config: MoECommunicatorConfig) -> MoECommunicatorConfig:
     if not isinstance(config, MoECommunicatorConfig):
         raise TypeError("config must be a MoECommunicatorConfig")
     if config.comm is None:
-        raise ValueError("MoECommunicator requires an mscclpp.CommGroup via comm=")
+        raise ValueError("MoECommunicator requires an mscclpp.CommGroup via config.comm")
     if not isinstance(config.comm, CommGroup):
         raise TypeError("comm must be an mscclpp.CommGroup")
-    for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
-        value = getattr(config, name)
-        if type(value) is not int or not 0 < value < (1 << 31):
-            raise ValueError(f"{name} must be a positive int32")
-    if config.topk > 8:
-        raise ValueError("topk must be in [1, 8]")
-    if not isinstance(config.mode, MoEMode):
-        raise TypeError("mode must be a MoEMode")
-    if not isinstance(config.combine_mode, CombineMode):
-        raise TypeError("combine_mode must be a CombineMode")
     latency = config.mode == MoEMode.LATENCY
     layout = config.output_layout
     if layout is None:
         layout = DispatchLayout.EXPERT_MAJOR if latency else DispatchLayout.TOKEN_MAJOR
-    if not isinstance(layout, DispatchLayout):
-        raise TypeError("output_layout must be a DispatchLayout")
-    supported = (
-        (DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR)
-        if latency
-        else (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR)
-    )
-    if layout not in supported:
-        raise ValueError("output_layout is unsupported for the selected mode")
-    if not latency and config.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
-        raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
     world_size = config.comm.nranks
     if not 1 <= world_size <= 64 or config.comm.nranks_per_ipc_domain != world_size:
         raise ValueError("EP requires 1-64 ranks in one CUDA IPC domain")
@@ -555,11 +530,8 @@ def _resolve_config(config: MoECommunicatorConfig) -> MoECommunicatorConfig:
         value = getattr(config, name)
         if value is not None and (type(value) is not int or value != expected):
             raise ValueError(f"{name} must be {expected}; only even contiguous expert placement is supported")
-    if latency:
-        if config.hidden_size not in (4096, 4352, 6656, 7168, 8192, 8704, 9216):
-            raise ValueError("latency hidden_size must be one of 4096, 4352, 6656, 7168, 8192, 8704, 9216")
-    elif num_local > 128 or config.hidden_size % 8:
-        raise ValueError("throughput requires at most 128 experts per rank and 16-byte-aligned BF16 rows")
+    if not latency and num_local > 128:
+        raise ValueError("throughput requires at most 128 experts per rank")
     invalid_id = config.invalid_token_expert_id
     if not latency and invalid_id is not None:
         raise ValueError("invalid_token_expert_id is supported only in LATENCY mode; throughput uses -1")
