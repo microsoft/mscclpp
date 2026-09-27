@@ -216,7 +216,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   void* output = request.output;
   const void* input = request.input;
   const int64_t* topkIdx = metadata->topkIdx_;
-  const float* topkWeights = metadata->topkWeights_;
+  const float* topkWeights = request.applyRouterWeights ? metadata->topkWeights_ : nullptr;
   const int* srcInfo = metadata->srcInfo_;
   const int64_t* layoutRange = metadata->layoutRange_;
   const int numTokens = handle.numTokens_;

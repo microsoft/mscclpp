@@ -98,7 +98,7 @@ kernel is introduced.
 | Mode / layout | `tokens` shape | Returned counts | Physical row grouping | Expert-output contract |
 | --- | --- | --- | --- | --- |
 | LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | One fixed slice per local expert | BF16 per-expert results; native combine applies the original routing weights |
-| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 already-weighted local expert sums |
+| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 weighted local sums, or unweighted per-topk rows for DIRECT_SEND |
 | THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | `layout.num_tokens_per_expert` | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
 | THROUGHPUT / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
@@ -130,9 +130,10 @@ routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
 the required BF16 `combine_input_buffer`. With `CombineMode.DIRECT_SEND`, that
-buffer and expert outputs have shape `[R, A, K, H]`: write already-weighted
-per-topk results, with zero for absent routes. Otherwise write local expert
-sums. Expert computation must write directly into this runtime-owned buffer;
+buffer and expert outputs have shape `[R, A, K, H]`: write unweighted BF16
+per-topk results, with zero for absent routes. Combine applies the original
+routing weights during FP32 reduction. Otherwise write already-weighted local
+expert sums. Expert computation must write directly into this runtime-owned buffer;
 latency rank-major combine rejects external expert-output tensors rather than
 performing a hidden staging copy. Both throughput layouts likewise require
 `combine_input_buffer`: write expert results there directly or copy them there
@@ -141,6 +142,10 @@ is rejected. Throughput dispatch payload, top-k IDs, weights, and FP8 scales
 are also runtime-owned views.
 Combine returns token outputs only; the native runtime no longer produces
 combined top-k weights, so `output_topk_weights` is not a supported argument.
+
+For preweighted expert outputs, use `combine(..., apply_router_weights=False)`
+with latency `DIRECT_SEND` (either layout). The default is `True` for
+`DIRECT_SEND`, `False` otherwise. Other modes ignore this option.
 
 ## Formats and buffers
 

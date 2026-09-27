@@ -238,6 +238,9 @@ struct LatencyCombineRequest {
   int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Apply routing weights in DIRECT_SEND combine; false accepts preweighted
+  /// expert outputs. Ignored by RANK_LOCAL_REDUCE.
+  bool applyRouterWeights = true;
 };
 
 /// Arguments for throughput-mode combine.

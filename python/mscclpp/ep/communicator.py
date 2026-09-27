@@ -383,16 +383,23 @@ class MoECommunicator:
         *,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
+        apply_router_weights: Optional[bool] = None,
     ) -> torch.Tensor:
         """Combine BF16 expert outputs into ``[local_num_tokens, hidden_size]``.
 
-        EXPERT_MAJOR applies the dispatch's original weights natively. Other
-        layouts require already-weighted local expert sums (per-topk results
-        for latency DIRECT_SEND) in ``DispatchOutput.combine_input_buffer``.
+        EXPERT_MAJOR and latency RANK_MAJOR DIRECT_SEND apply routing weights
+        natively. The latter expects unweighted per-topk rows; other rank/token
+        layouts expect already-weighted local expert sums. Non-EXPERT_MAJOR
+        inputs must use ``DispatchOutput.combine_input_buffer``.
+        For latency DIRECT_SEND, set ``apply_router_weights=False`` for
+        preweighted expert outputs. By default it is enabled only for
+        DIRECT_SEND; other modes ignore this option.
         There is no implicit copy from external expert-output tensors.
         The output must not overlap expert inputs or runtime combine storage.
         The caller must ensure these conditions; buffer aliasing is not checked.
         """
+        if apply_router_weights is None:
+            apply_router_weights = self.combine_mode == CombineMode.DIRECT_SEND
         self._validate_handle(handle, DispatchHandle)
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), torch.bfloat16)
         if (
@@ -415,6 +422,7 @@ class MoECommunicator:
                     handle=handle._native,
                     num_blocks=self.num_blocks[1],
                     stream_ptr=caller_stream.cuda_stream,
+                    apply_router_weights=apply_router_weights,
                 )
             else:
                 self._runtime.combine_throughput(

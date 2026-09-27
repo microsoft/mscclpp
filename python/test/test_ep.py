@@ -121,7 +121,7 @@ CASES = [
 ]
 
 
-def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, prepared):
+def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, prepared, apply_router_weights):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
     fp8 = data_type == DispatchDataType.FP8_E4M3
@@ -205,24 +205,30 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
                 tokens = torch.where(valid_rows[..., None], tokens, 0)
 
             if layout == DispatchLayout.EXPERT_MAJOR:
+                if combine_mode == CombineMode.DIRECT_SEND and apply_router_weights is False:
+                    tokens = tokens / NUM_TOPK
                 expert_output = tokens.to(torch.bfloat16)
+            elif mode == MoEMode.LATENCY and combine_mode == CombineMode.DIRECT_SEND:
+                valid_routes = (result.topk_ids >= 0) & (result.topk_ids < num_experts)
+                expert_output = torch.where(valid_routes[..., None], tokens[..., None, :], 0)
+                if apply_router_weights is False:
+                    expert_output = expert_output * result.weights[..., None]
+                expert_output = expert_output.to(torch.bfloat16)
             else:
                 local_weights = (
                     result.weights if valid_rows is None else torch.where(valid_rows[..., None], result.weights, 0)
                 )
-                if mode == MoEMode.LATENCY and combine_mode == CombineMode.DIRECT_SEND:
-                    expert_output = (tokens[..., None, :] * local_weights[..., None]).to(torch.bfloat16)
-                else:
-                    expert_output = (tokens * local_weights.sum(dim=-1, keepdim=True)).to(torch.bfloat16)
+                expert_output = (tokens * local_weights.sum(dim=-1, keepdim=True)).to(torch.bfloat16)
             if result.combine_input_buffer is not None:
                 result.combine_input_buffer.copy_(expert_output)
                 expert_output = result.combine_input_buffer
 
-            combined = runtime.combine(expert_output, handle, stream=stream)
+            combined = runtime.combine(expert_output, handle, stream=stream, apply_router_weights=apply_router_weights)
             expected_weights = torch.where(routes >= 0, weights, 0)
             expected = input.float() * expected_weights.sum(dim=-1, keepdim=True)
             stream.synchronize()
             torch.testing.assert_close(combined.float(), expected, rtol=0, atol=1 if fp8 else 0)
+            torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / NUM_TOPK), rtol=0, atol=0)
             if mode == MoEMode.THROUGHPUT:
                 torch.testing.assert_close(result.tokens.view(torch.uint8), dispatched_bytes, rtol=0, atol=0)
 
@@ -274,9 +280,10 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
 
 
 @pytest.mark.nranks(8)
-def test_dispatch_combine_correctness(ep_group):
+@pytest.mark.parametrize("apply_router_weights", [None, False])
+def test_dispatch_combine_correctness(ep_group, apply_router_weights):
     for case in CASES:
-        _run_dispatch_combine_case(ep_group, *case)
+        _run_dispatch_combine_case(ep_group, *case, apply_router_weights)
         gc.collect()
         ep_group.barrier()
 

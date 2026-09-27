@@ -132,17 +132,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def(
           "combine_latency",
           [](MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t outputPtr, const DispatchHandle& handle,
-             int numBlocks, uintptr_t streamPtr) {
+             int numBlocks, uintptr_t streamPtr, bool applyRouterWeights) {
             self.combine(CombineRequest{LatencyCombineRequest{
                 .output = pointer(outputPtr),
                 .input = pointer<const void>(expertOutputPtr),
                 .handle = handle,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
+                .applyRouterWeights = applyRouterWeights,
             }});
           },
           nb::arg("expert_output_ptr"), nb::arg("output_ptr"), nb::arg("handle"), nb::arg("num_blocks"),
-          nb::arg("stream_ptr"))
+          nb::arg("stream_ptr"), nb::arg("apply_router_weights"))
       .def(
           "combine_throughput",
           [](MoERuntime& self, uintptr_t outputPtr, const DispatchHandle& handle, int numBlocks, uintptr_t streamPtr) {
