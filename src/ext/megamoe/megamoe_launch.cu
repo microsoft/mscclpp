@@ -6,11 +6,16 @@
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <variant>
 
 #include "megamoe_device.cuh"
 #include "megamoe_kernel.hpp"
+
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#include "megamoe_quantization.cuh"
+#endif
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 namespace detail {
@@ -28,14 +33,25 @@ size_t appendRegion(size_t& bytes, size_t regionBytes) {
   return offset;
 }
 
+size_t blockScaleBytes(size_t rows, int width) {
+  const size_t paddedRows = aligned(rows, 128);
+  const size_t scalesPerRow = size_t(width) / 32;
+  if (scalesPerRow && paddedRows > std::numeric_limits<size_t>::max() / scalesPerRow)
+    throw std::overflow_error("MegaMoE block-scale workspace size overflows size_t");
+  return paddedRows * scalesPerRow;
+}
+
 Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   const size_t experts = c.numExperts / c.worldSize;
   const size_t routes = size_t(c.worldSize) * c.maxTokens * c.topK;
   const bool local = isLocalExpert(c);
   const int tileM = local ? LocalTileM : TileM;
-  const int tileN = local ? LocalTileN : TileN;
+  const int tileN = local ? LocalTileN : (c.weightMxfp4 ? W4TileN : TileN);
   const size_t rows =
       local ? aligned(c.maxTokens, LocalTokenAlignment) : aligned(routes + experts * (tileN - 1), tileN);
+  const size_t activationRows = c.weightMxfp4 ? rows / W4TileN * W4TokenStride : rows;
+  if (activationRows > size_t(std::numeric_limits<int>::max()))
+    throw std::invalid_argument("MegaMoE activation workspace exceeds 32-bit row indexing");
   if (rows > size_t(std::numeric_limits<int>::max()) ||
       (rows + tileN - 1) / tileN *
               ((2 * size_t(c.intermediate) + tileM - 1) / tileM + (size_t(c.hidden) + tileM - 1) / tileM) >
@@ -51,16 +67,50 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
     w.counts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.starts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.cursors = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
-    w.inputReady = at<int>(base, appendRegion(bytes, rows / TileN * sizeof(int)));
-    w.hiddenReady = at<int>(base, appendRegion(bytes, rows / TileN * sizeof(int)));
+    w.inputReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
+    w.hiddenReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
+    if (c.weightMxfp4 && w4InputChunks(c.hidden) > 1)
+      w.inputChunkReady =
+          at<int>(base, appendRegion(bytes, rows / tileN * (w4InputChunks(c.hidden) - 1) * sizeof(int)));
     w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
-    w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / TileN * sizeof(TokenBlock)));
-    w.input = at<__bfloat16>(base, appendRegion(bytes, rows * c.hidden * sizeof(__bfloat16)));
+    w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / tileN * sizeof(TokenBlock)));
+    if (c.weightMxfp4) {
+      w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * c.hidden));
+      w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.hidden)));
+    } else {
+      w.input = at<__bfloat16>(base, appendRegion(bytes, rows * c.hidden * sizeof(__bfloat16)));
+    }
   }
-  w.hidden = at<__bfloat16>(base, appendRegion(bytes, rows * c.intermediate * sizeof(__bfloat16)));
+  if (c.weightMxfp4) {
+    w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, activationRows * c.intermediate));
+    w.hiddenScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.intermediate)));
+  } else {
+    w.hidden = at<__bfloat16>(base, appendRegion(bytes, rows * c.intermediate * sizeof(__bfloat16)));
+  }
   w.poolRows = int(rows);
   bytes = aligned(bytes);
   return w;
+}
+
+__device__ __forceinline__ int canonicalFc1Row(int row, int intermediate) {
+  return row / 32 * 16 + row % 16 + (row % 32 >= 16 ? intermediate : 0);
+}
+
+template <int ValuesPerByte>
+__device__ __forceinline__ void packWeightValues(const NativeConfig& c, const PackedWeights& src,
+                                                 const PackedWeights& dst, size_t idx, size_t stride) {
+  int experts = c.numExperts / c.worldSize;
+  int rowBytes = c.hidden / ValuesPerByte;
+  size_t fc1Size = size_t(experts) * 2 * c.intermediate * rowBytes;
+  size_t fc2Size = size_t(experts) * c.hidden * (c.intermediate / ValuesPerByte);
+  for (size_t i = idx; i < fc1Size; i += stride) {
+    int k = i % rowBytes;
+    size_t row = i / rowBytes;
+    int m = row % (2 * c.intermediate);
+    int canonical = canonicalFc1Row(m, c.intermediate);
+    dst.fc1[i] = src.fc1[(row / (2 * c.intermediate) * 2 * c.intermediate + canonical) * rowBytes + k];
+  }
+  for (size_t i = idx; i < fc2Size; i += stride) dst.fc2[i] = src.fc2[i];
 }
 
 __global__ void packWeightsKernel(NativeConfig c, PackedWeights src, PackedWeights dst) {
@@ -69,19 +119,12 @@ __global__ void packWeightsKernel(NativeConfig c, PackedWeights src, PackedWeigh
   int experts = c.numExperts / c.worldSize;
   size_t fc1Size = size_t(experts) * 2 * c.intermediate * c.hidden;
   size_t fc2Size = size_t(experts) * c.hidden * c.intermediate;
-  for (size_t i = idx; i < fc1Size; i += stride) {
-    int k = i % c.hidden;
-    size_t row = i / c.hidden;
-    int m = row % (2 * c.intermediate);
-    int canonical = (m / 32 * 16 + m % 16) + (m % 32 >= 16 ? c.intermediate : 0);
-    dst.fc1[i] = src.fc1[(row / (2 * c.intermediate) * 2 * c.intermediate + canonical) * c.hidden + k];
-  }
-  for (size_t i = idx; i < fc2Size; i += stride) dst.fc2[i] = src.fc2[i];
+  packWeightValues<1>(c, src, dst, idx, stride);
   for (size_t i = idx; i < fc1Size / 32; i += stride) {
     int m = i % (2 * c.intermediate);
     int k = i / (2 * c.intermediate) % (c.hidden / 32);
     size_t expert = i / (size_t(2) * c.intermediate * (c.hidden / 32));
-    int canonical = (m / 32 * 16 + m % 16) + (m % 32 >= 16 ? c.intermediate : 0);
+    int canonical = canonicalFc1Row(m, c.intermediate);
     dst.fc1Scale[i] = src.fc1Scale[(expert * 2 * c.intermediate + canonical) * (c.hidden / 32) + k];
   }
   for (size_t i = idx; i < fc2Size / 32; i += stride) {
@@ -92,15 +135,93 @@ __global__ void packWeightsKernel(NativeConfig c, PackedWeights src, PackedWeigh
   }
 }
 
-template <bool E5M2, bool Local = false>
-Parameters<E5M2, Local> makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, void* workspace,
-                                       const PackedWeights& weights) {
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+using W4ScaleLayout = typename W4A8CollectiveTypes::Mainloop::LayoutSFA;
+
+__global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedWeights dst,
+                                      W4ScaleLayout fc1ScaleLayout, W4ScaleLayout fc2ScaleLayout) {
+  size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  size_t stride = size_t(gridDim.x) * blockDim.x;
+  int experts = c.numExperts / c.worldSize;
+  size_t fc1Rows = size_t(experts) * 2 * c.intermediate;
+  size_t fc2Rows = size_t(experts) * c.hidden;
+  packWeightValues<2>(c, src, dst, idx, stride);
+  size_t fc1Scales = fc1Rows * (c.hidden / 32);
+  for (size_t i = idx; i < fc1Scales; i += stride) {
+    int k = i % (c.hidden / 32);
+    size_t row = i / (c.hidden / 32);
+    int m = row % (2 * c.intermediate);
+    int expert = row / (2 * c.intermediate);
+    int canonical = canonicalFc1Row(m, c.intermediate);
+    size_t destination = fc1ScaleLayout(cute::make_coord(m, k * 32, expert));
+    dst.fc1Scale[destination] = src.fc1Scale[(size_t(expert) * 2 * c.intermediate + canonical) * (c.hidden / 32) + k];
+  }
+  size_t fc2Scales = fc2Rows * (c.intermediate / 32);
+  for (size_t i = idx; i < fc2Scales; i += stride) {
+    int k = i % (c.intermediate / 32);
+    size_t row = i / (c.intermediate / 32);
+    int m = row % c.hidden;
+    int expert = row / c.hidden;
+    size_t destination = fc2ScaleLayout(cute::make_coord(m, k * 32, expert));
+    dst.fc2Scale[destination] = src.fc2Scale[i];
+  }
+}
+
+__global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat16* source, const int32_t* ids,
+                                    const float* scores) {
+  int group = threadIdx.x / 16;
+  int lane = threadIdx.x % 16;
+  int block = blockIdx.x * 8 + group;
+  int blocks = p.config.hidden / 32;
+  if (block >= blocks) return;
+  for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
+    auto staged = at<__bfloat16>(p.local, p.symmetric.input) + size_t(token) * p.config.hidden + block * 32;
+    auto input = source ? source + size_t(token) * p.config.hidden + block * 32 : staged;
+    auto firstValue = input[2 * lane], secondValue = input[2 * lane + 1];
+    if (input != staged) {
+      staged[2 * lane] = firstValue;
+      staged[2 * lane + 1] = secondValue;
+    }
+    if (blockIdx.x == 0 && threadIdx.x < p.config.topK && ids) {
+      int index = token * p.config.topK + threadIdx.x;
+      at<int32_t>(p.local, p.symmetric.topkIds)[index] = ids[index];
+      at<float>(p.local, p.symmetric.topkWeights)[index] = scores[index];
+    }
+    float first = float(firstValue);
+    float second = float(secondValue);
+    float maximum = fmaxf(fabsf(first), fabsf(second));
+    CUTE_UNROLL
+    for (int offset = 8; offset > 0; offset /= 2)
+      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, 16));
+    uint8_t scale = quantizeE8M0Scale(maximum);
+    float inverse = inverseE8M0Scale(scale);
+    auto output =
+        at<uint8_t>(p.local, p.symmetric.quantizedInput) + size_t(token) * p.config.hidden + block * 32 + 2 * lane;
+    *reinterpret_cast<uint16_t*>(output) = quantizeE4M3Pair(first, second, inverse);
+    if (lane == 0)
+      at<uint8_t>(p.local,
+                  p.symmetric.quantizedInputScale)[size_t(token) * w4SourceScaleStride(p.config.hidden) + block] =
+          scale;
+  }
+}
+
+W4ScaleLayout makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
   using namespace cute;
-  using Mainloop = typename CollectiveTypes<E5M2, Local>::Mainloop;
-  using Weight = typename CollectiveTypes<E5M2, Local>::Weight;
-  using Scale = typename CollectiveTypes<E5M2, Local>::Scale;
-  using Activation = typename CollectiveTypes<E5M2, Local>::Activation;
-  Parameters<E5M2, Local> p{};
+  ProblemShape shape{m, n, k, experts};
+  if (!activation) return W4A8CollectiveTypes::ScaleConfig::tile_atom_to_shape_SFA(shape);
+  auto layout = W4A8CollectiveTypes::ScaleConfig::tile_atom_to_shape_SFB(shape);
+  return make_layout(cute::shape(layout), make_stride(get<0>(cute::stride(layout)), get<1>(cute::stride(layout)),
+                                                      make_stride(_0{}, int32_t(0))));
+}
+
+#endif
+
+template <class P>
+P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, void* workspace,
+                 const PackedWeights& weights) {
+  using namespace cute;
+  using Mainloop = typename P::Collective::Mainloop;
+  P p{};
   p.config = c;
   p.symmetric = getSymmetricLayout(c);
   p.local = symmetric;
@@ -108,30 +229,79 @@ Parameters<E5M2, Local> makeParameters(const NativeConfig& c, void* symmetric, c
   size_t bytes;
   p.workspace = workspaceLayout(c, workspace, bytes);
   int experts = c.numExperts / c.worldSize;
-  auto make = [&](int m, int k, int rows, uint8_t* weight, uint8_t* scale, __bfloat16* input) {
+  auto make = [&](int m, int k, int rows, uint8_t* weight, uint8_t* weightScale, void* input,
+                  uint8_t* inputScale = nullptr) {
     ProblemShape shape{m, rows, k, experts};
     typename Mainloop::Arguments args{};
-    args.ptr_A = reinterpret_cast<const Weight*>(weight);
+    args.ptr_A = reinterpret_cast<decltype(args.ptr_A)>(weight);
     args.dA = make_stride(int64_t(k), _1{}, int64_t(m) * k);
-    args.ptr_B = reinterpret_cast<const Activation*>(input);
+    args.ptr_B = reinterpret_cast<decltype(args.ptr_B)>(input);
     args.dB = make_stride(int64_t(k), _1{}, int64_t(0));
-    args.ptr_S = reinterpret_cast<const Scale*>(scale);
-    args.layout_S = ScaleConfig::tile_atom_to_shape_scale(make_shape(m, k, experts));
-    if (!Mainloop::can_implement(shape, args)) throw std::invalid_argument("MegaMoE TMA input layout is unsupported");
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+    if constexpr (P::WeightMxfp4) {
+      args.ptr_SFA = reinterpret_cast<decltype(args.ptr_SFA)>(weightScale);
+      args.layout_SFA = makeW4ScaleLayout(m, rows, k, experts, false);
+      args.ptr_SFB = reinterpret_cast<decltype(args.ptr_SFB)>(inputScale);
+      args.layout_SFB = makeW4ScaleLayout(m, rows, k, experts, true);
+      const size_t actualSfaBytes = size_t(cosize(args.layout_SFA));
+      const size_t actualSfbBytes = size_t(cosize(args.layout_SFB));
+      const size_t expectedSfaBytes = size_t(m) * (k / 32) * experts;
+      const size_t expectedSfbBytes = blockScaleBytes(rows, k);
+      if (actualSfaBytes != expectedSfaBytes || actualSfbBytes != expectedSfbBytes)
+        throw std::invalid_argument("MegaMoE W4A8 block-scale layout sizes are unsupported: SFA " +
+                                    std::to_string(actualSfaBytes) + "/" + std::to_string(expectedSfaBytes) + ", SFB " +
+                                    std::to_string(actualSfbBytes) + "/" + std::to_string(expectedSfbBytes));
+    } else
+#endif
+    {
+      args.ptr_S = reinterpret_cast<decltype(args.ptr_S)>(weightScale);
+      args.layout_S = ScaleConfig::tile_atom_to_shape_scale(make_shape(m, k, experts));
+    }
+    if (!Mainloop::can_implement(shape, args))
+      throw std::invalid_argument(P::WeightMxfp4 ? "MegaMoE W4A8 TMA input layout is unsupported"
+                                                 : "MegaMoE TMA input layout is unsupported");
     return Mainloop::to_underlying_arguments(shape, args, nullptr);
   };
-  p.fc1 = make(2 * c.intermediate, c.hidden, p.workspace.poolRows, weights.fc1, weights.fc1Scale,
-               isLocalExpert(c) ? at<__bfloat16>(symmetric, p.symmetric.input) : p.workspace.input);
-  p.fc2 = make(c.hidden, c.intermediate, p.workspace.poolRows, weights.fc2, weights.fc2Scale, p.workspace.hidden);
+  if constexpr (P::WeightMxfp4) {
+    const int activationRows = w4StorageRow(p.workspace.poolRows);
+    p.fc1 = make(2 * c.intermediate, c.hidden, activationRows, weights.fc1, weights.fc1Scale,
+                 p.workspace.quantizedInput, p.workspace.inputScale);
+    p.fc2 = make(c.hidden, c.intermediate, activationRows, weights.fc2, weights.fc2Scale, p.workspace.quantizedHidden,
+                 p.workspace.hiddenScale);
+  } else {
+    p.fc1 = make(2 * c.intermediate, c.hidden, p.workspace.poolRows, weights.fc1, weights.fc1Scale,
+                 isLocalExpert(c) ? at<__bfloat16>(symmetric, p.symmetric.input) : p.workspace.input);
+    p.fc2 = make(c.hidden, c.intermediate, p.workspace.poolRows, weights.fc2, weights.fc2Scale, p.workspace.hidden);
+  }
   return p;
+}
+
+cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, cudaStream_t stream,
+                                    cudaLaunchAttribute& attribute) {
+  attribute.id = cudaLaunchAttributeClusterDimension;
+  attribute.val.clusterDim = {ClusterM, 1, 1};
+  cudaLaunchConfig_t launch{};
+  launch.gridDim = dim3(ctas);
+  launch.blockDim = dim3(threads);
+  launch.dynamicSmemBytes = sharedBytes;
+  launch.stream = stream;
+  launch.attrs = &attribute;
+  launch.numAttrs = 1;
+  return launch;
 }
 
 }  // namespace detail
 
 struct KernelPlan {
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  std::variant<detail::Parameters<false>, detail::Parameters<true>, detail::Parameters<false, true>,
+               detail::Parameters<true, true>, detail::W4A8Parameters>
+      params;
+#else
   std::variant<detail::Parameters<false>, detail::Parameters<true>, detail::Parameters<false, true>,
                detail::Parameters<true, true>>
       params;
+#endif
   int ctas;
   int device;
   size_t sharedBytes = 0;
@@ -149,6 +319,10 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE requires evenly partitioned experts and 1 <= topK <= min(32, experts)");
   if (c.smMargin < 0 || !std::isfinite(c.gateUpClamp))
     throw std::invalid_argument("MegaMoE smMargin must be nonnegative and gateUpClamp must be finite");
+  if (c.weightE5M2 && c.weightMxfp4)
+    throw std::invalid_argument("MegaMoE weightE5M2 and weightMxfp4 are mutually exclusive");
+  if (c.weightMxfp4 && detail::isLocalExpert(c))
+    throw std::invalid_argument("MegaMoE W4A8 currently supports routed experts only");
   if (size_t(c.worldSize) * c.maxTokens * c.topK > size_t(std::numeric_limits<int>::max()))
     throw std::invalid_argument("MegaMoE routing capacity exceeds 32-bit indexing");
 }
@@ -167,6 +341,13 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   layout.peerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.expectedPeerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.tokenCount = detail::appendRegion(layout.bytes, sizeof(int));
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  if (c.weightMxfp4) {
+    layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
+    layout.quantizedInputScale =
+        detail::appendRegion(layout.bytes, size_t(c.maxTokens) * detail::w4SourceScaleStride(c.hidden));
+  }
+#endif
   layout.bytes = detail::aligned(layout.bytes);
   return layout;
 }
@@ -184,6 +365,19 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
   if (!source.fc1 || !source.fc1Scale || !source.fc2 || !source.fc2Scale || !destination.fc1 || !destination.fc1Scale ||
       !destination.fc2 || !destination.fc2Scale)
     throw std::invalid_argument("MegaMoE weight buffers must be non-null");
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  if (c.weightMxfp4) {
+    int experts = c.numExperts / c.worldSize;
+    auto fc1ScaleLayout = detail::makeW4ScaleLayout(2 * c.intermediate, 1, c.hidden, experts, false);
+    auto fc2ScaleLayout = detail::makeW4ScaleLayout(c.hidden, 1, c.intermediate, experts, false);
+    if (size_t(cute::cosize(fc1ScaleLayout)) != size_t(experts) * 2 * c.intermediate * (c.hidden / 32) ||
+        size_t(cute::cosize(fc2ScaleLayout)) != size_t(experts) * c.hidden * (c.intermediate / 32))
+      throw std::invalid_argument("MegaMoE W4A8 weight-scale layout size is unsupported");
+    detail::packW4A8WeightsKernel<<<256, 256, 0, stream>>>(c, source, destination, fc1ScaleLayout, fc2ScaleLayout);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    return;
+  }
+#endif
   detail::packWeightsKernel<<<256, 256, 0, stream>>>(c, source, destination);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
@@ -199,45 +393,47 @@ KernelResources preflightKernel(const NativeConfig& c) {
   if (c.smMargin > properties.multiProcessorCount - 2)
     throw std::invalid_argument("MegaMoE smMargin must leave at least two SMs");
   resources.ctas = (properties.multiProcessorCount - c.smMargin) / detail::ClusterM * detail::ClusterM;
-  auto configure = [&]<bool E5M2, int LocalMode>() {
-    constexpr bool Local = LocalMode != 0;
-    constexpr int Entry = Local ? detail::LocalEntryRegisters : detail::EntryRegisters;
-    auto kernel = detail::kernelEntry<E5M2, LocalMode>();
-    resources.sharedBytes = std::max(resources.sharedBytes, sizeof(detail::SharedStorage<E5M2, Local>));
+  const std::string name = c.weightMxfp4 ? "MegaMoE W4A8" : "MegaMoE";
+  auto configure = [&](auto kernel, int threads, int entryRegisters, size_t sharedBytes) {
+    resources.sharedBytes = std::max(resources.sharedBytes, sharedBytes);
     cudaFuncAttributes attributes{};
     MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
-    if (attributes.numRegs < Entry)
-      throw std::runtime_error("MegaMoE entry register allocation is too small for warpgroup reconfiguration");
+    if (attributes.numRegs < entryRegisters)
+      throw std::runtime_error(name + " entry register allocation is too small for warpgroup reconfiguration");
     if (resources.sharedBytes + attributes.sharedSizeBytes > properties.sharedMemPerBlockOptin)
-      throw std::invalid_argument("MegaMoE specialization exceeds the device's shared memory limit");
+      throw std::invalid_argument(name + " specialization exceeds the device's shared memory limit");
     MSCCLPP_CUDATHROW(
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
     cudaLaunchAttribute attribute{};
-    attribute.id = cudaLaunchAttributeClusterDimension;
-    attribute.val.clusterDim = {detail::ClusterM, 1, 1};
-    cudaLaunchConfig_t launch{};
-    launch.gridDim = dim3(resources.ctas);
-    launch.blockDim = dim3(Local ? detail::LocalThreads : detail::Threads);
-    launch.dynamicSmemBytes = resources.sharedBytes;
-    launch.attrs = &attribute;
-    launch.numAttrs = 1;
+    auto launch = detail::makeLaunchConfig(resources.ctas, threads, resources.sharedBytes, nullptr, attribute);
     int clusters = 0;
     MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
     resources.ctas = std::min(resources.ctas, clusters * detail::ClusterM);
-    if (resources.ctas < detail::ClusterM) throw std::runtime_error("MegaMoE cannot keep a two-CTA cluster resident");
+    if (resources.ctas < detail::ClusterM) throw std::runtime_error(name + " cannot keep a two-CTA cluster resident");
+  };
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  if (c.weightMxfp4) {
+    configure(detail::w4a8KernelEntry(), detail::W4Threads, detail::EntryRegisters, sizeof(detail::W4A8SharedStorage));
+    return resources;
+  }
+#endif
+  auto configureW8A16 = [&]<bool E5M2, int LocalMode>() {
+    constexpr bool Local = LocalMode != 0;
+    configure(detail::kernelEntry<E5M2, LocalMode>(), Local ? detail::LocalThreads : detail::Threads,
+              Local ? detail::LocalEntryRegisters : detail::EntryRegisters, sizeof(detail::SharedStorage<E5M2, Local>));
   };
   if (detail::isLocalExpert(c)) {
     if (c.weightE5M2) {
-      configure.template operator()<true, 1>();
-      configure.template operator()<true, 2>();
+      configureW8A16.template operator()<true, 1>();
+      configureW8A16.template operator()<true, 2>();
     } else {
-      configure.template operator()<false, 1>();
-      configure.template operator()<false, 2>();
+      configureW8A16.template operator()<false, 1>();
+      configureW8A16.template operator()<false, 2>();
     }
   } else if (c.weightE5M2) {
-    configure.template operator()<true, 0>();
+    configureW8A16.template operator()<true, 0>();
   } else {
-    configure.template operator()<false, 0>();
+    configureW8A16.template operator()<false, 0>();
   }
   return resources;
 }
@@ -252,14 +448,20 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
   plan->ctas = resources.ctas;
   plan->sharedBytes = resources.sharedBytes;
   plan->localExpert = detail::isLocalExpert(c);
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  if (c.weightMxfp4) {
+    plan->params = detail::makeParameters<detail::W4A8Parameters>(c, symmetric, peers, workspace, weights);
+    return plan;
+  }
+#endif
   if (plan->localExpert && c.weightE5M2) {
-    plan->params = detail::makeParameters<true, true>(c, symmetric, peers, workspace, weights);
+    plan->params = detail::makeParameters<detail::Parameters<true, true>>(c, symmetric, peers, workspace, weights);
   } else if (plan->localExpert) {
-    plan->params = detail::makeParameters<false, true>(c, symmetric, peers, workspace, weights);
+    plan->params = detail::makeParameters<detail::Parameters<false, true>>(c, symmetric, peers, workspace, weights);
   } else if (c.weightE5M2) {
-    plan->params = detail::makeParameters<true>(c, symmetric, peers, workspace, weights);
+    plan->params = detail::makeParameters<detail::Parameters<true>>(c, symmetric, peers, workspace, weights);
   } else {
-    plan->params = detail::makeParameters<false>(c, symmetric, peers, workspace, weights);
+    plan->params = detail::makeParameters<detail::Parameters<false>>(c, symmetric, peers, workspace, weights);
   }
   return plan;
 }
@@ -269,7 +471,8 @@ size_t kernelPlanSharedBytes(const KernelPlan& plan) { return plan.sharedBytes; 
 
 namespace {
 void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream,
-                uint32_t* startSignal, bool unweightedShared) {
+                uint32_t* startSignal, bool unweightedShared, const void* input = nullptr, const int32_t* ids = nullptr,
+                const float* scores = nullptr) {
   if (!plan) throw std::invalid_argument("MegaMoE kernel plan is null");
   if (unweightedShared && !plan->localExpert)
     throw std::invalid_argument("Shared forward requires a single local expert");
@@ -281,31 +484,41 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
         if (tokens < 0 || tokens > params.config.maxTokens || (tokens && !output))
           throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
         constexpr bool E5M2 = std::decay_t<decltype(params)>::WeightE5M2;
+        constexpr bool W4A8 = std::decay_t<decltype(params)>::WeightMxfp4;
         if (plan->localExpert && tokens) {
           const size_t tokenBlocks = (tokens + detail::LocalTileN - 1) / detail::LocalTileN;
           MSCCLPP_CUDATHROW(cudaMemsetAsync(params.workspace.hiddenReady, 0, tokenBlocks * sizeof(int), stream));
         }
         cudaLaunchAttribute attribute{};
-        attribute.id = cudaLaunchAttributeClusterDimension;
-        attribute.val.clusterDim = {detail::ClusterM, 1, 1};
-        cudaLaunchConfig_t launch{};
-        launch.gridDim = dim3(plan->ctas);
-        launch.blockDim = dim3(plan->localExpert ? detail::LocalThreads : detail::Threads);
-        launch.dynamicSmemBytes = plan->sharedBytes;
-        launch.stream = stream;
-        launch.attrs = &attribute;
-        launch.numAttrs = 1;
-        auto run = [&]<int LocalMode>(std::integral_constant<int, LocalMode>) {
-          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::kernelEntry<E5M2, LocalMode>(), params, tokens,
+        auto launch = detail::makeLaunchConfig(plan->ctas, std::decay_t<decltype(params)>::ThreadCount,
+                                               plan->sharedBytes, stream, attribute);
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+        if constexpr (W4A8) {
+          if (tokens) {
+            dim3 threads(128);
+            dim3 blocks((params.config.hidden / 32 + 7) / 8, std::min(tokens, 65535));
+            detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
+                params, tokens, static_cast<const __bfloat16*>(input), ids, scores);
+            MSCCLPP_CUDATHROW(cudaGetLastError());
+          }
+          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(), params, tokens,
                                                static_cast<__bfloat16*>(output), startSignal));
-        };
-        if constexpr (std::decay_t<decltype(params)>::LocalExpert) {
-          if (unweightedShared) {
-            run(std::integral_constant<int, 2>{});
-          } else
-            run(std::integral_constant<int, 1>{});
-        } else {
-          run(std::integral_constant<int, 0>{});
+          return;
+        }
+#endif
+        if constexpr (!W4A8) {
+          auto run = [&]<int LocalMode>(std::integral_constant<int, LocalMode>) {
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::kernelEntry<E5M2, LocalMode>(), params, tokens,
+                                                 static_cast<__bfloat16*>(output), startSignal));
+          };
+          if constexpr (std::decay_t<decltype(params)>::LocalExpert) {
+            if (unweightedShared) {
+              run(std::integral_constant<int, 2>{});
+            } else
+              run(std::integral_constant<int, 1>{});
+          } else {
+            run(std::integral_constant<int, 0>{});
+          }
         }
       },
       plan->params);
@@ -315,6 +528,11 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
 void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream,
                          uint32_t* startSignal) {
   launchPlan(plan, tokens, output, stream, startSignal, false);
+}
+
+void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
+                      const float* scores, int tokens, void* output, cudaStream_t stream, uint32_t* startSignal) {
+  launchPlan(plan, tokens, output, stream, startSignal, false, input, ids, scores);
 }
 
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream) {

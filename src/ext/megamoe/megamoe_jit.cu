@@ -59,7 +59,8 @@ NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
   if (!c || (c->weightE5M2 != 0 && c->weightE5M2 != 1))
     throw std::invalid_argument("Invalid MegaMoE JIT configuration");
   return NativeConfig{c->rank,       c->worldSize, c->maxTokens, c->hidden,           c->intermediate,
-                      c->numExperts, c->topK,      c->smMargin,  bool(c->weightE5M2), c->gateUpClamp};
+                      c->numExperts, c->topK,      c->smMargin,  bool(c->weightE5M2), c->gateUpClamp,
+                      false};
 }
 
 PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {

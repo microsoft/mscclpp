@@ -67,6 +67,7 @@ void register_megamoe(nb::module_& m) {
       .def_rw("top_k", &NativeConfig::topK)
       .def_rw("sm_margin", &NativeConfig::smMargin)
       .def_rw("weight_e5m2", &NativeConfig::weightE5M2)
+      .def_rw("weight_mxfp4", &NativeConfig::weightMxfp4)
       .def_rw("gate_up_clamp", &NativeConfig::gateUpClamp);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(

@@ -12,16 +12,21 @@ import time
 
 def _weights(config, device):
     import torch
-    from .quantization import quantize_mxfp8
+    from .quantization import quantize_mxfp4, quantize_mxfp8
 
-    dtype = torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn
     tensors = []
     for m, k in ((2 * config.intermediate, config.hidden), (config.hidden, config.intermediate)):
-        values = torch.empty((config.local_experts, m, k), dtype=dtype, device=device)
+        value_shape = (config.local_experts, m, k // 2) if config.weight_mxfp4 else (config.local_experts, m, k)
+        dtype = (
+            torch.uint8 if config.weight_mxfp4 else (torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn)
+        )
+        values = torch.empty(value_shape, dtype=dtype, device=device)
         scales = torch.empty((config.local_experts, m, k // 32), dtype=torch.uint8, device=device)
         for expert in range(config.local_experts):
             source = torch.randn((m, k), dtype=torch.float32, device=device) / k**0.5
-            quantized, scale = quantize_mxfp8(source, e5m2=config.weight_e5m2)
+            quantized, scale = (
+                quantize_mxfp4(source) if config.weight_mxfp4 else quantize_mxfp8(source, e5m2=config.weight_e5m2)
+            )
             values[expert].copy_(quantized)
             scales[expert].copy_(scale)
         tensors.extend((values, scales))
@@ -32,7 +37,7 @@ def _reference(config, inputs, ids, scores, weights):
     import torch
     import torch.distributed as dist
     import torch.nn.functional as functional
-    from .quantization import dequantize_mxfp8
+    from .quantization import dequantize_mxfp4, dequantize_mxfp8, quantize_mxfp8
 
     def gather(tensor):
         host = tensor.cpu()
@@ -47,14 +52,25 @@ def _reference(config, inputs, ids, scores, weights):
         token, slot = torch.where(all_ids == config.rank * config.local_experts + expert)
         if not token.numel():
             continue
-        first = dequantize_mxfp8(fc1[expert], fc1_scale[expert]).float()
-        second = dequantize_mxfp8(fc2[expert], fc2_scale[expert]).float()
-        gate, up = (all_inputs[token].float() @ first.T).chunk(2, dim=-1)
+        dequantize = dequantize_mxfp4 if config.weight_mxfp4 else dequantize_mxfp8
+        decoded_dtype = torch.float32 if config.weight_mxfp4 else torch.bfloat16
+        first = dequantize(fc1[expert], fc1_scale[expert], dtype=decoded_dtype).float()
+        second = dequantize(fc2[expert], fc2_scale[expert], dtype=decoded_dtype).float()
+        expert_input = all_inputs[token].float()
+        if config.weight_mxfp4:
+            expert_input = dequantize_mxfp8(*quantize_mxfp8(expert_input), dtype=torch.float32)
+        gate, up = (expert_input @ first.T).chunk(2, dim=-1)
         if config.gate_up_clamp >= 0:
             gate = gate.clamp(max=config.gate_up_clamp)
             up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
-        hidden = (functional.silu(gate) * up * all_scores[token, slot, None]).to(torch.bfloat16)
-        partial[token, slot] = (hidden.float() @ second.T).to(torch.bfloat16).float()
+        hidden = functional.silu(gate) * up
+        if config.weight_mxfp4:
+            hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
+            result = (hidden @ second.T) * all_scores[token, slot, None]
+        else:
+            hidden = (hidden * all_scores[token, slot, None]).to(torch.bfloat16)
+            result = hidden.float() @ second.T
+        partial[token, slot] = result.to(torch.bfloat16).float()
     host_partial = partial.cpu()
     dist.all_reduce(host_partial)
     first_token = config.rank * inputs.shape[0]
@@ -71,6 +87,9 @@ def main():
     parser.add_argument("--sm-margin", type=int, default=32)
     parser.add_argument("--gate-up-clamp", type=float, default=-1.0)
     parser.add_argument("--e5m2", action="store_true")
+    parser.add_argument(
+        "--mxfp4", action="store_true", help="MXFP4 weights with dynamically quantized MXFP8 activations"
+    )
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
@@ -91,6 +110,8 @@ def main():
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
+    if args.e5m2 and args.mxfp4:
+        parser.error("--e5m2 and --mxfp4 are mutually exclusive")
 
     import torch
     import torch.distributed as dist
@@ -107,10 +128,10 @@ def main():
     if not torch.cuda.is_available():
         parser.error("native MegaMoE requires SM100 CUDA GPUs")
     torch.cuda.set_device(local_rank)
-    kernel = compile_kernel(
-        KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m),
-        cache_dir=args.cache_dir,
-    )
+    kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
+    if args.mxfp4 and kernel_config != KernelConfig():
+        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N32/K256/load5 kernel")
+    kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
     # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
@@ -129,6 +150,7 @@ def main():
         top_k=args.top_k,
         sm_margin=args.sm_margin,
         weight_e5m2=args.e5m2,
+        weight_mxfp4=args.mxfp4,
         gate_up_clamp=args.gate_up_clamp,
     )
     device = torch.device("cuda", local_rank)
@@ -192,7 +214,7 @@ def main():
             "workspace_bytes": context.workspace_bytes,
             "initialization_ms": initialization_ms,
             "kernel_id": context.kernel_id,
-            "kernel_config": vars(context.kernel_config),
+            "kernel_config": context.effective_kernel_config,
             "samples_us": samples,
             "correctness": correctness,
         },

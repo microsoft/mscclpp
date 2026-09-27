@@ -33,6 +33,7 @@ class MegaMoEConfig:
     sm_margin: int = 0
     weight_e5m2: bool = False
     gate_up_clamp: float = -1.0
+    weight_mxfp4: bool = False
 
     def __post_init__(self):
         for name in (
@@ -62,6 +63,12 @@ class MegaMoEConfig:
             raise ValueError("routing capacity exceeds signed 32-bit indexing")
         if not isinstance(self.weight_e5m2, bool):
             raise ValueError("weight_e5m2 must be bool")
+        if not isinstance(self.weight_mxfp4, bool):
+            raise ValueError("weight_mxfp4 must be bool")
+        if self.weight_e5m2 and self.weight_mxfp4:
+            raise ValueError("weight_e5m2 and weight_mxfp4 are mutually exclusive")
+        if self.weight_mxfp4 and (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
+            raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
 
@@ -92,12 +99,13 @@ class MegaMoE:
     """Routed SwiGLU experts with CUDA Graph-compatible MSCCL++ communication.
 
     Construction is collective, outside graph capture, on one SM100 GPU per rank
-    in the same active NVLink fabric. ``fc1`` and ``fc2`` are canonical FP8 tensors
-    [local_experts, 2*I, H] and [local_experts, H, I]. The first I FC1 rows are gate
-    and the second I rows are up. Scales are uint8 E8M0 tensors [local_experts, M,
-    K//32]; no backend-specific swizzle is accepted. Weights are packed into
-    context-owned allocations, so original weight tensors may be released after
-    construction.
+    in the same active NVLink fabric. By default, ``fc1`` and ``fc2`` are canonical
+    FP8 tensors [local_experts, 2*I, H] and [local_experts, H, I]. With
+    ``weight_mxfp4=True``, they are packed uint8 [local_experts, 2*I, H//2] and
+    [local_experts, H, I//2], with the even K element in the lower nibble. The
+    first I FC1 rows are gate and the second I rows are up. Scales are canonical
+    uint8 E8M0 tensors [local_experts, M, K//32]. Weights are packed into
+    context-owned allocations, so original tensors may be released after construction.
 
     Contexts and input views must outlive all ranks' outstanding launches and
     graphs. Do not run two forwards or graph replays concurrently on one context.
@@ -147,16 +155,22 @@ class MegaMoE:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError("Construct MegaMoE before CUDA Graph capture")
         e, h, i = config.local_experts, config.hidden, config.intermediate
-        dtype = torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn
-        _tensor(fc1, "fc1", (e, 2 * i, h), dtype, self.device)
+        dtype = (
+            torch.uint8 if config.weight_mxfp4 else (torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn)
+        )
+        fc1_shape = (e, 2 * i, h // 2) if config.weight_mxfp4 else (e, 2 * i, h)
+        fc2_shape = (e, h, i // 2) if config.weight_mxfp4 else (e, h, i)
+        _tensor(fc1, "fc1", fc1_shape, dtype, self.device)
         _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
-        _tensor(fc2, "fc2", (e, h, i), dtype, self.device)
+        _tensor(fc2, "fc2", fc2_shape, dtype, self.device)
         _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
         if kernel is None:
             kernel = KernelConfig()
         if not isinstance(kernel, (KernelConfig, CompiledKernel)):
             raise TypeError("kernel must be KernelConfig, CompiledKernel, or None")
         selected = kernel if isinstance(kernel, KernelConfig) else kernel.config
+        if config.weight_mxfp4 and selected != KernelConfig():
+            raise ValueError("MXFP4/MXFP8 currently supports the builtin kernel specialization only")
         if (config.world_size, config.num_experts, config.top_k) == (1, 1, 1) and selected != KernelConfig():
             raise ValueError("JIT specialization applies to routed experts; the local shared kernel is fixed")
         if isinstance(kernel, KernelConfig):
@@ -182,6 +196,17 @@ class MegaMoE:
     def kernel_config(self):
         """Routed specialization selected before context construction."""
         return self._kernel.config
+
+    @property
+    def effective_kernel_config(self):
+        """Actual tile and pipeline values used by the native kernel."""
+        return {
+            "tile_m": self._native.kernel_tile_m,
+            "tile_n": self._native.kernel_tile_n,
+            "tile_k": self._native.kernel_tile_k,
+            "load_stages": self._native.kernel_load_stages,
+            "transform_stages": self._native.kernel_transform_stages,
+        }
 
     @property
     def kernel_id(self):

@@ -8,8 +8,8 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-template <bool E5M2>
-__device__ int localExpert(const Parameters<E5M2>& p, int id, int rank, int token, int slot) {
+template <class P>
+__device__ int localExpert(const P& p, int id, int rank, int token, int slot) {
   if (id < -1 || id >= p.config.numExperts) {
     printf("MegaMoE rank %d: invalid expert %d from rank %d, token %d, slot %d\n", p.config.rank, id, rank, token,
            slot);
@@ -21,33 +21,37 @@ __device__ int localExpert(const Parameters<E5M2>& p, int id, int rank, int toke
              : -1;
 }
 
-template <bool E5M2>
-__device__ int routeExpert(const Parameters<E5M2>& p, int rank, int token, int slot) {
-  if (token >= *peerAt<E5M2, int>(p, rank, p.symmetric.tokenCount)) return -1;
-  int id = peerAt<E5M2, int>(p, rank, p.symmetric.topkIds)[token * p.config.topK + slot];
+template <class P>
+__device__ int routeExpert(const P& p, int rank, int token, int slot) {
+  if (token >= *peerAt<int>(p, rank, p.symmetric.tokenCount)) return -1;
+  int id = peerAt<int>(p, rank, p.symmetric.topkIds)[token * p.config.topK + slot];
   return localExpert(p, id, rank, token, slot);
 }
 
-template <bool E5M2>
-__device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& scratch) {
+template <bool Prefetched = false, class P>
+__device__ void prepareSmallRoutes(const P& p, RoutingStorage& scratch, const int* stagedIds = nullptr,
+                                   const float* stagedWeights = nullptr, int stagedStride = 0) {
+  constexpr int RoutingTileN = P::WeightMxfp4 ? W4TileN : TileN;
+  constexpr int PlannerThreads = P::ThreadCount;
+  constexpr int SlotsPerThread = (SmallRoutingSlots + PlannerThreads - 1) / PlannerThreads;
   const auto& c = p.config;
   const auto& w = p.workspace;
   int experts = c.numExperts / c.worldSize;
   int slots = c.worldSize * c.maxTokens * c.topK;
   if (threadIdx.x < experts) scratch.counts[threadIdx.x] = 0;
-  if (threadIdx.x < c.worldSize) {
+  if (!Prefetched && threadIdx.x < c.worldSize) {
     // Each peer-owning thread has already waited for that peer's publication.
     scratch.peers[threadIdx.x] = p.peers[threadIdx.x];
-    scratch.tokenCounts[threadIdx.x] = *peerAt<E5M2, int>(p, threadIdx.x, p.symmetric.tokenCount);
+    scratch.tokenCounts[threadIdx.x] = *peerAt<int>(p, threadIdx.x, p.symmetric.tokenCount);
   }
   __syncthreads();
 
-  int assignedExperts[SmallRoutingSlots / Threads];
-  int expertRows[SmallRoutingSlots / Threads];
-  float weights[SmallRoutingSlots / Threads];
+  int assignedExperts[SlotsPerThread];
+  int expertRows[SlotsPerThread];
+  float weights[SlotsPerThread];
   CUTE_UNROLL
-  for (int j = 0; j < SmallRoutingSlots / Threads; ++j) {
-    int i = threadIdx.x + j * Threads;
+  for (int j = 0; j < SlotsPerThread; ++j) {
+    int i = threadIdx.x + j * PlannerThreads;
     int expert = -1;
     if (i < slots) {
       int rank = i / (c.maxTokens * c.topK);
@@ -55,8 +59,10 @@ __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& sc
       int slot = i % c.topK;
       if (token < scratch.tokenCounts[rank]) {
         void* peer = reinterpret_cast<void*>(scratch.peers[rank]);
-        int id = at<int>(peer, p.symmetric.topkIds)[token * c.topK + slot];
-        weights[j] = at<float>(peer, p.symmetric.topkWeights)[token * c.topK + slot];
+        int id = Prefetched ? stagedIds[rank * stagedStride + token * c.topK + slot]
+                            : at<int>(peer, p.symmetric.topkIds)[token * c.topK + slot];
+        weights[j] = Prefetched ? stagedWeights[rank * stagedStride + token * c.topK + slot]
+                                : at<float>(peer, p.symmetric.topkWeights)[token * c.topK + slot];
         expert = localExpert(p, id, rank, token, slot);
       }
     }
@@ -69,7 +75,7 @@ __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& sc
     for (int base = 0; base < experts; base += 32) {
       int expert = base + threadIdx.x;
       int count = expert < experts ? scratch.counts[expert] : 0;
-      int blocks = (count + TileN - 1) / TileN;
+      int blocks = (count + RoutingTileN - 1) / RoutingTileN;
       int scan = blocks;
       CUTE_UNROLL
       for (int distance = 1; distance < 32; distance *= 2) {
@@ -78,10 +84,10 @@ __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& sc
       }
       int firstBlock = preceding + scan - blocks;
       if (expert < experts) {
-        scratch.starts[expert] = w.starts[expert] = firstBlock * TileN;
+        scratch.starts[expert] = w.starts[expert] = firstBlock * RoutingTileN;
         w.counts[expert] = w.cursors[expert] = count;
         for (int block = 0; block < blocks; ++block)
-          w.blocks[firstBlock + block] = TokenBlock{expert, min(int(TileN), count - block * TileN)};
+          w.blocks[firstBlock + block] = TokenBlock{expert, min(int(RoutingTileN), count - block * RoutingTileN)};
       }
       preceding += __shfl_sync(0xffffffff, scan, 31);
     }
@@ -89,10 +95,10 @@ __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& sc
   }
   __syncthreads();
   CUTE_UNROLL
-  for (int j = 0; j < SmallRoutingSlots / Threads; ++j) {
+  for (int j = 0; j < SlotsPerThread; ++j) {
     int expert = assignedExperts[j];
     if (expert >= 0) {
-      int i = threadIdx.x + j * Threads;
+      int i = threadIdx.x + j * PlannerThreads;
       int rank = i / (c.maxTokens * c.topK);
       int token = i / c.topK % c.maxTokens;
       int slot = i % c.topK;
@@ -101,14 +107,70 @@ __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& sc
   }
 }
 
-template <bool E5M2>
-__device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStorage& scratch) {
+template <class P>
+__device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W4DispatchStorage* dispatch = nullptr) {
+  constexpr int RoutingTileN = P::WeightMxfp4 ? W4TileN : TileN;
   const auto& c = p.config;
   const auto& w = p.workspace;
-  int thread = blockIdx.x * Threads + threadIdx.x;
-  int stride = gridDim.x * Threads;
+  int thread = blockIdx.x * P::ThreadCount + threadIdx.x;
+  int stride = gridDim.x * P::ThreadCount;
+  if constexpr (P::WeightMxfp4) {
+    if (c.worldSize * c.maxTokens * c.topK <= SmallRoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
+      if (blockIdx.x == 0) {
+        if (threadIdx.x == 0) {
+          w.control->epoch = ++*at<uint64_t>(p.local, p.symmetric.epoch);
+          w.control->completedCtas = 0;
+          *at<int>(p.local, p.symmetric.tokenCount) = tokens;
+        }
+        __syncthreads();
+        if (threadIdx.x < c.worldSize) signalAndWait(p, threadIdx.x);
+        bool prefetched = false;
+#if MSCCLPP_BULK_AVAILABLE
+        int slotStride = (c.maxTokens * c.topK + 3) / 4 * 4;
+        int peerBytes = slotStride * sizeof(int);
+        if (dispatch && 2 * c.worldSize * peerBytes <= sizeof(dispatch->tiles)) {
+          auto stagedIds = reinterpret_cast<int*>(dispatch->tiles);
+          auto stagedWeights = reinterpret_cast<float*>(stagedIds + c.worldSize * slotStride);
+          auto& barrier = dispatch->barriers[0][0];
+          if (threadIdx.x == 0) {
+            barrier.init();
+            barrier.arriveAndExpect(2 * c.worldSize * peerBytes);
+          }
+          __syncthreads();
+          if (threadIdx.x < c.worldSize) {
+            int peer = threadIdx.x;
+            bulkLoad(stagedIds + peer * slotStride, peerAt<int>(p, peer, p.symmetric.topkIds), peerBytes, barrier);
+            bulkLoad(stagedWeights + peer * slotStride, peerAt<float>(p, peer, p.symmetric.topkWeights), peerBytes,
+                     barrier);
+            scratch.peers[peer] = p.peers[peer];
+            scratch.tokenCounts[peer] = *peerAt<int>(p, peer, p.symmetric.tokenCount);
+          }
+          if (threadIdx.x == 0) {
+            uint32_t phase = 0;
+            barrier.wait(phase, SpinLimit);
+            bulkFence();
+          }
+          __syncthreads();
+          prepareSmallRoutes<true>(p, scratch, stagedIds, stagedWeights, slotStride);
+          if (threadIdx.x == 0) barrier.invalidate();
+          prefetched = true;
+        }
+#endif
+        if (!prefetched) prepareSmallRoutes(p, scratch);
+        for (int block = threadIdx.x; block < w.control->tokenBlocks; block += P::ThreadCount) {
+          w.inputReady[block] = 0;
+          w.hiddenReady[block] = 0;
+          for (int chunk = 0; chunk < w4InputChunks(c.hidden) - 1; ++chunk)
+            w.inputChunkReady[size_t(block) * (w4InputChunks(c.hidden) - 1) + chunk] = 0;
+        }
+      }
+      w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+      return;
+    }
+  }
   if (thread == 0) {
     w.control->epoch = ++*at<uint64_t>(p.local, p.symmetric.epoch);
+    if constexpr (P::WeightMxfp4) w.control->completedCtas = 0;
     *at<int>(p.local, p.symmetric.tokenCount) = tokens;
   }
   for (int e = thread; e < c.numExperts / c.worldSize; e += stride) {
@@ -116,9 +178,12 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
     w.cursors[e] = 0;
   }
   for (int r = thread; r < w.poolRows; r += stride) w.routes[r].rank = -1;
-  for (int b = thread; b < w.poolRows / TileN; b += stride) {
+  for (int b = thread; b < w.poolRows / RoutingTileN; b += stride) {
     w.inputReady[b] = 0;
     w.hiddenReady[b] = 0;
+    if constexpr (P::WeightMxfp4)
+      for (int chunk = 0; chunk < w4InputChunks(c.hidden) - 1; ++chunk)
+        w.inputChunkReady[size_t(b) * (w4InputChunks(c.hidden) - 1) + chunk] = 0;
   }
   auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
   for (size_t i = thread; i < size_t(tokens) * c.topK * c.hidden; i += stride) partial[i] = __bfloat16(0.0f);
@@ -149,9 +214,9 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
   if (thread == 0) {
     int block = 0;
     for (int e = 0; e < c.numExperts / c.worldSize; ++e) {
-      w.starts[e] = block * TileN;
-      for (int row = 0; row < w.counts[e]; row += TileN)
-        w.blocks[block++] = TokenBlock{e, min(int(TileN), w.counts[e] - row)};
+      w.starts[e] = block * RoutingTileN;
+      for (int row = 0; row < w.counts[e]; row += RoutingTileN)
+        w.blocks[block++] = TokenBlock{e, min(int(RoutingTileN), w.counts[e] - row)};
     }
     w.control->tokenBlocks = block;
   }
@@ -164,7 +229,7 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
     int expert = routeExpert(p, rank, token, slot);
     if (expert >= 0) {
       int row = w.starts[expert] + atomicFetchAdd<int, scopeDevice>(w.cursors + expert, 1, memoryOrderRelaxed);
-      float weight = peerAt<E5M2, float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];
+      float weight = peerAt<float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];
       w.routes[row] = Route{rank, token, slot, weight};
     }
   }
@@ -187,7 +252,7 @@ __device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, Shared
          row += gridDim.x * DispatchWarpCount) {
       Route route = w.routes[row];
       if (route.rank < 0) continue;
-      auto src = reinterpret_cast<const uint8_t*>(peerAt<E5M2, __bfloat16>(p, route.rank, p.symmetric.input) +
+      auto src = reinterpret_cast<const uint8_t*>(peerAt<__bfloat16>(p, route.rank, p.symmetric.input) +
                                                   size_t(route.token) * p.config.hidden);
       auto dst = reinterpret_cast<uint8_t*>(w.input + size_t(row) * p.config.hidden);
       auto load = [&](int chunk) {

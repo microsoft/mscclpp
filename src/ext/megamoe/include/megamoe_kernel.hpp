@@ -26,6 +26,7 @@ struct NativeConfig {
   bool weightE5M2 = false;
   // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
   float gateUpClamp = -1.0f;
+  bool weightMxfp4 = false;
 };
 
 struct SymmetricLayout {
@@ -38,6 +39,8 @@ struct SymmetricLayout {
   size_t peerSignals = 0;
   size_t expectedPeerSignals = 0;
   size_t tokenCount = 0;
+  size_t quantizedInput = 0;
+  size_t quantizedInputScale = 0;
 };
 
 struct PackedWeights {
@@ -57,8 +60,10 @@ struct KernelResources {
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 
-// Input weights are canonical [E_local, 2I, H] / [E_local, H, I] with
-// row-major E8M0 scales [E_local, M, K/32]. Packing preserves byte counts.
+// MXFP8 weights are canonical [E_local, 2I, H] / [E_local, H, I]. MXFP4
+// weights are packed uint8 [E_local, 2I, H/2] / [E_local, H, I/2], with
+// the lower nibble holding the even K element. Both use canonical row-major
+// E8M0 scales [E_local, M, K/32].
 void packNativeWeights(const NativeConfig& config, const PackedWeights& source, const PackedWeights& destination,
                        cudaStream_t stream);
 
@@ -78,6 +83,8 @@ int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream,
                          uint32_t* startSignal = nullptr);
+void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
+                      const float* scores, int numTokens, void* output, cudaStream_t stream, uint32_t* startSignal);
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
                               cudaStream_t stream);
 

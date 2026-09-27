@@ -11,7 +11,7 @@ if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS "13.3")
     message(FATAL_ERROR "Native MegaMoE requires CUDA nvcc/ptxas >=13.3 for packed FP8-to-BF16 conversion.")
 endif()
 
-set(MSCCLPP_MEGAMOE_CUTLASS_ROOT "" CACHE PATH "Standalone CUTLASS source directory for native MegaMoE")
+set(MSCCLPP_MEGAMOE_CUTLASS_ROOT "" CACHE PATH "CUTLASS source directory for native MegaMoE")
 if(NOT MSCCLPP_MEGAMOE_CUTLASS_ROOT)
     include(FetchContent)
     FetchContent_Declare(megamoe_cutlass
@@ -55,6 +55,10 @@ install(FILES megamoe.cu megamoe_launch.cu megamoe_jit.cu LICENSE.cutlass "${PRO
     DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}")
 install(FILES
     include/megamoe_collective.cuh
+    include/megamoe_quantization.cuh
+    include/megamoe_w4a8_collective.cuh
+    include/megamoe_w4a8_roles.cuh
+    include/megamoe_trace.cuh
     include/megamoe_device.cuh
     include/megamoe_epilogue.cuh
     include/megamoe_mma.cuh

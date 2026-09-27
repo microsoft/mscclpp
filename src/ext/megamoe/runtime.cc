@@ -141,7 +141,7 @@ size_t product(std::initializer_list<size_t> factors) {
 }
 
 struct RankInfo {
-  std::array<int, 9> config;
+  std::array<int, 10> config;
   int tag = 0;
   std::array<int, 5> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
@@ -156,8 +156,8 @@ struct RankInfo {
 
 RankInfo rankInfo(const NativeConfig& c, int device) {
   RankInfo info{};
-  info.config = {c.worldSize, c.maxTokens,       c.hidden, c.intermediate, c.numExperts, c.topK,
-                 c.smMargin,  int(c.weightE5M2), 1};
+  info.config = {c.worldSize, c.maxTokens, c.hidden,          c.intermediate,     c.numExperts,
+                 c.topK,      c.smMargin,  int(c.weightE5M2), int(c.weightMxfp4), 1};
   info.gateUpClamp = c.gateUpClamp;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)
@@ -218,10 +218,15 @@ bool overlaps(const void* a, size_t aBytes, const void* b, size_t bBytes) {
   return aBytes && bBytes && (x <= y ? y - x < aBytes : x - y < bBytes);
 }
 
-void stage(void* destination, const void* source, size_t bytes, cudaStream_t stream) {
+void validateStage(void* destination, const void* source, size_t bytes) {
   if (!bytes || source == destination) return;
   if (!source || overlaps(source, bytes, destination, bytes))
     throw std::invalid_argument("MegaMoE input must be non-null and not partially overlap its staging buffer");
+}
+
+void stage(void* destination, const void* source, size_t bytes, cudaStream_t stream) {
+  validateStage(destination, source, bytes);
+  if (!bytes || source == destination) return;
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(destination, source, bytes, cudaMemcpyDeviceToDevice, stream));
 }
 
@@ -300,6 +305,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       p.workspaceBytes = getPrivateWorkspaceBytes(c);
       p.resources = preflightKernel(c);
     } else {
+      if (c.weightMxfp4) throw std::invalid_argument("MegaMoE W4A8 currently supports the builtin kernel only");
       // Even rejected modules must stay mapped until Impl synchronizes: CUDA
       // may still have deferred registration work referencing their host stubs.
       p.module = std::make_shared<JitModule>();
@@ -309,11 +315,17 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       MegaMoeJitLayoutV1 layout{};
       char error[ErrorCapacity]{};
       checkJit(p.module->api->preflight(&config, &layout, error, sizeof(error)), error, "preflight");
-      p.layout = SymmetricLayout{size_t(layout.symmetricBytes), size_t(layout.input),
-                                 size_t(layout.topkIds),        size_t(layout.topkWeights),
-                                 size_t(layout.partialOutput),  size_t(layout.epoch),
-                                 size_t(layout.peerSignals),    size_t(layout.expectedPeerSignals),
-                                 size_t(layout.tokenCount)};
+      p.layout = SymmetricLayout{size_t(layout.symmetricBytes),
+                                 size_t(layout.input),
+                                 size_t(layout.topkIds),
+                                 size_t(layout.topkWeights),
+                                 size_t(layout.partialOutput),
+                                 size_t(layout.epoch),
+                                 size_t(layout.peerSignals),
+                                 size_t(layout.expectedPeerSignals),
+                                 size_t(layout.tokenCount),
+                                 0,
+                                 0};
       p.workspaceBytes = size_t(layout.privateBytes);
       p.resources = KernelResources{layout.ctaCount, p.device, size_t(layout.sharedBytes)};
       if (!p.layout.bytes || !p.workspaceBytes || !p.resources.sharedBytes || p.resources.ctas < detail::ClusterM ||
@@ -338,10 +350,12 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
     p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
     size_t localExperts = c.numExperts / c.worldSize;
-    const std::array<size_t, 4> sizes{product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden)}),
-                                      product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden / 32)}),
-                                      product({localExperts, size_t(c.hidden), size_t(c.intermediate)}),
-                                      product({localExperts, size_t(c.hidden), size_t(c.intermediate / 32)})};
+    const size_t valueDivisor = c.weightMxfp4 ? 2 : 1;
+    const std::array<size_t, 4> sizes{
+        product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden)}) / valueDivisor,
+        product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden / 32)}),
+        product({localExperts, size_t(c.hidden), size_t(c.intermediate)}) / valueDivisor,
+        product({localExperts, size_t(c.hidden), size_t(c.intermediate / 32)})};
     for (size_t i = 0; i < sizes.size(); ++i) p.weightBuffers[i] = mscclpp::detail::gpuCallocShared<uint8_t>(sizes[i]);
     packed = PackedWeights{p.weightBuffers[0].get(), p.weightBuffers[1].get(), p.weightBuffers[2].get(),
                            p.weightBuffers[3].get()};
@@ -417,13 +431,21 @@ size_t MegaMoeContext::symmetricBytes() const { return impl_->layout.bytes; }
 size_t MegaMoeContext::privateBytes() const { return impl_->workspaceBytes; }
 const std::string& MegaMoeContext::kernelId() const { return impl_->kernelId; }
 int MegaMoeContext::kernelTileM() const { return impl_->module ? impl_->module->api->tileM : detail::TileM; }
-int MegaMoeContext::kernelTileN() const { return impl_->module ? impl_->module->api->tileN : detail::TileN; }
-int MegaMoeContext::kernelTileK() const { return impl_->module ? impl_->module->api->tileK : detail::TileK; }
+int MegaMoeContext::kernelTileN() const {
+  if (impl_->module) return impl_->module->api->tileN;
+  return impl_->config.weightMxfp4 ? detail::W4TileN : detail::TileN;
+}
+int MegaMoeContext::kernelTileK() const {
+  if (impl_->module) return impl_->module->api->tileK;
+  return impl_->config.weightMxfp4 ? detail::W4TileK : detail::TileK;
+}
 int MegaMoeContext::kernelLoadStages() const {
-  return impl_->module ? impl_->module->api->loadStages : detail::LoadStages;
+  if (impl_->module) return impl_->module->api->loadStages;
+  return impl_->config.weightMxfp4 ? detail::W4LoadStages : detail::LoadStages;
 }
 int MegaMoeContext::kernelTransformStages() const {
-  return impl_->module ? impl_->module->api->transformStages : detail::TransformStages;
+  if (impl_->module) return impl_->module->api->transformStages;
+  return impl_->config.weightMxfp4 ? 0 : detail::TransformStages;
 }
 
 size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {
@@ -443,9 +465,21 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   const size_t inputBytes = validateForward(x, output, tokens);
   const size_t routingBytes = size_t(tokens) * config().topK * 4;
   if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
-  stage(input(), x, inputBytes, stream);
-  stage(topkIds(), ids, routingBytes, stream);
-  stage(topkWeights(), scores, routingBytes, stream);
+  // Cross-input aliases require the original ordered copies rather than concurrent staging.
+  const bool fusedStage =
+      config().weightMxfp4 && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
+      !overlaps(x, inputBytes, topkWeights(), routingBytes) && !overlaps(ids, routingBytes, input(), inputBytes) &&
+      !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
+      !overlaps(scores, routingBytes, input(), inputBytes) && !overlaps(scores, routingBytes, topkIds(), routingBytes);
+  if (fusedStage) {
+    validateStage(input(), x, inputBytes);
+    validateStage(topkIds(), ids, routingBytes);
+    validateStage(topkWeights(), scores, routingBytes);
+  } else {
+    stage(input(), x, inputBytes, stream);
+    stage(topkIds(), ids, routingBytes, stream);
+    stage(topkWeights(), scores, routingBytes, stream);
+  }
   impl_->startRecorded = false;
   if (signalStart) {
     MSCCLPP_CUDATHROW(cudaMemsetAsync(impl_->startSignal.get(), 0, sizeof(uint32_t), stream));
@@ -457,6 +491,8 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     checkJit(
         impl_->module->api->launch(impl_->jitPlan->handle, tokens, output, stream, signal, 0, error, sizeof(error)),
         error, "launch");
+  } else if (fusedStage) {
+    launchNativeW4A8(impl_->plan, x, ids, scores, tokens, output, stream, signal);
   } else {
     launchNativeMegaMoe(impl_->plan, tokens, output, stream, signal);
   }

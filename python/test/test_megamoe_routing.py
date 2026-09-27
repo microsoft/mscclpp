@@ -27,9 +27,9 @@ _JIT_ONLY = pytest.mark.skipif(
 
 
 def _routing_reference(config, sample, weights):
-    """Match the benchmark's BF16 handoffs and FP32 slot sum, entirely on CPU."""
+    """Match the configured quantization and FP32 slot sum, entirely on CPU."""
     import torch
-    from mscclpp.ext.megamoe import dequantize_mxfp8
+    from mscclpp.ext.megamoe import dequantize_mxfp4, dequantize_mxfp8, quantize_mxfp8
 
     inputs, ids, scores = sample
     assert all(tensor.device.type == "cpu" for tensor in (*sample, *weights))
@@ -44,14 +44,24 @@ def _routing_reference(config, sample, weights):
         rows, slots = torch.where(ids == expert)
         if rows.numel() == 0:
             continue
-        first = dequantize_mxfp8(fc1[expert], sf1[expert], dtype=torch.float32)
-        second = dequantize_mxfp8(fc2[expert], sf2[expert], dtype=torch.float32)
-        gate, up = (inputs[rows].float() @ first.T).chunk(2, dim=-1)
+        dequantize = dequantize_mxfp4 if config.weight_mxfp4 else dequantize_mxfp8
+        first = dequantize(fc1[expert], sf1[expert], dtype=torch.float32)
+        second = dequantize(fc2[expert], sf2[expert], dtype=torch.float32)
+        expert_input = inputs[rows].float()
+        if config.weight_mxfp4:
+            expert_input = dequantize_mxfp8(*quantize_mxfp8(expert_input), dtype=torch.float32)
+        gate, up = (expert_input @ first.T).chunk(2, dim=-1)
         if config.gate_up_clamp >= 0:
             gate = gate.clamp(max=config.gate_up_clamp)
             up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
-        activation = (torch.nn.functional.silu(gate) * up * scores[rows, slots, None]).to(torch.bfloat16)
-        partial[rows, slots] = (activation.float() @ second.T).to(torch.bfloat16).float()
+        activation = torch.nn.functional.silu(gate) * up
+        if config.weight_mxfp4:
+            activation = dequantize_mxfp8(*quantize_mxfp8(activation), dtype=torch.float32)
+            result = (activation @ second.T) * scores[rows, slots, None]
+        else:
+            activation = (activation * scores[rows, slots, None]).to(torch.bfloat16)
+            result = activation.float() @ second.T
+        partial[rows, slots] = result.to(torch.bfloat16).float()
     return partial.sum(dim=1).to(torch.bfloat16)
 
 
@@ -139,7 +149,9 @@ class _Runtime:
             pytest.fail("\n".join(message for message in errors if message), pytrace=False)
         return result
 
-    def config(self, capacity, *, local_experts=8, top_k=2, e5m2=False, clamp=-1.0, intermediate=128):
+    def config(
+        self, capacity, *, local_experts=8, top_k=2, e5m2=False, mxfp4=False, clamp=-1.0, hidden=128, intermediate=128
+    ):
         from mscclpp.ext.megamoe import MegaMoEConfig
 
         sms = self.torch.cuda.get_device_properties(self.device).multi_processor_count
@@ -147,13 +159,14 @@ class _Runtime:
             rank=self.rank,
             world_size=self.world,
             max_tokens=capacity,
-            hidden=128,
+            hidden=hidden,
             intermediate=intermediate,
             num_experts=local_experts * self.world,
             top_k=top_k,
             sm_margin=max(0, sms - 8),
             weight_e5m2=e5m2,
             gate_up_clamp=clamp,
+            weight_mxfp4=mxfp4,
         )
 
 
@@ -354,10 +367,11 @@ def test_routing_cpu_oracle_duplicate_slots_and_masked_nan(e5m2, clamp):
 
 
 @pytest.mark.parametrize("top_k", [1, 2])
-def test_native_routing_capacity_boundary(routing_runtime, top_k):
+@pytest.mark.parametrize("mxfp4", [False, True])
+def test_native_routing_capacity_boundary(routing_runtime, top_k, mxfp4):
     runtime, torch = routing_runtime, routing_runtime.torch
     capacity = 1024 // (runtime.world * top_k)
-    configs = [runtime.config(capacity + extra, top_k=top_k) for extra in (0, 1)]
+    configs = [runtime.config(capacity + extra, top_k=top_k, mxfp4=mxfp4) for extra in (0, 1)]
     assert configs[0].world_size * configs[0].max_tokens * top_k == 1024
     assert configs[1].world_size * configs[1].max_tokens * top_k > 1024
     weights = _host_weights(configs[0])
@@ -390,9 +404,10 @@ def test_native_routing_capacity_boundary(routing_runtime, top_k):
 
 
 @pytest.mark.parametrize("local_experts", [128, 129])
-def test_native_routing_local_expert_boundary(routing_runtime, local_experts):
+@pytest.mark.parametrize("mxfp4", [False, True])
+def test_native_routing_local_expert_boundary(routing_runtime, local_experts, mxfp4):
     runtime, torch = routing_runtime, routing_runtime.torch
-    config = runtime.config(129, local_experts=local_experts, top_k=1)
+    config = runtime.config(129, local_experts=local_experts, top_k=1, mxfp4=mxfp4)
     assert config.world_size * config.max_tokens * config.top_k <= 1024
     weights = _host_weights(config)
     sample = _sample(config, 129, "sweep")
@@ -407,23 +422,65 @@ def test_native_routing_local_expert_boundary(routing_runtime, local_experts):
         _check_output(runtime, buffers, sample, expected)
 
 
+@pytest.mark.parametrize("capacity,direct", [(33, False), (129, True)])
+def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct):
+    runtime, torch = routing_runtime, routing_runtime.torch
+    config = runtime.config(capacity, local_experts=2, top_k=2, mxfp4=True, hidden=2176, intermediate=256)
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights)
+        storage = _buffers(runtime, context, direct)
+        graphs = {}
+        counts = {count: max(0, count - runtime.rank) for count in (0, 1, capacity)}
+        for nominal, tokens in counts.items():
+            with torch.cuda.stream(case.stream):
+                _stage(storage, _sample(config, tokens, "hot_first"))
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            graphs[nominal] = graph
+        for nominal in (capacity, 1, 0, capacity):
+            tokens = counts[nominal]
+            for pattern in ("hot_first", "masked", "hot_last", "mixed", "random"):
+                sample = _sample(config, tokens, pattern)
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    graphs[nominal].replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)
+
+
 @pytest.mark.parametrize(
-    "kernel_values,e5m2,clamp,direct",
+    "kernel_values,e5m2,mxfp4,clamp,direct",
     [
-        pytest.param(None, False, -1.0, False, id="N32L8T7-e4-staged"),
-        pytest.param(None, True, 0.125, True, id="N32L8T7-e5-clamp-direct"),
-        pytest.param((32, 6, 7), False, 0.125, False, marks=_JIT_ONLY, id="N32L6T7-e4-clamp"),
-        pytest.param((64, 6, 6), True, -1.0, True, marks=_JIT_ONLY, id="N64L6T6-e5-direct"),
-        pytest.param((128, 4, 4), False, -1.0, False, marks=_JIT_ONLY, id="N128L4T4-e4-staged"),
+        pytest.param(None, False, False, -1.0, False, id="N32L8T7-e4-staged"),
+        pytest.param(None, True, False, 0.125, True, id="N32L8T7-e5-clamp-direct"),
+        pytest.param(None, False, True, 0.125, False, id="W4A8-N32K256L5-staged"),
+        pytest.param(None, False, True, -1.0, True, id="W4A8-N32K256L5-direct"),
+        pytest.param((32, 6, 7), False, False, 0.125, False, marks=_JIT_ONLY, id="N32L6T7-e4-clamp"),
+        pytest.param((64, 6, 6), True, False, -1.0, True, marks=_JIT_ONLY, id="N64L6T6-e5-direct"),
+        pytest.param((128, 4, 4), False, False, -1.0, False, marks=_JIT_ONLY, id="N128L4T4-e4-staged"),
     ],
 )
-def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, clamp, direct):
+def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4, clamp, direct):
     from mscclpp.ext.megamoe import jit
 
     runtime, torch = routing_runtime, routing_runtime.torch
     # Keep the 129-token graph inside the fast path even with four ranks.
     top_k = 1 if runtime.world == 4 else 2
-    config = runtime.config(129, top_k=top_k, e5m2=e5m2, clamp=clamp, intermediate=256)
+    config = runtime.config(
+        129,
+        top_k=top_k,
+        e5m2=e5m2,
+        mxfp4=mxfp4,
+        clamp=clamp,
+        hidden=384 if mxfp4 else 128,
+        intermediate=640 if mxfp4 else 256,
+    )
     assert config.world_size * config.max_tokens * config.top_k <= 1024
     weights = _host_weights(config)
     kernel = None
@@ -435,6 +492,14 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, clamp,
 
         def check_kernel():
             assert context.kernel_config == jit.KernelConfig(*(kernel_values or (32, 8, 7)))
+            if mxfp4:
+                assert context.effective_kernel_config == {
+                    "tile_m": 256,
+                    "tile_n": 32,
+                    "tile_k": 256,
+                    "load_stages": 5,
+                    "transform_stages": 0,
+                }
             if kernel_values is None:
                 assert context.kernel_id == "builtin"
 

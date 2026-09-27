@@ -1,9 +1,9 @@
 # Native CUDA MegaMoE (experimental)
 
-Inference-only SwiGLU experts with BF16 activations, MXFP8 weights, and native
-MSCCL++ communication. The extension does not depend on FlashInfer or NVSHMEM.
-Torch is required for the Python tensor adapter and benchmarks, not the native
-library.
+Inference-only SwiGLU experts with BF16 API activations, MXFP8 or MXFP4
+weights, and native MSCCL++ communication. The extension does not depend on
+FlashInfer or NVSHMEM. Torch is required for the Python tensor adapter and
+benchmarks, not the native library.
 
 ## Build
 
@@ -36,6 +36,15 @@ JIT C ABI entrypoint. Other internal headers separate device state
 (`megamoe_device.cuh`), routing/dispatch (`megamoe_routing.cuh`), and
 SwiGLU/epilogue/top-k combine (`megamoe_epilogue.cuh`). All three CUDA files and
 their headers ship in the JIT source bundle.
+
+W8A16 and W4A8 share the `KernelParameters` aggregate, `TilePolicy`, epilogue
+scratch layout, task indexing, and epilogue warp loop. Their common epilogue
+handles TMEM reads, SwiGLU staging, BF16 output packing and peer stores; compile-time
+branches preserve each precision's activation handoff and router-weight placement.
+Host parameter construction, weight-value packing, resource checks and cluster
+launch configuration are also shared. W8A16's weight transform and W4A8's
+block-scaled MMA/chunk-ready dispatch remain separate algorithms in
+`megamoe_roles.cuh` and `megamoe_w4a8_roles.cuh`, respectively.
 
 ## API
 
@@ -74,6 +83,68 @@ All tensors must be contiguous on the owning GPU. Scales use canonical K32
 blocks, not a backend-specific swizzle. For E5M2 weights, pass `e5m2=True` to
 quantization and `weight_e5m2=True` in the config.
 
+For native W4A8, set `weight_mxfp4=True` and use `quantize_mxfp4`. Packed
+weights are uint8 `[local_experts,2*I,H//2]` / `[local_experts,H,I//2]`;
+the even K element occupies the lower nibble. BF16 input rows are quantized to
+MXFP8 E4M3 plus E8M0 K32 scales before dispatch. Both values and scales use bulk
+peer pulls; scale rows are internally padded to 16 bytes, staged in shared
+memory, and packed locally into the MMA scale layout. FC1 uses FP32 accumulation and
+SwiGLU, then quantizes the unweighted hidden row to MXFP8. FC2 accumulates in
+FP32, applies the FP32 router weight, and emits BF16 partials for the existing
+FP32 top-k combination.
+
+Dispatch double-buffers 2 KiB input chunks with their corresponding K32 scales.
+Each chunk is published only after its values have reached the local input pool
+and its scales are visible in the MMA layout. The activation loader waits for all
+valid rows of the current N tile's chunk, then issues its K256 TMA loads; MMA
+consumes completed pipeline stages without waiting for the rest of the H dimension.
+The last chunk also marks the full row ready. Chunk counters are reset on every
+forward, including CUDA Graph replay; partial chunks retain the H/I multiple-of-128
+contract.
+
+W4A8 fuses BF16 input staging and routing-array copies into input quantization;
+exact input-buffer aliases remain supported, and cross-input aliases retain the
+ordered-copy path. Small route plans bulk-prefetch peer metadata into reusable
+dispatch storage. Only live routing rows are consumed, and masked slots are
+excluded from combination rather than requiring a full partial-buffer clear.
+The final completing CTA publishes GPU completion after acquiring all preceding
+CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
+
+The W4A8 path is routed-only and uses the builtin SM100
+M256/N32/K256/load5 block-scaled specialization with 16 warps. Separate weight
+and activation loader warps share a five-stage pipeline. Both must publish their
+TMA transaction counts before a stage can become ready. Mainloop warps retain
+128 registers, independently of the 32-register dispatch warps. FC1 quantization
+uses warp reductions over live token groups without staging the activated values
+back through shared memory or iterating through inactive groups.
+N32 uses a 64-row storage pitch to preserve even TMEM scale-column alignment;
+the MMA and activation-value TMA still process 32 rows. K tails are zero-filled
+by TMA, preserving support for H/I divisible by 128.
+Local shared experts and routed
+JIT specializations remain W8A16; passing a custom `KernelConfig` with
+`weight_mxfp4=True` is rejected.
+
+For an experimental native warp timeline, build with
+`-DMSCCLPP_MEGAMOE_W4_TRACE=1`. This enables bounded `%globaltimer` records on
+the first two CTAs, with separate routing, dispatch, loader acquire/issue, MMA
+wait/issue, epilogue, output-join, and local top-k reduction ranges. The debug
+`mscclpp_megamoe_w4_trace_reset/copy` exports must be called only after the
+context's CUDA work is synchronized. This is native C++ instrumentation, not
+CuTe DSL's `run-iket`; normal builds compile it out. Trace durations include
+instrumentation overhead and must not be used as uninstrumented latency.
+`-DMSCCLPP_MEGAMOE_W4_TRACE=2` retains coarse ranges but removes per-K timestamp
+reads and readiness probes, for lower-perturbation graph-phase measurements.
+`-DMSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES=1` separates weight/SFA and activation/SFB
+barriers for diagnosis with two loaders. The MMA waits for both inputs and
+releases each buffer only after its asynchronous use; the default shared-barrier
+schedule remains unchanged. Per-input waits are sequential observations, not
+independent TMA transfer-duration measurements.
+
+For controlled compile-time experiments, the `MSCCLPP_MEGAMOE_W4_` macros in
+`megamoe_specialization.hpp` select the token/K tiles, load stages, warp count,
+mainloop register budget, epilogue token chunk, and dispatch buffer geometry.
+Keep definitions consistent across a library's translation units and across ranks.
+
 Routing IDs must be in `[0,E)` and weights finite. Optional
 `validate_routing=True` checks values with a host synchronization and cannot be
 used during capture; shape, dtype, and device checks always run. Routing weights
@@ -84,6 +155,8 @@ are BF16; top-k combination sums in FP32 and returns BF16.
 120 CTAs. `moe.cta_count` reports the actual count after occupancy and two-CTA
 cluster alignment. This is not a fixed SM-ID partition or exclusive reservation.
 `moe.workspace_bytes` reports workspace sizes, excluding packed weights.
+Use `sm_margin=0` for routed-only measurements; reserve CTAs only when another
+concurrent branch needs them.
 
 For routing capacity `world_size * max_tokens * top_k <= 1024` and at most
 128 local experts, routing preparation uses one CTA with cached peer headers,
@@ -151,7 +224,7 @@ torchrun --nnodes=1 --nproc-per-node=4 \
   --master-addr=127.0.0.1 --master-port=29500 \
   -m mscclpp.ext.megamoe.benchmark \
   --tokens 32 --hidden 4096 --intermediate 4352 --experts 64 --top-k 7 \
-  --sm-margin 32 --check --input-mode staged
+  --sm-margin 0 --check --input-mode staged
 ```
 
 This measures staging, dispatch, expert GEMMs, SwiGLU, return, and combination.
@@ -164,6 +237,11 @@ include their producer. `--no-graph` selects ordinary launches instead of CUDA
 Graphs. `--tile-m`, `--tile-n`, `--tile-k`, `--load-stages`, and
 `--transform-stages` select a routed JIT specialization; defaults select the
 precompiled kernel.
+
+Add `--mxfp4` to benchmark the routed W4A8 path. This keeps BF16 public inputs,
+includes the input MXFP8 quantization kernel in timing, and reports the fixed
+effective M256/N32/K256/load5 specialization. It cannot be combined with
+`--e5m2` or nondefault JIT tile/stage flags.
 
 ### Complete synthetic MoE layer
 

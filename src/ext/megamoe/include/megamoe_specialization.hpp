@@ -19,6 +19,36 @@
 #ifndef MSCCLPP_MEGAMOE_TRANSFORM_STAGES
 #define MSCCLPP_MEGAMOE_TRANSFORM_STAGES 7
 #endif
+#ifndef MSCCLPP_MEGAMOE_W4_TILE_N
+#define MSCCLPP_MEGAMOE_W4_TILE_N 32
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_TILE_K
+#define MSCCLPP_MEGAMOE_W4_TILE_K 256
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_LOAD_STAGES
+#define MSCCLPP_MEGAMOE_W4_LOAD_STAGES 5
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_NUM_WARPS
+#define MSCCLPP_MEGAMOE_W4_NUM_WARPS 16
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_TRANSFER_REGISTERS
+#define MSCCLPP_MEGAMOE_W4_TRANSFER_REGISTERS 128
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_LOAD_WARPS
+#define MSCCLPP_MEGAMOE_W4_LOAD_WARPS 2
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES
+#define MSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES 0
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_EPILOGUE_TOKENS
+#define MSCCLPP_MEGAMOE_W4_EPILOGUE_TOKENS 32
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK
+#define MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK 2048
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS
+#define MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS 4
+#endif
 
 #if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
 #define MSCCLPP_MEGAMOE_KERNEL_NAMESPACE mscclpp::megamoe::jit
@@ -35,6 +65,29 @@ constexpr int TileN = MSCCLPP_MEGAMOE_TILE_N;
 constexpr int TileK = MSCCLPP_MEGAMOE_TILE_K;
 constexpr int LoadStages = MSCCLPP_MEGAMOE_LOAD_STAGES;
 constexpr int TransformStages = MSCCLPP_MEGAMOE_TRANSFORM_STAGES;
+constexpr int W4TileN = MSCCLPP_MEGAMOE_W4_TILE_N;
+constexpr int W4TileK = MSCCLPP_MEGAMOE_W4_TILE_K;
+constexpr int W4LoadStages = MSCCLPP_MEGAMOE_W4_LOAD_STAGES;
+constexpr int W4NumWarps = MSCCLPP_MEGAMOE_W4_NUM_WARPS;
+constexpr int W4TransferRegisters = MSCCLPP_MEGAMOE_W4_TRANSFER_REGISTERS;
+constexpr int W4LoadWarps = MSCCLPP_MEGAMOE_W4_LOAD_WARPS;
+constexpr bool W4SplitPipelines = MSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES != 0;
+constexpr int W4EpilogueTokens = MSCCLPP_MEGAMOE_W4_EPILOGUE_TOKENS;
+constexpr int W4DispatchChunk = MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK;
+constexpr int W4DispatchWarps = MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS;
+constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
+static_assert(W4TileN == 32 || W4TileN == 64 || W4TileN == 128);
+static_assert(W4TileK == 128 || W4TileK == 256 || W4TileK == 512);
+static_assert(W4LoadStages >= 2 && W4LoadStages <= 10);
+static_assert(W4NumWarps == 12 || W4NumWarps == 16);
+static_assert(W4TransferRegisters == 32 || W4TransferRegisters == 64 || W4TransferRegisters == 96 ||
+              W4TransferRegisters == 128);
+static_assert(W4LoadWarps == 1 || W4LoadWarps == 2);
+static_assert(!W4SplitPipelines || W4LoadWarps == 2);
+static_assert(W4EpilogueTokens == 16 || W4EpilogueTokens == 32);
+static_assert(W4DispatchChunk == 512 || W4DispatchChunk == 1024 || W4DispatchChunk == 2048);
+static_assert(W4DispatchChunk % W4TileK == 0);
+static_assert(W4DispatchWarps >= 2 && W4DispatchWarps <= 4);
 constexpr int LocalTileM = 256;
 constexpr int LocalTileN = 128;
 constexpr int LocalTileK = 128;
@@ -51,11 +104,11 @@ static_assert((TileN == 32 && LoadStages == 8 && TransformStages == 7) ||
                   (TileN == 128 && LoadStages == 4 && TransformStages == 4),
               "Unsupported MegaMoE routed specialization");
 
-template <bool Local>
+template <bool Local, bool Mxfp4 = false>
 struct TilePolicy {
   static constexpr int M = Local ? LocalTileM : TileM;
-  static constexpr int N = Local ? LocalTileN : TileN;
-  static constexpr int K = Local ? LocalTileK : TileK;
+  static constexpr int N = Local ? LocalTileN : (Mxfp4 ? W4TileN : TileN);
+  static constexpr int K = Local ? LocalTileK : (Mxfp4 ? W4TileK : TileK);
   static constexpr int CtaM = M / ClusterM;
   static constexpr int Fc1M = M / 2;
   static constexpr int CtaFc1M = CtaM / 2;
@@ -90,6 +143,20 @@ struct LocalWarpSchedule {
   static constexpr int TransformEnd = 12;
   static constexpr bool HasDispatch = false;
 };
+
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+struct W4A8WarpSchedule {
+  static constexpr int NumWarps = W4NumWarps;
+  static constexpr int EpilogueBegin = 0;
+  static constexpr int EpilogueEnd = 4;
+  static constexpr int MmaWarp = 4;
+  static constexpr int LoadWarp = 5;
+  static constexpr int ActivationLoadWarp = 6;
+  static constexpr int DispatchBegin = 8;
+  static constexpr int DispatchEnd = DispatchBegin + W4DispatchWarps;
+  static constexpr bool HasDispatch = true;
+};
+#endif
 
 template <bool Local>
 struct WarpSchedule;

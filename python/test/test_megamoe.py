@@ -5,7 +5,13 @@
 
 import pytest
 
-from mscclpp.ext.megamoe import MegaMoEConfig, dequantize_mxfp8, quantize_mxfp8
+from mscclpp.ext.megamoe import (
+    MegaMoEConfig,
+    dequantize_mxfp4,
+    dequantize_mxfp8,
+    quantize_mxfp4,
+    quantize_mxfp8,
+)
 
 
 def _config(**overrides):
@@ -19,6 +25,12 @@ def test_config_dimensions():
     assert config.local_experts == 16
     assert config.intermediate == 4352
     assert config.sm_margin == 32
+
+
+def test_config_preserves_positional_gate_clamp():
+    config = MegaMoEConfig(0, 4, 32, 4096, 4352, 64, 7, 32, False, 0.125)
+    assert config.gate_up_clamp == 0.125
+    assert not config.weight_mxfp4
 
 
 @pytest.mark.parametrize(
@@ -36,6 +48,9 @@ def test_config_dimensions():
         {"top_k": 33},
         {"sm_margin": -1},
         {"weight_e5m2": 1},
+        {"weight_mxfp4": 1},
+        {"weight_e5m2": True, "weight_mxfp4": True},
+        {"world_size": 1, "num_experts": 1, "top_k": 1, "weight_mxfp4": True},
         {"gate_up_clamp": float("nan")},
         {"gate_up_clamp": float("inf")},
         {"max_tokens": 2**30},
@@ -71,6 +86,161 @@ def test_mxfp8_zeros_and_scale_layout():
         quantize_mxfp8(torch.ones(2, 31))
     with pytest.raises(ValueError, match="finite"):
         quantize_mxfp8(torch.full((2, 32), float("nan")))
+
+
+def test_mxfp4_canonical_rounding_and_layout():
+    torch = pytest.importorskip("torch")
+    source = torch.tensor(
+        [
+            0.0,
+            0.25,
+            0.75,
+            1.25,
+            1.75,
+            2.5,
+            3.5,
+            5.0,
+            -0.25,
+            -0.75,
+            -1.25,
+            -1.75,
+            -2.5,
+            -3.5,
+            -5.0,
+            6.0,
+        ]
+        * 2,
+        dtype=torch.float32,
+    ).reshape(1, 32)
+    expected = torch.tensor(
+        [
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            2.0,
+            2.0,
+            4.0,
+            4.0,
+            -0.0,
+            -1.0,
+            -1.0,
+            -2.0,
+            -2.0,
+            -4.0,
+            -4.0,
+            6.0,
+        ]
+        * 2,
+        dtype=torch.float32,
+    ).reshape(1, 32)
+    weights, scales = quantize_mxfp4(source)
+    assert weights.shape == (1, 16)
+    assert weights.dtype == torch.uint8
+    assert scales.shape == (1, 1)
+    assert scales.item() == 127
+    torch.testing.assert_close(dequantize_mxfp4(weights, scales, dtype=torch.float32), expected, rtol=0, atol=0)
+    assert (weights[0, 4].item() & 15) == 8
+    zeros, zero_scales = quantize_mxfp4(torch.zeros(2, 64))
+    assert torch.count_nonzero(zeros) == 0 and torch.all(zero_scales == 127)
+    scaled, scaled_scales = quantize_mxfp4(source * 8)
+    torch.testing.assert_close(scaled, weights, rtol=0, atol=0)
+    torch.testing.assert_close(scaled_scales, scales + 3, rtol=0, atol=0)
+    with pytest.raises(ValueError, match="scales"):
+        dequantize_mxfp4(weights, scales.expand(1, 2))
+    with pytest.raises(ValueError, match="divisible by 32"):
+        quantize_mxfp4(torch.ones(2, 31))
+    with pytest.raises(ValueError, match="finite"):
+        quantize_mxfp4(torch.full((2, 32), float("nan")))
+
+
+@pytest.mark.parametrize(
+    "tokens,hidden,intermediate", [(17, 128, 256), (65, 384, 640), (33, 2176, 640), (2, 8704, 128)]
+)
+def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate):
+    import gc
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+
+    torch = pytest.importorskip("torch")
+    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
+        pytest.skip("requires native MegaMoE on an SM100 GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    config = _config(
+        world_size=1,
+        max_tokens=tokens,
+        hidden=hidden,
+        intermediate=intermediate,
+        num_experts=2,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        gate_up_clamp=0.125,
+        weight_mxfp4=True,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    generator = torch.Generator(device=device).manual_seed(9431)
+    source1 = torch.randn((2, 2 * intermediate, hidden), generator=generator, device=device).mul_(0.03125)
+    source2 = torch.randn((2, hidden, intermediate), generator=generator, device=device).mul_(0.03125)
+    fc1, sf1 = quantize_mxfp4(source1)
+    fc2, sf2 = quantize_mxfp4(source2)
+    first = dequantize_mxfp4(fc1, sf1, dtype=torch.float32)
+    second = dequantize_mxfp4(fc2, sf2, dtype=torch.float32)
+    context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
+    assert context.effective_kernel_config == {
+        "tile_m": 256,
+        "tile_n": 32,
+        "tile_k": 256,
+        "load_stages": 5,
+        "transform_stages": 0,
+    }
+    inputs = torch.randn((tokens, hidden), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
+    ids = torch.arange(tokens, device=device, dtype=torch.int32).remainder(2)
+    ids = torch.stack((ids, 1 - ids), dim=1).contiguous()
+    scores = torch.rand((tokens, 2), generator=generator, device=device)
+    scores /= scores.sum(dim=1, keepdim=True)
+    output = torch.empty_like(inputs)
+
+    def reference():
+        quantized, scale = quantize_mxfp8(inputs.float())
+        quantized_input = dequantize_mxfp8(quantized, scale, dtype=torch.float32)
+        partial = torch.zeros((tokens, 2, config.hidden), device=device, dtype=torch.float32)
+        for expert in range(2):
+            rows, slots = torch.where(ids == expert)
+            gate, up = (quantized_input[rows] @ first[expert].T).chunk(2, dim=-1)
+            gate = gate.clamp(max=0.125)
+            up = up.clamp(-0.125, 0.125)
+            hidden = torch.nn.functional.silu(gate) * up
+            quantized, scale = quantize_mxfp8(hidden)
+            hidden = dequantize_mxfp8(quantized, scale, dtype=torch.float32)
+            partial[rows, slots] = ((hidden @ second[expert].T) * scores[rows, slots, None]).to(torch.bfloat16).float()
+        return partial.sum(dim=1).to(torch.bfloat16)
+
+    context(inputs, ids, scores, output=output)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(output, reference(), rtol=0.02, atol=0.001)
+    staged = context.input_view(tokens)
+    torch.testing.assert_close(staged, inputs, rtol=0, atol=0)
+    shifted = staged.reshape(-1)[1 : 1 + (tokens - 1) * hidden].reshape(tokens - 1, hidden)
+    with pytest.raises(ValueError, match="partially overlap"):
+        context(shifted, ids[:-1], scores[:-1])
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    with torch.cuda.graph(graph, stream=stream):
+        context(inputs, ids, scores, output=output, stream=stream)
+    with torch.cuda.stream(stream):
+        inputs.neg_()
+        for _ in range(10):
+            graph.replay()
+    stream.synchronize()
+    torch.testing.assert_close(output, reference(), rtol=0.02, atol=0.001)
+    torch.testing.assert_close(staged, inputs, rtol=0, atol=0)
+    assert context(inputs[:0], ids[:0], scores[:0]).shape == (0, hidden)
+    torch.cuda.synchronize()
+    del graph, context
+    gc.collect()
 
 
 def test_native_views_staging_and_graph_lifetime():

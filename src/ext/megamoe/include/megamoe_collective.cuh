@@ -7,17 +7,26 @@
 #include <cutlass/arch/reg_reconfig.h>
 
 #include <cute/tensor.hpp>
+#include <cutlass/detail/sm100_blockscaled_layout.hpp>
 #include <cutlass/detail/sm100_mixed_dtype_blockwise_layout.hpp>
 #include <cutlass/gemm/collective/collective_builder.hpp>
+#include <cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp>
 #include <cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp>
 
 #include "megamoe_specialization.hpp"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
-
-using TileShape = cute::Shape<cute::Int<TileM>, cute::Int<TileN>, cute::Int<TileK>>;
 using ClusterShape = cute::Shape<cute::Int<ClusterM>, cute::_1, cute::_1>;
 using ProblemShape = cute::Shape<int, int, int, int>;
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#include "megamoe_w4a8_collective.cuh"
+#endif
+
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
+
+using TileShape = cute::Shape<cute::Int<TileM>, cute::Int<TileN>, cute::Int<TileK>>;
+using W4TileShape = cute::Shape<cute::Int<TileM>, cute::Int<(W4TileN < 64 ? 64 : W4TileN)>, cute::Int<W4TileK>>;
 using ScaleConfig = cutlass::detail::Sm100MixedInputBlockwiseScaleConfig<1, 32>;
 
 template <bool E5M2, bool Local = false>
@@ -48,6 +57,24 @@ struct CollectiveTypes {
   using Transform = typename Mainloop::Transform2MmaPipeline;
   using Accumulate = typename Mainloop::Mma2AccumPipeline;
 };
+
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+struct W4A8CollectiveTypes {
+  using Weight = cutlass::mx_float4_t<cutlass::float_e2m1_t>;
+  using Activation = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
+  using Scale = cutlass::float_ue8m0_t;
+  using Builder = typename cutlass::gemm::collective::CollectiveBuilder<
+      cutlass::arch::Sm100, cutlass::arch::OpClassBlockScaledTensorOp, Weight, cutlass::layout::RowMajor, 128,
+      Activation, cutlass::layout::ColumnMajor, 16, float, W4TileShape, ClusterShape,
+      cutlass::gemm::collective::StageCount<W4LoadStages>,
+      cutlass::gemm::KernelTmaWarpSpecialized2SmMxf8f6f4Sm100>::CollectiveOp;
+  using Mainloop = W4A8Mainloop<Builder>;
+  using Load = typename Mainloop::MainloopPipeline;
+  using Accumulate = cutlass::PipelineUmmaAsync<2, typename Mainloop::AtomThrShapeMNK>;
+  using ScaleConfig = typename Mainloop::Sm1xxBlkScaledConfig;
+};
+static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
+#endif
 
 template <bool E5M2>
 __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {

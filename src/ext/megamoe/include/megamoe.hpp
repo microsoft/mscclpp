@@ -19,10 +19,11 @@ namespace mscclpp::megamoe {
 /// launches (including graph replays) must be ordered on a single CUDA stream.
 class MegaMoeContext {
  public:
-  /// Collectively create a context and pack canonical MXFP8 weights.
+  /// Collectively create a context and pack canonical MXFP8 or packed MXFP4 weights.
   /// @param communicator Communicator spanning one NVLink fabric.
   /// @param config Identical configuration on all ranks, except for rank.
-  /// @param weights Canonical local weights and E8M0 K32 scales.
+  /// @param weights Canonical local weights and E8M0 K32 scales. MXFP4 values
+  /// are packed two per byte with the even K element in the lower nibble.
   /// @param stream CUDA stream used to pack weights; synchronized before returning.
   /// @param tag Bootstrap tag reserved for this collective context construction.
   /// @param kernelPath Absolute path to an optional native JIT module; empty selects the builtin kernel.
