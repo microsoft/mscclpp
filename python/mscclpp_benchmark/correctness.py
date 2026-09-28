@@ -208,6 +208,11 @@ def _expected_outputs(case: Any, nranks: int, iteration: int, rank: int = 0):
             sliced = [values.reshape(-1)[start : start + chunk] for values in encoded_inputs]
             stats_expected = _expected_fp8_accum_values(case, sliced)
             return _encode_reduced_output(case, stats_expected), stats_expected
+        if case.dtype_spec.name == "bfloat16":
+            stats_expected = sum(
+                _decode_bfloat16_array(values.reshape(-1)[start : start + chunk]) for values in encoded_inputs
+            )
+            return _encode_reduced_output(case, stats_expected), stats_expected
         reduced = sum(values.astype(cp.float32).reshape(-1)[start : start + chunk] for values in encoded_inputs)
         return _encode_reduced_output(case, reduced), None
 
