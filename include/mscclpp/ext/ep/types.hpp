@@ -3,10 +3,9 @@
 #ifndef MSCCLPP_EXT_EP_TYPES_HPP_
 #define MSCCLPP_EXT_EP_TYPES_HPP_
 
-#include <cuda_runtime.h>
-
 #include <cstdint>
 #include <memory>
+#include <mscclpp/gpu.hpp>
 #include <utility>
 #include <variant>
 
