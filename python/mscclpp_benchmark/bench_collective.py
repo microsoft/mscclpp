@@ -88,7 +88,7 @@ class CandidateSpec:
     requires_symmetric_memory: bool = False
     # Native algorithms require a single IPC domain, which can span physical nodes.
     # This flag opts into cross-domain execution; the compiled DSL topology must still be supported.
-    supports_multi_node: bool = False
+    supports_multi_ipc_domain: bool = False
     # None means "use the tuner's global sweep"; an explicit tuple overrides it, which DSL
     # algorithms need since they bake their launch geometry into the plan and ignore nblocks/nthreads.
     candidate_nblocks: tuple[int, ...] | None = None
@@ -372,7 +372,7 @@ def _dsl_candidate_specs(comm: Comm, collective: str) -> tuple[CandidateSpec, ..
                 max_message_size=max_message_size,
                 candidate_nblocks=(0,),
                 candidate_nthreads=(0,),
-                supports_multi_node=True,
+                supports_multi_ipc_domain=True,
             )
         )
     return tuple(specs)
@@ -394,7 +394,7 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
         *_candidate_specs(case.collective, symmetric_memory=symmetric_memory),
         *_dsl_candidate_specs(comm, case.collective),
     ):
-        if cross_ipc_domain and not candidate.supports_multi_node:
+        if cross_ipc_domain and not candidate.supports_multi_ipc_domain:
             filtered_out = True
             continue
         if not _candidate_supports_profile(candidate, profile):
