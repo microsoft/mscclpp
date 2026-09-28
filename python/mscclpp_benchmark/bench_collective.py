@@ -264,11 +264,11 @@ def _parse_size_list(raw: str) -> tuple[int, ...]:
 
 
 def _nelems_for_total_size(collective: str, total_bytes: int, itemsize: int, nranks: int) -> int:
-    """Return the per-rank ``nelems`` that makes ``_make_case`` allocate ``total_bytes`` in total.
+    """Return ``nelems`` for a full logical buffer of ``total_bytes`` bytes per rank.
 
-    ``_make_case`` allocates ``nelems * nranks`` elements for allgather and reducescatter but only
-    ``nelems`` for allreduce, so the same total maps to a different ``nelems`` per collective. This
-    is what lets every collective be swept over an identical set of total sizes.
+    The full buffer is the input/output for allreduce, the output for allgather, and the input for
+    reducescatter. It contains ``nelems * nranks`` elements for allgather and reducescatter, but only
+    ``nelems`` for allreduce. This is not the combined input+output allocation size.
     """
     divisor = itemsize if collective == _ALLREDUCE else itemsize * nranks
     if total_bytes % divisor != 0:
@@ -663,9 +663,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
     parser.add_argument(
         "--total-sizes",
-        help="Comma-separated total collective buffer sizes (e.g. '16KiB,1MiB,8MiB'). Sweeps by the "
-        "total size every rank sees rather than by batch, so different collectives can be compared "
-        "at identical totals. Mutually exclusive with --batch-sizes/--d-model.",
+        help="Comma-separated full logical buffer sizes in bytes per rank (e.g. '16KiB,1MiB,8MiB'): "
+        "input/output size for AllReduce, output size for AllGather, and input size for ReduceScatter. "
+        "This is not the combined input+output allocation size. "
+        "Mutually exclusive with --batch-sizes; --d-model is ignored.",
     )
     parser.add_argument(
         "--buffer-mode",
