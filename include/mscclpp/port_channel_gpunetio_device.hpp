@@ -23,10 +23,11 @@ struct GpuNetIoMemoryDeviceHandle {
 /// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
 /// rings the NIC doorbell directly via the DOCA GPUNetIO device verbs.
 ///
-/// All remote addressing uses a symmetric-memory model: an explicit bootstrap
-/// rank selects a peer's registered buffer, with the same offset layout on
-/// every rank. `qps` is indexed by peer*numQpsPerPeer+qpIndex; `rkeys` and
-/// `peerBase` are indexed by peer rank. All QPs use the same local HCA.
+/// The legacy `put`, `putWithSignal`, and `atomicAdd` helpers use a symmetric-memory
+/// model: a bootstrap rank selects `rkeys[peer]` and `peerBase[peer]`. The
+/// registered-operation helpers instead use their explicit registration handles.
+/// `qps` uses peerQpOffsets[peer]+qpIndex when offsets are supplied, otherwise
+/// peer*numQpsPerPeer+qpIndex for legacy contexts. All QPs use the same local HCA.
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
@@ -46,8 +47,10 @@ struct GpuNetIoDeviceContext {
   uintptr_t atomicResultBase;
   /// Local registration key for atomicResultBase, in host byte order.
   uint32_t atomicResultLkey;
-  /// Number of QPs per peer, laid out peer-major; existing callers use QP 0.
+  /// Maximum per-peer count, or the stride for legacy contexts without offsets.
   int numQpsPerPeer = 1;
+  /// Compact per-peer QP offsets, length numPeers+1; repeated offsets indicate no connection.
+  const int* peerQpOffsets = nullptr;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Write between explicit registrations on the selected peer/QP.

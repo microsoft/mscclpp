@@ -14,19 +14,30 @@
 namespace mscclpp {
 
 namespace detail {
-MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_qp* gpuNetIoQp(const GpuNetIoDeviceContext& context, int peer, int qpIndex) {
-  MSCCLPP_ASSERT_DEVICE(peer >= 0 && peer < context.numPeers, "GPUNetIO peer out of range");
-  MSCCLPP_ASSERT_DEVICE(qpIndex >= 0 && qpIndex < context.numQpsPerPeer, "GPUNetIO QP index out of range");
-  return reinterpret_cast<doca_gpu_dev_verbs_qp*>(context.qps) + static_cast<uintptr_t>(peer) * context.numQpsPerPeer +
+MSCCLPP_DEVICE_INLINE uintptr_t gpuNetIoQpIndex(const GpuNetIoDeviceContext& context, int peer, int qpIndex) {
+  if (peer < 0 || peer >= context.numPeers) {
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO peer out of range");
+    __trap();
+  }
+  const int count =
+      context.peerQpOffsets ? context.peerQpOffsets[peer + 1] - context.peerQpOffsets[peer] : context.numQpsPerPeer;
+  if (qpIndex < 0 || qpIndex >= count) {
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO QP was not requested");
+    __trap();
+  }
+  return (context.peerQpOffsets ? static_cast<uintptr_t>(context.peerQpOffsets[peer])
+                                : static_cast<uintptr_t>(peer) * context.numQpsPerPeer) +
          qpIndex;
+}
+MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_qp* gpuNetIoQp(const GpuNetIoDeviceContext& context, int peer, int qpIndex) {
+  return reinterpret_cast<doca_gpu_dev_verbs_qp*>(context.qps) + gpuNetIoQpIndex(context, peer, qpIndex);
 }
 MSCCLPP_DEVICE_INLINE __be32 gpuNetIoHtobe32(uint32_t v) { return static_cast<__be32>(__byte_perm(v, 0, 0x0123)); }
 MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_addr gpuNetIoAtomicResult(const GpuNetIoDeviceContext& context, int peer,
                                                                    int qpIndex) {
   MSCCLPP_ASSERT_DEVICE(context.atomicResultBase != 0, "GPUNetIO atomics require registered result scratch");
-  return {
-      context.atomicResultBase + (static_cast<uintptr_t>(peer) * context.numQpsPerPeer + qpIndex) * sizeof(uint64_t),
-      gpuNetIoHtobe32(context.atomicResultLkey)};
+  return {context.atomicResultBase + gpuNetIoQpIndex(context, peer, qpIndex) * sizeof(uint64_t),
+          gpuNetIoHtobe32(context.atomicResultLkey)};
 }
 }  // namespace detail
 

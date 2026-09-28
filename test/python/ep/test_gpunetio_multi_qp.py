@@ -189,9 +189,13 @@ class MultiQpTests(unittest.TestCase):
         self.run_native(native)
         self.ordered(
             function(service, "connectQp"),
-            "queryLocalPort(local)",
-            "pathMtu(",
+            "pathMtu(localPortInfo.activeMtu, remote)",
             "doca_verbs_qp_attr_set_path_mtu(attr, mtu)",
+        )
+        self.ordered(
+            function(service, "validateLocalPort"),
+            "detail::queryGpuNetIoPort(",
+            "localPortInfo.activeMtu = info.port.active_mtu",
         )
 
     def test_storage_geometry_agreement_before_allocation(self):

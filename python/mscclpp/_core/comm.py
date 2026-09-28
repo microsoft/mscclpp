@@ -50,7 +50,6 @@ class CommGroup:
 
                 uniq_id_global = mpi_comm.bcast(uniq_id, 0)
             else:
-                import torch
                 import torch.distributed as dist
 
                 backend = str(dist.get_backend(torch_group)).lower()

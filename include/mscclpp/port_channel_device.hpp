@@ -12,7 +12,7 @@ namespace mscclpp {
 
 /// Backend that services a PortChannel's device-side operations.
 /// The same device API (`put`, `signal`,
-/// `putWithSignal`, `flush`, `atomicAdd`) is serviced either by the CPU proxy
+/// `putWithSignal`, `flush`, `accumulate`) is serviced either by the CPU proxy
 /// (FIFO + ProxyService thread) or by GPU-initiated networking (GPUNetIO/GDAKI,
 /// kernel-issued RDMA). The backend is chosen at channel creation.
 enum class PortChannelBackend : uint8_t {
@@ -30,7 +30,7 @@ using MemoryId = uint32_t;
 
 namespace detail {
 #if defined(MSCCLPP_DEVICE_COMPILE)
-/// Wait until the proxy has processed and drained the TriggerSync at FIFO position `fifoPos`.
+/// Wait until the proxy has processed and drained the TriggerFlush at FIFO position `fifoPos`.
 /// The proxy publishes `flushDonePos = latestCompletedPos + 1` when the CQ drains, so the
 /// wait condition `flushDonePos > fifoPos` is satisfied exactly when our own request has
 /// been completed. Using the FIFO push position as the wait target couples the wait to the
@@ -142,7 +142,7 @@ struct BasePortChannelDeviceHandle {
                     bytes <= memory.bytes - offset && memory.bytes <= UINTPTR_MAX - memory.base);
     return memory;
   }
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -157,10 +157,10 @@ struct BasePortChannelDeviceHandle {
       gpuNetIo_->putRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, src, srcOffset, size);
       return;
     }
-    fifo_.push({TriggerData, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -169,17 +169,17 @@ struct BasePortChannelDeviceHandle {
     put(dstId, offset, srcId, offset, size);
   }
 
-  /// Push a TriggerFlag to the FIFO.
+  /// Push a TriggerSignal to the FIFO.
   MSCCLPP_DEVICE_INLINE void signal() {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
       gpuNetIo_->atomicAddRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, gpuNetIoSignal_, 0, 1);
       return;
     }
-    fifo_.push({TriggerFlag, 0, 0, 0, 0, 0, semaphoreId_});
+    fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
   }
 
-  /// Push a (TriggerData | TriggerFlag) to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -195,10 +195,10 @@ struct BasePortChannelDeviceHandle {
                                          gpuNetIoSignal_);
       return;
     }
-    fifo_.push({(TriggerData | TriggerFlag), dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
-  /// Push a (TriggerData | TriggerFlag) to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -207,7 +207,7 @@ struct BasePortChannelDeviceHandle {
     putWithSignal(dstId, offset, srcId, offset, size);
   }
 
-  /// Push a (TriggerData | TriggerFlag | TriggerSync) to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcId The ID of source memory region.
@@ -221,12 +221,11 @@ struct BasePortChannelDeviceHandle {
       flush(maxSpinCount);
       return;
     }
-    uint64_t pos =
-        fifo_.push({(TriggerData | TriggerFlag | TriggerSync), dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
-  /// Push a (TriggerData | TriggerFlag | TriggerSync) to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
@@ -237,7 +236,7 @@ struct BasePortChannelDeviceHandle {
     putWithSignalAndFlush(dstId, offset, srcId, offset, size, maxSpinCount);
   }
 
-  /// Push a TriggerSync to the FIFO.
+  /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
@@ -253,16 +252,16 @@ struct BasePortChannelDeviceHandle {
       }
       return;
     }
-    uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 0, semaphoreId_});
+    uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
-  /// Push an atomicAdd trigger to the FIFO: add a 64-bit value to remote memory.
-  /// Connection::atomicAdd() documents how many concurrent writers each transport allows.
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to remote memory.
+  /// Connection::accumulate() documents how many concurrent writers each transport allows.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
-  MSCCLPP_DEVICE_INLINE void atomicAdd(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+  MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       validateGpuNetIo();
       const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, sizeof(uint64_t));
@@ -272,8 +271,8 @@ struct BasePortChannelDeviceHandle {
     }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
     uint64_t operand = static_cast<uint64_t>(value);
-    ProxyTrigger trigger(0, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize, static_cast<uint32_t>(operand),
-                         semaphoreId_);
+    ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
+                         static_cast<uint32_t>(operand), semaphoreId_);
     fifo_.push(trigger);
   }
 
@@ -304,7 +303,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
       : BasePortChannelDeviceHandle(base), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -312,12 +311,12 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
-  /// Push a TriggerData to the FIFO.
+  /// Push a TriggerPut to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
 
-  /// Push a (TriggerData | TriggerFlag) to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -325,12 +324,12 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
-  /// Push a (TriggerData | TriggerFlag) to the FIFO.
+  /// Push a TriggerPutWithSignal to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
 
-  /// Push a (TriggerData | TriggerFlag | TriggerSync) to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
@@ -340,18 +339,18 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
     BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
-  /// Push a (TriggerData | TriggerFlag | TriggerSync) to the FIFO.
+  /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
   }
-  /// Push an atomicAdd trigger to the FIFO: add a 64-bit value to the destination memory.
-  /// See Connection::atomicAdd() for transport support.
+  /// Push an accumulate trigger to the FIFO: add a 64-bit value to the destination memory.
+  /// See Connection::accumulate() for transport support.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
-  MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t dstOffset, int64_t value) {
-    BasePortChannelDeviceHandle::atomicAdd(dst_, dstOffset, value);
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
+    BasePortChannelDeviceHandle::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };

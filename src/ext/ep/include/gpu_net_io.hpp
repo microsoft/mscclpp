@@ -30,7 +30,7 @@ struct EpGpuNetIoDeviceContext {
   }
 
   MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t destination, int64_t value, int queue = 0) {
-    channel(peer, queue).atomicAdd(destination, value);
+    channel(peer, queue).accumulate(destination, value);
   }
 
   MSCCLPP_DEVICE_INLINE void putWithSignal(int peer, uint64_t destination, uint64_t source, uint64_t bytes,

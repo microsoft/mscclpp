@@ -127,6 +127,16 @@ struct AllreduceRsAgZeroCopyAdapter {
         nBlocks = 128;
       }
     }
+    constexpr size_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
+    size_t nelemsPerRank = (nelems + nRanksPerIpcDomain - 1) / nRanksPerIpcDomain;
+    size_t nInt4PerRank = (nelemsPerRank + nelemsPerInt4 - 1) / nelemsPerInt4;
+    if (nInt4PerRank == 0) return cudaSuccess;
+    if (nBlocks <= 0 || static_cast<size_t>(nBlocks) > nInt4PerRank) {
+      WARN(ALGO, "AllreduceRsAgZeroCopy requires nBlocks <= nInt4PerRank, got nBlocks=", nBlocks,
+           ", nInt4PerRank=", nInt4PerRank);
+      return cudaErrorInvalidValue;
+    }
+
     if (nRanksPerIpcDomain == 4) {
       allreduceRsAgZeroCopy<4, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
@@ -139,8 +149,13 @@ struct AllreduceRsAgZeroCopyAdapter {
       allreduceRsAgZeroCopy<16, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
+    } else if (nRanksPerIpcDomain == 32) {
+      allreduceRsAgZeroCopy<32, OpType, T, AccumT>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
+                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4, 8, or 16, got: ", nRanksPerIpcDomain);
+      WARN(ALGO,
+           "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4, 8, 16, or 32, got: ", nRanksPerIpcDomain);
       return cudaErrorInvalidValue;
     }
     return cudaGetLastError();

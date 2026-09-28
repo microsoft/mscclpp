@@ -84,9 +84,10 @@ class Env {
   /// enabled and will dump traces to this directory. Unset by default.
   const std::string npkitDumpDir;
 
-  /// Env name: `MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM`. If set to true, the CUDA IPC transport will use the default
-  /// stream for all operations. If set to false, it will use a separate stream for each operation. This is an
-  /// experimental feature and should be false in most cases. Default is false.
+  /// Env name: `MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM`. On CUDA, if set to true, the CUDA IPC transport will use the
+  /// default stream for all operations. If set to false, it will use a separate stream for each operation. ROCm
+  /// always uses a nonblocking stream so proxy-launched kernels can make progress. This is an experimental feature
+  /// and should be false in most cases. Default is false.
   const bool cudaIpcUseDefaultStream;
 
   /// Env name: `MSCCLPP_NCCL_LIB_PATH`. The path to the original NCCL/RCCL shared library. If set, it will be used

@@ -102,7 +102,7 @@ MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blo
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() {
   proxy_->stop();
-  // Drain pending TriggerSync flushes. After a bounded loop, force-unblock any still-pending
+  // Drain pending TriggerFlush operations. After a bounded loop, force-unblock any still-pending
   // GPU waiters with a sentinel write (UINT64_MAX > any FIFO position).
   for (int i = 0; i < 1000 && !pendingFlushPos_.empty(); ++i) {
     progressFlushes();
@@ -138,31 +138,55 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   int maxWriteQueueSize = conn.getMaxWriteQueueSize();
   auto& numRequests = inflightRequests_[conn.impl_];
 
-  if (trigger.fields.type == 0) {
-    // type == 0 indicates an atomic add operation.
-    // The full 64-bit add value is encoded in fst (size + srcOffset fields).
-    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
-    int64_t value = static_cast<int64_t>(trigger.fst);
-    conn.atomicAdd(dst, trigger.fields.dstOffset, value);
-    numRequests++;
-  }
-
-  if (trigger.fields.type & TriggerData) {
+  auto put = [&]() {
     RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger.fields.srcMemoryId];
     conn.write(dst, trigger.fields.dstOffset, src, trigger.fields.srcOffset, trigger.fields.size);
     numRequests++;
-  }
-
-  if (trigger.fields.type & TriggerFlag) {
+  };
+  auto signal = [&]() {
     semaphore->signal();
     numRequests++;
+  };
+  auto accumulate = [&]() {
+    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    // The operand is the full fst word, spanning the size and srcOffset fields.
+    conn.accumulate(dst, trigger.fields.dstOffset, static_cast<int64_t>(trigger.fst));
+    numRequests++;
+  };
+
+  bool flushRequested = false;
+  switch (trigger.fields.type) {
+    case TriggerPut:
+      put();
+      break;
+    case TriggerSignal:
+      signal();
+      break;
+    case TriggerFlush:
+      flushRequested = true;
+      break;
+    case TriggerPutWithSignal:
+      put();
+      signal();
+      break;
+    case TriggerPutWithSignalAndFlush:
+      put();
+      signal();
+      flushRequested = true;
+      break;
+    case TriggerAccumulate:
+      accumulate();
+      break;
+    default:
+      WARN(CONN, "unknown trigger opcode ", uint64_t(trigger.fields.type), ", ignoring the trigger");
+      return ProxyHandlerResult::Continue;
   }
 
-  if (trigger.fields.type & TriggerSync) {
-    // Record this TriggerSync's FIFO position. The GPU caller is spinning on
-    // flushDonePos_ > pos; progressFlushes() will publish pos+1 once the CQ drains.
-    // Later TriggerSyncs on the same conn overwrite — CQ drain completes them all at once.
+  if (flushRequested) {
+    // Record this flush's FIFO position. The GPU caller is spinning on flushDonePos_ > pos;
+    // progressFlushes() publishes pos+1 once the CQ drains. A later flush on the same connection
+    // overwrites this entry, and the CQ drain completes them all at once.
     conn.impl_->requestFlush();
     pendingFlushPos_[conn.impl_] = pos;
     numRequests = 0;
@@ -175,14 +199,18 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  if (gpuNetIoState_) return gpuNetIoHandle_;
+  if (gpuNetIoState_) {
+    return gpuNetIoHandle_;
+  }
   auto& conn = semaphore_->connection();
   return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
                                        conn.impl_->getFlushDonePtr());
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
-  if (gpuNetIoState_) return PortChannel::DeviceHandle(gpuNetIoHandle_, dst_, src_);
+  if (gpuNetIoState_) {
+    return PortChannel::DeviceHandle(gpuNetIoHandle_, dst_, src_);
+  }
   auto& conn = semaphore_->connection();
   return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
                                    conn.impl_->getFlushDonePtr());

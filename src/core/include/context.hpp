@@ -5,7 +5,6 @@
 #define MSCCLPP_CONTEXT_HPP_
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 #include <vector>
@@ -20,24 +19,20 @@ class CudaIpcStream {
   int deviceId_;
   bool dirty_;
 
-  // Dedicated stream for atomic operations launched from the proxy thread.
-  // On CUDA, a separate context avoids deadlocks with the primary context's per-context lock.
-#if !defined(MSCCLPP_DEVICE_HIP)
-  CUcontext proxyAtomicCtx_ = nullptr;
-#endif
-  cudaStream_t proxyAtomicStream_ = nullptr;
-
   void setStreamIfNeeded();
 
  public:
   CudaIpcStream(int deviceId);
-  ~CudaIpcStream();
 
   void memcpyD2D(void* dst, const void* src, size_t nbytes);
 
   void memcpyH2D(void* dst, const void* src, size_t nbytes);
 
-  void atomicAdd(uint64_t* dst, int64_t value);
+#if defined(MSCCLPP_USE_ROCM)
+  /// Add a value to a 64-bit integer in peer memory, with a kernel on this stream. ROCm only:
+  /// on CUDA such a kernel cannot be scheduled while the caller's kernel spins.
+  void accumulate(uint64_t* dst, uint64_t value);
+#endif  // defined(MSCCLPP_USE_ROCM)
 
   void sync();
 

@@ -7,11 +7,14 @@ The dependency is BSD-3-Clause licensed. Its headers are installed under
 `include/mscclpp/gpunetio` and its license under `share/licenses/mscclpp/gpunetio`.
 No Git submodule initialization is needed despite the branch name.
 
-The integration is ported from `qinghuazhou/gpunetio_submodule` at
-`b11bccc544f1cbe3d524d8e753922aecab0a8cf7`, on top of `feature/ep-experimental`
-at `672e30d733bca64b13c2976bc0353f74d3f6dca9`. EP's existing CPU-proxy
-`atomicAdd` API and bitmask trigger encoding are retained; the donor branch's
-unrelated `accumulate` and proxy-opcode migration is not included.
+The original port used `qinghuazhou/gpunetio_submodule` at `b11bccc`, on top of
+`feature/ep-experimental` at `672e30d733bca64b13c2976bc0353f74d3f6dca9`.
+The subsequent merge incorporates the shared branch through
+`160a3cec310bfc45e7e58eea450000ee9a2cb954`, including current main's
+`accumulate` API and proxy opcodes. The EP adapter retains its internal
+`atomicAdd` operation name and delegates to `PortChannel::accumulate`.
+The superseded proxy atomic-add kernel and duplicate test implementations are
+not retained alongside the incoming versions.
 
 ## Build
 
@@ -30,6 +33,13 @@ is supplied using `-DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/absolute/path`.
 That override bypasses pin enforcement: verify the checkout's exact revision
 and cleanliness. Reconfigure existing builds after this migration.
 
+GPUNetIO feature definitions and fetched include paths propagate from the shared
+and static library targets. EP and the mp-unit tests need no manual GPUNetIO
+definitions. Installed consumers can use `find_package(mscclpp CONFIG REQUIRED)`
+and link `mscclpp::mscclpp` or `mscclpp::mscclpp_static`. OFF installations remain
+free of GPUNetIO dependency headers; the public service API is linkable and its
+constructors reject use with `ErrorCode::InvalidUsage`.
+
 ## Shared API
 
 Include `<mscclpp/gpu_net_io_service.hpp>`. Each shared `GpuNetIoService` owns
@@ -41,6 +51,13 @@ buffer; `exchangeMemory` exchanges the selected peer's registration; and
 Offsets are relative to the selected registrations. Channels retain transport,
 registrations and semaphore state. Synchronize GPU work before releasing the
 last channel or its externally owned payload buffer.
+
+The shared service also supports `setup(peerQpCounts, tag)` for sparse reciprocal
+plans with 0-64 QPs per peer and zero self counts. QPs and scratch are compactly
+indexed by `peerQpOffsets`; absent peers allocate no queues. All ranks still
+participate in count-plan validation, which uses an O(worldSize squared) count
+matrix. The EP adapter currently uses the compatible full-mesh `setup()` overload
+per HCA; this merge does not change EP's collective topology or payload layout.
 
 ## EP Adapter
 
@@ -75,6 +92,15 @@ fails setup. This avoids the pinned upstream's known GPU_CPU allocation fallback
 and CPU service shutdown defects; it does not fix those upstream defects or
 carry the old bundled DOCA patches. No upstream source is modified.
 
+The shared service checks `IbCtx::supportsRdmaAtomics()` and rejects unsupported
+HCAs collectively. Port 1 and `MSCCLPP_IB_GID_INDEX` (default 0) are validated
+before QP creation; the chosen local GID is reused in metadata and AH programming.
+Each local setup phase, including registration, QP transitions and device-context
+publication, exchanges status before any rank advances. Construction must succeed
+on all ranks first. This does not recover process loss, bootstrap failures or
+hung driver calls, and does not make the EP adapter's later paired registration
+and semaphore construction fault-tolerant.
+
 Use an external launcher timeout for GPU tests: local allocation failures,
 bootstrap exchanges and upstream posting waits are not end-to-end bounded.
 A skipped setup is not a hardware pass. Build/CPU checks cannot establish GPU
@@ -94,6 +120,19 @@ single-HCA service; EP multi-HCA behavior is exercised through the EP runtime,
 not that benchmark. Run the existing EP rank-major and top-k-expanded numerical
 and graph-replay tests on the intended multi-node/HCA configuration before
 claiming runtime parity. These GPU workloads are not executed by the CPU suite.
+
+The separate four-rank shared-service sparse test is available as:
+
+```bash
+timeout 300s mpirun -np 4 build/bin/mp_unit_tests \
+  --filter=PortChannelSparseTest.GpuNetIoSparseConnections
+```
+
+Unit and mp-unit tests use one copy of each shared GPUNetIO test. The EP-only
+`gpunetio_topology_test` remains distinct. Shared setup fault injection, ON/OFF
+host API checks, and shared/static consumer probes are retained, including the
+OFF-service link regression. Different compile modes of the shared CPU test
+exercise separate contracts and are not duplicate test registrations.
 
 CPU coverage includes the shared real-header routing, registration exchange,
 sparse QP-table adapter and direct-only policy tests, plus EP logical-QP mapping,

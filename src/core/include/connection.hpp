@@ -5,6 +5,7 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 #include <atomic>
+#include <exception>
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
@@ -35,7 +36,7 @@ class BaseConnection {
 
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
-  virtual void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) = 0;
+  virtual void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) = 0;
 
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
@@ -96,7 +97,7 @@ class BaseConnection {
   int maxWriteQueueSize_;
 
   // GPU-visible flush-done position (host-pinned memory). ProxyService writes one past the
-  // highest FIFO position whose TriggerSync request has fully completed on this connection
+  // highest FIFO position whose TriggerFlush request has fully completed on this connection
   // (CQ drained for IB, synchronous flush() returned for non-IB).
   std::shared_ptr<uint64_t> gpuFlushDonePos_;
 };
@@ -115,7 +116,7 @@ class CudaIpcConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
-  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
+  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 };
@@ -172,7 +173,7 @@ class IBConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
-  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
+  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 
@@ -185,6 +186,9 @@ class EthernetConnection : public BaseConnection {
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> recvSocket_;
   std::thread threadRecvMessages_;
+  std::atomic<bool> stopping_{false};
+  std::mutex receiverErrorMutex_;
+  std::exception_ptr receiverError_;
   volatile uint32_t* abortFlag_;
   const uint64_t sendBufferSize_;
   const uint64_t recvBufferSize_;
@@ -193,12 +197,21 @@ class EthernetConnection : public BaseConnection {
 
   void recvMessages();
   void sendMessage();
+  void publishReceiverError(std::exception_ptr error) noexcept;
+  void rethrowReceiverError();
+  template <typename Operation>
+  void runWithReceiverErrorCheck(Operation&& operation) {
+    rethrowReceiverError();
+    std::forward<Operation>(operation)();
+    rethrowReceiverError();
+  }
+  bool receiveFramePart(void* ptr, int size, bool allowBoundaryEof);
 
  public:
   EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint,
                      uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
 
-  ~EthernetConnection();
+  ~EthernetConnection() noexcept;
 
   Transport transport() const override;
 
@@ -207,7 +220,7 @@ class EthernetConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
-  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
+  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 };

@@ -35,11 +35,8 @@ pr:
     - docs/**
     - '**/*.md'
 
-parameters:
-# Docker image used for the SGLang test container on the GPU node.
-- name: sglangImage
-  type: string
-  default: lmsysorg/sglang:latest-cu129
+variables:
+  Codeql.Enabled: false
 
 jobs:
 - job: SGLangTest
@@ -48,8 +45,10 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+        sglangImage: lmsysorg/sglang:latest-cu129
       cuda13:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        sglangImage: lmsysorg/sglang:latest-cu130
   pool:
     name: msccl-ci-h100
   container:
@@ -62,4 +61,4 @@ jobs:
       subscription: mscclpp-ci-h100
       vmssName: mscclpp-h100-ci
       gpuArch: '90'
-      sglangImage: ${{ parameters.sglangImage }}
+      sglangImage: $(sglangImage)

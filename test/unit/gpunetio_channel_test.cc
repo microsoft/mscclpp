@@ -9,7 +9,12 @@
 #include <vector>
 
 #if defined(TEST_QP_TABLE)
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <map>
+#include <mutex>
+#include <thread>
 
 #include "gpu_net_io_policy.hpp"
 #include "gpu_net_io_qp_table.hpp"
@@ -85,6 +90,260 @@ extern "C" doca_error_t doca_gpu_verbs_create_qp_hl(doca_gpu_verbs_qp_init_attr_
 int main() {
   doca_gpu_t gpu{};
   doca_dev_t device{};
+  int portCases = 0;
+  for (const int link : {IBV_LINK_LAYER_ETHERNET, IBV_LINK_LAYER_INFINIBAND}) {
+    for (const bool grh : {false, true}) {
+      for (const int gidIndex : {0, 3, 255}) {
+        for (int failure = 0; failure < 10; ++failure) {
+          int portQueries = 0;
+          int gidQueries = 0;
+          const auto queryPort = [&](ibv_context*, uint8_t port, ibv_port_attr* attributes) {
+            require(port == 1, "wrong GPUNetIO port queried");
+            ++portQueries;
+            attributes->state = failure == 1 ? IBV_PORT_DOWN : IBV_PORT_ACTIVE;
+            attributes->link_layer = failure == 2 ? IBV_LINK_LAYER_UNSPECIFIED : link;
+            attributes->active_mtu = failure == 3 ? static_cast<ibv_mtu>(IBV_MTU_4096 + 1) : IBV_MTU_4096;
+            attributes->gid_tbl_len = failure == 4 ? gidIndex : 256;
+            attributes->flags = grh ? IBV_QPF_GRH_REQUIRED : 0;
+            return failure == 5 ? -1 : 0;
+          };
+          const auto queryGid = [&](ibv_context*, uint8_t port, int selected, ibv_gid* gid) {
+            require(port == 1 && selected == gidIndex, "configured GID index replaced or truncated");
+            ++gidQueries;
+            gid->raw[15] = failure == 7 ? 0 : 42;
+            return failure == 6 ? -1 : 0;
+          };
+          const int selected = failure == 8 ? -1 : failure == 9 ? 256 : gidIndex;
+          bool rejected = false;
+          try {
+            const auto info = mscclpp::detail::queryGpuNetIoPort(nullptr, 1, selected, queryPort, queryGid);
+            require(info.port.active_mtu == IBV_MTU_4096 && info.gid.raw[15] == (failure == 7 ? 0 : 42),
+                    "validated port/GID was not retained");
+          } catch (const std::invalid_argument&) {
+            rejected = true;
+          } catch (const std::runtime_error& error) {
+            require(failure == 5 || failure == 6, error.what());
+            require(std::string(error.what()) ==
+                        (failure == 5 ? "ibv_query_port failed for GPUNetIO" : "ibv_query_gid failed for GPUNetIO"),
+                    "unexpected failure masked by query-error test");
+            rejected = true;
+          }
+          const bool valid = failure == 0 || (failure == 7 && link == IBV_LINK_LAYER_INFINIBAND && !grh);
+          require(rejected != valid, "port/GID admission mismatch");
+          require(portQueries == (failure >= 8 ? 0 : 1), "invalid index reached port query");
+          require(gidQueries == (failure == 0 || failure == 6 || failure == 7 ? 1 : 0),
+                  "invalid port/index reached GID query");
+          require(qpCreationCalls == 0, "port validation created QPs");
+          ++portCases;
+        }
+      }
+    }
+  }
+  for (const int invalidPort : {-1, 0, 256}) {
+    int queries = 0;
+    bool rejected = false;
+    try {
+      (void)mscclpp::detail::queryGpuNetIoPort(
+          nullptr, invalidPort, 0,
+          [&](ibv_context*, uint8_t, ibv_port_attr*) {
+            ++queries;
+            return 0;
+          },
+          [&](ibv_context*, uint8_t, int, ibv_gid*) {
+            ++queries;
+            return 0;
+          });
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected && queries == 0, "invalid port reached verbs queries");
+    ++portCases;
+  }
+  std::cout << "GPUNetIO port/GID preflight: " << portCases << " cases passed\n";
+  int sparsePlans = 0;
+  for (const int ranks : {1, 2, 4, 8}) {
+    for (const int pattern : {0, 1, 2}) {
+      std::vector<int> plans(static_cast<size_t>(ranks) * ranks);
+      for (int first = 0; first < ranks; ++first) {
+        for (int second = first + 1; second < ranks; ++second) {
+          const int count = pattern == 0   ? 0
+                            : pattern == 1 ? (second == first + 1 || (first == 0 && second == ranks - 1))
+                                           : (first == 0 ? second : 0);
+          plans[first * ranks + second] = plans[second * ranks + first] = count;
+        }
+      }
+      for (int rank = 0; rank < ranks; ++rank) {
+        const auto offsets = mscclpp::detail::gpuNetIoQpOffsets(plans, rank, ranks);
+        int total = 0;
+        for (int peer = 0; peer < ranks; ++peer) {
+          require(offsets[peer] == total, "sparse peer offset");
+          total += plans[rank * ranks + peer];
+        }
+        require(offsets.back() == total, "sparse allocation includes unrequested queues");
+        struct Transport {
+          int rank;
+          const std::vector<int>& offsets;
+          int calls = 0;
+          void send(const void* data, int bytes, int peer, int tag) {
+            require(peer != rank && bytes == (offsets[peer + 1] - offsets[peer]) * static_cast<int>(sizeof(int)) &&
+                        tag == 91 && calls % 2 == (rank < peer ? 0 : 1),
+                    "sparse send scope/order");
+            require(*static_cast<const int*>(data) == offsets[peer], "wrong send segment");
+            ++calls;
+          }
+          void recv(void* data, int bytes, int peer, int tag) {
+            require(peer != rank && bytes == (offsets[peer + 1] - offsets[peer]) * static_cast<int>(sizeof(int)) &&
+                        tag == 91 && calls % 2 == (rank < peer ? 1 : 0),
+                    "sparse recv scope/order");
+            auto* values = static_cast<int*>(data);
+            for (int queue = 0; queue < bytes / static_cast<int>(sizeof(int)); ++queue)
+              values[queue] = peer * 100 + queue;
+            ++calls;
+          }
+        } transport{rank, offsets};
+        std::vector<int> local(total);
+        for (int index = 0; index < total; ++index) local[index] = index;
+        const auto remote = mscclpp::detail::exchangeGpuNetIoQpMetadata(transport, local, offsets, rank, 91);
+        int edges = 0;
+        for (int peer = 0; peer < ranks; ++peer) {
+          if (plans[rank * ranks + peer] > 0) ++edges;
+          for (int queue = 0; queue < plans[rank * ranks + peer]; ++queue)
+            require(remote[offsets[peer] + queue] == peer * 100 + queue, "remote queue mismatch");
+        }
+        require(transport.calls == 2 * edges, "unrequested peer contacted");
+        ++sparsePlans;
+      }
+      for (const int invalid : {-1, 1, 65}) {
+        auto bad = plans;
+        bad[0] = invalid;
+        bool rejected = false;
+        try {
+          (void)mscclpp::detail::gpuNetIoQpOffsets(bad, 0, ranks);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "invalid self plan accepted");
+      }
+      if (ranks > 1) {
+        auto bad = plans;
+        ++bad[1];
+        bool rejected = false;
+        try {
+          (void)mscclpp::detail::gpuNetIoQpOffsets(bad, 0, ranks);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "asymmetric plan accepted");
+        for (const int count : {-1, 65}) {
+          bad = plans;
+          bad[1] = bad[ranks] = count;
+          rejected = false;
+          try {
+            (void)mscclpp::detail::gpuNetIoQpOffsets(bad, 0, ranks);
+          } catch (const std::invalid_argument&) {
+            rejected = true;
+          }
+          require(rejected, "out-of-range reciprocal counts accepted");
+        }
+      }
+    }
+  }
+  require(mscclpp::detail::buildGpuNetIoQpTable({}).empty(), "idle rank QP table must be empty");
+  for (const int count : {1, 4, 65}) {
+    std::vector<doca_gpu_dev_verbs_qp> descriptors(count);
+    std::vector<doca_gpu_verbs_qp> verbs(count);
+    std::vector<doca_gpu_verbs_qp_hl> handles(count);
+    std::vector<doca_gpu_verbs_qp_hl*> compact(count);
+    for (int index = 0; index < count; ++index) {
+      descriptors[index].sq_num = 9000 + index;
+      descriptors[index].sq_rsvd_index = 100 + index;
+      verbs[index].qp_cpu = &descriptors[index];
+      handles[index].qp_gverbs = &verbs[index];
+      compact[index] = &handles[index];
+    }
+    const auto table = mscclpp::detail::buildGpuNetIoQpTable(compact);
+    require(table.size() == static_cast<size_t>(count) &&
+                std::memcmp(table.data(), descriptors.data(), count * sizeof(descriptors[0])) == 0,
+            "compact descriptors changed or extra slots allocated");
+    for (const int failure : {0, 1, 2}) {
+      compact[0] = failure == 0 ? nullptr : &handles[0];
+      handles[0].qp_gverbs = failure == 1 ? nullptr : &verbs[0];
+      verbs[0].qp_cpu = failure == 2 ? nullptr : &descriptors[0];
+      bool rejected = false;
+      try {
+        (void)mscclpp::detail::buildGpuNetIoQpTable(compact);
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "missing compact descriptor accepted");
+    }
+  }
+  for (const int pattern : {0, 1, 2}) {
+    constexpr int ranks = 8;
+    std::vector<int> plan(ranks * ranks);
+    for (int first = 0; first < ranks - 1; ++first) {
+      for (int second = first + 1; second < ranks - 1; ++second) {
+        const int count = pattern == 0   ? 0
+                          : pattern == 1 ? (second == first + 1 || (first == 0 && second == ranks - 2))
+                                         : (first == 0 ? second : 0);
+        plan[first * ranks + second] = plan[second * ranks + first] = count;
+      }
+    }
+    struct Network {
+      std::mutex mutex;
+      std::condition_variable changed;
+      std::map<std::pair<int, int>, std::vector<int>> messages;
+    } network;
+    struct Endpoint {
+      Network& network;
+      int rank;
+      void send(void* data, int bytes, int peer, int tag) {
+        require(tag == 19, "unexpected QP tag");
+        std::unique_lock<std::mutex> lock(network.mutex);
+        const auto key = std::make_pair(rank, peer);
+        const auto* values = static_cast<int*>(data);
+        network.messages[key] = std::vector<int>(values, values + bytes / sizeof(int));
+        network.changed.notify_all();
+        require(
+            network.changed.wait_for(lock, std::chrono::seconds(5), [&] { return network.messages.count(key) == 0; }),
+            "sparse send deadlock");
+      }
+      void recv(void* data, int bytes, int peer, int tag) {
+        require(tag == 19, "unexpected QP tag");
+        std::unique_lock<std::mutex> lock(network.mutex);
+        const auto key = std::make_pair(peer, rank);
+        require(
+            network.changed.wait_for(lock, std::chrono::seconds(5), [&] { return network.messages.count(key) != 0; }),
+            "sparse receive deadlock");
+        require(network.messages.at(key).size() * sizeof(int) == static_cast<size_t>(bytes), "QP count mismatch");
+        std::memcpy(data, network.messages.at(key).data(), bytes);
+        network.messages.erase(key);
+        network.changed.notify_all();
+      }
+    };
+    std::vector<std::thread> threads;
+    std::vector<std::exception_ptr> failures(ranks);
+    for (int rank = 0; rank < ranks; ++rank) {
+      threads.emplace_back([&, rank] {
+        try {
+          Endpoint endpoint{network, rank};
+          const auto offsets = mscclpp::detail::gpuNetIoQpOffsets(plan, rank, ranks);
+          std::vector<int> local(offsets.back(), rank);
+          const auto remote = mscclpp::detail::exchangeGpuNetIoQpMetadata(endpoint, local, offsets, rank, 19);
+          for (int peer = 0; peer < ranks; ++peer)
+            for (int index = offsets[peer]; index < offsets[peer + 1]; ++index)
+              require(remote[index] == peer, "parallel QP metadata crossed peers");
+        } catch (...) {
+          failures[rank] = std::current_exception();
+        }
+      });
+    }
+    for (auto& thread : threads) thread.join();
+    for (const auto& failure : failures)
+      if (failure) std::rethrow_exception(failure);
+    require(network.messages.empty(), "unconsumed QP metadata");
+  }
+  std::cout << "Sparse plans and requested-peer metadata: " << sparsePlans << " cases passed\n";
   for (qpFailureCase = 0; qpFailureCase < 12; ++qpFailureCase) {
     doca_gpu_verbs_qp_hl* output = &policyQp;
     const auto status = mscclpp::detail::createDirectGpuNetIoQp(&gpu, &device, nullptr, &output);
@@ -255,7 +514,7 @@ int doca_gpu_dev_verbs_poll_one_cq_at(doca_gpu_dev_verbs_qp* qp, uint64_t ticket
 #define POLL_MAYBE_JAILBREAK(condition, budget) require(!(condition), "unexpected proxy polling")
 namespace mscclpp {
 enum { scopeSystem, memoryOrderAcquire };
-enum { TriggerData = 1, TriggerFlag = 2, TriggerSync = 4 };
+enum { TriggerPut, TriggerSignal, TriggerPutWithSignal, TriggerPutWithSignalAndFlush, TriggerFlush, TriggerAccumulate };
 constexpr int TriggerBitsSize = 32;
 template <typename Value, int Scope>
 Value atomicLoad(Value* pointer, int) {
@@ -348,6 +607,39 @@ int main() {
     }
     require(rejected, "out-of-range QP accepted");
   }
+  for (const int count : {1, 2, 64}) {
+    const int offsets[] = {0, 0, 1, 1, 1 + count};
+    std::vector<doca_gpu_dev_verbs_qp> sparseQps(1 + count);
+    std::vector<uint64_t> sparseScratch(1 + count);
+    mscclpp::GpuNetIoDeviceContext sparse{};
+    sparse.qps = sparseQps.data();
+    sparse.numPeers = 4;
+    sparse.numQpsPerPeer = count;
+    sparse.peerQpOffsets = offsets;
+    sparse.atomicResultBase = reinterpret_cast<uintptr_t>(sparseScratch.data());
+    sparse.atomicResultLkey = 7;
+    for (const int peer : {1, 3}) {
+      for (int queue = 0; queue < offsets[peer + 1] - offsets[peer]; ++queue) {
+        sparse.atomicAddRegistered(peer, queue, {0x1000, 256, 11, peer}, 8, 1);
+        const int index = offsets[peer] + queue;
+        require(
+            selectedQp == &sparseQps[index] && signalResult.addr == reinterpret_cast<uintptr_t>(&sparseScratch[index]),
+            "sparse QP and scratch lookup disagree");
+        sparse.flush(peer, queue);
+        require(selectedQp == &sparseQps[index], "sparse flush chose wrong QP");
+      }
+    }
+    for (const int peer : {0, 1, 2, 3}) {
+      selectedQp = nullptr;
+      bool rejected = false;
+      try {
+        sparse.flush(peer, offsets[peer + 1] - offsets[peer]);
+      } catch (const std::runtime_error&) {
+        rejected = true;
+      }
+      require(rejected && selectedQp == nullptr, "unrequested QP reached transport");
+    }
+  }
   std::vector<doca_gpu_dev_verbs_qp> boundQps(4);
   uint64_t scratch[4]{};
   uint64_t counters[4]{};
@@ -379,8 +671,8 @@ int main() {
             "channel signal/QP binding");
     channel.signal();
     require(selectedQp == expectedQp && signalDestination.addr == signal.base, "standalone signal changed QP");
-    channel.atomicAdd(64, -1);
-    require(selectedQp == expectedQp && signalDestination.addr == memories[queue * 2].base + 64, "atomicAdd binding");
+    channel.accumulate(64, -1);
+    require(selectedQp == expectedQp && signalDestination.addr == memories[queue * 2].base + 64, "accumulate binding");
     channel.flush(-1);
     require(selectedQp == expectedQp, "flush changed QP");
     base.put(queue * 2, 8, queue * 2 + 1, 16, 8);
@@ -396,7 +688,7 @@ int main() {
         if (invalid == 0) base.put(4, 0, 1, 0, 8);
         if (invalid == 1) base.put(1, 0, 0, 0, 8);
         if (invalid == 2) channel.put(UINT64_MAX, 0, 8);
-        if (invalid == 3) channel.atomicAdd(1, 1);
+        if (invalid == 3) channel.accumulate(1, 1);
       } catch (const std::runtime_error&) {
         rejected = true;
       }
@@ -407,9 +699,12 @@ int main() {
 }
 
 #elif defined(TEST_HOST_API)
+#include <condition_variable>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mutex>
+#include <thread>
 
 #include "gpu_net_io_binding.hpp"
 
@@ -435,6 +730,65 @@ class PeerTestBootstrap : public mscclpp::Bootstrap {
  private:
   int rank_;
   int worldSize_;
+};
+
+class SetupPhaseTestBootstrap : public PeerTestBootstrap {
+ public:
+  SetupPhaseTestBootstrap(int rank, int failedPeer) : PeerTestBootstrap(rank, 4), failedPeer_(failedPeer) {}
+  int calls = 0;
+  int observedCode = 0;
+  void allGather(void* data, int size) override {
+    if (size != sizeof(mscclpp::detail::GpuNetIoSetupStatus)) throw std::runtime_error("wrong setup status size");
+    ++calls;
+    auto* statuses = static_cast<mscclpp::detail::GpuNetIoSetupStatus*>(data);
+    observedCode = statuses[getRank()].code;
+    for (int peer = 0; peer < getNranks(); ++peer) {
+      if (peer == getRank()) continue;
+      statuses[peer] = {};
+      if (peer == failedPeer_) {
+        statuses[peer].code = 2;
+        std::snprintf(statuses[peer].message, sizeof(statuses[peer].message), "%s", "remote allocation failure");
+      }
+    }
+  }
+
+ private:
+  int failedPeer_;
+};
+
+struct SetupCollective {
+  std::mutex mutex;
+  std::condition_variable changed;
+  int arrived = 0;
+  int generation = 0;
+  std::vector<mscclpp::detail::GpuNetIoSetupStatus> rows = std::vector<mscclpp::detail::GpuNetIoSetupStatus>(4);
+};
+
+class ThreadedSetupBootstrap : public PeerTestBootstrap {
+ public:
+  ThreadedSetupBootstrap(int rank, SetupCollective& collective) : PeerTestBootstrap(rank, 4), collective_(collective) {}
+  void allGather(void* data, int size) override {
+    if (size != sizeof(mscclpp::detail::GpuNetIoSetupStatus)) throw std::runtime_error("wrong status size");
+    auto* rows = static_cast<mscclpp::detail::GpuNetIoSetupStatus*>(data);
+    std::unique_lock<std::mutex> lock(collective_.mutex);
+    const auto barrier = [&] {
+      const int generation = collective_.generation;
+      if (++collective_.arrived == 4) {
+        collective_.arrived = 0;
+        ++collective_.generation;
+        collective_.changed.notify_all();
+      } else {
+        collective_.changed.wait(lock, [&] { return collective_.generation != generation; });
+      }
+    };
+    collective_.rows[getRank()] = rows[getRank()];
+    barrier();
+    std::copy(collective_.rows.begin(), collective_.rows.end(), rows);
+    barrier();
+  }
+
+ private:
+  SetupCollective& collective_;
 };
 
 class ExchangeTestBootstrap : public PeerTestBootstrap {
@@ -466,7 +820,7 @@ __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel)
   channel.signal();
   channel.putWithSignal(0, 8);
   channel.putWithSignalAndFlush(0, 8, 8, 100);
-  channel.atomicAdd(128, -1);
+  channel.accumulate(128, -1);
   channel.flush();
   channel.wait();
 }
@@ -474,6 +828,60 @@ __global__ void compileGpuNetIoChannel(mscclpp::PortChannelDeviceHandle channel)
 
 int main() {
 #if defined(TEST_GPUNETIO_ENABLED)
+  for (int failedPhase = -1; failedPhase < 10; ++failedPhase) {
+    for (int failedRank = 0; failedRank < 4; ++failedRank) {
+      SetupCollective collective;
+      std::vector<std::thread> threads;
+      std::vector<int> reached(4), rejected(4);
+      for (int rank = 0; rank < 4; ++rank) {
+        threads.emplace_back([&, rank] {
+          ThreadedSetupBootstrap bootstrap(rank, collective);
+          std::vector<mscclpp::detail::GpuNetIoSetupStatus> statuses(4);
+          try {
+            for (int phase = 0; phase < 10; ++phase) {
+              mscclpp::detail::runGpuNetIoSetupPhase(bootstrap, statuses, "fault injection", [&] {
+                ++reached[rank];
+                if (rank == failedRank && phase == failedPhase) throw std::bad_alloc();
+              });
+            }
+          } catch (const mscclpp::Error& error) {
+            rejected[rank] = std::string(error.what()).find("rank " + std::to_string(failedRank)) != std::string::npos;
+          }
+        });
+      }
+      for (auto& thread : threads) thread.join();
+      for (int rank = 0; rank < 4; ++rank) {
+        if (reached[rank] != (failedPhase < 0 ? 10 : failedPhase + 1) || rejected[rank] != (failedPhase >= 0)) return 7;
+      }
+    }
+  }
+  for (int rank = 0; rank < 4; ++rank) {
+    for (int failure = 0; failure < 4; ++failure) {
+      for (int failedPeer = -1; failedPeer < 4; ++failedPeer) {
+        SetupPhaseTestBootstrap bootstrap(rank, failedPeer);
+        std::vector<mscclpp::detail::GpuNetIoSetupStatus> statuses(4);
+        int operations = 0;
+        bool rejected = false;
+        try {
+          mscclpp::detail::runGpuNetIoSetupPhase(bootstrap, statuses, "allocation", [&] {
+            ++operations;
+            if (failure == 1) throw std::invalid_argument("invalid device");
+            if (failure == 2) throw std::bad_alloc();
+            if (failure == 3) throw 7;
+          });
+        } catch (const mscclpp::Error& error) {
+          const std::string text = error.what();
+          rejected = text.find("allocation") != std::string::npos && text.find("rank ") != std::string::npos;
+        }
+        if (operations != 1 || bootstrap.calls != 1 ||
+            bootstrap.observedCode != (failure == 0   ? 0
+                                       : failure == 1 ? 1
+                                                      : 2) ||
+            rejected != (failure != 0 || (failedPeer >= 0 && failedPeer != rank)))
+          return 6;
+      }
+    }
+  }
   for (int rank = 0; rank < 2; ++rank) {
     for (const uint32_t kind : {1U, 2U}) {
       for (const int queue : {0, 1, 63}) {
@@ -561,6 +969,17 @@ int main() {
 #else
   mscclpp::PortChannelDeviceHandle handle(0, {}, {}, 0, 0, nullptr);
   if (handle.backend_ != mscclpp::PortChannelBackend::Proxy) return 2;
+  for (const bool multiQp : {false, true}) {
+    bool rejected = false;
+    try {
+      auto service = multiQp ? std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0, 2)
+                             : std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0);
+    } catch (const mscclpp::Error& error) {
+      rejected = error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage &&
+                 std::string(error.what()).find("built without GPUNetIO") != std::string::npos;
+    }
+    if (!rejected) return 8;
+  }
 #endif
   std::cout << "PortChannel linked host API checks passed\n";
 }
@@ -586,7 +1005,7 @@ void require(bool condition, const char* message) {
 
 namespace mscclpp {
 enum { scopeSystem, memoryOrderAcquire };
-enum { TriggerData = 1, TriggerFlag = 2, TriggerSync = 4 };
+enum { TriggerPut, TriggerSignal, TriggerPutWithSignal, TriggerPutWithSignalAndFlush, TriggerFlush, TriggerAccumulate };
 constexpr int TriggerBitsSize = 32;
 
 template <typename Value, int Scope>
@@ -700,10 +1119,10 @@ int main() {
   proxy.putWithSignalAndFlush(32, 48, 128, 17);
   proxy.flush();
   const int64_t operand = -((int64_t{1} << 40) + 3);
-  proxy.atomicAdd(56, operand);
+  proxy.accumulate(56, operand);
   require(triggers.size() == 6, "proxy calls changed");
-  const int types[] = {
-      TriggerData, TriggerFlag, (TriggerData | TriggerFlag), (TriggerData | TriggerFlag | TriggerSync), TriggerSync, 0};
+  const int types[] = {TriggerPut,   TriggerSignal,    TriggerPutWithSignal, TriggerPutWithSignalAndFlush,
+                       TriggerFlush, TriggerAccumulate};
   for (size_t index = 0; index < triggers.size(); ++index) {
     require(triggers[index].type == types[index] && triggers[index].semaphoreId == 12, "proxy opcode or semaphore");
   }
@@ -711,7 +1130,7 @@ int main() {
               triggers[0].srcOffset == 16 && triggers[0].size == 32,
           "proxy addressing");
   require((triggers[5].srcOffset << TriggerBitsSize | triggers[5].size) == static_cast<uint64_t>(operand),
-          "proxy truncated signed 64-bit atomicAdd");
+          "proxy truncated signed 64-bit accumulate");
 
   GpuNetIoDeviceContext context;
   const GpuNetIoMemoryDeviceHandle memories[] = {{1024, 512, 11, 3}, {2048, 512, 12, 0}};
@@ -732,8 +1151,8 @@ int main() {
   require(context.boundedFlushes == 2 && context.budget == 0, "zero-budget flush");
   network.flush(-1);
   require(context.flushes == 1, "unbounded flush");
-  network.atomicAdd(56, operand);
-  require(context.destination == 1080 && context.value == operand, "GDAKI atomicAdd");
+  network.accumulate(56, operand);
+  require(context.destination == 1080 && context.value == operand, "GDAKI accumulate");
   base.put(0, 8, 1, 16, 32);
   require(context.peer == 3 && context.queue == 1, "memory ID used as GDAKI peer/QP");
   require(!network.poll(), "unsignaled counter");
