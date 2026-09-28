@@ -254,15 +254,13 @@ class Comm:
             self._algorithms_by_collective,
             symmetric_memory=symmetric_memory,
         )
-        # The tuner falls back here when every candidate fails, which bypasses the multi-node filter
-        # in _candidate_algorithms. Only the compiled DSL plans work across nodes; the native
-        # algorithms _default_tuned_config prefers are single-node CUDA-IPC and would hang.
-        if self._comm_group.nranks > self._comm_group.nranks_per_node:
+        # The tuner falls back here when every candidate fails, bypassing _candidate_algorithms.
+        # Native defaults require a single IPC domain, which can span physical nodes.
+        if self._comm_group.nranks > self._comm_group.nranks_per_ipc_domain:
             if default_config.algorithm not in self._dsl_algorithms:
                 raise RuntimeError(
-                    f"No multi-node algorithm is available for {collective}: "
-                    f"'{default_config.algorithm}' is single-node only. Re-run with --enable-dsl so "
-                    "a multi-node plan is compiled, or supply a tuned config that names one."
+                    f"Default algorithm '{default_config.algorithm}' for {collective} requires a single IPC domain. "
+                    "Select a DSL algorithm compiled for a supported topology."
                 )
         return default_config
 
@@ -306,10 +304,13 @@ class Comm:
                 accum_dtype=accum_dtype,
                 symmetric_memory=symmetric_memory,
             )
-        if self._comm_group.nranks > self._comm_group.nranks_per_node and config.algorithm not in self._dsl_algorithms:
+        if (
+            self._comm_group.nranks > self._comm_group.nranks_per_ipc_domain
+            and config.algorithm not in self._dsl_algorithms
+        ):
             raise RuntimeError(
-                f"Algorithm '{config.algorithm}' does not support multi-node execution. "
-                "Select a compiled multi-node DSL algorithm."
+                f"Algorithm '{config.algorithm}' requires a single IPC domain. "
+                "Select a DSL algorithm compiled for a supported topology."
             )
         symmetric_memory = symmetric_memory or config.symmetric_memory
         algorithm = self._algorithms_by_collective[collective][config.algorithm]
