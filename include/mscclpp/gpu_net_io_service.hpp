@@ -60,6 +60,9 @@ class GpuNetIoSemaphore {
 };
 
 /// Collective setup of GPUNetIO queue pairs per remote bootstrap rank.
+/// The public API remains linkable when the library is built without GPUNetIO.
+/// In that configuration, both constructors throw Error with ErrorCode::InvalidUsage
+/// before initializing any CUDA, IB or DOCA resources.
 /// Unlike ProxyService, the GPU posts RDMA operations and rings NIC doorbells directly.
 /// Requires GPU_SM_DB, valid DBRs and GPU-resident non-collapsed CQs. CPU-assisted
 /// fallback is disabled for the pinned upstream version; unsupported systems fail setup.

@@ -21,7 +21,33 @@ __global__ void compileConsumerChannel(mscclpp::PortChannelDeviceHandle channel)
   channel.flush();
 }
 
-int main() {
+void compileConsumerService(mscclpp::GpuNetIoService& service) {
+  service.setup();
+  service.setup(nullptr, 0);
+  service.setup(std::vector<int>{}, 1);
+  auto connection = service.connect(1, 0);
+  auto memory = service.registerMemory(nullptr, 0);
+  (void)service.exchangeMemory(connection, memory, 2);
+  (void)service.buildSemaphore(connection, 3);
+  (void)service.deviceContext();
+  (void)service.deviceContext(1);
+}
+
+int main(int argc, char**) {
+  for (const bool multiQp : {false, true}) {
+    bool rejected = false;
+    try {
+      auto service = multiQp ? std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0, 2)
+                             : std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0);
+      if (argc > 1) compileConsumerService(*service);
+    } catch (const mscclpp::Error& error) {
+      rejected = error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage;
+#if !TEST_EXPECT_GPUNETIO
+      rejected = rejected && std::string(error.what()).find("built without GPUNetIO") != std::string::npos;
+#endif
+    }
+    if (!rejected) return 2;
+  }
   try {
     mscclpp::PortChannel channel(mscclpp::GpuNetIoSemaphore{}, {}, {});
   } catch (const mscclpp::Error&) {

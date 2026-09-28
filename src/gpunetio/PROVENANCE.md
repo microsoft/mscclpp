@@ -45,6 +45,12 @@ cmake --build build -j
 
 The option defaults to OFF. OFF builds do not require GPUNetIO sources or DOCA
 headers. GDAKI host channel construction is rejected by an OFF library.
+The public `GpuNetIoService` API also remains linkable in shared and static OFF
+libraries: core-side stubs provide both constructors, the destructor and every
+public operation. Construction throws `ErrorCode::InvalidUsage` with
+`MSCCL++ was built without GPUNetIO` before any GPU/IB/DOCA resource initialization.
+This permits applications to build against the same public API in either mode;
+it does not make GPUNetIO available in an OFF library.
 Both `mscclpp` and `mscclpp_static` carry the GPUNetIO feature definition and
 dependency include paths as consumer usage requirements when built ON. Linking
 either target enables the real device implementation automatically. OFF targets
@@ -485,3 +491,7 @@ cmake --build consumer-build -j2
 
 Use `EXPECT_GPUNETIO=OFF` for an OFF installation. Compilation is not GPU/NIC
 runtime qualification; this fixture does not launch its device kernel.
+The fixture references both service constructors, destruction and all public
+service operations in each mode, so missing OFF symbols fail shared/static
+consumer linking. The CPU host test checks the disabled constructors' error
+code and message; it never calls instance methods on an unconstructed service.

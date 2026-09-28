@@ -969,6 +969,17 @@ int main() {
 #else
   mscclpp::PortChannelDeviceHandle handle(0, {}, {}, 0, 0, nullptr);
   if (handle.backend_ != mscclpp::PortChannelBackend::Proxy) return 2;
+  for (const bool multiQp : {false, true}) {
+    bool rejected = false;
+    try {
+      auto service = multiQp ? std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0, 2)
+                             : std::make_unique<mscclpp::GpuNetIoService>(nullptr, "test-device", 0);
+    } catch (const mscclpp::Error& error) {
+      rejected = error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage &&
+                 std::string(error.what()).find("built without GPUNetIO") != std::string::npos;
+    }
+    if (!rejected) return 8;
+  }
 #endif
   std::cout << "PortChannel linked host API checks passed\n";
 }
