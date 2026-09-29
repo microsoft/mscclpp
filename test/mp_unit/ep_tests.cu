@@ -478,7 +478,6 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
   }
   assertCollectiveSuccess(error, label);
 
-  communicator.bootstrap()->barrier();
   runtime.reset();
   communicator.bootstrap()->barrier();
 }
@@ -747,7 +746,6 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
     ::mscclpp::test::reportPerfResult(perfLabel, maxMicroseconds, "us/iter");
   }
 
-  communicator.bootstrap()->barrier();
   graph.reset();
   runtime.reset();
   communicator.bootstrap()->barrier();
@@ -947,7 +945,6 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
 
   communicator->bootstrap()->barrier();
   throughputRuntime.reset();
-  communicator->bootstrap()->barrier();
   runtime.reset();
   communicator->bootstrap()->barrier();
 }
