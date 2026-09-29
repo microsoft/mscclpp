@@ -122,7 +122,7 @@ void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayo
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-__global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspace, Workload workload,
+__global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspace, int* outputCount, Workload workload,
                                                const DeviceContext* context) {
   const int numRanks = context->numRanks_;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -162,25 +162,30 @@ __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspa
     for (int srcRank = 0; srcRank < numRanks; ++srcRank) {
       count += localExpertCounts[srcRank * numExpertsPerRank + localExpert];
     }
-    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) workspace.recvCounts_[localExpert] = count;
+    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) {
+      workspace.recvCounts_[localExpert] = count;
+      if (outputCount != nullptr) outputCount[localExpert] = count;
+    }
   }
   __syncthreads();
 
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR && threadId < numRanks) {
     const int prefix = localRankCounts[threadId * numRanks + context->rank_];
     const int previous = threadId == 0 ? 0 : localRankCounts[(threadId - 1) * numRanks + context->rank_];
-    workspace.recvCounts_[threadId] = prefix - previous;
+    const int count = prefix - previous;
+    workspace.recvCounts_[threadId] = count;
+    if (outputCount != nullptr) outputCount[threadId] = count;
   }
   // Dispatch and combine use local rank offsets; peers no longer read these prefixes.
 }
 
-void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, int* outputCount, const Workload& workload,
                               const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = ThroughputCountThreads;
   EP_HOST_ASSERT(workload.numExperts_ % context.numRanks_ == 0);
   EP_HOST_ASSERT(context.numRanks_ <= NumThreads);
 
-  exchangeThroughputCountsKernel<<<1, NumThreads, 0, stream>>>(workspace, workload, context.devicePtr_);
+  exchangeThroughputCountsKernel<<<1, NumThreads, 0, stream>>>(workspace, outputCount, workload, context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 

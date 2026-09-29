@@ -104,7 +104,8 @@ class MoERuntime {
   /// dispatchRequest.prepareHandle = routing;
   /// auto dispatched = runtime.dispatch(DispatchRequest{dispatchRequest});
   /// @endcode
-  /// @param request Routing IDs, token counts, dispatch grid size, and CUDA stream.
+  /// @param request Routing IDs, token counts, optional output counts, dispatch
+  /// grid size, and CUDA stream.
   /// @return An opaque, reusable handle identifying runtime-owned routing metadata.
   /// @throws EPException For invalid inputs or an unsupported mode.
   PrepareHandle prepare(const PrepareRequest& request);

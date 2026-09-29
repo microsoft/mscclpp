@@ -176,7 +176,7 @@ PrepareHandle MoERuntime::prepare(const PrepareRequest& request) {
   context.routingEpoch_ = nextRoutingEpoch;
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank);
   throughputCountRoutes(request.topkIdx, workspaceLayout, workload, context.deviceContext_, request.stream);
-  throughputExchangeCounts(workspaceLayout, workload, context.deviceContext_, request.stream);
+  throughputExchangeCounts(workspaceLayout, request.outputCount, workload, context.deviceContext_, request.stream);
   return PrepareHandle(std::move(metadata));
 }
 
@@ -228,15 +228,6 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
     // before overwriting payload storage that peers consumed in the previous pair.
     throughputSynchronizePeers(context.deviceContext_, request.stream);
   }
-  if (request.outputCount != nullptr) {
-    const int numOutputCounts = context.outputLayout_ == DispatchLayout::TOKEN_MAJOR
-                                    ? context.numExperts_ / context.numRanks_
-                                    : context.numRanks_;
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(request.outputCount, workspaceLayout.recvCounts_,
-                                      sizeof(int) * static_cast<size_t>(numOutputCounts), cudaMemcpyDeviceToDevice,
-                                      request.stream));
-  }
-
   const ThroughputStorageLayout storageLayout = context.storageLayout();
   const Workload workload = context.makeWorkload(request.numTokens, request.maxTokensPerRank, request.dispatchDataType);
   throughputDispatch(request.input, request.topkIdx, request.topkWeights, request.inputScales, workload,

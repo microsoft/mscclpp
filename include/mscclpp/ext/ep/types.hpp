@@ -72,6 +72,12 @@ struct PrepareRequest {
   int numBlocks;
   /// CUDA stream on which preparation is enqueued asynchronously.
   cudaStream_t stream;
+  /// Optional device output counts produced by preparation.
+  ///
+  /// TOKEN_MAJOR writes one count per local expert. RANK_MAJOR writes one
+  /// count per source rank. Keep this buffer alive until preparation completes
+  /// on the supplied stream. Reusing the returned handle does not rewrite it.
+  int* outputCount = nullptr;
 };
 
 /// Opaque routing metadata returned by MoERuntime::prepare().
@@ -149,8 +155,6 @@ struct LatencyDispatchRequest {
 /// including graph replays, has completed. The returned DispatchHandle must
 /// stay alive until the matching combine has been enqueued.
 struct ThroughputDispatchRequest {
-  /// Per-expert or per-rank output counts.
-  int* outputCount;
   /// Input token payload, 16-byte aligned.
   const void* input;
   /// Optional input scale factors.
@@ -174,6 +178,7 @@ struct ThroughputDispatchRequest {
   ///
   /// An empty handle requests automatic preparation. For a non-empty handle,
   /// topkIdx, numTokens, maxTokensPerRank, and numBlocks must match the preparation.
+  /// Request explicit preparation when output counts are required.
   /// All ranks must agree on whether to reuse preparation or compute it automatically.
   /// This dispatch must use the same CUDA stream as preparation.
   /// Routing IDs must remain unchanged; their device contents are not validated

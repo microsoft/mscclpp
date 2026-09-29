@@ -81,7 +81,7 @@ void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayo
                            const DeviceContext& context, cudaStream_t stream);
 
 // Collective preparation: exchange counts and determine source-rank receive ranges.
-void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, int* outputCount, const Workload& workload,
                               const DeviceContext& context, cudaStream_t stream);
 
 // Wait until peers have finished consuming the previous payload before overwriting it.
