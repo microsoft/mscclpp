@@ -157,7 +157,7 @@ def parse_args():
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
     parser.add_argument("--graph-pairs", type=int, default=1, help="Dispatch/combine pairs per correctness graph")
-    parser.add_argument("--graph-replays", type=int, default=1, help="Correctness graph replay count")
+    parser.add_argument("--graph-replays", type=int, default=2, help="Correctness graph replay count")
     parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.graph_pairs < 1 or args.graph_replays < 1:
@@ -932,18 +932,22 @@ def main():
     if rank == 0:
         print("PASS", flush=True)
 
-    def _graph_capture(dispatch_buffer, combine_out, expert_output=None, pairs=1):
+    def _graph_capture(dispatch_buffer, combine_out, expert_output=None, pairs=1, dispatch_input=None):
         graph = torch.cuda.CUDAGraph()
         graph_start = torch.cuda.Event(enable_timing=True, external=True)
         dispatch_end = torch.cuda.Event(enable_timing=True, external=True)
         graph_end = torch.cuda.Event(enable_timing=True, external=True)
+        if dispatch_input is None:
+            dispatch_input = x
         torch.cuda.synchronize()
         dist.barrier(group=group)
         with torch.cuda.graph(graph):
             graph_start.record()
             for _ in range(pairs):
+                if dispatch_quant is None:
+                    dispatch_input.add_(64)
                 graph_dout = moe_comm.dispatch(
-                    x,
+                    dispatch_input,
                     topk_idx,
                     topk_weights,
                     output_buffer=dispatch_buffer,
@@ -968,19 +972,37 @@ def main():
             else (None if dispatch_output_buffer is None else torch.empty_like(dispatch_output_buffer))
         )
         graph_out = torch.empty_like(out)
+        graph_input = x.clone()
         graph, _, graph_combined_x, _, _, _ = _graph_capture(
-            graph_dispatch_output_buffer, graph_out, pairs=args.graph_pairs
+            graph_dispatch_output_buffer, graph_out, pairs=args.graph_pairs, dispatch_input=graph_input
         )
+
         for _ in range(args.graph_replays):
             graph.replay()
-        torch.cuda.synchronize()
+            torch.cuda.synchronize()
 
-        _, graph_diff = validate_combine_output(
-            graph_combined_x,
-            expected,
-            exact=combine_mode == ep.CombineMode.DIRECT_SEND,
-            group=group,
-        )
+            graph_expected = expected
+            if dispatch_quant is None:
+                if expanded:
+                    graph_expected = expected_direct_send_output(graph_input, valid_ids, topk_weights)
+                elif (
+                    output_layout == ep.DispatchLayout.RANK_MAJOR
+                    and combine_mode == ep.CombineMode.DIRECT_SEND
+                    and not args.rank_major_route_weights_in_combine
+                ):
+                    graph_expected = expected_rank_major_route_output(graph_input, topk_idx, topk_weights)
+                elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+                    graph_expected = expected_rank_local_reduce_output(
+                        graph_input, topk_idx, topk_weights, num_ranks, num_local_experts
+                    )
+                else:
+                    graph_expected = expected_direct_send_output(graph_input, topk_idx, topk_weights)
+            _, graph_diff = validate_combine_output(
+                graph_combined_x,
+                graph_expected,
+                exact=combine_mode == ep.CombineMode.DIRECT_SEND,
+                group=group,
+            )
         if rank == 0:
             print(
                 f"[cuda graph dispatch+combine] OK pairs={args.graph_pairs} replays={args.graph_replays} "
