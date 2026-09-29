@@ -151,7 +151,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Algorithm family (`MoEMode.LATENCY` or `MoEMode.THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
-| `deduplicate_expanded_routes` | For latency `RANK_MAJOR_TOPK_EXPANDED`, send one payload per destination rank and expand duplicate route rows locally; disabled by default |
+| `deduplicate_expanded_routes` | For latency `TOKEN_MAJOR` or `RANK_MAJOR_TOPK_EXPANDED`, send one payload per destination rank and expand duplicate route rows locally; disabled by default |
 | `rank_major_route_weights_in_combine` | For latency `RANK_MAJOR` with `DIRECT_SEND`, apply source route weights during combine so MM2 can provide unweighted route rows |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
@@ -199,7 +199,7 @@ Use `DispatchLayout` instead of string literals for this field:
 
 | Layout enum | Tensor shape |
 |---|---|
-| `DispatchLayout.TOKEN_MAJOR` | Throughput: `[total_recv_tokens, hidden]` |
+| `DispatchLayout.TOKEN_MAJOR` | Throughput: `[total_recv_tokens, hidden]`; latency: `[world_size * max_tokens_per_rank * topk, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 | `DispatchLayout.RANK_MAJOR` | Latency or throughput: `[world_size * max_tokens_per_rank, hidden]` |
 | `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED` | Latency: `[world_size * max_tokens_per_rank * topk, hidden]` |
@@ -600,7 +600,8 @@ dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
-Latency `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED` exposes one row per routed token/top-k lane:
+Latency `DispatchLayout.TOKEN_MAJOR` and `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED`
+expose one row per routed token/top-k lane:
 
 ```python
 dispatch_out.tokens     # [world_size * max_tokens_per_rank * K, H]
@@ -610,10 +611,11 @@ dispatch_out.weights    # [world_size * max_tokens_per_rank * K]
 
 Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
 final receive buffers and exposed as zero-copy Torch tensors.
-For `RANK_MAJOR_TOPK_EXPANDED`, the flat IDs and weights align with the expanded
-token rows. This layout uses the configured capacity for every call, supports
-BF16 with top-k 1 through 9, and requires `RANK_LOCAL_REDUCE`. Expert output is
-unweighted and must reuse `dispatch_out.combine_input_buffer`, which aliases
+For latency `TOKEN_MAJOR` (and the legacy `RANK_MAJOR_TOPK_EXPANDED` spelling),
+the flat IDs and weights align with the token rows. This layout uses the
+configured capacity for every call, supports BF16 with top-k 1 through 9, and
+requires `RANK_LOCAL_REDUCE`. Expert output is unweighted and must reuse
+`dispatch_out.combine_input_buffer`, which aliases
 `dispatch_out.tokens`; combine applies the original routing weights once.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
@@ -703,8 +705,9 @@ rank_partial = rank_major_mlp(
 )
 ```
 
-For rank-major-top-k-expanded output, each valid top-k slot owns a fixed sparse
-row in `dispatch_out.tokens`, and combine applies the original routing weights.
+For latency TOKEN_MAJOR or RANK_MAJOR_TOPK_EXPANDED output, each valid top-k
+slot owns a fixed sparse row in `dispatch_out.tokens`, and combine applies the
+original routing weights.
 
 For padded expert-major output:
 
@@ -721,8 +724,8 @@ For rank-major `RANK_LOCAL_REDUCE`, combine assumes each row is already
 weighted and reduced across all local experts.
 For rank-major `DIRECT_SEND`, combine consumes weighted route rows and performs
 the full top-k reduction in combine.
-For rank-major-top-k-expanded output, combine consumes one row per top-k route
-and applies the original routing weights.
+For latency TOKEN_MAJOR or RANK_MAJOR_TOPK_EXPANDED output, combine consumes one
+row per top-k route and applies the original routing weights.
 With expert-major output, it retains its existing expert-row direct-send behavior.
 
 ## Combine API

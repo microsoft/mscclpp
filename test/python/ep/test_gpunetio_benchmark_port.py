@@ -153,6 +153,7 @@ class CpuPortTest(unittest.TestCase):
             def dispatch(self, *args, **kwargs):
                 trace.append("dispatch")
                 rank_major = self.config.output_layout in (
+                    api["DispatchLayout"].TOKEN_MAJOR,
                     api["DispatchLayout"].RANK_MAJOR,
                     api["DispatchLayout"].RANK_MAJOR_TOPK_EXPANDED,
                 )

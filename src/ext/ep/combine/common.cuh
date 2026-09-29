@@ -375,9 +375,9 @@ template <int Hidden, CombineMode Mode>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
                                                           const int64_t* __restrict__ topkIndices,
                                                           const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                                          int nExperts, int nRanks, int maxTokensPerRank, uint32_t epoch,
-                                                          const TransportView& transport, WorkspaceView& workspaceView,
-                                                          uint8_t* sharedMemory) {
+                                                          int nExperts, int nRanks, int maxTokensPerRank,
+                                                          uint32_t epoch, const TransportView& transport,
+                                                          WorkspaceView& workspaceView, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major combine requires SM90 or newer");
 #endif
@@ -409,8 +409,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   for (int tokenIdx = static_cast<int>(blockIdx.x) - 1; tokenIdx < nTokens; tokenIdx += nWorkerBlocks) {
     if (warpId == 0) {
       const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-      const float weight =
-          laneId < nTopk && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + laneId] : 1.0f;
+      const float weight = laneId < nTopk && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + laneId] : 1.0f;
       const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
       const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
       const bool validRow = laneId < RankMajorTmaMaxNTopk && destinationRank >= 0 && (IsDirectSend || firstLaneForRank);
@@ -500,8 +499,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartials(void* output, const void*
 
   for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
     const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-    const float weight =
-        laneId < nTopk && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + laneId] : 1.0f;
+    const float weight = laneId < nTopk && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + laneId] : 1.0f;
     const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
     const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
     const int partialRank = destinationRank >= 0 && (IsDirectSend || firstLaneForRank) ? destinationRank : -1;
@@ -836,8 +834,7 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombinePushReady(const int64_t* __res
 template <CombineMode Mode, int Hidden>
 MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, int nRanks, int nTopk,
                                                     int maxTokensPerRank, const TransportView& transport,
-                                                    WorkspaceView& workspaceView,
-                                                    [[maybe_unused]] uint32_t epoch) {
+                                                    WorkspaceView& workspaceView, [[maybe_unused]] uint32_t epoch) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   auto* gin = transport.gpuNetIo_;
@@ -859,8 +856,8 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, in
     const uint64_t srcRowOffset =
         transport.symmetricOffset(const_cast<void*>(expertOutput)) +
         (static_cast<size_t>(owner) * maxTokensPerRank + rowBegin) * rowsPerToken * HiddenBytes;
-    auto* landingSlot = landingBase +
-                        (static_cast<size_t>(transport.rank_) * maxTokensPerRank + rowBegin) * rowsPerToken * HiddenBytes;
+    auto* landingSlot =
+        landingBase + (static_cast<size_t>(transport.rank_) * maxTokensPerRank + rowBegin) * rowsPerToken * HiddenBytes;
     auto* remoteFlag = static_cast<uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
                        static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer + qpIndex;
     gin->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,

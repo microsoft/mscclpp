@@ -87,7 +87,9 @@ class MultiQpTests(unittest.TestCase):
 
     def test_generic_channel_peer_and_signals(self):
         header = source("include/mscclpp/port_channel_device.hpp")
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #define MSCCLPP_DEVICE_COMPILE
 #define MSCCLPP_INLINE
 #define MSCCLPP_HOST_DEVICE_INLINE
@@ -124,6 +126,7 @@ struct GpuNetIoDeviceContext{
  int tryFlush(int peer,uint64_t spins){budget=spins;flush(peer);return status;}
 };
 """
+        )
         native += header[header.index("struct BasePortChannelDeviceHandle") : header.rindex("}  // namespace mscclpp")]
         native += r"""
 int main(){
@@ -325,13 +328,16 @@ int main() {
     def test_actual_dense_landing_allocation_preserves_existing_offsets(self):
         path = "src/ext/ep/include/config.hpp"
         current = source(path)
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <sys/mman.h>
 using Bf16 = uint16_t;
 using Fp8E4M3 = uint8_t;
-enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR, RANK_MAJOR_TOPK_EXPANDED };
+enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR, TOKEN_MAJOR, RANK_MAJOR_TOPK_EXPANDED };
 enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
 """
+        )
         native += "\n".join(line for line in current.splitlines() if line.startswith("inline constexpr int GpuNetIo"))
         native += "\ntemplate<typename DataType, typename ScaleType = void>\n" + structure(current, "PayloadView")
         for name in ("rankMajorTopkIdsOffset", "rankMajorTopkWeightsOffset", "rankMajorTokenOffset"):
@@ -387,7 +393,9 @@ int main() {
         )
 
     def test_actual_owner_send_drain_and_independent_readiness(self):
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #define MSCCLPP_DEVICE_INLINE inline
 #define __trap() throw std::runtime_error("invalid QP count")
 #define EP_DEVICE_ASSERT(condition) require(condition, "device assertion")
@@ -431,6 +439,7 @@ struct WorkspaceView {
 };
 enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
 """
+        )
         combine = source(COMBINE)
         native += function(combine, "rankMajorSlotForDestination")
         native += function(combine, "rankMajorCombineStripeQp")
@@ -860,7 +869,9 @@ class ResourceLifetimeTests(unittest.TestCase):
         symbol = "doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data"
         position = text.index("void " + symbol)
         definition = text[text.rindex("template <typename T>", 0, position) : text.index("\n}", position) + 2]
-        preamble = HOST_PREAMBLE + r"""
+        preamble = (
+            HOST_PREAMBLE
+            + r"""
 #define __device__
 #define __forceinline__ inline
 struct doca_gpu_dev_verbs_qp{};struct doca_gpu_dev_verbs_wqe{};
@@ -870,6 +881,7 @@ struct doca_gpunetio_ib_mlx5_wqe_raddr_seg{uint64_t words[2];};
 constexpr uint32_t DOCA_GPUNETIO_IB_MLX5_INLINE_SEG=1u<<31;
 uint32_t doca_gpu_dev_verbs_bswap32(uint32_t value){return __builtin_bswap32(value);}
 """
+        )
         for size in (1, 2, 4, 8, 16):
             invocation = (
                 f"struct Value{{unsigned char data[{size}];}};int main(){{{symbol}(nullptr,nullptr,Value{{}});}}"
@@ -903,7 +915,9 @@ uint32_t doca_gpu_dev_verbs_bswap32(uint32_t value){return __builtin_bswap32(val
                 "doca_error_t doca_gpu_verbs_qp_flat_list_create_hl("
             )
         ]
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <cstdio>
 template<class... Args>void log_error(int,const char*,Args... arguments){(void)sizeof...(arguments);}
 #define DOCA_LOG log_error
@@ -931,7 +945,10 @@ template<class... Args>doca_error_t create_qp(Args...){return DOCA_SUCCESS;}
 template<class... Args>doca_error_t doca_gpu_verbs_export_qp(Args...){return ++exportCount==failExport?DOCA_ERROR_DRIVER:DOCA_SUCCESS;}
 void doca_gpu_verbs_destroy_qp_hl_internal(doca_gpu_verbs_qp_hl* qp){if(qp->gpu_dev)++cleaned;}
 """
-        native += actual + r"""
+        )
+        native += (
+            actual
+            + r"""
 int main(){
  doca_gpu gpu;ibv_pd pd;doca_gpu_verbs_qp_init_attr_hl attr{&gpu,&pd};
  require(doca_gpu_verbs_create_qp_hl(nullptr,nullptr)==DOCA_ERROR_INVALID_VALUE,"null QP output");
@@ -947,6 +964,7 @@ int main(){
  }
 }
 """
+        )
         self.run_native(native)
 
     def test_internal_uar_type_tracks_fallback(self):
@@ -954,7 +972,9 @@ int main(){
         internal = block(text, r"if\s*\(m_init_attr.external_uar == nullptr\)")
         getter_start = text.index("enum doca_verbs_uar_allocation_type doca_verbs_qp::get_uar_mtype()")
         getter = text[getter_start : text.index("\n}", getter_start) + 2]
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #define DOCA_LOG(...) ((void)0)
 enum doca_verbs_uar_allocation_type{DOCA_VERBS_UAR_ALLOCATION_TYPE_BLUEFLAME,DOCA_VERBS_UAR_ALLOCATION_TYPE_NONCACHE};
 constexpr int DOCA_SUCCESS=0,DOCA_ERROR_DRIVER=1,MLX5DV_UAR_ALLOC_TYPE_BF=0,MLX5DV_UAR_ALLOC_TYPE_NC=1;
@@ -968,6 +988,7 @@ struct doca_verbs_qp{
  doca_verbs_uar_allocation_type get_uar_mtype()const noexcept;
  void allocate(){uint32_t uar_id=0;
 """
+        )
         native += internal + "}};\n" + getter
         native += r"""
 int main(){for(failure=0;failure<3;++failure){doca_verbs_qp qp;calls=0;bool rejected=false;
@@ -1004,7 +1025,9 @@ int main(){for(failure=0;failure<3;++failure){doca_verbs_qp qp;calls=0;bool reje
     def test_host_allocations_and_failure_cleanup(self):
         text = source("src/gpunetio/src/doca_gpunetio.cpp")
         actual = text[text.index("doca_error_t doca_gpu_mem_alloc(") : text.index("doca_error_t doca_gpu_dmabuf_fd(")]
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <unordered_map>
 #define DOCA_LOG(...) ((void)0)
 #define DOCA_VERBS_CUDA_CALL_CLEAR_ERROR(call) (call)
@@ -1028,7 +1051,10 @@ int doca_verbs_wrapper_cuPointerSetAttribute(void*,int,uintptr_t){return failure
 int doca_gpu_gdrcopy_create_mapping(void*device,size_t,int*,void**host){*host=device;return failure==4;}
 void doca_gpu_gdrcopy_destroy_mapping(int,void*,size_t){}
 """
-        native += actual + r"""
+        )
+        native += (
+            actual
+            + r"""
 int main(){
  std::unordered_map<uint64_t,doca_gpu_mtable*> table;doca_gpu gpu{false,&table};
  for(auto type:{DOCA_GPU_MEM_TYPE_GPU_CPU,DOCA_GPU_MEM_TYPE_CPU_GPU})
@@ -1052,6 +1078,7 @@ int main(){
  }
 }
 """
+        )
         self.run_native(native)
 
     def test_atomic_results_never_alias_payload(self):
@@ -1061,7 +1088,9 @@ int main(){
                 "}  // namespace detail"
             )
         ]
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <set>
 #define MSCCLPP_DEVICE_INLINE inline
 #define MSCCLPP_ASSERT_DEVICE(test,message) require(test,message)
@@ -1081,7 +1110,10 @@ uint32_t ginLocalKey(const GpuNetIoDeviceContext& context,int queue){return cont
 uint32_t ginRemoteKey(const GpuNetIoDeviceContext& context,int peer,int queue){return context.rkeys[(queue%context.numHcas)*8+peer];}
 int ginQp(void*,int flat){return flat;}
 """
-        native += helper + r"""
+        )
+        native += (
+            helper
+            + r"""
 }
 using doca_gpu_dev_verbs_ticket_t=uint64_t;
 constexpr int DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD=0,DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU=0;
@@ -1092,6 +1124,7 @@ template<int,int>void doca_gpu_dev_verbs_put_signal(int flat,doca_gpu_dev_verbs_
  *reinterpret_cast<uint64_t*>(result.addr)=0xfeed;
 }
 """
+        )
         native += function(text, "GpuNetIoDeviceContext::putWithSignal")
         native += function(text, "GpuNetIoDeviceContext::atomicAdd")
         native += r"""
@@ -1124,7 +1157,9 @@ int main(){
 
     def test_service_shutdown_with_continuous_progress(self):
         text = source("src/gpunetio/src/doca_gpunetio.cpp")
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <atomic>
 #include <set>
 #include <new>
@@ -1136,6 +1171,7 @@ struct doca_gpu_verbs_qp{};using doca_gpu_verbs_service_t=void*;
 std::atomic<int> progress{0};
 void doca_gpu_verbs_cpu_proxy_progress(doca_gpu_verbs_qp*,bool* advanced){++progress;*advanced=true;}
 """
+        )
         native += "struct doca_gpu_verbs_service " + block(text, r"struct doca_gpu_verbs_service(?=\s*\{)") + ";"
         native += text[
             text.index("static void *priv_service_mainloop") : text.index(

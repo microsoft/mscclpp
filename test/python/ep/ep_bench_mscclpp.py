@@ -33,7 +33,7 @@ def _make_comm_group(comm):
 
 
 def _simulated_latency_expert_output(dispatch_out, ep):
-    if dispatch_out.layout.kind == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+    if dispatch_out.layout.kind in (ep.DispatchLayout.TOKEN_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
         return dispatch_out.tokens
     return simulated_gemm_output(dispatch_out)
 
@@ -68,19 +68,19 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     }[args.combine_mode]
     requested_layout = args.ep_layout or "expert_major"
     rank_major = requested_layout == "rank_major"
+    token_major = requested_layout == "token_major"
     rank_major_topk_expanded = requested_layout == "rank_major_topk_expanded"
-    expanded = rank_major_topk_expanded
-    if requested_layout == "token_major":
-        raise ValueError("MSCCL++ latency TOKEN_MAJOR was renamed to rank_major_topk_expanded")
-    if (rank_major or rank_major_topk_expanded) and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
+    expanded = token_major or rank_major_topk_expanded
+    if (rank_major or expanded) and combine_mode != ep.CombineMode.RANK_LOCAL_REDUCE:
         raise ValueError(f"{requested_layout} output requires rank_local_reduce combine")
     output_layout = {
         "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
+        "token_major": ep.DispatchLayout.TOKEN_MAJOR,
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
         "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[requested_layout]
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if (rank_major or rank_major_topk_expanded) and dispatch_quant is not None:
+    if (rank_major or expanded) and dispatch_quant is not None:
         raise ValueError(f"{requested_layout} output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
@@ -111,7 +111,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     # src_info/layout_range/count buffers internally).
     output_buffer = (
         None
-        if rank_major or rank_major_topk_expanded
+        if rank_major or expanded
         else torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=dispatch_dtype, device="cuda")
     )
     expert_output_initialized = False

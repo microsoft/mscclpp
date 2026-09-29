@@ -535,10 +535,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpanded(
     void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    dispatchSendRankMajorTopkExpandedBf16<Hidden>(
-        output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
-        nTopk, invalidTokenExpertId, maxTokensPerRank, deduplicateExpandedRoutes, transport, workspace, nWorkerBlocks,
-        sharedMem);
+    dispatchSendRankMajorTopkExpandedBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts,
+                                                  nRanks, topkIndices, topkWeights, nTokens, nTopk,
+                                                  invalidTokenExpertId, maxTokensPerRank, deduplicateExpandedRoutes,
+                                                  transport, workspace, nWorkerBlocks, sharedMem);
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
     dispatchRankMajorTopkExpandedNotify(transport, outputTopkIdx, outputTopkWeights, nExperts, nRanks, topkIndices,
                                         nTokens, nTopk, maxTokensPerRank, invalidTokenExpertId, recvBuffer, workspace,

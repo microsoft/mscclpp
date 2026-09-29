@@ -210,7 +210,7 @@ class ExpandedTests(unittest.TestCase):
     def test_actual_expanded_allocation_aliases_and_bounds(self):
         config = source("src/ext/ep/include/config.hpp")
         native = HOST_PREAMBLE + "\n#include <sys/mman.h>\nusing Bf16=uint16_t;using Fp8E4M3=uint8_t;\n"
-        native += "enum class DispatchLayout { EXPERT_MAJOR,RANK_MAJOR,RANK_MAJOR_TOPK_EXPANDED };\n"
+        native += "enum class DispatchLayout { EXPERT_MAJOR,TOKEN_MAJOR,RANK_MAJOR,RANK_MAJOR_TOPK_EXPANDED };\n"
         native += "enum class CombineMode { RANK_LOCAL_REDUCE,DIRECT_SEND };\n"
         native += "\n".join(line for line in config.splitlines() if line.startswith("inline constexpr int GpuNetIo"))
         native += "\ntemplate<typename DataType,typename ScaleType=void>\n" + structure(config, "PayloadView")
@@ -297,7 +297,9 @@ int main() {
 
 class FastPathTests(unittest.TestCase):
     def test_actual_metadata_batch_and_large_transfer_fallback(self):
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #define MSCCLPP_USE_GPUNETIO
 #define __syncthreads() ((void)0)
 constexpr size_t DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE=4096;
@@ -327,6 +329,7 @@ struct TransportView { int rank_=0;Gin* gpuNetIo_;uint8_t* base;
 struct LatencyStorageLayout {void* expandedCounts_;void* expandedCountStaging_;void* rankMajorTopkIdsBuffer_;void* expandedSendIds_;void* rankMajorTopkWeightsBuffer_;void* expandedSendWeights_;void* gpuNetIoFlagsBuffer_;};
 struct Workload {int maxTokensPerRank_;int numTopk_;};
 """
+        )
         native += function(source(NETWORK_FAST), "postDispatch")
         native += r"""
 int main() {
@@ -345,7 +348,9 @@ int main() {
         native_tests.MultiQpTests.run_native(self, native)
 
     def test_actual_sparse_wqe_batch_keys_and_wrap(self):
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -403,6 +408,7 @@ template<int Mode,int Scope,int Handler> void doca_gpu_dev_verbs_submit(doca_gpu
 }
 namespace mscclpp {
 """
+        )
         native += structure(source("include/mscclpp/port_channel_gpunetio_device.hpp"), "GpuNetIoDeviceContext")
         native += "namespace detail {\n"
         native += "doca_gpu_dev_verbs_qp* ginQp(void* ptr,int index){return static_cast<doca_gpu_dev_verbs_qp*>(ptr)+index;}\n"
@@ -441,7 +447,9 @@ int main() {
 
     def test_actual_collective_default_and_opt_out_selection(self):
         host = function(source("src/ext/ep/latency.cc"), "LatencyContext::initialize")
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #include <cstdlib>
 enum class DispatchLayout { RANK_MAJOR, RANK_MAJOR_TOPK_EXPANDED };
 struct Device { void* gpuNetIo_=nullptr; bool expandedIpcFastPath_=false, expandedGpuNetIoFastPath_=false; };
@@ -465,6 +473,7 @@ void check(bool expanded,int ipcDomainSize,bool mapped,bool network,const char* 
   Device deviceContext_; if(network) deviceContext_.gpuNetIo_=&token;
   Bootstrap group{peerEnabled};Communicator communicator{&group};auto* communicator_=&communicator;
 """
+        )
         for relation in (">=", "<"):
             condition = (
                 "outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && ipcDomainSize " + relation + " numRanks_"
@@ -490,7 +499,9 @@ for(const char* request:{static_cast<const char*>(nullptr),"0","1","-1","garbage
         self.assertLess(host.index("expandedGpuNetIoFastPath_"), host.index("deviceContext_.devicePtr_ ="))
 
     def test_actual_retirement_ack_and_cached_epoch_wrap(self):
-        native = HOST_PREAMBLE + r"""
+        native = (
+            HOST_PREAMBLE
+            + r"""
 #define __syncthreads() ((void)0)
 #define __threadfence_system() ((void)0)
 struct Dim { unsigned x; } blockIdx{0},threadIdx{0},blockDim{1},gridDim{5};
@@ -512,6 +523,7 @@ struct LatencyStorageLayout {void* expandedSyncEpoch_;void* expandedSyncFlags_;}
 struct WorkspaceView {int* dispatchNumRecvTasks_;uint32_t* combineRankReadyEpochs_;};
 void finishCollective(const TransportView&,const LatencyStorageLayout&,int) {++ackCalls;}
 """
+        )
         for name in ("release", "wait", "ready", "retireAndAck"):
             native += function(source(IPC_FAST), name)
         native += function(source(NETWORK_FAST), "retireNetwork")

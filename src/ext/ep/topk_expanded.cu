@@ -113,6 +113,17 @@ __device__ void finishCollective(const TransportView& transport, const LatencySt
   __syncthreads();
 }
 
+__device__ void initializeLocalTokenMajorMetadata(int* outputIds, float* outputWeights, const Workload& work,
+                                                  int ranks) {
+  const size_t entries = static_cast<size_t>(ranks) * work.maxTokensPerRank_ * work.numTopk_;
+  const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+  for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < entries; index += stride) {
+    outputIds[index] = work.invalidTokenExpertId_;
+    outputWeights[index] = 0.0f;
+  }
+  __threadfence_system();
+}
+
 template <int Hidden>
 struct RankMajorSendState {
   int laneId_, warpGroupId_, tokenStride_, firstTokenIdx_;
@@ -174,8 +185,7 @@ __device__ void dispatchSendRankMajorTopkExpandedBf16(void* output, int* outputI
     const size_t selection = static_cast<size_t>(token) * topk + lane;
     const int64_t expert = lane < topk ? topkIds[selection] : -1;
     const int destination = validExpert(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
-    const bool sendsPayload =
-        !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
+    const bool sendsPayload = !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
     const float weight = lane < topk ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
     const size_t row = static_cast<size_t>(transport.rank_) * rowsPerRank + selection;
     if (lane == 0) send.bulkBarrier_->wait(send.bulkPhase_);
@@ -352,6 +362,10 @@ __global__ __launch_bounds__(DispatchNThreads,
                                     work.numExperts_, work.numTopk_, DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,
                                     CombineMode::RANK_LOCAL_REDUCE, context->gpuNetIo_ != nullptr);
   const uint64_t target = state.dispatchArrivedBaseline_[context->rank_] + 1;
+  initializeLocalTokenMajorMetadata(outputIds, outputWeights, work, context->numRanks_);
+  state.combineSyncer_->sync(gridDim.x);
+  if (blockIdx.x == 0) finishCollective(transport, layout, context->numRanks_);
+  state.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x < gridDim.x - 1)
     dispatchSendRankMajorTopkExpandedBf16<Hidden>(output, outputIds, outputWeights, input, topkIds, weights, work,
                                                   transport, layout, state, context->numRanks_,
@@ -571,10 +585,21 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineTopkExpandedKernel(
     }
   }
   if (blockIdx.x < context->numRanks_) pushExpandedCombine<Hidden>(input, layout, transport, work, blockIdx.x);
+#if defined(MSCCLPP_USE_GPUNETIO)
+  if (blockIdx.x < context->numRanks_ && !transport.isNvlinkPeer(blockIdx.x)) {
+    auto* gin = transport.gpuNetIo_;
+    for (int stripe = threadIdx.x; stripe < gin->numHcas; stripe += blockDim.x) {
+      gin->flush(blockIdx.x, markerQp(transport, blockIdx.x, stripe));
+    }
+  }
+#endif
+  state.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x == 0) {
     for (int source = threadIdx.x; source < context->numRanks_; source += blockDim.x)
       waitSource(transport, flags, source, target, true);
-  } else {
+  }
+  state.combineSyncer_->sync(gridDim.x);
+  if (blockIdx.x != 0) {
     if constexpr (UseTma)
       recvRankMajorTopkExpandedRemotePartialsTma<Hidden>(output, input, topkIds, weights, work, transport, layout,
                                                          context->numRanks_, target, shared);
@@ -601,7 +626,8 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineTopkExpandedKernel(
 #include "topk_expanded_gpunetio.cuh"
 
 void validate(const Workload& work, const DeviceContext& context, int blocks) {
-  EP_HOST_ASSERT(work.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  EP_HOST_ASSERT(work.outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
+                 work.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(work.dispatchDataType_ == DispatchDataType::BF16);
   EP_HOST_ASSERT(context.numRanks_ > 0 && context.numRanks_ <= 64);
   EP_HOST_ASSERT(work.numExperts_ > 0 && work.numExperts_ % context.numRanks_ == 0);

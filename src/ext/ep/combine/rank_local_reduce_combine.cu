@@ -58,7 +58,8 @@ void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, c
                                               [[maybe_unused]] void* recvBuffer,
                                               [[maybe_unused]] void* dispatchRecvBuffer, const DeviceContext& context,
                                               int numBlocks, cudaStream_t stream) {
-  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
+                 workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
 }
 

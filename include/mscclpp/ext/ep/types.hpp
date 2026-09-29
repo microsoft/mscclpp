@@ -26,7 +26,7 @@ enum class MoEMode {
 enum class DispatchLayout {
   /// Rows grouped by local expert.
   EXPERT_MAJOR,
-  /// Dynamically sized token-major rows used by throughput mode.
+  /// Token-major rows; dynamically sized in throughput mode and fixed-capacity in latency mode.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
   RANK_MAJOR,

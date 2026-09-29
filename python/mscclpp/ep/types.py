@@ -102,15 +102,17 @@ class DispatchOutputInfo:
 class DispatchOutput:
     """Dispatch result consumed by the local MLP.
 
-    ``RANK_MAJOR`` and ``RANK_MAJOR_TOPK_EXPANDED`` alias registered buffers that are
-    reused by every dispatch. Clone any result that must outlive the next call.
+    ``RANK_MAJOR``, latency ``TOKEN_MAJOR`` and ``RANK_MAJOR_TOPK_EXPANDED``
+    alias registered buffers that are reused by every dispatch. Clone any result
+    that must outlive the next call.
 
-    Expanded tokens have shape [world_size * capacity * topk, hidden_size],
-    with flat int32 IDs and FP32 weights aligned to each row. Row
-    (source_rank * capacity + source_token) * topk + slot preserves duplicates.
-    Nonlocal, invalid and padding rows carry the invalid ID and zero weight;
-    their payload is unspecified. Write unweighted expert results into the
-    aliased combine_input_buffer. Combine applies original weights once in FP32.
+    Latency TOKEN_MAJOR and RANK_MAJOR_TOPK_EXPANDED tokens have shape
+    [world_size * capacity * topk, hidden_size], with flat int32 IDs and FP32
+    weights aligned to each row. Row (source_rank * capacity + source_token) *
+    topk + slot preserves duplicates. Nonlocal, invalid and padding rows carry
+    the invalid ID and zero weight; their payload is unspecified. Write
+    unweighted expert results into the aliased combine_input_buffer. Combine
+    applies original weights once in FP32.
     """
 
     tokens: torch.Tensor
@@ -151,7 +153,7 @@ class _RankMajorCombineContext:
 
 @dataclass
 class _RankMajorTopkExpandedCombineContext:
-    """Combine context for fixed-stride source-rank/top-k-expanded output."""
+    """Combine context for fixed-stride latency token/top-k output."""
 
     topk_ids: torch.Tensor
     weights: Optional[torch.Tensor]

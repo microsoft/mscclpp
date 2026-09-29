@@ -202,8 +202,8 @@ class MoECommunicator:
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
-        if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
-            raise NotImplementedError("expanded output does not support overlapping calls")
+        if self.output_layout in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
+            raise NotImplementedError("expanded token-major output does not support overlapping calls")
         return OverlapConfig(operation=OperationOverlapConfig())
 
 

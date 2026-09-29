@@ -202,7 +202,8 @@ struct LatencyStorageLayout {
   MSCCLPP_HOST_DEVICE_INLINE LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
                                                   int numExperts, int numTopk, DispatchLayout outputLayout,
                                                   CombineMode combineMode, bool useGpuNetIo = false) {
-    const bool topkExpanded = outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
+    const bool topkExpanded =
+        outputLayout == DispatchLayout::TOKEN_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR || topkExpanded;
     const bool rankMajorDirectSend = !topkExpanded && rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = topkExpanded || (rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE);
@@ -251,11 +252,10 @@ struct LatencyStorageLayout {
             : 0;
     const size_t gpuNetIoCombineFlagsBytes = gpuNetIoFlagsBytes;
     const size_t gpuNetIoCombineLandingBytes =
-        useGpuNetIo
-            ? configAlign<size_t>(
-                  rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes : rankMajorDispatchOutputBytes,
-                  BufferAlignmentBytes)
-            : 0;
+        useGpuNetIo ? configAlign<size_t>(
+                          rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes : rankMajorDispatchOutputBytes,
+                          BufferAlignmentBytes)
+                    : 0;
     const size_t gpuNetIoRegionBytes =
         gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
     totalBytes_ = baseBytes + gpuNetIoRegionBytes;

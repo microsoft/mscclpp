@@ -348,7 +348,8 @@ class NativeSourceTests(unittest.TestCase):
         # Exact loop bodies reject the old signal/wait in one peer iteration.
         self.assertEqual(
             code(control),
-            code("""{
+            code(
+                """{
               for (int peerRank = 0; peerRank < nRanks; ++peerRank) {
                 if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
                 transport.baseMemoryChannels_[peerRank].relaxedSignal();
@@ -357,7 +358,8 @@ class NativeSourceTests(unittest.TestCase):
                 if (transport.isSelf(peerRank) || !transport.isNvlinkPeer(peerRank)) continue;
                 transport.baseMemoryChannels_[peerRank].relaxedWait(-1);
               }
-            }"""),
+            }"""
+            ),
         )
         self.assert_ordered(sync, control, "workspaceView.combineSyncer_->sync(gridDim.x, -1);")
 
@@ -404,11 +406,14 @@ class NativeSourceTests(unittest.TestCase):
         )
         self.assertEqual(
             code(enabled),
-            code("""{
+            code(
+                """{
               available_ = outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                           outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
                            outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
               useGpuNetIo_ = available_;
-            }"""),
+            }"""
+            ),
         )
         initialize = function(context, "LatencyContext::initialize")
         self.assert_ordered(initialize, "EP_HOST_ASSERT(available_);", "svc->setup(")
