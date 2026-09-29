@@ -5,7 +5,6 @@
 
 from contextlib import contextmanager
 from dataclasses import replace
-import gc
 import importlib.util
 
 import cupy as cp
@@ -143,11 +142,20 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
                 device="cuda",
             )
             weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
-            preparation = (
-                runtime.prepare(routes, stream=stream, runtime_max_tokens_per_rank=active_capacity)
-                if prepared
-                else None
-            )
+            output_count = None
+            preparation = None
+            if prepared:
+                output_count = torch.empty(
+                    ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else NUM_LOCAL_EXPERTS,
+                    dtype=torch.int32,
+                    device="cuda",
+                )
+                preparation = runtime.prepare(
+                    routes,
+                    stream=stream,
+                    runtime_max_tokens_per_rank=active_capacity,
+                    output_count=output_count,
+                )
 
             values = (
                 (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
@@ -172,7 +180,10 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
             assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
-            if layout == DispatchLayout.RANK_MAJOR:
+            if mode == MoEMode.THROUGHPUT:
+                assert result.layout.num_tokens_per_expert is None
+                assert result.layout.num_tokens_per_rank is None
+            elif layout == DispatchLayout.RANK_MAJOR:
                 assert result.layout.num_tokens_per_expert is None
             else:
                 assert result.layout.num_tokens_per_rank is None
@@ -186,7 +197,14 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
                 if fp8:
                     assert result.quant.block_scales.data_ptr() == runtime._runtime.output_scales_buffer_ptr()
 
-            if layout == DispatchLayout.EXPERT_MAJOR:
+            if mode == MoEMode.THROUGHPUT:
+                counts = output_count
+                valid_rows = (
+                    None
+                    if counts is None or layout != DispatchLayout.RANK_MAJOR
+                    else torch.arange(active_capacity, device="cuda")[None, :] < counts[:, None]
+                )
+            elif layout == DispatchLayout.EXPERT_MAJOR:
                 counts = result.layout.num_tokens_per_expert
                 valid_rows = torch.arange(ep_group.nranks * active_capacity, device="cuda")[None, :] < counts[:, None]
             elif layout == DispatchLayout.RANK_MAJOR:
@@ -262,7 +280,8 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
                         expected_recv_weights.append(
                             [1.0 / NUM_TOPK if expert in local_routes else 0.0 for expert in all_routes]
                         )
-            assert counts.cpu().tolist() == expected_counts
+            if counts is not None:
+                assert counts.cpu().tolist() == expected_counts
             if received_rows:
                 rows = torch.tensor(received_rows, device="cuda")
                 torch.testing.assert_close(
@@ -284,7 +303,6 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
 def test_dispatch_combine_correctness(ep_group, apply_router_weights):
     for case in CASES:
         _run_dispatch_combine_case(ep_group, *case, apply_router_weights)
-        gc.collect()
         ep_group.barrier()
 
 
@@ -302,7 +320,11 @@ def test_preparation_validation(ep_group):
         with torch.cuda.stream(stream):
             routes = torch.arange(NUM_TOPK, device="cuda").repeat(num_tokens, 1)
             input = torch.ones((num_tokens, HIDDEN), dtype=torch.bfloat16, device="cuda")
-            preparation = runtime.prepare(routes, runtime_max_tokens_per_rank=active_capacity)
+            runtime.prepare(routes, runtime_max_tokens_per_rank=active_capacity)
+            output_count = torch.empty(NUM_LOCAL_EXPERTS, dtype=torch.int32, device="cuda")
+            preparation = runtime.prepare(
+                routes, runtime_max_tokens_per_rank=active_capacity, output_count=output_count
+            )
 
             with pytest.raises(TypeError, match="PrepareHandle"):
                 runtime.dispatch(input, routes, prepare_handle=object())
@@ -322,6 +344,8 @@ def test_preparation_validation(ep_group):
             result, handle = runtime.dispatch(
                 input, routes, prepare_handle=preparation, runtime_max_tokens_per_rank=active_capacity
             )
+            assert result.layout.num_tokens_per_expert is None
+            assert result.layout.num_tokens_per_rank is None
             assert handle._runtime is runtime._runtime
             assert result.tokens.shape == (ep_group.nranks * active_capacity, HIDDEN)
             assert preparation._topk_ids is routes
@@ -448,7 +472,12 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens):
         with torch.cuda.stream(stream):
             input = torch.ones((num_tokens, 128), dtype=torch.bfloat16, device="cuda")
             routes = torch.full((num_tokens, 1), ep_group.my_rank, dtype=torch.int64, device="cuda")
-            preparation = runtime.prepare(routes, runtime_max_tokens_per_rank=3)
+            output_count = torch.empty(
+                ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else 1,
+                dtype=torch.int32,
+                device="cuda",
+            )
+            preparation = runtime.prepare(routes, runtime_max_tokens_per_rank=3, output_count=output_count)
 
             def operation():
                 result, handle = runtime.dispatch(
@@ -468,9 +497,4 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens):
                 stream.synchronize()
                 torch.testing.assert_close(output, input, rtol=0, atol=0)
             if num_tokens == 0:
-                counts = (
-                    result.layout.num_tokens_per_rank
-                    if layout == DispatchLayout.RANK_MAJOR
-                    else result.layout.num_tokens_per_expert
-                )
-                torch.testing.assert_close(counts, torch.zeros_like(counts), rtol=0, atol=0)
+                torch.testing.assert_close(output_count, torch.zeros_like(output_count), rtol=0, atol=0)

@@ -172,9 +172,13 @@ class MoECommunicator:
         *,
         stream: Optional[torch.cuda.Stream] = None,
         runtime_max_tokens_per_rank: Optional[int] = None,
+        output_count: Optional[torch.Tensor] = None,
     ) -> PrepareHandle:
         """Prepare throughput routing entirely on the GPU, without moving payloads.
 
+        Optional ``output_count`` receives GPU counts with shape
+        ``[num_local_experts]`` for TOKEN_MAJOR or ``[world_size]`` for
+        RANK_MAJOR.
         Reuse the returned handle only with unchanged routing, token count,
         active capacity, and stream. Every rank must make the same reuse choice.
         """
@@ -182,18 +186,24 @@ class MoECommunicator:
             raise ValueError("prepare() is supported only in THROUGHPUT mode")
         active = self._capacity(runtime_max_tokens_per_rank)
         self._check(topk_ids, "topk_ids", (None, self.topk), torch.int64, 8)
+        if output_count is not None:
+            count_shape = (
+                (self.world_size,) if self.output_layout == DispatchLayout.RANK_MAJOR else (self.num_local_experts,)
+            )
+            self._check(output_count, "output_count", count_shape, torch.int32, 4)
         num_tokens = topk_ids.shape[0]
         if num_tokens > active:
             raise ValueError("topk_ids token count exceeds runtime_max_tokens_per_rank")
         caller_stream = self._resolve_stream(stream)
         with torch.cuda.stream(caller_stream):
-            record_stream((topk_ids,), caller_stream)
+            record_stream((topk_ids, output_count), caller_stream)
             native = self._runtime.prepare(
                 topk_idx_ptr=ptr(topk_ids),
                 num_tokens=num_tokens,
                 max_tokens_per_rank=active,
                 num_blocks=self.num_blocks[0],
                 stream_ptr=caller_stream.cuda_stream,
+                output_count_ptr=ptr(output_count),
             )
             self._bind_stream(caller_stream)
         return PrepareHandle(
@@ -265,8 +275,14 @@ class MoECommunicator:
                 else output_buffer
             )
             rank_major = self.output_layout == DispatchLayout.RANK_MAJOR
-            count = torch.empty(
-                (self.world_size if rank_major else self.num_local_experts,), dtype=torch.int32, device=self.device
+            count = (
+                None
+                if self.mode == MoEMode.THROUGHPUT
+                else torch.empty(
+                    (self.world_size if rank_major else self.num_local_experts,),
+                    dtype=torch.int32,
+                    device=self.device,
+                )
             )
             src_info = layout_range = recv_ids = recv_weights = scales = None
             if self.output_layout == DispatchLayout.EXPERT_MAJOR:
@@ -296,6 +312,11 @@ class MoECommunicator:
                 if self.output_layout == DispatchLayout.EXPERT_MAJOR
                 else self._view(self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), torch.bfloat16)
             )
+            if self.mode == MoEMode.THROUGHPUT:
+                if prepare_handle is None:
+                    native_preparation = _cpp.PrepareHandle()
+                else:
+                    native_preparation = prepare_handle._native
             retained = tuple(
                 tensor
                 for tensor in (
@@ -340,13 +361,12 @@ class MoECommunicator:
                     input_scales_ptr=ptr(input_scales),
                     topk_idx_ptr=ptr(topk_ids),
                     topk_weights_ptr=ptr(weights),
-                    output_count_ptr=ptr(count),
                     num_tokens=num_tokens,
                     max_tokens_per_rank=active,
                     dispatch_data_type=data_type,
                     num_blocks=self.num_blocks[0],
                     stream_ptr=caller_stream.cuda_stream,
-                    prepare_handle=_cpp.PrepareHandle() if prepare_handle is None else prepare_handle._native,
+                    prepare_handle=native_preparation,
                 )
             self._bind_stream(caller_stream)
             layout = DispatchLayoutInfo(

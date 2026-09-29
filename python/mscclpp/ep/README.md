@@ -1,12 +1,14 @@
 # Expert-parallel PyTorch interface
 
-`mscclpp.ep` is an optional, pure-Python tensor interface to the native
+`mscclpp.ep` is an optional PyTorch tensor interface backed by the native
 `mscclpp.mscclpp_ep_cpp` runtime. Install `mscclpp[ep,cuda12]` or
-`mscclpp[ep,cuda13]` for the appropriate CUDA version and build
-MSCCL++ with its EP Python extension. Importing the root `mscclpp` package does
-not eagerly import this interface.
+`mscclpp[ep,cuda13]` for the appropriate CUDA version. Source builds must
+use CUDA and enable the Python and EP targets
+(`MSCCLPP_USE_CUDA=ON`, `MSCCLPP_BUILD_PYTHON_BINDINGS=ON`, and
+`MSCCLPP_BUILD_EXT_EP=ON`). Importing the root `mscclpp` package does not
+eagerly import this interface.
 
-## Minimal throughput example
+## Minimal latency example
 
 Save this as `ep_identity.py` and run `mpirun -np 8 python ep_identity.py` on one
 host with eight CUDA GPUs visible to each process. `mpi4py` is needed for this
@@ -20,6 +22,7 @@ import torch
 from mscclpp import CommGroup
 from mscclpp.ep import MoECommunicator, MoECommunicatorConfig, MoEMode
 
+
 def main():
     world = MPI.COMM_WORLD
     local = world.Split_type(MPI.COMM_TYPE_SHARED)
@@ -30,32 +33,32 @@ def main():
     config = MoECommunicatorConfig(
         comm=group,
         device=device,
-        mode=MoEMode.THROUGHPUT,  # TOKEN_MAJOR by default
+        mode=MoEMode.LATENCY,  # EXPERT_MAJOR by default
         num_experts=world.Get_size(),  # one expert per rank
-        hidden_size=128,
+        hidden_size=4096,
         topk=1,
         max_tokens_per_rank=64,
     )
     moe = MoECommunicator(config)
-    moe.initialize()  # collective; call before CUDA graph capture
+    if not moe.is_available():
+        raise RuntimeError("EP is unavailable for this configuration")
+    moe.initialize()  # collective; all ranks must call in the same order
     stream = torch.cuda.current_stream(device)
 
     with torch.cuda.stream(stream):
-        x = torch.randn((32, 128), dtype=torch.bfloat16, device=device)
+        x = torch.randn((32, 4096), dtype=torch.bfloat16, device=device)
         ids = torch.full(
-            (32, 1), (world.Get_rank() + 1) % world.Get_size(),
-            dtype=torch.int64, device=device,
+            (32, 1),
+            (world.Get_rank() + 1) % world.Get_size(),
+            dtype=torch.int64,
+            device=device,
         )
         weights = torch.ones((32, 1), dtype=torch.float32, device=device)
-        routing = moe.prepare(ids, stream=stream)
-        received, handle = moe.dispatch(
-            x, ids, weights, prepare_handle=routing, stream=stream
-        )
+        received, handle = moe.dispatch(x, ids, weights, stream=stream)
 
         # Identity expert, topk=1, weight=1. The tensor is capacity-sized;
         # native combine ignores rows outside its private routing metadata.
-        received.combine_input_buffer.copy_(received.tokens)
-        result = moe.combine(received.combine_input_buffer, handle, stream=stream)
+        result = moe.combine(received.tokens, handle, stream=stream)
 
     # Caller-owned completion, only for checking the example and safe teardown.
     stream.synchronize()
@@ -75,12 +78,15 @@ resources. The wrapper itself does not synchronize on destruction.
 All ranks must configure matching dimensions, layout, capacity, and algorithms,
 and invoke collectives in the same order. Initialization is idempotent and is
 otherwise performed lazily by `prepare`, `dispatch`, or
-`get_dispatch_output_buffer` through the shared initialization decorator.
-Construction and initialization before graph capture are caller preconditions;
-the Python wrapper does not query capture state. An explicit `device` is honored
-during native construction and initialization, even when another CUDA device is
-current; the previous device is restored afterward. Operations use the caller
-stream's device scope.
+`get_dispatch_output_buffer`.
+`is_available()` reports basic native availability for the resolved topology
+and capacity; check it consistently across ranks before explicit initialization.
+Per-launch validation still applies.
+For supported CUDA graph capture, construction and initialization are caller
+preconditions; the Python wrapper does not query capture state. An explicit
+`device` is honored during native construction and initialization, even when
+another CUDA device is current; the previous device is restored afterward.
+Operations use the caller stream's device scope.
 
 `MoECommunicator` takes a frozen `MoECommunicatorConfig`. To change settings,
 create a new config with `dataclasses.replace(config, ...)`.
@@ -91,31 +97,36 @@ Let `R` be the rank count, `A` the active per-rank capacity, `H` the hidden size
 `K` the top-k count, and `L = num_experts / R`. `A` defaults to the configured
 `max_tokens_per_rank`. A call's `runtime_max_tokens_per_rank=A` may reduce it,
 provided `num_input_tokens <= A <= configured_capacity` and all ranks agree.
-Storage is allocated once at configured capacity; returned views and strides
-use **active** capacity. No host sizing, receive-pool resizing, or compaction
-kernel is introduced.
+Runtime-owned payload and communication storage is allocated at configured
+capacity; returned runtime views and strides use **active** capacity. Calls do
+not resize those buffers or read counts back to the host.
 
-| Mode / layout | `tokens` shape | Returned counts | Physical row grouping | Expert-output contract |
+| Mode / layout | `tokens` shape | Count metadata | Physical row grouping | Expert-output contract |
 | --- | --- | --- | --- | --- |
 | LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | One fixed slice per local expert | BF16 per-expert results; native combine applies the original routing weights |
 | LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 weighted local sums, or unweighted per-topk rows for DIRECT_SEND |
-| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | `layout.num_tokens_per_expert` | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
-| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 already-weighted local expert sums |
+| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | Optional prepare `output_count[L]` | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
+| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | Optional prepare `output_count[R]` | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
-Counts are CUDA int32 tensors. In TOKEN_MAJOR, `num_tokens_per_expert` is an
-expert workload statistic, not a description of physical row ranges. One token
-row can route to multiple local experts, so it increments multiple expert
-counts while occupying only one physical row. Consequently, expert counts
-cannot determine the number of valid rows or their offsets.
+Counts, when present, are CUDA int32 tensors. Latency dispatch always returns
+them. Throughput returns them only when explicit preparation receives an
+`output_count` CUDA int32 tensor; count-free preparation and automatic dispatch
+leave both `DispatchLayoutInfo` count fields as `None`.
+
+In TOKEN_MAJOR, `num_tokens_per_expert` is an expert workload statistic, not a
+description of physical row ranges. One token row can route to multiple local
+experts, so it increments multiple expert counts while occupying only one
+physical row. Consequently, expert counts cannot determine the number of valid
+rows or their offsets.
 
 TOKEN_MAJOR rows are grouped by source rank and then by source token order.
 Describing those segments would require `num_tokens_per_rank`; their offsets
 would be `exclusive_cumsum(num_tokens_per_rank)`. That metadata is not currently
 exposed. The output remains capacity-sized, and native combine uses private
-routing metadata to ignore unused tail rows. For RANK_MAJOR, a GPU mask can be
-formed with
-`torch.arange(A, device=device)[None, :] < layout.num_tokens_per_rank[:, None]`.
-Capacity tails and padded metadata are unspecified.
+routing metadata to ignore unused tail rows. When RANK_MAJOR `output_count` is
+requested, a GPU mask can be formed with
+`torch.arange(A, device=device)[None, :] < output_count[:, None]`. Capacity
+tails and padded metadata are unspecified.
 
 Input `topk_ids` is contiguous CUDA int64 `[num_input_tokens, K]`, using global
 expert IDs in `[0, num_experts)` or negative values for dropped routes.
@@ -124,25 +135,26 @@ means one per valid route. Routing values are not read or validated on the host.
 
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
 `weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global, with
-`invalid_token_expert_id` (default `num_experts`) marking non-local entries.
-Throughput IDs are local to the destination rank, with `-1` marking invalid
-routes in valid rows.
+`invalid_token_expert_id` (default `num_experts`) marking dropped or non-local
+entries. Throughput IDs are local to the destination rank, with `-1` marking
+invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
 the required BF16 `combine_input_buffer`. With `CombineMode.DIRECT_SEND`, that
 buffer and expert outputs have shape `[R, A, K, H]`: write unweighted BF16
-per-topk results, with zero for absent routes. Combine applies the original
-routing weights during FP32 reduction. Otherwise write already-weighted local
-expert sums. Expert computation must write directly into this runtime-owned buffer;
-latency rank-major combine rejects external expert-output tensors rather than
-performing a hidden staging copy. Both throughput layouts likewise require
-`combine_input_buffer`: write expert results there directly or copy them there
-explicitly before calling `combine`. Passing an external tensor to `combine`
-is rejected. Throughput dispatch payload, top-k IDs, weights, and FP8 scales
-are also runtime-owned views.
-Combine returns token outputs only; the native runtime no longer produces
-combined top-k weights, so `output_topk_weights` is not a supported argument.
+per-topk results for entries whose returned `topk_ids` identify a local expert.
+Combine applies the original routing weights during FP32 reduction. Otherwise
+write already-weighted local expert sums. Before `combine`, place these results
+in the runtime-owned buffer, either by computing there or by explicitly copying
+them there. Latency rank-major combine rejects an external expert-output tensor
+rather than performing a hidden staging copy. Both throughput layouts have the
+same exact-buffer requirement: pass `combine_input_buffer`, after writing or
+copying expert results into it. Throughput dispatch payload, top-k IDs, weights,
+and FP8 scales are also runtime-owned views.
 
+`combine` returns token outputs only and has no `output_topk_weights` argument.
+
+THROUGHPUT supports only `CombineMode.RANK_LOCAL_REDUCE`.
 For preweighted expert outputs, use `combine(..., apply_router_weights=False)`
 with latency `DIRECT_SEND` (either layout). The default is `True` for
 `DIRECT_SEND`, `False` otherwise. Other modes ignore this option.
@@ -151,10 +163,11 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
 
 * BF16 dispatch uses BF16 inputs/outputs and no block scales.
 * FP8 E4M3 uses one FP32 scale per 128 hidden elements. Latency EXPERT_MAJOR
-  can quantize **BF16 input** on the fly with
-  `QuantConfig(format=DispatchDataType.FP8_E4M3)`. Returned FP32 scales have
-  logical shape `[L, R*A, H//128]`, transposed from physical
-  `[L, H//128, R*A]`; they are not contiguous in logical order.
+  quantizes **BF16 input** on the fly with
+  `QuantConfig(format=DispatchDataType.FP8_E4M3)` and does not accept
+  precomputed input scales. Returned FP32 scales have logical shape
+  `[L, R*A, H//128]`, transposed from physical `[L, H//128, R*A]`; they are not
+  contiguous in logical order.
 * Throughput FP8 requires `torch.float8_e4m3fn` input and
   `QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=scales)`, where
   `scales` is contiguous CUDA FP32 `[num_input_tokens, H//128]`. Output scales
@@ -165,10 +178,11 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
 There are no implicit casts or contiguous copies to accept incompatible input.
-Payload pointers must be 16-byte aligned. `output_buffer` and `combine(out=...)`
-must have the exact active shape, dtype, device, and contiguous layout.
-Only latency EXPERT_MAJOR permits an external dispatch `output_buffer`. Other
-layouts require the exact runtime-owned dispatch buffer.
+Payload pointers must be 16-byte aligned. `output_buffer` must match the active
+dispatch shape, while `combine(out=...)` must be `[num_input_tokens, H]`; both
+require the exact dtype, device, and contiguous layout. Only latency
+EXPERT_MAJOR permits an external dispatch `output_buffer`. Other layouts require
+the exact runtime-owned dispatch buffer.
 `get_dispatch_output_buffer(quant=..., runtime_max_tokens_per_rank=...)` returns
 a correctly shaped runtime view without moving data.
 
@@ -187,22 +201,24 @@ Runtime views are reused by later operations, not independent results.
 
 ## Streams, handles, and limitations
 
-* The first successful preparation, dispatch, or combine binds the runtime to
-  the supplied stream (`None` means the device's current PyTorch stream).
-  Subsequent operations on another stream are rejected. Use that same caller
-  stream for expert computation; arrange any external producer dependencies
-  yourself. The wrapper creates no internal stream, event, wait, or host count
-  readback. Host calls sharing a communicator must be serialized.
-* `prepare` is throughput-only. Omit `prepare_handle` for automatic GPU
-  preparation, or reuse a `PrepareHandle` for unchanged IDs, pointer, token
-  count, and active capacity. All ranks must choose the same path. A new
-  preparation, including automatic preparation, invalidates earlier preparation
-  and dispatch handles. Every successful dispatch invalidates earlier dispatch
-  handles but can retain its explicitly reused preparation. Native code checks
-  ownership and generations; invalid Python tensor metadata is rejected first.
-  Preparation pointer, token count, capacity, and block-count mismatches are
-  rejected by the native runtime with an MSCCL++ error rather than a Python
-  `ValueError`.
+* The first successful preparation or dispatch binds the runtime to the supplied
+  stream (`None` means the device's current PyTorch stream). Dispatch, expert
+  computation, and combine must then use that same stream. The wrapper creates
+  no internal CUDA stream or event, inserts no cross-stream dependencies, and
+  performs no host count readback. Host calls sharing a communicator must be
+  serialized.
+* `prepare` is throughput-only. Pass an `output_count` CUDA int32 tensor only
+  when per-expert or per-rank counts are needed. Omit `prepare_handle` for
+  count-free automatic GPU preparation, or reuse a `PrepareHandle` for unchanged
+  IDs, pointer, token count, and active capacity. All ranks must choose the same
+  path. A new preparation, including automatic preparation, invalidates earlier
+  preparation and dispatch handles. Complete the matching combine before the
+  next dispatch or preparation because runtime storage is reused. A dispatch
+  that explicitly reuses a preparation leaves that `PrepareHandle` reusable.
+  The Python wrapper checks handle type and runtime ownership, while the native
+  runtime validates generations and exact preparation pointer, token count,
+  capacity, and block count. Preparation mismatches raise an MSCCL++ error
+  rather than a Python `ValueError`.
 * Keep routing and borrowed metadata unchanged through matching combine work.
   Python handles retain the native runtime and borrowed tensors; tensor storage
   retains native owners even across slices and views, without owner cycles.
@@ -210,11 +226,12 @@ Runtime views are reused by later operations, not independent results.
   allocator reuse. This is not cross-stream execution or peer synchronization.
   The caller must complete **all local and peer GPU use** before releasing the
   last runtime, handle, or view.
-* Construct and initialize outside CUDA graph capture. Preparation/dispatch/combine
-  may be captured on the same stream. Handle checks occur while capturing, not on
-  replay: preserve graph ordering, routing, buffers, and owners through the last
-  replay. A graph reusing preparation without recomputing it needs unchanged
-  routing.
+* CUDA graph replay is currently supported only for throughput dispatch/combine
+  with a reusable `PrepareHandle` created before capture. Construct, initialize,
+  prepare, and warm up the operation outside capture, then preserve graph
+  ordering, routing, buffers, and owners through the last replay. Python handle
+  checks run during capture, not replay. Latency dispatch/combine graph replay is
+  unsupported because its host-side epoch is not advanced by replay.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even
@@ -222,17 +239,12 @@ Runtime views are reused by later operations, not independent results.
 * Latency hidden sizes are `4096, 4352, 6656, 7168, 8192, 8704, 9216`.
   Throughput BF16 hidden size is a multiple of 8; FP8 requires a multiple of 128.
   Default dispatch/combine blocks are `(130, 128)` for latency or `(24, 32)` for
-  throughput, clipped to SM count. Latency dispatch needs at least `R+2` blocks;
-  native cooperative occupancy checks still apply. `num_blocks=(D, C)` sets the
-  dispatch and combine grid sizes explicitly. A scalar `N` sets the dispatch
-  grid to `N`; latency dispatch reserves two control blocks, so combine uses the
-  remaining `N-2` worker blocks, while throughput uses `N` for both operations.
-* This port does not include the donor's notify/count caches, receive pools,
-  overlap/event stubs, `previous_handle`, `enable_overlap`, or
-  `expert_alignment`. There is no automatic autograd integration.
-
-Python tests can use `@pytest.mark.nranks(N)` to require a specific positive MPI
-rank count; other world sizes skip the test before fixture setup. The
-`test_dispatch_combine_correctness` case uses `@pytest.mark.nranks(8)`, with one GPU
-per rank. Run it from the repository root with
-`mpirun -np 8 python3 -m pytest python/test/test_ep.py -k dispatch_combine_correctness`.
+  throughput, clipped to SM count. Custom values must satisfy `D <= 130` and
+  `1 <= C <= 128`; latency also requires `D >= R+2`, and latency RANK_MAJOR
+  combine requires `C > 1`. Native shared-memory, residency, and occupancy
+  checks still apply. `num_blocks=(D, C)` sets the two grid sizes explicitly. A
+  scalar `N` sets the dispatch grid to `N`; latency dispatch reserves two control
+  blocks, so combine uses the remaining `N-2` worker blocks, while throughput
+  uses `N` for both operations.
+* The API does not automatically overlap communication with expert computation
+  or provide PyTorch autograd backward support.

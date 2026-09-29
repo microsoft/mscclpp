@@ -97,6 +97,8 @@ class DispatchLayoutInfo:
     count routes and do not define disjoint token ranges.
     RANK_MAJOR uses ``num_tokens_per_rank`` to bound each source rank.
     EXPERT_MAJOR uses ``num_tokens_per_expert`` to bound each local expert.
+    Throughput dispatch leaves both count fields as ``None``; explicit
+    preparation can write optional counts to a caller-provided tensor.
     No count is read back to the host. ``offsets`` is reserved and is not populated.
     """
 
@@ -134,7 +136,7 @@ class DispatchOutput:
 
 @dataclass(frozen=True, eq=False)
 class PrepareHandle:
-    """Opaque reusable throughput routing; create with ``communicator.prepare``.
+    """Opaque reusable throughput routing from ``communicator.prepare``.
 
     Keep routing IDs unchanged until all dispatches using this preparation have
     finished. A new preparation (including automatic preparation by dispatch)
