@@ -52,6 +52,8 @@ ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
 
+  baseMemoryChannelHandles_.reset();
+  baseMemoryChannels_.clear();
   peerBufferMemories_.clear();
   symmetricBuffer_.reset();
 }

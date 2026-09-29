@@ -41,7 +41,7 @@ __global__ void __launch_bounds__(NumWarps* WARP_SIZE, 1)
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const int hiddenInt4 = workload.hidden_ / Bf16PerInt4;
 
-  extern __shared__ uint8_t sharedMemory[];
+  extern __shared__ __align__(128) uint8_t sharedMemory[];
   const size_t warpStageBytes = static_cast<size_t>(NumStages) * MaxContributors * ChunkBytes;
   auto* warpStages = sharedMemory + warpId * warpStageBytes;
   auto* barriers =
