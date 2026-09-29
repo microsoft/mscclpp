@@ -51,8 +51,10 @@ __global__ void __launch_bounds__(NumThreads, 1)
     for (int token = threadId; token < numTokens; token += NumThreads) {
       const int64_t* tokenTopk = topkIdx + token * numTopk;
       for (int i = 0; i < numTopk; ++i) {
-        const int expert = static_cast<int>(tokenTopk[i]);
-        if (expertBegin <= expert && expert < expertEnd) ++shared.perExpert[threadId][expert - expertBegin];
+        const int64_t expert = tokenTopk[i];
+        if (expertBegin <= expert && expert < expertEnd) {
+          ++shared.perExpert[threadId][static_cast<int>(expert) - expertBegin];
+        }
       }
     }
     __syncthreads();
@@ -155,12 +157,12 @@ __global__ void exchangeThroughputCountsKernel(ThroughputWorkspaceLayout workspa
   }
 
   auto* localExpertCounts = localRankCounts + numRanks * numRanks;
-  if (threadId < numExpertsPerRank) {
+  for (int localExpert = threadId; localExpert < numExpertsPerRank; localExpert += static_cast<int>(blockDim.x)) {
     int count = 0;
     for (int srcRank = 0; srcRank < numRanks; ++srcRank) {
-      count += localExpertCounts[srcRank * numExpertsPerRank + threadId];
+      count += localExpertCounts[srcRank * numExpertsPerRank + localExpert];
     }
-    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) workspace.recvCounts_[threadId] = count;
+    if (workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR) workspace.recvCounts_[localExpert] = count;
   }
   __syncthreads();
 
@@ -176,7 +178,7 @@ void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, const 
                               const DeviceContext& context, cudaStream_t stream) {
   constexpr int NumThreads = ThroughputCountThreads;
   EP_HOST_ASSERT(workload.numExperts_ % context.numRanks_ == 0);
-  EP_HOST_ASSERT(workload.numExperts_ / context.numRanks_ <= NumThreads && context.numRanks_ <= NumThreads);
+  EP_HOST_ASSERT(context.numRanks_ <= NumThreads);
 
   exchangeThroughputCountsKernel<<<1, NumThreads, 0, stream>>>(workspace, workload, context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());

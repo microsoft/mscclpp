@@ -58,6 +58,7 @@ enum class DispatchDataType {
 /// it does not read or transfer token payloads.
 struct PrepareRequest {
   /// Device-resident input top-k expert IDs.
+  /// IDs outside [0, numExperts) are ignored.
   ///
   /// Keep this buffer alive for the GPU work using it. Its contents must remain
   /// unchanged between preparation and dispatch, unless a graph replay also
@@ -155,6 +156,7 @@ struct ThroughputDispatchRequest {
   /// Optional input scale factors.
   const float* inputScales;
   /// Input top-k expert IDs.
+  /// IDs outside [0, numExperts) are ignored.
   const int64_t* topkIdx;
   /// Optional input top-k weights.
   const float* topkWeights;

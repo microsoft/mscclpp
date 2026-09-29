@@ -979,7 +979,7 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
 
   constexpr int Tokens = 5;
   constexpr int Hidden = 136;
-  constexpr int ExpertsPerRank = NumTopk + 1;
+  constexpr int ExpertsPerRank = 129;  // Cross the 128-thread count-exchange boundary.
   CudaStream stream;
   std::vector<Bf16> input(Tokens * Hidden);
   for (size_t index = 0; index < input.size(); ++index) {
@@ -1004,7 +1004,8 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
           if (token == 1) peer = (gEnv->rank + 3) % NumRanks;
           if (token == 2) peer = (gEnv->rank + topk % 2) % NumRanks;
           const bool valid = token != 3 && (token != 2 || topk % 3 != 0) && (token != 4 || topk == numTopk - 1);
-          routes[token * numTopk + topk] = valid ? peer * ExpertsPerRank + topk : -1;
+          const int expert = peer * ExpertsPerRank + ExpertsPerRank - 1 - topk;
+          routes[token * numTopk + topk] = valid ? expert : (token == 3 ? int64_t{1} << 32 : -1);
           if (valid && !selectedRanks[peer]) {
             selectedRanks[peer] = true;
             ++numDestinations[token];
@@ -1012,9 +1013,10 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
         }
       }
       mscclpp::GpuBuffer<int64_t> deviceRoutes(routes.size());
+      mscclpp::GpuBuffer<int> deviceCounts(ExpertsPerRank);
       mscclpp::gpuMemcpy<int64_t>(deviceRoutes.data(), routes.data(), routes.size(), cudaMemcpyHostToDevice);
       const auto handle = runtime->dispatch(DispatchRequest{ThroughputDispatchRequest{
-          .outputCount = nullptr,
+          .outputCount = layout == DispatchLayout::TOKEN_MAJOR ? deviceCounts.data() : nullptr,
           .input = deviceInput.data(),
           .inputScales = nullptr,
           .topkIdx = deviceRoutes.data(),
@@ -1039,6 +1041,13 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       communicator->bootstrap()->barrier();
       std::vector<Bf16> output(input.size());
       mscclpp::gpuMemcpy<Bf16>(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost);
+      if (layout == DispatchLayout::TOKEN_MAJOR) {
+        std::array<int, ExpertsPerRank> counts{};
+        mscclpp::gpuMemcpy<int>(counts.data(), deviceCounts.data(), counts.size(), cudaMemcpyDeviceToHost);
+        ASSERT_EQ(counts.front(), 0);
+        // Expert 128 receives tokens 0 and 1, plus token 4 when top-k is one.
+        ASSERT_EQ(counts.back(), numTopk == 1 ? 3 : 2);
+      }
       for (size_t index = 0; index < output.size(); ++index) {
         ASSERT_EQ(static_cast<float>(output[index]),
                   static_cast<float>(input[index]) * numDestinations[index / Hidden]);

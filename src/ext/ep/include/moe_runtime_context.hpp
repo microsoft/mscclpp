@@ -49,6 +49,10 @@ struct DispatchHandle::Impl {
     const int64_t* layoutRange_;
   };
 
+  struct ThroughputMetadata {
+    uint64_t routingEpoch_;
+  };
+
   Impl(std::weak_ptr<void> owner, uint32_t epoch, const LatencyDispatchRequest& request)
       : owner_(std::move(owner)),
         epoch_(epoch),
@@ -58,12 +62,12 @@ struct DispatchHandle::Impl {
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
-  Impl(std::weak_ptr<void> owner, const ThroughputDispatchRequest& request)
+  Impl(std::weak_ptr<void> owner, uint64_t routingEpoch, const ThroughputDispatchRequest& request)
       : owner_(std::move(owner)),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.dispatchDataType),
-        metadata_(std::monostate{}) {}
+        metadata_(ThroughputMetadata{routingEpoch}) {}
 
   std::weak_ptr<void> owner_;
   // Latency packet/handle generation; throughput does not use this field.
@@ -72,7 +76,7 @@ struct DispatchHandle::Impl {
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
-  std::variant<LatencyMetadata, std::monostate> metadata_;
+  std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };
 
 // Mode-specific contexts owned by MoERuntime.
@@ -130,6 +134,7 @@ struct ThroughputRuntimeContext {
   int numRanks_;
   int numRanksPerIpcDomain_;
   bool available_ = false;
+  int deviceId_ = -1;
   int maxTokensPerRank_;
   int hidden_;
   int numExperts_;

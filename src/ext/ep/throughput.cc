@@ -47,10 +47,8 @@ ThroughputRuntimeContext::ThroughputRuntimeContext(mscclpp::Communicator& commun
 }
 
 ThroughputRuntimeContext::~ThroughputRuntimeContext() noexcept(false) {
-  if (deviceContext_.devicePtr_ == nullptr) return;
-
-  CudaDeviceGuard deviceGuard(deviceContext_.deviceId_);
-  MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
+  CudaDeviceGuard deviceGuard(deviceId_);
+  if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
 
@@ -63,6 +61,7 @@ void ThroughputRuntimeContext::initialize() {
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
 
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
   const size_t allocationGranularity = mscclpp::detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM);
   symmetricBuffer_ = mscclpp::detail::gpuCallocPhysicalUnique<uint8_t>(symmetricBufferBytes_, allocationGranularity,
@@ -105,20 +104,18 @@ void ThroughputRuntimeContext::initialize() {
   baseMemoryChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
   mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
       baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
-  int deviceId;
   int maxSharedMemoryPerBlock;
   int numSms;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
   MSCCLPP_CUDATHROW(
-      cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId));
-  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId));
+      cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
   deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
                     .peerBufferBases_ = peerMappedBufferBasesGpu_,
                     .channels_ = baseMemoryChannelHandles_.get(),
                     .workspace_ = workspace_,
                     .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
                     .numSms_ = numSms,
-                    .deviceId_ = deviceId,
+                    .deviceId_ = deviceId_,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
@@ -157,7 +154,7 @@ void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& requ
     EP_THROW("Throughput requests require 0 <= numTokens <= maxTokensPerRank <= runtime capacity");
   }
   EP_HOST_ASSERT(request.numBlocks > 0 && request.numBlocks <= MaxDispatchBlocks);
-  EP_HOST_ASSERT(numExperts_ / numRanks_ <= ThroughputCountThreads && numRanks_ <= ThroughputCountThreads);
+  EP_HOST_ASSERT(numRanks_ <= ThroughputCountThreads);
   EP_HOST_ASSERT(request.numBlocks <= maxResidentThroughputDispatchBlocks(outputLayout_, deviceContext_));
   EP_HOST_ASSERT(request.topkIdx != nullptr || request.numTokens == 0);
   if (!fitsReceiveBuffer(request.maxTokensPerRank)) {
@@ -246,7 +243,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
                      workspaceLayout, storageLayout.payload_, storageLayout.recvBuffer_, context.deviceContext_,
                      request.numBlocks, request.stream);
 
-  return DispatchHandle(std::make_shared<const DispatchHandle::Impl>(throughputContext_, request));
+  return DispatchHandle(
+      std::make_shared<const DispatchHandle::Impl>(throughputContext_, context.routingEpoch_, request));
 }
 
 void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request) {
@@ -262,8 +260,12 @@ void MoERuntime::launchThroughputCombine(const ThroughputCombineRequest& request
   if (owner != throughputContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
-  if (!std::holds_alternative<std::monostate>(handle.metadata_)) {
+  const auto* metadata = std::get_if<DispatchHandle::Impl::ThroughputMetadata>(&handle.metadata_);
+  if (metadata == nullptr) {
     EP_THROW("Dispatch handle does not contain throughput metadata");
+  }
+  if (metadata->routingEpoch_ != context.routingEpoch_) {
+    EP_THROW("Stale dispatch handle: a newer preparation has replaced its routing metadata");
   }
 
   EP_HOST_ASSERT(context.available_);
