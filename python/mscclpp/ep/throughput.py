@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 
@@ -81,8 +81,6 @@ class ThroughputContext(Context):
             raise ValueError("invalid_token_expert_id is only supported in latency mode")
         if config.deduplicate_expanded_routes:
             raise ValueError("deduplicate_expanded_routes is only supported in latency mode")
-        if config.rank_major_route_weights_in_combine:
-            raise ValueError("rank_major_route_weights_in_combine is only supported in latency mode")
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
             world_size=self.world_size,
@@ -261,6 +259,7 @@ class ThroughputRuntime(Runtime):
         *,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
+        **_kwargs: Any,
     ) -> torch.Tensor:
         mode_context = self.context
         stream_scope = torch.cuda.stream(stream) if stream is not None else nullcontext()

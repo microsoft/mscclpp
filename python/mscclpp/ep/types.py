@@ -69,8 +69,6 @@ class MoECommunicatorConfig:
 
     # Latency expanded-layout tuning (advanced)
     deduplicate_expanded_routes: bool = False
-    # Apply source route weights while direct rank-major combine accumulates route rows.
-    rank_major_route_weights_in_combine: bool = False
 
 
 # MLP-facing dispatch output.

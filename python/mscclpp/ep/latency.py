@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 
@@ -73,7 +73,6 @@ class LatencyContext(Context):
             self.num_experts if config.invalid_token_expert_id is None else config.invalid_token_expert_id
         )
         self.deduplicate_expanded_routes = config.deduplicate_expanded_routes
-        self.rank_major_route_weights_in_combine = config.rank_major_route_weights_in_combine
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout not in (
@@ -115,11 +114,6 @@ class LatencyContext(Context):
                 raise ValueError("expanded combine requires more blocks than ranks, including its control block")
         elif self.deduplicate_expanded_routes:
             raise ValueError("deduplicate_expanded_routes requires RANK_MAJOR_TOPK_EXPANDED output")
-        if self.rank_major_route_weights_in_combine and (
-            self.output_layout != DispatchLayout.RANK_MAJOR or self.combine_mode != CombineMode.DIRECT_SEND
-        ):
-            raise ValueError("rank_major_route_weights_in_combine requires RANK_MAJOR DIRECT_SEND combine")
-
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
             world_size=self.world_size,
@@ -281,7 +275,7 @@ class LatencyRuntime(Runtime):
                 output_info=output_info,
                 _context=_RankMajorCombineContext(
                     topk_ids=topk_ids,
-                    weights=weights if mode_context.rank_major_route_weights_in_combine else None,
+                    weights=weights,
                     num_experts=mode_context.num_experts,
                     num_tokens=input.size(0),
                     hidden_size=mode_context.hidden_size,
@@ -312,6 +306,7 @@ class LatencyRuntime(Runtime):
         *,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
+        **kwargs: Any,
     ) -> torch.Tensor:
         mode_context = self.context
         debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
@@ -321,8 +316,9 @@ class LatencyRuntime(Runtime):
         if debug_combine:
             print(f"[py_ll_combine][rank {mode_context.rank}] validated", flush=True)
         context = handle._context
+        apply_router_weights = kwargs.pop("apply_router_weights", mode_context.combine_mode == CombineMode.DIRECT_SEND)
         if isinstance(context, _ExpertMajorCombineContext):
-            topk_weights = context.weights
+            topk_weights = context.weights if apply_router_weights else None
             src_info = context.src_info
             layout_range = context.layout_range
             active_capacity = mode_context.max_tokens_per_rank
@@ -330,7 +326,7 @@ class LatencyRuntime(Runtime):
                 print(f"[py_ll_combine][rank {mode_context.rank}] expert-major context", flush=True)
         elif isinstance(context, _RankMajorCombineContext):
             active_capacity = context.max_tokens_per_rank
-            topk_weights = context.weights
+            topk_weights = context.weights if apply_router_weights else None
             src_info = None
             layout_range = None
             if debug_combine:

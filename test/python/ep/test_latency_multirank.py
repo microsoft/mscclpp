@@ -140,9 +140,9 @@ def parse_args():
         help="Send one expanded-layout payload per destination rank and copy duplicate routes locally",
     )
     parser.add_argument(
-        "--rank-major-route-weights-in-combine",
+        "--preweighted-direct-send",
         action="store_true",
-        help="Pass unweighted route rows and apply source weights in direct rank-major combine",
+        help="Pass preweighted rank-major route rows and skip router weights in direct-send combine",
     )
     parser.add_argument(
         "--bench",
@@ -169,10 +169,10 @@ def parse_args():
             args.num_blocks = tuple(args.num_blocks)
         else:
             parser.error("--num-blocks accepts one value or a dispatch/combine pair")
-    if args.rank_major_route_weights_in_combine and (
+    if args.preweighted_direct_send and (
         args.output_layout != "rank_major" or args.combine_mode != "direct_send"
     ):
-        parser.error("--rank-major-route-weights-in-combine requires rank_major direct_send")
+        parser.error("--preweighted-direct-send requires rank_major direct_send")
     return args
 
 
@@ -619,13 +619,12 @@ def main():
         raise ValueError("--capacity requires expanded layout and capacity >= num-tokens > 0")
     if output_layout == ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
         assert combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE
-    if output_layout == ep.DispatchLayout.RANK_MAJOR and combine_mode == ep.CombineMode.DIRECT_SEND:
-        assert args.rank_major_route_weights_in_combine
     if output_layout == ep.DispatchLayout.RANK_MAJOR:
         assert combine_mode in (
             ep.CombineMode.RANK_LOCAL_REDUCE,
             ep.CombineMode.DIRECT_SEND,
         ), "runtime-owned output layouts require rank-local-reduce combine"
+    combine_kwargs = {"apply_router_weights": False} if args.preweighted_direct_send else {}
     dispatch_data_type = {
         "bf16": ep.DispatchDataType.BF16,
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
@@ -691,7 +690,6 @@ def main():
         output_layout=output_layout,
         invalid_token_expert_id=invalid_token_expert_id,
         deduplicate_expanded_routes=args.deduplicate_expanded_routes,
-        rank_major_route_weights_in_combine=args.rank_major_route_weights_in_combine,
         quant=dispatch_quant,
     )
     if rank == 0:
@@ -850,7 +848,7 @@ def main():
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
     simulated_gemm_x = stage_simulated_gemm_output(
         dispatch_out,
-        route_weights_in_combine=args.rank_major_route_weights_in_combine,
+        route_weights_in_combine=combine_mode == ep.CombineMode.DIRECT_SEND and not args.preweighted_direct_send,
     )
     if expanded:
         simulated_gemm_x[dispatch_out.weights == 0] = float("nan")
@@ -884,7 +882,7 @@ def main():
                 group=group,
             )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
+    combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out, **combine_kwargs)
 
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
@@ -895,7 +893,7 @@ def main():
     elif (
         output_layout == ep.DispatchLayout.RANK_MAJOR
         and combine_mode == ep.CombineMode.DIRECT_SEND
-        and not args.rank_major_route_weights_in_combine
+        and args.preweighted_direct_send
     ):
         expected = expected_rank_major_route_output(reference_x, topk_idx, topk_weights)
     elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
@@ -908,7 +906,12 @@ def main():
         exact=combine_mode == ep.CombineMode.DIRECT_SEND,
         group=group,
     )
-    if args.rank_major_route_weights_in_combine and topk_weights is not None:
+    if (
+        output_layout == ep.DispatchLayout.RANK_MAJOR
+        and combine_mode == ep.CombineMode.DIRECT_SEND
+        and not args.preweighted_direct_send
+        and topk_weights is not None
+    ):
         updated_weights = topk_weights * 0.5
         updated_dispatch_out, updated_handle = moe_comm.dispatch(
             x,
@@ -956,12 +959,19 @@ def main():
                 graph_expert_output = (
                     stage_simulated_gemm_output(
                         graph_dout[0],
-                        route_weights_in_combine=args.rank_major_route_weights_in_combine,
+                        route_weights_in_combine=(
+                            combine_mode == ep.CombineMode.DIRECT_SEND and not args.preweighted_direct_send
+                        ),
                     )
                     if expert_output is None
                     else expert_output
                 )
-                graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
+                graph_combined_x = moe_comm.combine(
+                    graph_expert_output,
+                    graph_dout[1],
+                    out=combine_out,
+                    **combine_kwargs,
+                )
             graph_end.record()
         return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end
 
@@ -988,7 +998,7 @@ def main():
                 elif (
                     output_layout == ep.DispatchLayout.RANK_MAJOR
                     and combine_mode == ep.CombineMode.DIRECT_SEND
-                    and not args.rank_major_route_weights_in_combine
+                    and args.preweighted_direct_send
                 ):
                     graph_expected = expected_rank_major_route_output(graph_input, topk_idx, topk_weights)
                 elif combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
@@ -1043,7 +1053,12 @@ def main():
     bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _combine(expert_output, handle_, out_):
-        moe_comm.combine(expert_output, handle_, out=out_)
+        moe_comm.combine(
+            expert_output,
+            handle_,
+            out=out_,
+            **combine_kwargs,
+        )
 
     def _num_recv_rows(dispatch_output):
         counts = (
@@ -1098,7 +1113,9 @@ def main():
             warmup_dout = _dispatch()
             warmup_expert_output = stage_simulated_gemm_output(
                 warmup_dout[0],
-                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+                route_weights_in_combine=(
+                    combine_mode == ep.CombineMode.DIRECT_SEND and not args.preweighted_direct_send
+                ),
             )
             _combine(warmup_expert_output, warmup_dout[1], bench_out)
         torch.cuda.synchronize()
@@ -1113,7 +1130,9 @@ def main():
             dispatch_end_events[i].record()
             bench_expert_output = stage_simulated_gemm_output(
                 dout[0],
-                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+                route_weights_in_combine=(
+                    combine_mode == ep.CombineMode.DIRECT_SEND and not args.preweighted_direct_send
+                ),
             )
             _combine(bench_expert_output, dout[1], bench_out)
         torch.cuda.synchronize()
@@ -1128,7 +1147,9 @@ def main():
             dout = _dispatch()
             bench_expert_output = stage_simulated_gemm_output(
                 dout[0],
-                route_weights_in_combine=args.rank_major_route_weights_in_combine,
+                route_weights_in_combine=(
+                    combine_mode == ep.CombineMode.DIRECT_SEND and not args.preweighted_direct_send
+                ),
             )
             combine_start_events[i].record()
             _combine(bench_expert_output, dout[1], bench_out)
