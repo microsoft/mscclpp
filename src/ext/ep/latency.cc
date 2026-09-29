@@ -269,6 +269,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
+  // TODO: Make epoch advancement CUDA-graph-safe. This host-side increment is not replayed;
+  // a graph containing a single dispatch/combine round reuses the same epoch and may hang.
   ++context.epoch_;
 }
 
