@@ -155,7 +155,18 @@ def test_mxfp4_canonical_rounding_and_layout():
 
 
 @pytest.mark.parametrize(
-    "tokens,hidden,intermediate", [(17, 128, 256), (65, 384, 640), (33, 2176, 640), (2, 8704, 128)]
+    "tokens,hidden,intermediate",
+    [
+        (1, 128, 256),
+        (15, 128, 256),
+        (17, 128, 256),
+        (31, 384, 640),
+        (33, 2176, 640),
+        (49, 384, 640),
+        (63, 384, 640),
+        (65, 384, 640),
+        (2, 8704, 128),
+    ],
 )
 def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate):
     import gc
@@ -190,9 +201,9 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
     assert context.effective_kernel_config == {
         "tile_m": 256,
-        "tile_n": 32,
+        "tile_n": 64,
         "tile_k": 256,
-        "load_stages": 5,
+        "load_stages": 4,
         "transform_stages": 0,
     }
     inputs = torch.randn((tokens, hidden), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
@@ -222,9 +233,10 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     torch.testing.assert_close(output, reference(), rtol=0.02, atol=0.001)
     staged = context.input_view(tokens)
     torch.testing.assert_close(staged, inputs, rtol=0, atol=0)
-    shifted = staged.reshape(-1)[1 : 1 + (tokens - 1) * hidden].reshape(tokens - 1, hidden)
-    with pytest.raises(ValueError, match="partially overlap"):
-        context(shifted, ids[:-1], scores[:-1])
+    if tokens > 1:
+        shifted = staged.reshape(-1)[1 : 1 + (tokens - 1) * hidden].reshape(tokens - 1, hidden)
+        with pytest.raises(ValueError, match="partially overlap"):
+            context(shifted, ids[:-1], scores[:-1])
     graph = torch.cuda.CUDAGraph()
     stream = torch.cuda.Stream(device=device)
     stream.wait_stream(torch.cuda.current_stream(device))

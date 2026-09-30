@@ -4,6 +4,8 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_DEVICE_CUH_
 #define MSCCLPP_EXT_MEGAMOE_DEVICE_CUH_
 
+#include <cutlass/fast_math.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <mscclpp/bulk_device.hpp>
@@ -41,6 +43,7 @@ constexpr int EpilogueTokens = 32;
 constexpr int DispatchChunkBytes = 2048;
 constexpr int DispatchWarpCount = 4;
 constexpr int SmallRoutingSlots = 2 * Threads;
+constexpr int W4SmallRoutingSlots = 8 * Threads;
 constexpr int SmallRoutingExperts = 128;
 constexpr int64_t SpinLimit = 1000000000;
 
@@ -119,6 +122,8 @@ struct KernelParameters {
   Workspace workspace;
   void* local;
   const uint64_t* peers;
+  cutlass::FastDivmod fc1TaskDivisor;
+  cutlass::FastDivmod fc2TaskDivisor;
   typename Types::Mainloop::Params fc1;
   typename Types::Mainloop::Params fc2;
 };
@@ -161,11 +166,26 @@ struct RoutingStorage {
   int tokenCounts[72];
 };
 
+template <int Tokens, bool SeparatePacked>
+struct EpilogueStorage;
+
 template <int Tokens>
-union alignas(128) EpilogueStorage {
-  float scratch[128 * (Tokens + 1)];
+struct alignas(128) EpilogueStorage<Tokens, false> {
+  union {
+    float scratch[128 * (Tokens + 1)];
+    __bfloat16 packed[Tokens * 128];
+    RoutingStorage routing;
+  };
+  static_assert(sizeof(RoutingStorage) <= sizeof(scratch));
+};
+
+template <int Tokens>
+struct alignas(128) EpilogueStorage<Tokens, true> {
+  union {
+    float scratch[128 * (Tokens + 1)];
+    RoutingStorage routing;
+  };
   __bfloat16 packed[Tokens * 128];
-  RoutingStorage routing;
   static_assert(sizeof(RoutingStorage) <= sizeof(scratch));
 };
 
@@ -177,7 +197,7 @@ struct alignas(1024) SharedStorage {
   typename CollectiveTypes<E5M2, Local>::Transform::SharedStorage transformed;
   typename CollectiveTypes<E5M2, Local>::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
-  EpilogueStorage<EpilogueTokens> epilogue;
+  EpilogueStorage<EpilogueTokens, !Local> epilogue;
   std::conditional_t<Local, NoDispatchStorage, DispatchStorage> dispatch;
 };
 
@@ -188,7 +208,7 @@ struct alignas(1024) W4A8SharedStorage {
   std::conditional_t<W4SplitPipelines, W4A8CollectiveTypes::Load::SharedStorage, NoDispatchStorage> activationLoad;
   W4A8CollectiveTypes::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
-  EpilogueStorage<W4EpilogueTokens> epilogue;
+  EpilogueStorage<W4EpilogueTokens, false> epilogue;
   W4DispatchStorage dispatch;
 };
 #endif

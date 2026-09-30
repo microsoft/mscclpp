@@ -130,7 +130,7 @@ def main():
     torch.cuda.set_device(local_rank)
     kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
     if args.mxfp4 and kernel_config != KernelConfig():
-        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N32/K256/load5 kernel")
+        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N64/K256/load4 kernel")
     kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.

@@ -111,15 +111,20 @@ The final completing CTA publishes GPU completion after acquiring all preceding
 CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
 
 The W4A8 path is routed-only and uses the builtin SM100
-M256/N32/K256/load5 block-scaled specialization with 16 warps. Separate weight
-and activation loader warps share a five-stage pipeline. Both must publish their
+M256/N64/K256/load4 block-scaled specialization with 16 warps. Separate weight
+and activation loader warps share a four-stage pipeline. Both must publish their
 TMA transaction counts before a stage can become ready. Mainloop warps retain
 128 registers, independently of the 32-register dispatch warps. FC1 quantization
 uses warp reductions over live token groups without staging the activated values
 back through shared memory or iterating through inactive groups.
-N32 uses a 64-row storage pitch to preserve even TMEM scale-column alignment;
-the MMA and activation-value TMA still process 32 rows. K tails are zero-filled
-by TMA, preserving support for H/I divisible by 128.
+MMA rounds the live token count up to 16 rows, and the second CTA's activation
+load shifts to the corresponding runtime half-tile. Accumulator and scale storage
+retain their allocated pitch. This reduces padded MMA work without reloading
+weights for a second 32-token tile when an expert receives slightly more than
+32 tokens. Task-index division is prepared on the host rather than recomputed
+inside every device role. Experimental N32 configurations retain a 64-row storage
+pitch for even TMEM scale-column alignment. K tails are zero-filled by TMA,
+preserving support for H/I divisible by 128.
 Local shared experts and routed
 JIT specializations remain W8A16; passing a custom `KernelConfig` with
 `weight_mxfp4=True` is rejected.
@@ -147,8 +152,9 @@ Keep definitions consistent across a library's translation units and across rank
 
 Routing IDs must be in `[0,E)` and weights finite. Optional
 `validate_routing=True` checks values with a host synchronization and cannot be
-used during capture; shape, dtype, and device checks always run. Routing weights
-multiply the FP32 SwiGLU result before the BF16 FC1-to-FC2 handoff. FC2 partials
+used during capture; shape, dtype, and device checks always run. For W8A16,
+routing weights multiply the FP32 SwiGLU result before the BF16 FC1-to-FC2 handoff; W4A8 applies
+them to the FP32 FC2 result after intermediate MXFP8 quantization. FC2 partials
 are BF16; top-k combination sums in FP32 and returns BF16.
 
 `sm_margin` caps persistent CTA usage: margin 32 on a 152-SM GB200 permits at most
@@ -158,12 +164,18 @@ cluster alignment. This is not a fixed SM-ID partition or exclusive reservation.
 Use `sm_margin=0` for routed-only measurements; reserve CTAs only when another
 concurrent branch needs them.
 
-For routing capacity `world_size * max_tokens * top_k <= 1024` and at most
-128 local experts, routing preparation uses one CTA with cached peer headers,
+For routing capacity `world_size * max_tokens * top_k <= 1024` (W8A16) or
+`<= 4096` (W4A8), and at most 128 local experts, routing preparation uses one
+CTA with cached peer headers,
 IDs and weights, a shared-memory histogram, and a warp-parallel prefix. It
-publishes the completed plan once, reducing preparation from five full-grid
-joins to two without changing peer readiness or output-completion requirements.
-The scratch storage reuses the epilogue allocation. Larger capacities/expert
+publishes the completed plan once, avoiding the distributed planner's histogram,
+prefix, and route-construction grid joins without changing peer readiness or
+output-completion requirements.
+The histogram/prefix scratch reuses the epilogue allocation. W4A8 stages
+peer IDs and weights in the otherwise idle GEMM tensor buffers; the final routing
+grid join completes all metadata reads before GEMM reuses that storage. This
+fits 4096 route slots without increasing the kernel's shared-memory allocation.
+Larger capacities/expert
 counts retain the distributed planner; selection is automatic and capture-safe.
 
 ### Local shared expert
@@ -240,7 +252,7 @@ precompiled kernel.
 
 Add `--mxfp4` to benchmark the routed W4A8 path. This keeps BF16 public inputs,
 includes the input MXFP8 quantization kernel in timing, and reports the fixed
-effective M256/N32/K256/load5 specialization. It cannot be combined with
+effective M256/N64/K256/load4 specialization. It cannot be combined with
 `--e5m2` or nondefault JIT tile/stage flags.
 
 ### Complete synthetic MoE layer

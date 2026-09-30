@@ -370,10 +370,11 @@ def test_routing_cpu_oracle_duplicate_slots_and_masked_nan(e5m2, clamp):
 @pytest.mark.parametrize("mxfp4", [False, True])
 def test_native_routing_capacity_boundary(routing_runtime, top_k, mxfp4):
     runtime, torch = routing_runtime, routing_runtime.torch
-    capacity = 1024 // (runtime.world * top_k)
+    routing_slots = 4096 if mxfp4 else 1024
+    capacity = routing_slots // (runtime.world * top_k)
     configs = [runtime.config(capacity + extra, top_k=top_k, mxfp4=mxfp4) for extra in (0, 1)]
-    assert configs[0].world_size * configs[0].max_tokens * top_k == 1024
-    assert configs[1].world_size * configs[1].max_tokens * top_k > 1024
+    assert configs[0].world_size * configs[0].max_tokens * top_k == routing_slots
+    assert configs[1].world_size * configs[1].max_tokens * top_k > routing_slots
     weights = _host_weights(configs[0])
     with _native_case(runtime) as case:
         contexts = [case.create(config, weights) for config in configs]
@@ -393,7 +394,7 @@ def test_native_routing_capacity_boundary(routing_runtime, top_k, mxfp4):
                     outputs[0].view(torch.int16), outputs[1].view(torch.int16), rtol=0, atol=0
                 )
             )
-        # On one GPU these are 1025 slots (K=1) and 1026 slots (K=2).
+        # Exercise the first capacity beyond the precision-specific planner limit.
         sample = _sample(configs[1], capacity + 1, "balanced")
         expected = _routing_reference(configs[1], sample, weights)
         with torch.cuda.stream(case.stream):
@@ -422,7 +423,7 @@ def test_native_routing_local_expert_boundary(routing_runtime, local_experts, mx
         _check_output(runtime, buffers, sample, expected)
 
 
-@pytest.mark.parametrize("capacity,direct", [(33, False), (129, True)])
+@pytest.mark.parametrize("capacity,direct", [(33, False), (129, True), (512, True)])
 def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct):
     runtime, torch = routing_runtime, routing_runtime.torch
     config = runtime.config(capacity, local_experts=2, top_k=2, mxfp4=True, hidden=2176, intermediate=256)
@@ -459,8 +460,8 @@ def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, dire
     [
         pytest.param(None, False, False, -1.0, False, id="N32L8T7-e4-staged"),
         pytest.param(None, True, False, 0.125, True, id="N32L8T7-e5-clamp-direct"),
-        pytest.param(None, False, True, 0.125, False, id="W4A8-N32K256L5-staged"),
-        pytest.param(None, False, True, -1.0, True, id="W4A8-N32K256L5-direct"),
+        pytest.param(None, False, True, 0.125, False, id="W4A8-N64K256L4-staged"),
+        pytest.param(None, False, True, -1.0, True, id="W4A8-N64K256L4-direct"),
         pytest.param((32, 6, 7), False, False, 0.125, False, marks=_JIT_ONLY, id="N32L6T7-e4-clamp"),
         pytest.param((64, 6, 6), True, False, -1.0, True, marks=_JIT_ONLY, id="N64L6T6-e5-direct"),
         pytest.param((128, 4, 4), False, False, -1.0, False, marks=_JIT_ONLY, id="N128L4T4-e4-staged"),
@@ -495,9 +496,9 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
             if mxfp4:
                 assert context.effective_kernel_config == {
                     "tile_m": 256,
-                    "tile_n": 32,
+                    "tile_n": 64,
                     "tile_k": 256,
-                    "load_stages": 5,
+                    "load_stages": 4,
                     "transform_stages": 0,
                 }
             if kernel_values is None:

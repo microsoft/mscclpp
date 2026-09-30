@@ -119,13 +119,17 @@ __device__ __forceinline__ void runW4A8MainloopRole(
         auto result = [&](auto& firstMainloop, auto& secondMainloop) {
           if constexpr (W4LoadWarps == 2) {
             if (warp == Schedule::LoadWarp)
-              return task.fc1 ? firstMainloop.template load<1>(producerPipeline, state, load1, coord, iterator, count)
-                              : secondMainloop.template load<1>(producerPipeline, state, load2, coord, iterator, count);
-            return task.fc1 ? firstMainloop.template load<2>(producerPipeline, state, load1, coord, iterator, count)
-                            : secondMainloop.template load<2>(producerPipeline, state, load2, coord, iterator, count);
+              return task.fc1 ? firstMainloop.template load<1>(producerPipeline, state, load1, coord, iterator, count,
+                                                               task.tokens.rows)
+                              : secondMainloop.template load<1>(producerPipeline, state, load2, coord, iterator, count,
+                                                                task.tokens.rows);
+            return task.fc1 ? firstMainloop.template load<2>(producerPipeline, state, load1, coord, iterator, count,
+                                                             task.tokens.rows)
+                            : secondMainloop.template load<2>(producerPipeline, state, load2, coord, iterator, count,
+                                                              task.tokens.rows);
           } else {
-            return task.fc1 ? firstMainloop.load(loadPipeline, state, load1, coord, iterator, count)
-                            : secondMainloop.load(loadPipeline, state, load2, coord, iterator, count);
+            return task.fc1 ? firstMainloop.load(loadPipeline, state, load1, coord, iterator, count, task.tokens.rows)
+                            : secondMainloop.load(loadPipeline, state, load2, coord, iterator, count, task.tokens.rows);
           }
         }(fc1, fc2);
         state = get<0>(result);
@@ -158,8 +162,9 @@ __device__ __forceinline__ void runW4A8MainloopRole(
       auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
       auto phase = task.fc1 ? W4TracePhase::MmaFc1 : W4TracePhase::MmaFc2;
       traceW4(phase, true, i);
-      loadState = fc1.mma(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
-                          make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord, kTiles);
+      loadState =
+          fc1.mma(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
+                  make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord, kTiles, task.tokens.rows);
       traceW4(phase, false, i);
       accumulatePipeline.producer_commit(accumulateState);
       ++accumulateState;

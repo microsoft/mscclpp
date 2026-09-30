@@ -33,7 +33,8 @@ __device__ void prepareSmallRoutes(const P& p, RoutingStorage& scratch, const in
                                    const float* stagedWeights = nullptr, int stagedStride = 0) {
   constexpr int RoutingTileN = P::WeightMxfp4 ? W4TileN : TileN;
   constexpr int PlannerThreads = P::ThreadCount;
-  constexpr int SlotsPerThread = (SmallRoutingSlots + PlannerThreads - 1) / PlannerThreads;
+  constexpr int RoutingSlots = P::WeightMxfp4 ? W4SmallRoutingSlots : SmallRoutingSlots;
+  constexpr int SlotsPerThread = (RoutingSlots + PlannerThreads - 1) / PlannerThreads;
   const auto& c = p.config;
   const auto& w = p.workspace;
   int experts = c.numExperts / c.worldSize;
@@ -108,14 +109,16 @@ __device__ void prepareSmallRoutes(const P& p, RoutingStorage& scratch, const in
 }
 
 template <class P>
-__device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W4DispatchStorage* dispatch = nullptr) {
+__device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W4DispatchStorage* dispatch = nullptr,
+                              void* metadata = nullptr, size_t metadataBytes = 0) {
   constexpr int RoutingTileN = P::WeightMxfp4 ? W4TileN : TileN;
+  constexpr int RoutingSlots = P::WeightMxfp4 ? W4SmallRoutingSlots : SmallRoutingSlots;
   const auto& c = p.config;
   const auto& w = p.workspace;
   int thread = blockIdx.x * P::ThreadCount + threadIdx.x;
   int stride = gridDim.x * P::ThreadCount;
   if constexpr (P::WeightMxfp4) {
-    if (c.worldSize * c.maxTokens * c.topK <= SmallRoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
+    if (c.worldSize * c.maxTokens * c.topK <= RoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
       if (blockIdx.x == 0) {
         if (threadIdx.x == 0) {
           w.control->epoch = ++*at<uint64_t>(p.local, p.symmetric.epoch);
@@ -128,8 +131,8 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
 #if MSCCLPP_BULK_AVAILABLE
         int slotStride = (c.maxTokens * c.topK + 3) / 4 * 4;
         int peerBytes = slotStride * sizeof(int);
-        if (dispatch && 2 * c.worldSize * peerBytes <= sizeof(dispatch->tiles)) {
-          auto stagedIds = reinterpret_cast<int*>(dispatch->tiles);
+        if (dispatch && metadata && size_t(2 * c.worldSize * peerBytes) <= metadataBytes) {
+          auto stagedIds = reinterpret_cast<int*>(metadata);
           auto stagedWeights = reinterpret_cast<float*>(stagedIds + c.worldSize * slotStride);
           auto& barrier = dispatch->barriers[0][0];
           if (threadIdx.x == 0) {
@@ -194,7 +197,7 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
     signalAndWait(p, threadIdx.x);
   }
   int slots = c.worldSize * c.maxTokens * c.topK;
-  if (slots <= SmallRoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
+  if (slots <= RoutingSlots && c.numExperts / c.worldSize <= SmallRoutingExperts) {
     // Only the planner CTA needs peer readiness. Publish its entire plan once;
     // the histogram ticket is also the final row offset, so IDs are read once.
     if (blockIdx.x == 0) prepareSmallRoutes(p, scratch);

@@ -191,7 +191,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
     atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
   traceW4(W4TracePhase::Routing, true);
-  prepareRoutes(p, tokens, s.epilogue.routing, &s.dispatch);
+  // Routing finishes with a grid join before GEMM reuses the tensor staging buffers.
+  prepareRoutes(p, tokens, s.epilogue.routing, &s.dispatch, &s.tensors, sizeof(s.tensors));
   traceW4(W4TracePhase::Routing, false);
 
   typename Load::Params loadParams{};

@@ -82,7 +82,6 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
   } else {
     constexpr int FoldedValuesPerThread = ChunkTokens * CtaFc1M / EpilogueThreads;
     static_assert(ChunkTokens * CtaFc1M % EpilogueThreads == 0);
-    __bfloat16 folded[FoldedValuesPerThread];
     CUTE_UNROLL
     for (int j = 0; j < FoldedValuesPerThread; ++j) {
       int i = threadIdx.x + j * EpilogueThreads;
@@ -106,10 +105,12 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
         } else if constexpr (LocalMode == 0) {
           probability = p.workspace.routes[row].weight;
         }
-        folded[j] = active ? __bfloat16(swiglu(gate, up, probability, p.config.gateUpClamp)) : __bfloat16(0.0f);
+        __bfloat16 folded = active ? __bfloat16(swiglu(gate, up, probability, p.config.gateUpClamp)) : __bfloat16(0.0f);
         if constexpr (Local) {
           int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
-          p.workspace.hidden[size_t(row) * intermediate + column] = folded[j];
+          p.workspace.hidden[size_t(row) * intermediate + column] = folded;
+        } else {
+          s.epilogue.packed[i] = folded;
         }
       }
     }
@@ -118,14 +119,6 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
       // Publish ordinary global stores to the async proxy before FC2's TMA load.
       asm volatile("fence.proxy.async.global;" ::: "memory");
       cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-    } else {
-      // Every FP32 reader must finish before the same storage becomes a BF16 tile.
-      cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-      CUTE_UNROLL
-      for (int j = 0; j < FoldedValuesPerThread; ++j) {
-        int i = threadIdx.x + j * EpilogueThreads;
-        if (i < validRows * CtaFc1M) s.epilogue.packed[i] = folded[j];
-      }
     }
   }
 }
@@ -277,34 +270,101 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
 #endif
 }
 
+template <int Elements>
+struct ResultAccumulator {
+  float values[Elements] = {};
+};
+
+template <class Element, int Elements>
+struct ResultVectorOps {
+  __device__ __forceinline__ static void accumulate(ResultAccumulator<Elements>& accumulator, const Element* source) {
+    CUTE_UNROLL
+    for (int element = 0; element < Elements; ++element) accumulator.values[element] += float(source[element]);
+  }
+
+  __device__ __forceinline__ static void store(Element* destination, const ResultAccumulator<Elements>& accumulator) {
+    CUTE_UNROLL
+    for (int element = 0; element < Elements; ++element) destination[element] = Element(accumulator.values[element]);
+  }
+};
+
+template <>
+struct ResultVectorOps<__bfloat16, 8> {
+  __device__ __forceinline__ static void accumulate(ResultAccumulator<8>& accumulator, const __bfloat16* source) {
+    uint32_t word0, word1, word2, word3;
+    asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                 : "=r"(word0), "=r"(word1), "=r"(word2), "=r"(word3)
+                 : "l"(source)
+                 : "memory");
+    accumulator.values[0] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0)));
+    accumulator.values[1] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0 >> 16)));
+    accumulator.values[2] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1)));
+    accumulator.values[3] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1 >> 16)));
+    accumulator.values[4] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2)));
+    accumulator.values[5] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2 >> 16)));
+    accumulator.values[6] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3)));
+    accumulator.values[7] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3 >> 16)));
+  }
+
+  __device__ __forceinline__ static uint32_t pack(float low, float high) {
+    return uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(low))) |
+           uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(high))) << 16;
+  }
+
+  __device__ __forceinline__ static void store(__bfloat16* destination, const ResultAccumulator<8>& accumulator) {
+    if ((reinterpret_cast<uintptr_t>(destination) & 15) != 0) {
+      CUTE_UNROLL
+      for (int element = 0; element < 8; ++element) destination[element] = __bfloat16(accumulator.values[element]);
+      return;
+    }
+    uint32_t word0 = pack(accumulator.values[0], accumulator.values[1]);
+    uint32_t word1 = pack(accumulator.values[2], accumulator.values[3]);
+    uint32_t word2 = pack(accumulator.values[4], accumulator.values[5]);
+    uint32_t word3 = pack(accumulator.values[6], accumulator.values[7]);
+    asm volatile("st.global.v4.u32 [%0], {%1, %2, %3, %4};"
+                 :
+                 : "l"(destination), "r"(word0), "r"(word1), "r"(word2), "r"(word3)
+                 : "memory");
+  }
+};
+
+template <class Element, int Elements>
+__device__ __forceinline__ void reduceResultVector(const Element* partial, int rowStride, int topK, Element* output,
+                                                   const int* routeIds = nullptr) {
+  ResultAccumulator<Elements> accumulator;
+  for (int slot = 0; slot < topK; ++slot) {
+    if (routeIds && routeIds[slot] < 0) continue;
+    ResultVectorOps<Element, Elements>::accumulate(accumulator, partial + size_t(slot) * rowStride);
+  }
+  ResultVectorOps<Element, Elements>::store(output, accumulator);
+}
+
 // All peer output stores must be complete and visible before this local reduction.
 template <class P>
 __device__ __forceinline__ void combineResults(const P& p, int tokens, __bfloat16* output) {
-  constexpr int Elements = P::WeightMxfp4 ? 2 : 1;
-  using Bits = std::conditional_t<P::WeightMxfp4, uint32_t, uint16_t>;
-  auto partial = at<uint16_t>(p.local, p.symmetric.partialOutput);
+  if constexpr (P::WeightMxfp4) {
+    constexpr int Elements = 8;
+    auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
+    auto routeIds = at<int>(p.local, p.symmetric.topkIds);
+    for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
+         i += gridDim.x * P::ThreadCount) {
+      size_t token = i / (p.config.hidden / Elements);
+      int feature = Elements * (i % (p.config.hidden / Elements));
+      auto source = partial + size_t(token) * p.config.topK * p.config.hidden + feature;
+      reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i,
+                                               routeIds + size_t(token) * p.config.topK);
+    }
+    return;
+  }
+
+  constexpr int Elements = 8;
+  auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
   for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
        i += gridDim.x * P::ThreadCount) {
     size_t token = i / (p.config.hidden / Elements);
     int feature = Elements * (i % (p.config.hidden / Elements));
-    float sum[Elements] = {};
-    for (int slot = 0; slot < p.config.topK; ++slot) {
-      if constexpr (P::WeightMxfp4) {
-        if (at<int>(p.local, p.symmetric.topkIds)[token * p.config.topK + slot] < 0) continue;
-      }
-      Bits bits;
-      auto address = partial + (token * p.config.topK + slot) * p.config.hidden + feature;
-      if constexpr (P::WeightMxfp4) {
-        asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(bits) : "l"(address) : "memory");
-      } else {
-        asm volatile("ld.global.cg.u16 %0, [%1];" : "=h"(bits) : "l"(address) : "memory");
-      }
-      CUTE_UNROLL
-      for (int element = 0; element < Elements; ++element)
-        sum[element] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(bits >> (16 * element))));
-    }
-    CUTE_UNROLL
-    for (int element = 0; element < Elements; ++element) output[Elements * i + element] = __bfloat16(sum[element]);
+    auto source = partial + size_t(token) * p.config.topK * p.config.hidden + feature;
+    reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i);
   }
 }
 

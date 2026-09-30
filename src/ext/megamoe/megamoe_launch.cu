@@ -226,6 +226,10 @@ P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, 
   p.symmetric = getSymmetricLayout(c);
   p.local = symmetric;
   p.peers = peers;
+  if constexpr (P::WeightMxfp4) {
+    p.fc1TaskDivisor = cutlass::FastDivmod(2 * c.intermediate / P::Tiles::M);
+    p.fc2TaskDivisor = cutlass::FastDivmod((c.hidden + P::Tiles::M - 1) / P::Tiles::M);
+  }
   size_t bytes;
   p.workspace = workspaceLayout(c, workspace, bytes);
   int experts = c.numExperts / c.worldSize;

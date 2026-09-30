@@ -36,14 +36,20 @@ __device__ Task taskAt(const P& p, int ordinal, int tokens, int hidden, int inte
   bool fc1 = ordinal < fc1Tasks;
   int local = fc1 ? ordinal : ordinal - fc1Tasks;
   int tiles = fc1 ? fc1Tiles : fc2Tiles;
-  int block = local / tiles;
+  int block, m;
+  if constexpr (P::WeightMxfp4) {
+    (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
+  } else {
+    block = local / tiles;
+    m = local % tiles;
+  }
   TokenBlock tokenBlock;
   if constexpr (Local) {
     tokenBlock = TokenBlock{0, min(int(KernelTileN), tokens - block * KernelTileN)};
   } else {
     tokenBlock = p.workspace.blocks[block];
   }
-  return Task{fc1, block, local % tiles, tokenBlock};
+  return Task{fc1, block, m, tokenBlock};
 }
 
 template <class P>

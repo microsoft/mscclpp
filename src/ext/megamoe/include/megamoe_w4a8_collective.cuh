@@ -104,6 +104,8 @@ struct W4A8Mainloop {
 
   __device__ W4A8Mainloop(const Params& p, ClusterShape, uint32_t rank) : params(p), cta(rank) {}
 
+  __host__ __device__ static constexpr int mmaRows(int validRows) { return (validRows + 15) / 16 * 16; }
+
   static bool can_implement(const ProblemShape& shape, const Arguments& args) {
     return Base::can_implement(shape, args);
   }
@@ -212,11 +214,15 @@ struct W4A8Mainloop {
 
   template <int Operands = 0, class Inputs, class Coord, class Iterator>
   __device__ auto load(MainloopPipeline pipe, MainloopPipelineState state, const Inputs& inputs, Coord coord,
-                       Iterator iterator, int kTiles) const {
+                       Iterator iterator, int kTiles, int validRows) const {
     using namespace cute;
     int m = get<0>(coord) / 2, n = get<1>(coord), expert = get<3>(coord);
     auto a = inputs.tAgA_mkl(_, m, _, expert);
-    auto b = inputs.tBgB_nkl(_, n, _, expert);
+    auto originalB = inputs.tBgB_nkl(_, n, _, expert);
+    // A two-CTA MMA splits activation rows at its runtime N/2, not the allocated tile's N/2.
+    auto rowLayout = params.tma_load_b.get_tma_tensor(make_shape(1, 1, 1)).layout();
+    auto rowOffset = rowLayout(make_coord(cta * (mmaRows(validRows) - W4TileN) / 2, 0, 0));
+    auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
     uint64_t waitNs = 0, issueNs = 0;
@@ -248,11 +254,12 @@ struct W4A8Mainloop {
   __device__ void load_tail(MainloopPipeline pipe, MainloopPipelineState state) const { pipe.producer_tail(state); }
   template <class Pipelines, class States, class Accumulators, class Inputs, class Coord>
   __device__ auto mma(Pipelines pipes, States states, Accumulators accumulators, const Inputs& inputs, Coord coord,
-                      int kTiles) const {
+                      int kTiles, int validRows) const {
     using namespace cute;
     auto [loadPipe, activationPipe, accPipe] = pipes;
     auto [loadState, accState] = states;
     auto [tiled, a, b, sfa, sfb, copyA, sourceA, targetA, copyB, sourceB, targetB] = inputs;
+    tiled.idesc_.n_dim_ = mmaRows(validRows) >> 3;
     sfb.data() = sfb.data().get() + (get<1>(coord) % (128 / W4TileN)) * (W4TileN / 32);
     traceW4(W4TracePhase::AccumulatorFree, true, accState.index());
     accPipe.producer_acquire(accState);
@@ -261,6 +268,8 @@ struct W4A8Mainloop {
     uint64_t waitNs = 0, activationWaitNs = 0, issueNs = 0, releaseNs = 0;
     uint32_t weightReady = 0, activationReady = 0;
     const int iterations = kTiles;
+    const bool issuer = elect_one_sync();
+    const uint32_t destination = raw_pointer_cast(get<0>(accumulators).data());
     for (; kTiles > 0; --kTiles) {
 #if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE == 1
       // Nonblocking probes sample both operands before either blocking wait.
@@ -280,11 +289,10 @@ struct W4A8Mainloop {
       }
       int stage = loadState.index();
       start = traceW4Clock();
-      if (elect_one_sync()) {
+      if (issuer) {
         copy(copyA, sourceA(_, _, _, _, stage), targetA);
         copy(copyB, sourceB(_, _, _, _, stage), targetB);
-        // Elect once for the K tile; pipeline waits/releases remain warp-wide.
-        uint32_t destination = raw_pointer_cast(get<0>(accumulators).data());
+        // Pipeline waits/releases remain warp-wide.
         CUTE_UNROLL
         for (int k = 0; k < size<2>(a); ++k) {
           uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
