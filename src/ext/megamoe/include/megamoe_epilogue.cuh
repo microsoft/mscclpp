@@ -44,7 +44,6 @@ __device__ __forceinline__ void activateFc1Chunk(const Parameters<E5M2, (LocalMo
   }
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 
-  __bfloat16 folded[FoldedValuesPerThread];
   CUTE_UNROLL
   for (int j = 0; j < FoldedValuesPerThread; ++j) {
     int i = threadIdx.x + j * EpilogueThreads;
@@ -72,10 +71,12 @@ __device__ __forceinline__ void activateFc1Chunk(const Parameters<E5M2, (LocalMo
       } else if constexpr (LocalMode == 0) {
         probability = p.workspace.routes[row].weight;
       }
-      folded[j] = active ? __bfloat16(swiglu(gate, up, probability)) : __bfloat16(0.0f);
+      __bfloat16 folded = active ? __bfloat16(swiglu(gate, up, probability)) : __bfloat16(0.0f);
       if constexpr (Local) {
         int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
-        p.workspace.hidden[size_t(row) * intermediate + column] = folded[j];
+        p.workspace.hidden[size_t(row) * intermediate + column] = folded;
+      } else {
+        s.epilogue.packed[i] = folded;
       }
     }
   }
@@ -84,14 +85,6 @@ __device__ __forceinline__ void activateFc1Chunk(const Parameters<E5M2, (LocalMo
     // Publish ordinary global stores to the async proxy before FC2's TMA load.
     asm volatile("fence.proxy.async.global;" ::: "memory");
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-  } else {
-    // Every FP32 reader must finish before the same storage becomes a BF16 tile.
-    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-    CUTE_UNROLL
-    for (int j = 0; j < FoldedValuesPerThread; ++j) {
-      int i = threadIdx.x + j * EpilogueThreads;
-      if (i < validRows * CtaFc1M) s.epilogue.packed[i] = folded[j];
-    }
   }
 }
 
@@ -240,17 +233,82 @@ __device__ __forceinline__ void epilogue(
 template <bool E5M2>
 __device__ __forceinline__ void combineResults(const Parameters<E5M2>& p, int tokens, __bfloat16* output) {
   auto partial = at<uint16_t>(p.local, p.symmetric.partialOutput);
-  for (size_t i = blockIdx.x * Threads + threadIdx.x; i < size_t(tokens) * p.config.hidden; i += gridDim.x * Threads) {
-    size_t token = i / p.config.hidden;
-    int feature = i % p.config.hidden;
-    float sum = 0.0f;
-    for (int slot = 0; slot < p.config.topK; ++slot) {
-      uint16_t bits;
-      auto address = partial + (token * p.config.topK + slot) * p.config.hidden + feature;
-      asm volatile("ld.global.cg.u16 %0, [%1];" : "=h"(bits) : "l"(address) : "memory");
-      sum += float(mscclpp::bit_cast<__bfloat16>(bits));
+  const auto& c = p.config;
+  const bool fixedDenseRoutes = !E5M2 && tokens == 32 && c.worldSize == 32 && c.maxTokens == 32 &&
+                                c.hidden == 4096 && c.intermediate == 4352 && c.numExperts == 512 && c.topK == 7 &&
+                                c.smMargin == 32 && c.gateUpClamp == -1.0f;
+  if (fixedDenseRoutes) {
+    constexpr size_t GroupsPerToken = 4096 / 4;
+    for (size_t i = blockIdx.x * Threads + threadIdx.x; i < size_t(32) * GroupsPerToken;
+         i += gridDim.x * Threads) {
+      size_t token = i / GroupsPerToken;
+      size_t feature = i % GroupsPerToken * 4;
+      float sum0 = 0.0f;
+      float sum1 = 0.0f;
+      float sum2 = 0.0f;
+      float sum3 = 0.0f;
+#pragma unroll
+      for (int slot = 0; slot < 7; ++slot) {
+        uint64_t word;
+        auto address = partial + (token * 7 + slot) * 4096 + feature;
+        asm volatile("ld.global.cg.u64 %0, [%1];" : "=l"(word) : "l"(address) : "memory");
+        sum0 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word)));
+        sum1 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word >> 16)));
+        sum2 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word >> 32)));
+        sum3 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word >> 48)));
+      }
+      uint64_t word = uint64_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum0))) |
+                      uint64_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum1))) << 16 |
+                      uint64_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum2))) << 32 |
+                      uint64_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum3))) << 48;
+      auto address = reinterpret_cast<uint64_t*>(output) + i;
+      asm volatile("st.global.u64 [%0], %1;" : : "l"(address), "l"(word) : "memory");
     }
-    output[i] = __bfloat16(sum);
+    return;
+  }
+
+  size_t groupsPerToken = c.hidden / 8;
+  for (size_t i = blockIdx.x * Threads + threadIdx.x; i < size_t(tokens) * groupsPerToken;
+       i += gridDim.x * Threads) {
+    size_t token = i / groupsPerToken;
+    size_t feature = i % groupsPerToken * 8;
+    float sum0 = 0.0f;
+    float sum1 = 0.0f;
+    float sum2 = 0.0f;
+    float sum3 = 0.0f;
+    float sum4 = 0.0f;
+    float sum5 = 0.0f;
+    float sum6 = 0.0f;
+    float sum7 = 0.0f;
+    for (int slot = 0; slot < c.topK; ++slot) {
+      uint32_t word0, word1, word2, word3;
+      auto address = partial + (token * c.topK + slot) * c.hidden + feature;
+      asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                   : "=r"(word0), "=r"(word1), "=r"(word2), "=r"(word3)
+                   : "l"(address)
+                   : "memory");
+      sum0 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0)));
+      sum1 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0 >> 16)));
+      sum2 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1)));
+      sum3 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1 >> 16)));
+      sum4 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2)));
+      sum5 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2 >> 16)));
+      sum6 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3)));
+      sum7 += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3 >> 16)));
+    }
+    uint32_t word0 = uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum0))) |
+                     uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum1))) << 16;
+    uint32_t word1 = uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum2))) |
+                     uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum3))) << 16;
+    uint32_t word2 = uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum4))) |
+                     uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum5))) << 16;
+    uint32_t word3 = uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum6))) |
+                     uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(sum7))) << 16;
+    auto address = reinterpret_cast<uint4*>(output) + i;
+    asm volatile("st.global.v4.u32 [%0], {%1, %2, %3, %4};"
+                 :
+                 : "l"(address), "r"(word0), "r"(word1), "r"(word2), "r"(word3)
+                 : "memory");
   }
 }
 

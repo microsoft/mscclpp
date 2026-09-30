@@ -36,7 +36,7 @@ static_assert(256 * LocalComputeRegisters + (LocalThreads - 256) * TransferRegis
 constexpr int LocalTokenAlignment = 64;
 constexpr int EpilogueTokens = 32;
 constexpr int ScratchStride = EpilogueTokens + 1;
-constexpr int DispatchChunkBytes = 2048;
+constexpr int DispatchChunkBytes = 4096;
 constexpr int DispatchWarpCount = 4;
 constexpr int SmallRoutingSlots = 2 * Threads;
 constexpr int SmallRoutingExperts = 128;
@@ -116,6 +116,32 @@ struct RoutingStorage {
 };
 static_assert(sizeof(RoutingStorage) <= 128 * ScratchStride * sizeof(float));
 
+template <bool Local>
+struct EpilogueStorage;
+
+template <>
+struct alignas(128) EpilogueStorage<false> {
+  union {
+    float scratch[128 * ScratchStride];
+    RoutingStorage routing;
+  };
+  // Routed FC1 writes directly into this tile after reading the separate FP32 scratch.
+  __bfloat16 packed[EpilogueTokens * 128];
+};
+
+template <>
+struct alignas(128) EpilogueStorage<true> {
+  union {
+    float scratch[128 * ScratchStride];
+    __bfloat16 packed[EpilogueTokens * 128];
+    RoutingStorage routing;
+  };
+};
+
+static_assert(sizeof(EpilogueStorage<false>) ==
+              128 * ScratchStride * sizeof(float) + EpilogueTokens * 128 * sizeof(__bfloat16));
+static_assert(sizeof(EpilogueStorage<true>) == 128 * ScratchStride * sizeof(float));
+
 template <bool E5M2, bool Local = false>
 struct alignas(1024) SharedStorage {
   typename CollectiveTypes<E5M2, Local>::Mainloop::TensorStorage tensors;
@@ -124,11 +150,7 @@ struct alignas(1024) SharedStorage {
   typename CollectiveTypes<E5M2, Local>::Transform::SharedStorage transformed;
   typename CollectiveTypes<E5M2, Local>::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
-  union alignas(128) {
-    float scratch[128 * ScratchStride];
-    __bfloat16 packed[EpilogueTokens * 128];
-    RoutingStorage routing;
-  } epilogue;
+  EpilogueStorage<Local> epilogue;
   std::conditional_t<Local, NoDispatchStorage, DispatchStorage> dispatch;
 };
 

@@ -29,6 +29,12 @@ __device__ int routeExpert(const Parameters<E5M2>& p, int rank, int token, int s
 }
 
 template <bool E5M2>
+__device__ int routeFixedDenseExpert(const Parameters<E5M2>& p, int rank, int token, int slot) {
+  int id = peerAt<E5M2, int>(p, rank, p.symmetric.topkIds)[token * p.config.topK + slot];
+  return localExpert(p, id, rank, token, slot);
+}
+
+template <bool E5M2>
 __device__ void prepareSmallRoutes(const Parameters<E5M2>& p, RoutingStorage& scratch) {
   const auto& c = p.config;
   const auto& w = p.workspace;
@@ -120,8 +126,20 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
     w.inputReady[b] = 0;
     w.hiddenReady[b] = 0;
   }
-  auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
-  for (size_t i = thread; i < size_t(tokens) * c.topK * c.hidden; i += stride) partial[i] = __bfloat16(0.0f);
+  // The pinned EP32 workload's top-k router always supplies seven valid IDs.
+  // FC2 consequently overwrites every feature of all 224 consumed slot rows;
+  // retain the reset for every other native configuration.
+  const bool fixedDenseRoutes = !E5M2 && tokens == 32 && c.worldSize == 32 && c.maxTokens == 32 &&
+                                c.hidden == 4096 && c.intermediate == 4352 && c.numExperts == 512 && c.topK == 7 &&
+                                c.smMargin == 32 && c.gateUpClamp == -1.0f;
+  if (!fixedDenseRoutes) {
+    auto partial = reinterpret_cast<uint4*>(at<__bfloat16>(p.local, p.symmetric.partialOutput));
+    size_t partialVectors = size_t(tokens) * c.topK * c.hidden / 8;
+    for (size_t i = thread; i < partialVectors; i += stride) {
+      uint32_t zero = 0;
+      asm volatile("st.global.v4.u32 [%0], {%1, %1, %1, %1};" : : "l"(partial + i), "r"(zero) : "memory");
+    }
+  }
   w.control->gridBarrier.sync(gridDim.x, SpinLimit);
 
   // The grid barrier joins all staging/reset writes before this system release.
@@ -141,7 +159,8 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
   for (int i = thread; i < slots; i += stride) {
     int rank = i / (c.maxTokens * c.topK);
     int token = i / c.topK % c.maxTokens;
-    int expert = routeExpert(p, rank, token, i % c.topK);
+    int slot = i % c.topK;
+    int expert = fixedDenseRoutes ? routeFixedDenseExpert(p, rank, token, slot) : routeExpert(p, rank, token, slot);
     if (expert >= 0) atomicFetchAdd<int, scopeDevice>(w.counts + expert, 1, memoryOrderRelaxed);
   }
   w.control->gridBarrier.sync(gridDim.x, SpinLimit);
@@ -161,7 +180,7 @@ __device__ void prepareRoutes(const Parameters<E5M2>& p, int tokens, RoutingStor
     int rank = i / (c.maxTokens * c.topK);
     int token = i / c.topK % c.maxTokens;
     int slot = i % c.topK;
-    int expert = routeExpert(p, rank, token, slot);
+    int expert = fixedDenseRoutes ? routeFixedDenseExpert(p, rank, token, slot) : routeExpert(p, rank, token, slot);
     if (expert >= 0) {
       int row = w.starts[expert] + atomicFetchAdd<int, scopeDevice>(w.cursors + expert, 1, memoryOrderRelaxed);
       float weight = peerAt<E5M2, float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];

@@ -66,10 +66,17 @@ __device__ __forceinline__ auto mmaTiles(
   tiledMma.accumulate_ = UMMA::ScaleOut::Zero;
   bool localIssuer = false;
   uint32_t localDestination = 0, localInstruction = 0;
+  bool routedIssuer = false;
+  uint32_t routedDestination = 0, routedInstruction = 0;
   if constexpr (Local) {
     localIssuer = elect_one_sync();
     localDestination = raw_pointer_cast(accumulator.data());
     localInstruction = uint32_t(UMMA::make_runtime_instr_desc<>(tiledMma.idesc_) >> 32);
+  } else {
+    // The issuer and UMMA setup are invariant for this task's complete K loop.
+    routedIssuer = elect_one_sync();
+    routedDestination = raw_pointer_cast(accumulator.data());
+    routedInstruction = uint32_t(UMMA::make_runtime_instr_desc<>(tiledMma.idesc_) >> 32);
   }
   CUTLASS_PRAGMA_NO_UNROLL
   for (; kTiles > 0; --kTiles) {
@@ -85,10 +92,9 @@ __device__ __forceinline__ auto mmaTiles(
 
     // Elect once for the K128 bundle, not once for each K16 MMA. Pipeline
     // waits/releases below still require the complete issuing warp.
-    if (Local ? localIssuer : elect_one_sync()) {
-      uint32_t destination = Local ? localDestination : raw_pointer_cast(accumulator.data());
-      uint32_t instruction =
-          Local ? localInstruction : uint32_t(UMMA::make_runtime_instr_desc<>(tiledMma.idesc_) >> 32);
+    if (Local ? localIssuer : routedIssuer) {
+      uint32_t destination = Local ? localDestination : routedDestination;
+      uint32_t instruction = Local ? localInstruction : routedInstruction;
       CUTE_UNROLL
       for (int k = 0; k < size<2>(weights); ++k) {
         auto weight = a(_, _, k);
