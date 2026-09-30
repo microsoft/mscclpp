@@ -47,7 +47,7 @@ __device__ void retireAndAck(const TransportView& transport, const LatencyStorag
   __syncthreads();
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __device__ void send(void* output, int* outputIds, float* outputWeights, const void* input, const int64_t* topkIds,
                      const float* weights, const Workload& work, const TransportView& transport, WorkspaceView& state,
                      int ranks, int* sharedMem) {
@@ -60,7 +60,10 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
   const int groups = DispatchNWarps / perGroup;
   const int sendSlots = ranks > DispatchMaxNWarpGroups * WARP_SIZE ? ranks : DispatchMaxNWarpGroups * WARP_SIZE;
   const size_t control = configAlign<size_t>((sendSlots + DispatchMaxNWarpGroups * ranks) * sizeof(int), 128);
-  const size_t stride = dispatchPayloadStride<DispatchDataType::BF16>(Hidden, work.numTopk_, 0);
+  const size_t stride = DataType == DispatchDataType::BF16
+                            ? dispatchPayloadStride<DataType>(Hidden, work.numTopk_, 0)
+                            : configAlign<size_t>(static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>),
+                                                  BufferAlignmentBytes);
   auto* tiles = reinterpret_cast<uint8_t*>(sharedMem) + control;
   auto* tile = tiles + group * stride;
   auto* barrier = reinterpret_cast<mscclpp::BulkBarrier*>(tiles + DispatchMaxNWarpGroups * stride) + group;
@@ -68,22 +71,35 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
   const int first = (blockIdx.x - 1) * groups + group;
   const int step = workers * groups;
   const int localExperts = work.numExperts_ / ranks;
-  constexpr size_t bytes = Hidden * sizeof(Bf16);
+  using ElementType = DispatchElementType<DataType>;
+  constexpr size_t bytes = Hidden * sizeof(ElementType);
+  constexpr int inputVectors = Hidden / mscclpp::bf16x8::Size;
   uint32_t phase = 0;
   if (lane == 0 && first < work.numTokens_) barrier->init();
   for (int peer = lane; peer < ranks; peer += WARP_SIZE) completed[peer] = 0;
   __syncwarp();
   for (int token = first; token < work.numTokens_; token += step) {
-    if (lane == 0) {
-      barrier->arriveAndExpect(bytes);
-      mscclpp::bulkLoad(tile, static_cast<const uint8_t*>(input) + token * bytes, bytes, *barrier);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) {
+        barrier->arriveAndExpect(bytes);
+        mscclpp::bulkLoad(tile, static_cast<const uint8_t*>(input) + token * bytes, bytes, *barrier);
+      }
+    } else {
+      static_assert(DataType == DispatchDataType::FP8_E4M3);
+      const auto* source = reinterpret_cast<const mscclpp::bf16x8*>(input) + static_cast<size_t>(token) * inputVectors;
+      auto* destination = reinterpret_cast<mscclpp::f8_e4m3x8*>(tile);
+      for (int vector = lane; vector < inputVectors; vector += WARP_SIZE)
+        destination[vector] = quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_);
     }
     const size_t index = static_cast<size_t>(token) * work.numTopk_ + lane;
     const int64_t expert = lane < work.numTopk_ ? topkIds[index] : -1;
     const int destination = valid(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
+    const bool sendsPayload = !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
     const float weight = lane < work.numTopk_ ? (weights == nullptr ? 1.0f : weights[index]) : 0.0f;
     const size_t row = (static_cast<size_t>(transport.rank_) * work.maxTokensPerRank_ + token) * work.numTopk_ + lane;
-    if (lane == 0) barrier->wait(phase);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) barrier->wait(phase);
+    }
     __syncwarp();
     mscclpp::bulkFence();
     if (lane < work.numTopk_) {
@@ -93,7 +109,7 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
         static_cast<float*>(transport.mappedBuffer(outputWeights, peer))[row] = peer == destination ? weight : 0.0f;
       }
     }
-    if (destination >= 0) {
+    if (sendsPayload && destination >= 0) {
       auto* dst = static_cast<uint8_t*>(transport.mappedBuffer(output, destination)) + row * bytes;
       mscclpp::bulkStore(dst, tile, bytes);
       mscclpp::bulkStoreCommit();
@@ -264,7 +280,7 @@ __device__ void gather(void* output, const void* input, const int64_t* topkIds, 
 }
 #endif
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __global__ __launch_bounds__(DispatchNThreads, 1) void dispatchKernel(void* output, int* ids, float* weightsOut,
                                                                       int* count, const void* input,
                                                                       const int64_t* topkIds, const float* weights,
@@ -281,8 +297,8 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void dispatchKernel(void* outp
     notify(ids, weightsOut, topkIds, work, transport, layout, state, context->numRanks_,
            reinterpret_cast<int*>(shared));
   else
-    send<Hidden>(output, ids, weightsOut, input, topkIds, weights, work, transport, state, context->numRanks_,
-                 reinterpret_cast<int*>(shared));
+    send<Hidden, DataType>(output, ids, weightsOut, input, topkIds, weights, work, transport, state, context->numRanks_,
+                           reinterpret_cast<int*>(shared));
   if (blockIdx.x < context->numRanks_ && threadIdx.x == 0) {
     wait(static_cast<uint64_t*>(layout.gpuNetIoFlagsBuffer_) + blockIdx.x * GpuNetIoMaxQpsPerPeer, target);
     count[blockIdx.x] = static_cast<int*>(layout.expandedCounts_)[blockIdx.x];

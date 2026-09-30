@@ -4,35 +4,48 @@
 
 namespace gpunetio_fast {
 #if MSCCLPP_BULK_AVAILABLE
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __device__ void send(void* output, int* outputIds, float* outputWeights, const void* input, const int64_t* topkIds,
                      const float* weights, const Workload& work, const TransportView& transport,
                      const LatencyStorageLayout& layout, WorkspaceView& state, int ranks, int* sharedMem) {
-  RankMajorSendState<Hidden> sender;
+  RankMajorSendState<Hidden, DataType> sender;
   if (!initRankMajorSendState(sender, work.numTokens_, work.numTopk_, ranks, gridDim.x - DispatchControlBlocks,
                               sharedMem))
     return;
   const int lane = sender.laneId_, topk = work.numTopk_, localExperts = work.numExperts_ / ranks;
-  constexpr size_t bytes = Hidden * sizeof(Bf16);
-  [[maybe_unused]] constexpr int vectors = bytes / sizeof(int4);
+  using ElementType = DispatchElementType<DataType>;
+  constexpr size_t bytes = Hidden * sizeof(ElementType);
+  constexpr int inputVectors = Hidden / mscclpp::bf16x8::Size;
+  constexpr int vectors = bytes / sizeof(int4);
   const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * topk;
   int completedTokens = 0;
   [[maybe_unused]] int sinceFlush = 0;
   for (int token = sender.firstTokenIdx_; token < work.numTokens_; token += sender.tokenStride_) {
-    if (lane == 0) {
-      sender.bulkBarrier_->arriveAndExpect(bytes);
-      mscclpp::bulkLoad(sender.stagedToken_, static_cast<const uint8_t*>(input) + static_cast<size_t>(token) * bytes,
-                        bytes, *sender.bulkBarrier_);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) {
+        sender.bulkBarrier_->arriveAndExpect(bytes);
+        mscclpp::bulkLoad(sender.stagedToken_, static_cast<const uint8_t*>(input) + static_cast<size_t>(token) * bytes,
+                          bytes, *sender.bulkBarrier_);
+      }
+    } else {
+      static_assert(DataType == DispatchDataType::FP8_E4M3);
+      const auto* source = reinterpret_cast<const mscclpp::bf16x8*>(input) + static_cast<size_t>(token) * inputVectors;
+      auto* destination = reinterpret_cast<mscclpp::f8_e4m3x8*>(sender.stagedToken_);
+      for (int vector = lane; vector < inputVectors; vector += WARP_SIZE)
+        destination[vector] = quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_);
     }
     const size_t selection = static_cast<size_t>(token) * topk + lane;
     const int64_t expert = lane < topk ? topkIds[selection] : -1;
     const int dst = validExpert(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
+    const bool sendsPayload = !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(dst, lane);
     const float weight = lane < topk ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
     const size_t row = static_cast<size_t>(transport.rank_) * rows + selection;
-    if (lane == 0) sender.bulkBarrier_->wait(sender.bulkPhase_);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) sender.bulkBarrier_->wait(sender.bulkPhase_);
+    }
     __syncwarp();
     mscclpp::bulkFence();
-    const bool mapped = dst >= 0 && transport.isNvlinkPeer(dst);
+    const bool mapped = sendsPayload && dst >= 0 && transport.isNvlinkPeer(dst);
     if (mapped) {
       auto* remote = static_cast<uint8_t*>(transport.mappedBuffer(output, dst)) + row * bytes;
       mscclpp::bulkStore(remote, sender.stagedToken_, bytes);
@@ -52,7 +65,7 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
     }
     if (mapped) mscclpp::bulkStoreWait();
 #if defined(MSCCLPP_USE_GPUNETIO)
-    const bool remote = dst >= 0 && !transport.isNvlinkPeer(dst);
+    const bool remote = sendsPayload && dst >= 0 && !transport.isNvlinkPeer(dst);
     if (__any_sync(0xffffffff, remote)) {
       auto* staged = reinterpret_cast<int4*>(static_cast<uint8_t*>(layout.gpuNetIoStagingBuffer_) +
                                              static_cast<size_t>(token) * layout.gpuNetIoSlotStride_);
@@ -268,7 +281,7 @@ __device__ void pushCombine(const void* input, const LatencyStorageLayout& layou
 }
 #endif
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __global__ __launch_bounds__(DispatchNThreads, 1) void dispatchKernel(void* output, int* ids, float* weightsOut,
                                                                       int* counts, const void* input,
                                                                       const int64_t* topkIds, const float* weights,
@@ -286,8 +299,8 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void dispatchKernel(void* outp
     notify(ids, weightsOut, topkIds, work, transport, layout, state, context->numRanks_,
            reinterpret_cast<int*>(shared));
   else
-    send<Hidden>(output, ids, weightsOut, input, topkIds, weights, work, transport, layout, state, context->numRanks_,
-                 reinterpret_cast<int*>(shared));
+    send<Hidden, DataType>(output, ids, weightsOut, input, topkIds, weights, work, transport, layout, state,
+                           context->numRanks_, reinterpret_cast<int*>(shared));
   __threadfence_system();
   state.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x == gridDim.x - 1) postDispatch(transport, layout, work, context->numRanks_);

@@ -125,14 +125,33 @@ __device__ void finishCollective(const TransportView& transport, const LatencySt
   __syncthreads();
 }
 
-__device__ void initializeLocalTokenMajorMetadata(int* outputIds, float* outputWeights, const Workload& work,
-                                                  int ranks) {
-  const size_t entries = static_cast<size_t>(ranks) * work.maxTokensPerRank_ * work.numTopk_;
+__device__ void initializeExpandedDispatchMetadata(int* outputIds, float* outputWeights,
+                                                   const LatencyStorageLayout& layout, const TransportView& transport,
+                                                   const Workload& work, int ranks) {
+  const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * work.numTopk_;
+  const size_t entries = static_cast<size_t>(ranks) * rows;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < entries; index += stride) {
     outputIds[index] = work.invalidTokenExpertId_;
     outputWeights[index] = 0.0f;
   }
+#if defined(MSCCLPP_USE_GPUNETIO)
+  if (transport.gpuNetIo_ != nullptr) {
+    const size_t activeRows = static_cast<size_t>(work.numTokens_) * work.numTopk_;
+    const size_t activeEntries = static_cast<size_t>(ranks) * activeRows;
+    for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < activeEntries;
+         index += stride) {
+      const size_t peer = index / activeRows;
+      const size_t row = index % activeRows;
+      const size_t stagingIndex = peer * rows + row;
+      static_cast<int*>(layout.expandedSendIds_)[stagingIndex] = work.invalidTokenExpertId_;
+      static_cast<float*>(layout.expandedSendWeights_)[stagingIndex] = 0.0f;
+    }
+  }
+#else
+  static_cast<void>(layout);
+  static_cast<void>(transport);
+#endif
   __threadfence_system();
 }
 
@@ -215,24 +234,15 @@ __device__ void dispatchSendRankMajorTopkExpanded(void* output, int* outputIds, 
     }
     __syncwarp();
     mscclpp::bulkFence();
-    if (lane < topk) {
-      for (int peer = 0; peer < ranks; ++peer) {
-        const bool local = peer == destination;
-        int* ids;
-        float* wgts;
-        size_t offset;
-        if (transport.isNvlinkPeer(peer)) {
-          ids = static_cast<int*>(transport.mappedBuffer(outputIds, peer));
-          wgts = static_cast<float*>(transport.mappedBuffer(outputWeights, peer));
-          offset = row;
-        } else {
-          ids = static_cast<int*>(layout.expandedSendIds_);
-          wgts = static_cast<float*>(layout.expandedSendWeights_);
-          offset = static_cast<size_t>(peer) * rowsPerRank + selection;
-        }
-        ids[offset] = local ? static_cast<int>(expert) : work.invalidTokenExpertId_;
-        wgts[offset] = local ? weight : 0.0f;
-      }
+    if (lane < topk && destination >= 0) {
+      const bool mapped = transport.isNvlinkPeer(destination);
+      auto* ids = mapped ? static_cast<int*>(transport.mappedBuffer(outputIds, destination))
+                         : static_cast<int*>(layout.expandedSendIds_);
+      auto* wgts = mapped ? static_cast<float*>(transport.mappedBuffer(outputWeights, destination))
+                          : static_cast<float*>(layout.expandedSendWeights_);
+      const size_t offset = mapped ? row : static_cast<size_t>(destination) * rowsPerRank + selection;
+      ids[offset] = static_cast<int>(expert);
+      wgts[offset] = weight;
     }
     if (sendsPayload && destination >= 0 && transport.isNvlinkPeer(destination)) {
       auto* remote = static_cast<uint8_t*>(transport.mappedBuffer(output, destination)) + row * bytes;
@@ -268,10 +278,8 @@ __device__ void dispatchSendRankMajorTopkExpanded(void* output, int* outputIds, 
       tokensSinceFlush = 0;
     }
 #endif
-    if (lane < topk) {
-      for (int peer = 0; peer < ranks; ++peer)
-        if (transport.isNvlinkPeer(peer)) atomicAdd_block(completions + peer, 1);
-    }
+    if (lane < topk && destination >= 0 && transport.isNvlinkPeer(destination))
+      atomicAdd_block(completions + destination, 1);
     __syncwarp();
   }
   __threadfence_system();
@@ -283,10 +291,9 @@ __device__ void dispatchSendRankMajorTopkExpanded(void* output, int* outputIds, 
   }
 }
 
-__device__ void dispatchRankMajorTopkExpandedNotify(int* outputIds, float* outputWeights, const int64_t* topkIds,
-                                                    const Workload& work, const TransportView& transport,
-                                                    const LatencyStorageLayout& layout, WorkspaceView& workspace,
-                                                    int ranks, int* counts) {
+__device__ void dispatchRankMajorTopkExpandedNotify(const int64_t* topkIds, const Workload& work,
+                                                    const TransportView& transport, const LatencyStorageLayout& layout,
+                                                    WorkspaceView& workspace, int ranks, int* counts) {
   const int lane = get_lane_id();
   const int warp = threadIdx.x / WARP_SIZE;
   const int topk = work.numTopk_;
@@ -298,25 +305,10 @@ __device__ void dispatchRankMajorTopkExpandedNotify(int* outputIds, float* outpu
     if (validExpert(expert, work.numExperts_)) atomicAdd_block(counts + expert / localExperts, 1);
   }
   __syncthreads();
-  const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * topk;
-  for (int peer = 0; peer < ranks; ++peer) {
-    const bool mapped = transport.isNvlinkPeer(peer);
-    auto* ids = mapped ? static_cast<int*>(transport.mappedBuffer(outputIds, peer))
-                       : static_cast<int*>(layout.expandedSendIds_);
-    auto* wgts = mapped ? static_cast<float*>(transport.mappedBuffer(outputWeights, peer))
-                        : static_cast<float*>(layout.expandedSendWeights_);
-    const size_t base = static_cast<size_t>(mapped ? transport.rank_ : peer) * rows;
-    for (size_t index = static_cast<size_t>(work.numTokens_) * topk + threadIdx.x; index < rows; index += blockDim.x) {
-      ids[base + index] = work.invalidTokenExpertId_;
-      wgts[base + index] = 0.0f;
-    }
-  }
-  __threadfence_system();
-  __syncthreads();
   auto* flags = static_cast<uint64_t*>(layout.gpuNetIoFlagsBuffer_);
   for (int peer = threadIdx.x; peer < ranks; peer += blockDim.x) {
     if (transport.isNvlinkPeer(peer)) {
-      const int expected = work.numTokens_ * topk;
+      const int expected = counts[peer];
       while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspace.dispatchRankPayloadCompletions_ + peer,
                                                             mscclpp::memoryOrderAcquire) != expected) {
       }
@@ -331,9 +323,6 @@ __device__ void dispatchRankMajorTopkExpandedNotify(int* outputIds, float* outpu
       auto* staged = static_cast<int*>(layout.expandedCountStaging_) + peer;
       *staged = counts[peer];
       __threadfence_system();
-      auto* remote = static_cast<int*>(layout.expandedCounts_) + transport.rank_;
-      transport.gpuNetIo_->put(peer, transport.symmetricOffset(remote), transport.symmetricOffset(staged), sizeof(int),
-                               0);
 #endif
     }
   }
@@ -345,15 +334,33 @@ __device__ void postRemoteDispatchMetadataAndMarkers(const TransportView& transp
   auto* gin = transport.gpuNetIo_;
   if (gin == nullptr) return;
   const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * work.numTopk_;
+  const size_t activeRows = static_cast<size_t>(work.numTokens_) * work.numTopk_;
   for (int peer = threadIdx.x; peer < ranks; peer += blockDim.x) {
     if (transport.isNvlinkPeer(peer)) continue;
     const size_t source = static_cast<size_t>(peer) * rows;
     const size_t dest = static_cast<size_t>(transport.rank_) * rows;
-    gin->put(peer, transport.symmetricOffset(static_cast<int*>(layout.rankMajorTopkIdsBuffer_) + dest),
-             transport.symmetricOffset(static_cast<int*>(layout.expandedSendIds_) + source), rows * sizeof(int), 0);
-    gin->put(peer, transport.symmetricOffset(static_cast<float*>(layout.rankMajorTopkWeightsBuffer_) + dest),
-             transport.symmetricOffset(static_cast<float*>(layout.expandedSendWeights_) + source), rows * sizeof(float),
-             0);
+    const uint64_t countDestination =
+        transport.symmetricOffset(static_cast<int*>(layout.expandedCounts_) + transport.rank_);
+    const uint64_t countSource = transport.symmetricOffset(static_cast<int*>(layout.expandedCountStaging_) + peer);
+    if (activeRows == 0) {
+      gin->put(peer, countDestination, countSource, sizeof(int), 0);
+    } else if (activeRows * sizeof(int) <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
+      gin->putBatched3(peer, 0, countDestination, countSource, sizeof(int),
+                       transport.symmetricOffset(static_cast<int*>(layout.rankMajorTopkIdsBuffer_) + dest),
+                       transport.symmetricOffset(static_cast<int*>(layout.expandedSendIds_) + source),
+                       activeRows * sizeof(int),
+                       transport.symmetricOffset(static_cast<float*>(layout.rankMajorTopkWeightsBuffer_) + dest),
+                       transport.symmetricOffset(static_cast<float*>(layout.expandedSendWeights_) + source),
+                       activeRows * sizeof(float));
+    } else {
+      gin->put(peer, countDestination, countSource, sizeof(int), 0);
+      gin->put(peer, transport.symmetricOffset(static_cast<int*>(layout.rankMajorTopkIdsBuffer_) + dest),
+               transport.symmetricOffset(static_cast<int*>(layout.expandedSendIds_) + source), activeRows * sizeof(int),
+               0);
+      gin->put(peer, transport.symmetricOffset(static_cast<float*>(layout.rankMajorTopkWeightsBuffer_) + dest),
+               transport.symmetricOffset(static_cast<float*>(layout.expandedSendWeights_) + source),
+               activeRows * sizeof(float), 0);
+    }
   }
   __syncthreads();
   auto* flags = static_cast<uint64_t*>(layout.gpuNetIoFlagsBuffer_) +
@@ -386,7 +393,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                     work.numExperts_, work.numTopk_, DispatchLayout::RANK_MAJOR_TOPK_EXPANDED,
                                     CombineMode::RANK_LOCAL_REDUCE, context->gpuNetIo_ != nullptr);
   const uint64_t target = state.dispatchArrivedBaseline_[context->rank_] + 1;
-  initializeLocalTokenMajorMetadata(outputIds, outputWeights, work, context->numRanks_);
+  initializeExpandedDispatchMetadata(outputIds, outputWeights, layout, transport, work, context->numRanks_);
   state.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x == 0) finishCollective(transport, layout, context->numRanks_);
   state.combineSyncer_->sync(gridDim.x);
@@ -395,8 +402,8 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                         transport, layout, state, context->numRanks_,
                                                         reinterpret_cast<int*>(shared));
   else
-    dispatchRankMajorTopkExpandedNotify(outputIds, outputWeights, topkIds, work, transport, layout, state,
-                                        context->numRanks_, reinterpret_cast<int*>(shared));
+    dispatchRankMajorTopkExpandedNotify(topkIds, work, transport, layout, state, context->numRanks_,
+                                        reinterpret_cast<int*>(shared));
   __threadfence_system();
   state.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x == gridDim.x - 1) postRemoteDispatchMetadataAndMarkers(transport, layout, work, context->numRanks_);
@@ -718,23 +725,21 @@ void launchDispatch(void* output, int* ids, float* weightsOut, int* count, const
                     const float* weights, const Workload& work, const DeviceContext& context, int blocks,
                     cudaStream_t stream) {
   const size_t shared = dispatchSharedBytes<Hidden, DataType>(context.numRanks_, work.numTopk_);
-  if constexpr (DataType == DispatchDataType::BF16) {
-    if (context.expandedGpuNetIoFastPath_ && !work.deduplicateExpandedRoutes_) {
-      static thread_local KernelConfigCache netConfig;
-      EP_HOST_ASSERT(configureKernel(gpunetio_fast::dispatchKernel<Hidden>, DispatchNThreads, shared, context,
-                                     netConfig) >= blocks);
-      gpunetio_fast::dispatchKernel<Hidden><<<blocks, DispatchNThreads, shared, stream>>>(
-          output, ids, weightsOut, count, input, topkIds, weights, work, context.devicePtr_);
-      return;
-    }
-    if (context.expandedIpcFastPath_ && !work.deduplicateExpandedRoutes_) {
-      static thread_local KernelConfigCache ipcConfig;
-      EP_HOST_ASSERT(configureKernel(ipc::dispatchKernel<Hidden>, DispatchNThreads, shared, context, ipcConfig) >=
-                     blocks);
-      ipc::dispatchKernel<Hidden><<<blocks, DispatchNThreads, shared, stream>>>(
-          output, ids, weightsOut, count, input, topkIds, weights, work, context.devicePtr_);
-      return;
-    }
+  if (context.expandedGpuNetIoFastPath_) {
+    static thread_local KernelConfigCache netConfig;
+    EP_HOST_ASSERT(configureKernel(gpunetio_fast::dispatchKernel<Hidden, DataType>, DispatchNThreads, shared, context,
+                                   netConfig) >= blocks);
+    gpunetio_fast::dispatchKernel<Hidden, DataType><<<blocks, DispatchNThreads, shared, stream>>>(
+        output, ids, weightsOut, count, input, topkIds, weights, work, context.devicePtr_);
+    return;
+  }
+  if (context.expandedIpcFastPath_) {
+    static thread_local KernelConfigCache ipcConfig;
+    EP_HOST_ASSERT(
+        configureKernel(ipc::dispatchKernel<Hidden, DataType>, DispatchNThreads, shared, context, ipcConfig) >= blocks);
+    ipc::dispatchKernel<Hidden, DataType><<<blocks, DispatchNThreads, shared, stream>>>(
+        output, ids, weightsOut, count, input, topkIds, weights, work, context.devicePtr_);
+    return;
   }
   static thread_local KernelConfigCache config;
   EP_HOST_ASSERT(configureKernel(dispatchTopkExpandedKernel<Hidden, DataType>, DispatchNThreads, shared, context,

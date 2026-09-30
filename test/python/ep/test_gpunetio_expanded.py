@@ -245,10 +245,12 @@ class ExpandedTests(unittest.TestCase):
         self.assertIn("topk_expanded::combine(", combine)
         self.assertNotIn("runRankLocalReduce", combine)
         kernel = source(KERNEL)
-        for name in ("launchDispatch", "launchCombine"):
-            launch = function(kernel, name)
-            self.assertIn("if constexpr (DataType == DispatchDataType::BF16)", launch)
-            self.assertIn("DataType>", launch)
+        dispatch_launch = function(kernel, "launchDispatch")
+        self.assertIn("gpunetio_fast::dispatchKernel<Hidden, DataType>", dispatch_launch)
+        self.assertIn("ipc::dispatchKernel<Hidden, DataType>", dispatch_launch)
+        combine_launch = function(kernel, "launchCombine")
+        self.assertIn("if constexpr (DataType == DispatchDataType::BF16)", combine_launch)
+        self.assertIn("DataType>", combine_launch)
         latency = source("src/ext/ep/latency.cc")
         network_fp8_guard = (
             "dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr ||\n"
@@ -404,6 +406,28 @@ int main() {
             self.assertIn("fmaf(", receive)
             self.assertNotIn("isFirstLaneForRank", receive)
         self.assertEqual(function(kernel, "validExpert").count("expert < experts"), 1)
+
+    def test_fp8_expanded_dispatch_publishes_destination_only_metadata(self):
+        kernel = source(KERNEL)
+        initialize = function(kernel, "initializeExpandedDispatchMetadata")
+        self.assertIn("outputIds[index] = work.invalidTokenExpertId_", initialize)
+        self.assertIn("layout.expandedSendIds_", initialize)
+        self.assertIn("activeEntries", initialize)
+
+        send = function(kernel, "dispatchSendRankMajorTopkExpanded")
+        self.assertIn("transport.isNvlinkPeer(destination)", send)
+        self.assertIn("static_cast<size_t>(destination) * rowsPerRank + selection", send)
+        self.assertNotIn("peer == destination", send)
+        self.assertIn("completions + destination", send)
+
+        notify = function(kernel, "dispatchRankMajorTopkExpandedNotify")
+        self.assertIn("const int expected = counts[peer]", notify)
+        self.assertNotIn("work.numTokens_ * topk", notify)
+
+        post = function(kernel, "postRemoteDispatchMetadataAndMarkers")
+        self.assertIn("activeRows * sizeof(int)", post)
+        self.assertIn("gin->putBatched3(", post)
+        self.assertNotIn("rows * sizeof(int)", post)
 
 
 class FastPathTests(unittest.TestCase):
@@ -672,10 +696,18 @@ int main() {
             self.assertLess(
                 launch.index("context.expandedGpuNetIoFastPath_"), launch.index("context.expandedIpcFastPath_")
             )
-            self.assertLess(
-                launch.index("if constexpr (DataType == DispatchDataType::BF16)"),
-                launch.index("context.expandedGpuNetIoFastPath_"),
-            )
+            if name == "launchDispatch":
+                self.assertLess(
+                    launch.index("context.expandedGpuNetIoFastPath_"),
+                    launch.index("context.expandedIpcFastPath_"),
+                )
+                self.assertIn("gpunetio_fast::dispatchKernel<Hidden, DataType>", launch)
+                self.assertIn("ipc::dispatchKernel<Hidden, DataType>", launch)
+            else:
+                self.assertLess(
+                    launch.index("if constexpr (DataType == DispatchDataType::BF16)"),
+                    launch.index("context.expandedGpuNetIoFastPath_"),
+                )
             self.assertIn("gpunetio_fast::" + kernel, launch)
             self.assertIn("ipc::" + kernel, launch)
             self.assertEqual(launch.count("configureKernel("), 3)
@@ -692,6 +724,17 @@ int main() {
         dispatch = function(source(NETWORK_FAST), "dispatchKernel")
         self.assertLess(dispatch.index("combineSyncer_->sync"), dispatch.index("postDispatch("))
         self.assertLess(dispatch.index("postDispatch("), dispatch.index("retireNetwork("))
+        network_send = function(source(NETWORK_FAST), "send")
+        self.assertIn("DispatchElementType<DataType>", network_send)
+        self.assertIn("quantizeBf16x8ToFp8E4M3", network_send)
+        self.assertIn("!work.deduplicateExpandedRoutes_ || isFirstLaneForRank(dst, lane)", network_send)
+        self.assertNotIn(
+            "expandedGpuNetIoFastPath_ && !work.deduplicateExpandedRoutes_", function(current, "launchDispatch")
+        )
+        ipc_send = function(source(IPC_FAST), "send")
+        self.assertIn("DispatchElementType<DataType>", ipc_send)
+        self.assertIn("quantizeBf16x8ToFp8E4M3", ipc_send)
+        self.assertIn("!work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane)", ipc_send)
         self.assertIn("ipc::ready(*readyState", function(current, "recvRankMajorTopkExpandedRemotePartialsTma"))
         self.assertIn("ipc::ready(*readyState", function(current, "recvRankMajorTopkExpandedRemotePartials"))
 
