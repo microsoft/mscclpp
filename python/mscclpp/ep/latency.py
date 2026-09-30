@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
@@ -139,6 +140,15 @@ class LatencyContext(Context):
         self.dispatch_data_type = resolve_dispatch_data_type(config.quant)
         if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("TOKEN_MAJOR output currently supports BF16 dispatch only")
+        rank_layout = self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+        if self.dispatch_data_type == DispatchDataType.FP8_E4M3 and rank_layout:
+            if config.quant is None or config.quant.scale is None:
+                raise ValueError("rank-major FP8 dispatch requires quant.scale")
+            self.quant_scale = config.quant.scale
+        else:
+            if config.quant is not None and config.quant.scale is not None:
+                raise ValueError("quant.scale is supported only by rank-major FP8 latency dispatch")
+            self.quant_scale = 1.0
 
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -149,16 +159,12 @@ class LatencyContext(Context):
 
         self._dispatch_output_owner: Optional[DevicePointerArray] = None
         self._combine_input_owner: Optional[DevicePointerArray] = None
-        self._dispatch_scales_owner: Optional[DevicePointerArray] = None
-        self._combine_input_scales_owner: Optional[DevicePointerArray] = None
         self._output_topk_ids_owner: Optional[DevicePointerArray] = None
         self._output_topk_weights_owner: Optional[DevicePointerArray] = None
         self._output_topk_ids: Optional[torch.Tensor] = None
         self._output_topk_weights: Optional[torch.Tensor] = None
         self.dispatch_output_buffer: Optional[torch.Tensor] = None
         self.combine_input_buffer: Optional[torch.Tensor] = None
-        self.combine_input_scales: Optional[torch.Tensor] = None
-        self.dispatch_output_scales: Optional[torch.Tensor] = None
 
 
 class LatencyRuntime(Runtime):
@@ -229,18 +235,17 @@ class LatencyRuntime(Runtime):
             mode_context.invalid_token_expert_id,
             mode_context.output_layout,
             mode_context.dispatch_data_type,
+            mode_context.quant_scale,
             mode_context.dispatch_blocks,
             cuda_stream_ptr(stream),
             mode_context.deduplicate_expanded_routes,
         )
-        output_quant = (
-            None
-            if scales is None
-            else QuantConfig(
-                format=mode_context.dispatch_data_type,
-                block_scales=scales,
-            )
-        )
+        if mode_context.dispatch_data_type == DispatchDataType.BF16:
+            output_quant = None
+        elif mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
+            output_quant = QuantConfig(format=mode_context.dispatch_data_type, scale=mode_context.quant_scale)
+        else:
+            output_quant = QuantConfig(format=mode_context.dispatch_data_type, block_scales=scales)
         if mode_context.output_layout == DispatchLayout.EXPERT_MAJOR:
             layout_info = DispatchLayoutInfo(kind=mode_context.output_layout, num_tokens_per_expert=count)
         elif mode_context.output_layout in (
@@ -256,15 +261,12 @@ class LatencyRuntime(Runtime):
             raise ValueError(f"unsupported latency output layout: {mode_context.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
         combine_input_buffer = mode_context.combine_input_buffer
-        combine_input_scales = mode_context.combine_input_scales
         if mode_context.output_layout in (
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
             DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
         ):
             assert combine_input_buffer is not None
-        if combine_input_scales is not None and mode_context.output_layout == DispatchLayout.RANK_MAJOR:
-            combine_input_scales = combine_input_scales[: mode_context.world_size * active_capacity]
         dispatch_out = DispatchOutput(
             tokens=out_buf,
             quant=output_info.quant,
@@ -272,9 +274,10 @@ class LatencyRuntime(Runtime):
             topk_ids=recv_topk_ids,
             weights=recv_weights,
             combine_input_quant=(
-                None
-                if combine_input_scales is None
-                else QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=combine_input_scales)
+                QuantConfig(format=DispatchDataType.FP8_E4M3, scale=mode_context.quant_scale)
+                if mode_context.dispatch_data_type == DispatchDataType.FP8_E4M3
+                and mode_context.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+                else None
             ),
             combine_input_buffer=(
                 combine_input_buffer
@@ -400,6 +403,7 @@ class LatencyRuntime(Runtime):
             context.num_experts,
             mode_context.output_layout,
             mode_context.dispatch_data_type,
+            1.0 if quant is None or quant.scale is None else quant.scale,
             mode_context.combine_mode,
             mode_context.combine_blocks,
             cuda_stream_ptr(stream),
@@ -479,33 +483,6 @@ class LatencyRuntime(Runtime):
                 self.cpp_runtime,
             )
 
-        if context.dispatch_data_type == DispatchDataType.FP8_E4M3:
-            scale_block_size = dispatch_scale_block_size(context.dispatch_data_type)
-            scale_dtype = dispatch_scale_dtype(context.dispatch_data_type)
-            scale_rows = dispatch_shape[0]
-            if context.combine_mode == CombineMode.DIRECT_SEND:
-                scale_rows = context.world_size * context.max_tokens_per_rank * context.topk
-            scale_shape = (
-                (*context.combine_input_buffer.shape[:-1], context.hidden_size // scale_block_size)
-                if context.combine_input_buffer is not None
-                else (scale_rows, context.hidden_size // scale_block_size)
-            )
-            context._dispatch_scales_owner, context.dispatch_output_scales = tensor_from_pointer(
-                self.cpp_runtime.dispatch_output_scales_buffer_ptr(),
-                (dispatch_shape[0], context.hidden_size // scale_block_size),
-                scale_dtype,
-                context.device,
-                self.cpp_runtime,
-            )
-            context._combine_input_scales_owner, context.combine_input_scales = tensor_from_pointer(
-                self.cpp_runtime.combine_input_scales_buffer_ptr(),
-                scale_shape,
-                scale_dtype,
-                context.device,
-                self.cpp_runtime,
-            )
-            context._dispatch_scales = context.dispatch_output_scales
-
     def _resolve_capacity(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
         mode_context = self.context
         resolved = (
@@ -554,11 +531,7 @@ class LatencyRuntime(Runtime):
                 DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
             ):
                 mode_context._dispatch_src_info = None
-                mode_context._dispatch_scales = (
-                    mode_context.dispatch_output_scales
-                    if mode_context.dispatch_data_type == DispatchDataType.FP8_E4M3
-                    else None
-                )
+                mode_context._dispatch_scales = None
                 assert mode_context._output_topk_ids is not None
                 assert mode_context._output_topk_weights is not None
                 mode_context._dispatch_topk_ids = mode_context._output_topk_ids
@@ -705,21 +678,16 @@ class LatencyRuntime(Runtime):
             DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
         )
         if mode_context.dispatch_data_type == DispatchDataType.FP8_E4M3 and rank_layout:
-            if quant is None or quant.format != DispatchDataType.FP8_E4M3 or quant.block_scales is None:
-                raise ValueError("FP8 expert_output requires FP8_E4M3 quant metadata with block_scales")
-            scale_block_size = dispatch_scale_block_size(mode_context.dispatch_data_type)
-            scale_dtype = dispatch_scale_dtype(mode_context.dispatch_data_type)
-            expected_scales = (*expert_output.shape[:-1], mode_context.hidden_size // scale_block_size)
             if (
-                tuple(quant.block_scales.shape) != expected_scales
-                or quant.block_scales.dtype != scale_dtype
-                or quant.block_scales.device != expert_output.device
-                or not quant.block_scales.is_contiguous()
+                quant is None
+                or quant.format != DispatchDataType.FP8_E4M3
+                or quant.scale is None
+                or type(quant.scale) is not float
+                or not math.isfinite(quant.scale)
+                or quant.scale <= 0
+                or quant.block_scales is not None
             ):
-                raise ValueError(f"FP8 block_scales must be contiguous uint8 E8M0 with shape {expected_scales}")
-            assert mode_context.combine_input_scales is not None
-            if quant.block_scales.data_ptr() != mode_context.combine_input_scales.data_ptr():
-                raise ValueError("FP8 combine requires the runtime-owned block scales")
+                raise ValueError("FP8 expert_output requires FP8_E4M3 quant metadata with a positive scalar scale")
         elif quant is not None:
             raise ValueError("BF16 expert_output does not accept quant metadata")
         if handle.output_info.layout.kind in (

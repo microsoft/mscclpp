@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import pickle
 from typing import Any, List, Optional, Tuple, Union
 
@@ -50,20 +51,24 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
         raise ValueError("unsupported dispatch quantization format")
     if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
+    if quant.scale is not None and (
+        type(quant.scale) is not float or not math.isfinite(quant.scale) or quant.scale <= 0
+    ):
+        raise ValueError("quant.scale must be a positive finite float")
     return quant_format
 
 
 def dispatch_scale_block_size(data_type: DispatchDataType) -> int:
     """Return the hidden-element count represented by one dispatch scale."""
     if data_type == DispatchDataType.FP8_E4M3:
-        return 32
+        return 128
     return 0
 
 
 def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the scale dtype for a quantized dispatch format."""
     if data_type == DispatchDataType.FP8_E4M3:
-        return torch.uint8
+        return torch.float32
     raise ValueError(f"{data_type} dispatch does not have block scales")
 
 

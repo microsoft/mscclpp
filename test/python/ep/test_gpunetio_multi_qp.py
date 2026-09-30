@@ -338,7 +338,12 @@ enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR, TOKEN_MAJOR, RANK_MAJOR_TO
 enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
 """
         )
-        native += "\n".join(line for line in current.splitlines() if line.startswith("inline constexpr int GpuNetIo"))
+        native += "\n".join(
+            line
+            for line in current.splitlines()
+            if line.startswith("inline constexpr int GpuNetIo")
+            or line.startswith("inline constexpr int DynamicFp8ScaleBlockSize")
+        )
         native += "\ntemplate<typename DataType, typename ScaleType = void>\n" + structure(current, "PayloadView")
         for name in ("rankMajorTopkIdsOffset", "rankMajorTopkWeightsOffset", "rankMajorTokenOffset"):
             native += function(current, name)
@@ -554,7 +559,8 @@ int main() {
             topk_idx="ids",
             topk_weights="weights",
             moe_comm=SimpleNamespace(
-                dispatch=lambda *args, **kwargs: events.append("dispatch") or ("tokens", "handle"),
+                dispatch=lambda *args, **kwargs: events.append("dispatch")
+                or (SimpleNamespace(combine_input_quant=None), "handle"),
                 combine=lambda *args, **kwargs: events.append("combine") or "combined",
             ),
             stage_simulated_gemm_output=lambda output, **kwargs: events.append("stage") or "expert",

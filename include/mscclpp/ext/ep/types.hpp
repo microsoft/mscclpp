@@ -49,7 +49,7 @@ enum class CombineMode {
 enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
-  /// MXFP8 E4M3 payload with one E8M0 scale byte per 32 hidden elements.
+  /// FP8 E4M3 payload.
   FP8_E4M3
 };
 
@@ -97,6 +97,8 @@ struct LatencyDispatchRequest {
   cudaStream_t stream;
   /// Send one payload per destination rank and expand duplicate top-k routes locally.
   bool deduplicateExpandedRoutes = false;
+  /// Scalar multiplier used by static FP8 quantization.
+  float scale = 1.0f;
 };
 
 /// Arguments for throughput-mode dispatch.
@@ -195,6 +197,8 @@ struct LatencyCombineRequest {
   int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Scalar multiplier used to quantize the FP8 local expert output.
+  float scale = 1.0f;
 };
 
 /// Arguments for throughput-mode combine.

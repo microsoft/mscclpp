@@ -8,8 +8,6 @@ import os
 import torch
 
 from ep_bench_common import (
-    decode_e8m0,
-    encode_e8m0_round_up,
     simulated_gemm_output,
     validate_combine_output_mpi,
     sum_matching_kernel_us,
@@ -81,7 +79,14 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         "rank_major": ep.DispatchLayout.RANK_MAJOR,
         "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[requested_layout]
-    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
+    dispatch_quant = (
+        ep.QuantConfig(
+            format=ep.DispatchDataType.FP8_E4M3,
+            scale=2.0 if rank_major or rank_major_topk_expanded else None,
+        )
+        if args.dispatch_dtype == "fp8_e4m3"
+        else None
+    )
     if token_major and dispatch_quant is not None:
         raise ValueError("token_major output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
@@ -126,20 +131,14 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             else:
                 destination.copy_(source)
             return
-        if quant is None or quant.block_scales is None:
-            raise RuntimeError("FP8 combine input requires runtime-owned block scales")
+        if quant is None or quant.scale is None:
+            raise RuntimeError("FP8 combine input requires a static scalar scale")
         values = (
             torch.randn(destination.shape, dtype=torch.bfloat16, device=destination.device)
             if source is None
             else source
         )
-        blocks = values.float().reshape(*values.shape[:-1], hidden // 32, 32)
-        raw_scales = blocks.abs().amax(dim=-1).div_(448.0)
-        scales = encode_e8m0_round_up(raw_scales)
-        decoded_scales = decode_e8m0(scales)
-        quant_scales = torch.where(decoded_scales == 0, 0, decoded_scales.reciprocal())
-        destination.copy_((blocks * quant_scales.unsqueeze(-1)).reshape(destination.shape).to(torch.float8_e4m3fn))
-        quant.block_scales.copy_(scales)
+        destination.copy_((values.float() * quant.scale).to(torch.float8_e4m3fn))
 
     def _dispatch():
         # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).

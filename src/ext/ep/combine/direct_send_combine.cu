@@ -32,14 +32,13 @@ void expertMajorDirectSendCombine(void* output, const void* input, const void* i
       context, numBlocks, stream);
 }
 
-void rankMajorDirectSendCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
-                                const float* topkWeights, const Workload& workload, void* recvBuffer,
-                                void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                                cudaStream_t stream) {
+void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   combineAlgorithm<CombineMode::DIRECT_SEND, DirectSendCombineKernelSelector>(
-      output, input, inputScales, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer,
-      context, numBlocks, stream);
+      output, input, nullptr, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context,
+      numBlocks, stream);
 }
 
 }  // namespace ep

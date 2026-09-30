@@ -99,7 +99,7 @@ struct DispatchDataTypeTraits<DispatchDataType::BF16> {
 template <>
 struct DispatchDataTypeTraits<DispatchDataType::FP8_E4M3> {
   using ElementType = Fp8E4M3;
-  using ScaleType = uint8_t;
+  using ScaleType = float;
 };
 
 template <DispatchDataType DataType>
@@ -270,6 +270,19 @@ template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
   const size_t controlBytes = dispatchSharedControlBytes(nRanks);
   const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
+  const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
+  return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
+}
+
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorDispatchSharedBytes(int nRanks, int nExperts) {
+  using ElementType = DispatchElementType<DataType>;
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks);
+  const size_t tokenStride =
+      configAlign<size_t>(static_cast<size_t>(Hidden) * sizeof(ElementType), BufferAlignmentBytes);
+  const size_t sendBytes = DispatchMaxNWarpGroups * (tokenStride + sizeof(mscclpp::BulkBarrier));
   const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);

@@ -33,7 +33,7 @@ path on a single node. The experimental optimized combine performs rank-local
 partial reduction, TMA send, and source-rank reduction. The correctness check:
   - dispatch: per-expert received token counts agree with an all-gathered
     reference computed from topk_idx across all ranks, and FP8 data/scales
-    agree with a block-32 MXFP8/E8M0 quantization reference;
+    agree with the configured static E4M3 scalar quantization reference;
   - combine: the reconstructed x matches the analytical sum
     ``x * sum(topk_weights, masked by topk_idx == -1)``.
 
@@ -192,25 +192,21 @@ def init_dist():
 
 def fp8_e4m3_scales(x, scale_block_size):
     blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // scale_block_size, scale_block_size)
-    scale_bits = (blocks.abs().amax(dim=-1).div(448.0).view(torch.int32) + 0x007FFFFF) & 0x7F800000
-    return (scale_bits >> 23).to(torch.uint8)
-
-
-def decode_block_scales(scales):
-    return (scales.to(torch.int32) << 23).view(torch.float32)
+    return blocks.abs().amax(dim=-1).div(448.0)
 
 
 def dequantized_dispatch_tokens(dispatch_out):
     if dispatch_out.quant is None:
         return dispatch_out.tokens
     assert dispatch_out.tokens.dtype == torch.float8_e4m3fn
-    assert dispatch_out.quant.block_scales is not None
     tokens = dispatch_out.tokens
-    decoded_scales = decode_block_scales(dispatch_out.quant.block_scales)
-    num_scales = decoded_scales.size(-1)
-    scale_block_size = tokens.size(-1) // num_scales
-    token_blocks = tokens.float().reshape(*tokens.shape[:-1], num_scales, scale_block_size)
-    return (token_blocks * decoded_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+    if dispatch_out.quant.scale is not None:
+        return (tokens.float() / dispatch_out.quant.scale).to(torch.bfloat16)
+    assert dispatch_out.quant.block_scales is not None
+    scales = dispatch_out.quant.block_scales
+    num_scales = scales.size(-1)
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], num_scales, tokens.size(-1) // num_scales)
+    return (token_blocks * scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
 
 
 def simulated_gemm_output(dispatch_out):
@@ -237,16 +233,10 @@ def simulated_rank_major_route_output(dispatch_out):
     return (tokens.float().unsqueeze(1) * weights.unsqueeze(-1)).to(torch.bfloat16)
 
 
-def quantize_mxfp8_into(destination, quant, source):
+def quantize_fp8_into(destination, quant, source):
     assert quant is not None
-    assert quant.block_scales is not None
-    num_scales = destination.size(-1) // 32
-    blocks = source.float().reshape(*destination.shape[:-1], num_scales, 32)
-    scales = fp8_e4m3_scales(source, 32)
-    decoded_scales = decode_block_scales(scales)
-    quant_scales = torch.where(decoded_scales == 0, 0, decoded_scales.reciprocal())
-    destination.copy_((blocks * quant_scales.unsqueeze(-1)).reshape(destination.shape).to(torch.float8_e4m3fn))
-    quant.block_scales.copy_(scales)
+    assert quant.scale is not None
+    destination.copy_((source.float() * quant.scale).to(torch.float8_e4m3fn))
     return destination
 
 
@@ -273,7 +263,7 @@ def stage_simulated_gemm_output(dispatch_out, *, route_weights_in_combine=False)
             else simulated_gemm_output(dispatch_out)
         )
     if dispatch_out.combine_input_quant is not None:
-        return quantize_mxfp8_into(combine_input, dispatch_out.combine_input_quant, source)
+        return quantize_fp8_into(combine_input, dispatch_out.combine_input_quant, source)
     combine_input.copy_(source)
     return combine_input
 
@@ -357,8 +347,8 @@ def validate_expert_major_dispatch(
             ]
             reference_scales = expected_scales[source_rank, source_tokens]
             assert torch.equal(actual_scales, reference_scales)
-            decoded_actual_scales = decode_block_scales(actual_scales)
-            decoded_reference_scales = decode_block_scales(reference_scales)
+            decoded_actual_scales = actual_scales
+            decoded_reference_scales = reference_scales
             actual_blocks = actual_tokens.float().reshape(source_count, hidden // scale_block_size, scale_block_size)
             reference_blocks = (
                 all_x[source_rank, source_tokens]
@@ -641,11 +631,20 @@ def main():
         "fp8_e4m3": ep.DispatchDataType.FP8_E4M3,
     }[args.dispatch_dtype]
     dispatch_quant = (
-        None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
+        None
+        if dispatch_data_type == ep.DispatchDataType.BF16
+        else ep.QuantConfig(
+            format=dispatch_data_type,
+            scale=(
+                2.0
+                if output_layout in (ep.DispatchLayout.RANK_MAJOR, ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+                else None
+            ),
+        )
     )
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
-    scale_block_size = 32 if dispatch_data_type == ep.DispatchDataType.FP8_E4M3 else 0
-    scale_element_size = 1
+    scale_block_size = 128 if dispatch_quant is not None and output_layout == ep.DispatchLayout.EXPERT_MAJOR else 0
+    scale_element_size = 4
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -782,12 +781,16 @@ def main():
     if dispatch_quant is not None:
         assert dispatch_out.quant is not None
         assert dispatch_out.quant.format == dispatch_data_type
-        assert dispatch_out.quant.block_scales is not None
-        expected_scale_shape = (*dispatch_out.tokens.shape[:-1], hidden // scale_block_size)
-        assert dispatch_out.quant.block_scales.shape == expected_scale_shape
-        assert dispatch_out.quant.block_scales.dtype == torch.uint8
-        assert all_x is not None
-        expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
+        if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
+            assert dispatch_out.quant.block_scales is not None
+            expected_scale_shape = (*dispatch_out.tokens.shape[:-1], hidden // scale_block_size)
+            assert dispatch_out.quant.block_scales.shape == expected_scale_shape
+            assert dispatch_out.quant.block_scales.dtype == torch.float32
+            assert all_x is not None
+            expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
+        else:
+            assert dispatch_out.quant.block_scales is None
+            assert dispatch_out.quant.scale == dispatch_quant.scale
 
     if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
         assert packed_recv_layout_range is not None
@@ -1149,7 +1152,13 @@ def main():
     # the wire match dispatch. Using num_tokens × hidden here would under-count
     # the actual send payload by ~num_topk×.
     dispatch_bytes_per_token = (
-        hidden * 2 if dispatch_quant is None else hidden + hidden // scale_block_size * scale_element_size
+        hidden * 2
+        if dispatch_quant is None
+        else (
+            hidden + hidden // scale_block_size * scale_element_size
+            if output_layout == ep.DispatchLayout.EXPERT_MAJOR
+            else hidden
+        )
     )
     disp_bytes = recv_tokens * dispatch_bytes_per_token
     comb_bytes = recv_tokens * hidden * 2

@@ -45,18 +45,18 @@ void expertMajorLocalReduceCombine(void* output, const void* input, const void* 
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-void rankMajorGatherReduceCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
-                                  const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
-                                  const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                                  const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  runRankLocalReduce(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+  runRankLocalReduce(output, input, nullptr, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const void* inputScales,
-                                              const int64_t* topkIdx, const float* topkWeights,
-                                              const Workload& workload, [[maybe_unused]] void* recvBuffer,
+void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx,
+                                              const float* topkWeights, const Workload& workload,
+                                              [[maybe_unused]] void* recvBuffer,
                                               [[maybe_unused]] void* dispatchRecvBuffer, const DeviceContext& context,
                                               int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
@@ -65,7 +65,7 @@ void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, c
     topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
     return;
   }
-  runRankLocalReduce(output, input, inputScales, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer,
+  runRankLocalReduce(output, input, nullptr, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer,
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 

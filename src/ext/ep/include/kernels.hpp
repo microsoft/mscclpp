@@ -58,6 +58,8 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Static FP8 quantization multiplier.
+  float quantScale_ = 1.0f;
   /// Whether expanded rank-major dispatch deduplicates payloads by destination rank.
   bool deduplicateExpandedRoutes_ = false;
 };
@@ -77,35 +79,34 @@ void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, i
                          const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                          const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
-void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                       const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+void rankMajorDispatch(void* output, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+                       int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
+                       const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
-void rankMajorTopkExpandedDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
-                                   float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
-                                   const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
-                                   void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankMajorTopkExpandedDispatch(void* output, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
+                                   int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
+                                   const float* topkWeights, const Workload& workload, void* recvBuffer,
+                                   const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorLocalReduceCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
                                    const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                                    const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                                    const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
-void rankMajorGatherReduceCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
-                                  const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
-                                  const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                                  const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
 
-void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const void* inputScales,
-                                              const int64_t* topkIdx, const float* topkWeights,
-                                              const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                                              const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx,
+                                              const float* topkWeights, const Workload& workload, void* recvBuffer,
+                                              void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
+                                              cudaStream_t stream);
 
-void rankMajorDirectSendCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
-                                const float* topkWeights, const Workload& workload, void* recvBuffer,
-                                void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                                cudaStream_t stream);
+void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorDirectSendCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
                                   const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,

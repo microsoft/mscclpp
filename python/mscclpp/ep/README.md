@@ -289,6 +289,7 @@ can leave those fields as `None`.
 class QuantConfig:
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
+    scale: Optional[float] = None
 
 
 class DispatchLayout(str, Enum):
@@ -511,14 +512,15 @@ input and emits FP8 output.
 
 Examples:
 
-| Format | `input` | `quant.block_scales` |
+| Format/layout | `input` | Quantization metadata |
 |---|---|---|
 | BF16 | `[T, H]` BF16 | `None` |
-| MXFP8 E4M3 | `[T, H]` BF16 input, FP8 output | `[T, H / 32]` uint8 E8M0 |
+| E4M3 rank-major/expanded | `[T, H]` BF16 input, FP8 output | scalar `scale = 448 / absmax` |
+| E4M3 expert-major | `[T, H]` BF16 input, FP8 output | `[T, H / 128]` FP32 `block_scales` |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
 
-The API should not assume quantization scale is a scalar. For FP8 paths in
-DeepEP/SGLang, scales are usually per token and per hidden block.
+Rank-major dispatch stores `E4M3(input * scale)`. Consumers, including KI,
+receive the raw E4M3 tensor and use `1 / scale` as the dequantization multiplier.
 
 ### `output_buffer`
 
@@ -680,14 +682,14 @@ Examples:
 token-major tokens:              throughput [total_recv_tokens, H]
 rank-major tokens:               latency/throughput [world_size * max_tokens_per_rank, H]
 rank-major-topk-expanded tokens: latency [world_size * max_tokens_per_rank * topk, H]
-rank-major scales:               not yet supported
+rank-major scale:                scalar quantization multiplier
 
 expert-major tokens:             [num_local_experts, max_slots, H]
 expert-major scales:             [num_local_experts, max_slots, S]
 ```
 
-`S` is `H / 32` with uint8 E8M0 dequantization scales for `FP8_E4M3`,
-compatible with `ki.quant.Mxfp8Lhs`.
+For expert-major `FP8_E4M3`, `S` is `H / 128` with FP32 dequantization scales.
+Rank-major and rank-major-top-k-expanded use no sideband tensor.
 
 ## MLP contract
 
@@ -728,6 +730,10 @@ the full top-k reduction in combine.
 For latency TOKEN_MAJOR or RANK_MAJOR_TOPK_EXPANDED output, combine consumes one
 row per top-k route and applies the original routing weights.
 With expert-major output, it retains its existing expert-row direct-send behavior.
+For static E4M3 rank-major output, quantize MLP results with
+`dispatch_out.combine_input_quant.scale` and pass that `QuantConfig` to
+`combine`; native combine dequantizes each raw E4M3 value with `1 / scale`
+before weighting and reduction.
 
 ## Combine API
 
@@ -929,7 +935,8 @@ Quantized path:
 ```python
 moe_comm = MoECommunicator(
     ...,
-    quant=QuantConfig(format=DispatchDataType.FP8_E4M3),
+    output_layout=DispatchLayout.RANK_MAJOR,
+    quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=448.0 / absmax),
 )
 
 recv, handle = moe_comm.dispatch(
@@ -946,5 +953,9 @@ expert_output = fp8_grouped_mlp(
     recv.layout,
 )
 
-output = moe_comm.combine(expert_output, handle)
+output = moe_comm.combine(
+    expert_output,
+    handle,
+    quant=recv.combine_input_quant,
+)
 ```

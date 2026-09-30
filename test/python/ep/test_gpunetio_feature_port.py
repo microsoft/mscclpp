@@ -684,7 +684,7 @@ size_t check_workspace(int ranks, int experts, int capacity, int topk) {
     events.clear();
     // Actual extracted host wrapper, not a hand-written imitation of its reset.
     rankMajorDispatch(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                      nullptr, nullptr, nullptr, workload, nullptr, context, 7, expected_stream);
+                      nullptr, nullptr, workload, nullptr, context, 7, expected_stream);
     require(events == std::vector<std::string>{"reset", "dispatch"}, "wrong reset/launch order");
     for (size_t i = 0; i < storage_size; ++i) {
       const bool reset_byte = i >= reset_begin && i < reset_begin + expected_bytes;

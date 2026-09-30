@@ -6,7 +6,6 @@ from itertools import product
 import math
 import os
 import subprocess
-import struct
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
@@ -59,6 +58,7 @@ class ExpandedTests(unittest.TestCase):
         traces = []
         api.update(
             os=os,
+            math=math,
             Context=object,
             Runtime=object,
             requires_initialized=lambda method: method,
@@ -98,7 +98,7 @@ class ExpandedTests(unittest.TestCase):
         if isinstance(overrides.get("output_layout"), str):
             overrides["output_layout"] = getattr(api["DispatchLayout"], overrides["output_layout"])
         if overrides.get("quant") == "fp8":
-            overrides["quant"] = api["QuantConfig"](format=api["DispatchDataType"].FP8_E4M3)
+            overrides["quant"] = api["QuantConfig"](format=api["DispatchDataType"].FP8_E4M3, scale=2.0)
         config = api["MoECommunicatorConfig"](
             **(
                 dict(
@@ -117,8 +117,6 @@ class ExpandedTests(unittest.TestCase):
         runtime.context = context
         runtime.cpp_runtime = NS(
             dispatch_output_buffer_ptr=lambda: 0x100000,
-            dispatch_output_scales_buffer_ptr=lambda: 0x400000,
-            combine_input_scales_buffer_ptr=lambda: 0x400000,
             output_topk_ids_buffer_ptr=lambda: 0x200000,
             output_topk_weights_buffer_ptr=lambda: 0x300000,
             combine_input_buffer_ptr=lambda: 0x100000,
@@ -169,17 +167,15 @@ class ExpandedTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runtime.combine(output.tokens, handle, out=Tensor((2, 4096), pointer=0x100000), stream=None)
 
-    def test_rank_major_expanded_fp8_views_and_combine_scales(self):
+    def test_rank_major_expanded_fp8_static_scale(self):
         layouts = ("RANK_MAJOR", "RANK_MAJOR_TOPK_EXPANDED")
         for layout_name in layouts:
             api, runtime, trace = self.runtime(quant="fp8", output_layout=layout_name)
             context = runtime.context
             rows = 2 * 4 * (8 if layout_name == "RANK_MAJOR_TOPK_EXPANDED" else 1)
             self.assertEqual(context.dispatch_output_buffer.dtype, "fp8")
-            self.assertEqual(context.dispatch_output_scales.shape, (rows, 128))
-            self.assertEqual(context.dispatch_output_scales.dtype, "uint8")
-            self.assertEqual(context.combine_input_scales.shape, (rows, 128))
-            self.assertEqual(context.combine_input_scales.dtype, "uint8")
+            self.assertFalse(hasattr(context, "dispatch_output_scales"))
+            self.assertFalse(hasattr(context, "combine_input_scales"))
             tokens = Tensor((2, 4096), device=context.device)
             ids = Tensor((2, 8), "int64", context.device)
             output, handle = runtime.dispatch(
@@ -192,46 +188,34 @@ class ExpandedTests(unittest.TestCase):
                 previous_handle=None,
                 runtime_max_tokens_per_rank=None,
             )
-            self.assertIs(output.quant.block_scales, context.dispatch_output_scales)
-            self.assertIs(output.combine_input_quant.block_scales, context.combine_input_scales)
+            self.assertEqual(output.quant.scale, 2.0)
+            self.assertIsNone(output.quant.block_scales)
+            self.assertEqual(output.combine_input_quant.scale, 2.0)
+            self.assertIsNone(output.combine_input_quant.block_scales)
             result = Tensor((2, 4096), device=context.device, pointer=0x900000)
             runtime.combine(
                 output.combine_input_buffer, handle, quant=output.combine_input_quant, out=result, stream=None
             )
-            self.assertEqual(trace[-1][1][1], context.combine_input_scales.data_ptr())
+            self.assertEqual(trace[-1][1][1], 0)
+            self.assertEqual(trace[-1][1][14], 2.0)
             invalid_quant = api["QuantConfig"](
                 format=api["DispatchDataType"].FP8_E4M3,
-                block_scales=Tensor((rows, 128), "fp32", context.device),
+                scale=0.0,
             )
-            with self.assertRaisesRegex(ValueError, "uint8 E8M0"):
+            with self.assertRaisesRegex(ValueError, "positive scalar scale"):
                 runtime.combine(output.combine_input_buffer, handle, quant=invalid_quant, out=result, stream=None)
-            invalid_quant.block_scales = Tensor((rows, 32), "uint8", context.device)
-            with self.assertRaisesRegex(ValueError, "shape"):
+            invalid_quant.scale = 2.0
+            invalid_quant.block_scales = Tensor((rows, 32), "fp32", context.device)
+            with self.assertRaisesRegex(ValueError, "positive scalar scale"):
                 runtime.combine(output.combine_input_buffer, handle, quant=invalid_quant, out=result, stream=None)
 
-    def test_ki_e8m0_decode_vectors(self):
+    def test_static_fp8_quantization_has_no_sideband_decode(self):
         quantization = source("src/ext/ep/common/quantization.cuh")
-        decoder_begin = quantization.index("MSCCLPP_DEVICE_INLINE float decodeE8M0")
-        decoder = quantization[decoder_begin : quantization.index("}", decoder_begin) + 1]
-        self.assertIn("static_cast<uint32_t>(scale) << 23", decoder)
-        self.assertNotIn("scale ==", decoder)
-
-        vectors = (
-            (0, 0x00000000, 0.0),
-            (1, 0x00800000, 2.0**-126),
-            (126, 0x3F000000, 0.5),
-            (127, 0x3F800000, 1.0),
-            (254, 0x7F000000, 2.0**127),
-            (255, 0x7F800000, math.inf),
-        )
-        for scale, expected_bits, expected_value in vectors:
-            bits = scale << 23
-            self.assertEqual(bits, expected_bits)
-            value = struct.unpack("<f", struct.pack("<I", bits))[0]
-            if math.isinf(expected_value):
-                self.assertTrue(math.isinf(value))
-            else:
-                self.assertEqual(value, expected_value)
+        self.assertIn("values.data[element] * quantScale", quantization)
+        combine = source("src/ext/ep/combine/common.cuh")
+        self.assertNotIn("mappedBuffer(const_cast<void*>(expertScales)", combine)
+        expanded_reduce = function(combine, "recvRankMajorTopkExpandedRemotePartials")
+        self.assertIn("globalExpertIdx >= 0 && globalExpertIdx < nExperts", expanded_reduce)
 
     def test_python_configuration_rejects_unsupported_cases(self):
         for options in ({"topk": 10}, {"enable_overlap": True}, {"max_tokens_per_rank": 1 << 30}):
@@ -299,7 +283,7 @@ class ExpandedTests(unittest.TestCase):
             line
             for line in config.splitlines()
             if line.startswith("inline constexpr int GpuNetIo")
-            or line.startswith("inline constexpr int Mxfp8ScaleBlockSize")
+            or line.startswith("inline constexpr int DynamicFp8ScaleBlockSize")
         )
         native += "\ntemplate<typename DataType,typename ScaleType=void>\n" + structure(config, "PayloadView")
         for name in ("rankMajorTopkIdsOffset", "rankMajorTopkWeightsOffset", "rankMajorTokenOffset"):
@@ -327,7 +311,6 @@ int main() {
     region(layout.rankMajorTopkIdsBuffer_,rows*sizeof(int));
     region(layout.rankMajorTopkWeightsBuffer_,rows*sizeof(float));
     region(layout.dispatchOutputBuffer_,rows*hidden*2);
-    region(layout.dispatchOutputScalesBuffer_,rows*hidden/32);
     if (network) {
     region(layout.gpuNetIoStagingBuffer_,static_cast<size_t>(std::max(capacity,32768))*layout.gpuNetIoSlotStride_);
     }

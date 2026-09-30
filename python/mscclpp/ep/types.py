@@ -19,14 +19,15 @@ from mscclpp.ep._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMo
 class QuantConfig:
     """Quantization metadata associated with an activation tensor.
 
-    Latency FP8 dispatch returns ``block_scales`` with the activation's
-    leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
-    uses one uint8 E8M0 dequantization scale per 32 elements, matching
-    ``ki.quant.Mxfp8Lhs``.
+    Rank-major latency FP8 uses the scalar quantization multiplier ``scale``:
+    values are stored as E4M3 after multiplying by ``scale`` and dequantized
+    with ``1 / scale``. Expert-major latency FP8 retains format-specific
+    ``block_scales``.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
+    scale: Optional[float] = None
 
 
 # Communicator construction.

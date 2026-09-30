@@ -3,7 +3,6 @@
 #ifndef MSCCLPP_EP_COMMON_QUANTIZATION_CUH_
 #define MSCCLPP_EP_COMMON_QUANTIZATION_CUH_
 
-#include <cstdint>
 #include <mscclpp/gpu_data_types.hpp>
 
 #include "device_helpers.cuh"
@@ -43,25 +42,23 @@ MSCCLPP_DEVICE_INLINE float laneGroupMax(float value, int laneId) {
 }
 
 template <int NumElementsPerScale>
-MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::bf16x8& source, uint8_t* scaleOut,
+MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::bf16x8& source, float* scaleOut,
                                                                  int laneId) {
   constexpr int NumElements = mscclpp::bf16x8::Size;
   constexpr int NumLanesPerScale = NumElementsPerScale / NumElements;
+  constexpr float Margin = 1e-4f;
 
   EP_STATIC_ASSERT(NumElementsPerScale % NumElements == 0, "Invalid scale vectorization");
   EP_STATIC_ASSERT(NumLanesPerScale > 0 && NumLanesPerScale <= WARP_SIZE, "Invalid lanes per scale");
   EP_STATIC_ASSERT((NumLanesPerScale & (NumLanesPerScale - 1)) == 0, "Lanes per scale must be a power of two");
 
   const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
-  float maxAbs = maxAbsF32x8(values, 0.0f);
+  float maxAbs = maxAbsF32x8(values, Margin);
 
   maxAbs = laneGroupMax<NumLanesPerScale>(maxAbs, laneId);
-  const float dequantScale = maxAbs / Fp8E4M3MaxValue;
-  const uint32_t roundedScaleBits = (__float_as_uint(dequantScale) + 0x007fffffu) & 0x7f800000u;
-  const float roundedScale = __uint_as_float(roundedScaleBits);
-  const float quantScale = roundedScaleBits == 0 ? 0.0f : 1.0f / roundedScale;
+  const float quantScale = Fp8E4M3MaxValue / maxAbs;
   if (laneId % NumLanesPerScale == 0) {
-    *scaleOut = static_cast<uint8_t>(roundedScaleBits >> 23);
+    *scaleOut = maxAbs / Fp8E4M3MaxValue;
   }
 
   mscclpp::f32x8 scaledValues;
@@ -72,13 +69,21 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
 }
 
-MSCCLPP_DEVICE_INLINE float decodeE8M0(uint8_t scale) { return __uint_as_float(static_cast<uint32_t>(scale) << 23); }
+MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::bf16x8& source, float quantScale) {
+  const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
+  mscclpp::f32x8 scaledValues;
+#pragma unroll
+  for (int element = 0; element < mscclpp::f32x8::Size; ++element) {
+    scaledValues.data[element] = values.data[element] * quantScale;
+  }
+  return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
+}
 
-MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(typename mscclpp::f8_e4m3x2::ElementType value, uint8_t scale) {
+MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(typename mscclpp::f8_e4m3x2::ElementType value, float scale) {
   mscclpp::f8_e4m3x2 packed;
   packed.data[0] = value;
   packed.data[1] = value;
-  return mscclpp::to<mscclpp::f32x2>(packed).data[0] * decodeE8M0(scale);
+  return mscclpp::to<mscclpp::f32x2>(packed).data[0] * scale;
 }
 
 }  // namespace ep
