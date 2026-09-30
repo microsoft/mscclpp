@@ -612,11 +612,11 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
       for (int topk = 0; topk < NumTopk; ++topk) {
         const int localExpert = experts[topk] / LocalExperts == rank ? experts[topk] % LocalExperts : -1;
         const size_t index = static_cast<size_t>(row) * NumTopk + topk;
-        ASSERT_EQ(topkIdx[index], localExpert);
-        ASSERT_EQ(topkWeights[index], localExpert >= 0 ? 1.0f / NumTopk : 0.0f);
+        EXPECT_EQ(topkIdx[index], localExpert);
+        EXPECT_EQ(topkWeights[index], localExpert >= 0 ? 1.0f / NumTopk : 0.0f);
       }
       for (int scale = 0; scale < numScales; ++scale) {
-        ASSERT_EQ(scales[static_cast<size_t>(row) * numScales + scale],
+        EXPECT_EQ(scales[static_cast<size_t>(row) * numScales + scale],
                   testTokenValue(source, numTokens, token, valueModulo));
       }
     }
@@ -633,8 +633,8 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
         cudaMemcpy(counts.data(), buffers.outputCount.data(), counts.size() * sizeof(int), cudaMemcpyDeviceToHost));
     MSCCLPP_CUDATHROW(
         cudaMemcpy(output.data(), buffers.output.data(), output.size() * sizeof(Bf16), cudaMemcpyDeviceToHost));
-    ASSERT_TRUE(std::all_of(counts.begin(), counts.end(), [](int value) { return value == 0; }));
-    ASSERT_TRUE(
+    EXPECT_TRUE(std::all_of(counts.begin(), counts.end(), [](int value) { return value == 0; }));
+    EXPECT_TRUE(
         std::all_of(output.begin(), output.end(), [](Bf16 value) { return static_cast<float>(value) == 0.0f; }));
   }
 
@@ -1053,12 +1053,12 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       if (layout == DispatchLayout::TOKEN_MAJOR) {
         std::array<int, ExpertsPerRank> counts{};
         mscclpp::gpuMemcpy<int>(counts.data(), deviceCounts.data(), counts.size(), cudaMemcpyDeviceToHost);
-        ASSERT_EQ(counts.front(), 0);
+        EXPECT_EQ(counts.front(), 0);
         // Expert 128 receives tokens 0 and 1, plus token 4 when top-k is one.
-        ASSERT_EQ(counts.back(), numTopk == 1 ? 3 : 2);
+        EXPECT_EQ(counts.back(), numTopk == 1 ? 3 : 2);
       }
       for (size_t index = 0; index < output.size(); ++index) {
-        ASSERT_EQ(static_cast<float>(output[index]),
+        EXPECT_EQ(static_cast<float>(output[index]),
                   static_cast<float>(input[index]) * numDestinations[index / Hidden]);
       }
       runtime.reset();
