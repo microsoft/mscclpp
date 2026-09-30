@@ -259,10 +259,13 @@ class ThroughputRuntime(Runtime):
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig] = None,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
         mode_context = self.context
+        if quant is not None:
+            raise ValueError("throughput combine does not accept quant metadata")
         stream_scope = torch.cuda.stream(stream) if stream is not None else nullcontext()
         with stream_scope:
             self._validate_combine(expert_output, handle)

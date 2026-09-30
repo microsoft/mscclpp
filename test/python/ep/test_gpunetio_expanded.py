@@ -6,6 +6,7 @@ from itertools import product
 import math
 import os
 import subprocess
+import struct
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
@@ -40,7 +41,12 @@ class Tensor:
         return math.prod(self.shape)
 
     def element_size(self):
+        if self.dtype in ("fp8", "uint8"):
+            return 1
         return 2 if self.dtype == "bf16" else 4
+
+    def __getitem__(self, _key):
+        return self
 
     def is_contiguous(self):
         return True
@@ -63,6 +69,7 @@ class ExpandedTests(unittest.TestCase):
                 int32="int32",
                 int64="int64",
                 float32="fp32",
+                uint8="uint8",
                 float8_e4m3fn="fp8",
                 empty=lambda shape, **kwargs: Tensor(shape, **kwargs),
             ),
@@ -75,11 +82,23 @@ class ExpandedTests(unittest.TestCase):
             cuda_stream_ptr=lambda stream: 17,
         )
         _load(
-            "python/mscclpp/ep/utils.py", ("resolve_num_blocks", "dispatch_tensor_dtype", "combine_tensor_dtype"), api
+            "python/mscclpp/ep/utils.py",
+            (
+                "resolve_num_blocks",
+                "dispatch_tensor_dtype",
+                "combine_tensor_dtype",
+                "dispatch_scale_block_size",
+                "dispatch_scale_dtype",
+            ),
+            api,
         )
         _load("python/mscclpp/ep/latency.py", ("LatencyContext", "LatencyRuntime"), api)
         if isinstance(overrides.get("combine_mode"), str):
             overrides["combine_mode"] = getattr(api["CombineMode"], overrides["combine_mode"])
+        if isinstance(overrides.get("output_layout"), str):
+            overrides["output_layout"] = getattr(api["DispatchLayout"], overrides["output_layout"])
+        if overrides.get("quant") == "fp8":
+            overrides["quant"] = api["QuantConfig"](format=api["DispatchDataType"].FP8_E4M3)
         config = api["MoECommunicatorConfig"](
             **(
                 dict(
@@ -98,6 +117,8 @@ class ExpandedTests(unittest.TestCase):
         runtime.context = context
         runtime.cpp_runtime = NS(
             dispatch_output_buffer_ptr=lambda: 0x100000,
+            dispatch_output_scales_buffer_ptr=lambda: 0x400000,
+            combine_input_scales_buffer_ptr=lambda: 0x400000,
             output_topk_ids_buffer_ptr=lambda: 0x200000,
             output_topk_weights_buffer_ptr=lambda: 0x300000,
             combine_input_buffer_ptr=lambda: 0x100000,
@@ -135,9 +156,9 @@ class ExpandedTests(unittest.TestCase):
             result = Tensor((2, 4096), device=context.device, pointer=0x900000)
             self.assertIs(runtime.combine(output.tokens, handle, out=result, stream=None), result)
             self.assertEqual(trace[0][1][2], weights.data_ptr() if weighted else 0)
-            self.assertEqual(trace[1][1][2], weights.data_ptr() if weighted else 0)
-            self.assertEqual(trace[1][1][1], ids.data_ptr())
-            self.assertEqual(trace[1][1][9], 4)
+            self.assertEqual(trace[1][1][3], weights.data_ptr() if weighted else 0)
+            self.assertEqual(trace[1][1][2], ids.data_ptr())
+            self.assertEqual(trace[1][1][10], 4)
             self.assertEqual(trace[1][1][-2:], (128, 17))
             with self.assertRaises(ValueError):
                 runtime._resolve_capacity(3)
@@ -148,14 +169,76 @@ class ExpandedTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runtime.combine(output.tokens, handle, out=Tensor((2, 4096), pointer=0x100000), stream=None)
 
+    def test_rank_major_expanded_fp8_views_and_combine_scales(self):
+        layouts = ("RANK_MAJOR", "RANK_MAJOR_TOPK_EXPANDED")
+        for layout_name in layouts:
+            api, runtime, trace = self.runtime(quant="fp8", output_layout=layout_name)
+            context = runtime.context
+            rows = 2 * 4 * (8 if layout_name == "RANK_MAJOR_TOPK_EXPANDED" else 1)
+            self.assertEqual(context.dispatch_output_buffer.dtype, "fp8")
+            self.assertEqual(context.dispatch_output_scales.shape, (rows, 128))
+            self.assertEqual(context.dispatch_output_scales.dtype, "uint8")
+            self.assertEqual(context.combine_input_scales.shape, (rows, 128))
+            self.assertEqual(context.combine_input_scales.dtype, "uint8")
+            tokens = Tensor((2, 4096), device=context.device)
+            ids = Tensor((2, 8), "int64", context.device)
+            output, handle = runtime.dispatch(
+                tokens,
+                ids,
+                None,
+                None,
+                output_buffer=None,
+                stream=None,
+                previous_handle=None,
+                runtime_max_tokens_per_rank=None,
+            )
+            self.assertIs(output.quant.block_scales, context.dispatch_output_scales)
+            self.assertIs(output.combine_input_quant.block_scales, context.combine_input_scales)
+            result = Tensor((2, 4096), device=context.device, pointer=0x900000)
+            runtime.combine(
+                output.combine_input_buffer, handle, quant=output.combine_input_quant, out=result, stream=None
+            )
+            self.assertEqual(trace[-1][1][1], context.combine_input_scales.data_ptr())
+            invalid_quant = api["QuantConfig"](
+                format=api["DispatchDataType"].FP8_E4M3,
+                block_scales=Tensor((rows, 128), "fp32", context.device),
+            )
+            with self.assertRaisesRegex(ValueError, "uint8 E8M0"):
+                runtime.combine(output.combine_input_buffer, handle, quant=invalid_quant, out=result, stream=None)
+            invalid_quant.block_scales = Tensor((rows, 32), "uint8", context.device)
+            with self.assertRaisesRegex(ValueError, "shape"):
+                runtime.combine(output.combine_input_buffer, handle, quant=invalid_quant, out=result, stream=None)
+
+    def test_ki_e8m0_decode_vectors(self):
+        quantization = source("src/ext/ep/common/quantization.cuh")
+        decoder_begin = quantization.index("MSCCLPP_DEVICE_INLINE float decodeE8M0")
+        decoder = quantization[decoder_begin : quantization.index("}", decoder_begin) + 1]
+        self.assertIn("static_cast<uint32_t>(scale) << 23", decoder)
+        self.assertNotIn("scale ==", decoder)
+
+        vectors = (
+            (0, 0x00000000, 0.0),
+            (1, 0x00800000, 2.0**-126),
+            (126, 0x3F000000, 0.5),
+            (127, 0x3F800000, 1.0),
+            (254, 0x7F000000, 2.0**127),
+            (255, 0x7F800000, math.inf),
+        )
+        for scale, expected_bits, expected_value in vectors:
+            bits = scale << 23
+            self.assertEqual(bits, expected_bits)
+            value = struct.unpack("<f", struct.pack("<I", bits))[0]
+            if math.isinf(expected_value):
+                self.assertTrue(math.isinf(value))
+            else:
+                self.assertEqual(value, expected_value)
+
     def test_python_configuration_rejects_unsupported_cases(self):
         for options in ({"topk": 10}, {"enable_overlap": True}, {"max_tokens_per_rank": 1 << 30}):
             with self.assertRaises((ValueError, NotImplementedError)):
                 self.runtime(**options)
         with self.assertRaises(ValueError):
             self.runtime(combine_mode="DIRECT_SEND")
-        with self.assertRaises(NotImplementedError):
-            self.runtime(quant=NS(format="fp8"))
 
     def test_independent_total_block_counts(self):
         for requested, expected in (
@@ -212,7 +295,12 @@ class ExpandedTests(unittest.TestCase):
         native = HOST_PREAMBLE + "\n#include <sys/mman.h>\nusing Bf16=uint16_t;using Fp8E4M3=uint8_t;\n"
         native += "enum class DispatchLayout { EXPERT_MAJOR,TOKEN_MAJOR,RANK_MAJOR,RANK_MAJOR_TOPK_EXPANDED };\n"
         native += "enum class CombineMode { RANK_LOCAL_REDUCE,DIRECT_SEND };\n"
-        native += "\n".join(line for line in config.splitlines() if line.startswith("inline constexpr int GpuNetIo"))
+        native += "\n".join(
+            line
+            for line in config.splitlines()
+            if line.startswith("inline constexpr int GpuNetIo")
+            or line.startswith("inline constexpr int Mxfp8ScaleBlockSize")
+        )
         native += "\ntemplate<typename DataType,typename ScaleType=void>\n" + structure(config, "PayloadView")
         for name in ("rankMajorTopkIdsOffset", "rankMajorTopkWeightsOffset", "rankMajorTokenOffset"):
             native += function(config, name)
@@ -239,6 +327,7 @@ int main() {
     region(layout.rankMajorTopkIdsBuffer_,rows*sizeof(int));
     region(layout.rankMajorTopkWeightsBuffer_,rows*sizeof(float));
     region(layout.dispatchOutputBuffer_,rows*hidden*2);
+    region(layout.dispatchOutputScalesBuffer_,rows*hidden/32);
     if (network) {
     region(layout.gpuNetIoStagingBuffer_,static_cast<size_t>(std::max(capacity,32768))*layout.gpuNetIoSlotStride_);
     }

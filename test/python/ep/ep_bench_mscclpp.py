@@ -8,6 +8,8 @@ import os
 import torch
 
 from ep_bench_common import (
+    decode_e8m0,
+    encode_e8m0_round_up,
     simulated_gemm_output,
     validate_combine_output_mpi,
     sum_matching_kernel_us,
@@ -80,8 +82,8 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         "rank_major_topk_expanded": ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
     }[requested_layout]
     dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if (rank_major or expanded) and dispatch_quant is not None:
-        raise ValueError(f"{requested_layout} output supports BF16 dispatch only")
+    if token_major and dispatch_quant is not None:
+        raise ValueError("token_major output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
@@ -117,6 +119,28 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     expert_output_initialized = False
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
+    def _write_combine_input(destination, quant, source=None):
+        if dispatch_quant is None:
+            if source is None:
+                destination.normal_()
+            else:
+                destination.copy_(source)
+            return
+        if quant is None or quant.block_scales is None:
+            raise RuntimeError("FP8 combine input requires runtime-owned block scales")
+        values = (
+            torch.randn(destination.shape, dtype=torch.bfloat16, device=destination.device)
+            if source is None
+            else source
+        )
+        blocks = values.float().reshape(*values.shape[:-1], hidden // 32, 32)
+        raw_scales = blocks.abs().amax(dim=-1).div_(448.0)
+        scales = encode_e8m0_round_up(raw_scales)
+        decoded_scales = decode_e8m0(scales)
+        quant_scales = torch.where(decoded_scales == 0, 0, decoded_scales.reciprocal())
+        destination.copy_((blocks * quant_scales.unsqueeze(-1)).reshape(destination.shape).to(torch.float8_e4m3fn))
+        quant.block_scales.copy_(scales)
+
     def _dispatch():
         # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
         return moe_comm.dispatch(x, topk_idx, topk_weights, output_buffer=output_buffer)
@@ -133,13 +157,13 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             if debug_combine:
                 print(f"[rank_major_input][rank {rank}] enter", flush=True)
             if not expert_output_initialized:
-                combine_input.normal_()
+                _write_combine_input(combine_input, dispatch_out.combine_input_quant)
                 expert_output_initialized = True
                 if debug_combine:
                     print(f"[rank_major_input][rank {rank}] initialized", flush=True)
             if debug_combine:
                 print(f"[rank_major_input][rank {rank}] buffer ready", flush=True)
-        moe_comm.combine(combine_input, handle, out=out)
+        moe_comm.combine(combine_input, handle, quant=dispatch_out.combine_input_quant, out=out)
 
     # Optional one-time correctness check (mirrors test_latency_multirank).
     if args.validate:
@@ -150,9 +174,11 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             # Rank-major combine reads the runtime-owned registered buffer, so the
             # simulated expert output has to be staged into it first.
             if v_dispatch_out.combine_input_buffer.data_ptr() != validation_input.data_ptr():
-                v_dispatch_out.combine_input_buffer.copy_(validation_input)
+                _write_combine_input(
+                    v_dispatch_out.combine_input_buffer, v_dispatch_out.combine_input_quant, validation_input
+                )
             validation_input = v_dispatch_out.combine_input_buffer
-        moe_comm.combine(validation_input, v_handle, out=v_out)
+        moe_comm.combine(validation_input, v_handle, quant=v_dispatch_out.combine_input_quant, out=v_out)
         torch.cuda.synchronize()
         if dispatch_quant is None:
             expected_f = torch.zeros_like(x, dtype=torch.float32)
@@ -226,10 +252,20 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
                 print(f"[graph_combfn][rank {rank}] enter", flush=True)
                 if rank_major:
                     print(f"[rank_major_input][rank {rank}] enter", flush=True)
-            graph_input = _cap["out"].combine_input_buffer if expanded else simulated_gemm_output(_cap["out"])
+            graph_input = (
+                _cap["out"].combine_input_buffer
+                if dispatch_quant is not None or expanded
+                else simulated_gemm_output(_cap["out"])
+            )
+            assert graph_input is not None
             if debug_combine and rank_major:
                 print(f"[rank_major_input][rank {rank}] simulated", flush=True)
-            moe_comm.combine(graph_input, _cap["handle"], out=out)
+            moe_comm.combine(
+                graph_input,
+                _cap["handle"],
+                quant=_cap["out"].combine_input_quant,
+                out=out,
+            )
             if debug_combine:
                 print(f"[graph_combfn][rank {rank}] exit", flush=True)
 

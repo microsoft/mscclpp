@@ -176,13 +176,14 @@ class MoECommunicator:
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig] = None,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
         debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         if debug_combine:
             print(f"[py_comm_combine] enter runtime={type(self._runtime).__name__}", flush=True)
-        result = self._runtime.combine(expert_output, handle, out=out, stream=stream)
+        result = self._runtime.combine(expert_output, handle, quant=quant, out=out, stream=stream)
         if debug_combine:
             print("[py_comm_combine] exit", flush=True)
         return result

@@ -128,7 +128,7 @@ class CpuPortTest(unittest.TestCase):
             self.trace.append("allocate")
             return FakeTensor(shape, dtype, device, self.trace)
 
-        return NS(bfloat16="bf16", float8_e4m3fn="fp8", empty=empty)
+        return NS(bfloat16="bf16", uint8="uint8", float8_e4m3fn="fp8", empty=empty)
 
     def setup_benchmark(self, args):
         api = _api_types()

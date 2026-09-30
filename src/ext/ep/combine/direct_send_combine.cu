@@ -8,11 +8,11 @@ namespace ep {
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
 __global__ __launch_bounds__(CombineNThreads, 1) void directSendCombineKernel(
-    void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
-    const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
-    const DeviceContext* context) {
+    void* output, const void* expertOutput, const void* expertScales, const int64_t* topkIndices,
+    const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, Workload workload,
+    void* combineRecvBuffer, const void* dispatchRecvBuffer, const DeviceContext* context) {
   combineBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout>(
-      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+      output, expertOutput, expertScales, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
 
@@ -23,22 +23,23 @@ struct DirectSendCombineKernelSelector {
   }
 };
 
-void expertMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
-                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
-                                  int numBlocks, cudaStream_t stream) {
+void expertMajorDirectSendCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
+                                  const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
+                                  const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                  const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   combineAlgorithm<CombineMode::DIRECT_SEND, DirectSendCombineKernelSelector>(
-      output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-      numBlocks, stream);
+      output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+      context, numBlocks, stream);
 }
 
-void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
-                                const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+void rankMajorDirectSendCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
+                                const float* topkWeights, const Workload& workload, void* recvBuffer,
+                                void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
+                                cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   combineAlgorithm<CombineMode::DIRECT_SEND, DirectSendCombineKernelSelector>(
-      output, input, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context,
-      numBlocks, stream);
+      output, input, inputScales, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer,
+      context, numBlocks, stream);
 }
 
 }  // namespace ep

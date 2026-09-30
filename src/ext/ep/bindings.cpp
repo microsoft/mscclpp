@@ -69,8 +69,16 @@ NB_MODULE(mscclpp_ep_cpp, m) {
            })
       .def("dispatch_output_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.dispatchOutputBuffer()); })
+      .def("dispatch_output_scales_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(self.dispatchOutputScalesBuffer());
+           })
       .def("combine_input_buffer_ptr",
            [](const mscclpp::ep::MoERuntime& self) { return reinterpret_cast<uintptr_t>(self.combineInputBuffer()); })
+      .def("combine_input_scales_buffer_ptr",
+           [](const mscclpp::ep::MoERuntime& self) {
+             return reinterpret_cast<uintptr_t>(self.combineInputScalesBuffer());
+           })
       .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,
@@ -112,14 +120,15 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("deduplicate_expanded_routes") = false)
       .def(
           "combine",
-          [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,
-             uintptr_t srcInfoPtr, uintptr_t layoutRangePtr, uintptr_t outputPtr, int numTokens, int hidden,
-             int numTopk, int maxTokensPerRank, int numExperts, mscclpp::ep::DispatchLayout dispatchLayout,
-             mscclpp::ep::DispatchDataType dispatchDataType, mscclpp::ep::CombineMode mode, int numBlocks,
-             uintptr_t streamPtr) {
+          [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t expertOutputScalesPtr,
+             uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr, uintptr_t srcInfoPtr, uintptr_t layoutRangePtr,
+             uintptr_t outputPtr, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
+             mscclpp::ep::DispatchLayout dispatchLayout, mscclpp::ep::DispatchDataType dispatchDataType,
+             mscclpp::ep::CombineMode mode, int numBlocks, uintptr_t streamPtr) {
             self.combine(mscclpp::ep::CombineRequest{mscclpp::ep::LatencyCombineRequest{
                 .output = ptr(outputPtr),
                 .input = ptr(expertOutputPtr),
+                .inputScales = ptr(expertOutputScalesPtr),
                 .topkIdx = reinterpret_cast<const int64_t*>(ptr(topkIdxPtr)),
                 .topkWeights = reinterpret_cast<const float*>(ptr(topkWeightsPtr)),
                 .srcInfo = reinterpret_cast<const int*>(ptr(srcInfoPtr)),
@@ -136,10 +145,11 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .stream = stream(streamPtr),
             }});
           },
-          nb::arg("expert_output_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"),
-          nb::arg("layout_range_ptr"), nb::arg("output_ptr"), nb::arg("num_tokens"), nb::arg("hidden"),
-          nb::arg("num_topk"), nb::arg("max_tokens_per_rank"), nb::arg("num_experts"), nb::arg("dispatch_layout"),
-          nb::arg("dispatch_data_type"), nb::arg("mode"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
+          nb::arg("expert_output_ptr"), nb::arg("expert_output_scales_ptr"), nb::arg("topk_idx_ptr"),
+          nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"), nb::arg("layout_range_ptr"), nb::arg("output_ptr"),
+          nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("max_tokens_per_rank"),
+          nb::arg("num_experts"), nb::arg("dispatch_layout"), nb::arg("dispatch_data_type"), nb::arg("mode"),
+          nb::arg("num_blocks"), nb::arg("stream_ptr"))
       .def(
           "prepare",
           [](mscclpp::ep::MoERuntime& self, uintptr_t num_tokens_per_rank_ptr, uintptr_t num_tokens_per_expert_ptr,

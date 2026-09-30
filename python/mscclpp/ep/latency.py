@@ -137,12 +137,8 @@ class LatencyContext(Context):
         )
 
         self.dispatch_data_type = resolve_dispatch_data_type(config.quant)
-        if (
-            self.output_layout
-            in (DispatchLayout.RANK_MAJOR, DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
-            and self.dispatch_data_type != DispatchDataType.BF16
-        ):
-            raise NotImplementedError("RANK_MAJOR and TOKEN_MAJOR output currently support BF16 dispatch only")
+        if self.output_layout == DispatchLayout.TOKEN_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
+            raise NotImplementedError("TOKEN_MAJOR output currently supports BF16 dispatch only")
 
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -153,12 +149,16 @@ class LatencyContext(Context):
 
         self._dispatch_output_owner: Optional[DevicePointerArray] = None
         self._combine_input_owner: Optional[DevicePointerArray] = None
+        self._dispatch_scales_owner: Optional[DevicePointerArray] = None
+        self._combine_input_scales_owner: Optional[DevicePointerArray] = None
         self._output_topk_ids_owner: Optional[DevicePointerArray] = None
         self._output_topk_weights_owner: Optional[DevicePointerArray] = None
         self._output_topk_ids: Optional[torch.Tensor] = None
         self._output_topk_weights: Optional[torch.Tensor] = None
         self.dispatch_output_buffer: Optional[torch.Tensor] = None
         self.combine_input_buffer: Optional[torch.Tensor] = None
+        self.combine_input_scales: Optional[torch.Tensor] = None
+        self.dispatch_output_scales: Optional[torch.Tensor] = None
 
 
 class LatencyRuntime(Runtime):
@@ -256,18 +256,26 @@ class LatencyRuntime(Runtime):
             raise ValueError(f"unsupported latency output layout: {mode_context.output_layout}")
         output_info = DispatchOutputInfo(layout=layout_info, quant=output_quant)
         combine_input_buffer = mode_context.combine_input_buffer
+        combine_input_scales = mode_context.combine_input_scales
         if mode_context.output_layout in (
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
             DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
         ):
             assert combine_input_buffer is not None
+        if combine_input_scales is not None and mode_context.output_layout == DispatchLayout.RANK_MAJOR:
+            combine_input_scales = combine_input_scales[: mode_context.world_size * active_capacity]
         dispatch_out = DispatchOutput(
             tokens=out_buf,
             quant=output_info.quant,
             layout=output_info.layout,
             topk_ids=recv_topk_ids,
             weights=recv_weights,
+            combine_input_quant=(
+                None
+                if combine_input_scales is None
+                else QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=combine_input_scales)
+            ),
             combine_input_buffer=(
                 combine_input_buffer
                 if mode_context.output_layout in (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
@@ -327,6 +335,7 @@ class LatencyRuntime(Runtime):
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig] = None,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
@@ -334,7 +343,7 @@ class LatencyRuntime(Runtime):
         debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         if debug_combine:
             print(f"[py_ll_combine][rank {mode_context.rank}] enter handle={type(handle).__name__}", flush=True)
-        self._validate_combine(expert_output, handle, out)
+        self._validate_combine(expert_output, quant, handle, out)
         if debug_combine:
             print(f"[py_ll_combine][rank {mode_context.rank}] validated", flush=True)
         context = handle._context
@@ -378,6 +387,7 @@ class LatencyRuntime(Runtime):
             )
         self.cpp_runtime.combine(
             expert_output.data_ptr(),
+            0 if quant is None or quant.block_scales is None else quant.block_scales.data_ptr(),
             context.topk_ids.data_ptr(),
             0 if topk_weights is None else topk_weights.data_ptr(),
             0 if src_info is None else src_info.data_ptr(),
@@ -464,10 +474,37 @@ class LatencyRuntime(Runtime):
                     context.topk,
                     context.hidden_size,
                 ),
-                torch.bfloat16,
+                dispatch_tensor_dtype(context.dispatch_data_type),
                 context.device,
                 self.cpp_runtime,
             )
+
+        if context.dispatch_data_type == DispatchDataType.FP8_E4M3:
+            scale_block_size = dispatch_scale_block_size(context.dispatch_data_type)
+            scale_dtype = dispatch_scale_dtype(context.dispatch_data_type)
+            scale_rows = dispatch_shape[0]
+            if context.combine_mode == CombineMode.DIRECT_SEND:
+                scale_rows = context.world_size * context.max_tokens_per_rank * context.topk
+            scale_shape = (
+                (*context.combine_input_buffer.shape[:-1], context.hidden_size // scale_block_size)
+                if context.combine_input_buffer is not None
+                else (scale_rows, context.hidden_size // scale_block_size)
+            )
+            context._dispatch_scales_owner, context.dispatch_output_scales = tensor_from_pointer(
+                self.cpp_runtime.dispatch_output_scales_buffer_ptr(),
+                (dispatch_shape[0], context.hidden_size // scale_block_size),
+                scale_dtype,
+                context.device,
+                self.cpp_runtime,
+            )
+            context._combine_input_scales_owner, context.combine_input_scales = tensor_from_pointer(
+                self.cpp_runtime.combine_input_scales_buffer_ptr(),
+                scale_shape,
+                scale_dtype,
+                context.device,
+                self.cpp_runtime,
+            )
+            context._dispatch_scales = context.dispatch_output_scales
 
     def _resolve_capacity(self, runtime_max_tokens_per_rank: Optional[int]) -> int:
         mode_context = self.context
@@ -517,6 +554,11 @@ class LatencyRuntime(Runtime):
                 DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
             ):
                 mode_context._dispatch_src_info = None
+                mode_context._dispatch_scales = (
+                    mode_context.dispatch_output_scales
+                    if mode_context.dispatch_data_type == DispatchDataType.FP8_E4M3
+                    else None
+                )
                 assert mode_context._output_topk_ids is not None
                 assert mode_context._output_topk_weights is not None
                 mode_context._dispatch_topk_ids = mode_context._output_topk_ids
@@ -598,7 +640,7 @@ class LatencyRuntime(Runtime):
         if tuple(output_buffer.shape) != expected_shape:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
-    def _validate_combine(self, expert_output, handle, out) -> None:
+    def _validate_combine(self, expert_output, quant, handle, out) -> None:
         mode_context = self.context
         if not isinstance(handle, DispatchHandle) or not isinstance(
             handle._context,
@@ -650,9 +692,36 @@ class LatencyRuntime(Runtime):
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        expected_dtype = combine_tensor_dtype(mode_context.dispatch_data_type)
+        expected_dtype = (
+            dispatch_tensor_dtype(mode_context.dispatch_data_type)
+            if handle.output_info.layout.kind
+            in (DispatchLayout.RANK_MAJOR, DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+            else combine_tensor_dtype(mode_context.dispatch_data_type)
+        )
         if expert_output.dtype != expected_dtype:
             raise ValueError(f"expert_output must be {expected_dtype}")
+        rank_layout = handle.output_info.layout.kind in (
+            DispatchLayout.RANK_MAJOR,
+            DispatchLayout.RANK_MAJOR_TOPK_EXPANDED,
+        )
+        if mode_context.dispatch_data_type == DispatchDataType.FP8_E4M3 and rank_layout:
+            if quant is None or quant.format != DispatchDataType.FP8_E4M3 or quant.block_scales is None:
+                raise ValueError("FP8 expert_output requires FP8_E4M3 quant metadata with block_scales")
+            scale_block_size = dispatch_scale_block_size(mode_context.dispatch_data_type)
+            scale_dtype = dispatch_scale_dtype(mode_context.dispatch_data_type)
+            expected_scales = (*expert_output.shape[:-1], mode_context.hidden_size // scale_block_size)
+            if (
+                tuple(quant.block_scales.shape) != expected_scales
+                or quant.block_scales.dtype != scale_dtype
+                or quant.block_scales.device != expert_output.device
+                or not quant.block_scales.is_contiguous()
+            ):
+                raise ValueError(f"FP8 block_scales must be contiguous uint8 E8M0 with shape {expected_scales}")
+            assert mode_context.combine_input_scales is not None
+            if quant.block_scales.data_ptr() != mode_context.combine_input_scales.data_ptr():
+                raise ValueError("FP8 combine requires the runtime-owned block scales")
+        elif quant is not None:
+            raise ValueError("BF16 expert_output does not accept quant metadata")
         if handle.output_info.layout.kind in (
             DispatchLayout.RANK_MAJOR,
             DispatchLayout.TOKEN_MAJOR,
@@ -675,5 +744,6 @@ class LatencyRuntime(Runtime):
                     raise ValueError("expanded token-major combine output must not overlap its input")
         if out is not None:
             expected_out_shape = (context.num_tokens, mode_context.hidden_size)
-            if tuple(out.shape) != expected_out_shape or out.dtype != expected_dtype or not out.is_contiguous():
-                raise ValueError(f"out must be a contiguous {expected_dtype} tensor with shape {expected_out_shape}")
+            output_dtype = combine_tensor_dtype(mode_context.dispatch_data_type)
+            if tuple(out.shape) != expected_out_shape or out.dtype != output_dtype or not out.is_contiguous():
+                raise ValueError(f"out must be a contiguous {output_dtype} tensor with shape {expected_out_shape}")

@@ -271,6 +271,26 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
       .rankMajorTopkWeightsBuffer_;
 }
 
+void* MoERuntime::dispatchOutputScalesBuffer() const {
+  requireMode(MoEMode::LATENCY);
+  const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.useGpuNetIo_)
+      .dispatchOutputScalesBuffer_;
+}
+
+void* MoERuntime::combineInputScalesBuffer() const {
+  requireMode(MoEMode::LATENCY);
+  const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  return LatencyStorageLayout(context.symmetricBuffer_, context.maxTokensPerRank_, context.hidden_, context.numRanks_,
+                              context.numExperts_, context.numTopk_, context.outputLayout_, context.combineMode_,
+                              context.useGpuNetIo_)
+      .combineInputScalesBuffer_;
+}
+
 void* MoERuntime::combineInputBuffer() const {
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
@@ -316,13 +336,17 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
+  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr);
   EP_HOST_ASSERT(!deduplicateExpandedRoutes || dispatchLayout == DispatchLayout::TOKEN_MAJOR ||
                  dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
 
-  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16);
     EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&
                    numTopk == context.numTopk_ && numExperts == context.numExperts_);
-    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16);
+  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+    EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&
+                   numTopk == context.numTopk_ && numExperts == context.numExperts_);
   }
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_, context.maxTokensPerRank_, hidden, context.numRanks_,
                                         numExperts, numTopk, context.outputLayout_, context.combineMode_,
@@ -353,7 +377,11 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
                           .deduplicateExpandedRoutes_ = deduplicateExpandedRoutes};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
+  if (dispatchLayout == DispatchLayout::TOKEN_MAJOR) {
+    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16);
+    topk_expanded::dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                            workload, context.deviceContext_, numBlocks, stream);
+  } else if (dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     rankMajorTopkExpandedDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout,
                                   outputCount, input, topkIdx, topkWeights, workload, dispatchRecvBuffer,
                                   context.deviceContext_, numBlocks, stream);
@@ -371,6 +399,7 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
 void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   void* output = request.output;
   const void* input = request.input;
+  const void* inputScales = request.inputScales;
   const int64_t* topkIdx = request.topkIdx;
   const float* topkWeights = request.topkWeights;
   const int* srcInfo = request.srcInfo;
@@ -394,10 +423,11 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
+  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr);
   if (dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&
                    numTopk == context.numTopk_ && numExperts == context.numExperts_);
-    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 && mode == CombineMode::RANK_LOCAL_REDUCE);
+    EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
     EP_HOST_ASSERT(numTokens >= 0 && numTokens <= maxTokensPerRank && numBlocks > context.numRanks_);
   }
   if (context.deviceContext_.gpuNetIo_ != nullptr) {
@@ -417,6 +447,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   if (dispatchLayout == DispatchLayout::RANK_MAJOR || dispatchLayout == DispatchLayout::TOKEN_MAJOR ||
       dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     EP_HOST_ASSERT(input == allocationLayout.combineRecvBuffer_);
+    EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 ||
+                   inputScales == allocationLayout.combineInputScalesBuffer_);
   }
 
   if (std::getenv("MSCCLPP_EP_DEBUG_EPOCH") != nullptr) {
@@ -436,21 +468,23 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context.deviceContext_, numBlocks, stream);
+    rankMajorTopkExpandedGatherReduceCombine(output, input, inputScales, topkIdx, topkWeights, workload,
+                                             combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks,
+                                             stream);
   } else if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {
-      rankMajorDirectSendCombine(output, input, topkIdx, topkWeights, workload, combineRecvBuffer, dispatchRecvBuffer,
-                                 context.deviceContext_, numBlocks, stream);
+      rankMajorDirectSendCombine(output, input, inputScales, topkIdx, topkWeights, workload, combineRecvBuffer,
+                                 dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
     } else {
       EP_HOST_ASSERT(mode == CombineMode::RANK_LOCAL_REDUCE);
-      rankMajorGatherReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+      rankMajorGatherReduceCombine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload,
                                    combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
     }
   } else if (mode == CombineMode::DIRECT_SEND) {
-    expertMajorDirectSendCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
-                                 dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
+    expertMajorDirectSendCombine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+                                 combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   } else {
-    expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload,
+    expertMajorLocalReduceCombine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload,
                                   combineRecvBuffer, dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
 }

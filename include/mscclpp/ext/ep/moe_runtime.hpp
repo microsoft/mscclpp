@@ -72,8 +72,12 @@ class MoERuntime {
   void* outputTopkWeightsBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
   void* dispatchOutputBuffer() const;
+  /// Return the runtime-owned FP8 dispatch scale buffer.
+  void* dispatchOutputScalesBuffer() const;
   /// Return the runtime-owned rank-major combine input buffer.
   void* combineInputBuffer() const;
+  /// Return the runtime-owned FP8 combine-input scale buffer.
+  void* combineInputScalesBuffer() const;
 
   /// Dispatch tokens using the configured runtime mode.
   ///

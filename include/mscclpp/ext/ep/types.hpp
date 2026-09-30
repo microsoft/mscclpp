@@ -49,7 +49,7 @@ enum class CombineMode {
 enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
-  /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
+  /// MXFP8 E4M3 payload with one E8M0 scale byte per 32 hidden elements.
   FP8_E4M3
 };
 
@@ -165,6 +165,8 @@ struct LatencyCombineRequest {
   void* output;
   /// Local expert output.
   const void* input;
+  /// Optional format-specific block scales for the local expert output.
+  const void* inputScales;
   /// Input top-k expert IDs.
   const int64_t* topkIdx;
   /// Optional input top-k weights.

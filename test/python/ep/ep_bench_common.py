@@ -204,20 +204,24 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
 # ----------------------------------------------------------------------------
 # Latency dtype / combine helpers (ported from test_latency_multirank.py).
 # ----------------------------------------------------------------------------
-def fp8_e4m3_block128_scales(x):
-    blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // 128, 128)
-    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
-    return max_abs / 448.0
+def encode_e8m0_round_up(scales):
+    scale_bits = (scales.view(torch.int32) + 0x007FFFFF) & 0x7F800000
+    return (scale_bits >> 23).to(torch.uint8)
+
+
+def decode_e8m0(scales):
+    return (scales.to(torch.int32) << 23).view(torch.float32)
 
 
 def simulated_gemm_output(dispatch_out):
     """Simulate the downstream expert GEMM so combine consumes BF16 expert output:
-    identity for BF16 dispatch; dequantize (tokens * block_scales) for FP8_E4M3."""
+    identity for BF16 dispatch; decode E8M0 scales and dequantize MXFP8."""
     if dispatch_out.quant is None:
         return dispatch_out.tokens
     tokens = dispatch_out.tokens
-    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
-    return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 32, 32)
+    scales = decode_e8m0(dispatch_out.quant.block_scales)
+    return (token_blocks * scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
 
 
 def validate_combine_output_mpi(actual, expected, comm, *, exact):

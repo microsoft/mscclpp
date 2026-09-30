@@ -8,11 +8,11 @@ namespace ep {
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
 __global__ __launch_bounds__(CombineNThreads, 1) void rankLocalReduceCombineKernel(
-    void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
-    const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
-    const DeviceContext* context) {
+    void* output, const void* expertOutput, const void* expertScales, const int64_t* topkIndices,
+    const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, Workload workload,
+    void* combineRecvBuffer, const void* dispatchRecvBuffer, const DeviceContext* context) {
   combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout>(
-      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
+      output, expertOutput, expertScales, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
 
@@ -25,42 +25,48 @@ struct RankLocalReduceCombineKernelSelector {
 
 namespace {
 
-void runRankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                        const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
-                        void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+void runRankLocalReduce(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
+                        const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
+                        const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, RankLocalReduceCombineKernelSelector>(
-      output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-      numBlocks, stream);
+      output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+      context, numBlocks, stream);
 }
 
 }  // namespace
 
-void expertMajorLocalReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
-                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
-                                   int numBlocks, cudaStream_t stream) {
+void expertMajorLocalReduceCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
+                                   const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
+                                   const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                   const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR);
-  runRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+  runRankLocalReduce(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
-                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
-                                  int numBlocks, cudaStream_t stream) {
+void rankMajorGatherReduceCombine(void* output, const void* input, const void* inputScales, const int64_t* topkIdx,
+                                  const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
+                                  const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                  const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  runRankLocalReduce(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+  runRankLocalReduce(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
                      dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx,
-                                              const float* topkWeights, const Workload& workload,
-                                              [[maybe_unused]] void* recvBuffer,
+void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, const void* inputScales,
+                                              const int64_t* topkIdx, const float* topkWeights,
+                                              const Workload& workload, [[maybe_unused]] void* recvBuffer,
                                               [[maybe_unused]] void* dispatchRecvBuffer, const DeviceContext& context,
                                               int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
-  topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
+  if (workload.dispatchDataType_ == DispatchDataType::BF16) {
+    topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
+    return;
+  }
+  runRankLocalReduce(output, input, inputScales, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer,
+                     dispatchRecvBuffer, context, numBlocks, stream);
 }
 
 }  // namespace ep

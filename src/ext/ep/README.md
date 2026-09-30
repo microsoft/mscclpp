@@ -57,8 +57,9 @@ Latency dispatch supports two user-visible layouts:
   from registered remote MoE output or push completed rank partials into
   source-local scratch and progressively reduce ready ranks.
 
-Quantized latency dispatch supports E4M3 payloads with FP32 scales per 128 hidden
-elements (`FP8_E4M3`).
+Quantized latency dispatch supports MXFP8 E4M3 payloads with one uint8 E8M0
+dequantization scale per 32 hidden elements (`FP8_E4M3`), compatible with
+`ki.quant.Mxfp8Lhs`.
 
 ### Throughput algorithms
 

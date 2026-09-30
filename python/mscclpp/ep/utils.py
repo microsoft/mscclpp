@@ -56,14 +56,14 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
 def dispatch_scale_block_size(data_type: DispatchDataType) -> int:
     """Return the hidden-element count represented by one dispatch scale."""
     if data_type == DispatchDataType.FP8_E4M3:
-        return 128
+        return 32
     return 0
 
 
 def dispatch_scale_dtype(data_type: DispatchDataType) -> torch.dtype:
     """Return the scale dtype for a quantized dispatch format."""
     if data_type == DispatchDataType.FP8_E4M3:
-        return torch.float32
+        return torch.uint8
     raise ValueError(f"{data_type} dispatch does not have block scales")
 
 
@@ -189,6 +189,7 @@ def tensor_from_pointer(
         torch.bfloat16: "<u2",
         torch.float16: "<f2",
         torch.float8_e4m3fn: "|u1",
+        torch.uint8: "|u1",
         torch.int32: "<i4",
         torch.float32: "<f4",
     }

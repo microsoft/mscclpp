@@ -29,7 +29,7 @@ path on a single node. The experimental optimized combine performs rank-local
 partial reduction, TMA send, and source-rank reduction. The correctness check:
   - dispatch: per-expert received token counts agree with an all-gathered
     reference computed from topk_idx across all ranks, and FP8 data/scales
-    agree with a block-128 quantization reference;
+    agree with a block-32 MXFP8/E8M0 quantization reference;
   - combine: the reconstructed x matches the analytical sum
     ``x * sum(topk_weights, masked by topk_idx == -1)``.
 
@@ -155,12 +155,12 @@ def init_dist():
 
 def fp8_e4m3_scales(x, scale_block_size):
     blocks = x.float().reshape(*x.shape[:-1], x.size(-1) // scale_block_size, scale_block_size)
-    max_abs = blocks.abs().amax(dim=-1).clamp_min(1e-4)
-    return max_abs / 448.0
+    scale_bits = (blocks.abs().amax(dim=-1).div(448.0).view(torch.int32) + 0x007FFFFF) & 0x7F800000
+    return (scale_bits >> 23).to(torch.uint8)
 
 
 def decode_block_scales(scales):
-    return scales.float()
+    return (scales.to(torch.int32) << 23).view(torch.float32)
 
 
 def dequantized_dispatch_tokens(dispatch_out):
@@ -187,6 +187,30 @@ def simulated_gemm_output(dispatch_out):
         local_weight = dispatch_out.weights[:, topk_idx].masked_fill(dispatch_out.topk_ids[:, topk_idx] < 0, 0.0)
         output = torch.addcmul(output, tokens_f, local_weight.view(-1, 1))
     return output.to(torch.bfloat16)
+
+
+def quantize_mxfp8_into(destination, quant, source):
+    assert quant is not None
+    assert quant.block_scales is not None
+    num_scales = destination.size(-1) // 32
+    blocks = source.float().reshape(*destination.shape[:-1], num_scales, 32)
+    scales = fp8_e4m3_scales(source, 32)
+    decoded_scales = decode_block_scales(scales)
+    quant_scales = torch.where(decoded_scales == 0, 0, decoded_scales.reciprocal())
+    destination.copy_((blocks * quant_scales.unsqueeze(-1)).reshape(destination.shape).to(torch.float8_e4m3fn))
+    quant.block_scales.copy_(scales)
+    return destination
+
+
+def stage_simulated_gemm_output(dispatch_out):
+    source = simulated_gemm_output(dispatch_out)
+    combine_input = dispatch_out.combine_input_buffer
+    if combine_input is None:
+        return source
+    if dispatch_out.combine_input_quant is not None:
+        return quantize_mxfp8_into(combine_input, dispatch_out.combine_input_quant, source)
+    combine_input.copy_(source)
+    return combine_input
 
 
 def validate_combine_output(actual, expected, *, exact, group):
@@ -267,7 +291,7 @@ def validate_expert_major_dispatch(
                 local_expert_idx, output_offset : output_offset + source_count
             ]
             reference_scales = expected_scales[source_rank, source_tokens]
-            torch.testing.assert_close(actual_scales, reference_scales, rtol=1e-6, atol=1e-7)
+            assert torch.equal(actual_scales, reference_scales)
             decoded_actual_scales = decode_block_scales(actual_scales)
             decoded_reference_scales = decode_block_scales(reference_scales)
             actual_blocks = actual_tokens.float().reshape(source_count, hidden // scale_block_size, scale_block_size)
@@ -486,8 +510,8 @@ def main():
         None if dispatch_data_type == ep.DispatchDataType.BF16 else ep.QuantConfig(format=dispatch_data_type)
     )
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
-    scale_block_size = 128 if dispatch_data_type == ep.DispatchDataType.FP8_E4M3 else 0
-    scale_element_size = 4
+    scale_block_size = 32 if dispatch_data_type == ep.DispatchDataType.FP8_E4M3 else 0
+    scale_element_size = 1
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -592,13 +616,9 @@ def main():
         assert dispatch_out.quant is not None
         assert dispatch_out.quant.format == dispatch_data_type
         assert dispatch_out.quant.block_scales is not None
-        expected_scale_shape = (
-            (num_local_experts, num_ranks * num_tokens, hidden // scale_block_size)
-            if output_layout == ep.DispatchLayout.EXPERT_MAJOR
-            else (num_ranks * num_tokens, hidden // scale_block_size)
-        )
+        expected_scale_shape = (*dispatch_out.tokens.shape[:-1], hidden // scale_block_size)
         assert dispatch_out.quant.block_scales.shape == expected_scale_shape
-        assert dispatch_out.quant.block_scales.dtype == torch.float32
+        assert dispatch_out.quant.block_scales.dtype == torch.uint8
         assert all_x is not None
         expected_scales = fp8_e4m3_scales(all_x, scale_block_size)
 
@@ -642,11 +662,7 @@ def main():
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
     # returns sum(x * weight) across experts.
     dequantized_x = dequantized_dispatch_tokens(dispatch_out)
-    simulated_gemm_x = simulated_gemm_output(dispatch_out)
-    if output_layout == ep.DispatchLayout.RANK_MAJOR:
-        rank_major_expert_output = dispatch_out.combine_input_buffer
-        rank_major_expert_output.copy_(simulated_gemm_x)
-        simulated_gemm_x = rank_major_expert_output
+    simulated_gemm_x = stage_simulated_gemm_output(dispatch_out)
     reference_x = x
     if dispatch_quant is not None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:
@@ -677,7 +693,12 @@ def main():
                 group=group,
             )
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
+    combined_x = moe_comm.combine(
+        simulated_gemm_x,
+        handle,
+        quant=dispatch_out.combine_input_quant,
+        out=out,
+    )
 
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Accumulate in the same top-k order as the kernel; multiplying
@@ -717,12 +738,13 @@ def main():
                 output_buffer=dispatch_buffer,
             )
             dispatch_end.record()
-            graph_expert_output = simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
-            if output_layout == ep.DispatchLayout.RANK_MAJOR and expert_output is None:
-                rank_major_expert_output = graph_dout[0].combine_input_buffer
-                rank_major_expert_output.copy_(graph_expert_output)
-                graph_expert_output = rank_major_expert_output
-            graph_combined_x = moe_comm.combine(graph_expert_output, graph_dout[1], out=combine_out)
+            graph_expert_output = stage_simulated_gemm_output(graph_dout[0]) if expert_output is None else expert_output
+            graph_combined_x = moe_comm.combine(
+                graph_expert_output,
+                graph_dout[1],
+                quant=graph_dout[0].combine_input_quant,
+                out=combine_out,
+            )
             graph_end.record()
         return graph, graph_dout, graph_combined_x, graph_start, dispatch_end, graph_end
 
@@ -775,8 +797,8 @@ def main():
     # to each combine sample and masking kernel-level changes.)
     bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
-    def _combine(expert_output, handle_, out_):
-        moe_comm.combine(expert_output, handle_, out=out_)
+    def _combine(expert_output, dispatch_output, handle_, out_):
+        moe_comm.combine(expert_output, handle_, quant=dispatch_output.combine_input_quant, out=out_)
 
     def _num_recv_rows(dispatch_output):
         counts = (
@@ -788,10 +810,10 @@ def main():
         return int(counts.sum().item())
 
     if args.cuda_graph:
-        bench_expert_output = simulated_gemm_x
         for _ in range(warmup):
             warmup_dout = _dispatch()
-            _combine(bench_expert_output, warmup_dout[1], bench_out)
+            warmup_expert_output = stage_simulated_gemm_output(warmup_dout[0])
+            _combine(warmup_expert_output, warmup_dout[0], warmup_dout[1], bench_out)
         torch.cuda.synchronize()
         dist.barrier(group=group)
 
@@ -804,7 +826,8 @@ def main():
                 graph_starts[index].record()
                 e2e_dout = _dispatch()
                 graph_dispatch_ends[index].record()
-                _combine(bench_expert_output, e2e_dout[1], bench_out)
+                e2e_expert_output = stage_simulated_gemm_output(e2e_dout[0])
+                _combine(e2e_expert_output, e2e_dout[0], e2e_dout[1], bench_out)
                 graph_ends[index].record()
         torch.cuda.synchronize()
         dist.barrier(group=group)
@@ -829,12 +852,8 @@ def main():
     else:
         for _ in range(warmup):
             warmup_dout = _dispatch()
-            warmup_expert_output = simulated_gemm_output(warmup_dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = warmup_dout[0].combine_input_buffer
-                rank_major_expert_output.copy_(warmup_expert_output)
-                warmup_expert_output = rank_major_expert_output
-            _combine(warmup_expert_output, warmup_dout[1], bench_out)
+            warmup_expert_output = stage_simulated_gemm_output(warmup_dout[0])
+            _combine(warmup_expert_output, warmup_dout[0], warmup_dout[1], bench_out)
         torch.cuda.synchronize()
         dist.barrier(group=group)
 
@@ -845,12 +864,8 @@ def main():
             dispatch_start_events[i].record()
             dout = _dispatch()
             dispatch_end_events[i].record()
-            bench_expert_output = simulated_gemm_output(dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = dout[0].combine_input_buffer
-                rank_major_expert_output.copy_(bench_expert_output)
-                bench_expert_output = rank_major_expert_output
-            _combine(bench_expert_output, dout[1], bench_out)
+            bench_expert_output = stage_simulated_gemm_output(dout[0])
+            _combine(bench_expert_output, dout[0], dout[1], bench_out)
         torch.cuda.synchronize()
         disp_us = sum(start.elapsed_time(end) for start, end in zip(dispatch_start_events, dispatch_end_events)) * 1e3
         disp_us /= iters
@@ -861,13 +876,9 @@ def main():
         combine_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
         for i in range(iters):
             dout = _dispatch()
-            bench_expert_output = simulated_gemm_output(dout[0])
-            if output_layout == ep.DispatchLayout.RANK_MAJOR:
-                rank_major_expert_output = dout[0].combine_input_buffer
-                rank_major_expert_output.copy_(bench_expert_output)
-                bench_expert_output = rank_major_expert_output
+            bench_expert_output = stage_simulated_gemm_output(dout[0])
             combine_start_events[i].record()
-            _combine(bench_expert_output, dout[1], bench_out)
+            _combine(bench_expert_output, dout[0], dout[1], bench_out)
             combine_end_events[i].record()
         torch.cuda.synchronize()
         comb_us = sum(start.elapsed_time(end) for start, end in zip(combine_start_events, combine_end_events)) * 1e3

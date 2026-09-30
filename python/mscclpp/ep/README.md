@@ -514,7 +514,7 @@ Examples:
 | Format | `input` | `quant.block_scales` |
 |---|---|---|
 | BF16 | `[T, H]` BF16 | `None` |
-| FP8 E4M3 | `[T, H]` BF16 input, FP8 output | `[T, H / 128]` |
+| MXFP8 E4M3 | `[T, H]` BF16 input, FP8 output | `[T, H / 32]` uint8 E8M0 |
 | NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
@@ -686,7 +686,8 @@ expert-major tokens:             [num_local_experts, max_slots, H]
 expert-major scales:             [num_local_experts, max_slots, S]
 ```
 
-`S` is `H / 128` with FP32 values for `FP8_E4M3`.
+`S` is `H / 32` with uint8 E8M0 dequantization scales for `FP8_E4M3`,
+compatible with `ki.quant.Mxfp8Lhs`.
 
 ## MLP contract
 

@@ -16,6 +16,7 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
+inline constexpr int Mxfp8ScaleBlockSize = 32;
 
 // Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
 inline constexpr int GpuNetIoStagingSlots = 32768;
@@ -94,7 +95,8 @@ struct PayloadView {
     return configAlign<size_t>(metadataOffset(hidden, scaleBlockSize) + metadataBytes(topK), 32);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE PayloadView(int hidden, int topK, int scaleBlockSize = (HasScales ? 128 : 0))
+  MSCCLPP_HOST_DEVICE_INLINE PayloadView(int hidden, int topK,
+                                         int scaleBlockSize = (HasScales ? Mxfp8ScaleBlockSize : 0))
       : topK_(topK),
         scaleOffset_(scaleOffset(hidden)),
         metadataOffset_(metadataOffset(hidden, scaleBlockSize)),
@@ -180,6 +182,8 @@ struct LatencyStorageLayout {
   void* rankMajorTokenBuffer_ = nullptr;
   void* rankMajorTopkExpandedTokenBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
+  void* dispatchOutputScalesBuffer_ = nullptr;
+  void* combineInputScalesBuffer_ = nullptr;
   // GPU-initiated networking (GPUNetIO) inter-domain staging, appended after the
   // existing regions so their offsets are unchanged. Reserved only when the
   // communicator collectively enables the network backend. Expanded IPC also
@@ -208,11 +212,11 @@ struct LatencyStorageLayout {
     const bool rankMajorDirectSend = !topkExpanded && rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = topkExpanded || (rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE);
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
-    const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
+    const PayloadView<Fp8E4M3, uint8_t> mxfp8Payload(hidden, numTopk, Mxfp8ScaleBlockSize);
     const size_t dispatchMetadataBytes =
         configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
     const size_t dispatchPayloadStride = configAlign<size_t>(
-        bf16Payload.numBytes_ > fp8Payload128.numBytes_ ? bf16Payload.numBytes_ : fp8Payload128.numBytes_,
+        bf16Payload.numBytes_ > mxfp8Payload.numBytes_ ? bf16Payload.numBytes_ : mxfp8Payload.numBytes_,
         BufferAlignmentBytes);
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
@@ -222,15 +226,22 @@ struct LatencyStorageLayout {
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
+    const size_t rankMajorDispatchScaleBytes = configAlign<size_t>(
+        rankMajorDispatchOutputBytes / sizeof(Bf16) / Mxfp8ScaleBlockSize * sizeof(uint8_t), BufferAlignmentBytes);
+    const size_t rankMajorDispatchBufferBytes =
+        rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes + rankMajorDispatchScaleBytes;
     dispatchOutputBytes_ = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchWireBytes =
         dispatchBufferBytes > rankMajorDispatchBufferBytes ? dispatchBufferBytes : rankMajorDispatchBufferBytes;
     const size_t dispatchRecvBufferBytes =
         dispatchWireBytes > dispatchOutputBytes_ ? dispatchWireBytes : dispatchOutputBytes_;
-    const size_t combineRecvBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                          : rankMajorLocalReduce ? 0
-                                                                 : dispatchOutputBytes_;
+    const size_t rankMajorCombineInputBytes =
+        rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes : rankMajorDispatchOutputBytes;
+    const size_t rankMajorCombineScaleBytes = configAlign<size_t>(
+        rankMajorCombineInputBytes / sizeof(Bf16) / Mxfp8ScaleBlockSize * sizeof(uint8_t), BufferAlignmentBytes);
+    const size_t combineRecvBufferBytes = rankMajorDirectSend
+                                              ? rankMajorDirectSendCombineInputBytes + rankMajorCombineScaleBytes
+                                              : (rankMajorLocalReduce ? 0 : dispatchOutputBytes_);
     dispatchRecvBufferBytes_ = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
     combineRecvBufferBytes_ = configAlign<size_t>(combineRecvBufferBytes, BufferAlignmentBytes);
     const size_t baseBytes = dispatchRecvBufferBytes_ + combineRecvBufferBytes_ +
@@ -283,9 +294,17 @@ struct LatencyStorageLayout {
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
       rankMajorTokenBuffer_ = base + rankMajorTokenOffsetBytes;
       rankMajorTopkExpandedTokenBuffer_ = rankMajorTokenBuffer_;
-      dispatchOutputBuffer_ =
-          rankMajor ? base + rankMajorTokenOffsetBytes : base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
-      combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+      if (rankMajor) {
+        dispatchOutputBuffer_ = rankMajorTokenBuffer_;
+        dispatchOutputScalesBuffer_ = base + rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
+        combineRecvBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + dispatchRecvBufferBytes_;
+        combineInputScalesBuffer_ = rankMajorLocalReduce ? dispatchOutputScalesBuffer_
+                                                         : reinterpret_cast<uint8_t*>(combineRecvBuffer_) +
+                                                               rankMajorDirectSendCombineInputBytes;
+      } else {
+        dispatchOutputBuffer_ = base + dispatchRecvBufferBytes_ + combineRecvBufferBytes_;
+        combineRecvBuffer_ = base + dispatchRecvBufferBytes_;
+      }
       if (useGpuNetIo) {
         auto* gpuNetIoBase = base + baseBytes;
         gpuNetIoStagingBuffer_ = gpuNetIoBase;

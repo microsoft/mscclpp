@@ -21,7 +21,8 @@ class QuantConfig:
 
     Latency FP8 dispatch returns ``block_scales`` with the activation's
     leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
-    uses FP32 scales per 128 elements.
+    uses one uint8 E8M0 dequantization scale per 32 elements, matching
+    ``ki.quant.Mxfp8Lhs``.
     """
 
     format: Optional[DispatchDataType] = None
@@ -121,6 +122,7 @@ class DispatchOutput:
     topk_ids: Optional[torch.Tensor] = None
     weights: Optional[torch.Tensor] = None
     combine_input_buffer: Optional[torch.Tensor] = None
+    combine_input_quant: Optional[QuantConfig] = None
 
 
 # Private combine-side context.
