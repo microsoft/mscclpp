@@ -443,6 +443,11 @@ struct WorkspaceView {
   uint64_t* combineArrivedBaseline_; uint32_t* combineRankReadyEpochs_;
 };
 enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
+enum class DispatchDataType { BF16, FP8_E4M3 };
+template<DispatchDataType> struct DispatchElement;
+template<> struct DispatchElement<DispatchDataType::BF16> { using type = Bf16; };
+template<> struct DispatchElement<DispatchDataType::FP8_E4M3> { using type = uint8_t; };
+template<DispatchDataType DataType> using DispatchElementType = typename DispatchElement<DataType>::type;
 """
         )
         combine = source(COMBINE)
@@ -450,7 +455,9 @@ enum class CombineMode { RANK_LOCAL_REDUCE, DIRECT_SEND };
         native += function(combine, "rankMajorCombineStripeQp")
         native += function(combine, "signalRankMajorCombineLocalStart")
         native += function(combine, "publishRankMajorCombinePushReady")
-        native += "template<CombineMode Mode, int Hidden>\n" + function(combine, "sendRankMajorCombinePush")
+        native += "template<CombineMode Mode, int Hidden, DispatchDataType DispatchType>\n" + function(
+            combine, "sendRankMajorCombinePush"
+        )
         native += function(combine, "drainRankMajorCombinePush")
         native += r"""
 int main() {
@@ -479,7 +486,7 @@ int main() {
     for (unsigned int owner = 0; owner < static_cast<unsigned int>(ranks + 2); ++owner) {
       blockIdx.x = owner;
     for (threadIdx.x = 0; threadIdx.x < 65; ++threadIdx.x) {
-        sendRankMajorCombinePush<CombineMode::RANK_LOCAL_REDUCE, 8>(
+        sendRankMajorCombinePush<CombineMode::RANK_LOCAL_REDUCE, 8, DispatchDataType::BF16>(
             base, ranks, 1, capacity, transport, workspace, 1);
         drainRankMajorCombinePush(ranks, transport, workspace, 1);
       }
@@ -697,6 +704,10 @@ int main() {
         )
         self.assertNotIn("flush(", send)
         self.assertNotIn("combineSyncer_", send)
+        self.assertIn("sizeof(DispatchElementType<DispatchType>)", send)
+        receive_tma = function(source(COMBINE), "recvRankMajorRemotePartialsTma")
+        self.assertIn("DispatchElementType<DispatchType>", receive_tma)
+        self.assertIn("dequantizeFp8E4M3(values[element], dequantScale)", receive_tma)
         self.ordered(
             function(source(COMBINE), "recvRankMajorCombinePush"),
             "if (!sendsToRank) continue",
@@ -711,10 +722,10 @@ int main() {
             function(source(COMBINE), "combineBody"),
             "signalRankMajorCombineLocalStart(transport, nRanks)",
             "synchronizeRankMajorCombine(transport, nRanks, workspaceView)",
-            "sendRankMajorCombinePush<Mode, Hidden>",
+            "sendRankMajorCombinePush<Mode, Hidden, DispatchType>",
             "if (nTopk <= RankMajorTmaMaxNTopk)",
             "publishRankMajorCombinePushReady(",
-            "recvRankMajorRemotePartialsTma<Hidden, Mode>",
+            "recvRankMajorRemotePartialsTma<Hidden, Mode, DispatchType>",
             "recvRankMajorCombinePush<Hidden, Mode>",
             "drainRankMajorCombinePush(",
             "workspaceView.combineSyncer_->sync(gridDim.x)",
