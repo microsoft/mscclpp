@@ -321,7 +321,8 @@ void MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
-  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr);
+  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr ||
+                 dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(!usesStaticFp8Scale || (quantScale > 0.0f && std::isfinite(quantScale)));
   EP_HOST_ASSERT(!deduplicateExpandedRoutes || dispatchLayout == DispatchLayout::TOKEN_MAJOR ||
                  dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
@@ -413,7 +414,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
-  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr);
+  EP_HOST_ASSERT(dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr ||
+                 dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(!usesStaticFp8Scale || (quantScale > 0.0f && std::isfinite(quantScale)));
   if (dispatchLayout == DispatchLayout::TOKEN_MAJOR || dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
     EP_HOST_ASSERT(maxTokensPerRank == context.maxTokensPerRank_ && hidden == context.hidden_ &&

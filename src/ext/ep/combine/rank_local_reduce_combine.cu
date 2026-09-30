@@ -61,12 +61,7 @@ void rankMajorTopkExpandedGatherReduceCombine(void* output, const void* input, c
                                               int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::TOKEN_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
-  if (workload.dispatchDataType_ == DispatchDataType::BF16) {
-    topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
-    return;
-  }
-  runRankLocalReduce(output, input, nullptr, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer,
-                     dispatchRecvBuffer, context, numBlocks, stream);
+  topk_expanded::combine(output, input, topkIdx, topkWeights, workload, context, numBlocks, stream);
 }
 
 }  // namespace ep

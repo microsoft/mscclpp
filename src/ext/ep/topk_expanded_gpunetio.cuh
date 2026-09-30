@@ -329,11 +329,11 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(void* output
                                                            static_cast<uint32_t>(target), mscclpp::memoryOrderRelease);
     }
   } else if constexpr (UseTma) {
-    recvRankMajorTopkExpandedRemotePartialsTma<Hidden, true>(output, input, ids, weights, work, transport, layout,
-                                                             context->numRanks_, target, shared, &state);
+    recvRankMajorTopkExpandedRemotePartialsTma<Hidden, DispatchDataType::BF16, true>(
+        output, input, ids, weights, work, transport, layout, context->numRanks_, target, shared, &state);
   } else
-    recvRankMajorTopkExpandedRemotePartials<Hidden, true>(output, input, ids, weights, work, transport, layout,
-                                                          context->numRanks_, target, &state);
+    recvRankMajorTopkExpandedRemotePartials<Hidden, DispatchDataType::BF16, true>(
+        output, input, ids, weights, work, transport, layout, context->numRanks_, target, &state);
 #if defined(MSCCLPP_USE_GPUNETIO)
   if (blockIdx.x < context->numRanks_ && !transport.isNvlinkPeer(blockIdx.x)) {
     auto* gin = transport.gpuNetIo_;

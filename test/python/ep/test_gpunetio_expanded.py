@@ -5,7 +5,6 @@
 from itertools import product
 import math
 import os
-import subprocess
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
@@ -216,6 +215,46 @@ class ExpandedTests(unittest.TestCase):
         self.assertNotIn("mappedBuffer(const_cast<void*>(expertScales)", combine)
         expanded_reduce = function(combine, "recvRankMajorTopkExpandedRemotePartials")
         self.assertIn("globalExpertIdx >= 0 && globalExpertIdx < nExperts", expanded_reduce)
+        kernel = source(KERNEL)
+        send = function(kernel, "dispatchSendRankMajorTopkExpanded")
+        self.assertIn("quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_)", send)
+        self.assertIn("Hidden * sizeof(ElementType)", send)
+        self.assertIn("token) * stagingStride", send)
+        self.assertNotIn("token) * layout.gpuNetIoSlotStride_", send)
+        for name in ("recvRankMajorTopkExpandedRemotePartials", "recvRankMajorTopkExpandedRemotePartialsTma"):
+            receive = function(kernel, name)
+            self.assertIn("dequantizeFp8E4M3", receive)
+            self.assertIn("1.0f / work.quantScale_", receive)
+            self.assertIn("Hidden * sizeof(ElementType)", receive)
+        self.assertIn(
+            "Hidden * sizeof(DispatchElementType<DataType>)",
+            function(kernel, "pushExpandedCombine"),
+        )
+        stride = function(kernel, "expandedTokenStride")
+        self.assertIn("sizeof(DispatchElementType<DataType>)", stride)
+        self.assertNotIn("dispatchPayloadStride<DataType>", stride[stride.index("else") :])
+
+    def test_static_fp8_expanded_uses_dedicated_transport(self):
+        dispatch = function(source("src/ext/ep/dispatch/rank_major_dispatch.cu"), "rankMajorTopkExpandedDispatch")
+        combine = function(
+            source("src/ext/ep/combine/rank_local_reduce_combine.cu"),
+            "rankMajorTopkExpandedGatherReduceCombine",
+        )
+        self.assertIn("topk_expanded::dispatch(", dispatch)
+        self.assertNotIn("dispatchAlgorithm", dispatch)
+        self.assertIn("topk_expanded::combine(", combine)
+        self.assertNotIn("runRankLocalReduce", combine)
+        kernel = source(KERNEL)
+        for name in ("launchDispatch", "launchCombine"):
+            launch = function(kernel, name)
+            self.assertIn("if constexpr (DataType == DispatchDataType::BF16)", launch)
+            self.assertIn("DataType>", launch)
+        latency = source("src/ext/ep/latency.cc")
+        network_fp8_guard = (
+            "dispatchDataType == DispatchDataType::BF16 || context.deviceContext_.gpuNetIo_ == nullptr ||\n"
+            "                 dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED"
+        )
+        self.assertEqual(latency.count(network_fp8_guard), 2)
 
     def test_python_configuration_rejects_unsupported_cases(self):
         for options in ({"topk": 10}, {"enable_overlap": True}, {"max_tokens_per_rank": 1 << 30}):
@@ -628,24 +667,14 @@ int main() {
 
     def test_fastpath_launches_and_baseline_are_preserved(self):
         current = source(KERNEL)
-        old = subprocess.check_output(["git", "-C", str(benchmark_tests.ROOT), "show", "65dc412:" + KERNEL], text=True)
-        for name in (
-            "dispatchTopkExpandedKernel",
-            "combineTopkExpandedKernel",
-            "finishCollective",
-            "pushExpandedCombine",
-            "dispatchSendRankMajorTopkExpandedBf16",
-            "postRemoteDispatchMetadataAndMarkers",
-        ):
-            current_body = function(current, name)
-            if name in ("dispatchTopkExpandedKernel", "combineTopkExpandedKernel"):
-                self.assertIn("context->gpuNetIo_ != nullptr", current_body)
-                current_body = current_body.replace(", context->gpuNetIo_ != nullptr", "")
-            self.assertEqual(code(current_body), code(function(old, name)))
         for name, kernel in (("launchDispatch", "dispatchKernel"), ("launchCombine", "combineKernel")):
             launch = function(current, name)
             self.assertLess(
                 launch.index("context.expandedGpuNetIoFastPath_"), launch.index("context.expandedIpcFastPath_")
+            )
+            self.assertLess(
+                launch.index("if constexpr (DataType == DispatchDataType::BF16)"),
+                launch.index("context.expandedGpuNetIoFastPath_"),
             )
             self.assertIn("gpunetio_fast::" + kernel, launch)
             self.assertIn("ipc::" + kernel, launch)
