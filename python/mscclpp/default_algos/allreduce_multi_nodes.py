@@ -229,7 +229,7 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, help="name of the program")
     parser.add_argument("--num_gpus", type=int, help="total number of gpus")
     parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
-    parser.add_argument("--tbg", type=int, default=1, help="thread block group size")
+    parser.add_argument("--thread_block_group_size", type=int, default=1, help="thread block group size")
     parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
     parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
     parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
@@ -252,5 +252,5 @@ if __name__ == "__main__":
         max_message_size=args.max_message_size,
     )
 
-    prog = allreduce_multi_nodes(spec, args.tbg)
+    prog = allreduce_multi_nodes(spec, args.thread_block_group_size)
     print(prog.to_json())
