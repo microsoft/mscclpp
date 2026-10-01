@@ -106,11 +106,17 @@ The last chunk also marks the full row ready. Chunk counters are reset on every
 forward, including CUDA Graph replay; partial chunks retain the H/I multiple-of-128
 contract.
 
-W4A8 fuses BF16 input staging and routing-array copies into input quantization;
-exact input-buffer aliases remain supported, and cross-input aliases retain the
-ordered-copy path. Small route plans bulk-prefetch peer metadata into reusable
-dispatch storage. Only live routing rows are consumed, and masked slots are
-excluded from combination rather than requiring a full partial-buffer clear.
+All routed kernels publish each rank's live token count and every
+`{expert ID, router weight}` pair as epoch-tagged LL16 packets. A
+live-token-sized set of planner CTAs maps each token once and loops over its
+top-k packets, coordinating count, offset, and fill phases through device epoch
+flags rather than a cross-rank or grid barrier. W8A16 publishes one rank-level
+input-ready epoch after staging; W4A8 publishes per-token readiness after
+quantization. W4A8 fuses BF16 input staging and routing-array copies into input
+quantization; exact input-buffer aliases remain supported, and cross-input
+aliases retain the ordered-copy path. Only live routing rows are consumed, and
+masked slots are excluded from combination rather than requiring a full
+partial-buffer clear.
 The final completing CTA publishes GPU completion after acquiring all preceding
 CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
 
@@ -134,9 +140,12 @@ issuing epilogue warp drains destination completion before the CTA publishes its
 arrival. This overlaps return traffic without weakening peer visibility.
 E8M0 scale selection compares FP32 exponent/mantissa bits directly, preserving
 the ceiling-power-of-two rule without a floating-point division.
-Unclamped EP4 contexts with capacity 64, 64 experts, top-8, H9216, and I4096 or
-I4608 select configuration-specialized kernels. Launch resources are borrowed
-from grid-constant parameters rather than copied into thread-local memory.
+Unclamped EP4/E64 and EP32/E512 contexts with capacity 64, top-8, H9216, and
+I4096 or I4608 select configuration-specialized kernels that assume every rank
+has the same live token count. These kernels calculate route offsets directly;
+other W4A8 configurations read token-count packets and build dynamic prefixes.
+Launch resources are borrowed from grid-constant parameters rather than copied
+into thread-local memory.
 Other capacities, shapes, expert/top-k counts, and clamped activations retain
 the generic kernel; preflight and forward use the same selection rule.
 Local shared experts and routed

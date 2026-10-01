@@ -342,29 +342,16 @@ __device__ __forceinline__ void reduceResultVector(const Element* partial, int r
 // All peer output stores must be complete and visible before this local reduction.
 template <class P>
 __device__ __forceinline__ void combineResults(const P& p, int tokens, __bfloat16* output) {
-  if constexpr (P::WeightMxfp4) {
-    constexpr int Elements = 8;
-    auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
-    auto routeIds = at<int>(p.local, p.symmetric.topkIds);
-    for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
-         i += gridDim.x * P::ThreadCount) {
-      size_t token = i / (p.config.hidden / Elements);
-      int feature = Elements * (i % (p.config.hidden / Elements));
-      auto source = partial + size_t(token) * p.config.topK * p.config.hidden + feature;
-      reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i,
-                                               routeIds + size_t(token) * p.config.topK);
-    }
-    return;
-  }
-
   constexpr int Elements = 8;
   auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
+  auto routeIds = at<int>(p.local, p.symmetric.topkIds);
   for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
        i += gridDim.x * P::ThreadCount) {
     size_t token = i / (p.config.hidden / Elements);
     int feature = Elements * (i % (p.config.hidden / Elements));
     auto source = partial + size_t(token) * p.config.topK * p.config.hidden + feature;
-    reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i);
+    reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i,
+                                             routeIds + size_t(token) * p.config.topK);
   }
 }
 

@@ -50,7 +50,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   if constexpr (Local) {
     if (tokens == 0) return;
   } else {
-    prepareRoutes(p, tokens, s.epilogue.routing);
+    prepareRoutes(p, tokens);
   }
 
   typename LoadA::Params aParams{};
@@ -129,6 +129,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
     p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
     // Bulk stores have landed; CTA/grid joins transfer their completion to these publishers.
     if (blockIdx.x == 0 && threadIdx.x < p.config.worldSize) {
+      if (threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
       signalAndWait(p, threadIdx.x);
     }
     p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
@@ -172,7 +173,7 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 }
 #endif
 
-template <int Hidden = 0, int Intermediate = 0>
+template <int Hidden = 0, int Intermediate = 0, int WorldSize = 0>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* startSignal) {
   using namespace cute;
@@ -182,12 +183,13 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   using Accumulate = Types::Accumulate;
   using Schedule = W4A8WarpSchedule;
   NativeConfig configuration = parameters.config;
-  if constexpr (Hidden != 0) {
-    configuration.worldSize = 4;
+  if constexpr (WorldSize != 0) {
+    static_assert(WorldSize == 4 || WorldSize == 32);
+    configuration.worldSize = WorldSize;
     configuration.maxTokens = 64;
     configuration.hidden = Hidden;
     configuration.intermediate = Intermediate;
-    configuration.numExperts = 64;
+    configuration.numExperts = 16 * WorldSize;
     configuration.topK = 8;
     configuration.gateUpClamp = -1.0f;
   }
@@ -203,8 +205,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
     atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
   traceW4(W4TracePhase::Routing, true);
-  // Routing finishes with a grid join before GEMM reuses the tensor staging buffers.
-  prepareRoutes(p, tokens, s.epilogue.routing, &s.dispatch, &s.tensors, sizeof(s.tensors));
+  // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
+  prepareRoutes<WorldSize != 0>(p, tokens);
   traceW4(W4TracePhase::Routing, false);
 
   typename Load::Params loadParams{};
@@ -295,11 +297,13 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   traceW4(W4TracePhase::OutputJoin, true);
   if (threadIdx.x == 0) {
     // The final arrival acquires every CTA's completed writes before the system release.
-    s.epilogue.routing.counts[0] =
+    s.epilogue.routing.outputPublisher =
         atomicFetchAdd<int, scopeDevice>(&p.workspace.control->completedCtas, 1, memoryOrderAcqRel) == gridDim.x - 1;
   }
   __syncthreads();
-  if (s.epilogue.routing.counts[0] && threadIdx.x < p.config.worldSize) {
+  if (s.epilogue.routing.outputPublisher && threadIdx.x == 0)
+    *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
+  if (s.epilogue.routing.outputPublisher && threadIdx.x < p.config.worldSize) {
     MemoryDevice2DeviceSemaphoreDeviceHandle channel{
         at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
         peerAt<uint64_t>(p, threadIdx.x, p.symmetric.peerSignals) + p.config.rank,
@@ -309,7 +313,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   }
   if (threadIdx.x < p.config.worldSize)
     waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
-                                       2 * p.workspace.control->epoch);
+                                       p.workspace.control->epoch);
   __syncthreads();
   traceW4(W4TracePhase::OutputJoin, false);
   traceW4(W4TracePhase::Combine, true);
@@ -318,10 +322,11 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
-  if (config.worldSize == 4 && config.maxTokens == 64 && config.numExperts == 64 && config.topK == 8 &&
-      config.gateUpClamp < 0 && config.hidden == 9216) {
-    if (config.intermediate == 4096) return megaMoeW4A8<9216, 4096>;
-    if (config.intermediate == 4608) return megaMoeW4A8<9216, 4608>;
+  if (useSpecializedW4A8Kernel(config)) {
+    if (config.intermediate == 4096)
+      return config.worldSize == 4 ? megaMoeW4A8<9216, 4096, 4> : megaMoeW4A8<9216, 4096, 32>;
+    if (config.intermediate == 4608)
+      return config.worldSize == 4 ? megaMoeW4A8<9216, 4608, 4> : megaMoeW4A8<9216, 4608, 32>;
   }
   return megaMoeW4A8<>;
 }

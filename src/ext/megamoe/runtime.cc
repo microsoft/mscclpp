@@ -325,6 +325,10 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
                                  size_t(layout.expectedPeerSignals),
                                  size_t(layout.tokenCount),
                                  0,
+                                 0,
+                                 0,
+                                 0,
+                                 0,
                                  0};
       p.workspaceBytes = size_t(layout.privateBytes);
       p.resources = KernelResources{layout.ctaCount, p.device, size_t(layout.sharedBytes)};

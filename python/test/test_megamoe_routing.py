@@ -9,9 +9,12 @@ For two or four NVLink-connected SM100 GPUs, use ``torchrun --nnodes=1
 with the same file. Gloo is
 only used for multi-rank rendezvous and the CPU oracle; MSCCL++ uses MASTER_PORT+1.
 Set MSCCLPP_TEST_MEGAMOE_JIT=1 as well to exercise non-builtin specializations.
+The configuration-selection tests also support EP32 across eight four-GPU nodes;
+select them with ``-k configuration_selection``.
 """
 
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import timedelta
 import gc
 import os
@@ -171,7 +174,7 @@ class _Runtime:
 
 
 @pytest.fixture(scope="module")
-def routing_runtime():
+def _native_runtime():
     if os.environ.get("MSCCLPP_TEST_MEGAMOE_ROUTING") != "1":
         pytest.skip("set MSCCLPP_TEST_MEGAMOE_ROUTING=1 to opt into native SM100 routing tests")
     torch = pytest.importorskip("torch")
@@ -181,8 +184,8 @@ def routing_runtime():
 
     rank, world = int(os.environ.get("RANK", 0)), int(os.environ.get("WORLD_SIZE", 1))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    if world not in (1, 2, 4):
-        pytest.skip("routing tests support one, two, or four ranks")
+    if world not in (1, 2, 4, 32):
+        pytest.skip("native tests support one, two, four, or 32 ranks")
     if os.environ.get("PYTEST_XDIST_WORKER"):
         pytest.fail("run routing tests without pytest-xdist")
     owned_group = False
@@ -233,6 +236,20 @@ def routing_runtime():
         if owned_group:
             dist.barrier()
             dist.destroy_process_group()
+
+
+@pytest.fixture
+def routing_runtime(_native_runtime):
+    if _native_runtime.world not in (1, 2, 4):
+        pytest.skip("routing tests support one, two, or four ranks")
+    return _native_runtime
+
+
+@pytest.fixture
+def configuration_runtime(_native_runtime):
+    if _native_runtime.world not in (4, 32):
+        pytest.skip("configuration-selection tests require EP4 or EP32")
+    return _native_runtime
 
 
 @contextmanager
@@ -536,18 +553,25 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
 
 
 @pytest.mark.parametrize(
-    "capacity,intermediate,clamp",
-    [(64, 4096, -1.0), (64, 4608, -7.0), (65, 4096, -1.0), (64, 4096, 0.125)],
-    ids=["specialized-4k", "specialized-4k5", "generic-capacity", "generic-clamp"],
+    "capacity,intermediate,clamp,local_experts,top_k",
+    [
+        (64, 4096, -1.0, 16, 8),
+        (64, 4608, -7.0, 16, 8),
+        (65, 4096, -1.0, 16, 8),
+        (64, 4096, 0.125, 16, 8),
+        (64, 4096, -1.0, 8, 8),
+        (64, 4096, -1.0, 16, 7),
+    ],
+    ids=["specialized-4k", "specialized-4k5", "generic-capacity", "generic-clamp", "generic-experts", "generic-top-k"],
 )
-def test_native_w4a8_configuration_selection_graph_reuse(routing_runtime, capacity, intermediate, clamp):
-    runtime, torch = routing_runtime, routing_runtime.torch
-    if runtime.world != 4:
-        pytest.skip("requires four ranks to exercise the EP4 configuration specialization")
+def test_native_w4a8_configuration_selection_graph_reuse(
+    configuration_runtime, capacity, intermediate, clamp, local_experts, top_k
+):
+    runtime, torch = configuration_runtime, configuration_runtime.torch
     config = runtime.config(
         capacity,
-        local_experts=16,
-        top_k=8,
+        local_experts=local_experts,
+        top_k=top_k,
         mxfp4=True,
         clamp=clamp,
         hidden=9216,
@@ -558,7 +582,10 @@ def test_native_w4a8_configuration_selection_graph_reuse(routing_runtime, capaci
         context = case.create(config, weights)
         storage = _buffers(runtime, context)
         graphs = {}
-        counts = {count: max(0, count - runtime.rank) for count in (0, 1, capacity)}
+        # Keep EP32 CPU oracles small while retaining the specialized capacity.
+        sample_capacity = 4 if runtime.world == 32 else capacity
+        reference_config = replace(config, max_tokens=sample_capacity)
+        counts = {count: count for count in (0, 1, sample_capacity)}
         for nominal, tokens in counts.items():
             with torch.cuda.stream(case.stream):
                 _stage(storage, _sample(config, tokens, "hot_first"))
@@ -569,11 +596,27 @@ def test_native_w4a8_configuration_selection_graph_reuse(routing_runtime, capaci
             with torch.cuda.graph(graph, stream=case.stream):
                 _launch(context, storage, tokens, case.stream)
             graphs[nominal] = graph
-        for nominal in (capacity, 1, 0, capacity):
+
+        def check_selected_kernel():
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as profiler:
+                with torch.cuda.stream(case.stream):
+                    graphs[sample_capacity].replay()
+                case.stream.synchronize()
+            kernels = [
+                event.name.replace(" ", "")
+                for event in profiler.events()
+                if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
+            ]
+            specialized = capacity == 64 and clamp < 0 and local_experts == 16 and top_k == 8
+            expected = f"megaMoeW4A8<9216,{intermediate},{runtime.world}>" if specialized else "megaMoeW4A8<0,0,0>"
+            assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
+
+        runtime.collective(check_selected_kernel)
+        for nominal in (sample_capacity, 1, 0, sample_capacity):
             tokens = counts[nominal]
             for pattern in ("masked", "hot_last", "mixed"):
                 sample = _sample(config, tokens, pattern)
-                expected = _routing_reference(config, sample, weights)
+                expected = _routing_reference(reference_config, sample, weights)
                 with torch.cuda.stream(case.stream):
                     _stage(storage, sample)
                     for _ in range(3):

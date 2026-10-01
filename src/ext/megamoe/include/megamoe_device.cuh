@@ -13,6 +13,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
 #include "megamoe_collective.cuh"
@@ -42,16 +43,26 @@ constexpr int LocalTokenAlignment = 64;
 constexpr int EpilogueTokens = 32;
 constexpr int DispatchChunkBytes = 2048;
 constexpr int DispatchWarpCount = 4;
-constexpr int SmallRoutingSlots = 2 * Threads;
-constexpr int W4SmallRoutingSlots = 8 * Threads;
-constexpr int SmallRoutingExperts = 128;
 constexpr int64_t SpinLimit = 1000000000;
+
+__host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
+  return c.weightMxfp4 && (c.worldSize == 4 || c.worldSize == 32) && c.maxTokens == 64 &&
+         c.numExperts == 16 * c.worldSize && c.topK == 8 && c.gateUpClamp < 0 && c.hidden == 9216 &&
+         (c.intermediate == 4096 || c.intermediate == 4608);
+}
 
 struct Control {
   DeviceSyncer gridBarrier;
   uint64_t epoch;
+  uint64_t routingInitEpoch;
+  uint64_t routingOffsetsEpoch;
+  uint64_t routingReadyEpoch;
   int tokenBlocks;
   int completedCtas;
+  int routingCountCtas;
+  int routingFillCtas;
+  int routingTokens;
+  int routingPlannerCtas;
 };
 
 struct Route {
@@ -81,6 +92,9 @@ struct Workspace {
   int* inputReady;
   int* hiddenReady;
   int* inputChunkReady;
+  int* quantizedInputArrivals;
+  int* peerTokenCounts;
+  int* peerTokenOffsets;
   Route* routes;
   TokenBlock* blocks;
   __bfloat16* input;
@@ -168,10 +182,7 @@ struct W4DispatchStorage {
 struct NoDispatchStorage {};
 
 struct RoutingStorage {
-  int counts[SmallRoutingExperts];
-  int starts[SmallRoutingExperts];
-  uint64_t peers[72];
-  int tokenCounts[72];
+  int outputPublisher;
 };
 
 template <int Tokens, bool SeparatePacked>
