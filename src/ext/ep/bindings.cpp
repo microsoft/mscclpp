@@ -78,7 +78,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
              int hidden, int numTopk, int maxTokensPerRank, int numExperts, int invalidTokenExpertId,
              mscclpp::ep::DispatchLayout dispatchLayout, mscclpp::ep::DispatchDataType dispatchDataType, int numBlocks,
-             uintptr_t streamPtr) {
+             uintptr_t streamPtr, bool deduplicateExpandedRoutes) {
             self.dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
                 .output = ptr(outputPtr),
                 .outputScales = ptr(outputScalesPtr),
@@ -100,6 +100,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .dispatchDataType = dispatchDataType,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
+                .deduplicateExpandedRoutes = deduplicateExpandedRoutes,
             }});
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
@@ -107,7 +108,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
           nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("max_tokens_per_rank"),
           nb::arg("num_experts"), nb::arg("invalid_token_expert_id"), nb::arg("dispatch_layout"),
-          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
+          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"),
+          nb::arg("deduplicate_expanded_routes") = false)
       .def(
           "combine",
           [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,

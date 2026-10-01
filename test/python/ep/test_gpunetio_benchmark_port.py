@@ -436,7 +436,16 @@ class CpuPortTest(unittest.TestCase):
         self.assertEqual(trace.count("replay"), 1)
         self.assertNotIn("normal", trace)
 
-    def runtime_combine(self, *, rank_major, allocate, debug, direct=False, failure=None):
+    def runtime_combine(
+        self,
+        *,
+        rank_major,
+        allocate,
+        debug,
+        direct=False,
+        apply_router_weights=None,
+        failure=None,
+    ):
         namespace = _api_types()
         namespace.update(
             os=os,
@@ -455,11 +464,12 @@ class CpuPortTest(unittest.TestCase):
         shape = (6, 2, 16) if direct and rank_major else ((6, 16) if rank_major else (2, 8, 16))
         expert = FakeTensor(shape)
         context = dict(topk_ids=FakeTensor((2, 2)), num_experts=4, num_tokens=2, hidden_size=16)
+        weights = FakeTensor((2, 2))
         if rank_major:
-            context = namespace["_RankMajorCombineContext"](**context, max_tokens_per_rank=3)
+            context = namespace["_RankMajorCombineContext"](**context, max_tokens_per_rank=3, weights=weights)
         else:
             context = namespace["_ExpertMajorCombineContext"](
-                **context, weights=FakeTensor((2, 2)), src_info=FakeTensor((2, 8)), layout_range=FakeTensor((2, 2))
+                **context, weights=weights, src_info=FakeTensor((2, 8)), layout_range=FakeTensor((2, 2))
             )
         handle = namespace["DispatchHandle"](
             namespace["DispatchOutputInfo"](namespace["DispatchLayoutInfo"](layout)), context
@@ -497,7 +507,15 @@ class CpuPortTest(unittest.TestCase):
         env = {} if debug is None else {"MSCCLPP_EP_DEBUG_COMBINE": debug}
         self.trace.clear()
         with patch.dict(os.environ, env, clear=True):
-            invoke = lambda: comm_namespace["combine"](communicator, expert, handle, out=out, stream=NS(cuda_stream=42))
+            combine_kwargs = {} if apply_router_weights is None else {"apply_router_weights": apply_router_weights}
+            invoke = lambda: comm_namespace["combine"](
+                communicator,
+                expert,
+                handle,
+                out=out,
+                stream=NS(cuda_stream=42),
+                **combine_kwargs,
+            )
             if failure:
                 with self.assertRaises(ValueError if failure == "validation" else RuntimeError):
                     invoke()
@@ -512,7 +530,11 @@ class CpuPortTest(unittest.TestCase):
                 (
                     expert.data_ptr(),
                     context.topk_ids.data_ptr(),
-                    0 if rank_major else context.weights.data_ptr(),
+                    (
+                        context.weights.data_ptr()
+                        if apply_router_weights is True or (apply_router_weights is None and direct)
+                        else 0
+                    ),
                     0 if rank_major else context.src_info.data_ptr(),
                     0 if rank_major else context.layout_range.data_ptr(),
                     result.data_ptr(),
@@ -558,6 +580,21 @@ class CpuPortTest(unittest.TestCase):
                 if debug == "1":
                     expected += ["[py_ll_combine][rank 1] after combine", "[py_comm_combine] exit"]
                 self.assertEqual(self.trace, expected)
+
+    def test_runtime_combine_router_weight_override(self):
+        self.runtime_combine(
+            rank_major=False,
+            allocate=False,
+            debug=None,
+            apply_router_weights=True,
+        )
+        self.runtime_combine(
+            rank_major=True,
+            allocate=False,
+            debug=None,
+            direct=True,
+            apply_router_weights=False,
+        )
 
     def test_failure_logs_stop_at_validation_or_native_call(self):
         self.runtime_combine(rank_major=True, allocate=False, debug="1", failure="validation")

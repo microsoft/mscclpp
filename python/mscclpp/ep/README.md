@@ -83,6 +83,9 @@ class MoECommunicatorConfig:
 
     # Overlap
     enable_overlap: bool = False
+
+    # Latency rank-major tuning
+    deduplicate_expanded_routes: bool = False
 ```
 
 The constructor can accept either a config object or keyword arguments:
@@ -147,6 +150,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `mode` | Algorithm family (`MoEMode.LATENCY` or `MoEMode.THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `invalid_token_expert_id` | Sentinel for rank-major non-local and padding entries; defaults to `num_experts` |
+| `deduplicate_expanded_routes` | For latency `RANK_MAJOR_TOPK_EXPANDED`, send one payload per destination rank and expand duplicate route rows locally; disabled by default |
 | `max_tokens_per_rank` | dispatch capacity |
 | scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_blocks` | Total dispatch/combine grid sizes. A pair configures them independently, and `None` uses that entry's mode default. A single `N` resolves to `(N, N - 2)` in latency mode and `(N, N)` in throughput mode |
@@ -224,6 +228,7 @@ class MoECommunicator:
         *,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
+        apply_router_weights: Optional[bool] = None,
     ) -> torch.Tensor:
         ...
 
@@ -611,10 +616,13 @@ unweighted and must reuse `dispatch_out.combine_input_buffer`, which aliases
 `dispatch_out.tokens`; combine applies the original routing weights once.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
 weights. BF16 is currently the only supported rank-major dispatch format.
+Setting `deduplicate_expanded_routes=True` preserves these tensor shapes while
+transmitting one activation per unique destination rank. A local follow-up
+kernel copies that activation into duplicate top-k route rows.
 
 Set `combine_mode=CombineMode.DIRECT_SEND` with rank-major dispatch to move the
 top-k reduction into combine. The existing `RANK_LOCAL_REDUCE` behavior remains
-available. The MoE runner writes one weighted BF16 row per top-k route into the
+available. The MoE runner writes one unweighted BF16 row per top-k route into the
 runtime-owned registered buffer:
 
 ```python
@@ -626,8 +634,16 @@ assert route_output.shape == (
     top_k,
     hidden,
 )
-moe(..., route_output=route_output)
+moe(..., route_output=route_output, apply_router_weights=False)
 combined = communicator.combine(route_output, handle)
+```
+
+`DIRECT_SEND` combine applies the source FP32 routing weights by default while
+accumulating the top-k BF16 route rows. If the MoE output is already weighted,
+disable the second multiplication for that call:
+
+```python
+combined = communicator.combine(route_output, handle, apply_router_weights=False)
 ```
 
 Rank-major storage is selected once from the configured combine mode.

@@ -183,7 +183,7 @@ class ExpandedTests(unittest.TestCase):
             )
             self.assertIsInstance(handle._context, api["_RankMajorTopkExpandedCombineContext"])
             runtime.combine(output.tokens, handle, out=Tensor((2, 5120), pointer=0x900000), stream=None)
-            self.assertEqual(trace[0][1][-2], expected[0])
+            self.assertEqual(trace[0][1][-3], expected[0])
             self.assertEqual(trace[1][1][-2], expected[1])
         for requested in ((32, 2), (32, 0), (3, 16), (32,), True, [32, 16], (32, False)):
             with self.assertRaises((ValueError, TypeError)):

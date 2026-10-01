@@ -174,6 +174,7 @@ __device__ void dispatchSendRankMajorTopkExpandedBf16(void* output, int* outputI
     const size_t selection = static_cast<size_t>(token) * topk + lane;
     const int64_t expert = lane < topk ? topkIds[selection] : -1;
     const int destination = validExpert(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
+    const bool sendsPayload = !work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane);
     const float weight = lane < topk ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
     const size_t row = static_cast<size_t>(transport.rank_) * rowsPerRank + selection;
     if (lane == 0) send.bulkBarrier_->wait(send.bulkPhase_);
@@ -198,14 +199,14 @@ __device__ void dispatchSendRankMajorTopkExpandedBf16(void* output, int* outputI
         wgts[offset] = local ? weight : 0.0f;
       }
     }
-    if (destination >= 0 && transport.isNvlinkPeer(destination)) {
+    if (sendsPayload && destination >= 0 && transport.isNvlinkPeer(destination)) {
       auto* remote = static_cast<uint8_t*>(transport.mappedBuffer(output, destination)) + row * bytes;
       mscclpp::bulkStore(remote, send.stagedToken_, bytes);
       mscclpp::bulkStoreCommit();
       mscclpp::bulkStoreWait();
     }
 #if defined(MSCCLPP_USE_GPUNETIO)
-    const bool remote = destination >= 0 && !transport.isNvlinkPeer(destination);
+    const bool remote = sendsPayload && destination >= 0 && !transport.isNvlinkPeer(destination);
     if (__any_sync(0xffffffff, remote)) {
       auto* staged = reinterpret_cast<int4*>(static_cast<uint8_t*>(layout.gpuNetIoStagingBuffer_) +
                                              static_cast<size_t>(token) * layout.gpuNetIoSlotStride_);
@@ -616,7 +617,7 @@ void launchDispatch(void* output, int* ids, float* weightsOut, int* count, const
                     const float* weights, const Workload& work, const DeviceContext& context, int blocks,
                     cudaStream_t stream) {
   const size_t shared = dispatchSharedBytes<Hidden>(context.numRanks_, work.numTopk_);
-  if (context.expandedGpuNetIoFastPath_) {
+  if (context.expandedGpuNetIoFastPath_ && !work.deduplicateExpandedRoutes_) {
     static thread_local KernelConfigCache netConfig;
     EP_HOST_ASSERT(
         configureKernel(gpunetio_fast::dispatchKernel<Hidden>, DispatchNThreads, shared, context, netConfig) >= blocks);
@@ -624,7 +625,7 @@ void launchDispatch(void* output, int* ids, float* weightsOut, int* count, const
         output, ids, weightsOut, count, input, topkIds, weights, work, context.devicePtr_);
     return;
   }
-  if (context.expandedIpcFastPath_) {
+  if (context.expandedIpcFastPath_ && !work.deduplicateExpandedRoutes_) {
     static thread_local KernelConfigCache ipcConfig;
     EP_HOST_ASSERT(configureKernel(ipc::dispatchKernel<Hidden>, DispatchNThreads, shared, context, ipcConfig) >=
                    blocks);
