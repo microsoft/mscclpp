@@ -67,7 +67,6 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
   auto* tiles = reinterpret_cast<uint8_t*>(sharedMem) + control;
   auto* tile = tiles + group * stride;
   auto* barrier = reinterpret_cast<mscclpp::BulkBarrier*>(tiles + DispatchMaxNWarpGroups * stride) + group;
-  auto* completed = sharedMem + sendSlots + group * ranks;
   const int first = (blockIdx.x - 1) * groups + group;
   const int step = workers * groups;
   const int localExperts = work.numExperts_ / ranks;
@@ -75,9 +74,8 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
   constexpr size_t bytes = Hidden * sizeof(ElementType);
   constexpr int inputVectors = Hidden / mscclpp::bf16x8::Size;
   uint32_t phase = 0;
+  int completedTokens = 0;
   if (lane == 0 && first < work.numTokens_) barrier->init();
-  for (int peer = lane; peer < ranks; peer += WARP_SIZE) completed[peer] = 0;
-  __syncwarp();
   for (int token = first; token < work.numTokens_; token += step) {
     if constexpr (DataType == DispatchDataType::BF16) {
       if (lane == 0) {
@@ -115,16 +113,15 @@ __device__ void send(void* output, int* outputIds, float* outputWeights, const v
       mscclpp::bulkStoreCommit();
       mscclpp::bulkStoreWait();
     }
-    if (lane < work.numTopk_)
-      for (int peer = 0; peer < ranks; ++peer) atomicAdd_block(completed + peer, 1);
+    ++completedTokens;
     __syncwarp();
   }
   __threadfence_system();
   __syncwarp();
   for (int peer = lane; peer < ranks; peer += WARP_SIZE)
-    if (completed[peer])
-      mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(state.dispatchRankPayloadCompletions_ + peer, completed[peer],
-                                                         mscclpp::memoryOrderRelease);
+    if (completedTokens != 0)
+      mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(state.dispatchRankPayloadCompletions_ + peer,
+                                                         completedTokens * work.numTopk_, mscclpp::memoryOrderRelease);
 }
 
 __device__ void notify(int* outputIds, float* outputWeights, const int64_t* topkIds, const Workload& work,

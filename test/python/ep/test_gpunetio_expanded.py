@@ -735,6 +735,8 @@ int main() {
         self.assertIn("DispatchElementType<DataType>", ipc_send)
         self.assertIn("quantizeBf16x8ToFp8E4M3", ipc_send)
         self.assertIn("!work.deduplicateExpandedRoutes_ || isFirstLaneForRank(destination, lane)", ipc_send)
+        self.assertIn("completedTokens * work.numTopk_", ipc_send)
+        self.assertNotIn("atomicAdd_block", ipc_send)
         self.assertIn("ipc::ready(*readyState", function(current, "recvRankMajorTopkExpandedRemotePartialsTma"))
         self.assertIn("ipc::ready(*readyState", function(current, "recvRankMajorTopkExpandedRemotePartials"))
 
