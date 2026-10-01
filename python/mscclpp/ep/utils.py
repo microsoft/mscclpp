@@ -10,8 +10,8 @@ from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 
-from ._cpp import DispatchDataType
-from .types import QuantConfig
+from ._cpp import DispatchDataType, DispatchLayout, MoEMode
+from .types import MoECommunicatorConfig, QuantConfig
 
 
 def requires_initialized(method):
@@ -57,6 +57,52 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
     if data_type == DispatchDataType.BF16 and quant.block_scales is not None:
         raise ValueError("BF16 dispatch does not accept block_scales")
     return data_type
+
+
+def validate_quant(
+    quant: Optional[QuantConfig], mode: MoEMode, layout: DispatchLayout, hidden: int
+) -> DispatchDataType:
+    """Validate the mode-specific dispatch quantization contract."""
+    data_type = resolve_dispatch_data_type(quant)
+    if mode == MoEMode.LATENCY and quant is not None and quant.block_scales is not None:
+        raise ValueError("latency dispatch quantizes BF16 input; precomputed block_scales are unsupported")
+    if data_type == DispatchDataType.FP8_E4M3:
+        if hidden % 128:
+            raise ValueError("FP8 dispatch requires hidden_size to be a multiple of 128")
+        if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR:
+            raise ValueError("latency RANK_MAJOR supports BF16 dispatch only")
+    return data_type
+
+
+def resolve_dispatch_format(
+    config: MoECommunicatorConfig, quant: Optional[QuantConfig]
+) -> Tuple[DispatchDataType, Optional[torch.Tensor]]:
+    """Resolve a per-call format override or the communicator's quantization default."""
+    quant = config.quant if quant is None else quant
+    data_type = validate_quant(quant, config.mode, config.output_layout, config.hidden_size)
+    return data_type, None if quant is None else quant.block_scales
+
+
+def verify_active_capacity(active: Optional[int], capacity: int) -> int:
+    """Verify active capacity against the configured allocation limit."""
+    active = capacity if active is None else active
+    if type(active) is not int or not 0 < active <= capacity:
+        raise ValueError("runtime_max_tokens_per_rank must be positive and not exceed configured capacity")
+    return active
+
+
+def dispatch_shape(config: MoECommunicatorConfig, num_ranks: int, active: int) -> tuple:
+    """Return the dispatch shape for a resolved configuration and active capacity."""
+    if config.output_layout == DispatchLayout.EXPERT_MAJOR:
+        return config.num_local_experts, num_ranks * active, config.hidden_size
+    if config.output_layout == DispatchLayout.RANK_MAJOR:
+        return num_ranks, active, config.hidden_size
+    return num_ranks * active, config.hidden_size
+
+
+def payload_dtype(data_type: DispatchDataType) -> torch.dtype:
+    """Return the PyTorch dtype of the dispatched payload."""
+    return torch.bfloat16 if data_type == DispatchDataType.BF16 else torch.float8_e4m3fn
 
 
 def ptr(tensor: Optional[torch.Tensor]) -> int:
