@@ -30,7 +30,8 @@ struct PrepareHandle::Impl {
         topkIdx_(request.topkIdx),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
-        numBlocks_(request.numBlocks) {}
+        numBlocks_(request.numBlocks),
+        stream_(request.stream) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
   // Snapshot of the routing workspace's generation; a new prepare invalidates this handle.
@@ -39,6 +40,7 @@ struct PrepareHandle::Impl {
   int numTokens_;
   int maxTokensPerRank_;
   int numBlocks_;
+  cudaStream_t stream_;
 };
 
 struct DispatchHandle::Impl {

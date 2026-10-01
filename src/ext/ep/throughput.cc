@@ -216,8 +216,9 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
       EP_THROW("Stale preparation handle: a newer preparation has replaced its metadata");
     }
     if (metadata.topkIdx_ != request.topkIdx || metadata.numTokens_ != request.numTokens ||
-        metadata.maxTokensPerRank_ != request.maxTokensPerRank || metadata.numBlocks_ != request.numBlocks) {
-      EP_THROW("Dispatch routing IDs, token counts, capacity, and block count must match the preparation");
+        metadata.maxTokensPerRank_ != request.maxTokensPerRank || metadata.numBlocks_ != request.numBlocks ||
+        metadata.stream_ != request.stream) {
+      EP_THROW("Dispatch routing IDs, token counts, capacity, block count, and stream must match the preparation");
     }
   } else {
     preparation = prepare(prepareRequest);

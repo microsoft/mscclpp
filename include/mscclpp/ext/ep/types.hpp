@@ -65,8 +65,10 @@ struct PrepareRequest {
   /// recomputes preparation.
   const int64_t* topkIdx;
   /// Number of local input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
   int numTokens;
   /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in preparation and dispatch.
   int maxTokensPerRank;
   /// Requested grid block count for subsequent dispatches.
   int numBlocks;
@@ -128,8 +130,10 @@ struct LatencyDispatchRequest {
   /// Optional input top-k weights.
   const float* topkWeights;
   /// Number of input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
   int numTokens;
   /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in dispatch.
   int maxTokensPerRank;
   /// Sentinel written to rank-major padding and non-local expert entries.
   /// Defaults to -1.
@@ -165,8 +169,10 @@ struct ThroughputDispatchRequest {
   /// Optional input top-k weights.
   const float* topkWeights;
   /// Number of input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
   int numTokens;
   /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in preparation and dispatch.
   int maxTokensPerRank;
   /// Requested dispatch payload format.
   DispatchDataType dispatchDataType;
@@ -177,7 +183,7 @@ struct ThroughputDispatchRequest {
   /// Routing metadata returned by MoERuntime::prepare().
   ///
   /// An empty handle requests automatic preparation. For a non-empty handle,
-  /// topkIdx, numTokens, maxTokensPerRank, and numBlocks must match the preparation.
+  /// topkIdx, numTokens, maxTokensPerRank, numBlocks, and stream must match the preparation.
   /// Request explicit preparation when output counts are required.
   /// All ranks must agree on whether to reuse preparation or compute it automatically.
   /// This dispatch must use the same CUDA stream as preparation.

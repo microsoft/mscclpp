@@ -331,21 +331,22 @@ struct ThroughputExpectation {
   int totalRows = 0;
 };
 
-ThroughputExpectation makeThroughputExpectation(mscclpp::ep::DispatchLayout layout, int rank, int numTokens,
+ThroughputExpectation makeThroughputExpectation(mscclpp::ep::DispatchLayout layout, int rank,
+                                                const std::array<int, NumRanks>& numTokensPerRank, int maxTokensPerRank,
                                                 int numExperts) {
   const int numLocalExperts = numExperts / NumRanks;
   ThroughputExpectation expectation;
   if (layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR) {
     expectation.outputCount.assign(numLocalExperts, 0);
-    expectation.rowWeights.reserve(static_cast<size_t>(NumRanks) * numTokens);
+    expectation.rowWeights.reserve(static_cast<size_t>(NumRanks) * maxTokensPerRank);
   } else {
     expectation.outputCount.assign(NumRanks, 0);
-    expectation.rowWeights.assign(static_cast<size_t>(NumRanks) * numTokens, 0.0f);
+    expectation.rowWeights.assign(static_cast<size_t>(NumRanks) * maxTokensPerRank, 0.0f);
   }
 
   std::vector<int> rankOffsets(NumRanks, 0);
   for (int source = 0; source < NumRanks; ++source) {
-    for (int token = 0; token < numTokens; ++token) {
+    for (int token = 0; token < numTokensPerRank[source]; ++token) {
       float localWeight = 0.0f;
       for (int expert : routedExperts(source, token, numExperts)) {
         if (expert >= 0 && expert < numExperts && expert / numLocalExperts == rank) {
@@ -359,7 +360,7 @@ ThroughputExpectation makeThroughputExpectation(mscclpp::ep::DispatchLayout layo
       if (layout == mscclpp::ep::DispatchLayout::TOKEN_MAJOR) {
         expectation.rowWeights.push_back(localWeight);
       } else {
-        expectation.rowWeights[static_cast<size_t>(source) * numTokens + rankOffsets[source]] = localWeight;
+        expectation.rowWeights[static_cast<size_t>(source) * maxTokensPerRank + rankOffsets[source]] = localWeight;
         ++expectation.outputCount[source];
         ++rankOffsets[source];
       }
@@ -372,9 +373,7 @@ ThroughputExpectation makeThroughputExpectation(mscclpp::ep::DispatchLayout layo
   return expectation;
 }
 
-std::string checkThroughputCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout, int rank, int numTokens,
-                                  int numExperts) {
-  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, numTokens, numExperts);
+std::string checkThroughputCounts(const int* outputCount, const ThroughputExpectation& expectation) {
   std::vector<int> hostCount(expectation.outputCount.size());
   MSCCLPP_CUDATHROW(cudaMemcpy(hostCount.data(), outputCount, hostCount.size() * sizeof(int), cudaMemcpyDeviceToHost));
   for (size_t index = 0; index < hostCount.size(); ++index) {
@@ -488,12 +487,18 @@ struct ThroughputTestCase {
   int hidden = CorrectnessHidden;
   int runtimeCapacity = CorrectnessTokens;
   mscclpp::ep::DispatchDataType dataType = mscclpp::ep::DispatchDataType::BF16;
+  bool varyTokensByRank = false;
 };
 
 void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
                                   mscclpp::ep::DispatchLayout layout, ThroughputTestCase testCase = {}) {
   const bool prepared = testCase.usePreparation;
-  const int numTokens = testCase.numTokens;
+  const int maxTokensPerRank = testCase.numTokens;
+  std::array<int, NumRanks> numTokensPerRank;
+  for (int source = 0; source < NumRanks; ++source) {
+    numTokensPerRank[source] = testCase.varyTokensByRank ? source + 1 : testCase.numTokens;
+  }
+  const int numTokens = numTokensPerRank[rank];
   const int hidden = testCase.hidden;
   const bool useFp8 = testCase.dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
   const int numScales = useFp8 ? hidden / 128 : 0;
@@ -517,7 +522,8 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   }
   const void* input = useFp8 ? static_cast<const void*>(fp8Input.data()) : buffers.input.data();
 
-  const ThroughputExpectation expectation = makeThroughputExpectation(layout, rank, numTokens, NumExperts);
+  const ThroughputExpectation expectation =
+      makeThroughputExpectation(layout, rank, numTokensPerRank, maxTokensPerRank, NumExperts);
   mscclpp::GpuBuffer<float> rowWeights(expectation.totalRows > 0 ? static_cast<size_t>(expectation.totalRows) : 1);
   if (expectation.totalRows > 0) {
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(rowWeights.data(), expectation.rowWeights.data(),
@@ -536,26 +542,28 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   auto prepare = [&] {
     return runtime->prepare({.topkIdx = buffers.topkIdx.data(),
                              .numTokens = numTokens,
-                             .maxTokensPerRank = numTokens,
+                             .maxTokensPerRank = maxTokensPerRank,
                              .numBlocks = dispatchBlocks,
                              .stream = stream,
                              .outputCount = buffers.outputCount.data()});
   };
   if (prepared) preparation = prepare();
 
+  mscclpp::ep::ThroughputDispatchRequest request{
+      .input = input,
+      .inputScales = useFp8 ? inputScales.data() : nullptr,
+      .topkIdx = buffers.topkIdx.data(),
+      .topkWeights = buffers.topkWeights.data(),
+      .numTokens = numTokens,
+      .maxTokensPerRank = maxTokensPerRank,
+      .dispatchDataType = testCase.dataType,
+      .numBlocks = dispatchBlocks,
+      .stream = stream,
+      .prepareHandle = preparation,
+  };
   auto operation = [&] {
-    const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::ThroughputDispatchRequest{
-        .input = input,
-        .inputScales = useFp8 ? inputScales.data() : nullptr,
-        .topkIdx = buffers.topkIdx.data(),
-        .topkWeights = buffers.topkWeights.data(),
-        .numTokens = numTokens,
-        .maxTokensPerRank = numTokens,
-        .dispatchDataType = testCase.dataType,
-        .numBlocks = dispatchBlocks,
-        .stream = stream,
-        .prepareHandle = preparation,
-    }});
+    request.prepareHandle = preparation;
+    const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{request});
 
     if (expectation.totalRows > 0) {
       if (useFp8) {
@@ -580,8 +588,7 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   if (prepared) operation();
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  std::string error =
-      prepared ? checkThroughputCounts(buffers.outputCount.data(), layout, rank, numTokens, NumExperts) : "";
+  std::string error = prepared ? checkThroughputCounts(buffers.outputCount.data(), expectation) : "";
   if (error.empty()) {
     error = checkOutput(buffers.output.data(), rank, numTokens, hidden, 0.0f, valueModulo);
   }
@@ -603,12 +610,13 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
   constexpr int LocalExperts = NumExperts / NumRanks;
   for (int source = 0; source < NumRanks; ++source) {
     int rankRow = 0;
-    for (int token = 0; token < numTokens; ++token) {
+    for (int token = 0; token < numTokensPerRank[source]; ++token) {
       const auto experts = routedExperts(source, token, NumExperts);
       const bool selected =
           std::any_of(experts.begin(), experts.end(), [&](int expert) { return expert / LocalExperts == rank; });
       if (!selected) continue;
-      const int row = layout == mscclpp::ep::DispatchLayout::RANK_MAJOR ? source * numTokens + rankRow++ : compactRow++;
+      const int row =
+          layout == mscclpp::ep::DispatchLayout::RANK_MAJOR ? source * maxTokensPerRank + rankRow++ : compactRow++;
       for (int topk = 0; topk < NumTopk; ++topk) {
         const int localExpert = experts[topk] / LocalExperts == rank ? experts[topk] % LocalExperts : -1;
         const size_t index = static_cast<size_t>(row) * NumTopk + topk;
@@ -617,7 +625,7 @@ void runThroughputCorrectnessCase(mscclpp::Communicator& communicator, int rank,
       }
       for (int scale = 0; scale < numScales; ++scale) {
         EXPECT_EQ(scales[static_cast<size_t>(row) * numScales + scale],
-                  testTokenValue(source, numTokens, token, valueModulo));
+                  testTokenValue(source, numTokensPerRank[source], token, valueModulo));
       }
     }
   }
@@ -969,6 +977,13 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       runThroughputCorrectnessCase(
           *communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
           {.usePreparation = true, .runtimeCapacity = 2 * CorrectnessTokens, .dataType = dataType});
+      for (const bool prepared : {false, true}) {
+        runThroughputCorrectnessCase(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, layout,
+                                     {.usePreparation = prepared,
+                                      .runtimeCapacity = 2 * CorrectnessTokens,
+                                      .dataType = dataType,
+                                      .varyTokensByRank = true});
+      }
       runThroughputCorrectnessCase(*communicator, gEnv->rank, 3, combineBlocks_, layout,
                                    {.numTokens = 67, .hidden = 9216, .runtimeCapacity = 96, .dataType = dataType});
     }
