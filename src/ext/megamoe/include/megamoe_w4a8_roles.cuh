@@ -8,7 +8,8 @@
 
 namespace mscclpp::megamoe::detail {
 
-__device__ __forceinline__ void dispatchW4A8Tokens(const W4A8Parameters& p, W4A8SharedStorage& s, int localWarp) {
+template <class P>
+__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   constexpr int ScaleStageBytes = W4ScaleChunkBytes / 2;
   static_assert((W4DispatchChunk / 32 + 15) / 16 * 16 <= ScaleStageBytes);
@@ -82,9 +83,9 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const W4A8Parameters& p, W4A8
 #endif
 }
 
-template <class TmemStorage>
+template <class P, class TmemStorage>
 __device__ __forceinline__ void runW4A8MainloopRole(
-    const W4A8Parameters& p, W4A8SharedStorage& s, W4A8CollectiveTypes::Load& loadPipeline,
+    const P& p, W4A8SharedStorage& s, W4A8CollectiveTypes::Load& loadPipeline,
     W4A8CollectiveTypes::Load& activationPipeline, W4A8CollectiveTypes::Accumulate& accumulatePipeline,
     W4A8CollectiveTypes::Mainloop& fc1, W4A8CollectiveTypes::Mainloop& fc2, const ProblemShape& shape1,
     const ProblemShape& shape2, TmemStorage tmemStorage, int hidden, int intermediate, int warp, int lane, int cta,

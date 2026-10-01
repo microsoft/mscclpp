@@ -417,7 +417,7 @@ KernelResources preflightKernel(const NativeConfig& c) {
   };
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
   if (c.weightMxfp4) {
-    configure(detail::w4a8KernelEntry(), detail::W4Threads, detail::EntryRegisters, sizeof(detail::W4A8SharedStorage));
+    configure(detail::w4a8KernelEntry(c), detail::W4Threads, detail::EntryRegisters, sizeof(detail::W4A8SharedStorage));
     return resources;
   }
 #endif
@@ -505,7 +505,7 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
                 params, tokens, static_cast<const __bfloat16*>(input), ids, scores);
             MSCCLPP_CUDATHROW(cudaGetLastError());
           }
-          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(), params, tokens,
+          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config), params, tokens,
                                                static_cast<__bfloat16*>(output), startSignal));
           return;
         }

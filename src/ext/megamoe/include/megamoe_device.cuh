@@ -108,9 +108,11 @@ __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidd
   return chunk == chunks - 1 ? w.inputReady + block : w.inputChunkReady + size_t(block) * (chunks - 1) + chunk;
 }
 
-template <class Types, bool E5M2, bool Local, bool Mxfp4 = false>
+template <class Types, bool E5M2, bool Local, bool Mxfp4 = false, bool Borrowed = false>
 struct KernelParameters {
   static_assert(!Mxfp4 || (!E5M2 && !Local));
+  template <class T>
+  using Resource = std::conditional_t<Borrowed, const T&, T>;
   using Collective = Types;
   using Tiles = TilePolicy<Local, Mxfp4>;
   static constexpr int ThreadCount = Local ? LocalThreads : (Mxfp4 ? W4Threads : Threads);
@@ -118,14 +120,14 @@ struct KernelParameters {
   static constexpr bool WeightMxfp4 = Mxfp4;
   static constexpr bool LocalExpert = Local;
   NativeConfig config;
-  SymmetricLayout symmetric;
-  Workspace workspace;
+  Resource<SymmetricLayout> symmetric;
+  Resource<Workspace> workspace;
   void* local;
   const uint64_t* peers;
-  cutlass::FastDivmod fc1TaskDivisor;
-  cutlass::FastDivmod fc2TaskDivisor;
-  typename Types::Mainloop::Params fc1;
-  typename Types::Mainloop::Params fc2;
+  Resource<cutlass::FastDivmod> fc1TaskDivisor;
+  Resource<cutlass::FastDivmod> fc2TaskDivisor;
+  Resource<typename Types::Mainloop::Params> fc1;
+  Resource<typename Types::Mainloop::Params> fc2;
 };
 
 template <bool E5M2, bool Local = false>
@@ -140,9 +142,15 @@ KernelEntry<E5M2, LocalMode> kernelEntry();
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
 using W4A8Parameters = KernelParameters<W4A8CollectiveTypes, false, false, true>;
+using W4A8ParameterView = KernelParameters<W4A8CollectiveTypes, false, false, true, true>;
+
+// Borrow grid-constant launch resources while owning only the specialized configuration.
+__device__ __forceinline__ W4A8ParameterView w4a8ParameterView(const W4A8Parameters& p, NativeConfig config) {
+  return {config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
+}
 
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*);
-W4A8KernelEntry w4a8KernelEntry();
+W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config);
 #endif
 
 struct DispatchStorage {

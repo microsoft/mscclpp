@@ -78,7 +78,8 @@ __device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat
     epilogue<LocalMode, Schedule>(p, taskAt(p, i, tokens, hidden, intermediate), s, pipeline, state, accumulators,
                                   output, hidden, intermediate);
 #if MSCCLPP_BULK_AVAILABLE
-  if constexpr (Local) {
+  if constexpr (Local || P::WeightMxfp4) {
+    // Deferred peer stores must land before the CTA publishes its completion.
     if (threadIdx.x % 32 == 0) bulkStoreWait();
   }
 #endif

@@ -202,8 +202,8 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     assert context.effective_kernel_config == {
         "tile_m": 256,
         "tile_n": 64,
-        "tile_k": 256,
-        "load_stages": 4,
+        "tile_k": 128,
+        "load_stages": 9,
         "transform_stages": 0,
     }
     inputs = torch.randn((tokens, hidden), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)

@@ -41,6 +41,10 @@ W8A16 and W4A8 share the `KernelParameters` aggregate, `TilePolicy`, epilogue
 scratch layout, task indexing, and epilogue warp loop. Their common epilogue
 handles TMEM reads, SwiGLU staging, BF16 output packing and peer stores; compile-time
 branches preserve each precision's activation handoff and router-weight placement.
+Per-store waits require only shared-source consumption for both precisions.
+Routed W8A16 still drains destination completion at each chunk boundary, before
+publishing FC1 `hiddenReady` or reaching the peer-completion join. Local W8A16
+and W4A8 drain shared-source reads per chunk and destination writes at role exit.
 Host parameter construction, weight-value packing, resource checks and cluster
 launch configuration are also shared. W8A16's weight transform and W4A8's
 block-scaled MMA/chunk-ready dispatch remain separate algorithms in
@@ -96,7 +100,7 @@ FP32 top-k combination.
 Dispatch double-buffers 2 KiB input chunks with their corresponding K32 scales.
 Each chunk is published only after its values have reached the local input pool
 and its scales are visible in the MMA layout. The activation loader waits for all
-valid rows of the current N tile's chunk, then issues its K256 TMA loads; MMA
+valid rows of the current N tile's chunk, then issues its K128 TMA loads; MMA
 consumes completed pipeline stages without waiting for the rest of the H dimension.
 The last chunk also marks the full row ready. Chunk counters are reset on every
 forward, including CUDA Graph replay; partial chunks retain the H/I multiple-of-128
@@ -111,8 +115,8 @@ The final completing CTA publishes GPU completion after acquiring all preceding
 CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
 
 The W4A8 path is routed-only and uses the builtin SM100
-M256/N64/K256/load4 block-scaled specialization with 16 warps. Separate weight
-and activation loader warps share a four-stage pipeline. Both must publish their
+M256/N64/K128/load9 block-scaled specialization with 16 warps. Separate weight
+and activation loader warps share a nine-stage pipeline. Both must publish their
 TMA transaction counts before a stage can become ready. Mainloop warps retain
 128 registers, independently of the 32-register dispatch warps. FC1 quantization
 uses warp reductions over live token groups without staging the activated values
@@ -125,6 +129,16 @@ weights for a second 32-token tile when an expert receives slightly more than
 inside every device role. Experimental N32 configurations retain a 64-row storage
 pitch for even TMEM scale-column alignment. K tails are zero-filled by TMA,
 preserving support for H/I divisible by 128.
+FC2 peer stores wait only for shared-source consumption between chunks; every
+issuing epilogue warp drains destination completion before the CTA publishes its
+arrival. This overlaps return traffic without weakening peer visibility.
+E8M0 scale selection compares FP32 exponent/mantissa bits directly, preserving
+the ceiling-power-of-two rule without a floating-point division.
+Unclamped EP4 contexts with capacity 64, 64 experts, top-8, H9216, and I4096 or
+I4608 select configuration-specialized kernels. Launch resources are borrowed
+from grid-constant parameters rather than copied into thread-local memory.
+Other capacities, shapes, expert/top-k counts, and clamped activations retain
+the generic kernel; preflight and forward use the same selection rule.
 Local shared experts and routed
 JIT specializations remain W8A16; passing a custom `KernelConfig` with
 `weight_mxfp4=True` is rejected.

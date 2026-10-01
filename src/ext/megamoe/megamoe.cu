@@ -172,14 +172,26 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 }
 #endif
 
-__global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters p, int tokens,
-                                                            __bfloat16* output, uint32_t* startSignal) {
+template <int Hidden = 0, int Intermediate = 0>
+__global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
+                                                            int tokens, __bfloat16* output, uint32_t* startSignal) {
   using namespace cute;
   using Types = W4A8CollectiveTypes;
   using Mainloop = Types::Mainloop;
   using Load = Types::Load;
   using Accumulate = Types::Accumulate;
   using Schedule = W4A8WarpSchedule;
+  NativeConfig configuration = parameters.config;
+  if constexpr (Hidden != 0) {
+    configuration.worldSize = 4;
+    configuration.maxTokens = 64;
+    configuration.hidden = Hidden;
+    configuration.intermediate = Intermediate;
+    configuration.numExperts = 64;
+    configuration.topK = 8;
+    configuration.gateUpClamp = -1.0f;
+  }
+  auto p = w4a8ParameterView(parameters, configuration);
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorage*>(storage);
   int warp = threadIdx.x / 32;
@@ -305,7 +317,14 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   traceW4(W4TracePhase::Combine, false);
 }
 
-W4A8KernelEntry w4a8KernelEntry() { return megaMoeW4A8; }
+W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
+  if (config.worldSize == 4 && config.maxTokens == 64 && config.numExperts == 64 && config.topK == 8 &&
+      config.gateUpClamp < 0 && config.hidden == 9216) {
+    if (config.intermediate == 4096) return megaMoeW4A8<9216, 4096>;
+    if (config.intermediate == 4608) return megaMoeW4A8<9216, 4608>;
+  }
+  return megaMoeW4A8<>;
+}
 #endif
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

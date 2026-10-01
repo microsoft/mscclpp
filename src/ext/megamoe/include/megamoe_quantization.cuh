@@ -10,12 +10,12 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 __device__ __forceinline__ uint8_t quantizeE8M0Scale(float maximum) {
   if (maximum == 0.0f) return 127;
-  float scale = maximum / 448.0f;
-  uint32_t bits = __float_as_uint(scale);
+  uint32_t bits = mscclpp::bit_cast<uint32_t>(maximum);
   uint32_t exponent = (bits >> 23) & 0xff;
-  uint32_t mantissa = bits & 0x7fffff;
-  uint32_t roundUp = mantissa != 0 && (exponent != 0 || mantissa > 0x400000);
-  return uint8_t(max(1u, min(exponent + roundUp, 254u)));
+  if (exponent == 0xff) return 254;
+  // 448 = 1.75 * 2^8; compare the significand directly instead of dividing.
+  int scale = int(exponent) - 8 + int((bits & 0x7fffff) > 0x600000);
+  return uint8_t(max(1, min(scale, 254)));
 }
 
 __device__ __forceinline__ float inverseE8M0Scale(uint8_t scale) {

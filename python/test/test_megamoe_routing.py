@@ -460,8 +460,8 @@ def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, dire
     [
         pytest.param(None, False, False, -1.0, False, id="N32L8T7-e4-staged"),
         pytest.param(None, True, False, 0.125, True, id="N32L8T7-e5-clamp-direct"),
-        pytest.param(None, False, True, 0.125, False, id="W4A8-N64K256L4-staged"),
-        pytest.param(None, False, True, -1.0, True, id="W4A8-N64K256L4-direct"),
+        pytest.param(None, False, True, 0.125, False, id="W4A8-N64K128L9-staged"),
+        pytest.param(None, False, True, -1.0, True, id="W4A8-N64K128L9-direct"),
         pytest.param((32, 6, 7), False, False, 0.125, False, marks=_JIT_ONLY, id="N32L6T7-e4-clamp"),
         pytest.param((64, 6, 6), True, False, -1.0, True, marks=_JIT_ONLY, id="N64L6T6-e5-direct"),
         pytest.param((128, 4, 4), False, False, -1.0, False, marks=_JIT_ONLY, id="N128L4T4-e4-staged"),
@@ -479,8 +479,8 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         e5m2=e5m2,
         mxfp4=mxfp4,
         clamp=clamp,
-        hidden=384 if mxfp4 else 128,
-        intermediate=640 if mxfp4 else 256,
+        hidden=384,
+        intermediate=640,
     )
     assert config.world_size * config.max_tokens * config.top_k <= 1024
     weights = _host_weights(config)
@@ -497,8 +497,8 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
                 assert context.effective_kernel_config == {
                     "tile_m": 256,
                     "tile_n": 64,
-                    "tile_k": 256,
-                    "load_stages": 4,
+                    "tile_k": 128,
+                    "load_stages": 9,
                     "transform_stages": 0,
                 }
             if kernel_values is None:
@@ -533,3 +533,50 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
                         graphs[nominal].replay()
                 case.stream.synchronize()
                 _check_output(runtime, buffers, sample, expected)
+
+
+@pytest.mark.parametrize(
+    "capacity,intermediate,clamp",
+    [(64, 4096, -1.0), (64, 4608, -7.0), (65, 4096, -1.0), (64, 4096, 0.125)],
+    ids=["specialized-4k", "specialized-4k5", "generic-capacity", "generic-clamp"],
+)
+def test_native_w4a8_configuration_selection_graph_reuse(routing_runtime, capacity, intermediate, clamp):
+    runtime, torch = routing_runtime, routing_runtime.torch
+    if runtime.world != 4:
+        pytest.skip("requires four ranks to exercise the EP4 configuration specialization")
+    config = runtime.config(
+        capacity,
+        local_experts=16,
+        top_k=8,
+        mxfp4=True,
+        clamp=clamp,
+        hidden=9216,
+        intermediate=intermediate,
+    )
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights)
+        storage = _buffers(runtime, context)
+        graphs = {}
+        counts = {count: max(0, count - runtime.rank) for count in (0, 1, capacity)}
+        for nominal, tokens in counts.items():
+            with torch.cuda.stream(case.stream):
+                _stage(storage, _sample(config, tokens, "hot_first"))
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            graphs[nominal] = graph
+        for nominal in (capacity, 1, 0, capacity):
+            tokens = counts[nominal]
+            for pattern in ("masked", "hot_last", "mixed"):
+                sample = _sample(config, tokens, pattern)
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    for _ in range(3):
+                        graphs[nominal].replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)

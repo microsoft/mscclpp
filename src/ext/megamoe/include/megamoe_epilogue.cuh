@@ -198,9 +198,9 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
       }
     }
     bulkStoreCommit();
-    bulkStoreWait<4>();
+    bulkStoreWaitSource<4>();
   }
-  if constexpr (Local) {
+  if constexpr (Local || P::WeightMxfp4) {
     bulkStoreWaitSource();
   } else {
     bulkStoreWait();
