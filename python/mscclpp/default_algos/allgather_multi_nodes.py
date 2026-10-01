@@ -219,7 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--num_gpus", type=int, required=True)
     parser.add_argument("--gpus_per_node", type=int, required=True)
-    parser.add_argument("--tbg", type=int, default=1, help="thread block group size")
+    parser.add_argument("--thread_block_group_size", type=int, default=1, help="thread block group size")
     parser.add_argument("--num_threads_per_block", type=int, default=1024)
     parser.add_argument("--min_message_size", type=int, default=1 << 10)
     parser.add_argument("--max_message_size", type=int, default=8 << 20)
@@ -246,5 +246,5 @@ if __name__ == "__main__":
         max_message_size=args.max_message_size,
         tags={"default": 1},
     )
-    program = allgather_multi_nodes(algo_spec, args.tbg)
+    program = allgather_multi_nodes(algo_spec, args.thread_block_group_size)
     print(program.to_json())
