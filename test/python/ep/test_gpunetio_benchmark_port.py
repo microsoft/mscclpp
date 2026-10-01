@@ -530,9 +530,11 @@ class CpuPortTest(unittest.TestCase):
                 (
                     expert.data_ptr(),
                     context.topk_ids.data_ptr(),
-                    context.weights.data_ptr()
-                    if apply_router_weights is True or (apply_router_weights is None and direct)
-                    else 0,
+                    (
+                        context.weights.data_ptr()
+                        if apply_router_weights is True or (apply_router_weights is None and direct)
+                        else 0
+                    ),
                     0 if rank_major else context.src_info.data_ptr(),
                     0 if rank_major else context.layout_range.data_ptr(),
                     result.data_ptr(),

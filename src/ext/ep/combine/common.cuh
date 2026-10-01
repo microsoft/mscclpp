@@ -320,11 +320,10 @@ MSCCLPP_DEVICE_INLINE void synchronizeRankMajorCombine(const TransportView& tran
   workspaceView.combineSyncer_->sync(gridDim.x, -1);
 }
 
-MSCCLPP_DEVICE_INLINE void invalidateRankMajorCombineReady(int nRanks, uint32_t epoch,
-                                                           WorkspaceView& workspaceView) {
+MSCCLPP_DEVICE_INLINE void invalidateRankMajorCombineReady(int nRanks, uint32_t epoch, WorkspaceView& workspaceView) {
   if (blockIdx.x == 0 && threadIdx.x < nRanks) {
-    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(
-        workspaceView.combineRankReadyEpochs_ + threadIdx.x, ~epoch, mscclpp::memoryOrderRelaxed);
+    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadIdx.x, ~epoch,
+                                                         mscclpp::memoryOrderRelaxed);
   }
   workspaceView.combineSyncer_->sync(gridDim.x, -1);
 }

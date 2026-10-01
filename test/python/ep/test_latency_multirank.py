@@ -169,9 +169,7 @@ def parse_args():
             args.num_blocks = tuple(args.num_blocks)
         else:
             parser.error("--num-blocks accepts one value or a dispatch/combine pair")
-    if args.preweighted_direct_send and (
-        args.output_layout != "rank_major" or args.combine_mode != "direct_send"
-    ):
+    if args.preweighted_direct_send and (args.output_layout != "rank_major" or args.combine_mode != "direct_send"):
         parser.error("--preweighted-direct-send requires rank_major direct_send")
     return args
 
