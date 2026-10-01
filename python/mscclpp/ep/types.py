@@ -67,6 +67,9 @@ class MoECommunicatorConfig:
     # Throughput receive-pool tuning (advanced)
     expert_alignment: int = 1
 
+    # Latency expanded-layout tuning (advanced)
+    deduplicate_expanded_routes: bool = False
+
 
 # MLP-facing dispatch output.
 

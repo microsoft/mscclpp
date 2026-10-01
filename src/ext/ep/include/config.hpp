@@ -251,7 +251,10 @@ struct LatencyStorageLayout {
             : 0;
     const size_t gpuNetIoCombineFlagsBytes = gpuNetIoFlagsBytes;
     const size_t gpuNetIoCombineLandingBytes =
-        useGpuNetIo ? configAlign<size_t>(rankMajorDispatchOutputBytes, BufferAlignmentBytes) : 0;
+        useGpuNetIo ? configAlign<size_t>(
+                          rankMajorDirectSend ? rankMajorDirectSendCombineInputBytes : rankMajorDispatchOutputBytes,
+                          BufferAlignmentBytes)
+                    : 0;
     const size_t gpuNetIoRegionBytes =
         gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
     totalBytes_ = baseBytes + gpuNetIoRegionBytes;

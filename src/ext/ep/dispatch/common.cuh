@@ -481,8 +481,8 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
     void* output, int* outputTopkIdx, float* outputTopkWeights, const void* inputTokens, int nExperts, int nRanks,
     const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights, int nTokens, int nTopk,
-    int invalidTokenExpertId, int maxTokensPerRank, const TransportView& transport, void* workspace, int nPayloadBlocks,
-    int* sharedMem) {
+    int invalidTokenExpertId, int maxTokensPerRank, bool deduplicateExpandedRoutes, const TransportView& transport,
+    void* workspace, int nPayloadBlocks, int* sharedMem) {
   RankMajorSendState<Hidden> sendState;
   if (!initRankMajorSendState(sendState, nTokens, nTopk, nRanks, nPayloadBlocks, sharedMem)) return;
 
@@ -500,6 +500,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
     const float weight =
         laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
     const size_t destIndex = (static_cast<size_t>(transport.rank_) * maxTokensPerRank + tokenIdx) * nTopk + laneId;
+    const bool isDestinationLeader = isFirstLaneForRank(dstRank, laneId);
 
     waitRankMajorBf16Token(sendState);
 
@@ -512,7 +513,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpandedBf16(
       }
     }
 
-    if (dstRank >= 0) {
+    if (dstRank >= 0 && (!deduplicateExpandedRoutes || isDestinationLeader)) {
       issueRankMajorTopkExpandedTokenStore<Hidden>(output, transport, dstRank, destIndex, sendState.stagedToken_);
       mscclpp::bulkStoreWait();
     }
@@ -530,17 +531,47 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSendRankMajorTopkExpanded(
     void* output, int* outputTopkIdx, float* outputTopkWeights, const void* inputTokens, const TransportView& transport,
     int nExperts, int nRanks, const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
-    int nTokens, int nTopk, int invalidTokenExpertId, int maxTokensPerRank, void* recvBuffer, void* workspace,
-    uint32_t epoch, int* sharedMem) {
+    int nTokens, int nTopk, int invalidTokenExpertId, int maxTokensPerRank, bool deduplicateExpandedRoutes,
+    void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    dispatchSendRankMajorTopkExpandedBf16<Hidden>(
-        output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
-        nTopk, invalidTokenExpertId, maxTokensPerRank, transport, workspace, nWorkerBlocks, sharedMem);
+    dispatchSendRankMajorTopkExpandedBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts,
+                                                  nRanks, topkIndices, topkWeights, nTokens, nTopk,
+                                                  invalidTokenExpertId, maxTokensPerRank, deduplicateExpandedRoutes,
+                                                  transport, workspace, nWorkerBlocks, sharedMem);
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
     dispatchRankMajorTopkExpandedNotify(transport, outputTopkIdx, outputTopkWeights, nExperts, nRanks, topkIndices,
                                         nTokens, nTopk, maxTokensPerRank, invalidTokenExpertId, recvBuffer, workspace,
                                         epoch, sharedMem);
+  }
+}
+
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void expandRankMajorTopkDuplicateRoutes(void* output, const int* outputTopkIdx, int tokenIdx,
+                                                              int rank, int nExperts, int nRanks, int nTopk,
+                                                              int maxTokensPerRank) {
+  constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
+  const int nLocalExperts = nExperts / nRanks;
+  const int localExpertBegin = nLocalExperts * rank;
+  const int localExpertEnd = localExpertBegin + nLocalExperts;
+  const int laneId = get_lane_id();
+  auto* outputVectors = reinterpret_cast<mscclpp::bf16x8*>(output);
+
+  const size_t routeBase = static_cast<size_t>(tokenIdx) * nTopk;
+  int leaderLane = -1;
+  for (int topkLane = 0; topkLane < nTopk; ++topkLane) {
+    const int expert = outputTopkIdx[routeBase + topkLane];
+    if (expert < localExpertBegin || expert >= localExpertEnd) continue;
+    if (leaderLane < 0) {
+      leaderLane = topkLane;
+      continue;
+    }
+
+    auto* destination = outputVectors + (routeBase + topkLane) * HiddenVectors;
+    const auto* source = outputVectors + (routeBase + leaderLane) * HiddenVectors;
+    for (int vectorIdx = laneId; vectorIdx < HiddenVectors; vectorIdx += WARP_SIZE) {
+      destination[vectorIdx] = source[vectorIdx];
+    }
   }
 }
 
@@ -1294,7 +1325,8 @@ MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* o
     static_assert(DataType == DispatchDataType::BF16);
     dispatchSendRankMajorTopkExpanded<Hidden>(
         output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
-        nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch, sharedMem);
+        nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, workload.deduplicateExpandedRoutes_, recvBuffer,
+        context->workspace_, epoch, sharedMem);
   } else {
     dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
                                                    nTokens, nTopk, maxTokensPerRank, recvBuffer, context->workspace_,

@@ -95,6 +95,8 @@ struct LatencyDispatchRequest {
   int numBlocks;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Send one payload per destination rank and expand duplicate top-k routes locally.
+  bool deduplicateExpandedRoutes = false;
 };
 
 /// Arguments for throughput-mode dispatch.

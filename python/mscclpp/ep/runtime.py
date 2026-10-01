@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import wraps
-from typing import Callable, Optional, ParamSpec, TypeVar
+from typing import Any, Callable, Optional, ParamSpec, TypeVar
 
 import torch
 
@@ -95,5 +95,6 @@ class Runtime(ABC):
         *,
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
+        **kwargs: Any,
     ) -> torch.Tensor:
         raise NotImplementedError
