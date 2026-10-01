@@ -231,6 +231,12 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     context(inputs, ids, scores, output=output)
     torch.cuda.synchronize()
     torch.testing.assert_close(output, reference(), rtol=0.02, atol=0.001)
+    unaligned_storage = torch.empty(tokens * hidden + 1, device=device, dtype=torch.bfloat16)
+    unaligned = unaligned_storage[1:].view(tokens, hidden)
+    assert unaligned.is_contiguous() and unaligned.data_ptr() % 16 != 0
+    unaligned.copy_(inputs)
+    with pytest.raises(ValueError, match="direct input must be 16-byte aligned"):
+        context(unaligned, ids, scores, output=output)
     staged = context.input_view(tokens)
     torch.testing.assert_close(staged, inputs, rtol=0, atol=0)
     if tokens > 1:

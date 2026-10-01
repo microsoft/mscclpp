@@ -112,11 +112,15 @@ live-token-sized set of planner CTAs maps each token once and loops over its
 top-k packets, coordinating count, offset, and fill phases through device epoch
 flags rather than a cross-rank or grid barrier. W8A16 publishes one rank-level
 input-ready epoch after staging; W4A8 publishes per-token readiness after
-quantization. W4A8 fuses BF16 input staging and routing-array copies into input
-quantization; exact input-buffer aliases remain supported, and cross-input
-aliases retain the ordered-copy path. Only live routing rows are consumed, and
-masked slots are excluded from combination rather than requiring a full
-partial-buffer clear.
+quantization. W4A8 input quantization handles activation values and scales only. Aligned
+inputs use one 16-byte `int4` load for eight BF16 values per thread, four
+threads per K32 scale group, and one packed 64-bit FP8 store. Direct BF16 input
+pointers must be 16-byte aligned; cross-input aliases retain the ordered-copy
+path through aligned internal storage. Routing IDs and weights are passed to
+the main kernel, which stages them and publishes epoch-tagged packets at routing
+startup. Exact input-buffer aliases remain supported. Only live routing rows
+are consumed, and masked slots are excluded from combination rather than
+requiring a full partial-buffer clear.
 The final completing CTA publishes GPU completion after acquiring all preceding
 CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
 

@@ -479,6 +479,8 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     validateStage(input(), x, inputBytes);
     validateStage(topkIds(), ids, routingBytes);
     validateStage(topkWeights(), scores, routingBytes);
+    if (tokens && (reinterpret_cast<uintptr_t>(x) & 15))
+      throw std::invalid_argument("MegaMoE W4A8 direct input must be 16-byte aligned");
   } else {
     stage(input(), x, inputBytes, stream);
     stage(topkIds(), ids, routingBytes, stream);

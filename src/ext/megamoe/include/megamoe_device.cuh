@@ -163,7 +163,7 @@ __device__ __forceinline__ W4A8ParameterView w4a8ParameterView(const W4A8Paramet
   return {config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
-using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*);
+using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config);
 #endif
 

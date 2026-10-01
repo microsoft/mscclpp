@@ -172,44 +172,43 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
   }
 }
 
-__global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat16* source, const int32_t* ids,
-                                    const float* scores) {
-  int group = threadIdx.x / 16;
-  int lane = threadIdx.x % 16;
-  int block = blockIdx.x * 8 + group;
+__global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat16* source) {
+  constexpr int ValuesPerThread = 8;
+  constexpr int ThreadsPerBlockScale = 4;
+  constexpr int BlockScalesPerCta = 128 / ThreadsPerBlockScale;
+  int group = threadIdx.x / ThreadsPerBlockScale;
+  int lane = threadIdx.x % ThreadsPerBlockScale;
+  int block = blockIdx.x * BlockScalesPerCta + group;
   int blocks = p.config.hidden / 32;
   bool active = block < blocks;
   uint64_t routeEpoch = *at<uint64_t>(p.local, p.symmetric.epoch) + 1;
-  uint32_t packetFlag = uint32_t(routeEpoch);
   for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
     if (active) {
       auto staged = at<__bfloat16>(p.local, p.symmetric.input) + size_t(token) * p.config.hidden + block * 32;
       auto input = source ? source + size_t(token) * p.config.hidden + block * 32 : staged;
-      auto firstValue = input[2 * lane], secondValue = input[2 * lane + 1];
-      if (input != staged) {
-        staged[2 * lane] = firstValue;
-        staged[2 * lane + 1] = secondValue;
-      }
-      if (blockIdx.x == 0 && threadIdx.x < p.config.topK) {
-        int index = token * p.config.topK + threadIdx.x;
-        int32_t id = ids ? ids[index] : at<int32_t>(p.local, p.symmetric.topkIds)[index];
-        float weight = scores ? scores[index] : at<float>(p.local, p.symmetric.topkWeights)[index];
-        at<int32_t>(p.local, p.symmetric.topkIds)[index] = id;
-        at<float>(p.local, p.symmetric.topkWeights)[index] = weight;
-        at<mscclpp::LLPacket>(p.local, p.symmetric.routingPackets)[index].write(
-            mscclpp::bit_cast<uint32_t>(id), mscclpp::bit_cast<uint32_t>(weight), packetFlag);
-      }
-      float first = float(firstValue);
-      float second = float(secondValue);
-      float maximum = fmaxf(fabsf(first), fabsf(second));
+      auto values = input + lane * ValuesPerThread;
+      auto stagedValues = staged + lane * ValuesPerThread;
+      int4 packed = *reinterpret_cast<const int4*>(values);
+      if (values != stagedValues) *reinterpret_cast<int4*>(stagedValues) = packed;
+      mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
+      mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
+
+      float maximum = 0.0f;
       CUTE_UNROLL
-      for (int offset = 8; offset > 0; offset /= 2)
-        maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, 16));
+      for (int i = 0; i < ValuesPerThread; ++i) maximum = fmaxf(maximum, fabsf(decoded[i]));
+      unsigned int activeMask = __activemask();
+      CUTE_UNROLL
+      for (int offset = ThreadsPerBlockScale / 2; offset > 0; offset /= 2)
+        maximum = fmaxf(maximum, __shfl_xor_sync(activeMask, maximum, offset, ThreadsPerBlockScale));
       uint8_t scale = quantizeE8M0Scale(maximum);
       float inverse = inverseE8M0Scale(scale);
-      auto output =
-          at<uint8_t>(p.local, p.symmetric.quantizedInput) + size_t(token) * p.config.hidden + block * 32 + 2 * lane;
-      *reinterpret_cast<uint16_t*>(output) = quantizeE4M3Pair(first, second, inverse);
+      mscclpp::f32x8 normalized;
+      CUTE_UNROLL
+      for (int i = 0; i < ValuesPerThread; ++i) normalized[i] = decoded[i] * inverse;
+      mscclpp::f8_e4m3x8 quantized = mscclpp::to<mscclpp::f8_e4m3x8>(normalized);
+      auto output = at<uint8_t>(p.local, p.symmetric.quantizedInput) + size_t(token) * p.config.hidden + block * 32 +
+                    lane * ValuesPerThread;
+      *reinterpret_cast<uint2*>(output) = quantized.storage;
       if (lane == 0)
         at<uint8_t>(p.local,
                     p.symmetric.quantizedInputScale)[size_t(token) * w4SourceScaleStride(p.config.hidden) + block] =
@@ -223,7 +222,6 @@ __global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat
         atomicStore<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.quantizedInputReady) + token, routeEpoch,
                                            memoryOrderRelease);
     }
-    __syncthreads();
   }
 }
 
@@ -529,13 +527,13 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
         if constexpr (W4A8) {
           if (tokens) {
             dim3 threads(128);
-            dim3 blocks((params.config.hidden / 32 + 7) / 8, std::min(tokens, 65535));
-            detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
-                params, tokens, static_cast<const __bfloat16*>(input), ids, scores);
+            dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
+            detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(params, tokens,
+                                                                        static_cast<const __bfloat16*>(input));
             MSCCLPP_CUDATHROW(cudaGetLastError());
           }
           MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config), params, tokens,
-                                               static_cast<__bfloat16*>(output), startSignal));
+                                               static_cast<__bfloat16*>(output), startSignal, ids, scores));
           return;
         }
 #endif
