@@ -25,6 +25,9 @@ pr:
     - docs/**
     - '**/*.md'
 
+variables:
+  Codeql.Enabled: false
+
 jobs:
 - job: IntegrationTestA100
   displayName: Integration test A100

@@ -35,6 +35,9 @@ pr:
     - docs/**
     - '**/*.md'
 
+variables:
+  Codeql.Enabled: false
+
 jobs:
 - job: SGLangTest
   displayName: SGLang Test

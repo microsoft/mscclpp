@@ -21,6 +21,8 @@ parameters:
 
 variables:
   - group: mscclpp
+  - name: Codeql.Enabled
+    value: false
 
 jobs:
 - job: MultiNodesTest

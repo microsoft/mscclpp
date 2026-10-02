@@ -1,0 +1,136 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+// Private host-callable API exposed by the EP CUDA kernels.
+
+#ifndef MSCCLPP_EP_KERNELS_HPP_
+#define MSCCLPP_EP_KERNELS_HPP_
+
+#include <cuda_runtime.h>
+
+#include <mscclpp/ext/ep/types.hpp>
+
+#include "config.hpp"
+#include "device_context.hpp"
+
+namespace mscclpp {
+namespace ep {
+
+inline constexpr int ThroughputCountThreads = 128;
+
+inline constexpr int DispatchControlBlocks = 2;
+inline constexpr int MaxWorkerBlocks = 128;
+inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks;
+inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
+inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
+
+inline constexpr bool isSupportedHidden(int hidden) {
+  return hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 ||
+         hidden == 9216;
+}
+
+struct Workload {
+  /// Latency packet epoch; throughput kernels leave the default value unused.
+  uint32_t epoch_ = 0;
+  /// Number of local input or output tokens.
+  int numTokens_;
+  /// Hidden dimension size.
+  int hidden_;
+  /// Number of top-k experts per token.
+  int numTopk_;
+  /// Total number of experts.
+  int numExperts_;
+  /// Sentinel used for rank-major padding and non-local expert entries.
+  int invalidTokenExpertId_;
+  /// Maximum tokens per rank in the packed layout.
+  int maxTokensPerRank_;
+  /// User-visible dispatch output layout.
+  DispatchLayout outputLayout_;
+  /// Dispatch payload data format.
+  DispatchDataType dispatchDataType_;
+};
+
+struct KernelConfigCache {
+  int deviceId_ = -1;
+  size_t dynamicSharedBytes_ = 0;
+  int residentBlocks_ = 0;
+};
+
+// Both modes use this shared-memory opt-in and residency setup before launching kernels.
+template <typename Kernel>
+inline int configureKernel(Kernel kernel, int nThreads, size_t dynamicSharedBytes, const DeviceContext& context,
+                           KernelConfigCache& cache) {
+  if (cache.deviceId_ != context.deviceId_ || cache.dynamicSharedBytes_ < dynamicSharedBytes) {
+    cudaFuncAttributes attributes;
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
+    EP_HOST_ASSERT(dynamicSharedBytes + attributes.sharedSizeBytes <=
+                   static_cast<size_t>(context.maxSharedMemoryPerBlock_));
+    MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                           static_cast<int>(dynamicSharedBytes)));
+    int blocksPerSm;
+    MSCCLPP_CUDATHROW(
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernel, nThreads, dynamicSharedBytes));
+    cache.deviceId_ = context.deviceId_;
+    cache.dynamicSharedBytes_ = dynamicSharedBytes;
+    cache.residentBlocks_ = blocksPerSm * context.numSms_;
+  }
+  return cache.residentBlocks_;
+}
+
+// Local preparation: build per-token destination maps with stable offsets and routing counts.
+void throughputCountRoutes(const int64_t* topkIdx, const ThroughputWorkspaceLayout& workspace, const Workload& workload,
+                           const DeviceContext& context, cudaStream_t stream);
+
+// Collective preparation: exchange counts and determine source-rank receive ranges.
+void throughputExchangeCounts(const ThroughputWorkspaceLayout& workspace, int* outputCount, const Workload& workload,
+                              const DeviceContext& context, cudaStream_t stream);
+
+// Wait until peers have finished consuming the previous payload before overwriting it.
+void throughputSynchronizePeers(const DeviceContext& context, cudaStream_t stream);
+
+// The software grid barrier requires all blocks to be resident. Preparation can
+// be reused by either data format, so use their lower occupancy limit.
+int maxResidentThroughputDispatchBlocks(DispatchLayout layout, const DeviceContext& context);
+
+void throughputDispatch(const void* input, const int64_t* topkIdx, const float* topkWeights, const float* inputScales,
+                        const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                        const ThroughputPayloadView& payload, void* recvBuffer, const DeviceContext& context,
+                        int numBlocks, cudaStream_t stream);
+
+void throughputReduceCombine(void* output, const Workload& workload, const ThroughputWorkspaceLayout& workspace,
+                             const ThroughputPayloadView& payload, void* combineBuffer, const DeviceContext& context,
+                             int numBlocks, cudaStream_t stream);
+
+size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+
+void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                         float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                         const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                         const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
+                       float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
+                       const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                       const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void expertMajorLocalReduceCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                   const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                   void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                   int numBlocks, cudaStream_t stream);
+
+void rankMajorGatherReduceCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
+
+void rankMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                                const DeviceContext& context, int numBlocks, cudaStream_t stream);
+
+void expertMajorDirectSendCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                                  const int* srcInfo, const int64_t* layoutRange, const Workload& workload,
+                                  void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context,
+                                  int numBlocks, cudaStream_t stream);
+
+}  // namespace ep
+}  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_KERNELS_HPP_
