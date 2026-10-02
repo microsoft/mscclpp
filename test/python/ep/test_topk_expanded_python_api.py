@@ -276,8 +276,12 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
         )
         self.assertEqual(native.ll_dispatch.call_args.args[18], 2.0)
         expert = moe.get_expert_output_buffer()
-        moe.combine(expert, handle, quant=self.api.QuantConfig(format=fp8, scale=0.25))
-        self.assertEqual(native.ll_combine.call_args.args[13], 0.25)
+        with self.assertRaisesRegex(NotImplementedError, "FP8 expanded combine"):
+            moe.combine(expert, handle, quant=self.api.QuantConfig(format=fp8, scale=0.25))
+        native.ll_combine.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "prequantized input is unsupported"):
+            moe.dispatch(replace(self.x, dtype="float8_e4m3fn"), self.ids)
+        self.assertEqual(native.ll_dispatch.call_count, 1)
 
         invalid = (None, 0.0, -1.0, float("nan"), float("inf"), 1e-50, 1e39, 1)
         self.factory.reset_mock()
@@ -287,13 +291,13 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
             [dict(quant=self.api.QuantConfig(format=fp8, scale=scale)) for scale in invalid],
         )
 
-    def test_static_fp8_combine_scale_validation(self):
+    def test_static_fp8_combine_is_explicitly_unsupported(self):
         fp8 = self.api.DispatchDataType.FP8_E4M3
         moe = self.make(quant=self.api.QuantConfig(format=fp8, scale=1.0))
         _, handle = moe.dispatch(self.x, self.ids)
         native, expert = moe._backend._runtime.cpp_runtime, moe.get_expert_output_buffer()
         native.ll_combine.reset_mock()
-        invalid = (
+        cases = (
             None,
             self.api.QuantConfig(format=fp8),
             self.api.QuantConfig(format=fp8, scale=0.0),
@@ -302,8 +306,8 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
             self.api.QuantConfig(format=self.api.DispatchDataType.BF16, scale=1.0),
             self.api.QuantConfig(format=fp8, scale=1.0, block_scales=_Tensor((1,), "float32")),
         )
-        for quant in invalid:
-            with self.subTest(quant=quant), self.assertRaises(ValueError):
+        for quant in cases:
+            with self.subTest(quant=quant), self.assertRaisesRegex(NotImplementedError, "FP8 expanded combine"):
                 moe.combine(expert, handle, quant=quant)
             native.ll_combine.assert_not_called()
 

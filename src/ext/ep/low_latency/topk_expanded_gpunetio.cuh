@@ -7,31 +7,43 @@
 namespace gpunetio_fast {
 #if MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __device__ void send(void* output, int* outputIds, float* outputWeights, const void* input, const int64_t* topkIds,
                      const float* weights, const Workload& work, const TransportView& transport, const Layout& layout,
                      WorkspaceView& state, int ranks, int* sharedMem) {
-  RankMajorSendState<Hidden> s;
+  RankMajorSendState<Hidden, DataType> s;
   if (!initRankMajorSendState(s, work.numTokens_, work.numTopk_, ranks, gridDim.x - DispatchControlBlocks, sharedMem))
     return;
   const int lane = s.laneId_, topk = work.numTopk_, localExperts = work.numExperts_ / ranks;
-  constexpr size_t bytes = Hidden * sizeof(Bf16);
+  using ElementType = DispatchElementType<DataType>;
+  constexpr size_t bytes = Hidden * sizeof(ElementType);
+  constexpr int inputVectors = Hidden / mscclpp::bf16x8::Size;
   [[maybe_unused]] constexpr int vectors = bytes / sizeof(int4);
   const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * topk;
   int completedTokens = 0;
   [[maybe_unused]] int sinceFlush = 0;
   for (int token = s.firstTokenIdx_; token < work.numTokens_; token += s.tokenStride_) {
-    if (lane == 0) {
-      s.bulkBarrier_->arriveAndExpect(bytes);
-      mscclpp::bulkLoad(s.stagedToken_, static_cast<const uint8_t*>(input) + static_cast<size_t>(token) * bytes, bytes,
-                        *s.bulkBarrier_);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) {
+        s.bulkBarrier_->arriveAndExpect(bytes);
+        mscclpp::bulkLoad(s.stagedToken_, static_cast<const uint8_t*>(input) + static_cast<size_t>(token) * bytes,
+                          bytes, *s.bulkBarrier_);
+      }
+    } else {
+      static_assert(DataType == DispatchDataType::FP8_E4M3);
+      const auto* source = reinterpret_cast<const mscclpp::bf16x8*>(input) + static_cast<size_t>(token) * inputVectors;
+      auto* destination = reinterpret_cast<mscclpp::f8_e4m3x8*>(s.stagedToken_);
+      for (int vector = lane; vector < inputVectors; vector += WARP_SIZE)
+        destination[vector] = quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_);
     }
     const size_t selection = static_cast<size_t>(token) * topk + lane;
     const int64_t expert = lane < topk ? topkIds[selection] : -1;
     const int dst = validExpert(expert, work.numExperts_) ? static_cast<int>(expert / localExperts) : -1;
     const float weight = lane < topk ? (weights == nullptr ? 1.0f : weights[selection]) : 0.0f;
     const size_t row = static_cast<size_t>(transport.rank_) * rows + selection;
-    if (lane == 0) s.bulkBarrier_->wait(s.bulkPhase_);
+    if constexpr (DataType == DispatchDataType::BF16) {
+      if (lane == 0) s.bulkBarrier_->wait(s.bulkPhase_);
+    }
     __syncwarp();
     mscclpp::bulkFence();
     // Start mapped payload stores before dense metadata, as compact dispatch
@@ -287,7 +299,7 @@ __device__ void pushCombine(const void* input, const Layout& layout, const Trans
 }
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __global__ __launch_bounds__(DispatchNThreads,
                              1) void dispatchKernel(void* output, int* ids, float* weightsOut, int* counts,
                                                     const void* input, const int64_t* topkIds, const float* weights,
@@ -298,13 +310,13 @@ __global__ __launch_bounds__(DispatchNThreads,
   validateGpuNetIo(transport);
   WorkspaceView state(workspace, comm.numRanks_, work.numExperts_);
   const Layout layout(comm.symmetricBufferBase_, work.maxTokensPerRank_, Hidden, comm.numRanks_, work.numExperts_,
-                      work.numTopk_, true, true);
+                      work.numTopk_, true, true, DataType);
   const uint64_t target = state.dispatchArrivedBaseline_[comm.rank_] + 1;
   if (blockIdx.x == gridDim.x - 1)
     notify(ids, weightsOut, topkIds, work, transport, layout, state, comm.numRanks_, reinterpret_cast<int*>(shared));
   else
-    send<Hidden>(output, ids, weightsOut, input, topkIds, weights, work, transport, layout, state, comm.numRanks_,
-                 reinterpret_cast<int*>(shared));
+    send<Hidden, DataType>(output, ids, weightsOut, input, topkIds, weights, work, transport, layout, state,
+                           comm.numRanks_, reinterpret_cast<int*>(shared));
   // Retain the posting barrier: a marker must never overtake another CTA's
   // payload reservation. Only the redundant end-of-kernel grids are removed.
   __threadfence_system();

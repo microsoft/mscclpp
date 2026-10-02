@@ -252,7 +252,7 @@ class IpcSourceTests(unittest.TestCase):
 
     def test_full_grid_residency_and_original_launch_geometry_remain(self):
         for name, kernel in (
-            ("launchDispatch", "ipc::dispatchKernel<Hidden>"),
+            ("launchDispatch", "ipc::dispatchKernel<Hidden, DataType>"),
             ("launchCombine", "ipc::combineKernel<Hidden, UseTma>"),
         ):
             code = body(self.native, name)
@@ -297,6 +297,14 @@ class IpcSourceTests(unittest.TestCase):
 
     def test_dispatch_payload_and_metadata_publication_retained(self):
         send = body(self.ipc, "send")
+        for snippet in (
+            "DispatchElementType<DataType>",
+            "if constexpr (DataType == DispatchDataType::BF16)",
+            "reinterpret_cast<const mscclpp::bf16x8*>(input)",
+            "reinterpret_cast<mscclpp::f8_e4m3x8*>(tile)",
+            "quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_)",
+        ):
+            locate(send, snippet)
         self.assert_order(
             send,
             "barrier->arriveAndExpect(bytes)",

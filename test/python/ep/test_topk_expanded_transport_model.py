@@ -870,10 +870,11 @@ class NativeSourceContractTests(unittest.TestCase):
             "state.bulkBarrier_ = barriers + state.warpGroupId_",
             "state.bulkPhase_ = 0",
         )
-        send = body(self.native, "dispatchSendRankMajorTopkExpandedBf16")
+        send = body(self.native, "dispatchSendRankMajorTopkExpanded")
         self.assertOrder(
             send,
             "initRankMajorSendState(",
+            "if constexpr (DataType == DispatchDataType::BF16)",
             "send.bulkBarrier_->arriveAndExpect(bytes)",
             "mscclpp::bulkLoad(",
             "send.bulkBarrier_->wait(send.bulkPhase_)",
@@ -882,9 +883,40 @@ class NativeSourceContractTests(unittest.TestCase):
             "mscclpp::bulkStoreCommit()",
             "mscclpp::bulkStoreWait()",
         )
+        self.assertCode(
+            send,
+            "using ElementType = DispatchElementType<DataType>",
+            "reinterpret_cast<const mscclpp::bf16x8*>(input)",
+            "reinterpret_cast<mscclpp::f8_e4m3x8*>(send.stagedToken_)",
+            "quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_)",
+        )
+
+    def test_dispatch_selects_bf16_or_static_fp8_and_combine_rejects_fp8(self):
+        launch = body(self.native, "launchDispatch")
+        self.assertCode(
+            launch,
+            "dispatchSharedBytes<Hidden, DataType>",
+            "gpunetio_fast::dispatchKernel<Hidden, DataType>",
+            "ipc::dispatchKernel<Hidden, DataType>",
+            "dispatchTopkExpandedKernel<Hidden, DataType>",
+        )
+        dispatch = body(self.native, "dispatch")
+        self.assertCode(
+            dispatch,
+            "work.dispatchDataType_ == DispatchDataType::BF16",
+            "EXPANDED_DISPATCH_TYPED(Hidden, DispatchDataType::BF16)",
+            "EXPANDED_DISPATCH_TYPED(Hidden, DispatchDataType::FP8_E4M3)",
+        )
+        combine = body(self.native, "combine")
+        self.assertOrder(
+            combine,
+            "work.dispatchDataType_ == DispatchDataType::BF16",
+            '"FP8 expanded combine is not implemented"',
+            "EXPANDED_COMBINE",
+        )
 
     def test_dispatch_full_warp_vote_and_private_registered_token_slots(self):
-        send = body(self.native, "dispatchSendRankMajorTopkExpandedBf16")
+        send = body(self.native, "dispatchSendRankMajorTopkExpanded")
         assert_unconditional_dispatch_vote(send)
         self.assertCode(send, "static_cast<size_t>(token) * layout.gpuNetIoSlotStride_", "staged[v] = shared[v]")
         self.assertOrder(
@@ -899,7 +931,7 @@ class NativeSourceContractTests(unittest.TestCase):
         self.assertNotIn("GpuNetIoStagingSlots", send)  # No modulo-ring addressing.
 
     def test_dispatch_per_stage_dense_metadata_completion_counters(self):
-        send = body(self.native, "dispatchSendRankMajorTopkExpandedBf16")
+        send = body(self.native, "dispatchSendRankMajorTopkExpanded")
         self.assertCode(
             send,
             "sharedMem + sendSlots + send.warpGroupId_ * ranks",
@@ -925,7 +957,7 @@ class NativeSourceContractTests(unittest.TestCase):
         self.assertCode(self.native, "validExpert(int64_t expert, int nExperts)")
         self.assertCode(body(self.native, "validExpert"), "return expert >= 0 && expert < nExperts")
         for name in (
-            "dispatchSendRankMajorTopkExpandedBf16",
+            "dispatchSendRankMajorTopkExpanded",
             "dispatchRankMajorTopkExpandedNotify",
             "recvRankMajorTopkExpandedRemotePartialsTma",
             "recvRankMajorTopkExpandedRemotePartials",
@@ -1103,9 +1135,10 @@ class NativeSourceContractTests(unittest.TestCase):
         self.assertNotIn("epoch_", self.native)
 
     def test_expanded_layout_has_separate_metadata_counts_and_capacity_sizing(self):
-        layout = body(self.config, "Layout")
+        layout = self.config
         self.assertCode(
             layout,
+            "dispatchDataType == DispatchDataType::FP8_E4M3 ? sizeof(Fp8E4M3) : sizeof(Bf16)",
             "topkExpanded && maxTokensPerRank > GpuNetIoStagingSlots ? maxTokensPerRank : GpuNetIoStagingSlots",
             "static_cast<size_t>(gpuNetIoStagingRows) * gpuNetIoSlotStride_",
             "rankMajorExpertOutputBuffer_ = topkExpanded ? rankMajorTokenBuffer_ : combineRecvBuffer_",
@@ -1132,8 +1165,13 @@ class NativeSourceContractTests(unittest.TestCase):
             self.assertCode(
                 code,
                 "maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_",
-                "dispatchDataType == low_latency::DispatchDataType::BF16",
+                "dispatchDataType == dispatchDataType_",
             )
+        self.assertCode(
+            body(self.native, "combine"),
+            "work.dispatchDataType_ == DispatchDataType::BF16",
+            '"FP8 expanded combine is not implemented"',
+        )
         self.assertCode(
             body(self.runtime, "dispatch"),
             "output == allocationLayout.rankMajorTokenBuffer_",

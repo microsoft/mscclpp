@@ -115,7 +115,8 @@ class DispatchOutput:
     Only expanded output exposes ``combine_input_buffer``. It aliases
     ``tokens`` and ``get_expert_output_buffer()``: overwrite active rows with
     unweighted expert results in place, after saving any needed dispatch
-    snapshot. Other layouts leave it None and retain their existing contracts.
+    snapshot. Static FP8 expanded output is dispatch-only until FP8 combine is
+    implemented. Other layouts leave it None and retain their existing contracts.
     """
 
     tokens: torch.Tensor

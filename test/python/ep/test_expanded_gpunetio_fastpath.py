@@ -19,6 +19,7 @@ from test_topk_expanded_transport_model import body, locate, tokens
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "44b1d9c70e9588ef69308abd5b4886878b334489"
+STATIC_METADATA_BASE = "f14b9d2d4c711750647915d93c255bab4a4b57e9"
 FAST = ROOT / "src/ext/ep/low_latency/topk_expanded_gpunetio.cuh"
 NATIVE = ROOT / "src/ext/ep/low_latency/topk_expanded.cu"
 
@@ -167,6 +168,14 @@ class FastPathSourceTests(unittest.TestCase):
         )
         self.assertIn("gpuNetIoStagingBuffer_", send)
         self.assertNotIn("replicate", send)
+        for snippet in (
+            "DispatchElementType<DataType>",
+            "if constexpr (DataType == DispatchDataType::BF16)",
+            "reinterpret_cast<const mscclpp::bf16x8*>(input)",
+            "reinterpret_cast<mscclpp::f8_e4m3x8*>(s.stagedToken_)",
+            "quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_)",
+        ):
+            locate(send, snippet)
 
     def test_only_original_ipc_and_network_paths_exist(self):
         native = tokens(NATIVE.read_text())
@@ -280,16 +289,20 @@ class FastPathSourceTests(unittest.TestCase):
             return subprocess.check_output(["git", "-C", str(ROOT), "show", f"{BASE}:{path}"], text=True)
 
         for path in (
-            "src/ext/ep/config.hpp",
             "src/ext/ep/low_latency/config.cuh",
             "src/ext/ep/low_latency/dispatch.cu",
             "src/ext/ep/low_latency/combine.cu",
         ):
             self.assertEqual((ROOT / path).read_text(), original(path), path)
+        config = "src/ext/ep/config.hpp"
+        self.assertEqual(
+            (ROOT / config).read_text(),
+            subprocess.check_output(["git", "-C", str(ROOT), "show", f"{STATIC_METADATA_BASE}:{config}"], text=True),
+            config,
+        )
         old = tokens(original("src/ext/ep/low_latency/topk_expanded.cu"))
         now = tokens(NATIVE.read_text())
         for name in (
-            "dispatchTopkExpandedKernel",
             "combineTopkExpandedKernel",
             "pushExpandedCombine",
             "finishCollective",

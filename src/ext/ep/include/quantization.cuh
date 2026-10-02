@@ -68,6 +68,16 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
 }
 
+MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::bf16x8& source, float quantScale) {
+  const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
+  mscclpp::f32x8 scaledValues;
+#pragma unroll
+  for (int element = 0; element < mscclpp::f32x8::Size; ++element) {
+    scaledValues.data[element] = values.data[element] * quantScale;
+  }
+  return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
+}
+
 MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(typename mscclpp::f8_e4m3x2::ElementType value, float scale) {
   mscclpp::f8_e4m3x2 packed;
   packed.data[0] = value;

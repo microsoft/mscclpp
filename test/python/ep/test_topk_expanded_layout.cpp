@@ -162,6 +162,35 @@ void checkLayout(int ranks, int capacity, int topk, int hidden) {
   require(offset(expanded.expandedCounts_) + static_cast<size_t>(ranks) * sizeof(int) <=
               offset(expanded.expandedCountStaging_),
           "receiver counts overlap sender counts");
+
+  const size_t fp8TokenBytes = static_cast<size_t>(ranks) * capacity * topk * hidden * sizeof(Fp8E4M3);
+  const size_t fp8SlotStride =
+      alignBytes(static_cast<size_t>(hidden) * sizeof(Fp8E4M3) + topk * (sizeof(int) + sizeof(float)));
+  const size_t fp8Recv = alignBytes(std::max({dispatchBytes, tokenOffset + fp8TokenBytes, fp8TokenBytes}));
+  const size_t fp8StagingBytes =
+      alignBytes(static_cast<size_t>(std::max(GpuNetIoStagingSlots, capacity)) * fp8SlotStride);
+  const Layout fp8Expanded(reinterpret_cast<void*>(base), capacity, hidden, ranks, experts, topk, true, true,
+                           DispatchDataType::FP8_E4M3);
+  require(fp8Expanded.dispatchDataType_ == DispatchDataType::FP8_E4M3, "FP8 payload type was not retained");
+  require(fp8Expanded.recvBufferBytes_ == fp8Recv, "FP8 expanded receive allocation differs");
+  require(fp8Expanded.gpuNetIoSlotStride_ == fp8SlotStride, "FP8 staging stride differs");
+  require(offset(fp8Expanded.rankMajorTokenBuffer_) == tokenOffset, "FP8 public tokens moved");
+  require(fp8Expanded.rankMajorExpertOutputBuffer_ == fp8Expanded.rankMajorTokenBuffer_,
+          "FP8 expanded expert output must alias tokens");
+  require(offset(fp8Expanded.gpuNetIoStagingBuffer_) == 2 * fp8Recv, "FP8 staging base differs");
+  require(offset(fp8Expanded.gpuNetIoFlagsBuffer_) == 2 * fp8Recv + fp8StagingBytes,
+          "FP8 metadata completion flags inherited payload sizing");
+  require(offset(fp8Expanded.gpuNetIoCombineLandingBuffer_) == 2 * fp8Recv + fp8StagingBytes + 2 * flagsBytes,
+          "FP8 combine landing base differs");
+  require(offset(fp8Expanded.expandedSendIds_) ==
+              offset(fp8Expanded.gpuNetIoCombineLandingBuffer_) + alignBytes(fp8TokenBytes),
+          "FP8 IDs do not follow the payload-only landing region");
+  require(
+      offset(fp8Expanded.expandedSendWeights_) == offset(fp8Expanded.expandedSendIds_) + alignBytes(rows * sizeof(int)),
+      "FP8 metadata sizes inherited payload element sizing");
+  require(symmetricBufferSize(capacity, hidden, ranks, experts, topk, true, true, DispatchDataType::FP8_E4M3) ==
+              fp8Expanded.totalBytes_,
+          "FP8 expanded size helper differs");
 }
 
 size_t checkOriginalShapes() {
