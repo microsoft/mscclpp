@@ -221,11 +221,10 @@ class IpcSourceTests(unittest.TestCase):
             start = locate(code, snippet, start) + len(tokens(snippet))
 
     def test_original_gpunetio_kernel_code_unchanged(self):
-        # Network launch routing and cached-readiness templates are additive;
-        # verify original kernels, public layout and reduction arithmetic exactly.
+        # Reuse the GPUNetIO suite's unrelated-kernel and public-layout guard.
         from test_expanded_gpunetio_fastpath import FastPathSourceTests
 
-        FastPathSourceTests.test_original_kernels_public_layout_and_math_preserved(self)
+        FastPathSourceTests.test_unrelated_kernels_and_public_layout_preserved(self)
 
     def test_opt_in_collective_full_domain_gate(self):
         runtime = tokens((ROOT / "src/ext/ep/ll_runtime.cc").read_text())
@@ -253,7 +252,7 @@ class IpcSourceTests(unittest.TestCase):
     def test_full_grid_residency_and_original_launch_geometry_remain(self):
         for name, kernel in (
             ("launchDispatch", "ipc::dispatchKernel<Hidden, DataType>"),
-            ("launchCombine", "ipc::combineKernel<Hidden, UseTma>"),
+            ("launchCombine", "ipc::combineKernel<Hidden, DataType, UseTma>"),
         ):
             code = body(self.native, name)
             self.assert_order(
@@ -350,6 +349,26 @@ class IpcSourceTests(unittest.TestCase):
         )
         self.assertNotIn("^=", gather)
         locate(gather, "if constexpr (UseTma) __syncthreads()")
+
+    def test_static_fp8_gather_uses_typed_rows_and_one_final_inverse(self):
+        gather = body(self.ipc, "gather")
+        for snippet in (
+            "using ElementType = detail::DispatchElementType<DataType>",
+            "constexpr size_t bytes = Hidden * sizeof(ElementType)",
+            "base + row * bytes",
+            "float sum[bf16PerVector] = {}",
+            "fmaf(fp8E4M3ToFloat(values[element]), weightValue, sum[element])",
+            "const float inverseQuantScale = 1.0f / work.quantScale_",
+            "sum[pair * 2] * inverseQuantScale",
+        ):
+            locate(gather, snippet)
+        self.assert_order(
+            gather,
+            "fmaf(fp8E4M3ToFloat(",
+            "const float inverseQuantScale = 1.0f / work.quantScale_",
+            "* inverseQuantScale",
+            "static_cast<int4*>(output)",
+        )
 
 
 if __name__ == "__main__":

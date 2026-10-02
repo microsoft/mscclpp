@@ -729,11 +729,6 @@ class LowLatencyBackend:
         handle_data_type = DispatchDataType.BF16 if output_quant is None else output_quant.format
         if handle_data_type != self.dispatch_data_type:
             raise ValueError("DispatchHandle quantization does not match this MoECommunicator configuration")
-        if (
-            self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-            and self.dispatch_data_type == DispatchDataType.FP8_E4M3
-        ):
-            raise NotImplementedError("static FP8 expanded combine is not implemented")
         active_capacity = (
             handle.combine_context.max_tokens_per_rank
             if isinstance(handle, (RankMajorDispatchHandle, RankMajorTopkExpandedDispatchHandle))
@@ -762,9 +757,24 @@ class LowLatencyBackend:
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype != torch.bfloat16:
-            raise ValueError("expert_output must be BF16")
-        if quant is not None:
+        expected_dtype = (
+            torch.float8_e4m3fn
+            if self.dispatch_data_type == DispatchDataType.FP8_E4M3
+            and handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+            else torch.bfloat16
+        )
+        if expert_output.dtype != expected_dtype:
+            raise ValueError(f"expert_output must be {expected_dtype}")
+        if expected_dtype == torch.float8_e4m3fn:
+            if (
+                quant is None
+                or quant.format != DispatchDataType.FP8_E4M3
+                or quant.scale is None
+                or quant.block_scales is not None
+            ):
+                raise ValueError("FP8 expert_output requires FP8_E4M3 quant metadata with a scalar scale")
+            _validate_static_scale(quant.scale, "quant.scale")
+        elif quant is not None:
             raise ValueError("BF16 expert_output does not accept quant metadata")
         if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
             assert self.expert_output_buffer is not None

@@ -257,7 +257,7 @@ __device__ int putWarpRows(mscclpp::GpuNetIoDeviceContext* gin, int peer, int q,
 }
 #endif
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 __device__ void pushCombine(const void* input, const Layout& layout, const TransportView& transport,
                             const Workload& work, int owner) {
 #if defined(MSCCLPP_USE_GPUNETIO)
@@ -265,7 +265,7 @@ __device__ void pushCombine(const void* input, const Layout& layout, const Trans
   auto* gin = transport.gpuNetIo_;
   const int lane = get_lane_id(), warp = threadIdx.x / WARP_SIZE;
   const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * work.numTopk_;
-  constexpr size_t bytes = Hidden * sizeof(Bf16);
+  constexpr size_t bytes = Hidden * sizeof(DispatchElementType<DataType>);
   const auto* ids = static_cast<const int*>(layout.rankMajorTopkIdsBuffer_) + owner * rows;
   const auto* wgts = static_cast<const float*>(layout.rankMajorTopkWeightsBuffer_) + owner * rows;
   // Same HCA stripe boundaries and matching QPs as baseline. Support up to 64
@@ -331,7 +331,7 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif
 }
 
-template <int Hidden, bool UseTma>
+template <int Hidden, DispatchDataType DataType, bool UseTma>
 __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(void* output, const void* input, const int64_t* ids,
                                                                     const float* weights, Workload work,
                                                                     CommContext comm, void* workspace) {
@@ -341,7 +341,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(void* output
   validateGpuNetIo(transport);
   WorkspaceView state(workspace, comm.numRanks_, work.numExperts_);
   const Layout layout(comm.symmetricBufferBase_, work.maxTokensPerRank_, Hidden, comm.numRanks_, work.numExperts_,
-                      work.numTopk_, true, true);
+                      work.numTopk_, true, true, DataType);
   auto* flags = static_cast<uint64_t*>(layout.gpuNetIoCombineFlagsBuffer_);
   const uint64_t target = state.combineArrivedBaseline_[comm.rank_] + 1;
   if (blockIdx.x == 0) {
@@ -351,7 +351,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(void* output
                   static_cast<size_t>(comm.rank_) * GpuNetIoMaxQpsPerPeer);
     }
   }
-  if (blockIdx.x < comm.numRanks_) pushCombine<Hidden>(input, layout, transport, work, blockIdx.x);
+  if (blockIdx.x < comm.numRanks_) pushCombine<Hidden, DataType>(input, layout, transport, work, blockIdx.x);
   if (blockIdx.x == 0) {
     // One system-scope poller per source, not one poller per top-k lane/worker.
     for (int source = threadIdx.x; source < comm.numRanks_; source += blockDim.x) {
@@ -360,11 +360,11 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineKernel(void* output
                                                            static_cast<uint32_t>(target), mscclpp::memoryOrderRelease);
     }
   } else if constexpr (UseTma) {
-    recvRankMajorTopkExpandedRemotePartialsTma<Hidden, true>(output, input, ids, weights, work, transport, layout,
-                                                             comm.numRanks_, target, shared, &state);
+    recvRankMajorTopkExpandedRemotePartialsTma<Hidden, DataType, true>(output, input, ids, weights, work, transport,
+                                                                       layout, comm.numRanks_, target, shared, &state);
   } else {
-    recvRankMajorTopkExpandedRemotePartials<Hidden, true>(output, input, ids, weights, work, transport, layout,
-                                                          comm.numRanks_, target, &state);
+    recvRankMajorTopkExpandedRemotePartials<Hidden, DataType, true>(output, input, ids, weights, work, transport,
+                                                                    layout, comm.numRanks_, target, &state);
   }
 #if defined(MSCCLPP_USE_GPUNETIO)
   if (blockIdx.x < comm.numRanks_ && !transport.isNvlinkPeer(blockIdx.x)) {

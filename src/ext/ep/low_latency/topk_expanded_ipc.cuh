@@ -204,13 +204,16 @@ __device__ __forceinline__ bool ready(WorkspaceView& state, int source, uint64_t
              state.combineRankReadyEpochs_ + source, mscclpp::memoryOrderAcquire) == static_cast<uint32_t>(target);
 }
 
-template <int Hidden, bool UseTma>
+template <int Hidden, DispatchDataType DataType, bool UseTma>
 __device__ void gather(void* output, const void* input, const int64_t* topkIds, const float* weights,
                        const Workload& work, const TransportView& transport, WorkspaceView& state, int ranks,
                        uint64_t target, uint8_t* shared) {
-  constexpr size_t bytes = Hidden * sizeof(Bf16);
-  constexpr int vectors = bytes / sizeof(int4), pairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  static_assert(vectors % WARP_SIZE == 0);
+  using ElementType = detail::DispatchElementType<DataType>;
+  constexpr size_t bytes = Hidden * sizeof(ElementType);
+  constexpr int outputVectors = Hidden * sizeof(Bf16) / sizeof(int4);
+  constexpr int bf16PerVector = sizeof(int4) / sizeof(Bf16);
+  constexpr int pairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
+  static_assert(outputVectors % WARP_SIZE == 0);
   const int lane = get_lane_id(), warp = threadIdx.x / WARP_SIZE;
   const int localExperts = work.numExperts_ / ranks;
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(shared + TmaSlots * bytes);
@@ -262,39 +265,73 @@ __device__ void gather(void* output, const void* input, const int64_t* topkIds, 
         }
       __syncwarp();
     }
-    for (int v = threadIdx.x; v < vectors; v += CombineThreads) {
-      float2 sum[pairsPerVector] = {};
+    for (int vector = threadIdx.x; vector < outputVectors; vector += CombineThreads) {
       const int slots = UseTma ? TmaSlots : work.numTopk_;
+      int4 packedOutput;
+      auto* outputPairs = reinterpret_cast<mscclpp::bf16x2*>(&packedOutput);
+      if constexpr (DataType == DispatchDataType::BF16) {
+        float2 sum[pairsPerVector] = {};
 #pragma unroll
-      for (int k = 0; k < slots; ++k) {
-        int4 packed;
-        float w;
-        if constexpr (UseTma) {
-          if (!validRows[k]) continue;
-          packed = reinterpret_cast<const int4*>(shared)[k * vectors + v];
-          w = slotWeights[k];
-        } else {
-          const int owner = __shfl_sync(0xffffffff, source, k);
-          w = __shfl_sync(0xffffffff, weight, k);
-          if (owner < 0) continue;
-          const auto* base = static_cast<const int4*>(transport.mappedBuffer(const_cast<void*>(input), owner));
-          const size_t row =
-              (static_cast<size_t>(transport.rank_) * work.maxTokensPerRank_ + token) * work.numTopk_ + k;
-          packed = base[row * vectors + v];
-        }
-        const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+        for (int slot = 0; slot < slots; ++slot) {
+          int4 packed;
+          float weightValue;
+          if constexpr (UseTma) {
+            if (!validRows[slot]) continue;
+            const auto* row = shared + static_cast<size_t>(slot) * bytes;
+            packed = reinterpret_cast<const int4*>(row)[vector];
+            weightValue = slotWeights[slot];
+          } else {
+            const int owner = __shfl_sync(0xffffffff, source, slot);
+            weightValue = __shfl_sync(0xffffffff, weight, slot);
+            if (owner < 0) continue;
+            const auto* base = static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(input), owner));
+            const size_t row =
+                (static_cast<size_t>(transport.rank_) * work.maxTokensPerRank_ + token) * work.numTopk_ + slot;
+            packed = reinterpret_cast<const int4*>(base + row * bytes)[vector];
+          }
+          const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
-        for (int p = 0; p < pairsPerVector; ++p) {
-          const auto values = mscclpp::to<mscclpp::f32x2>(pairs[p]);
-          sum[p].x = fmaf(values.data[0], w, sum[p].x);
-          sum[p].y = fmaf(values.data[1], w, sum[p].y);
+          for (int pair = 0; pair < pairsPerVector; ++pair) {
+            const auto values = mscclpp::to<mscclpp::f32x2>(pairs[pair]);
+            sum[pair].x = fmaf(values.data[0], weightValue, sum[pair].x);
+            sum[pair].y = fmaf(values.data[1], weightValue, sum[pair].y);
+          }
         }
+#pragma unroll
+        for (int pair = 0; pair < pairsPerVector; ++pair)
+          outputPairs[pair] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(sum[pair]));
+      } else {
+        static_assert(DataType == DispatchDataType::FP8_E4M3);
+        float sum[bf16PerVector] = {};
+#pragma unroll
+        for (int slot = 0; slot < slots; ++slot) {
+          const Fp8E4M3* values;
+          float weightValue;
+          if constexpr (UseTma) {
+            if (!validRows[slot]) continue;
+            values =
+                reinterpret_cast<const Fp8E4M3*>(shared + static_cast<size_t>(slot) * bytes) + vector * bf16PerVector;
+            weightValue = slotWeights[slot];
+          } else {
+            const int owner = __shfl_sync(0xffffffff, source, slot);
+            weightValue = __shfl_sync(0xffffffff, weight, slot);
+            if (owner < 0) continue;
+            const auto* base = static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(input), owner));
+            const size_t row =
+                (static_cast<size_t>(transport.rank_) * work.maxTokensPerRank_ + token) * work.numTopk_ + slot;
+            values = reinterpret_cast<const Fp8E4M3*>(base + row * bytes) + vector * bf16PerVector;
+          }
+#pragma unroll
+          for (int element = 0; element < bf16PerVector; ++element)
+            sum[element] = fmaf(fp8E4M3ToFloat(values[element]), weightValue, sum[element]);
+        }
+        const float inverseQuantScale = 1.0f / work.quantScale_;
+#pragma unroll
+        for (int pair = 0; pair < pairsPerVector; ++pair)
+          outputPairs[pair] = mscclpp::to<mscclpp::bf16x2>(
+              mscclpp::f32x2(float2{sum[pair * 2] * inverseQuantScale, sum[pair * 2 + 1] * inverseQuantScale}));
       }
-      int4 packed;
-      auto* pairs = reinterpret_cast<mscclpp::bf16x2*>(&packed);
-#pragma unroll
-      for (int p = 0; p < pairsPerVector; ++p) pairs[p] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(sum[p]));
-      static_cast<int4*>(output)[static_cast<size_t>(token) * vectors + v] = packed;
+      static_cast<int4*>(output)[static_cast<size_t>(token) * outputVectors + vector] = packedOutput;
     }
     if constexpr (UseTma) __syncthreads();
   }
@@ -329,7 +366,7 @@ __global__ __launch_bounds__(detail::DispatchNThreads,
 #endif
 }
 
-template <int Hidden, bool UseTma>
+template <int Hidden, DispatchDataType DataType, bool UseTma>
 __global__ __launch_bounds__(CombineThreads, 1) void combineKernel(void* output, const void* input, const int64_t* ids,
                                                                    const float* weights, Workload work,
                                                                    CommContext comm, void* workspace) {
@@ -338,12 +375,13 @@ __global__ __launch_bounds__(CombineThreads, 1) void combineKernel(void* output,
   const TransportView transport(comm);
   WorkspaceView state(workspace, comm.numRanks_, work.numExperts_);
   const Layout layout(comm.symmetricBufferBase_, work.maxTokensPerRank_, Hidden, comm.numRanks_, work.numExperts_,
-                      work.numTopk_, true, true);
+                      work.numTopk_, true, true, DataType);
   const uint64_t target = state.combineArrivedBaseline_[comm.rank_] + 1;
   if (blockIdx.x == 0)
     publishReady(transport, layout, state, comm.numRanks_, target);
   else
-    gather<Hidden, UseTma>(output, input, ids, weights, work, transport, state, comm.numRanks_, target, shared);
+    gather<Hidden, DataType, UseTma>(output, input, ids, weights, work, transport, state, comm.numRanks_, target,
+                                     shared);
   retireAndAck(transport, layout, state, comm.numRanks_);
   if (blockIdx.x == 0 && threadIdx.x == 0) state.combineArrivedBaseline_[comm.rank_] = target;
 #endif

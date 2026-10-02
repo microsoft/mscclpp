@@ -265,11 +265,11 @@ class FastPathSourceTests(unittest.TestCase):
     def test_combine_ready_cache_drain_and_lifetime_ack(self):
         self.ordered(
             body(self.code, "combineKernel"),
-            "pushCombine<Hidden>",
+            "pushCombine<Hidden, DataType>",
             "waitSource(",
             "state.combineRankReadyEpochs_",
             "memoryOrderRelease",
-            "recvRankMajorTopkExpandedRemotePartialsTma<Hidden, true>",
+            "recvRankMajorTopkExpandedRemotePartialsTma<Hidden, DataType, true>",
             "gin->flush(",
             "retireNetwork(",
         )
@@ -284,7 +284,28 @@ class FastPathSourceTests(unittest.TestCase):
             "finishCollective(",
         )
 
-    def test_original_kernels_public_layout_and_math_preserved(self):
+    def test_typed_combine_uses_payload_bytes_and_preserves_bf16_math(self):
+        push = body(self.code, "pushCombine")
+        for snippet in (
+            "DispatchElementType<DataType>",
+            "(owner * rows + row) * bytes",
+            "(static_cast<size_t>(transport.rank_) * rows + row) * bytes",
+            "putWarpRows(gin, owner, q, live, dst, src, bytes)",
+        ):
+            locate(push, snippet)
+        for name in ("recvRankMajorTopkExpandedRemotePartialsTma", "recvRankMajorTopkExpandedRemotePartials"):
+            reduction = body(tokens(NATIVE.read_text()), name)
+            for snippet in (
+                "if constexpr (DataType == DispatchDataType::BF16)",
+                "mscclpp::to<mscclpp::f32x2>",
+                "fmaf(",
+                "mscclpp::to<mscclpp::bf16x2>",
+                "float reduced[bf16PerVector] = {}",
+                "1.0f / work.quantScale_",
+            ):
+                locate(reduction, snippet)
+
+    def test_unrelated_kernels_and_public_layout_preserved(self):
         def original(path):
             return subprocess.check_output(["git", "-C", str(ROOT), "show", f"{BASE}:{path}"], text=True)
 
@@ -302,19 +323,8 @@ class FastPathSourceTests(unittest.TestCase):
         )
         old = tokens(original("src/ext/ep/low_latency/topk_expanded.cu"))
         now = tokens(NATIVE.read_text())
-        for name in (
-            "combineTopkExpandedKernel",
-            "pushExpandedCombine",
-            "finishCollective",
-            "expandedRow",
-        ):
+        for name in ("finishCollective", "expandedRow"):
             self.assertEqual(body(now, name), body(old, name), name)
-        for name in ("recvRankMajorTopkExpandedRemotePartialsTma", "recvRankMajorTopkExpandedRemotePartials"):
-            previous = body(old, name)
-            current = body(now, name)
-            begin_old = locate(previous, "for (int v = threadIdx.x")
-            begin_now = locate(current, "for (int v = threadIdx.x")
-            self.assertEqual(current[begin_now:], previous[begin_old:], name)
 
 
 if __name__ == "__main__":

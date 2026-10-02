@@ -167,9 +167,9 @@ class MoECommunicator:
         ``[world_size * max_tokens_per_rank * topk, hidden_size]`` that aliases
         dispatch tokens and ``DispatchOutput.combine_input_buffer``. Save any
         dispatch snapshot before overwriting active rows with unweighted expert
-        results. Static FP8 expanded dispatch is supported, but its combine path
-        is not implemented yet. BF16 combine applies original source weights,
-        without compaction or local pre-reduction.
+        results. Static FP8 expert output uses E4M3 with scalar ``quant`` metadata.
+        Combine applies original source weights, without compaction or local
+        pre-reduction, and writes BF16 model output.
         """
         buffer = getattr(self._backend, "expert_output_buffer", None)
         if buffer is None:

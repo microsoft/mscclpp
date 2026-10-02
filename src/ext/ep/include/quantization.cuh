@@ -85,5 +85,9 @@ MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(typename mscclpp::f8_e4m3x2::Eleme
   return mscclpp::to<mscclpp::f32x2>(packed).data[0] * scale;
 }
 
+MSCCLPP_DEVICE_INLINE float fp8E4M3ToFloat(typename mscclpp::f8_e4m3x2::ElementType value) {
+  return dequantizeFp8E4M3(value, 1.0f);
+}
+
 }  // namespace ep
 }  // namespace mscclpp

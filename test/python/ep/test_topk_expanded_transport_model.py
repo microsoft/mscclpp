@@ -264,6 +264,15 @@ def combine_scalar(topology, owner, token, ids, weights, capacity, read):
     return result
 
 
+def static_fp8_quantize(value, scale):
+    return max(-448.0, min(448.0, value * scale))
+
+
+def combine_static_fp8_scalar(topology, owner, token, ids, weights, capacity, scale, read):
+    quantized_sum = combine_scalar(topology, owner, token, ids, weights, capacity, read)
+    return quantized_sum / scale
+
+
 class OrderedMarkers:
     """One source/destination pair; arbitrary inter-QP progress, ordered QP WQEs."""
 
@@ -494,6 +503,33 @@ class RoutingModelTests(unittest.TestCase):
 
         self.assertEqual(combine_scalar(topology, 0, 0, (4, 4, 4), None, 1, read), 15.0)
         self.assertEqual(reads, [3, 4, 5])
+
+    def test_static_fp8_weighted_topk_local_remote_and_mixed_reduction(self):
+        topology = Topology(8, 2, 4, 2)
+        owner, scale = 0, 4.0
+        cases = (
+            ((0, 4, 7), (0.25, -0.5, 1.25), (8.0, 12.0, -4.0), {"ipc"}),
+            ((16, 24, 31), (-0.75, 0.5, 1.5), (16.0, -8.0, 4.0), {"landing"}),
+            ((0, 16, 4, 24), (0.125, -1.5, 2.25, 0.5), (8.0, -4.0, 12.0, 16.0), {"ipc", "landing"}),
+        )
+        for ids, weights, quantized, kinds in cases:
+            addresses = [
+                gather_address(topology, owner, expert // 4, 0, k, 1, len(ids)) for k, expert in enumerate(ids)
+            ]
+            values = dict(zip(addresses, quantized))
+            result = combine_static_fp8_scalar(
+                topology, owner, 0, ids, weights, 1, scale, lambda address: values[address]
+            )
+            expected = sum(weight * value for weight, value in zip(weights, quantized)) / scale
+            self.assertEqual(result, expected)
+            self.assertEqual({address[0] for address in addresses}, kinds)
+
+    def test_static_fp8_constant_scale_and_saturation_boundaries(self):
+        scale = 2.0
+        self.assertEqual(static_fp8_quantize(3.0, scale) / scale, 3.0)
+        for real, stored in ((223.5, 447.0), (224.0, 448.0), (224.5, 448.0), (-224.0, -448.0), (-225.0, -448.0)):
+            with self.subTest(real=real):
+                self.assertEqual(static_fp8_quantize(real, scale), stored)
 
     def test_tma_barrier_phase_advances_only_for_loaded_slots(self):
         for topk in (1, 8):
@@ -891,7 +927,7 @@ class NativeSourceContractTests(unittest.TestCase):
             "quantizeBf16x8ToFp8E4M3(source[vector], work.quantScale_)",
         )
 
-    def test_dispatch_selects_bf16_or_static_fp8_and_combine_rejects_fp8(self):
+    def test_dispatch_and_combine_select_bf16_or_static_fp8(self):
         launch = body(self.native, "launchDispatch")
         self.assertCode(
             launch,
@@ -908,12 +944,36 @@ class NativeSourceContractTests(unittest.TestCase):
             "EXPANDED_DISPATCH_TYPED(Hidden, DispatchDataType::FP8_E4M3)",
         )
         combine = body(self.native, "combine")
-        self.assertOrder(
+        self.assertCode(
             combine,
             "work.dispatchDataType_ == DispatchDataType::BF16",
-            '"FP8 expanded combine is not implemented"',
-            "EXPANDED_COMBINE",
+            "EXPANDED_COMBINE_TYPED(Hidden, DispatchDataType::BF16)",
+            "EXPANDED_COMBINE_TYPED(Hidden, DispatchDataType::FP8_E4M3)",
         )
+        self.assertNotIn('"FP8 expanded combine is not implemented"', combine)
+        launch_combine = body(self.native, "launchCombine")
+        self.assertCode(
+            launch_combine,
+            "combineSharedBytes<Hidden, DataType>",
+            "gpunetio_fast::combineKernel<Hidden, DataType, UseTma>",
+            "ipc::combineKernel<Hidden, DataType, UseTma>",
+            "combineTopkExpandedKernel<Hidden, DataType, UseTma>",
+        )
+        for name in ("recvRankMajorTopkExpandedRemotePartialsTma", "recvRankMajorTopkExpandedRemotePartials"):
+            reduction = body(self.native, name)
+            self.assertCode(
+                reduction,
+                "float reduced[bf16PerVector] = {}",
+                "fmaf(fp8E4M3ToFloat(",
+                "const float inverseQuantScale = 1.0f / work.quantScale_",
+            )
+            self.assertOrder(
+                reduction,
+                "fmaf(fp8E4M3ToFloat(",
+                "const float inverseQuantScale = 1.0f / work.quantScale_",
+                "* inverseQuantScale",
+                "static_cast<int4*>(output)",
+            )
 
     def test_dispatch_full_warp_vote_and_private_registered_token_slots(self):
         send = body(self.native, "dispatchSendRankMajorTopkExpanded")
@@ -1056,9 +1116,11 @@ class NativeSourceContractTests(unittest.TestCase):
             self.assertOrder(code, "weight != 0.0f", "expandedRow(")
             self.assertCode(code, "fmaf(")
         tma = body(self.native, "recvRankMajorTopkExpandedRemotePartialsTma")
-        self.assertOrder(tma, "if (!validRows[k]) continue", "sharedRows[k * vectors + v]")
+        self.assertOrder(tma, "if (!validRows[slot]) continue", "reinterpret_cast<const Fp8E4M3*>(row)")
         fallback = body(self.native, "recvRankMajorTopkExpandedRemotePartials")
-        self.assertOrder(fallback, "for (int k = 0; k < work.numTopk_; ++k)", "if (owner < 0) continue", "expandedRow(")
+        self.assertOrder(
+            fallback, "for (int slot = 0; slot < work.numTopk_; ++slot)", "if (owner < 0) continue", "expandedRow("
+        )
         self.assertOrder(
             body(self.native, "pushExpandedCombine"),
             "if (!validExpert(ids[row], work.numExperts_) || wgts[row] == 0.0f) continue",
@@ -1085,15 +1147,15 @@ class NativeSourceContractTests(unittest.TestCase):
             self.native,
             "RankMajorTmaMaxNTopk = 8",
             "CombineMaxNTopk = 9",
-            "launchCombine<H, true>",
-            "launchCombine<H, false>",
+            "launchCombine<Hidden, DataType, true>",
+            "launchCombine<Hidden, DataType, false>",
         )
 
     def test_final_drains_grid_barriers_and_finish_ack_are_retained(self):
         combine = body(self.native, "combineTopkExpandedKernel")
         self.assertOrder(
             combine,
-            "recvRankMajorTopkExpandedRemotePartials<Hidden>",
+            "recvRankMajorTopkExpandedRemotePartials<Hidden, DataType>",
             "gin->flush(blockIdx.x, markerQp(transport, blockIdx.x, threadIdx.x))",
             "__threadfence_system()",
             "state.combineSyncer_->sync(gridDim.x)",
@@ -1167,11 +1229,9 @@ class NativeSourceContractTests(unittest.TestCase):
                 "maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_",
                 "dispatchDataType == dispatchDataType_",
             )
-        self.assertCode(
-            body(self.native, "combine"),
-            "work.dispatchDataType_ == DispatchDataType::BF16",
-            '"FP8 expanded combine is not implemented"',
-        )
+        combine = body(self.native, "combine")
+        self.assertCode(combine, "work.dispatchDataType_ == DispatchDataType::BF16")
+        self.assertNotIn("not implemented", combine)
         self.assertCode(
             body(self.runtime, "dispatch"),
             "output == allocationLayout.rankMajorTokenBuffer_",
