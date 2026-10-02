@@ -184,7 +184,8 @@ class MoECommunicator:
 
         Optional ``output_count`` receives GPU counts with shape
         ``[num_local_experts]`` for TOKEN_MAJOR or ``[world_size]`` for
-        RANK_MAJOR.
+        RANK_MAJOR. Dispatches using this handle expose the same tensor in
+        their corresponding layout count field.
         Reuse the returned handle only with unchanged routing, token count,
         active capacity, and stream. Every rank must make the same reuse choice.
         """
@@ -201,6 +202,7 @@ class MoECommunicator:
             _runtime=self._runtime,
             _topk_ids=topk_ids,
             _stream=caller_stream,
+            _output_count=output_count,
         )
 
     @requires_initialized

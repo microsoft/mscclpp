@@ -105,14 +105,17 @@ not resize those buffers or read counts back to the host.
 | --- | --- | --- | --- | --- |
 | LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | One fixed slice per local expert | BF16 per-expert results; native combine applies the original routing weights |
 | LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 weighted local sums, or unweighted per-topk rows for DIRECT_SEND |
-| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | Optional prepare `output_count[L]` | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
-| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | Optional prepare `output_count[R]` | One fixed slice per source rank | BF16 already-weighted local expert sums |
+| THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | Optional `layout.num_tokens_per_expert` (prepare `output_count[L]`) | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
+| THROUGHPUT / RANK_MAJOR | `[R, A, H]` | Optional `layout.num_tokens_per_rank` (prepare `output_count[R]`) | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
 Counts, when present, are CUDA int32 tensors. Latency dispatch always returns
 them through `DispatchLayoutInfo`. Throughput counts are written only to the
 caller-provided `output_count` tensor passed to explicit preparation. Both
-throughput `DispatchLayoutInfo` count fields are always `None`, including after
-count-producing preparation.
+the preparation handle and dispatch metadata retain that tensor: dispatches
+using the handle expose it as `layout.num_tokens_per_expert` for TOKEN_MAJOR or
+`layout.num_tokens_per_rank` for RANK_MAJOR, without copying. The other field is
+`None`. Count-free preparation and automatic dispatch leave both fields as
+`None`. Reusing a preparation handle reuses the counts without rewriting them.
 
 In TOKEN_MAJOR, preparation's per-expert `output_count` is an expert workload
 statistic, not a description of physical row ranges. One token row can route

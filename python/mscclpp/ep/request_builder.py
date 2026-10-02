@@ -210,10 +210,16 @@ class RequestBuilder:
         combine_input = self._view(
             self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), torch.bfloat16
         )
+        count = None if prepare_handle is None else prepare_handle._output_count
+        rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         output = DispatchOutput(
             tokens=tokens,
             quant=None if scales is None else QuantConfig(format=data_type, block_scales=scales),
-            layout=DispatchLayoutInfo(kind=config.output_layout),
+            layout=DispatchLayoutInfo(
+                kind=config.output_layout,
+                num_tokens_per_expert=None if rank_major else count,
+                num_tokens_per_rank=count if rank_major else None,
+            ),
             topk_ids=recv_ids,
             weights=recv_weights,
             combine_input_buffer=combine_input,
@@ -235,7 +241,7 @@ class RequestBuilder:
             num_tokens=num_tokens,
             active_capacity=active,
             tensors=_retain(
-                input, topk_ids, weights, input_scales, tokens, scales, recv_ids, recv_weights, combine_input
+                input, topk_ids, weights, input_scales, tokens, scales, recv_ids, recv_weights, combine_input, count
             ),
         )
 

@@ -214,10 +214,14 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
             assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
+            counts = (
+                result.layout.num_tokens_per_rank
+                if layout == DispatchLayout.RANK_MAJOR
+                else result.layout.num_tokens_per_expert
+            )
             if mode == MoEMode.THROUGHPUT:
-                assert result.layout.num_tokens_per_expert is None
-                assert result.layout.num_tokens_per_rank is None
-            elif layout == DispatchLayout.RANK_MAJOR:
+                assert counts is output_count
+            if layout == DispatchLayout.RANK_MAJOR:
                 assert result.layout.num_tokens_per_expert is None
             else:
                 assert result.layout.num_tokens_per_rank is None
@@ -232,20 +236,16 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
                     assert result.quant.block_scales.data_ptr() == runtime._runtime.output_scales_buffer_ptr()
 
             if mode == MoEMode.THROUGHPUT:
-                counts = output_count
                 valid_rows = (
                     None
                     if counts is None or layout != DispatchLayout.RANK_MAJOR
                     else torch.arange(active_capacity, device="cuda")[None, :] < counts[:, None]
                 )
             elif layout == DispatchLayout.EXPERT_MAJOR:
-                counts = result.layout.num_tokens_per_expert
                 valid_rows = torch.arange(ep_group.nranks * active_capacity, device="cuda")[None, :] < counts[:, None]
             elif layout == DispatchLayout.RANK_MAJOR:
-                counts = result.layout.num_tokens_per_rank
                 valid_rows = torch.arange(active_capacity, device="cuda")[None, :] < counts[:, None]
             else:
-                counts = result.layout.num_tokens_per_expert
                 valid_rows = None
 
             tokens = result.tokens.float()
@@ -378,7 +378,7 @@ def test_preparation_validation(ep_group):
             result, handle = runtime.dispatch(
                 input, routes, prepare_handle=preparation, runtime_max_tokens_per_rank=active_capacity
             )
-            assert result.layout.num_tokens_per_expert is None
+            assert result.layout.num_tokens_per_expert is output_count
             assert result.layout.num_tokens_per_rank is None
             assert handle._runtime is runtime._runtime
             assert result.tokens.shape == (ep_group.nranks * active_capacity, HIDDEN)
@@ -386,9 +386,16 @@ def test_preparation_validation(ep_group):
             result.combine_input_buffer.copy_(result.tokens)
             runtime.combine(result.combine_input_buffer, handle)
 
-            runtime.prepare(routes, runtime_max_tokens_per_rank=active_capacity)
+            count_free = runtime.prepare(routes, runtime_max_tokens_per_rank=active_capacity)
             with pytest.raises(Error, match="Stale preparation handle"):
                 runtime.dispatch(input, routes, prepare_handle=preparation, runtime_max_tokens_per_rank=active_capacity)
+            result, handle = runtime.dispatch(
+                input, routes, prepare_handle=count_free, runtime_max_tokens_per_rank=active_capacity
+            )
+            assert result.layout.num_tokens_per_expert is None
+            assert result.layout.num_tokens_per_rank is None
+            result.combine_input_buffer.copy_(result.tokens)
+            runtime.combine(result.combine_input_buffer, handle)
 
 
 def test_dispatch_handle_validation(ep_group):
@@ -521,6 +528,12 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
                 result, handle = runtime.dispatch(
                     input, routes, prepare_handle=preparation, runtime_max_tokens_per_rank=3
                 )
+                counts = (
+                    result.layout.num_tokens_per_rank
+                    if layout == DispatchLayout.RANK_MAJOR
+                    else result.layout.num_tokens_per_expert
+                )
+                assert counts is output_count
                 result.combine_input_buffer.copy_(result.tokens * (ep_group.my_rank + 1))
                 return result, handle, runtime.combine(result.combine_input_buffer, handle)
 

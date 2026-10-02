@@ -157,8 +157,9 @@ class DispatchLayoutInfo:
     count routes and do not define disjoint token ranges.
     RANK_MAJOR uses ``num_tokens_per_rank`` to bound each source rank.
     EXPERT_MAJOR uses ``num_tokens_per_expert`` to bound each local expert.
-    Throughput dispatch leaves both count fields as ``None``; explicit
-    preparation can write optional counts to a caller-provided tensor.
+    Throughput dispatch exposes the caller-provided ``output_count`` from its
+    preparation handle in the field matching the layout. Both fields remain
+    ``None`` when preparation did not request counts.
     No count is read back to the host.
     """
 
@@ -201,12 +202,14 @@ class PrepareHandle:
     finished. A new preparation (including automatic preparation by dispatch)
     invalidates this handle. The native runtime validates freshness and matching
     routing pointer, token count, active capacity, and dispatch block count.
+    Retains optional output counts, which dispatch exposes without copying.
     """
 
     _native: _cpp.PrepareHandle = field(repr=False)
     _runtime: _cpp.MoERuntime = field(repr=False)
     _topk_ids: torch.Tensor = field(repr=False)
     _stream: torch.cuda.Stream = field(repr=False)
+    _output_count: Optional[torch.Tensor] = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, eq=False)
