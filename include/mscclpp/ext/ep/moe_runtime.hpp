@@ -82,7 +82,6 @@ class MoERuntime {
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
   void* combineInputBuffer() const;
-
   /// Collectively prepare throughput routing without moving token payloads.
   ///
   /// Computes each token's distinct destination ranks and stable local offsets,
