@@ -230,11 +230,12 @@ Runtime views are reused by later operations, not independent results.
   allocator reuse. This is not cross-stream execution or peer synchronization.
   The caller must complete **all local and peer GPU use** before releasing the
   last runtime, handle, or view.
-* CUDA graph replay supports throughput dispatch/combine with either automatic
-  preparation captured with dispatch or a reusable `PrepareHandle` created
-  before capture. Construct, initialize, and warm up outside capture; for the
-  reusable-handle path, also prepare outside capture and keep routing unchanged.
-  Automatic preparation recomputes routing on each replay, so routing values may
+* CUDA graph replay supports throughput dispatch/combine with either preparation
+  captured in the graph (automatically by dispatch or explicitly before dispatch)
+  or a reusable `PrepareHandle` created before capture. Construct, initialize,
+  and warm up outside capture; for the reusable-handle path, also prepare outside
+  capture and keep routing unchanged.
+  Captured preparation recomputes routing on each replay, so routing values may
   change while their buffer pointer, shape, and active capacity remain fixed.
   Preserve graph ordering, buffers, and owners through the last replay. Python
   handle checks run during capture, not replay. Latency dispatch/combine graph
