@@ -49,7 +49,8 @@ def ep_group():
 
 @contextmanager
 def initialized_runtime(group, **kwargs):
-    runtime = MoECommunicator(MoECommunicatorConfig(comm=group, device=torch.cuda.current_device(), **kwargs))
+    device = torch.device("cuda", torch.cuda.current_device())
+    runtime = MoECommunicator(MoECommunicatorConfig(comm=group, device=device, **kwargs))
     assert runtime.is_available()
     runtime.initialize()
     runtime.initialize()
@@ -61,17 +62,43 @@ def initialized_runtime(group, **kwargs):
         group.barrier()
 
 
-def test_config_validation_at_construction():
-    config = MoECommunicatorConfig(num_experts=128, hidden_size=HIDDEN, topk=NUM_TOPK, max_tokens_per_rank=4)
+@pytest.mark.parametrize("name", ["comm", "num_experts", "hidden_size", "topk", "max_tokens_per_rank"])
+def test_config_required_arguments(name):
+    arguments = dict(
+        comm=None,
+        num_experts=NUM_LOCAL_EXPERTS,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=4,
+    )
+    del arguments[name]
+    with pytest.raises(TypeError, match=name):
+        MoECommunicatorConfig(**arguments)
+
+
+def test_config_validation_at_construction(ep_group):
+    config = MoECommunicatorConfig(
+        comm=ep_group,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=4,
+    )
     with pytest.raises(ValueError, match="topk"):
         replace(config, topk=9)
     with pytest.raises(ValueError, match="output_layout"):
         replace(config, output_layout=DispatchLayout.TOKEN_MAJOR)
+    for device in (torch.cuda.current_device(), "cuda:0"):
+        with pytest.raises(TypeError, match="device must be a torch.device"):
+            replace(config, device=device)
+    for name in ("num_local_experts", "local_expert_start"):
+        with pytest.raises(ValueError, match="init=False"):
+            replace(config, **{name: 0})
 
 
 @pytest.mark.parametrize("mode", [MoEMode.LATENCY, MoEMode.THROUGHPUT])
-def test_config_runtime_resolution(ep_group, mode):
-    device = torch.cuda.current_device()
+def test_config_resolution_at_construction(ep_group, mode):
+    device = torch.device("cuda", torch.cuda.current_device())
     config = MoECommunicatorConfig(
         comm=ep_group,
         device=device,
@@ -81,14 +108,21 @@ def test_config_runtime_resolution(ep_group, mode):
         max_tokens_per_rank=4,
         mode=mode,
     )
-    runtime = MoECommunicator(config)
     expected_layout = DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LATENCY else DispatchLayout.TOKEN_MAJOR
-    assert runtime.output_layout == expected_layout
     num_sms = torch.cuda.get_device_properties(device).multi_processor_count
     defaults = (130, 128) if mode == MoEMode.LATENCY else (24, 32)
-    assert runtime.num_blocks == tuple(min(value, num_sms) for value in defaults)
-    assert config.output_layout is None
-    assert config.num_blocks is None
+    assert config.output_layout == expected_layout
+    assert config.num_blocks == tuple(min(value, num_sms) for value in defaults)
+    assert config.device == device
+    assert replace(config, device=None).device == device
+    assert replace(config, device=torch.device("cuda")).device == device
+    assert config.num_local_experts == NUM_LOCAL_EXPERTS
+    assert config.local_expert_start == ep_group.my_rank * NUM_LOCAL_EXPERTS
+    assert config.invalid_token_expert_id == (config.num_experts if mode == MoEMode.LATENCY else -1)
+    runtime = MoECommunicator(config)
+    assert runtime._config is config
+    assert runtime.output_layout == config.output_layout
+    assert runtime.num_blocks == config.num_blocks
 
 
 def token_routes(rank, world_size, token, num_tokens):
@@ -367,7 +401,8 @@ def test_dispatch_handle_validation(ep_group):
         max_tokens_per_rank=capacity,
     )
     with initialized_runtime(ep_group, **config) as runtime:
-        other = MoECommunicator(MoECommunicatorConfig(comm=ep_group, device=torch.cuda.current_device(), **config))
+        device = torch.device("cuda", torch.cuda.current_device())
+        other = MoECommunicator(MoECommunicatorConfig(comm=ep_group, device=device, **config))
         stream = torch.cuda.Stream()
         other_stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -458,7 +493,8 @@ def test_runtime_owned_buffers(ep_group, mode, layout):
 
 @pytest.mark.parametrize("layout", [DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR])
 @pytest.mark.parametrize("num_tokens", [0, 2])
-def test_throughput_graph_replay(ep_group, layout, num_tokens):
+@pytest.mark.parametrize("prepared", [False, True])
+def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
     with initialized_runtime(
         ep_group,
         mode=MoEMode.THROUGHPUT,
@@ -472,18 +508,20 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens):
         with torch.cuda.stream(stream):
             input = torch.ones((num_tokens, 128), dtype=torch.bfloat16, device="cuda")
             routes = torch.full((num_tokens, 1), ep_group.my_rank, dtype=torch.int64, device="cuda")
-            output_count = torch.empty(
-                ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else 1,
-                dtype=torch.int32,
-                device="cuda",
-            )
-            preparation = runtime.prepare(routes, runtime_max_tokens_per_rank=3, output_count=output_count)
+            output_count = preparation = None
+            if prepared:
+                output_count = torch.empty(
+                    ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else 1,
+                    dtype=torch.int32,
+                    device="cuda",
+                )
+                preparation = runtime.prepare(routes, runtime_max_tokens_per_rank=3, output_count=output_count)
 
             def operation():
                 result, handle = runtime.dispatch(
                     input, routes, prepare_handle=preparation, runtime_max_tokens_per_rank=3
                 )
-                result.combine_input_buffer.copy_(result.tokens)
+                result.combine_input_buffer.copy_(result.tokens * (ep_group.my_rank + 1))
                 return result, handle, runtime.combine(result.combine_input_buffer, handle)
 
             operation()
@@ -491,10 +529,14 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens):
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, stream=stream):
                 result, handle, output = operation()
-            for value in (2, 3):
+            for replay, value in enumerate((2, 3, 4)):
                 input.fill_(value)
+                destination = ep_group.my_rank
+                if not prepared:
+                    destination = (ep_group.my_rank + replay + 1) % ep_group.nranks if replay < 2 else -1
+                    routes.fill_(destination)
                 graph.replay()
                 stream.synchronize()
-                torch.testing.assert_close(output, input, rtol=0, atol=0)
-            if num_tokens == 0:
+                torch.testing.assert_close(output, input * (destination + 1), rtol=0, atol=0)
+            if prepared and num_tokens == 0:
                 torch.testing.assert_close(output_count, torch.zeros_like(output_count), rtol=0, atol=0)

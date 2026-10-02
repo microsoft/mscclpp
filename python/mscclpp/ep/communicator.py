@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Optional, Tuple, Union
 
 import torch
@@ -29,9 +28,7 @@ from .utils import (
     record_stream,
     requires_initialized,
     resolve_dispatch_format,
-    resolve_num_blocks,
     tensor_from_pointer,
-    validate_quant,
     verify_active_capacity,
 )
 
@@ -47,7 +44,9 @@ class MoECommunicator:
     """
 
     def __init__(self, config: MoECommunicatorConfig) -> None:
-        self._config = _resolve_config(config)
+        if not isinstance(config, MoECommunicatorConfig):
+            raise TypeError("config must be a MoECommunicatorConfig")
+        self._config = config
         self._initialized = False
         self._stream: Optional[torch.cuda.Stream] = None
         with torch.cuda.device(self.device):
@@ -335,76 +334,3 @@ class MoECommunicator:
             or not 0 <= handle._num_tokens <= handle._active_capacity
         ):
             raise ValueError(f"{expected_type.__name__} has an invalid token count or capacity")
-
-
-def _resolve_config(config: MoECommunicatorConfig) -> MoECommunicatorConfig:
-    if not isinstance(config, MoECommunicatorConfig):
-        raise TypeError("config must be a MoECommunicatorConfig")
-    if config.comm is None:
-        raise ValueError("MoECommunicator requires an mscclpp.CommGroup via config.comm")
-    if not isinstance(config.comm, CommGroup):
-        raise TypeError("comm must be an mscclpp.CommGroup")
-    latency = config.mode == MoEMode.LATENCY
-    layout = config.output_layout
-    if layout is None:
-        layout = DispatchLayout.EXPERT_MAJOR if latency else DispatchLayout.TOKEN_MAJOR
-    world_size = config.comm.nranks
-    if not 1 <= world_size <= 64 or config.comm.nranks_per_ipc_domain != world_size:
-        raise ValueError("EP requires 1-64 ranks in one CUDA IPC domain")
-    if config.num_experts % world_size:
-        raise ValueError("num_experts must be divisible by world_size")
-    num_local = config.num_experts // world_size
-    start = config.comm.my_rank * num_local
-    for name, expected in (("num_local_experts", num_local), ("local_expert_start", start)):
-        value = getattr(config, name)
-        if value is not None and (type(value) is not int or value != expected):
-            raise ValueError(f"{name} must be {expected}; only even contiguous expert placement is supported")
-    if not latency and num_local > 128:
-        raise ValueError("throughput requires at most 128 experts per rank")
-    invalid_id = config.invalid_token_expert_id
-    if not latency and invalid_id is not None:
-        raise ValueError("invalid_token_expert_id is supported only in LATENCY mode; throughput uses -1")
-    if invalid_id is None:
-        invalid_id = config.num_experts if latency else -1
-    if type(invalid_id) is not int or not -(1 << 31) <= invalid_id < (1 << 31):
-        raise ValueError("invalid_token_expert_id must fit in int32")
-    if 0 <= invalid_id < config.num_experts:
-        raise ValueError("invalid_token_expert_id must not overlap a valid global expert ID")
-    validate_quant(config.quant, config.mode, layout, config.hidden_size)
-    if torch.version.hip is not None or not torch.cuda.is_available():
-        raise RuntimeError("MSCCL++ EP requires CUDA and an SM90 or newer GPU")
-    device = config.device
-    if device is None:
-        device = torch.device("cuda", torch.cuda.current_device())
-    elif type(device) is int:
-        device = torch.device("cuda", device)
-    else:
-        device = torch.device(device)
-    if device.type != "cuda":
-        raise ValueError("device must be a CUDA device")
-    if device.index is None:
-        device = torch.device("cuda", torch.cuda.current_device())
-    properties = torch.cuda.get_device_properties(device)
-    if properties.major < 9:
-        raise RuntimeError("MSCCL++ EP requires an SM90 or newer GPU")
-    num_sms = properties.multi_processor_count
-    blocks = resolve_num_blocks(
-        config.num_blocks,
-        default=(min(130, num_sms), min(128, num_sms)) if latency else (min(24, num_sms), min(32, num_sms)),
-        scalar_combine_offset=-2 if latency else 0,
-    )
-    if not (world_size + 2 if latency else 1) <= blocks[0] <= 130 or not 1 <= blocks[1] <= 128:
-        raise ValueError(
-            "num_blocks must satisfy dispatch <= 130 and combine <= 128; "
-            "latency dispatch requires at least world_size + 2 blocks, and all counts must be positive"
-        )
-    return replace(
-        config,
-        device=device,
-        output_layout=layout,
-        num_local_experts=num_local,
-        local_expert_start=start,
-        invalid_token_expert_id=invalid_id,
-        num_blocks=blocks,
-        quant=None if config.quant is None else replace(config.quant),
-    )

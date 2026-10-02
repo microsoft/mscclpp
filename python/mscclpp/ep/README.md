@@ -109,15 +109,16 @@ not resize those buffers or read counts back to the host.
 | THROUGHPUT / RANK_MAJOR | `[R, A, H]` | Optional prepare `output_count[R]` | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
 Counts, when present, are CUDA int32 tensors. Latency dispatch always returns
-them. Throughput returns them only when explicit preparation receives an
-`output_count` CUDA int32 tensor; count-free preparation and automatic dispatch
-leave both `DispatchLayoutInfo` count fields as `None`.
+them through `DispatchLayoutInfo`. Throughput counts are written only to the
+caller-provided `output_count` tensor passed to explicit preparation. Both
+throughput `DispatchLayoutInfo` count fields are always `None`, including after
+count-producing preparation.
 
-In TOKEN_MAJOR, `num_tokens_per_expert` is an expert workload statistic, not a
-description of physical row ranges. One token row can route to multiple local
-experts, so it increments multiple expert counts while occupying only one
-physical row. Consequently, expert counts cannot determine the number of valid
-rows or their offsets.
+In TOKEN_MAJOR, preparation's per-expert `output_count` is an expert workload
+statistic, not a description of physical row ranges. One token row can route
+to multiple local experts, so it increments multiple expert counts while
+occupying only one physical row. Consequently, expert counts cannot determine
+the number of valid rows or their offsets.
 
 TOKEN_MAJOR rows are grouped by source rank and then by source token order.
 Describing those segments would require `num_tokens_per_rank`; their offsets
@@ -226,18 +227,23 @@ Runtime views are reused by later operations, not independent results.
   allocator reuse. This is not cross-stream execution or peer synchronization.
   The caller must complete **all local and peer GPU use** before releasing the
   last runtime, handle, or view.
-* CUDA graph replay is currently supported only for throughput dispatch/combine
-  with a reusable `PrepareHandle` created before capture. Construct, initialize,
-  prepare, and warm up the operation outside capture, then preserve graph
-  ordering, routing, buffers, and owners through the last replay. Python handle
-  checks run during capture, not replay. Latency dispatch/combine graph replay is
-  unsupported because its host-side epoch is not advanced by replay.
+* CUDA graph replay supports throughput dispatch/combine with either automatic
+  preparation captured with dispatch or a reusable `PrepareHandle` created
+  before capture. Construct, initialize, and warm up outside capture; for the
+  reusable-handle path, also prepare outside capture and keep routing unchanged.
+  Automatic preparation recomputes routing on each replay, so routing values may
+  change while their buffer pointer, shape, and active capacity remain fixed.
+  Preserve graph ordering, buffers, and owners through the last replay. Python
+  handle checks run during capture, not replay. Latency dispatch/combine graph
+  replay is unsupported because its host-side epoch is not advanced by replay.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even
   and contiguous; top-k is 1-8; throughput allows at most 128 experts per rank.
 * Latency hidden sizes are `4096, 4352, 6656, 7168, 8192, 8704, 9216`.
-  Throughput BF16 hidden size is a multiple of 8; FP8 requires a multiple of 128.
+  Throughput combine always consumes BF16 and requires hidden size to be a
+  multiple of 8 for 16-byte rows, regardless of the dispatch format. FP8 dispatch
+  additionally requires a multiple of 128.
   Default dispatch/combine blocks are `(130, 128)` for latency or `(24, 32)` for
   throughput, clipped to SM count. Custom values must satisfy `D <= 130` and
   `1 <= C <= 128`; latency also requires `D >= R+2`, and latency RANK_MAJOR
