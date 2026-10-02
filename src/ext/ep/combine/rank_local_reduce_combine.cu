@@ -49,7 +49,7 @@ MSCCLPP_DEVICE_INLINE int4 reduceWeightedBf16x8(const void* expertOutput, int ro
 }
 
 template <int HiddenInt4>
-MSCCLPP_DEVICE_INLINE int4 reducePartialsBf16x8(const void* combineRecvBuffer, int partialRankCandidate, int nTopk,
+MSCCLPP_DEVICE_INLINE int4 reducePartialsBf16x8(const void* combineBuffer, int partialRankCandidate, int nTopk,
                                                 int maxTokensPerRank, int tokenIdx, int hiddenIdx) {
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   float2 reduced[Bf16PairsPerInt4] = {};
@@ -57,7 +57,7 @@ MSCCLPP_DEVICE_INLINE int4 reducePartialsBf16x8(const void* combineRecvBuffer, i
     const int partialRank = warpBroadcast(partialRankCandidate, topkLane);
     if (partialRank < 0) continue;
     const int4 packed = reinterpret_cast<const int4*>(
-        combineRecvBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
+        combineBuffer)[(static_cast<size_t>(partialRank) * maxTokensPerRank + tokenIdx) * HiddenInt4 + hiddenIdx];
     const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
     for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
@@ -78,7 +78,7 @@ MSCCLPP_DEVICE_INLINE int4 reducePartialsBf16x8(const void* combineRecvBuffer, i
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize>
 MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, int nExperts, int nRanks, int nTopk,
-                                        int maxTokensPerRank, void* combineRecvBuffer, const void* dispatchRecvBuffer,
+                                        int maxTokensPerRank, void* combineBuffer, const void* dispatchRecvBuffer,
                                         const TransportView& transport, WorkspaceView& workspaceView,
                                         uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
@@ -138,7 +138,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, int nExperts, 
         mscclpp::bulkFence();
         const int sourceTokenIdx = *payloadView.srcTokenGlobalIdx(sourcePayload) - sourceRank * maxTokensPerRank;
         EP_DEVICE_ASSERT(sourceTokenIdx >= 0 && sourceTokenIdx < maxTokensPerRank);
-        void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
+        void* destinationBuffer = transport.mappedBuffer(combineBuffer, sourceRank);
         auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                                (static_cast<size_t>(transport.rank_) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
         mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
@@ -151,7 +151,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, int nExperts, 
 
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict__ topkIndices, int nTokens, int nTopk,
-                                        int nExperts, int nRanks, int maxTokensPerRank, const void* combineRecvBuffer,
+                                        int nExperts, int nRanks, int maxTokensPerRank, const void* combineBuffer,
                                         uint8_t* sharedMemory) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int laneId = getLaneId();
@@ -177,8 +177,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict_
     for (int chunkIdx = 0; chunkIdx < ChunksPerThread; ++chunkIdx) {
       const int hiddenIdx = threadId + chunkIdx * CombineNThreads;
       if (hiddenIdx < HiddenInt4) {
-        reduced[chunkIdx] = reducePartialsBf16x8<HiddenInt4>(combineRecvBuffer, partialRank, nTopk, maxTokensPerRank,
-                                                             tokenIdx, hiddenIdx);
+        reduced[chunkIdx] =
+            reducePartialsBf16x8<HiddenInt4>(combineBuffer, partialRank, nTopk, maxTokensPerRank, tokenIdx, hiddenIdx);
       }
     }
     if (tokenIteration >= CombineNStages && threadId == 0) {
@@ -208,9 +208,8 @@ template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, Dispatc
 __global__ __launch_bounds__(CombineNThreads,
                              1) void combineKernel(void* output, const void* expertOutput, const int64_t* topkIndices,
                                                    const float* topkWeights, const int* srcInfo,
-                                                   const int64_t* layoutRange, Workload workload,
-                                                   void* combineRecvBuffer, const void* dispatchRecvBuffer,
-                                                   const DeviceContext* context) {
+                                                   const int64_t* layoutRange, Workload workload, void* combineBuffer,
+                                                   const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   const int nTokens = workload.numTokens_;
@@ -234,14 +233,14 @@ __global__ __launch_bounds__(CombineNThreads,
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
     dispatchSend<Hidden, DispatchType, ScaleBlockSize>(expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank,
-                                                       combineRecvBuffer, dispatchRecvBuffer, transport, workspaceView,
+                                                       combineBuffer, dispatchRecvBuffer, transport, workspaceView,
                                                        sharedMemory);
 
     workspaceView.combineSyncer_->sync(gridDim.x);
     exchangeCombineReady(transport, nRanks);
     workspaceView.combineSyncer_->sync(gridDim.x);
 
-    dispatchRecv<Hidden>(output, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, combineRecvBuffer,
+    dispatchRecv<Hidden>(output, topkIndices, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, combineBuffer,
                          sharedMemory);
   }
 #endif  // MSCCLPP_BULK_AVAILABLE

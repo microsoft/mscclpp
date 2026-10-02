@@ -11,7 +11,7 @@ namespace {
 
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, const int* srcInfo, const int64_t* layoutRange,
-                                        int nExperts, int nRanks, int maxTokensPerRank, void* combineRecvBuffer,
+                                        int nExperts, int nRanks, int maxTokensPerRank, void* combineBuffer,
                                         const TransportView& transport, uint8_t* sharedMemory) {
   if (threadIdx.x >= WARP_SIZE) return;
   const int laneId = getLaneId();
@@ -69,7 +69,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, const int* src
       bulkBarrier->wait(bulkPhase);
       mscclpp::bulkFence();
       const int globalExpertIdx = transport.rank_ * nLocalExperts + localExpertIdx;
-      void* destinationBuffer = transport.mappedBuffer(combineRecvBuffer, sourceRank);
+      void* destinationBuffer = transport.mappedBuffer(combineBuffer, sourceRank);
       auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                              (static_cast<size_t>(globalExpertIdx) * maxTokensPerRank + sourceTokenIdx) * HiddenBytes;
       mscclpp::bulkStore(destinationRow, outputTile, static_cast<uint32_t>(HiddenBytes));
@@ -84,7 +84,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* expertOutput, const int* src
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict__ topkIndices,
                                         const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                        int maxTokensPerRank, const void* combineRecvBuffer) {
+                                        int maxTokensPerRank, const void* combineBuffer) {
   constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int HiddenInt4 = Hidden / Bf16PerInt4;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -103,7 +103,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict_
       for (int topkIdx = 0; topkIdx < nTopk; ++topkIdx) {
         const int expertIdx = regTopkIndices[topkIdx];
         if (expertIdx < 0) continue;
-        const auto* expertRow = reinterpret_cast<const int4*>(combineRecvBuffer) +
+        const auto* expertRow = reinterpret_cast<const int4*>(combineBuffer) +
                                 (static_cast<size_t>(expertIdx) * maxTokensPerRank + tokenIdx) * HiddenInt4;
         const int4 packed = expertRow[hiddenIdx];
         const auto* values = reinterpret_cast<const Bf16*>(&packed);
@@ -131,9 +131,8 @@ template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, Dispatc
 __global__ __launch_bounds__(CombineNThreads,
                              1) void combineKernel(void* output, const void* expertOutput, const int64_t* topkIndices,
                                                    const float* topkWeights, const int* srcInfo,
-                                                   const int64_t* layoutRange, Workload workload,
-                                                   void* combineRecvBuffer, const void* dispatchRecvBuffer,
-                                                   const DeviceContext* context) {
+                                                   const int64_t* layoutRange, Workload workload, void* combineBuffer,
+                                                   const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   const int nTokens = workload.numTokens_;
@@ -156,14 +155,14 @@ __global__ __launch_bounds__(CombineNThreads,
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
-    dispatchSend<Hidden>(expertOutput, srcInfo, layoutRange, nExperts, nRanks, maxTokensPerRank, combineRecvBuffer,
+    dispatchSend<Hidden>(expertOutput, srcInfo, layoutRange, nExperts, nRanks, maxTokensPerRank, combineBuffer,
                          transport, sharedMemory);
 
     workspaceView.combineSyncer_->sync(gridDim.x);
     exchangeCombineReady(transport, nRanks);
     workspaceView.combineSyncer_->sync(gridDim.x);
 
-    dispatchRecv<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineRecvBuffer);
+    dispatchRecv<Hidden>(output, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank, combineBuffer);
   }
 #endif  // MSCCLPP_BULK_AVAILABLE
 }

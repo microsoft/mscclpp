@@ -3,10 +3,13 @@
 
 set(_mscclpp_ep_gpu_archs "")
 get_property(_mscclpp_requested_gpu_archs CACHE MSCCLPP_GPU_ARCHS PROPERTY VALUE)
+# EP kernels require SM90 or newer.
 if(_mscclpp_requested_gpu_archs)
     foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
         if(_arch STREQUAL "native")
-            list(APPEND _mscclpp_ep_gpu_archs native)
+            if(NVIDIA_GPU_ARCH AND NVIDIA_GPU_ARCH GREATER_EQUAL 90)
+                list(APPEND _mscclpp_ep_gpu_archs native)
+            endif()
         else()
             string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
             if(_arch_num AND _arch_num GREATER_EQUAL 90)
@@ -15,6 +18,12 @@ if(_mscclpp_requested_gpu_archs)
         endif()
     endforeach()
 else()
+    if(NVIDIA_FOUND AND NVIDIA_GPU_ARCH LESS 90)
+        message(STATUS
+            "Skipping the EP extension because the detected native CUDA "
+            "architecture is ${NVIDIA_GPU_ARCH}, below the required 90.")
+        return()
+    endif()
     list(APPEND _mscclpp_ep_gpu_archs 90)
     if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 12.8)
         list(APPEND _mscclpp_ep_gpu_archs 100 100a)
@@ -35,10 +44,14 @@ message(STATUS "EP CUDA architectures: ${_mscclpp_ep_gpu_archs}")
 set(MSCCLPP_EP_SOURCES
     combine/direct_send_combine.cu
     combine/rank_local_reduce_combine.cu
+    combine/throughput_reduce_combine.cu
     dispatch/expert_major_dispatch.cu
     dispatch/rank_major_dispatch.cu
+    dispatch/throughput_dispatch.cu
+    dispatch/throughput_prepare.cu
     latency.cc
     moe_runtime.cc
+    throughput.cc
 )
 
 add_library(mscclpp_ep SHARED ${MSCCLPP_EP_SOURCES})

@@ -43,7 +43,7 @@ MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* out
       laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
   const float candidateWeight =
       laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
-  unsigned int leaderMask = __ballot_sync(0xffffffff, route.dstRank >= 0 && route.isLeader);
+  unsigned int leaderMask = warpLaneMask(route.dstRank >= 0 && route.isLeader);
   while (leaderMask != 0) {
     const int leaderLane = __ffs(leaderMask) - 1;
     const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
