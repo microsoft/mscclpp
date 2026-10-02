@@ -5,9 +5,20 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
+#include "port_channel_gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
+
+/// Backend that services a PortChannel's device-side operations.
+/// The same device API (`put`, `signal`,
+/// `putWithSignal`, `flush`, `accumulate`) is serviced either by the CPU proxy
+/// (FIFO + ProxyService thread) or by GPU-initiated networking (GPUNetIO/GDAKI,
+/// kernel-issued RDMA). The backend is chosen at channel creation.
+enum class PortChannelBackend : uint8_t {
+  Proxy = 0,     ///< CPU proxy: device pushes ProxyTrigger to the host FIFO.
+  GpuNetIo = 1,  ///< GPU-initiated: device issues RDMA WQEs directly (DOCA GDAKI).
+};
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
 /// actual semaphores.
@@ -43,14 +54,94 @@ struct BasePortChannelDeviceHandle {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
+  // Backend that services this channel's device operations. Defaults to the CPU
+  // proxy so existing (FIFO-based) construction paths are unchanged.
+  PortChannelBackend backend_;
+
+  // GPU-initiated networking context; only used when backend_ == GpuNetIo.
+  GpuNetIoDeviceContext* gpuNetIo_;
+  /// Remote bootstrap rank, independent of proxy IDs.
+  int gpuNetIoPeer_;
+  /// Queue selected by the connection binding.
+  int gpuNetIoQpIndex_;
+  /// Owner of local memory registrations.
+  int gpuNetIoLocalRank_;
+  /// Peer's private registered signal counter.
+  GpuNetIoMemoryDeviceHandle gpuNetIoSignal_;
+  /// Per-channel table indexed by MemoryId.
+  const GpuNetIoMemoryDeviceHandle* gpuNetIoMemories_;
+  uint32_t gpuNetIoMemoryCount_;
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
                                                          FifoDeviceHandle fifo, uint64_t* flushDonePos)
-      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
+      : semaphoreId_(semaphoreId),
+        semaphore_(semaphore),
+        fifo_(fifo),
+        flushDonePos_(flushDonePos),
+        backend_(PortChannelBackend::Proxy),
+        gpuNetIo_(nullptr),
+        gpuNetIoPeer_(-1),
+        gpuNetIoQpIndex_(0),
+        gpuNetIoLocalRank_(-1),
+        gpuNetIoSignal_{},
+        gpuNetIoMemories_(nullptr),
+        gpuNetIoMemoryCount_(0) {}
+
+  /// Build a handle from an owned host connection/semaphore binding and memory table.
+  /// MemoryIds index this table; all resources must outlive GPU use.
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(GpuNetIoDeviceContext* gpuNetIo, int peer, int qpIndex,
+                                                         int localRank, GpuNetIoMemoryDeviceHandle signal,
+                                                         uint64_t* inboundSignal, uint64_t* expectedSignal,
+                                                         const GpuNetIoMemoryDeviceHandle* memories,
+                                                         uint32_t memoryCount)
+      : semaphoreId_(0),
+        semaphore_{inboundSignal, expectedSignal},
+        fifo_{},
+        flushDonePos_(nullptr),
+        backend_(PortChannelBackend::GpuNetIo),
+        gpuNetIo_(gpuNetIo),
+        gpuNetIoPeer_(peer),
+        gpuNetIoQpIndex_(qpIndex),
+        gpuNetIoLocalRank_(localRank),
+        gpuNetIoSignal_(signal),
+        gpuNetIoMemories_(memories),
+        gpuNetIoMemoryCount_(memoryCount) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Check the connection/semaphore binding in every device build mode.
+  MSCCLPP_DEVICE_INLINE void validateGpuNetIo() const {
+    requireGpuNetIo(gpuNetIo_ != nullptr);
+    requireGpuNetIo(gpuNetIoPeer_ >= 0 && gpuNetIoPeer_ < gpuNetIo_->numPeers && gpuNetIoPeer_ != gpuNetIoLocalRank_ &&
+                    gpuNetIoQpIndex_ >= 0 && gpuNetIoQpIndex_ < gpuNetIo_->numQpsPerPeer &&
+                    gpuNetIoSignal_.rank == gpuNetIoPeer_ && gpuNetIoSignal_.base != 0 &&
+                    gpuNetIoSignal_.base % sizeof(uint64_t) == 0 && gpuNetIoSignal_.bytes == sizeof(uint64_t) &&
+                    semaphore_.inboundToken && semaphore_.expectedInboundToken);
+  }
+
+  /// Reject invalid bindings or accesses even when device assertions are disabled.
+  MSCCLPP_DEVICE_INLINE static void requireGpuNetIo(bool valid) {
+    if (!valid) {
+      MSCCLPP_ASSERT_DEVICE(false, "Invalid GPUNetIO channel binding or memory access");
+#if defined(MSCCLPP_DEVICE_CUDA)
+      __trap();
+#else
+      __builtin_trap();
+#endif
+    }
+  }
+
+  /// Resolve a memory ID and validate its owner and range before issuing a WQE.
+  MSCCLPP_DEVICE_INLINE GpuNetIoMemoryDeviceHandle gpuNetIoMemory(MemoryId id, int rank, uint64_t offset,
+                                                                  uint64_t bytes) const {
+    requireGpuNetIo(gpuNetIoMemories_ != nullptr && id < gpuNetIoMemoryCount_);
+    const auto memory = gpuNetIoMemories_[id];
+    requireGpuNetIo(memory.rank == rank && memory.base != 0 && offset <= memory.bytes &&
+                    bytes <= memory.bytes - offset && memory.bytes <= UINTPTR_MAX - memory.base);
+    return memory;
+  }
   /// Push a TriggerPut to the FIFO.
   /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
@@ -59,6 +150,13 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, size);
+      const auto src = gpuNetIoMemory(srcId, gpuNetIoLocalRank_, srcOffset, size);
+      gpuNetIo_->putRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, src, srcOffset, size);
+      return;
+    }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -72,7 +170,14 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a TriggerSignal to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_}); }
+  MSCCLPP_DEVICE_INLINE void signal() {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      gpuNetIo_->atomicAddRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, gpuNetIoSignal_, 0, 1);
+      return;
+    }
+    fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
+  }
 
   /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
@@ -82,6 +187,14 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, size);
+      const auto src = gpuNetIoMemory(srcId, gpuNetIoLocalRank_, srcOffset, size);
+      gpuNetIo_->putRegisteredWithSignal(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, src, srcOffset, size,
+                                         gpuNetIoSignal_);
+      return;
+    }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -103,6 +216,11 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      putWithSignal(dstId, dstOffset, srcId, srcOffset, size);
+      flush(maxSpinCount);
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -121,6 +239,19 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      if (maxSpinCount < 0) {
+        gpuNetIo_->flush(gpuNetIoPeer_, gpuNetIoQpIndex_);
+      } else {
+        const int status = gpuNetIo_->tryFlush(gpuNetIoPeer_, static_cast<uint64_t>(maxSpinCount), gpuNetIoQpIndex_);
+        if (status != 0) {
+          MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO flush timed out or reported a CQ error");
+          gpuNetIo_->flush(gpuNetIoPeer_, gpuNetIoQpIndex_);
+        }
+      }
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -131,6 +262,13 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      validateGpuNetIo();
+      const auto dst = gpuNetIoMemory(dstId, gpuNetIoPeer_, dstOffset, sizeof(uint64_t));
+      requireGpuNetIo((dst.base + dstOffset) % sizeof(uint64_t) == 0);
+      gpuNetIo_->atomicAddRegistered(gpuNetIoPeer_, gpuNetIoQpIndex_, dst, dstOffset, value);
+      return;
+    }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
     uint64_t operand = static_cast<uint64_t>(value);
     ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
@@ -159,6 +297,10 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
                                                      MemoryId dst, MemoryId src, uint64_t* flushDonePos)
       : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
+
+  /// Bind source/destination IDs from a base channel's memory table.
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(BasePortChannelDeviceHandle base, MemoryId dst, MemoryId src)
+      : BasePortChannelDeviceHandle(base), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
