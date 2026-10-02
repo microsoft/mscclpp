@@ -1,0 +1,71 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+models:
+  small:
+    d_model: 4096
+    num_experts: 8
+    top_k: 2
+    intermediate_size: 14336
+    activation: swiglu
+  medium:
+    d_model: 5120
+    num_experts: 32
+    top_k: 4
+    intermediate_size: 8192
+    activation: swiglu
+  large:
+    d_model: 7168
+    num_experts: 128
+    top_k: 8
+    intermediate_size: 2048
+    activation: swiglu
+
+  scaled_small:
+    d_model: 4096
+    num_experts: 8
+    top_k: 2
+    intermediate_size: 8192
+    activation: swiglu
+  scaled_medium:
+    d_model: 5120
+    num_experts: 32
+    top_k: 2
+    intermediate_size: 14336
+    activation: swiglu
+  scaled_large:
+    d_model: 7168
+    num_experts: 128
+    top_k: 2
+    intermediate_size: 20480
+    activation: swiglu
+
+inputs:
+  decode:
+    tokens_per_rank: 16
+    dtype: bf16
+  prefill:
+    tokens_per_rank: 1024
+    dtype: bf16
+
+environment:
+  num_gpus: 4
+  communication_backend: mscclpp
+  compute_backend: torch
+  cuda_graph: false
+
+routing:
+  balanced:
+    kind: balanced
+  uniform:
+    kind: uniform
+  hot_pair:
+    kind: hot_experts
+    expert_ids: [0, 1]
+    probability_mass: 0.8
+
+benchmark:
+  warmup: 10
+  iterations: 100
+  seed: 42
+  output_dir: benchmark_results

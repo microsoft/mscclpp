@@ -36,6 +36,176 @@ helpers. There is no separate backend or strategy object.
 | Python frontend | `mscclpp.ep.MoECommunicator` selects latency or throughput algorithms with `MoEMode` |
 | ROCm | Not supported |
 
+## Synthetic MoE reference benchmark
+
+`test/python/ep/moe_bench/` adds real local expert computation to dispatch and
+combine without changing the communication-only `run_ep_bench_python.py`.
+Install the matching CUDA extra and benchmark dependencies, for example:
+
+```bash
+python -m pip install -e '.[cuda13,moe-benchmark]'
+python test/python/ep/moe_bench/run.py \
+  --model small --input decode --backend mscclpp --gpus 2 --routing balanced \
+  --warmup 10 --iterations 100
+```
+
+The launcher starts one worker per GPU using `torchrun`; do not wrap it in
+another `torchrun` or `mpirun`. Its default configuration is
+`test/python/ep/moe_bench/configs.yaml`, independently of the working directory.
+Use `--config` to select another YAML file. Named `models`, `inputs`, and `routing`
+presets describe each workload. One `environment` mapping defaults to four GPUs,
+`communication_backend: mscclpp`, `compute_backend: torch`, and `cuda_graph: false`.
+Independently override these defaults with `--backend {mscclpp,nccl}`,
+`--gpus {2,4}`, and `--graph {none,mlp}`. Omitted flags retain the YAML values;
+`--graph none` explicitly disables graphs even when the YAML default is `mlp`.
+The old `environments` mapping and `--environment` labels are no longer supported.
+The shared
+`benchmark` settings (`warmup`, `iterations`, `seed`, `output_dir`) can be
+overridden with `--warmup`, `--iterations`, `--seed`, and `--output-dir`.
+
+This supports MSCCL++ or NCCL-EP BF16 expert-major low-latency communication on two
+or four local GPUs, equal contiguous expert placement, and the same PyTorch reference
+SwiGLU compute. `cuda_graph: false` preserves eager execution. Select
+`--graph mlp` (`cuda_graph: mlp`) to capture only the local
+expert MLPs: gate/up/down GEMMs, SiLU, and multiplication. Dispatch and combine
+remain eager, with routing weights applied by combine. Capture and library
+warmup happen before benchmark warmup and timing; replay uses current dispatched
+data in fixed buffers with fixed expert counts. Timing still covers the entire
+dispatch/MLP/combine interval, including eager launch gaps and peer waits.
+`run.json` records `cuda_graph_scope: mlp_only` for these runs.
+Other communication/compute backends,
+precisions, full-pipeline graphs, overlap, and multi-node execution are rejected rather than
+silently substituted. Each expert has independent seeded gate/up/down matrices.
+Supported hidden dimensions are 4096, 4352, 5120, 6656, 7168, 8192, 8704, and 9216;
+top-k is at most nine and cannot exceed the global expert count.
+These common workload limits are retained for both backends to allow comparable
+runs; they are not a list of every dimension supported by NCCL-EP.
+No trained model, text dataset, router GEMM, backward pass, or optimizer is used.
+The `decode` and `prefill` names describe token batch sizes, not full-model tasks.
+
+### NCCL-EP backend
+
+NCCL-EP is optional: MSCCL++ runs do not import or require it. Install the
+official NVIDIA bindings separately, selecting the CUDA major matching PyTorch:
+
+```bash
+python -m pip install 'nccl-extensions[cu13]'
+# For a CUDA 12 PyTorch environment: nccl-extensions[cu12]
+python -c 'import nccl.core, nccl.ep'
+python test/python/ep/moe_bench/run.py \
+  --model small --input decode --backend nccl --gpus 2 --routing balanced \
+  --warmup 10 --iterations 100
+```
+
+The tested bindings are `nccl-extensions==0.1.0` and `nccl4py==0.6.0`, with
+NCCL 2.30.7. The extension requires a matching CUDA toolkit (`nvcc` and headers)
+for runtime kernel compilation; set `CUDA_HOME` if it is not discoverable.
+See the [NVIDIA installation instructions](https://github.com/NVIDIA/nccl-extensions#installation).
+The PyTorch NCCL process-group backend alone does **not** provide `nccl.ep`.
+There is no fallback when the requested runtime is missing or fails.
+
+Use `--backend nccl --gpus 2` (or `--gpus 4`) with `--graph none` for eager
+execution or `--graph mlp` for the same MLP-only graph mode. For example:
+
+```bash
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model scaled_small --input decode --backend nccl --gpus 4 --graph mlp \
+  --routing balanced --warmup 200 --iterations 1000
+```
+
+Both backends use the same input generation, routing, seeded expert matrices,
+preallocated buffers, compute, and phase timing. The NCCL unique ID is exchanged
+over the existing CPU Gloo group; this benchmark needs no MPI. Run on a supported
+single-node NVLink GPU system; multi-node/throughput execution is not implemented.
+NCCL initialization and any kernel compilation happen before measurement.
+
+Implementation files under `test/python/ep/moe_bench/`:
+
+- `backends/__init__.py`: lazy backend factory and fixed-buffer adapter contract.
+- `backends/mscclpp.py`: the existing MSCCL++ latency communication path.
+- `backends/nccl.py`: NCCL communicator, expert-major handle, dispatch counters,
+  weighted combine, version metadata, and ordered resource teardown.
+- `worker.py`: shared dispatch → PyTorch SwiGLU → combine pipeline and timings.
+- `config.py` / `configs.yaml`: named workload presets and default environment settings.
+- `test_backends.py`: dependency isolation, API wiring, and cleanup tests;
+  `test_moe_bench.py`: per-backend distributed mathematical reference.
+
+Combine consumes the **computed expert output**, not the dispatched input.
+NCCL-EP applies the original FP32 routing weights when gathering BF16 expert
+outputs. Unlike MSCCL++ `RANK_LOCAL_REDUCE`, it does not round intermediate
+per-rank partial sums to BF16, so results need not be bitwise identical.
+`run.json` records the actual backend, algorithm, combine mode, and installed
+backend/runtime versions; NCCL runs are not labeled `rank_local_reduce`.
+
+### Workloads and measurements
+
+Balanced routing gives global expert counts differing by at most one. Uniform
+routing samples distinct experts per token with equal probability. Hot-expert
+routing assigns a probability mass to the specified global IDs before weighted
+sampling without replacement. This is not a guaranteed final route fraction:
+two hot experts with top-k eight can account for at most 25% of assignments.
+Routing weights are positive and normalized per token. Inputs, routing, and
+expert matrices remain fixed throughout a run.
+
+Each timed iteration includes dispatch, valid-row expert GEMMs, SwiGLU, and
+combine. Expert counts are determined once outside timing, so no GEMMs run over
+padded rows and no receive-count CPU synchronization is required per iteration.
+Reusable buffers hold GEMM outputs. This is a reference implementation:
+per-expert Python launches and GPU idle gaps are included in the CUDA-event
+interval and can dominate small workloads. It is not optimized grouped GEMM.
+Host barriers before iterations and completion synchronization after their end
+events are outside timing. Initialization, generation, warmup, and output writing
+are excluded. Native CUDA timing events are materialized before warmup; warmup
+uses the same phase-event recording path as measured iterations. This prevents
+lazy CUDA event creation from contaminating the measured intervals, but does
+not remove Python launch gaps or host scheduling effects.
+
+Rank 0 prints mean/p50/p95 GPU elapsed latency per rank and for the maximum rank
+duration in each iteration. This maximum is a distributed duration metric, not
+a globally synchronized wall-clock measurement. Global throughput is the original
+input token count across all GPUs divided by the mean maximum-rank duration;
+top-k copies do not count as additional input tokens. Expert/rank assignment
+counts and maximum/mean rank load expose routing imbalance.
+
+Dispatch, MLP, and combine are also timed separately on each rank, using four
+CUDA events at the boundaries of the three phases on the current stream. There
+is no synchronization between phases. MLP includes all expert GEMMs, SwiGLU,
+and per-expert launch gaps, rather than isolated GEMM kernel time. Communication
+times include peer waiting, and event-recording overhead affects the measured
+pipeline. Phase durations are adjacent intervals; the total is measured directly
+from the first to last event. Phase means/p50/p95 are reported per rank, not as
+independently maximized global phases whose sum would misrepresent total latency.
+
+Each run writes three files under
+`benchmark_results/<UTC-timestamp>_<unique-id>/` (or `--output-dir`):
+
+| File | Contents |
+|---|---|
+| `run.json` | Invocation and worker command, selected model/input/routing presets, fully resolved configuration (including environment and benchmark overrides), seed, versions, GPU details, actual algorithm/layout, expert loads, and completion/failure status |
+| `summary.csv` | `scope,rank,phase,mean_latency_us,p50_latency_us,p95_latency_us,throughput_tokens_per_s`; one global total row and dispatch/MLP/combine/total rows per rank |
+| `iterations.csv` | `iteration,rank,dispatch_us,mlp_us,combine_us,total_us` per measured rank iteration, excluding warmup |
+
+`run.json` uses schema version 2 for these phase-aware CSVs. Throughput is only
+populated for the global total summary row. Existing schema-version-1 result
+files are not modified.
+
+The launcher records its Python argv, not shell redirections or a full shell
+environment. Native runtime/library allocations are not fully covered by the
+preflight tensor-memory estimate. Failures are reported on stderr and marked in
+`run.json` once a run directory has been created; malformed configurations fail
+before launch. Only completed runs should be used for analysis. Activation tensors
+and expert matrices are not saved. There are no optional profiling or validation
+passes in the user-facing benchmark.
+
+Development coverage includes CPU tests and an opt-in two-GPU mathematical
+reference comparison (including repeated calls and different routing loads):
+
+```bash
+MOE_BENCH_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
+# Optional NCCL-EP coverage (separate worker processes for each backend):
+MOE_BENCH_NCCL_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
+```
+
 ## Runtime architecture
 
 ### Latency algorithms
