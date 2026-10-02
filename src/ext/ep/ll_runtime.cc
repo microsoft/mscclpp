@@ -6,6 +6,7 @@
 #include <cuda.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <future>
@@ -25,16 +26,18 @@ namespace mscclpp {
 namespace ep {
 
 MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden,
-                                           int numExperts, int numTopk, DispatchLayout outputLayout)
+                                           int numExperts, int numTopk, DispatchLayout outputLayout,
+                                           low_latency::DispatchDataType dispatchDataType)
     : MoERuntime(communicator),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
       numTopk_(numTopk),
       outputLayout_(outputLayout),
+      dispatchDataType_(dispatchDataType),
       symmetricBufferBytes_(static_cast<int64_t>(low_latency::symmetricBufferSize(
           maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout != DispatchLayout::EXPERT_MAJOR,
-          outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED))),
+          outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType))),
       workspaceBytes_(low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk)),
       communicator_(&communicator) {
   EP_HOST_ASSERT(communicator_ != nullptr);
@@ -67,25 +70,25 @@ MoELowLatencyRuntime::~MoELowLatencyRuntime() noexcept(false) {
 void* MoELowLatencyRuntime::outputTopkIdsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ != DispatchLayout::EXPERT_MAJOR,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType_)
       .rankMajorTopkIdsBuffer_;
 }
 void* MoELowLatencyRuntime::outputTopkWeightsBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ != DispatchLayout::EXPERT_MAJOR,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType_)
       .rankMajorTopkWeightsBuffer_;
 }
 void* MoELowLatencyRuntime::outputTokensBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ != DispatchLayout::EXPERT_MAJOR,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType_)
       .rankMajorTokenBuffer_;
 }
 void* MoELowLatencyRuntime::expertOutputBuffer() const {
   return low_latency::Layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                              outputLayout_ != DispatchLayout::EXPERT_MAJOR,
-                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED)
+                             outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType_)
       .rankMajorExpertOutputBuffer_;
 }
 
@@ -176,7 +179,7 @@ void MoELowLatencyRuntime::setup() {
     // device inter-domain path can address them without reconstructing Layout.
     low_latency::Layout layout(symmetricBuffer_, maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
                                outputLayout_ != DispatchLayout::EXPERT_MAJOR,
-                               outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+                               outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED, dispatchDataType_);
     commContext_.gpuNetIoStagingBuffer_ = layout.gpuNetIoStagingBuffer_;
     commContext_.gpuNetIoFlagsBuffer_ = layout.gpuNetIoFlagsBuffer_;
     commContext_.gpuNetIoCombineFlagsBuffer_ = layout.gpuNetIoCombineFlagsBuffer_;
@@ -246,7 +249,7 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                                     const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens,
                                     int hidden, int numTopk, int maxTokensPerRank, int numExperts,
                                     int invalidTokenExpertId, DispatchLayout dispatchLayout,
-                                    low_latency::DispatchDataType dispatchDataType, int numBlocks,
+                                    low_latency::DispatchDataType dispatchDataType, float quantScale, int numBlocks,
                                     cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
@@ -256,15 +259,17 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
   EP_HOST_ASSERT(numBlocks - low_latency::DispatchControlBlocks >= numRanks_ &&
                  numBlocks <= low_latency::MaxDispatchBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
+  EP_HOST_ASSERT(dispatchDataType == dispatchDataType_);
+  EP_HOST_ASSERT(dispatchDataType != low_latency::DispatchDataType::FP8_E4M3 ||
+                 (quantScale > 0.0f && std::isfinite(quantScale)));
 
   const bool topkExpanded = dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
   if (topkExpanded) {
     EP_HOST_ASSERT(maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_);
     EP_HOST_ASSERT(numExperts == numExperts_ && numTokens >= 0);
-    EP_HOST_ASSERT(dispatchDataType == low_latency::DispatchDataType::BF16);
   }
   low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
-                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded);
+                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded, dispatchDataType_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR || topkExpanded) {
@@ -286,7 +291,8 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
                                        .invalidTokenExpertId_ = invalidTokenExpertId,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .dispatchDataType_ = dispatchDataType};
+                                       .dispatchDataType_ = dispatchDataType,
+                                       .quantScale_ = quantScale};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   // Reset the per-destination payload slot counter (workspace[0..numRanks_)) before
@@ -303,23 +309,25 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
 void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                                    const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
                                    int numTopk, int maxTokensPerRank, int numExperts, DispatchLayout dispatchLayout,
-                                   low_latency::DispatchDataType dispatchDataType, low_latency::CombineMode mode,
-                                   int numBlocks, cudaStream_t stream) {
+                                   low_latency::DispatchDataType dispatchDataType, float quantScale,
+                                   low_latency::CombineMode mode, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= maxTokensPerRank_);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= low_latency::MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == outputLayout_);
+  EP_HOST_ASSERT(dispatchDataType == dispatchDataType_);
+  EP_HOST_ASSERT(dispatchDataType != low_latency::DispatchDataType::FP8_E4M3 ||
+                 (quantScale > 0.0f && std::isfinite(quantScale)));
 
   const bool topkExpanded = dispatchLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
   if (topkExpanded) {
     EP_HOST_ASSERT(maxTokensPerRank == maxTokensPerRank_ && numTopk == numTopk_ && hidden == hidden_);
     EP_HOST_ASSERT(numExperts == numExperts_ && numTokens >= 0 && numTokens <= maxTokensPerRank);
-    EP_HOST_ASSERT(dispatchDataType == low_latency::DispatchDataType::BF16);
     EP_HOST_ASSERT(mode == low_latency::CombineMode::RANK_LOCAL_REDUCE);
   }
   low_latency::Layout allocationLayout(symmetricBuffer_, maxTokensPerRank_, hidden, numRanks_, numExperts, numTopk,
-                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded);
+                                       outputLayout_ != DispatchLayout::EXPERT_MAJOR, topkExpanded, dispatchDataType_);
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(symmetricBufferBytes_));
   void* combineRecvBuffer = allocationLayout.combineRecvBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
@@ -339,7 +347,8 @@ void MoELowLatencyRuntime::combine(void* output, const void* input, const int64_
                                        .invalidTokenExpertId_ = numExperts,
                                        .maxTokensPerRank_ = maxTokensPerRank,
                                        .outputLayout_ = dispatchLayout,
-                                       .dispatchDataType_ = dispatchDataType};
+                                       .dispatchDataType_ = dispatchDataType,
+                                       .quantScale_ = quantScale};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= workspaceBytes_);
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,

@@ -136,6 +136,8 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Static E4M3 quantization multiplier; one for BF16 and block-scaled paths.
+  float quantScale_ = 1.0f;
 };
 
 /// Persistent communication resources shared by low-latency operations.

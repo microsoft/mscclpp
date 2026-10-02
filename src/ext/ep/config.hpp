@@ -10,6 +10,8 @@
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
+#include "api.cuh"
+
 namespace mscclpp {
 namespace ep {
 
@@ -199,12 +201,13 @@ struct Layout {
   void* gpuNetIoFlagsBuffer_;
   void* gpuNetIoCombineFlagsBuffer_;
   void* gpuNetIoCombineLandingBuffer_;
-  // Byte stride of one staging-ring slot: one hidden BF16 token row followed by
+  // Byte stride of one staging-ring slot: one hidden payload row followed by
   // the rank-major top-k id/weight metadata for that token (numTopk each). The
   // inter-domain send stages token+metadata contiguously, RDMA-writes the token
   // to the peer rank-major token buffer and the metadata to the peer id/weight
   // buffers, then bumps the peer completion flag.
   size_t gpuNetIoSlotStride_;
+  DispatchDataType dispatchDataType_;
 
   // Expanded-only registered regions, each starting on a 128-byte boundary.
   // Metadata staging is persistent per destination: [numRanks, capacity, numTopk].
@@ -217,7 +220,9 @@ struct Layout {
   void* expandedCountStaging_ = nullptr;  // int[numRanks], persistent sender counts by destination rank.
 
   MSCCLPP_HOST_DEVICE_INLINE Layout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks,
-                                    int numExperts, int numTopk, bool rankMajor = false, bool topkExpanded = false) {
+                                    int numExperts, int numTopk, bool rankMajor = false, bool topkExpanded = false,
+                                    DispatchDataType dispatchDataType = DispatchDataType::BF16)
+      : dispatchDataType_(dispatchDataType) {
     const PayloadView<Bf16> bf16Payload(hidden, numTopk);
     const PayloadView<Fp8E4M3, float> fp8Payload128(hidden, numTopk, 128);
     const size_t dispatchMetadataBytes =
@@ -227,8 +232,10 @@ struct Layout {
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-    const size_t rankMajorTokenBytes =
-        static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16) * (topkExpanded ? numTopk : 1);
+    const size_t expandedElementBytes = dispatchDataType == DispatchDataType::FP8_E4M3 ? sizeof(Fp8E4M3) : sizeof(Bf16);
+    const size_t rankMajorElementBytes = topkExpanded ? expandedElementBytes : sizeof(Bf16);
+    const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden *
+                                       rankMajorElementBytes * (topkExpanded ? numTopk : 1);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;
     const size_t combineBufferBytes = static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t recvBufferBytes =
@@ -238,9 +245,9 @@ struct Layout {
 
     // GPUNetIO region sizing (small, always reserved so the layout is uniform
     // regardless of whether the backend is compiled in / enabled).
-    gpuNetIoSlotStride_ = configAlign<size_t>(
-        static_cast<size_t>(hidden) * sizeof(Bf16) + static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
-        BufferAlignmentBytes);
+    gpuNetIoSlotStride_ = configAlign<size_t>(static_cast<size_t>(hidden) * rankMajorElementBytes +
+                                                  static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
+                                              BufferAlignmentBytes);
     // Expanded sends retain one immutable staging row per source token until completion.
     const int gpuNetIoStagingRows =
         topkExpanded && maxTokensPerRank > GpuNetIoStagingSlots ? maxTokensPerRank : GpuNetIoStagingSlots;
@@ -297,8 +304,10 @@ struct Layout {
 };
 
 inline size_t symmetricBufferSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                  bool rankMajor = false, bool topkExpanded = false) {
-  const Layout layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, rankMajor, topkExpanded);
+                                  bool rankMajor = false, bool topkExpanded = false,
+                                  DispatchDataType dispatchDataType = DispatchDataType::BF16) {
+  const Layout layout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, rankMajor, topkExpanded,
+                      dispatchDataType);
   return configAlign<size_t>(layout.totalBytes_, BufferAlignmentBytes);
 }
 

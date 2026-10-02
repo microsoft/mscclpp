@@ -66,7 +66,7 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
 
         def as_tensor(view, *, device):
             interface = view.__cuda_array_interface__
-            dtype = {"<u2": "uint16", "<i4": "int32", "<f4": "float32"}[interface["typestr"]]
+            dtype = {"<u2": "uint16", "<i4": "int32", "<f4": "float32", "|u1": "uint8"}[interface["typestr"]]
             return _Tensor(interface["shape"], dtype, device, interface["data"][0])
 
         torch.as_tensor = as_tensor
@@ -135,6 +135,7 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
                     num_experts=8,
                     num_topk=k,
                     output_layout=moe.output_layout,
+                    dispatch_data_type=self.api.DispatchDataType.BF16,
                 )
                 ids, weights = _Tensor((2, k), "int64"), _Tensor((2, k), "float32") if weighted else None
                 stream = SimpleNamespace(cuda_stream=29) if explicit else None
@@ -163,6 +164,7 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
                 self.assertIsNot(output.topk_ids, ids)
                 self.assertIs(output.layout, handle.output_info.layout)
                 self.assertIsNone(output.quant)
+                self.assertIsNone(output.combine_input_quant)
                 counts = output.layout.num_tokens_per_rank
                 self.assertEqual((counts.shape, counts.dtype), ((2,), "int32"))
                 self.assertIsNone(output.layout.num_tokens_per_expert)
@@ -186,6 +188,7 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
                     8,
                     moe.output_layout,
                     self.api.DispatchDataType.BF16,
+                    1.0,
                     blocks,
                     sptr,
                 )
@@ -208,6 +211,7 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
                     8,
                     moe.output_layout,
                     self.api.DispatchDataType.BF16,
+                    1.0,
                     self.api.CombineMode.RANK_LOCAL_REDUCE,
                     blocks - 2,
                     sptr,
@@ -240,10 +244,68 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
                 dict(enable_overlap=True),
                 dict(output_layout=self.layout.TOKEN_MAJOR),
                 dict(mode=self.api.MoEMode.HIGH_THROUGHPUT),
-                dict(quant=self.api.QuantConfig(format=self.api.DispatchDataType.FP8_E4M3)),
             ],
             NotImplementedError,
         )
+        self.reject(
+            self.make,
+            self.factory,
+            [dict(quant=self.api.QuantConfig(format=self.api.DispatchDataType.FP8_E4M3))],
+        )
+
+    def test_static_fp8_scalar_metadata_and_validation(self):
+        fp8 = self.api.DispatchDataType.FP8_E4M3
+        moe = self.make(quant=self.api.QuantConfig(format=fp8, scale=2.0))
+        native = moe._backend._runtime.cpp_runtime
+        self.factory.assert_called_with(
+            self.comm.communicator,
+            self.api.MoEMode.LOW_LATENCY,
+            max_tokens_per_rank=4,
+            hidden=128,
+            num_experts=8,
+            num_topk=3,
+            output_layout=moe.output_layout,
+            dispatch_data_type=fp8,
+        )
+        output, handle = moe.dispatch(self.x, self.ids)
+        self.assertEqual(output.tokens.dtype, "float8_e4m3fn")
+        self.assertEqual((output.quant.format, output.quant.scale, output.quant.block_scales), (fp8, 2.0, None))
+        self.assertEqual(
+            (output.combine_input_quant.format, output.combine_input_quant.scale),
+            (fp8, 2.0),
+        )
+        self.assertEqual(native.ll_dispatch.call_args.args[18], 2.0)
+        expert = moe.get_expert_output_buffer()
+        moe.combine(expert, handle, quant=self.api.QuantConfig(format=fp8, scale=0.25))
+        self.assertEqual(native.ll_combine.call_args.args[13], 0.25)
+
+        invalid = (None, 0.0, -1.0, float("nan"), float("inf"), 1e-50, 1e39, 1)
+        self.factory.reset_mock()
+        self.reject(
+            self.make,
+            self.factory,
+            [dict(quant=self.api.QuantConfig(format=fp8, scale=scale)) for scale in invalid],
+        )
+
+    def test_static_fp8_combine_scale_validation(self):
+        fp8 = self.api.DispatchDataType.FP8_E4M3
+        moe = self.make(quant=self.api.QuantConfig(format=fp8, scale=1.0))
+        _, handle = moe.dispatch(self.x, self.ids)
+        native, expert = moe._backend._runtime.cpp_runtime, moe.get_expert_output_buffer()
+        native.ll_combine.reset_mock()
+        invalid = (
+            None,
+            self.api.QuantConfig(format=fp8),
+            self.api.QuantConfig(format=fp8, scale=0.0),
+            self.api.QuantConfig(format=fp8, scale=float("nan")),
+            self.api.QuantConfig(format=fp8, scale=1e39),
+            self.api.QuantConfig(format=self.api.DispatchDataType.BF16, scale=1.0),
+            self.api.QuantConfig(format=fp8, scale=1.0, block_scales=_Tensor((1,), "float32")),
+        )
+        for quant in invalid:
+            with self.subTest(quant=quant), self.assertRaises(ValueError):
+                moe.combine(expert, handle, quant=quant)
+            native.ll_combine.assert_not_called()
 
     def test_runtime_capacity_guard(self):
         moe = self.make()
@@ -460,7 +522,10 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
             self.assertIn(name, ep.__all__)
             self.assertIs(getattr(ep, name), getattr(self.api, name))
         output = ep.DispatchOutput(self.x, None, ep.DispatchLayoutInfo(self.layout.TOKEN_MAJOR))
+        quant = ep.QuantConfig()
+        self.assertEqual((quant.format, quant.block_scales, quant.scale), (None, None, None))
         self.assertIsNone(output.combine_input_buffer)
+        self.assertIsNone(output.combine_input_quant)
         self.assertEqual(ep.MoEMode.LOW_LATENCY.name, "LOW_LATENCY")
 
 

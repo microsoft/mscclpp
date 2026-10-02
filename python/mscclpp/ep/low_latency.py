@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+import struct
 from typing import Any, Optional
 
 import torch
@@ -41,6 +43,18 @@ def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataTyp
     if quant.block_scales is not None:
         raise ValueError("communicator quant config must not contain precomputed scales")
     return quant_format
+
+
+def _validate_static_scale(scale: object, name: str) -> float:
+    if type(scale) is not float or not math.isfinite(scale) or scale <= 0:
+        raise ValueError(f"{name} must be a positive finite float")
+    try:
+        value = struct.unpack("f", struct.pack("f", scale))[0]
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be representable as float32") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be representable as a positive finite float32")
+    return value
 
 
 def _dispatch_scale_block_size(data_type: DispatchDataType) -> int:
@@ -123,6 +137,7 @@ class LowLatencyRuntime:
         num_experts: int,
         num_topk: int,
         output_layout: DispatchLayout,
+        dispatch_data_type: DispatchDataType,
     ) -> None:
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
@@ -135,6 +150,7 @@ class LowLatencyRuntime:
             num_experts=num_experts,
             num_topk=num_topk,
             output_layout=output_layout,
+            dispatch_data_type=dispatch_data_type,
         )
 
     def is_available(self) -> bool:
@@ -216,11 +232,19 @@ class LowLatencyBackend:
         self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
         if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
             raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
-        if (
-            self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-            and self.dispatch_data_type != DispatchDataType.BF16
-        ):
-            raise NotImplementedError("RANK_MAJOR_TOPK_EXPANDED output currently supports BF16 dispatch only")
+        if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+            if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+                if config.quant is None or config.quant.scale is None:
+                    raise ValueError("RANK_MAJOR_TOPK_EXPANDED FP8 dispatch requires quant.scale")
+                self.dispatch_scale = _validate_static_scale(config.quant.scale, "quant.scale")
+            else:
+                if config.quant is not None and config.quant.scale is not None:
+                    raise ValueError("quant.scale is supported only by RANK_MAJOR_TOPK_EXPANDED FP8 dispatch")
+                self.dispatch_scale = 1.0
+        else:
+            if config.quant is not None and config.quant.scale is not None:
+                raise ValueError("quant.scale requires FP8_E4M3 dispatch")
+            self.dispatch_scale = 1.0
 
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -236,6 +260,7 @@ class LowLatencyBackend:
             num_experts=self.num_experts,
             num_topk=self.topk,
             output_layout=self.output_layout,
+            dispatch_data_type=self.dispatch_data_type,
         )
         self._is_internode = self._runtime.is_internode_available()
         self._output_tokens_owner: Optional[_CudaBufferView] = None
@@ -276,21 +301,33 @@ class LowLatencyBackend:
                 self.device,
                 self._runtime,
             )
-            self._output_tokens_owner, self._output_tokens = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.output_tokens_buffer_ptr(),
-                shape,
-                self.device,
-                self._runtime,
-            )
-            (
-                self._expert_output_owner,
-                self.expert_output_buffer,
-            ) = _bf16_tensor_from_pointer(
-                self._runtime.cpp_runtime.expert_output_buffer_ptr(),
-                shape,
-                self.device,
-                self._runtime,
-            )
+            if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+                self._output_tokens_owner, self._output_tokens = _tensor_from_pointer(
+                    self._runtime.cpp_runtime.output_tokens_buffer_ptr(), shape, "|u1", self.device, self._runtime
+                )
+                self._output_tokens = self._output_tokens.view(torch.float8_e4m3fn)
+                self._output_tokens._mscclpp_owner = self._runtime
+                self._expert_output_owner, self.expert_output_buffer = _tensor_from_pointer(
+                    self._runtime.cpp_runtime.expert_output_buffer_ptr(), shape, "|u1", self.device, self._runtime
+                )
+                self.expert_output_buffer = self.expert_output_buffer.view(torch.float8_e4m3fn)
+                self.expert_output_buffer._mscclpp_owner = self._runtime
+            else:
+                self._output_tokens_owner, self._output_tokens = _bf16_tensor_from_pointer(
+                    self._runtime.cpp_runtime.output_tokens_buffer_ptr(),
+                    shape,
+                    self.device,
+                    self._runtime,
+                )
+                (
+                    self._expert_output_owner,
+                    self.expert_output_buffer,
+                ) = _bf16_tensor_from_pointer(
+                    self._runtime.cpp_runtime.expert_output_buffer_ptr(),
+                    shape,
+                    self.device,
+                    self._runtime,
+                )
             if (
                 self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
                 and self.expert_output_buffer.data_ptr() != self._output_tokens.data_ptr()
@@ -356,17 +393,19 @@ class LowLatencyBackend:
             self.invalid_token_expert_id,
             self.output_layout,
             self.dispatch_data_type,
+            self.dispatch_scale,
             self.num_blocks,
             cuda_stream_ptr(stream),
         )
-        output_quant = (
-            None
-            if scales is None
-            else QuantConfig(
+        if self.dispatch_data_type == DispatchDataType.BF16:
+            output_quant = None
+        elif self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            output_quant = QuantConfig(format=self.dispatch_data_type, scale=self.dispatch_scale)
+        else:
+            output_quant = QuantConfig(
                 format=self.dispatch_data_type,
                 block_scales=scales,
             )
-        )
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             layout_info = DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_expert=count)
         elif self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
@@ -385,6 +424,12 @@ class LowLatencyBackend:
             weights=recv_weights,
             combine_input_buffer=(
                 self.expert_output_buffer if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED else None
+            ),
+            combine_input_quant=(
+                QuantConfig(format=self.dispatch_data_type, scale=self.dispatch_scale)
+                if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+                and self.dispatch_data_type == DispatchDataType.FP8_E4M3
+                else None
             ),
         )
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
@@ -434,13 +479,14 @@ class LowLatencyBackend:
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig],
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
         debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         if debug_combine:
             print(f"[py_ll_combine][rank {self.rank}] enter handle={type(handle).__name__}", flush=True)
-        self._validate_combine_inputs(expert_output, handle, out)
+        self._validate_combine_inputs(expert_output, quant, handle, out)
         if debug_combine:
             print(f"[py_ll_combine][rank {self.rank}] validated", flush=True)
         if isinstance(handle, ExpertMajorDispatchHandle):
@@ -501,6 +547,7 @@ class LowLatencyBackend:
             context.num_experts,
             self.output_layout,
             self.dispatch_data_type,
+            1.0 if quant is None or quant.scale is None else _validate_static_scale(quant.scale, "quant.scale"),
             self.combine_mode,
             self.num_blocks - 2,
             cuda_stream_ptr(stream),
@@ -632,7 +679,7 @@ class LowLatencyBackend:
         if tuple(output_buffer.shape) != expected_shape:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
-    def _validate_combine_inputs(self, expert_output, handle, out) -> None:
+    def _validate_combine_inputs(self, expert_output, quant, handle, out) -> None:
         if not isinstance(
             handle, (ExpertMajorDispatchHandle, RankMajorDispatchHandle, RankMajorTopkExpandedDispatchHandle)
         ):
@@ -705,8 +752,25 @@ class LowLatencyBackend:
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype != torch.bfloat16:
-            raise ValueError("expert_output must be BF16")
+        expected_dtype = (
+            torch.float8_e4m3fn
+            if self.dispatch_data_type == DispatchDataType.FP8_E4M3
+            and handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+            else torch.bfloat16
+        )
+        if expert_output.dtype != expected_dtype:
+            raise ValueError(f"expert_output must be {expected_dtype}")
+        if expected_dtype == torch.float8_e4m3fn:
+            if (
+                quant is None
+                or quant.format != DispatchDataType.FP8_E4M3
+                or quant.scale is None
+                or quant.block_scales is not None
+            ):
+                raise ValueError("FP8 expert_output requires FP8_E4M3 quant metadata with a scalar scale")
+            _validate_static_scale(quant.scale, "quant.scale")
+        elif quant is not None:
+            raise ValueError("BF16 expert_output does not accept quant metadata")
         if handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR:
             assert self.expert_output_buffer is not None
             if expert_output.data_ptr() != self.expert_output_buffer.data_ptr():

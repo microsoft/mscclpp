@@ -27,7 +27,7 @@ namespace ep {
 class MoELowLatencyRuntime : public MoERuntime {
  public:
   MoELowLatencyRuntime(mscclpp::Communicator& communicator, int maxTokensPerRank, int hidden, int numExperts,
-                       int numTopk, DispatchLayout outputLayout);
+                       int numTopk, DispatchLayout outputLayout, low_latency::DispatchDataType dispatchDataType);
   ~MoELowLatencyRuntime() noexcept(false);
 
   MoEMode mode() const override { return MoEMode::LOW_LATENCY; }
@@ -41,11 +41,11 @@ class MoELowLatencyRuntime : public MoERuntime {
                 int64_t* outputLayout, int* outputCount, const void* input, const int64_t* topkIdx,
                 const float* topkWeights, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
                 int invalidTokenExpertId, DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
-                int numBlocks, cudaStream_t stream);
+                float quantScale, int numBlocks, cudaStream_t stream);
 
   void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
                const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-               DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType,
+               DispatchLayout dispatchLayout, low_latency::DispatchDataType dispatchDataType, float quantScale,
                low_latency::CombineMode mode, int numBlocks, cudaStream_t stream);
 
  private:
@@ -55,6 +55,7 @@ class MoELowLatencyRuntime : public MoERuntime {
   int numExperts_;
   int numTopk_;
   DispatchLayout outputLayout_;
+  low_latency::DispatchDataType dispatchDataType_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 0;

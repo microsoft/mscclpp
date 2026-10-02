@@ -473,9 +473,12 @@ class HighThroughputBackend:
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig],
         out: Optional[torch.Tensor],
         stream: Optional[torch.cuda.Stream],
     ) -> torch.Tensor:
+        if quant is not None:
+            raise NotImplementedError("HT combine does not support quantized expert output yet")
         if stream is not None:
             with torch.cuda.stream(stream):
                 return self._combine(expert_output, handle, out)

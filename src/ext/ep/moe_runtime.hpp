@@ -24,10 +24,13 @@ namespace ep {
 /// @param numTopk Low-latency routed experts per token.
 /// @param maxHiddenBytes High-throughput maximum hidden-size bytes.
 /// @param numSms High-throughput SM budget for the comms kernels.
+/// @param outputLayout Low-latency dispatch output layout.
+/// @param dispatchDataType Low-latency dispatch payload data format.
 /// @return The constructed backend.
-std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
-                                             int hidden, int numExperts, int numTopk, int64_t maxHiddenBytes,
-                                             int numSms, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR);
+std::shared_ptr<MoERuntime> createMoERuntime(
+    mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts, int numTopk,
+    int64_t maxHiddenBytes, int numSms, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
+    low_latency::DispatchDataType dispatchDataType = low_latency::DispatchDataType::BF16);
 
 }  // namespace ep
 }  // namespace mscclpp

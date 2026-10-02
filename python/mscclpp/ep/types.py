@@ -19,13 +19,16 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 class QuantConfig:
     """Quantization metadata associated with an activation tensor.
 
-    Low-latency FP8 dispatch returns ``block_scales`` with the activation's
-    leading dimensions and a format-defined final scale dimension. ``FP8_E4M3``
-    uses FP32 scales per 128 elements.
+    Expanded rank-major FP8 uses the scalar quantization multiplier ``scale``:
+    values are stored as E4M3 after multiplying by ``scale`` and restored by
+    dividing by ``scale``. On combine, ``scale`` describes the quantized
+    ``mlp_B_out`` expert output. Expert-major FP8 retains format-specific
+    ``block_scales``.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
+    scale: Optional[float] = None
 
 
 # Communicator construction.
@@ -121,6 +124,7 @@ class DispatchOutput:
     topk_ids: Optional[torch.Tensor] = None
     weights: Optional[torch.Tensor] = None
     combine_input_buffer: Optional[torch.Tensor] = None
+    combine_input_quant: Optional[QuantConfig] = None
 
 
 # Combine-side context. These objects are layout-specific and opaque to the MLP.

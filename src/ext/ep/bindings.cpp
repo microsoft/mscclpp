@@ -87,6 +87,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
         nb::arg("max_tokens_per_rank") = 0, nb::arg("hidden") = 0, nb::arg("num_experts") = 0, nb::arg("num_topk") = 0,
         nb::arg("max_hidden_bytes") = 0, nb::arg("num_sms") = 20,
         nb::arg("output_layout") = mscclpp::ep::DispatchLayout::EXPERT_MAJOR,
+        nb::arg("dispatch_data_type") = mscclpp::ep::low_latency::DispatchDataType::BF16,
         "Create the MoE backend selected by mode; returns a shared MoERuntime handle.");
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
@@ -120,39 +121,41 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
              int hidden, int numTopk, int maxTokensPerRank, int numExperts, int invalidTokenExpertId,
              mscclpp::ep::DispatchLayout dispatchLayout, mscclpp::ep::low_latency::DispatchDataType dispatchDataType,
-             int numBlocks, uintptr_t streamPtr) {
+             float quantScale, int numBlocks, uintptr_t streamPtr) {
             narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
-                .dispatch(
-                    ptr(outputPtr), ptr(outputScalesPtr), reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
-                    reinterpret_cast<int*>(ptr(outputTopkIdxPtr)), reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
-                    reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)), reinterpret_cast<int*>(ptr(outputCountPtr)),
-                    ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
-                    reinterpret_cast<float*>(ptr(topkWeightsPtr)), numTokens, hidden, numTopk, maxTokensPerRank,
-                    numExperts, invalidTokenExpertId, dispatchLayout, dispatchDataType, numBlocks, stream(streamPtr));
+                .dispatch(ptr(outputPtr), ptr(outputScalesPtr), reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
+                          reinterpret_cast<int*>(ptr(outputTopkIdxPtr)),
+                          reinterpret_cast<float*>(ptr(outputTopkWeightsPtr)),
+                          reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
+                          reinterpret_cast<int*>(ptr(outputCountPtr)), ptr(inputPtr),
+                          reinterpret_cast<int64_t*>(ptr(topkIdxPtr)), reinterpret_cast<float*>(ptr(topkWeightsPtr)),
+                          numTokens, hidden, numTopk, maxTokensPerRank, numExperts, invalidTokenExpertId,
+                          dispatchLayout, dispatchDataType, quantScale, numBlocks, stream(streamPtr));
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
           nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("max_tokens_per_rank"),
           nb::arg("num_experts"), nb::arg("invalid_token_expert_id"), nb::arg("dispatch_layout"),
-          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
+          nb::arg("dispatch_data_type"), nb::arg("quant_scale"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
       .def(
           "ll_combine",
           [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr,
              uintptr_t srcInfoPtr, uintptr_t layoutRangePtr, uintptr_t outputPtr, int numTokens, int hidden,
              int numTopk, int maxTokensPerRank, int numExperts, mscclpp::ep::DispatchLayout dispatchLayout,
-             mscclpp::ep::low_latency::DispatchDataType dispatchDataType, mscclpp::ep::low_latency::CombineMode mode,
-             int numBlocks, uintptr_t streamPtr) {
+             mscclpp::ep::low_latency::DispatchDataType dispatchDataType, float quantScale,
+             mscclpp::ep::low_latency::CombineMode mode, int numBlocks, uintptr_t streamPtr) {
             narrow<mscclpp::ep::MoELowLatencyRuntime>(self, "LOW_LATENCY")
                 .combine(ptr(outputPtr), ptr(expertOutputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
                          reinterpret_cast<float*>(ptr(topkWeightsPtr)), reinterpret_cast<int*>(ptr(srcInfoPtr)),
                          reinterpret_cast<int64_t*>(ptr(layoutRangePtr)), numTokens, hidden, numTopk, maxTokensPerRank,
-                         numExperts, dispatchLayout, dispatchDataType, mode, numBlocks, stream(streamPtr));
+                         numExperts, dispatchLayout, dispatchDataType, quantScale, mode, numBlocks, stream(streamPtr));
           },
           nb::arg("expert_output_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"),
           nb::arg("layout_range_ptr"), nb::arg("output_ptr"), nb::arg("num_tokens"), nb::arg("hidden"),
           nb::arg("num_topk"), nb::arg("max_tokens_per_rank"), nb::arg("num_experts"), nb::arg("dispatch_layout"),
-          nb::arg("dispatch_data_type"), nb::arg("mode"), nb::arg("num_blocks"), nb::arg("stream_ptr"))
+          nb::arg("dispatch_data_type"), nb::arg("quant_scale"), nb::arg("mode"), nb::arg("num_blocks"),
+          nb::arg("stream_ptr"))
       .def(
           "ht_compute_dispatch_counts",
           [](mscclpp::ep::MoERuntime& self, uintptr_t num_tokens_per_rank_ptr, uintptr_t num_tokens_per_expert_ptr,

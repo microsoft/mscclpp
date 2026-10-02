@@ -622,7 +622,8 @@ __global__ __launch_bounds__(CombineNThreads, 1) void combineTopkExpandedKernel(
 
 void validate(const Workload& work, const CommContext& comm, int blocks) {
   EP_HOST_ASSERT(work.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
-  EP_HOST_ASSERT(work.dispatchDataType_ == DispatchDataType::BF16);
+  EP_HOST_ASSERT(work.dispatchDataType_ == DispatchDataType::BF16 &&
+                 "FP8 expanded CUDA dispatch/combine is not implemented");
   EP_HOST_ASSERT(comm.numRanks_ > 0 && comm.numRanks_ <= 64);
   EP_HOST_ASSERT(work.numExperts_ > 0 && work.numExperts_ % comm.numRanks_ == 0);
   EP_HOST_ASSERT(work.numTopk_ > 0 && work.numTopk_ <= CombineMaxNTopk);

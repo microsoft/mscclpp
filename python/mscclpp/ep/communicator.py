@@ -143,12 +143,13 @@ class MoECommunicator:
         expert_output: torch.Tensor,
         handle: DispatchHandle,
         *,
+        quant: Optional[QuantConfig] = None,
         out: Optional[torch.Tensor] = None,
         stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
         if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
             print(f"[py_comm_combine] enter backend={type(self._backend).__name__}", flush=True)
-        result = self._backend.combine(expert_output, handle, out=out, stream=stream)
+        result = self._backend.combine(expert_output, handle, quant=quant, out=out, stream=stream)
         if os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1":
             print("[py_comm_combine] exit", flush=True)
         return result
@@ -161,12 +162,14 @@ class MoECommunicator:
         that must outlive the next call.
 
         ``RANK_MAJOR`` retains its separate, pre-reduced per-rank result buffer.
-        ``RANK_MAJOR_TOPK_EXPANDED`` returns a BF16 tensor shaped
+        ``RANK_MAJOR_TOPK_EXPANDED`` returns a tensor in the configured payload
+        dtype shaped
         ``[world_size * max_tokens_per_rank * topk, hidden_size]`` that aliases
         dispatch tokens and ``DispatchOutput.combine_input_buffer``. Save any
         dispatch snapshot before overwriting active rows with unweighted expert
-        results. Combine applies original source weights, without compaction or
-        local pre-reduction.
+        results. FP8 expert output requires scalar ``quant`` metadata on combine.
+        Combine applies original source weights, without compaction or local
+        pre-reduction.
         """
         buffer = getattr(self._backend, "expert_output_buffer", None)
         if buffer is None:
