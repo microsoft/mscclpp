@@ -553,19 +553,28 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
 
 
 @pytest.mark.parametrize(
-    "capacity,intermediate,clamp,local_experts,top_k",
+    "capacity,intermediate,clamp,local_experts,top_k,remaining_sms",
     [
-        (64, 4096, -1.0, 16, 8),
-        (64, 4608, -7.0, 16, 8),
-        (65, 4096, -1.0, 16, 8),
-        (64, 4096, 0.125, 16, 8),
-        (64, 4096, -1.0, 8, 8),
-        (64, 4096, -1.0, 16, 7),
+        (64, 4096, -1.0, 16, 8, 8),
+        (64, 4608, -7.0, 16, 8, 8),
+        (64, 4096, -1.0, 16, 8, 2),
+        (65, 4096, -1.0, 16, 8, 8),
+        (64, 4096, 0.125, 16, 8, 8),
+        (64, 4096, -1.0, 8, 8, 8),
+        (64, 4096, -1.0, 16, 7, 8),
     ],
-    ids=["specialized-4k", "specialized-4k5", "generic-capacity", "generic-clamp", "generic-experts", "generic-top-k"],
+    ids=[
+        "specialized-4k",
+        "specialized-4k5",
+        "specialized-low-ctas",
+        "generic-capacity",
+        "generic-clamp",
+        "generic-experts",
+        "generic-top-k",
+    ],
 )
 def test_native_w4a8_configuration_selection_graph_reuse(
-    configuration_runtime, capacity, intermediate, clamp, local_experts, top_k
+    configuration_runtime, capacity, intermediate, clamp, local_experts, top_k, remaining_sms
 ):
     runtime, torch = configuration_runtime, configuration_runtime.torch
     config = runtime.config(
@@ -577,13 +586,22 @@ def test_native_w4a8_configuration_selection_graph_reuse(
         hidden=9216,
         intermediate=intermediate,
     )
+    sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
+    config = replace(config, sm_margin=max(0, sms - remaining_sms))
     weights = _host_weights(config)
     with _native_case(runtime) as case:
         context = case.create(config, weights)
         storage = _buffers(runtime, context)
         graphs = {}
         # Keep EP32 CPU oracles small while retaining the specialized capacity.
-        sample_capacity = 4 if runtime.world == 32 else capacity
+        sample_capacity = (8 if remaining_sms == 2 else 4) if runtime.world == 32 else capacity
+        if remaining_sms == 2:
+
+            def check_planner_fallback():
+                assert context.cta_count == 2
+                assert config.world_size * sample_capacity * config.top_k > context.cta_count * 512
+
+            runtime.collective(check_planner_fallback)
         reference_config = replace(config, max_tokens=sample_capacity)
         counts = {count: count for count in (0, 1, sample_capacity)}
         for nominal, tokens in counts.items():
@@ -614,7 +632,7 @@ def test_native_w4a8_configuration_selection_graph_reuse(
         runtime.collective(check_selected_kernel)
         for nominal in (sample_capacity, 1, 0, sample_capacity):
             tokens = counts[nominal]
-            for pattern in ("masked", "hot_last", "mixed"):
+            for pattern in ("hot_first", "masked", "hot_last", "mixed"):
                 sample = _sample(config, tokens, pattern)
                 expected = _routing_reference(reference_config, sample, weights)
                 with torch.cuda.stream(case.stream):

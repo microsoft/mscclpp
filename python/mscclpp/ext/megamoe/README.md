@@ -148,6 +148,13 @@ Unclamped EP4/E64 and EP32/E512 contexts with capacity 64, top-8, H9216, and
 I4096 or I4608 select configuration-specialized kernels that assume every rank
 has the same live token count. These kernels calculate route offsets directly;
 other W4A8 configurations read token-count packets and build dynamic prefixes.
+Fixed-token routing retains each thread's route through the count/fill phases
+when planner capacity permits, and falls back to rereading routes with smaller
+CTA budgets. Warp-aggregated expert updates share count and cursor atomics, and
+warps distribute block construction for experts spanning multiple token blocks.
+Count and arrival counters are cleared after their last use for the next ordered
+forward, eliminating the fixed-token initialization epoch wait while retaining
+the offset and final routing-ready publication.
 Launch resources are borrowed from grid-constant parameters rather than copied
 into thread-local memory.
 Other capacities, shapes, expert/top-k counts, and clamped activations retain

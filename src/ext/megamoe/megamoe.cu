@@ -205,20 +205,9 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   const int intermediate = p.config.intermediate;
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
     atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
-  if (blockIdx.x == 0) {
-    uint32_t packetFlag = uint32_t(*at<uint64_t>(p.local, p.symmetric.epoch) + 1);
-    for (int index = threadIdx.x; index < tokens * p.config.topK; index += blockDim.x) {
-      int32_t id = ids ? ids[index] : at<int32_t>(p.local, p.symmetric.topkIds)[index];
-      float weight = scores ? scores[index] : at<float>(p.local, p.symmetric.topkWeights)[index];
-      at<int32_t>(p.local, p.symmetric.topkIds)[index] = id;
-      at<float>(p.local, p.symmetric.topkWeights)[index] = weight;
-      at<mscclpp::LLPacket>(p.local, p.symmetric.routingPackets)[index].write(
-          mscclpp::bit_cast<uint32_t>(id), mscclpp::bit_cast<uint32_t>(weight), packetFlag);
-    }
-  }
   traceW4(W4TracePhase::Routing, true);
   // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
-  prepareRoutes<WorldSize != 0>(p, tokens);
+  prepareRoutes<WorldSize != 0>(p, tokens, ids, scores);
   traceW4(W4TracePhase::Routing, false);
 
   typename Load::Params loadParams{};
