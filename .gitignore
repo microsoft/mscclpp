@@ -5,5 +5,6 @@ __pycache__
 .*.swp
 *.so
 .pytest_cache/
+benchmark_results/
 _codeql_detected_source_root
 docs/_static/versions.js
