@@ -93,6 +93,12 @@ def main():
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
+    parser.add_argument(
+        "--graph-timing",
+        choices=("isolated", "steady-state"),
+        default="isolated",
+        help="steady-state queues an untimed replay before timing to exclude initial rank submission skew",
+    )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument("--tile-m", type=int, default=256)
@@ -112,6 +118,8 @@ def main():
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     if args.e5m2 and args.mxfp4:
         parser.error("--e5m2 and --mxfp4 are mutually exclusive")
+    if not args.graph and args.graph_timing != "isolated":
+        parser.error("--graph-timing steady-state requires --graph")
 
     import torch
     import torch.distributed as dist
@@ -200,6 +208,8 @@ def main():
     for _ in range(args.iterations):
         dist.barrier()
         with torch.cuda.stream(stream):
+            if graph and args.graph_timing == "steady-state":
+                graph.replay()
             begin.record()
             graph.replay() if graph else launch()
             end.record()
@@ -226,6 +236,11 @@ def main():
             "scope": "routed_experts_only",
             "excluded": ["shared_expert", "squash", "unsquash", "router", "residual"],
             "configuration": {**vars(args), "world_size": world},
+            "timing": {
+                "method": "CUDA events; slowest rank per sample",
+                "graph_timing": args.graph_timing if graph else None,
+                "untimed_graph_replays_per_sample": int(bool(graph) and args.graph_timing == "steady-state"),
+            },
             "hardware": torch.cuda.get_device_name(device),
             "torch": torch.__version__,
             "cuda": torch.version.cuda,

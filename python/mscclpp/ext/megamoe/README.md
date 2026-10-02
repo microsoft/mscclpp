@@ -284,6 +284,14 @@ Graphs. `--tile-m`, `--tile-n`, `--tile-k`, `--load-stages`, and
 `--transform-stages` select a routed JIT specialization; defaults select the
 precompiled kernel.
 
+Graph timing defaults to `--graph-timing isolated`: the first collective can
+include rank-to-rank CPU submission skew after the Gloo rendezvous.
+Use `--graph-timing steady-state` to queue one untimed replay before each timed
+replay on the same stream. The timed replay still includes the full forward,
+including W4A8 input quantization, but excludes the initial host submission skew.
+These are different measurement scopes, not a kernel optimization; retain the
+isolated result when reporting independent-call latency.
+
 Add `--mxfp4` to benchmark the routed W4A8 path. This keeps BF16 public inputs,
 includes the input MXFP8 quantization kernel in timing, and reports the fixed
 effective M256/N64/K256/load4 specialization. It cannot be combined with
