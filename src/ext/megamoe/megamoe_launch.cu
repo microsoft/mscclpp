@@ -74,9 +74,6 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
     if (c.weightMxfp4 && w4InputChunks(c.hidden) > 1)
       w.inputChunkReady =
           at<int>(base, appendRegion(bytes, rows / tileN * (w4InputChunks(c.hidden) - 1) * sizeof(int)));
-    if (c.weightMxfp4) {
-      w.quantizedInputArrivals = at<int>(base, appendRegion(bytes, size_t(c.maxTokens) * sizeof(int)));
-    }
     w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
     w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / tileN * sizeof(TokenBlock)));
     if (c.weightMxfp4) {
@@ -181,7 +178,6 @@ __global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat
   int block = blockIdx.x * BlockScalesPerCta + group;
   int blocks = p.config.hidden / 32;
   bool active = block < blocks;
-  uint64_t routeEpoch = *at<uint64_t>(p.local, p.symmetric.epoch) + 1;
   for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
     if (active) {
       auto staged = at<__bfloat16>(p.local, p.symmetric.input) + size_t(token) * p.config.hidden + block * 32;
@@ -213,14 +209,6 @@ __global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat
         at<uint8_t>(p.local,
                     p.symmetric.quantizedInputScale)[size_t(token) * w4SourceScaleStride(p.config.hidden) + block] =
             scale;
-    }
-    __syncthreads();
-    if (threadIdx.x == 0) {
-      // The cumulative counter needs no replay reset; each completed token contributes gridDim.x arrivals.
-      int arrival = atomicFetchAdd<int, scopeDevice>(p.workspace.quantizedInputArrivals + token, 1, memoryOrderAcqRel);
-      if (arrival % gridDim.x == int(gridDim.x) - 1)
-        atomicStore<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.quantizedInputReady) + token, routeEpoch,
-                                           memoryOrderRelease);
     }
   }
 }
@@ -366,7 +354,6 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   layout.expectedPeerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.tokenCount = detail::appendRegion(layout.bytes, sizeof(int));
   if (!detail::isLocalExpert(c)) {
-    layout.routedInputReady = detail::appendRegion(layout.bytes, sizeof(uint64_t));
     layout.routingHeader = detail::appendRegion(layout.bytes, sizeof(mscclpp::LLPacket));
     layout.routingPackets =
         detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(mscclpp::LLPacket));
@@ -376,7 +363,6 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
     layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
     layout.quantizedInputScale =
         detail::appendRegion(layout.bytes, size_t(c.maxTokens) * detail::w4SourceScaleStride(c.hidden));
-    layout.quantizedInputReady = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * sizeof(uint64_t));
   }
 #endif
   layout.bytes = detail::aligned(layout.bytes);

@@ -30,8 +30,8 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
     if (row % W4TileN >= w.blocks[row / W4TileN].rows) continue;
     Route route = w.routes[row];
     if (route.rank < 0) continue;
-    waitAtLeast<uint64_t, scopeSystem>(peerAt<uint64_t>(p, route.rank, p.symmetric.quantizedInputReady) + route.token,
-                                       w.control->epoch);
+    // prepareRoutes consumed this peer's current-epoch route packet, which is
+    // published by a kernel launched after the peer's same-stream quantization.
     auto* source = peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInput) + size_t(route.token) * hidden;
     auto* sourceScale = peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
                         size_t(route.token) * w4SourceScaleStride(hidden);

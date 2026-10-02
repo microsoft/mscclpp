@@ -107,11 +107,6 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
       at<mscclpp::LLPacket>(p.local, p.symmetric.routingPackets)[index].write(
           mscclpp::bit_cast<uint32_t>(id), mscclpp::bit_cast<uint32_t>(weight), uint32_t(epoch));
     }
-    if constexpr (!P::WeightMxfp4) {
-      if (threadIdx.x == 0)
-        atomicStore<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.routedInputReady), epoch,
-                                           memoryOrderRelease);
-    }
     if constexpr (!FixedTokenCount) {
       if (threadIdx.x < c.worldSize && threadIdx.x != c.rank) {
         int peer = threadIdx.x;
@@ -341,8 +336,8 @@ __device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, Shared
       if (row % TileN >= w.blocks[row / TileN].rows) continue;
       Route route = w.routes[row];
       if (route.rank < 0) continue;
-      waitAtLeast<uint64_t, scopeSystem>(peerAt<uint64_t>(p, route.rank, p.symmetric.routedInputReady),
-                                         w.control->epoch);
+      // prepareRoutes consumed this peer's current-epoch route packet, which is
+      // published by a kernel launched after the peer's same-stream input staging.
       auto src = reinterpret_cast<const uint8_t*>(peerAt<__bfloat16>(p, route.rank, p.symmetric.input) +
                                                   size_t(route.token) * p.config.hidden);
       auto dst = reinterpret_cast<uint8_t*>(w.input + size_t(row) * p.config.hidden);

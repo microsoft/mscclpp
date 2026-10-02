@@ -92,7 +92,6 @@ struct Workspace {
   int* inputReady;
   int* hiddenReady;
   int* inputChunkReady;
-  int* quantizedInputArrivals;
   int* peerTokenCounts;
   int* peerTokenOffsets;
   Route* routes;
