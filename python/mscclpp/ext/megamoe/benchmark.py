@@ -118,6 +118,8 @@ def main():
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     if args.e5m2 and args.mxfp4:
         parser.error("--e5m2 and --mxfp4 are mutually exclusive")
+    if args.mxfp4 and args.hidden not in (128, 384, 2176, 4096, 8704, 9216):
+        parser.error("--mxfp4 hidden must have a compiled specialization: 128, 384, 2176, 4096, 8704, or 9216")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
 
@@ -138,7 +140,7 @@ def main():
     torch.cuda.set_device(local_rank)
     kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
     if args.mxfp4 and kernel_config != KernelConfig():
-        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N64/K256/load4 kernel")
+        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N64/K128/load9 kernel")
     kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.

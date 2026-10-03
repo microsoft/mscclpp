@@ -4,6 +4,8 @@
 #include "megamoe_roles.cuh"
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#include <stdexcept>
+
 #include "megamoe_w4a8_roles.cuh"
 #endif
 
@@ -173,7 +175,7 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 }
 #endif
 
-template <int Hidden = 0, int Intermediate = 0, int WorldSize = 0>
+template <int Hidden, int Intermediate = 0, int WorldSize = 0>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* startSignal,
                                                             const int32_t* ids, const float* scores) {
@@ -283,7 +285,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
     if (warp < Schedule::DispatchEnd) {
       traceW4(W4TracePhase::Dispatch, true);
-      dispatchW4A8Tokens(p, s, warp - Schedule::DispatchBegin);
+      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin);
       traceW4(W4TracePhase::Dispatch, false);
     }
   }
@@ -329,7 +331,22 @@ W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
     if (config.intermediate == 4608)
       return config.worldSize == 4 ? megaMoeW4A8<9216, 4608, 4> : megaMoeW4A8<9216, 4608, 32>;
   }
-  return megaMoeW4A8<>;
+  switch (config.hidden) {
+    case 128:
+      return megaMoeW4A8<128>;
+    case 384:
+      return megaMoeW4A8<384>;
+    case 2176:
+      return megaMoeW4A8<2176>;
+    case 4096:
+      return megaMoeW4A8<4096>;
+    case 8704:
+      return megaMoeW4A8<8704>;
+    case 9216:
+      return megaMoeW4A8<9216>;
+    default:
+      throw std::invalid_argument("MegaMoE W4A8 hidden size has no compiled specialization");
+  }
 }
 #endif
 

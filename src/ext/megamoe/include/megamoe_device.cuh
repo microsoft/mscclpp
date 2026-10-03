@@ -171,11 +171,11 @@ struct DispatchStorage {
   BulkBarrier barriers[DispatchWarpCount][2];
 };
 
-constexpr int W4ScaleChunkBytes = 256;
+constexpr int W4ScaleStageBytes = 128;
 struct W4DispatchStorage {
-  alignas(128) uint8_t tiles[W4DispatchWarps][2][W4DispatchChunk];
-  BulkBarrier barriers[W4DispatchWarps][2];
-  alignas(128) uint8_t scales[W4DispatchWarps][W4ScaleChunkBytes];
+  alignas(128) uint8_t tiles[W4DispatchWarps][W4DispatchStages][W4DispatchChunk];
+  BulkBarrier barriers[W4DispatchWarps][W4DispatchStages];
+  alignas(128) uint8_t scales[W4DispatchWarps][W4DispatchStages][W4ScaleStageBytes];
 };
 
 struct NoDispatchStorage {};

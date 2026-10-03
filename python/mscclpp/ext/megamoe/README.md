@@ -97,7 +97,7 @@ SwiGLU, then quantizes the unweighted hidden row to MXFP8. FC2 accumulates in
 FP32, applies the FP32 router weight, and emits BF16 partials for the existing
 FP32 top-k combination.
 
-Dispatch double-buffers 2 KiB input chunks with their corresponding K32 scales.
+Dispatch uses one 3 KiB input buffer with the corresponding K32 scales.
 Each chunk is published only after its values have reached the local input pool
 and its scales are visible in the MMA layout. The activation loader waits for all
 valid rows of the current N tile's chunk, then issues its K128 TMA loads; MMA
@@ -159,8 +159,11 @@ forward, eliminating the fixed-token initialization epoch wait while retaining
 the offset and final routing-ready publication.
 Launch resources are borrowed from grid-constant parameters rather than copied
 into thread-local memory.
-Other capacities, shapes, expert/top-k counts, and clamped activations retain
-the generic kernel; preflight and forward use the same selection rule.
+Other capacities, intermediate widths, expert/top-k counts, and clamped
+activations use runtime configuration within a compiled hidden specialization.
+Current W4A8 hidden specializations are 128, 384, 2176, 4096, 8704, and 9216.
+Adding another hidden size requires adding an explicit `megaMoeW4A8<Hidden>`
+case in `w4a8KernelEntry`; there is no dynamic `Hidden=0` W4A8 kernel.
 Local shared experts and routed
 JIT specializations remain W8A16; passing a custom `KernelConfig` with
 `weight_mxfp4=True` is rejected.
@@ -296,7 +299,7 @@ isolated result when reporting independent-call latency.
 
 Add `--mxfp4` to benchmark the routed W4A8 path. This keeps BF16 public inputs,
 includes the input MXFP8 quantization kernel in timing, and reports the fixed
-effective M256/N64/K256/load4 specialization. It cannot be combined with
+effective M256/N64/K128/load9 specialization. It cannot be combined with
 `--e5m2` or nondefault JIT tile/stage flags.
 
 ### Complete synthetic MoE layer

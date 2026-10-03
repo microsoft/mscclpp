@@ -8,23 +8,23 @@
 
 namespace mscclpp::megamoe::detail {
 
-template <class P>
+template <int Hidden, class P>
 __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
-  constexpr int ScaleStageBytes = W4ScaleChunkBytes / 2;
-  static_assert((W4DispatchChunk / 32 + 15) / 16 * 16 <= ScaleStageBytes);
+  static_assert(Hidden > 0);
+  static_assert((W4DispatchChunk / 32 + 15) / 16 * 16 <= W4ScaleStageBytes);
   const auto& w = p.workspace;
   int lane = threadIdx.x % 32;
   auto& barriers = s.dispatch.barriers[localWarp];
-  uint32_t phases[2] = {0, 0};
+  uint32_t phases[W4DispatchStages] = {};
   if (lane == 0) {
-    barriers[0].relaxedInit();
-    barriers[1].relaxedInit();
+    CUTE_UNROLL
+    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].relaxedInit();
     bulkFence();
   }
   __syncwarp();
-  const int hidden = p.config.hidden;
-  const int chunks = w4InputChunks(hidden);
+  constexpr int hidden = Hidden;
+  constexpr int chunks = (Hidden + W4DispatchChunk - 1) / W4DispatchChunk;
   for (int row = blockIdx.x * W4DispatchWarps + localWarp; row < w.control->tokenBlocks * W4TileN;
        row += gridDim.x * W4DispatchWarps) {
     if (row % W4TileN >= w.blocks[row / W4TileN].rows) continue;
@@ -37,22 +37,24 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
                         size_t(route.token) * w4SourceScaleStride(hidden);
     auto* destination = w.quantizedInput + size_t(w4StorageRow(row)) * hidden;
     auto load = [&](int chunk) {
-      int stage = chunk % 2;
+      int stage = chunk % W4DispatchStages;
       int bytes = min(int(W4DispatchChunk), hidden - chunk * W4DispatchChunk);
       int scaleBytes = (bytes / 32 + 15) / 16 * 16;
       barriers[stage].arriveAndExpect(bytes + scaleBytes);
       bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * W4DispatchChunk, bytes, barriers[stage]);
-      bulkLoad(s.dispatch.scales[localWarp] + stage * ScaleStageBytes, sourceScale + chunk * (W4DispatchChunk / 32),
-               scaleBytes, barriers[stage]);
+      bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (W4DispatchChunk / 32), scaleBytes,
+               barriers[stage]);
     };
     if (lane == 0) {
       bulkFence();
-      load(0);
-      if (chunks > 1) load(1);
+      CUTE_UNROLL
+      for (int stage = 0; stage < W4DispatchStages; ++stage)
+        if (stage < chunks) load(stage);
     }
-    for (int chunk = 0; chunk < chunks; ++chunk) {
-      int stage = chunk % 2;
+    auto process = [&](int chunk) {
+      int stage = chunk % W4DispatchStages;
       int bytes = min(int(W4DispatchChunk), hidden - chunk * W4DispatchChunk);
+      int scaleValues = bytes / 32;
       if (lane == 0) {
         barriers[stage].wait(phases[stage], SpinLimit);
         bulkStore(destination + chunk * W4DispatchChunk, s.dispatch.tiles[localWarp][stage], bytes);
@@ -60,27 +62,30 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
         bulkFence();
       }
       __syncwarp();
-      for (int k = 4 * lane; k < bytes / 32; k += 128) {
+      int k = 4 * lane;
+      if (k < scaleValues) {
         size_t offset = p.fc1.layout_SFB(cute::make_coord(w4StorageRow(row), chunk * W4DispatchChunk + k * 32, 0));
         *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
-            *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp] + stage * ScaleStageBytes + k);
+            *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
       }
       asm volatile("fence.proxy.async.global;" ::: "memory");
       __syncwarp();
       if (lane == 0) {
         bulkStoreWait();
         atomicFetchAdd<int, scopeDevice>(w4InputChunkCounter(w, hidden, row / W4TileN, chunk), 1, memoryOrderRelease);
-        if (chunk + 2 < chunks) {
+        if (chunk + W4DispatchStages < chunks) {
           bulkFence();
-          load(chunk + 2);
+          load(chunk + W4DispatchStages);
         }
       }
       __syncwarp();
-    }
+    };
+    CUTE_UNROLL
+    for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
   }
   if (lane == 0) {
-    barriers[0].invalidate();
-    barriers[1].invalidate();
+    CUTE_UNROLL
+    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].invalidate();
   }
 #endif
 }
