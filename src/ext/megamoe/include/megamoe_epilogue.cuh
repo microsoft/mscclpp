@@ -265,8 +265,11 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
   }
   ++state;
-  if (task.fc1 && threadIdx.x == 0)
-    atomicFetchAdd<int, scopeDevice>(p.workspace.hiddenReady + task.block, 1, memoryOrderRelease);
+  if (task.fc1 && threadIdx.x == 0) {
+    constexpr int ReadyStride = P::WeightMxfp4 ? W4ReadyCounterStride : 1;
+    auto* counter = p.workspace.hiddenReady + size_t(task.block) * ReadyStride;
+    asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
+  }
 #endif
 }
 

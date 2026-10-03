@@ -67,13 +67,14 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
     w.counts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.starts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.cursors = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
-    w.inputReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
-    w.hiddenReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
+    const size_t readyStride = c.weightMxfp4 ? W4ReadyCounterStride : 1;
+    w.inputReady = at<int>(base, appendRegion(bytes, rows / tileN * readyStride * sizeof(int)));
+    w.hiddenReady = at<int>(base, appendRegion(bytes, rows / tileN * readyStride * sizeof(int)));
     w.peerTokenCounts = at<int>(base, appendRegion(bytes, size_t(c.worldSize) * sizeof(int)));
     w.peerTokenOffsets = at<int>(base, appendRegion(bytes, size_t(c.worldSize + 1) * sizeof(int)));
     if (c.weightMxfp4 && w4InputChunks(c.hidden) > 1)
-      w.inputChunkReady =
-          at<int>(base, appendRegion(bytes, rows / tileN * (w4InputChunks(c.hidden) - 1) * sizeof(int)));
+      w.inputChunkReady = at<int>(
+          base, appendRegion(bytes, rows / tileN * (w4InputChunks(c.hidden) - 1) * W4ReadyCounterStride * sizeof(int)));
     w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
     w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / tileN * sizeof(TokenBlock)));
     if (c.weightMxfp4) {

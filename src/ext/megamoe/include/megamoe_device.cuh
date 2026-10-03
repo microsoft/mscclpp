@@ -115,10 +115,14 @@ __host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return (hidd
 
 __host__ __device__ constexpr int w4InputChunks(int hidden) { return (hidden + W4DispatchChunk - 1) / W4DispatchChunk; }
 
+// Keep independently updated block/chunk counters in separate 128-byte slots.
+constexpr int W4ReadyCounterStride = 32;
+
 __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidden, int block, int chunk) {
   int chunks = w4InputChunks(hidden);
   // The last chunk also publishes full-row readiness.
-  return chunk == chunks - 1 ? w.inputReady + block : w.inputChunkReady + size_t(block) * (chunks - 1) + chunk;
+  return chunk == chunks - 1 ? w.inputReady + size_t(block) * W4ReadyCounterStride
+                             : w.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
 }
 
 template <class Types, bool E5M2, bool Local, bool Mxfp4 = false, bool Borrowed = false>
@@ -176,6 +180,7 @@ struct W4DispatchStorage {
   alignas(128) uint8_t tiles[W4DispatchWarps][W4DispatchStages][W4DispatchChunk];
   BulkBarrier barriers[W4DispatchWarps][W4DispatchStages];
   alignas(128) uint8_t scales[W4DispatchWarps][W4DispatchStages][W4ScaleStageBytes];
+  bool prefetchedRows[W4DispatchWarps];
 };
 
 struct NoDispatchStorage {};

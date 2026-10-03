@@ -264,11 +264,12 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
     if (threadIdx.x == 0) waitAtLeast<uint64_t, scopeDevice>(&w.control->routingOffsetsEpoch, epoch);
     __syncthreads();
     for (int block = plannerThread; block < w.control->tokenBlocks; block += plannerStride) {
-      w.inputReady[block] = 0;
-      w.hiddenReady[block] = 0;
+      constexpr int ReadyStride = P::WeightMxfp4 ? W4ReadyCounterStride : 1;
+      w.inputReady[size_t(block) * ReadyStride] = 0;
+      w.hiddenReady[size_t(block) * ReadyStride] = 0;
       if constexpr (P::WeightMxfp4)
         for (int chunk = 0; chunk < w4InputChunks(c.hidden) - 1; ++chunk)
-          w.inputChunkReady[size_t(block) * (w4InputChunks(c.hidden) - 1) + chunk] = 0;
+          *w4InputChunkCounter(w, c.hidden, block, chunk) = 0;
     }
     if constexpr (FixedTokenCount) {
       int routesPerRank = tokens * c.topK;
@@ -362,7 +363,8 @@ __device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, Shared
         }
       }
       bulkStoreWait();
-      atomicFetchAdd<int, scopeDevice>(w.inputReady + row / TileN, 1, memoryOrderRelease);
+      auto* counter = w.inputReady + row / TileN;
+      asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
     }
     barriers[0].invalidate();
     barriers[1].invalidate();

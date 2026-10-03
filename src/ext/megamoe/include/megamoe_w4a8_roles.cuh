@@ -8,8 +8,75 @@
 
 namespace mscclpp::megamoe::detail {
 
+template <class P>
+__device__ __forceinline__ void storeW4A8Chunk(const P& p, W4DispatchStorage& storage, int localWarp, int row,
+                                               int chunk, uint8_t* destination, int bytes, uint32_t& phase) {
+#if MSCCLPP_BULK_AVAILABLE
+  int lane = threadIdx.x % 32;
+  int stage = chunk % W4DispatchStages;
+  if (lane == 0) {
+    storage.barriers[localWarp][stage].wait(phase, SpinLimit);
+    bulkStore(destination + chunk * W4DispatchChunk, storage.tiles[localWarp][stage], bytes);
+    bulkStoreCommit();
+    bulkFence();
+  }
+  __syncwarp();
+  int k = 4 * lane;
+  if (k < bytes / 32) {
+    size_t offset = p.fc1.layout_SFB(cute::make_coord(w4StorageRow(row), chunk * W4DispatchChunk + k * 32, 0));
+    *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
+        *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
+  }
+  asm volatile("fence.proxy.async.global;" ::: "memory");
+  __syncwarp();
+  if (lane == 0) bulkStoreWait();
+#endif
+}
+
 template <int Hidden, class P>
-__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage& s, int localWarp) {
+__device__ __forceinline__ bool prefetchFirstW4A8Chunk(const P& p, W4A8SharedStorage& s, int localWarp) {
+#if MSCCLPP_BULK_AVAILABLE
+  static_assert(Hidden > 0);
+  const auto& w = p.workspace;
+  int lane = threadIdx.x % 32;
+  auto& barriers = s.dispatch.barriers[localWarp];
+  if (lane == 0) {
+    s.dispatch.prefetchedRows[localWarp] = false;
+    CUTE_UNROLL
+    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].relaxedInit();
+    bulkFence();
+  }
+  __syncwarp();
+  int row = blockIdx.x * W4DispatchWarps + localWarp;
+  if (row >= W4TileN || row >= w.control->tokenBlocks * W4TileN || row >= w.blocks[0].rows) return false;
+  Route route = w.routes[row];
+  if (route.rank < 0) return false;
+  constexpr int hidden = Hidden;
+  constexpr int stage = 0;
+  constexpr int bytes = W4DispatchChunk < hidden ? W4DispatchChunk : hidden;
+  constexpr int scaleBytes = (bytes / 32 + 15) / 16 * 16;
+  auto* source = peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInput) + size_t(route.token) * hidden;
+  auto* sourceScale = peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
+                      size_t(route.token) * w4SourceScaleStride(hidden);
+  auto* destination = w.quantizedInput + size_t(w4StorageRow(row)) * hidden;
+  uint32_t phase = 0;
+  if (lane == 0) {
+    barriers[stage].arriveAndExpect(bytes + scaleBytes);
+    bulkLoad(s.dispatch.tiles[localWarp][stage], source, bytes, barriers[stage]);
+    bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale, scaleBytes, barriers[stage]);
+  }
+  storeW4A8Chunk(p, s.dispatch, localWarp, row, 0, destination, bytes, phase);
+  if (lane == 0) s.dispatch.prefetchedRows[localWarp] = true;
+  __syncwarp();
+  return true;
+#else
+  return false;
+#endif
+}
+
+template <int Hidden, class P>
+__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage& s, int localWarp,
+                                                   bool firstChunkPrefetched) {
 #if MSCCLPP_BULK_AVAILABLE
   static_assert(Hidden > 0);
   static_assert((W4DispatchChunk / 32 + 15) / 16 * 16 <= W4ScaleStageBytes);
@@ -17,16 +84,11 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
   int lane = threadIdx.x % 32;
   auto& barriers = s.dispatch.barriers[localWarp];
   uint32_t phases[W4DispatchStages] = {};
-  if (lane == 0) {
-    CUTE_UNROLL
-    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].relaxedInit();
-    bulkFence();
-  }
-  __syncwarp();
+  if (firstChunkPrefetched) phases[0] = 1;
   constexpr int hidden = Hidden;
   constexpr int chunks = (Hidden + W4DispatchChunk - 1) / W4DispatchChunk;
-  for (int row = blockIdx.x * W4DispatchWarps + localWarp; row < w.control->tokenBlocks * W4TileN;
-       row += gridDim.x * W4DispatchWarps) {
+  int firstRow = blockIdx.x * W4DispatchWarps + localWarp;
+  for (int row = firstRow; row < w.control->tokenBlocks * W4TileN; row += gridDim.x * W4DispatchWarps) {
     if (row % W4TileN >= w.blocks[row / W4TileN].rows) continue;
     Route route = w.routes[row];
     if (route.rank < 0) continue;
@@ -45,34 +107,21 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
       bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (W4DispatchChunk / 32), scaleBytes,
                barriers[stage]);
     };
+    int firstChunk = firstChunkPrefetched && row == firstRow ? 1 : 0;
+    if (firstChunk == chunks) continue;
     if (lane == 0) {
       bulkFence();
       CUTE_UNROLL
       for (int stage = 0; stage < W4DispatchStages; ++stage)
-        if (stage < chunks) load(stage);
+        if (firstChunk + stage < chunks) load(firstChunk + stage);
     }
     auto process = [&](int chunk) {
       int stage = chunk % W4DispatchStages;
       int bytes = min(int(W4DispatchChunk), hidden - chunk * W4DispatchChunk);
-      int scaleValues = bytes / 32;
+      storeW4A8Chunk(p, s.dispatch, localWarp, row, chunk, destination, bytes, phases[stage]);
       if (lane == 0) {
-        barriers[stage].wait(phases[stage], SpinLimit);
-        bulkStore(destination + chunk * W4DispatchChunk, s.dispatch.tiles[localWarp][stage], bytes);
-        bulkStoreCommit();
-        bulkFence();
-      }
-      __syncwarp();
-      int k = 4 * lane;
-      if (k < scaleValues) {
-        size_t offset = p.fc1.layout_SFB(cute::make_coord(w4StorageRow(row), chunk * W4DispatchChunk + k * 32, 0));
-        *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
-            *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
-      }
-      asm volatile("fence.proxy.async.global;" ::: "memory");
-      __syncwarp();
-      if (lane == 0) {
-        bulkStoreWait();
-        atomicFetchAdd<int, scopeDevice>(w4InputChunkCounter(w, hidden, row / W4TileN, chunk), 1, memoryOrderRelease);
+        auto* counter = w4InputChunkCounter(w, hidden, row / W4TileN, chunk);
+        asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
         if (chunk + W4DispatchStages < chunks) {
           bulkFence();
           load(chunk + W4DispatchStages);
@@ -81,7 +130,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
       __syncwarp();
     };
     CUTE_UNROLL
-    for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
+    for (int chunk = firstChunk; chunk < chunks; ++chunk) process(chunk);
   }
   if (lane == 0) {
     CUTE_UNROLL
@@ -114,7 +163,8 @@ __device__ __forceinline__ void runW4A8MainloopRole(
       if (!task.fc1 && (W4LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
         traceW4(W4TracePhase::TokenReady, true, int(task.fc1));
         if (lane == 0)
-          waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + task.block, fc1CompletionCount<false>(intermediate));
+          waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
+                                        fc1CompletionCount<false>(intermediate));
         __syncwarp();
         traceW4(W4TracePhase::TokenReady, false, int(task.fc1));
       }

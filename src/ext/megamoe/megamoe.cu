@@ -211,6 +211,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
   prepareRoutes<WorldSize != 0>(p, tokens, ids, scores);
   traceW4(W4TracePhase::Routing, false);
+  bool firstChunkPrefetched = false;
+  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
+    firstChunkPrefetched = prefetchFirstW4A8Chunk<Hidden>(p, s, warp - Schedule::DispatchBegin);
+  }
 
   typename Load::Params loadParams{};
   bool loadWarp =
@@ -260,6 +264,16 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   cute::TMEM::Allocator2Sm allocator;
   if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
   __syncthreads();
+  if (threadIdx.x == 0) {
+    // The CTA join acquires every dispatch warp's stores before one grouped release.
+    uint32_t prefetched = 0;
+    CUTE_UNROLL
+    for (int i = 0; i < W4DispatchWarps; ++i) prefetched += s.dispatch.prefetchedRows[i];
+    if (prefetched) {
+      auto* counter = w4InputChunkCounter(p.workspace, hidden, 0, 0);
+      asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(prefetched) : "memory");
+    }
+  }
   cute::cluster_sync();
 
   Mainloop fc1(p.fc1, ClusterShape{}, cta);
@@ -285,7 +299,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
     if (warp < Schedule::DispatchEnd) {
       traceW4(W4TracePhase::Dispatch, true);
-      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin);
+      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin, firstChunkPrefetched);
       traceW4(W4TracePhase::Dispatch, false);
     }
   }
