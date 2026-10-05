@@ -238,8 +238,10 @@ Runtime views are reused by later operations, not independent results.
   Captured preparation recomputes routing on each replay, so routing values may
   change while their buffer pointer, shape, and active capacity remain fixed.
   Preserve graph ordering, buffers, and owners through the last replay. Python
-  handle checks run during capture, not replay. Latency dispatch/combine graph
-  replay is unsupported because its host-side epoch is not advanced by replay.
+  handle checks run during capture, not replay. Latency graphs must contain at
+  least two complete dispatch/combine pairs so readiness epochs alternate across
+  replays. Single-pair latency graph replay can consume stale metadata and is
+  unsupported.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even
@@ -258,3 +260,75 @@ Runtime views are reused by later operations, not independent results.
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
+
+## Unified EP benchmark
+
+`python -m mscclpp_benchmark.ep.run_ep_bench_python` compares MSCCL++ EP, NVIDIA NCCL-EP,
+and DeepEP V2 (`ElasticBuffer`) through their Python APIs using the same BF16
+tokens, routing IDs, and weights. Install PyTorch and `mpi4py`, plus the backends
+being compared: this project's EP extension, NCCL's `nccl4py` package exposing
+`nccl.core` and `nccl.ep`, and DeepEP V2 exposing `deep_ep.ElasticBuffer`.
+NCCL-EP also needs compatible `libnccl_ep.so`/`libnccl.so` libraries and its
+JIT kernel build environment. Follow each backend's installation instructions.
+The JIT compiler must also find NCCL-EP's public headers, including `ep_enums.h`;
+if necessary, add `-I<nccl-build>/include` through `NVCC_PREPEND_FLAGS`.
+After fixing a JIT configuration error, use a fresh `NCCL_EP_JIT_CACHE_DIR`
+to avoid reusing cached compilation failures.
+
+For a single-node run, use a loopback rendezvous address and one process per GPU:
+
+```bash
+export MASTER_ADDR=127.0.0.1
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.run_ep_bench_python \
+    --backend all --mode latency --ep-layout rank_major \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.run_ep_bench_python \
+    --backend mscclpp --mode throughput --ep-layout rank_major \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8 \
+    --cuda-graph --iters-per-graph 50 --validate
+```
+
+`--backend all` runs NCCL-EP, MSCCL++, then DeepEP, reporting missing optional
+packages explicitly; installed-backend setup or execution errors stop the run.
+Use `--backend nccl`, `mscclpp`, or `deepep` to run one backend. The benchmark
+uses MPI bootstrap and is launched only with `mpirun`.
+DeepEP and the NCCL profiling barrier require `MASTER_ADDR` on rank 0. For
+multi-node runs, set it to rank 0's IP or hostname reachable by every rank
+instead of a loopback address. `MASTER_PORT` defaults to `29700`.
+
+The MSCCL++ backend still requires SM90+ and one IPC domain; this benchmark
+does not add inter-domain transport support.
+
+Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
+`token_major` or `rank_major`. NCCL-EP throughput uses `expert_major` in this
+benchmark, so omit `--ep-layout` for a three-backend throughput run.
+An omitted layout keeps each backend's default.
+`--num-sms 0` keeps backend defaults; a positive value sets MSCCL++'s scalar
+dispatch/combine block configuration or DeepEP's communication SM budget.
+`--combine-mode` selects MSCCL++ latency reduction. `--dispatch-dtype fp8_e4m3`
+is wired only for MSCCL++ latency EXPERT_MAJOR; combine remains BF16.
+`--validate` checks MSCCL++'s identity-expert combine result before timing.
+
+CUDA events measure paired dispatch/combine, excluding input generation and
+synthetic expert-output construction. NCCL-EP uses a prebuilt routing handle;
+throughput MSCCL++ reuses a fixed-routing prepare handle. DeepEP eager dispatch
+recomputes layout with CPU count synchronization; its graph path uses cached
+routing. These API costs are part of the measured dispatch time. The first timed
+iteration is discarded when more than one is requested.
+Kineto adds kernel-only measurements with L2 flushing and GPU barriers;
+set `EP_KERNEL_TIMER=events` to disable it, or `EP_KINETO_BARRIER=mpi` to use host
+barriers.
+Bandwidth uses logical routed bytes (`tokens * topk * hidden * element_bytes`),
+not measured link traffic; kernel-only times are not end-to-end latency.
+
+MSCCL++ supports both latency and throughput graph replay. Latency requires
+`--iters-per-graph >= 2` because its readiness epochs must change between pairs;
+the default is `50`. Throughput also supports a single pair per graph.
+NCCL-EP graph timing is wired for latency, and DeepEP graph capture uses the
+NVLink path (`EP_DISABLE_GIN=1`). A captured graph contains
+`--iters-per-graph` pairs; event timing reports total D+C only, normalized per
+pair. The harness replays the graph directly as one operation during warmup,
+timing, and profiling, while Kineto attributes kernel times to each phase.
+Capture errors stop the benchmark rather than silently falling back.
