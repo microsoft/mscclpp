@@ -189,7 +189,6 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if constexpr (WorldSize != 0) {
     static_assert(WorldSize == 4 || WorldSize == 32);
     configuration.worldSize = WorldSize;
-    configuration.maxTokens = 64;
     configuration.hidden = Hidden;
     configuration.intermediate = Intermediate;
     configuration.numExperts = 16 * WorldSize;

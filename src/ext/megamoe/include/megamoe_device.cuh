@@ -46,9 +46,9 @@ constexpr int DispatchWarpCount = 4;
 constexpr int64_t SpinLimit = 1000000000;
 
 __host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
-  return c.weightMxfp4 && (c.worldSize == 4 || c.worldSize == 32) && c.maxTokens == 64 &&
-         c.numExperts == 16 * c.worldSize && c.topK == 8 && c.gateUpClamp < 0 && c.hidden == 9216 &&
-         (c.intermediate == 4096 || c.intermediate == 4608);
+  return c.weightMxfp4 && (c.worldSize == 4 || c.worldSize == 32) &&
+         (c.maxTokens == 32 || c.maxTokens == 64 || c.maxTokens == 128) && c.numExperts == 16 * c.worldSize &&
+         c.topK == 8 && c.gateUpClamp < 0 && c.hidden == 9216 && (c.intermediate == 4096 || c.intermediate == 4608);
 }
 
 struct Control {

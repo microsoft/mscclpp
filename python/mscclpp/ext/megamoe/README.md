@@ -146,10 +146,11 @@ issuing epilogue warp drains destination completion before the CTA publishes its
 arrival. This overlaps return traffic without weakening peer visibility.
 E8M0 scale selection compares FP32 exponent/mantissa bits directly, preserving
 the ceiling-power-of-two rule without a floating-point division.
-Unclamped EP4/E64 and EP32/E512 contexts with capacity 64, top-8, H9216, and
-I4096 or I4608 select configuration-specialized kernels that assume every rank
-has the same live token count. These kernels calculate route offsets directly;
-other W4A8 configurations read token-count packets and build dynamic prefixes.
+Unclamped EP4/E64 and EP32/E512 contexts with capacity 32, 64, or 128, top-8,
+H9216, and I4096 or I4608 select configuration-specialized kernels that assume
+every rank has the same live token count. These kernels calculate route offsets
+directly; other W4A8 configurations read token-count packets and build dynamic
+prefixes.
 Fixed-token routing retains each thread's route through the count/fill phases
 when planner capacity permits, and falls back to rereading routes with smaller
 CTA budgets. Warp-aggregated expert updates share count and cursor atomics, and

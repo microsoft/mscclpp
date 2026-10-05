@@ -555,7 +555,9 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
 @pytest.mark.parametrize(
     "capacity,intermediate,clamp,local_experts,top_k,remaining_sms",
     [
+        (32, 4096, -1.0, 16, 8, 8),
         (64, 4096, -1.0, 16, 8, 8),
+        (128, 4096, -1.0, 16, 8, 8),
         (64, 4608, -7.0, 16, 8, 8),
         (64, 4096, -1.0, 16, 8, 2),
         (65, 4096, -1.0, 16, 8, 8),
@@ -564,7 +566,9 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         (64, 4096, -1.0, 16, 7, 8),
     ],
     ids=[
+        "specialized-capacity-32",
         "specialized-4k",
+        "specialized-capacity-128",
         "specialized-4k5",
         "specialized-low-ctas",
         "generic-capacity",
@@ -625,8 +629,8 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            specialized = capacity == 64 and clamp < 0 and local_experts == 16 and top_k == 8
-            expected = f"megaMoeW4A8<9216,{intermediate},{runtime.world}>" if specialized else "megaMoeW4A8<0,0,0>"
+            specialized = capacity in (32, 64, 128) and clamp < 0 and local_experts == 16 and top_k == 8
+            expected = f"megaMoeW4A8<9216,{intermediate},{runtime.world}>" if specialized else "megaMoeW4A8<9216,0,0>"
             assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
 
         runtime.collective(check_selected_kernel)
