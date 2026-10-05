@@ -501,6 +501,45 @@ def test_runtime_owned_buffers(ep_group, mode, layout):
             torch.testing.assert_close(combined, input, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("layout", [DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR])
+def test_latency_grouped_graph_replay(ep_group, layout):
+    destination = (ep_group.my_rank + 1) % ep_group.nranks
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=layout,
+        num_experts=ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=1,
+        max_tokens_per_rank=4,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            input = torch.ones((2, HIDDEN), dtype=torch.bfloat16, device="cuda")
+            routes = torch.full((2, 1), destination, dtype=torch.int64, device="cuda")
+            output = torch.empty_like(input)
+
+            def operation():
+                result, handle = runtime.dispatch(input, routes, stream=stream)
+                expert_output = result.tokens * (ep_group.my_rank + 1)
+                if result.combine_input_buffer is not None:
+                    result.combine_input_buffer.copy_(expert_output)
+                    expert_output = result.combine_input_buffer
+                runtime.combine(expert_output, handle, out=output, stream=stream)
+
+            operation()
+            stream.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                for _ in range(2):
+                    operation()
+            for value in (2, 3, 4):
+                input.fill_(value)
+                graph.replay()
+                stream.synchronize()
+                torch.testing.assert_close(output, input * (destination + 1), rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("layout", [DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR])
 @pytest.mark.parametrize("num_tokens", [0, 2])
 @pytest.mark.parametrize("prepared", [False, True])
