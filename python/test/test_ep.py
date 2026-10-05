@@ -154,7 +154,9 @@ CASES = [
 ]
 
 
-def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, prepared, apply_router_weights):
+def _run_dispatch_combine_case(
+    ep_group, mode, layout, data_type, combine_mode, prepared, apply_router_weights, hidden_size
+):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
     fp8 = data_type == DispatchDataType.FP8_E4M3
@@ -164,7 +166,7 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
         output_layout=layout,
         combine_mode=combine_mode,
         num_experts=num_experts,
-        hidden_size=HIDDEN,
+        hidden_size=hidden_size,
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
     ) as runtime:
@@ -194,12 +196,12 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
             values = (
                 (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
             ).float() * NUM_TOPK
-            input = values[:, None].expand(-1, HIDDEN).to(torch.bfloat16).contiguous()
+            input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
             quant = QuantConfig(format=data_type)
             dispatch_input = input
             if fp8 and mode == MoEMode.THROUGHPUT:
                 dispatch_input = torch.ones_like(input, dtype=torch.float8_e4m3fn)
-                quant.block_scales = values[:, None].expand(-1, HIDDEN // 128).contiguous()
+                quant.block_scales = values[:, None].expand(-1, hidden_size // 128).contiguous()
 
             result, handle = runtime.dispatch(
                 dispatch_input,
@@ -251,7 +253,7 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
             tokens = result.tokens.float()
             if fp8:
                 assert result.quant.block_scales.dtype == torch.float32
-                assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], HIDDEN // 128)
+                assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], hidden_size // 128)
                 tokens = tokens * result.quant.block_scales.repeat_interleave(128, dim=-1)
             if valid_rows is not None:
                 tokens = torch.where(valid_rows[..., None], tokens, 0)
@@ -333,10 +335,11 @@ def _run_dispatch_combine_case(ep_group, mode, layout, data_type, combine_mode, 
 
 
 @pytest.mark.nranks(8)
+@pytest.mark.parametrize("hidden_size", [1024, 2048, 4096])
 @pytest.mark.parametrize("apply_router_weights", [None, False])
-def test_dispatch_combine_correctness(ep_group, apply_router_weights):
+def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_size):
     for case in CASES:
-        _run_dispatch_combine_case(ep_group, *case, apply_router_weights)
+        _run_dispatch_combine_case(ep_group, *case, apply_router_weights, hidden_size)
         ep_group.barrier()
 
 
