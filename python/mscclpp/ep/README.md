@@ -244,7 +244,7 @@ Runtime views are reused by later operations, not independent results.
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even
   and contiguous; top-k is 1-8; throughput allows at most 128 experts per rank.
-* Latency hidden sizes are `4096, 4352, 6656, 7168, 8192, 8704, 9216`.
+* Latency hidden sizes are `1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216`.
   Throughput combine always consumes BF16 and requires hidden size to be a
   multiple of 8 for 16-byte rows, regardless of the dispatch format. FP8 dispatch
   additionally requires a multiple of 128.
