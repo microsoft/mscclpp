@@ -180,7 +180,8 @@ struct W4DispatchStorage {
   alignas(128) uint8_t tiles[W4DispatchWarps][W4DispatchStages][W4DispatchChunk];
   BulkBarrier barriers[W4DispatchWarps][W4DispatchStages];
   alignas(128) uint8_t scales[W4DispatchWarps][W4DispatchStages][W4ScaleStageBytes];
-  bool prefetchedRows[W4DispatchWarps];
+  uint32_t arrivals;
+  uint32_t publishedPhase;
 };
 
 struct NoDispatchStorage {};
@@ -231,6 +232,7 @@ struct alignas(1024) W4A8SharedStorage {
   std::conditional_t<W4SplitPipelines, W4A8CollectiveTypes::Load::SharedStorage, NoDispatchStorage> activationLoad;
   W4A8CollectiveTypes::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
+  cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<W4EpilogueTokens, false> epilogue;
   W4DispatchStorage dispatch;
 };

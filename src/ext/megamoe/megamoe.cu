@@ -211,98 +211,106 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
   prepareRoutes<WorldSize != 0>(p, tokens, ids, scores);
   traceW4(W4TracePhase::Routing, false);
-  bool firstChunkPrefetched = false;
-  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
-    firstChunkPrefetched = prefetchFirstW4A8Chunk<Hidden>(p, s, warp - Schedule::DispatchBegin);
-  }
-
-  typename Load::Params loadParams{};
-  bool loadWarp =
-      warp == Schedule::LoadWarp || (!W4SplitPipelines && W4LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
-  loadParams.role =
-      loadWarp ? Load::ThreadCategory::Producer
-               : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
-  loadParams.is_leader = lane == 0 && cta == 0 && loadWarp;
-  loadParams.transaction_bytes = W4LoadWarps == 1 ? Mainloop::TmaTransactionBytes
-                                                  : (warp == Schedule::LoadWarp ? Mainloop::WeightTransactionBytes
-                                                                                : Mainloop::ActivationTransactionBytes);
-  if constexpr (W4SplitPipelines) loadParams.transaction_bytes = Mainloop::WeightTransactionBytes;
-  loadParams.initializing_warp = Schedule::LoadWarp;
-  Load loadPipeline(s.mainloop, loadParams, ClusterShape{}, false_type{}, false_type{});
-  if constexpr (W4LoadWarps == 2 && !W4SplitPipelines) {
-    if (warp == Schedule::LoadWarp) {
-      // Both producers arrive with their own byte count; the stage becomes
-      // ready only after both arrivals and all four TMA copies have completed.
-      cutlass::arch::detail::initialize_barrier_array_pair_aligned<decltype(s.mainloop.full_barrier_),
-                                                                   decltype(s.mainloop.empty_barrier_), W4LoadStages>(
-          s.mainloop.full_barrier_, s.mainloop.empty_barrier_, 2, 1);
-    }
-  } else {
-    Load::init_barriers(s.mainloop, loadParams, ClusterShape{});
-  }
-  auto activationPipeline = [&](auto& activationStorage) {
-    if constexpr (W4SplitPipelines) {
-      auto activationParams = loadParams;
-      activationParams.role =
-          warp == Schedule::ActivationLoadWarp
-              ? Load::ThreadCategory::Producer
-              : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
-      activationParams.is_leader = lane == 0 && cta == 0 && warp == Schedule::ActivationLoadWarp;
-      activationParams.transaction_bytes = Mainloop::ActivationTransactionBytes;
-      activationParams.initializing_warp = Schedule::ActivationLoadWarp;
-      return Load(activationStorage, activationParams, ClusterShape{}, true_type{}, false_type{});
-    } else {
-      return loadPipeline;
-    }
-  }(s.activationLoad);
-  auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule>(s.accumulated, warp);
-  cutlass::arch::fence_barrier_init();
-  cute::cluster_sync();
-  loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
-  if constexpr (W4SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
-  accumulatePipeline.init_masks(ClusterShape{});
   cute::TMEM::Allocator2Sm allocator;
-  if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    // The CTA join acquires every dispatch warp's stores before one grouped release.
-    uint32_t prefetched = 0;
-    CUTE_UNROLL
-    for (int i = 0; i < W4DispatchWarps; ++i) prefetched += s.dispatch.prefetchedRows[i];
-    if (prefetched) {
-      auto* counter = w4InputChunkCounter(p.workspace, hidden, 0, 0);
-      asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(prefetched) : "memory");
+
+  if (warp < Schedule::DispatchBegin) {
+    if (threadIdx.x == 0) s.tmemReady.init(ClusterM);
+    typename Load::Params loadParams{};
+    bool loadWarp =
+        warp == Schedule::LoadWarp || (!W4SplitPipelines && W4LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
+    loadParams.role =
+        loadWarp ? Load::ThreadCategory::Producer
+                 : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
+    loadParams.is_leader = lane == 0 && cta == 0 && loadWarp;
+    loadParams.transaction_bytes =
+        W4LoadWarps == 1
+            ? Mainloop::TmaTransactionBytes
+            : (warp == Schedule::LoadWarp ? Mainloop::WeightTransactionBytes : Mainloop::ActivationTransactionBytes);
+    if constexpr (W4SplitPipelines) loadParams.transaction_bytes = Mainloop::WeightTransactionBytes;
+    loadParams.initializing_warp = Schedule::LoadWarp;
+    Load loadPipeline(s.mainloop, loadParams, ClusterShape{}, false_type{}, false_type{});
+    if constexpr (W4LoadWarps == 2 && !W4SplitPipelines) {
+      if (warp == Schedule::LoadWarp) {
+        // Both producers arrive with their own byte count; the stage becomes
+        // ready only after both arrivals and all four TMA copies have completed.
+        cutlass::arch::detail::initialize_barrier_array_pair_aligned<decltype(s.mainloop.full_barrier_),
+                                                                     decltype(s.mainloop.empty_barrier_), W4LoadStages>(
+            s.mainloop.full_barrier_, s.mainloop.empty_barrier_, 2, 1);
+      }
+    } else {
+      Load::init_barriers(s.mainloop, loadParams, ClusterShape{});
     }
-  }
-  cute::cluster_sync();
+    auto activationPipeline = [&](auto& activationStorage) {
+      if constexpr (W4SplitPipelines) {
+        auto activationParams = loadParams;
+        activationParams.role =
+            warp == Schedule::ActivationLoadWarp
+                ? Load::ThreadCategory::Producer
+                : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
+        activationParams.is_leader = lane == 0 && cta == 0 && warp == Schedule::ActivationLoadWarp;
+        activationParams.transaction_bytes = Mainloop::ActivationTransactionBytes;
+        activationParams.initializing_warp = Schedule::ActivationLoadWarp;
+        return Load(activationStorage, activationParams, ClusterShape{}, true_type{}, false_type{});
+      } else {
+        return loadPipeline;
+      }
+    }(s.activationLoad);
+    auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule>(s.accumulated, warp);
+    cutlass::arch::fence_barrier_init();
+    loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
+    if constexpr (W4SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
+    accumulatePipeline.init_masks(ClusterShape{});
+    cutlass::arch::NamedBarrier::sync(Schedule::DispatchBegin * 32, 0);
+    cute::cluster_arrive();
+    cute::cluster_wait();
 
-  Mainloop fc1(p.fc1, ClusterShape{}, cta);
-  Mainloop fc2(p.fc2, ClusterShape{}, cta);
-  using EpilogueTile = Shape<Int<TileM / ClusterM>, Int<W4TileN>>;
-  auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
-  Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
-  int tokenBlocks = p.workspace.control->tokenBlocks;
-  int tasks = tokenBlocks * (fc1TaskTiles<false>(intermediate) + fc2TaskTiles<false>(hidden));
-  int localExperts = p.config.numExperts / p.config.worldSize;
-  ProblemShape shape1{2 * intermediate, w4StorageRow(p.workspace.poolRows), hidden, localExperts};
-  ProblemShape shape2{hidden, w4StorageRow(p.workspace.poolRows), intermediate, localExperts};
+    Mainloop fc1(p.fc1, ClusterShape{}, cta);
+    Mainloop fc2(p.fc2, ClusterShape{}, cta);
+    int tokenBlocks = p.workspace.control->tokenBlocks;
+    int tasks = tokenBlocks * (fc1TaskTiles<false>(intermediate) + fc2TaskTiles<false>(hidden));
+    int localExperts = p.config.numExperts / p.config.worldSize;
+    ProblemShape shape1{2 * intermediate, w4StorageRow(p.workspace.poolRows), hidden, localExperts};
+    ProblemShape shape2{hidden, w4StorageRow(p.workspace.poolRows), intermediate, localExperts};
 
-  if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
-    runEpilogueRole<0, Schedule>(p, tokens, output, s, accumulatePipeline, tmemStorage.accumulators, hidden,
-                                 intermediate, cluster, tasks);
-  } else if (warp < Schedule::DispatchBegin) {
-    // Keep mainloop and dispatch reconfiguration in disjoint branches so ptxas
-    // does not constrain the four-descriptor loader to dispatch's 32 registers.
-    runW4A8MainloopRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, fc2, shape1, shape2,
-                        tmemStorage, hidden, intermediate, warp, lane, cta, cluster, tasks);
+    // Reconfigure the complete transfer warpgroup before its load/MMA roles diverge.
+    if (warp >= Schedule::EpilogueEnd) cutlass::arch::warpgroup_reg_dealloc<W4TransferRegisters>();
+    bool producerWarp = warp == Schedule::LoadWarp || (W4LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
+    if (producerWarp) {
+      // Producers need initialized pipeline barriers, not the TMEM allocation.
+      runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
+                      lane, cta, cluster, tasks);
+    } else {
+      if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
+      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - W4LoadWarps) * 32, 2);
+      if (threadIdx.x == 0) {
+        CUTE_UNROLL
+        for (int peerCta = 0; peerCta < ClusterM; ++peerCta) s.tmemReady.arrive(peerCta);
+      }
+      s.tmemReady.wait(0);
+      using EpilogueTile = Shape<Int<TileM / ClusterM>, Int<W4TileN>>;
+      auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
+      Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
+      if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
+        runEpilogueRole<0, Schedule>(p, tokens, output, s, accumulatePipeline, tmemStorage.accumulators, hidden,
+                                     intermediate, cluster, tasks);
+      } else {
+        runW4A8MmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden,
+                       intermediate, warp, cta, cluster, tasks);
+      }
+    }
   } else {
+    // Keep the loader's register budget independent of dispatch's 32-register role.
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
+    // Arrive without waiting so copies overlap the compute-side initialization.
+    cute::cluster_arrive_relaxed();
     if (warp < Schedule::DispatchEnd) {
       traceW4(W4TracePhase::Dispatch, true);
-      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin, firstChunkPrefetched);
+      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin);
       traceW4(W4TracePhase::Dispatch, false);
     }
   }
+  // Compute has waited for initialization; this CTA join lets dispatch safely
+  // reuse the completed cluster phase without a separate initialization wait.
   __syncthreads();
   if (!(warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd))
     cutlass::arch::warpgroup_reg_alloc<EntryRegisters>();
