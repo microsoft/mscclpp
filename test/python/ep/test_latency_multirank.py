@@ -560,7 +560,18 @@ def validate_expanded_dispatch(dispatch_out, all_ids, all_weights, all_x, rank, 
     assert torch.all(weights[:, tokens:] == 0)
     assert torch.equal(dispatch_out.layout.num_tokens_per_rank, local.sum(dim=(1, 2)).to(torch.int32))
     expected_payload = all_x.unsqueeze(2).expand(-1, -1, topk, -1)
-    assert torch.equal(payload[:, :tokens][local], expected_payload[local])
+    if dispatch_out.quant is not None:
+        assert dispatch_out.quant.scale is not None
+        actual_payload = payload[:, :tokens][local].float() / dispatch_out.quant.scale
+        expected_payload = expected_payload[local].float()
+        torch.testing.assert_close(
+            actual_payload,
+            expected_payload,
+            rtol=1.0 / 16.0,
+            atol=1.0 / (dispatch_out.quant.scale * 512.0),
+        )
+    else:
+        assert torch.equal(payload[:, :tokens][local], expected_payload[local])
     assert dispatch_out.combine_input_buffer.data_ptr() == dispatch_out.tokens.data_ptr()
 
 
@@ -862,7 +873,13 @@ def main():
         route_weights_in_combine=args.rank_major_route_weights_in_combine,
     )
     if expanded:
-        simulated_gemm_x[dispatch_out.weights == 0] = float("nan")
+        invalid_routes = (dispatch_out.weights == 0).unsqueeze(-1)
+        if simulated_gemm_x.dtype == torch.float8_e4m3fn:
+            simulated_gemm_x.copy_(
+                torch.where(invalid_routes, float("nan"), simulated_gemm_x.float()).to(simulated_gemm_x.dtype)
+            )
+        else:
+            simulated_gemm_x[dispatch_out.weights == 0] = float("nan")
     reference_x = x
     if dispatch_quant is not None:
         if output_layout == ep.DispatchLayout.EXPERT_MAJOR:

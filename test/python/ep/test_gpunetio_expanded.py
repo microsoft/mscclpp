@@ -755,6 +755,7 @@ int main() {
                 for token in range(worker * groups + group, tokens, workers * groups)
             ]
             self.assertEqual(sorted(assigned), list(range(tokens)))
+
         for rows, hcas, qps, owner in product((0, 1, 8, 133, 257), (1, 2, 4, 64), (1, 4, 64), (0, 7)):
             if hcas > qps or qps % hcas:
                 continue
@@ -778,6 +779,15 @@ int main() {
         self.assertLess(batch.index("__threadfence_system"), batch.index("doca_gpu_dev_verbs_mark_wqes_ready"))
         self.assertIn("ginRemoteKey(*gin, peer, queue)", batch)
         self.assertIn("ginLocalKey(*gin, queue)", batch)
+
+    def test_deduplicated_routes_are_backfilled_after_dispatch(self):
+        dispatch_source = source("src/ext/ep/dispatch/rank_major_dispatch.cu")
+        dispatch = function(dispatch_source, "rankMajorTopkExpandedDispatch")
+        self.assertIn("expandRankMajorTopkDuplicateRoutesKernel", dispatch_source)
+        self.assertLess(dispatch.index("topk_expanded::dispatch"), dispatch.index("deduplicateExpandedRoutes_"))
+        self.assertIn("LAUNCH_EXPANSION_TYPED(HIDDEN, DispatchDataType::BF16)", dispatch)
+        self.assertIn("LAUNCH_EXPANSION_TYPED(HIDDEN, DispatchDataType::FP8_E4M3)", dispatch)
+        self.assertIn("CUDA_CHECK(cudaGetLastError())", dispatch)
 
 
 if __name__ == "__main__":
