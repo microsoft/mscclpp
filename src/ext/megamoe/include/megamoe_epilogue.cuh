@@ -188,6 +188,8 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
   if constexpr (P::WeightMxfp4) {
     if (feature >= hidden) return;
   }
+  // Open groups belong to this issuing leader and never survive this call.
+  int pendingCopies = 0;
   for (int token = warp; token < validRows; token += EpilogueWarps) {
     if (fc1) {
       auto output =
@@ -204,8 +206,22 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
         bulkStore(output + offset, s.epilogue.packed + token * width, width * sizeof(__bfloat16));
       }
     }
-    bulkStoreCommit();
-    bulkStoreWait<4>();
+    if constexpr (P::WeightMxfp4 && !Local) {
+      if (++pendingCopies == 4) {
+        bulkStoreCommit();
+        bulkStoreWait<1>();
+        pendingCopies = 0;
+      }
+    } else {
+      bulkStoreCommit();
+      bulkStoreWait<4>();
+    }
+  }
+  if constexpr (P::WeightMxfp4 && !Local) {
+    if (pendingCopies != 0) {
+      bulkStoreCommit();
+      bulkStoreWait<1>();
+    }
   }
   if constexpr (Local) {
     bulkStoreWaitSource();

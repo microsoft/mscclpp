@@ -159,7 +159,7 @@ struct DispatchStorage {
   BulkBarrier barriers[DispatchWarpCount][2];
 };
 
-constexpr int W4ScaleChunkBytes = 256;
+constexpr int W4ScaleChunkBytes = 512;
 struct W4DispatchStorage {
   alignas(128) uint8_t tiles[W4DispatchWarps][2][W4DispatchChunk];
   BulkBarrier barriers[W4DispatchWarps][2];
