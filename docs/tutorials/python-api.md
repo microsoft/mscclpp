@@ -80,6 +80,11 @@ The final argument to `Kernel.launch_kernel()` accepts an integer CUDA/HIP strea
 pointer, a PyTorch stream, or `None` for the default stream. CuPy stream objects
 must be passed as their integer `.ptr` value instead.
 
+Kernel loading and launching use `cuda-bindings` on CUDA and `hip-python` on ROCm,
+selected by `mscclpp._mscclpp.is_hip`. CUDA initializes the current device's runtime
+context before loading a module. Failed driver calls raise `RuntimeError` with the
+API name and error code. CuPy is still required for the array operations in this example.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>

@@ -67,8 +67,38 @@ class Kernel:
     CU_LAUNCH_PARAM_END = 0x00 if not is_hip else 0x03
 
     def __init__(self, cubin: bytes, kernel_name: str):
-        self._module = cp.cuda.driver.moduleLoadData(cubin)
-        self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
+        self._module = None
+        name = kernel_name.encode("utf-8")
+        if is_hip:
+            from hip import hip
+
+            load_module = hip.hipModuleLoadData
+            get_function = hip.hipModuleGetFunction
+            self._launch_kernel = hip.hipModuleLaunchKernel
+            self._unload_module = hip.hipModuleUnload
+        else:
+            from cuda.bindings import driver, runtime
+
+            load_module = driver.cuModuleLoadData
+            get_function = driver.cuModuleGetFunction
+            self._launch_kernel = driver.cuLaunchKernel
+            self._unload_module = driver.cuModuleUnload
+            # Driver module loading needs the runtime's current device context.
+            self._call(runtime.cudaFree, 0)
+
+        (self._module,) = self._call(load_module, cubin)
+        try:
+            (self._kernel,) = self._call(get_function, self._module, name)
+        except RuntimeError:
+            self.__del__()
+            raise
+
+    @staticmethod
+    def _call(func, *args):
+        error, *values = func(*args)
+        if int(error) != 0:
+            raise RuntimeError(f"{func.__name__} failed with error {int(error)}")
+        return values
 
     def launch_kernel(
         self,
@@ -81,27 +111,38 @@ class Kernel:
         """Launch on a native stream pointer, a PyTorch stream, or the default stream (None)."""
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
-        config = np.array(
-            [
-                Kernel.CU_LAUNCH_PARAM_BUFFER_POINTER,
-                ctypes.addressof(buffer),
-                Kernel.CU_LAUNCH_PARAM_BUFFER_SIZE,
-                ctypes.addressof(buffer_size),
-                Kernel.CU_LAUNCH_PARAM_END,
-            ],
-            dtype=np.uint64,
+        config = (ctypes.c_void_p * 5)(
+            Kernel.CU_LAUNCH_PARAM_BUFFER_POINTER,
+            ctypes.addressof(buffer),
+            Kernel.CU_LAUNCH_PARAM_BUFFER_SIZE,
+            ctypes.addressof(buffer_size),
+            Kernel.CU_LAUNCH_PARAM_END,
         )
         cuda_stream = 0
         if isinstance(stream, int):
             cuda_stream = stream
         elif stream is not None:
             cuda_stream = stream.cuda_stream
-        cp.cuda.driver.launchKernel(
-            self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
+        self._call(
+            self._launch_kernel,
+            self._kernel,
+            nblocks,
+            1,
+            1,
+            nthreads,
+            1,
+            1,
+            shared,
+            cuda_stream,
+            0,
+            ctypes.addressof(config),
         )
 
     def __del__(self):
-        cp.cuda.driver.moduleUnload(self._module)
+        if self._module is not None:
+            module = self._module
+            self._module = None
+            self._call(self._unload_module, module)
 
 
 class KernelBuilder:
