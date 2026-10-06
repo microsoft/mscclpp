@@ -67,6 +67,8 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
     w.counts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.starts = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
     w.cursors = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
+    if (useRoutingTags(c))
+      w.routingTags = at<uint32_t>(base, appendRegion(bytes, routes * sizeof(uint32_t)));
     w.inputReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
     w.hiddenReady = at<int>(base, appendRegion(bytes, rows / tileN * sizeof(int)));
     if (c.weightMxfp4 && w4InputChunks(c.hidden) > 1)

@@ -120,6 +120,8 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
         if (threadIdx.x == 0) {
           w.control->epoch = ++*at<uint64_t>(p.local, p.symmetric.epoch);
           w.control->completedCtas = 0;
+          w.control->planningArrivals = 0;
+          w.control->planningReadyEpoch = 0;
           *at<int>(p.local, p.symmetric.tokenCount) = tokens;
         }
         __syncthreads();
@@ -170,14 +172,20 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
   }
   if (thread == 0) {
     w.control->epoch = ++*at<uint64_t>(p.local, p.symmetric.epoch);
-    if constexpr (P::WeightMxfp4) w.control->completedCtas = 0;
+    if constexpr (P::WeightMxfp4) {
+      w.control->completedCtas = 0;
+      w.control->planningArrivals = 0;
+      w.control->planningReadyEpoch = 0;
+    }
     *at<int>(p.local, p.symmetric.tokenCount) = tokens;
   }
   for (int e = thread; e < c.numExperts / c.worldSize; e += stride) {
     w.counts[e] = 0;
     w.cursors[e] = 0;
   }
-  for (int r = thread; r < w.poolRows; r += stride) w.routes[r].rank = -1;
+  // W4 dispatch checks live rows before loading routes; padding is never consumed.
+  if constexpr (!P::WeightMxfp4)
+    for (int r = thread; r < w.poolRows; r += stride) w.routes[r].rank = -1;
   for (int b = thread; b < w.poolRows / RoutingTileN; b += stride) {
     w.inputReady[b] = 0;
     w.hiddenReady[b] = 0;
@@ -185,11 +193,19 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
       for (int chunk = 0; chunk < w4InputChunks(c.hidden) - 1; ++chunk)
         w.inputChunkReady[size_t(b) * (w4InputChunks(c.hidden) - 1) + chunk] = 0;
   }
-  auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
-  for (size_t i = thread; i < size_t(tokens) * c.topK * c.hidden; i += stride) partial[i] = __bfloat16(0.0f);
-  w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  if constexpr (P::WeightMxfp4) {
+    // FC2 overwrites every active slot completely; combine excludes inactive slots.
+    // Staged input is ready on entry. Only CTA 0's epoch/count publication must
+    // precede its peer releases; the following grid join finishes private resets
+    // and transfers the peer acquisitions to every CTA before histogramming.
+    if (blockIdx.x == 0) __syncthreads();
+  } else {
+    auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
+    for (size_t i = thread; i < size_t(tokens) * c.topK * c.hidden; i += stride) partial[i] = __bfloat16(0.0f);
+    w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  }
 
-  // The grid barrier joins all staging/reset writes before this system release.
+  // All CTA-0 threads join before its peer-owning threads perform system releases.
   if (blockIdx.x == 0 && threadIdx.x < c.worldSize) {
     signalAndWait(p, threadIdx.x);
   }
@@ -203,15 +219,41 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
   }
   w.control->gridBarrier.sync(gridDim.x, SpinLimit);
 
+  bool tagged = false;
+  if constexpr (P::WeightMxfp4) tagged = useRoutingTags(c);
   for (int i = thread; i < slots; i += stride) {
     int rank = i / (c.maxTokens * c.topK);
     int token = i / c.topK % c.maxTokens;
+    // routeExpert guards every ID read with the acquired current peer count.
     int expert = routeExpert(p, rank, token, i % c.topK);
-    if (expert >= 0) atomicFetchAdd<int, scopeDevice>(w.counts + expert, 1, memoryOrderRelaxed);
+    if (tagged) {
+      uint32_t tag = InvalidRoutingTag;
+      if (expert >= 0) {
+        int ticket = atomicFetchAdd<int, scopeDevice>(w.counts + expert, 1, memoryOrderRelaxed);
+        tag = (uint32_t(expert) << RoutingTagTicketBits) | uint32_t(ticket);
+      }
+      // Unique grid-stride owner overwrites even nonlive/nonlocal/inactive slots
+      // on every replay. No primed tag survives the histogram publication join.
+      w.routingTags[i] = tag;
+    } else if (expert >= 0) {
+      atomicFetchAdd<int, scopeDevice>(w.counts + expert, 1, memoryOrderRelaxed);
+    }
   }
-  w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  bool planLeader = thread == 0;
+  if (tagged) {
+    // All CTAs, including idle ones, collect their producers before arriving.
+    // The acq_rel modification-order chain transfers every count/tag write to
+    // the unique last leader. Full-grid residency is recomputed by preflight.
+    __syncthreads();
+    planLeader = false;
+    if (threadIdx.x == 0)
+      planLeader = atomicFetchAdd<int, scopeDevice>(&w.control->planningArrivals, 1, memoryOrderAcqRel) ==
+                   int(gridDim.x) - 1;
+  } else {
+    w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  }
 
-  if (thread == 0) {
+  if (planLeader) {
     int block = 0;
     for (int e = 0; e < c.numExperts / c.worldSize; ++e) {
       w.starts[e] = block * RoutingTileN;
@@ -219,18 +261,43 @@ __device__ void prepareRoutes(const P& p, int tokens, RoutingStorage& scratch, W
         w.blocks[block++] = TokenBlock{e, min(int(RoutingTileN), w.counts[e] - row)};
     }
     w.control->tokenBlocks = block;
+    if (tagged)
+      atomicStore<uint64_t, scopeDevice>(&w.control->planningReadyEpoch, w.control->epoch, memoryOrderRelease);
   }
-  w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  if (tagged) {
+    // Even the publishing leader acquires the exact current device epoch.
+    // The consumer join transfers prefix/tag visibility to every scatterer.
+    if (threadIdx.x == 0) {
+      const uint64_t epoch = w.control->epoch;
+      POLL_MAYBE_JAILBREAK(
+          (atomicLoad<uint64_t, scopeDevice>(&w.control->planningReadyEpoch, memoryOrderAcquire) != epoch), SpinLimit);
+    }
+    __syncthreads();
+  } else {
+    w.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  }
 
   for (int i = thread; i < slots; i += stride) {
     int rank = i / (c.maxTokens * c.topK);
     int token = i / c.topK % c.maxTokens;
     int slot = i % c.topK;
-    int expert = routeExpert(p, rank, token, slot);
-    if (expert >= 0) {
-      int row = w.starts[expert] + atomicFetchAdd<int, scopeDevice>(w.cursors + expert, 1, memoryOrderRelaxed);
-      float weight = peerAt<float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];
-      w.routes[row] = Route{rank, token, slot, weight};
+    if (tagged) {
+      uint32_t tag = w.routingTags[i];
+      if (tag != InvalidRoutingTag) {
+        // A current accepted tag proves a live token and validated local ID;
+        // histogram tickets uniquely cover exactly the expert's live rows.
+        int expert = int(tag >> RoutingTagTicketBits);
+        int row = w.starts[expert] + int(tag & RoutingTagTicketMask);
+        float weight = peerAt<float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];
+        w.routes[row] = Route{rank, token, slot, weight};
+      }
+    } else {
+      int expert = routeExpert(p, rank, token, slot);
+      if (expert >= 0) {
+        int row = w.starts[expert] + atomicFetchAdd<int, scopeDevice>(w.cursors + expert, 1, memoryOrderRelaxed);
+        float weight = peerAt<float>(p, rank, p.symmetric.topkWeights)[token * c.topK + slot];
+        w.routes[row] = Route{rank, token, slot, weight};
+      }
     }
   }
   w.control->gridBarrier.sync(gridDim.x, SpinLimit);

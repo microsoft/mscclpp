@@ -44,10 +44,10 @@
 #define MSCCLPP_MEGAMOE_W4_EPILOGUE_TOKENS 32
 #endif
 #ifndef MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK
-#define MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK 2048
+#define MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK 4096
 #endif
 #ifndef MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS
-#define MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS 4
+#define MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS 2
 #endif
 
 #if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
@@ -85,7 +85,8 @@ static_assert(W4TransferRegisters == 32 || W4TransferRegisters == 64 || W4Transf
 static_assert(W4LoadWarps == 1 || W4LoadWarps == 2);
 static_assert(!W4SplitPipelines || W4LoadWarps == 2);
 static_assert(W4EpilogueTokens == 16 || W4EpilogueTokens == 32);
-static_assert(W4DispatchChunk == 512 || W4DispatchChunk == 1024 || W4DispatchChunk == 2048);
+static_assert(W4DispatchChunk == 512 || W4DispatchChunk == 1024 || W4DispatchChunk == 2048 ||
+              W4DispatchChunk == 4096);
 static_assert(W4DispatchChunk % W4TileK == 0);
 static_assert(W4DispatchWarps >= 2 && W4DispatchWarps <= 4);
 constexpr int LocalTileM = 256;

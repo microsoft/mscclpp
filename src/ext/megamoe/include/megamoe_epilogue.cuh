@@ -280,8 +280,7 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
 // All peer output stores must be complete and visible before this local reduction.
 template <class P>
 __device__ __forceinline__ void combineResults(const P& p, int tokens, __bfloat16* output) {
-  constexpr int Elements = P::WeightMxfp4 ? 2 : 1;
-  using Bits = std::conditional_t<P::WeightMxfp4, uint32_t, uint16_t>;
+  constexpr int Elements = P::WeightMxfp4 ? 8 : 1;
   auto partial = at<uint16_t>(p.local, p.symmetric.partialOutput);
   for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
        i += gridDim.x * P::ThreadCount) {
@@ -292,19 +291,43 @@ __device__ __forceinline__ void combineResults(const P& p, int tokens, __bfloat1
       if constexpr (P::WeightMxfp4) {
         if (at<int>(p.local, p.symmetric.topkIds)[token * p.config.topK + slot] < 0) continue;
       }
-      Bits bits;
       auto address = partial + (token * p.config.topK + slot) * p.config.hidden + feature;
       if constexpr (P::WeightMxfp4) {
-        asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(bits) : "l"(address) : "memory");
+        // Internal BF16 rows and eight-feature groups are naturally 16-byte aligned.
+        uint32_t bits[4];
+        asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                     : "=r"(bits[0]), "=r"(bits[1]), "=r"(bits[2]), "=r"(bits[3])
+                     : "l"(address) : "memory");
+        CUTE_UNROLL
+        for (int element = 0; element < Elements; ++element)
+          sum[element] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(bits[element / 2] >> (16 * (element % 2)))));
       } else {
+        uint16_t bits;
         asm volatile("ld.global.cg.u16 %0, [%1];" : "=h"(bits) : "l"(address) : "memory");
+        sum[0] += float(mscclpp::bit_cast<__bfloat16>(bits));
       }
-      CUTE_UNROLL
-      for (int element = 0; element < Elements; ++element)
-        sum[element] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(bits >> (16 * element))));
     }
-    CUTE_UNROLL
-    for (int element = 0; element < Elements; ++element) output[Elements * i + element] = __bfloat16(sum[element]);
+    if constexpr (P::WeightMxfp4) {
+      if ((reinterpret_cast<uintptr_t>(output) & 15) == 0) {
+        uint32_t packed[4];
+        CUTE_UNROLL
+        for (int pair = 0; pair < 4; ++pair) {
+          uint16_t low = mscclpp::bit_cast<uint16_t>(__bfloat16(sum[2 * pair]));
+          uint16_t high = mscclpp::bit_cast<uint16_t>(__bfloat16(sum[2 * pair + 1]));
+          packed[pair] = uint32_t(low) | (uint32_t(high) << 16);
+        }
+        asm volatile("st.global.v4.u32 [%0], {%1, %2, %3, %4};"
+                     :: "l"(output + Elements * i), "r"(packed[0]), "r"(packed[1]), "r"(packed[2]), "r"(packed[3])
+                     : "memory");
+      } else {
+        // Public BF16 views need not have vector-store alignment.
+        CUTE_UNROLL
+        for (int element = 0; element < Elements; ++element)
+          output[Elements * i + element] = __bfloat16(sum[element]);
+      }
+    } else {
+      output[i] = __bfloat16(sum[0]);
+    }
   }
 }
 

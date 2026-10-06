@@ -42,6 +42,15 @@ constexpr int DispatchChunkBytes = 2048;
 constexpr int DispatchWarpCount = 4;
 constexpr int SmallRoutingSlots = 2 * Threads;
 constexpr int SmallRoutingExperts = 128;
+constexpr int RoutingTagTicketBits = 13;
+constexpr uint32_t RoutingTagTicketMask = (1u << RoutingTagTicketBits) - 1;
+constexpr uint32_t InvalidRoutingTag = 0xffffffffu;
+
+// Bounded encoding; larger native configurations retain the two-scan planner.
+__host__ __device__ constexpr bool useRoutingTags(const NativeConfig& c) {
+  return c.weightMxfp4 && size_t(c.worldSize) * c.maxTokens * c.topK <= (1u << RoutingTagTicketBits) &&
+         c.numExperts / c.worldSize <= 16;
+}
 constexpr int64_t SpinLimit = 1000000000;
 
 struct Control {
@@ -49,7 +58,11 @@ struct Control {
   uint64_t epoch;
   int tokenBlocks;
   int completedCtas;
+  // Private routing-plan state, independent of grid/output completion counters.
+  int planningArrivals;
+  alignas(8) uint64_t planningReadyEpoch;
 };
+static_assert(offsetof(Control, planningReadyEpoch) % 8 == 0);
 
 struct Route {
   int rank;
@@ -75,6 +88,7 @@ struct Workspace {
   int* counts;
   int* starts;
   int* cursors;
+  uint32_t* routingTags;
   int* inputReady;
   int* hiddenReady;
   int* inputChunkReady;
