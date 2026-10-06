@@ -512,6 +512,39 @@ its saved profile and local JIT cache. `autotune.collect_selection_key()` and
 `autotune.resolve_profile()` expose the same selection for application setup;
 reuse the returned kernel and capacity before constructing contexts/graphs.
 
+### Packaged resident tuning results
+
+[`megamoe_resident_tuning.json`](megamoe_resident_tuning.json) stores measured
+resident-kernel winners for the exact 32-rank GB200 W4A8 H9216/E512/top-8
+configuration. It records the complete builtin kernel policy, TMA cache hints,
+token/intermediate-specific CTA margins, measurements, and provenance.
+Resolution is opt-in and never compiles or benchmarks:
+
+```python
+from mscclpp.ext.megamoe import MegaMoEConfig, resolve_resident_tuning
+
+config = MegaMoEConfig(
+    rank=rank, world_size=32, max_tokens=tokens,
+    hidden=9216, intermediate=intermediate,
+    num_experts=512, top_k=8, weight_mxfp4=True,
+)
+tuning = resolve_resident_tuning(config, graph_batch=10)
+config = tuning.apply(config)
+```
+
+The packaged winners are:
+
+| Intermediate | T32 | T64 | T128 |
+| ---: | ---: | ---: | ---: |
+| 4096 | `sm_margin=4` | `sm_margin=4` | `sm_margin=2` |
+| 4608 | `sm_margin=4` | `sm_margin=6` | `sm_margin=2` |
+
+The resolver requires an exact match for GPU name/capability/SM count, EP size,
+dimensions, experts/top-k, W4A8 precision, capacity, and graph timing. Missing
+coverage raises `ResidentTuningMismatchError`; it never silently falls back or
+changes the default `sm_margin=0`. This resident profile is distinct from
+`megamoe_tuning.json`, which defines the generic offline autotune search space.
+
 ## Tests
 
 From the repository root with the extension installed:
