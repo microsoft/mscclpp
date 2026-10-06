@@ -236,12 +236,16 @@ struct W4A8Mainloop {
       start = traceW4Clock();
       if (elect_one_sync()) {
         if constexpr (Operands != 2) {
-          copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a), a(_, *iterator), inputs.tAsA(_, stage));
-          copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa), sfa(_, *iterator), inputs.tAsSFA(_, stage));
+          copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, TMA::CacheHintSm100::EVICT_FIRST), a(_, *iterator),
+               inputs.tAsA(_, stage));
+          copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, TMA::CacheHintSm100::EVICT_FIRST),
+               sfa(_, *iterator), inputs.tAsSFA(_, stage));
         }
         if constexpr (Operands != 1) {
-          copy(params.tma_load_b.with(*barrier, inputs.mcast_mask_b), b(_, *iterator), inputs.tBsB(_, stage));
-          copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb), sfb(_, *iterator), inputs.tBsSFB(_, stage));
+          copy(params.tma_load_b.with(*barrier, inputs.mcast_mask_b, TMA::CacheHintSm100::EVICT_LAST), b(_, *iterator),
+               inputs.tBsB(_, stage));
+          copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, TMA::CacheHintSm100::EVICT_LAST),
+               sfb(_, *iterator), inputs.tBsSFB(_, stage));
         }
       }
       issueNs += traceW4Clock() - start;
