@@ -532,6 +532,38 @@ def reconstruct_rank_major_reference(
     return dispatched_reference_x[rank]
 
 
+def reconstruct_expanded_reference(
+    *,
+    rank,
+    num_ranks,
+    num_tokens,
+    capacity,
+    hidden,
+    num_local_experts,
+    all_topk_idx,
+    dequantized_x,
+    group,
+):
+    valid_routes = (all_topk_idx >= 0) & (all_topk_idx < num_ranks * num_local_experts)
+    destination_ranks = torch.where(
+        valid_routes,
+        all_topk_idx // num_local_experts,
+        torch.full_like(all_topk_idx, num_ranks),
+    )
+    first_destination_rank = destination_ranks.amin(dim=-1)
+    payload = dequantized_x.reshape(num_ranks, capacity, all_topk_idx.size(-1), hidden)
+    dispatched_reference_x = torch.zeros((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    for source_rank in range(num_ranks):
+        selected_tokens = (first_destination_rank[source_rank] == rank).nonzero().flatten()
+        if selected_tokens.numel() == 0:
+            continue
+        local_routes = destination_ranks[source_rank, selected_tokens] == rank
+        first_local_slots = local_routes.to(torch.int32).argmax(dim=-1)
+        dispatched_reference_x[source_rank, selected_tokens] = payload[source_rank, selected_tokens, first_local_slots]
+    dist.all_reduce(dispatched_reference_x, group=group)
+    return dispatched_reference_x[rank]
+
+
 def expected_direct_send_output(reference_x, topk_idx, topk_weights):
     """Reference for DIRECT_SEND combine: a single accumulation over all top-k slots."""
     expected = torch.zeros_like(reference_x, dtype=torch.float32)
@@ -893,6 +925,18 @@ def main():
                 all_topk_idx=all_topk_idx,
                 packed_recv_layout_range=packed_recv_layout_range,
                 handle=handle,
+                dequantized_x=dequantized_x,
+                group=group,
+            )
+        elif expanded:
+            reference_x = reconstruct_expanded_reference(
+                rank=rank,
+                num_ranks=num_ranks,
+                num_tokens=num_tokens,
+                capacity=capacity,
+                hidden=hidden,
+                num_local_experts=num_local_experts,
+                all_topk_idx=all_topk_idx,
                 dequantized_x=dequantized_x,
                 group=group,
             )
