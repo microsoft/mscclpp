@@ -34,7 +34,7 @@ class CudaKernelTests(unittest.TestCase):
         # Load the real utility module without requiring GPU libraries or the native extension.
         modules = {
             "mscclpp._mscclpp": native,
-            "cupy": ModuleType("cupy"),
+            "cupy": None,
             "numpy": ModuleType("numpy"),
             "torch": None,
             "hip": SimpleNamespace(hip=driver),

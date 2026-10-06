@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 from typing import Any, Type, Union
 
-import cupy as cp
 import numpy as np
 
 from mscclpp._mscclpp import CppDataType as DataType
@@ -220,6 +219,20 @@ class KernelBuilder:
             self._tempdir.cleanup()
 
 
+def _get_data_ptr(array: Any) -> int:
+    if isinstance(array, np.ndarray):
+        ptr = array.ctypes.data
+    elif is_torch_tensor(array):
+        ptr = array.data_ptr()
+    else:
+        ptr = getattr(getattr(array, "data", None), "ptr", None)
+        if ptr is None:
+            raise RuntimeError(f"Unsupported type: {type(array)}")
+    if not isinstance(ptr, int) or isinstance(ptr, bool) or not 0 <= ptr < (1 << (8 * struct.calcsize("P"))):
+        raise RuntimeError(f"Invalid data pointer for {type(array)}: {ptr!r}")
+    return ptr
+
+
 def pack(*args):
     res = b""
     for arg in list(args):
@@ -227,19 +240,13 @@ def pack(*args):
             res += struct.pack("i", arg)
         elif isinstance(arg, ctypes.c_size_t):
             res += struct.pack("N", arg.value)
-        elif isinstance(arg, np.ndarray):
-            res += struct.pack("P", arg.ctypes.data)
-        elif isinstance(arg, cp.ndarray):
-            res += struct.pack("P", arg.data.ptr)
-        elif is_torch_tensor(arg):
-            res += struct.pack("P", arg.data_ptr())
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)
         elif isinstance(arg, bytes):
             res += struct.pack(f"{len(arg)}s", arg)
         else:
-            raise RuntimeError(f"Unsupported type: {type(arg)}")
+            res += struct.pack("P", _get_data_ptr(arg))
     return res
 
 

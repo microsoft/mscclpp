@@ -85,6 +85,12 @@ selected by `mscclpp._mscclpp.is_hip`. CUDA initializes the current device's run
 context before loading a module. Failed driver calls raise `RuntimeError` with the
 API name and error code. CuPy is still required for the array operations in this example.
 
+`pack()` extracts pointers from NumPy arrays, PyTorch tensors, and GPU arrays that
+expose an integer `array.data.ptr`, including CuPy arrays on CUDA and ROCm. The packing
+implementation does not import CuPy or copy array contents. Keep the arrays alive until the GPU
+has finished using the packed pointers. Other parts of MSCCL++, including
+`GpuBuffer`, still require CuPy.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
