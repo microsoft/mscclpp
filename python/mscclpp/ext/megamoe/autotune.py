@@ -731,11 +731,11 @@ def main(argv=None):
     if not all(os.environ.get(name) for name in ("MASTER_ADDR", "MASTER_PORT")):
         raise RuntimeError("set explicit MASTER_ADDR and MASTER_PORT, normally using torchrun")
     if not torch.cuda.is_available() or torch.version.hip or not is_available():
-        raise RuntimeError("offline native MegaMoE tuning requires an SM100/SM103 CUDA native build")
+        raise RuntimeError("offline native MegaMoE tuning requires an SM100-family CUDA native build")
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    if torch.cuda.get_device_capability(device) not in ((10, 0), (10, 3)):
-        raise RuntimeError("native MegaMoE tuning requires SM100 or SM103")
+    if torch.cuda.get_device_capability(device) not in ((10, 0), (10, 3), (10, 7)):
+        raise RuntimeError("native MegaMoE tuning requires an SM100-family GPU")
     torch.backends.cuda.matmul.allow_tf32 = False
     dist.init_process_group("gloo", rank=rank, world_size=world)
     bootstrap = shared_bootstrap = communicator = shared_communicator = None

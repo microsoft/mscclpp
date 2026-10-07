@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import time
 
-_ARCHITECTURES = {(10, 0): "sm_100a", (10, 3): "sm_103a"}
+_ARCHITECTURES = {(10, 0): "sm_100f", (10, 3): "sm_100f", (10, 7): "sm_100f"}
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,7 @@ def _check_device(device=None):
             raise RuntimeError("Prepare MegaMoE kernels outside CUDA Graph capture")
         capability = torch.cuda.get_device_capability(device)
         if capability not in _ARCHITECTURES:
-            raise RuntimeError("MegaMoE JIT requires an SM100 or SM103 GPU")
+            raise RuntimeError("MegaMoE JIT requires an SM100-family GPU")
     return torch.cuda.get_device_properties(device), _ARCHITECTURES[capability]
 
 
@@ -294,7 +294,7 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         raise ValueError("Set MSCCLPP_MEGAMOE_CUTLASS_ROOT to the compatible CUTLASS checkout")
     cutlass = Path(cutlass_value).expanduser().resolve() / "include"
     if not (cutlass / "cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp").is_file():
-        raise FileNotFoundError(f"SM100/SM103 mixed-input CUTLASS headers not found: {cutlass}")
+        raise FileNotFoundError(f"SM100-family mixed-input CUTLASS headers not found: {cutlass}")
     cuda_root = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda")).expanduser().resolve()
     compiler = _tool(nvcc or os.environ.get("MSCCLPP_MEGAMOE_NVCC", str(cuda_root / "bin/nvcc")), "nvcc")
     cxx = _tool(os.environ.get("CXX", "c++"), "C++ compiler")

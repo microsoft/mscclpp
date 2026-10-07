@@ -41,7 +41,7 @@ target_compile_options(mscclpp_megamoe PRIVATE
 target_link_libraries(mscclpp_megamoe PUBLIC mscclpp PRIVATE ${GPU_LIBRARIES} ${CMAKE_DL_LIBS})
 target_compile_definitions(mscclpp_megamoe PRIVATE MSCCLPP_USE_CUDA)
 set_target_properties(mscclpp_megamoe PROPERTIES
-    CUDA_ARCHITECTURES "100a-real;103a-real"
+    CUDA_ARCHITECTURES "100f-real"
     POSITION_INDEPENDENT_CODE ON
     VERSION ${MSCCLPP_VERSION}
     SOVERSION ${MSCCLPP_SOVERSION}

@@ -12,8 +12,7 @@
 // or its semantics requires a new ABI version and exported entrypoint.
 // Compile megamoe.cu, megamoe_launch.cu, and megamoe_jit.cu (not runtime.cc)
 // with C++20, PIC/hidden visibility,
-// -gencode=arch=compute_100a,code=sm_100a or -gencode=arch=compute_103a,code=sm_103a,
-// --expt-relaxed-constexpr,
+// -gencode=arch=compute_100f,code=sm_100f, --expt-relaxed-constexpr,
 // --expt-extended-lambda, MSCCLPP_USE_CUDA, MSCCLPP_MEGAMOE_JIT_MODULE=1,
 // the tile/stage specialization definitions, and a quoted MSCCLPP_MEGAMOE_JIT_ID.
 // Link the module against mscclpp, cudart, and the CUDA driver.

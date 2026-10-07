@@ -77,7 +77,7 @@ def compiler_fixture(tmp_path, monkeypatch):
     monkeypatch.setenv("MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS", "")
     monkeypatch.setattr(jit, "_package_root", lambda: package)
     monkeypatch.setattr(jit, "_source_root", lambda: source)
-    monkeypatch.setattr(jit, "runtime_fingerprint", lambda: {"native": "fixture", "driver": 13000, "arch": "sm_100a"})
+    monkeypatch.setattr(jit, "runtime_fingerprint", lambda: {"native": "fixture", "driver": 13000, "arch": "sm_100f"})
     monkeypatch.setattr(jit, "_tool", lambda value, name: name)
     monkeypatch.setattr(jit, "_version", lambda tool: "release 13.0, V13.0.88")
     commands = []
@@ -90,12 +90,8 @@ def compiler_fixture(tmp_path, monkeypatch):
     return tmp_path / "cache", commands, cutlass
 
 
-@pytest.mark.parametrize("architecture", ["sm_100a", "sm_103a"])
-def test_compile_is_cached_and_uses_native_architecture(compiler_fixture, monkeypatch, architecture):
+def test_compile_is_cached_and_uses_native_architecture(compiler_fixture):
     cache, commands, _ = compiler_fixture
-    monkeypatch.setattr(
-        jit, "runtime_fingerprint", lambda: {"native": "fixture", "driver": 13000, "arch": architecture}
-    )
     config = jit.KernelConfig(64, 6, 6, 64, 128)
     first = jit.compile_kernel(config, cache_dir=cache)
     assert not first.cache_hit and len(commands) == 4
@@ -105,8 +101,7 @@ def test_compile_is_cached_and_uses_native_architecture(compiler_fixture, monkey
         "megamoe_jit.cu",
     ]
     for command in commands[:-1]:
-        compute = architecture.replace("sm_", "compute_", 1)
-        assert f"--generate-code=arch={compute},code={architecture}" in command
+        assert "--generate-code=arch=compute_100f,code=sm_100f" in command
         assert "-DMSCCLPP_MEGAMOE_TILE_M=128" in command
         assert "-DMSCCLPP_MEGAMOE_TILE_N=64" in command
         assert "-DMSCCLPP_MEGAMOE_TILE_K=64" in command
@@ -118,6 +113,11 @@ def test_compile_is_cached_and_uses_native_architecture(compiler_fixture, monkey
     again = jit.compile_kernel(config, cache_dir=cache)
     assert again.cache_hit and again.key == first.key and len(commands) == 4
     assert not list(cache.glob(".*"))
+
+
+@pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])
+def test_sm100_family_capabilities_use_one_jit_target(capability):
+    assert jit._ARCHITECTURES[capability] == "sm_100f"
 
 
 @pytest.mark.parametrize("name", ["megamoe.cu", "megamoe_launch.cu", "megamoe_jit.cu"])

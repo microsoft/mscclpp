@@ -19,8 +19,8 @@
 #include "megamoe_collective.cuh"
 #include "megamoe_kernel.hpp"
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1000
-#error "Native MegaMoE requires an SM100a or SM103a compilation target"
+#if defined(__CUDA_ARCH__) && (!defined(__CUDA_ARCH_FAMILY_SPECIFIC__) || __CUDA_ARCH_FAMILY_SPECIFIC__ != 1000)
+#error "Native MegaMoE requires an SM100-family compilation target"
 #endif
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {

@@ -850,11 +850,11 @@ def main(argv=None):
     if not 1 <= port <= 65535:
         raise ValueError("native bootstrap port must be in [1, 65535]")
     if not torch.cuda.is_available() or torch.version.hip or not is_available():
-        raise RuntimeError("requires the native MegaMoE build and SM100/SM103 CUDA GPUs")
+        raise RuntimeError("requires the native MegaMoE build and SM100-family CUDA GPUs")
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    if torch.cuda.get_device_capability(device) not in ((10, 0), (10, 3)):
-        raise RuntimeError("native MegaMoE requires SM100 or SM103")
+    if torch.cuda.get_device_capability(device) not in ((10, 0), (10, 3), (10, 7)):
+        raise RuntimeError("native MegaMoE requires an SM100-family GPU")
     # Expert/reference operations keep the surrounding policy; the router scopes
     # its explicit math mode locally, including during graph capture.
     torch.backends.cuda.matmul.allow_tf32 = False
