@@ -98,7 +98,7 @@ def _tensor(tensor, name, shape, dtype, device):
 class MegaMoE:
     """Routed SwiGLU experts with CUDA Graph-compatible MSCCL++ communication.
 
-    Construction is collective, outside graph capture, on one SM100 GPU per rank
+    Construction is collective, outside graph capture, on one SM100 or SM103 GPU per rank
     in the same active NVLink fabric. By default, ``fc1`` and ``fc2`` are canonical
     FP8 tensors [local_experts, 2*I, H] and [local_experts, H, I]. With
     ``weight_mxfp4=True``, they are packed uint8 [local_experts, 2*I, H//2] and
@@ -136,18 +136,18 @@ class MegaMoE:
         if not is_available():
             raise RuntimeError(
                 "MSCCL++ was built without native MegaMoE. Rebuild with "
-                "-DMSCCLPP_BUILD_EXT_MEGAMOE=ON using CUDA nvcc/ptxas >=13.3 and CUTLASS."
+                "-DMSCCLPP_BUILD_EXT_MEGAMOE=ON using CUDA nvcc/ptxas >=13.0 and CUTLASS."
             )
         import torch
         from mscclpp import _mscclpp
         from .jit import CompiledKernel, KernelConfig, compile_kernel
 
         if not torch.cuda.is_available() or torch.version.hip:
-            raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100 GPU; ROCm is unsupported")
+            raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100 or SM103 GPU; ROCm is unsupported")
         self.config = config
         self.device = torch.device("cuda", torch.cuda.current_device())
-        if torch.cuda.get_device_capability(self.device) != (10, 0):
-            raise RuntimeError("Native MegaMoE currently requires an SM100 GPU (for example GB200)")
+        if torch.cuda.get_device_capability(self.device) not in ((10, 0), (10, 3)):
+            raise RuntimeError("Native MegaMoE currently requires an SM100 or SM103 GPU")
         if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - 2:
             raise ValueError("sm_margin must leave at least two SMs")
         stream = self._stream(stream)

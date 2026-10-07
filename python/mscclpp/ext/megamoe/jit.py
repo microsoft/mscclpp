@@ -18,6 +18,8 @@ import subprocess
 import tempfile
 import time
 
+_ARCHITECTURES = {(10, 0): "sm_100a", (10, 3): "sm_103a"}
+
 
 @dataclass(frozen=True)
 class KernelConfig:
@@ -129,16 +131,17 @@ def _check_device(device=None):
     with torch.cuda.device(device):
         if torch.cuda.is_current_stream_capturing():
             raise RuntimeError("Prepare MegaMoE kernels outside CUDA Graph capture")
-        if torch.cuda.get_device_capability(device) != (10, 0):
-            raise RuntimeError("MegaMoE JIT requires an SM100 GPU")
-    return torch.cuda.get_device_properties(device)
+        capability = torch.cuda.get_device_capability(device)
+        if capability not in _ARCHITECTURES:
+            raise RuntimeError("MegaMoE JIT requires an SM100 or SM103 GPU")
+    return torch.cuda.get_device_properties(device), _ARCHITECTURES[capability]
 
 
 def runtime_fingerprint(device=None):
     """Return an exact cache/profile environment key without invoking a compiler."""
     import torch
 
-    properties = _check_device(device)
+    properties, architecture = _check_device(device)
     driver = ctypes.CDLL("libcuda.so.1")
     version = ctypes.c_int()
     driver.cuDriverGetVersion.argtypes = [ctypes.POINTER(ctypes.c_int)]
@@ -149,7 +152,7 @@ def runtime_fingerprint(device=None):
     return {
         "gpu_name": properties.name,
         "sm_count": properties.multi_processor_count,
-        "arch": "sm_100a",
+        "arch": architecture,
         "torch_version": torch.__version__,
         "cuda_runtime_version": torch.version.cuda,
         "cuda_driver_version": version.value,
@@ -266,7 +269,7 @@ def _run(command, log, timeout):
 def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, timeout=600):
     """Compile one specialization once per host/cache, outside collective construction.
 
-    Set ``MSCCLPP_MEGAMOE_NVCC`` (nvcc >=13.3),
+    Set ``MSCCLPP_MEGAMOE_NVCC`` (nvcc >=13.0),
     ``MSCCLPP_MEGAMOE_CUTLASS_ROOT``, and optionally ``CUDA_HOME``.
     ``MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS`` supplies path-separated matching runtime
     include directories when compiler and runtime packages are installed separately.
@@ -291,14 +294,14 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         raise ValueError("Set MSCCLPP_MEGAMOE_CUTLASS_ROOT to the compatible CUTLASS checkout")
     cutlass = Path(cutlass_value).expanduser().resolve() / "include"
     if not (cutlass / "cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp").is_file():
-        raise FileNotFoundError(f"SM100 mixed-input CUTLASS headers not found: {cutlass}")
+        raise FileNotFoundError(f"SM100/SM103 mixed-input CUTLASS headers not found: {cutlass}")
     cuda_root = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda")).expanduser().resolve()
     compiler = _tool(nvcc or os.environ.get("MSCCLPP_MEGAMOE_NVCC", str(cuda_root / "bin/nvcc")), "nvcc")
     cxx = _tool(os.environ.get("CXX", "c++"), "C++ compiler")
     compiler_version = _version(compiler)
     match = re.search(r"release (\d+)\.(\d+)", compiler_version)
-    if match is None or tuple(map(int, match.groups())) < (13, 3):
-        raise RuntimeError("MegaMoE JIT requires CUDA nvcc/ptxas >=13.3")
+    if match is None or tuple(map(int, match.groups())) < (13, 0):
+        raise RuntimeError("MegaMoE JIT requires CUDA nvcc/ptxas >=13.0")
     cuda_lib = cuda_root / "lib64"
     if not (cuda_lib / "libcudart.so").is_file():
         raise FileNotFoundError(f"CUDA runtime development library not found: {cuda_lib / 'libcudart.so'}")
@@ -339,6 +342,8 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
             stage = Path(temporary)
             objects = [stage / f"{source.stem}.o" for source in sources]
             module = stage / "kernel.so"
+            architecture = environment["arch"]
+            compute_architecture = architecture.replace("sm_", "compute_", 1)
             command = [
                 compiler,
                 "-ccbin",
@@ -346,7 +351,7 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 "-O3",
                 "-DNDEBUG",
                 "-std=c++20",
-                "--generate-code=arch=compute_100a,code=sm_100a",
+                f"--generate-code=arch={compute_architecture},code={architecture}",
                 "--expt-relaxed-constexpr",
                 "--expt-extended-lambda",
                 "-Xcompiler=-fPIC,-fvisibility=hidden",

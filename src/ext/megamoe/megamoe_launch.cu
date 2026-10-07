@@ -406,8 +406,8 @@ KernelResources preflightKernel(const NativeConfig& c) {
   MSCCLPP_CUDATHROW(cudaGetDevice(&resources.device));
   cudaDeviceProp properties{};
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, resources.device));
-  if (properties.major != 10 || properties.minor != 0)
-    throw std::invalid_argument("Native MegaMoE currently requires an SM100 GPU");
+  if (properties.major != 10 || (properties.minor != 0 && properties.minor != 3))
+    throw std::invalid_argument("Native MegaMoE currently requires an SM100 or SM103 GPU");
   if (c.smMargin > properties.multiProcessorCount - 2)
     throw std::invalid_argument("MegaMoE smMargin must leave at least two SMs");
   resources.ctas = (properties.multiProcessorCount - c.smMargin) / detail::ClusterM * detail::ClusterM;

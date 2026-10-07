@@ -174,8 +174,12 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     from mscclpp.ext.megamoe import MegaMoE, is_available
 
     torch = pytest.importorskip("torch")
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on an SM100 GPU")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100 or SM103 GPU")
     device = torch.device("cuda", torch.cuda.current_device())
     sm_count = torch.cuda.get_device_properties(device).multi_processor_count
     config = _config(
@@ -267,8 +271,12 @@ def test_native_views_staging_and_graph_lifetime():
     from mscclpp.ext.megamoe import MegaMoE, is_available
 
     torch = pytest.importorskip("torch")
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on an SM100 GPU")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100 or SM103 GPU")
     bootstrap = TcpBootstrap.create(0, 1)
     bootstrap.initialize(TcpBootstrap.create_unique_id())
     config = _config(world_size=1, max_tokens=2, hidden=128, intermediate=128, num_experts=2, top_k=1, sm_margin=32)
@@ -322,8 +330,12 @@ def test_native_started_stream_wait_replays():
     from mscclpp.ext.megamoe import MegaMoE, is_available
 
     torch = pytest.importorskip("torch")
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on an SM100 GPU")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100 or SM103 GPU")
     bootstrap = TcpBootstrap.create(0, 1)
     bootstrap.initialize(TcpBootstrap.create_unique_id())
     device = torch.device("cuda", torch.cuda.current_device())
@@ -373,8 +385,12 @@ def test_native_ragged_tiles_and_pipeline_reuse(e5m2):
     from mscclpp.ext.megamoe import MegaMoE, is_available
 
     torch = pytest.importorskip("torch")
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on an SM100 GPU")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100 or SM103 GPU")
     device = torch.device("cuda", torch.cuda.current_device())
     sm_count = torch.cuda.get_device_properties(device).multi_processor_count
     config = _config(

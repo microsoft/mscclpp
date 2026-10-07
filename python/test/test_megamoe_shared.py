@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""CPU benchmark tests and explicitly opt-in, single-GPU SM100 integration."""
+"""CPU benchmark tests and explicitly opt-in, single-GPU SM100/SM103 integration."""
 
 import gc
 import os
@@ -657,7 +657,7 @@ def test_latency_reduction_uses_maximum_across_ranks_per_iteration():
 
 @pytest.mark.skipif(
     os.environ.get("MSCCLPP_TEST_MEGAMOE_SHARED") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into the single-GPU native SM100 test",
+    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into the single-GPU native SM100/SM103 test",
 )
 def test_native_shared_schedule_graph_changed_input_and_zero_tokens():
     torch = pytest.importorskip("torch")
@@ -666,8 +666,12 @@ def test_native_shared_schedule_graph_changed_input_and_zero_tokens():
     from mscclpp.ext.megamoe.benchmark import _weights
     from mscclpp.ext.megamoe.benchmark_shared import _capture, _Layer
 
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on SM100")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on SM100 or SM103")
     device = torch.device("cuda", torch.cuda.current_device())
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
     args = _small_args()
@@ -874,7 +878,7 @@ def test_local_expert_oracle_weights_clamp_and_masked_nan_without_distributed(mo
 
 @pytest.mark.skipif(
     os.environ.get("MSCCLPP_TEST_MEGAMOE_SHARED") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native local-expert SM100 tests",
+    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native local-expert SM100/SM103 tests",
 )
 @pytest.mark.parametrize(
     "e5m2,hidden,intermediate,cta_cap,clamp",
@@ -890,8 +894,12 @@ def test_native_local_expert_weights_masks_and_token_graph_tails(e5m2, hidden, i
     from mscclpp import Communicator, TcpBootstrap
     from mscclpp.ext.megamoe import MegaMoE, MegaMoEConfig, is_available
 
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on SM100")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on SM100 or SM103")
     device = torch.device("cuda", torch.cuda.current_device())
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
     config = MegaMoEConfig(
@@ -1062,7 +1070,7 @@ def test_forward_shared_rejects_nonlocal_or_multiple_experts_before_launch(world
 
 @pytest.mark.skipif(
     os.environ.get("MSCCLPP_TEST_MEGAMOE_SHARED") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native forward_shared SM100 tests",
+    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native forward_shared SM100/SM103 tests",
 )
 @pytest.mark.parametrize(
     "e5m2,hidden,intermediate,clamp",
@@ -1073,8 +1081,12 @@ def test_native_forward_shared_matches_unit_routing_and_input_view_graphs(e5m2, 
     from mscclpp import Communicator, TcpBootstrap
     from mscclpp.ext.megamoe import MegaMoE, MegaMoEConfig, is_available
 
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on SM100")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on SM100 or SM103")
     device = torch.device("cuda", torch.cuda.current_device())
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
     config = MegaMoEConfig(
@@ -1194,7 +1206,7 @@ def test_native_forward_shared_matches_unit_routing_and_input_view_graphs(e5m2, 
 
 @pytest.mark.skipif(
     os.environ.get("MSCCLPP_TEST_MEGAMOE_SHARED") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native misaligned-output SM100 tests",
+    reason="set MSCCLPP_TEST_MEGAMOE_SHARED=1 to opt into native misaligned-output SM100/SM103 tests",
 )
 @pytest.mark.parametrize("unweighted", [False, True])
 def test_native_local_expert_misaligned_contiguous_output_graphs(unweighted):
@@ -1202,8 +1214,12 @@ def test_native_local_expert_misaligned_contiguous_output_graphs(unweighted):
     from mscclpp import Communicator, TcpBootstrap
     from mscclpp.ext.megamoe import MegaMoE, MegaMoEConfig, is_available
 
-    if not is_available() or not torch.cuda.is_available() or torch.cuda.get_device_capability() != (10, 0):
-        pytest.skip("requires native MegaMoE on SM100")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3))
+    ):
+        pytest.skip("requires native MegaMoE on SM100 or SM103")
     device = torch.device("cuda", torch.cuda.current_device())
     physical_sms = torch.cuda.get_device_properties(device).multi_processor_count
     tokens = 33

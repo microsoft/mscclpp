@@ -4,11 +4,11 @@
 if(NOT MSCCLPP_USE_CUDA OR MSCCLPP_USE_ROCM)
     message(FATAL_ERROR "Native MegaMoE requires NVIDIA CUDA; ROCm is not supported.")
 endif()
-if(CUDAToolkit_VERSION VERSION_LESS "12.8")
-    message(FATAL_ERROR "Native MegaMoE requires CUDA 12.8 or newer for SM100a.")
+if(CUDAToolkit_VERSION VERSION_LESS "13.0")
+    message(FATAL_ERROR "Native MegaMoE requires CUDA 13.0 or newer.")
 endif()
-if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS "13.3")
-    message(FATAL_ERROR "Native MegaMoE requires CUDA nvcc/ptxas >=13.3 for packed FP8-to-BF16 conversion.")
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS "13.0")
+    message(FATAL_ERROR "Native MegaMoE requires CUDA nvcc/ptxas >=13.0.")
 endif()
 
 set(MSCCLPP_MEGAMOE_CUTLASS_ROOT "" CACHE PATH "CUTLASS source directory for native MegaMoE")
@@ -41,7 +41,7 @@ target_compile_options(mscclpp_megamoe PRIVATE
 target_link_libraries(mscclpp_megamoe PUBLIC mscclpp PRIVATE ${GPU_LIBRARIES} ${CMAKE_DL_LIBS})
 target_compile_definitions(mscclpp_megamoe PRIVATE MSCCLPP_USE_CUDA)
 set_target_properties(mscclpp_megamoe PROPERTIES
-    CUDA_ARCHITECTURES "100a-real"
+    CUDA_ARCHITECTURES "100a-real;103a-real"
     POSITION_INDEPENDENT_CODE ON
     VERSION ${MSCCLPP_VERSION}
     SOVERSION ${MSCCLPP_SOVERSION}

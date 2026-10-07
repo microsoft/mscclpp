@@ -4,7 +4,7 @@
 """Routing regressions, with native tests gated by MSCCLPP_TEST_MEGAMOE_ROUTING=1.
 
 Run with ``python -m pytest --noconftest python/test/test_megamoe_routing.py``.
-For two or four NVLink-connected SM100 GPUs, use ``torchrun --nnodes=1
+For two or four NVLink-connected SM100/SM103 GPUs, use ``torchrun --nnodes=1
 --master-addr=127.0.0.1 --master-port=29500 --nproc-per-node=2 --module pytest --noconftest``
 with the same file. Gloo is
 only used for multi-rank rendezvous and the CPU oracle; MSCCL++ uses MASTER_PORT+1.
@@ -176,7 +176,7 @@ class _Runtime:
 @pytest.fixture(scope="module")
 def _native_runtime():
     if os.environ.get("MSCCLPP_TEST_MEGAMOE_ROUTING") != "1":
-        pytest.skip("set MSCCLPP_TEST_MEGAMOE_ROUTING=1 to opt into native SM100 routing tests")
+        pytest.skip("set MSCCLPP_TEST_MEGAMOE_ROUTING=1 to opt into native SM100/SM103 routing tests")
     torch = pytest.importorskip("torch")
     import torch.distributed as dist
     from mscclpp import Communicator, TcpBootstrap
@@ -203,8 +203,8 @@ def _native_runtime():
             reason = f"LOCAL_RANK={local_rank} has no visible CUDA device"
         else:
             torch.cuda.set_device(local_rank)
-            if torch.cuda.get_device_capability(local_rank) != (10, 0):
-                reason = "requires SM100 on every participating rank"
+            if torch.cuda.get_device_capability(local_rank) not in ((10, 0), (10, 3)):
+                reason = "requires SM100 or SM103 on every participating rank"
         reasons = [reason]
         if world > 1:
             reasons = [None] * world

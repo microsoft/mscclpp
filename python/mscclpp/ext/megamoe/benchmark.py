@@ -136,7 +136,7 @@ def main():
     os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
     os.environ.setdefault("MASTER_PORT", "29500")
     if not torch.cuda.is_available():
-        parser.error("native MegaMoE requires SM100 CUDA GPUs")
+        parser.error("native MegaMoE requires SM100 or SM103 CUDA GPUs")
     torch.cuda.set_device(local_rank)
     kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
     if args.mxfp4 and kernel_config != KernelConfig():

@@ -76,6 +76,7 @@ struct W4A8CollectiveTypes {
 static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
 #endif
 
+#if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
 template <bool E5M2>
 __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
   uint32_t decoded, expanded, result;
@@ -88,6 +89,24 @@ __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t 
   asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expanded));
   return result;
 }
+#else
+__device__ __forceinline__ uint16_t expandE8M0ToBf16(uint8_t scale) {
+  return uint16_t(uint16_t(scale) << 7) | uint16_t(scale == 0) << 6 | uint16_t(scale == 255) * 0x7f;
+}
+
+template <bool E5M2>
+__device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
+  using Weight = std::conditional_t<E5M2, cutlass::float_e5m2_t, cutlass::float_e4m3_t>;
+  using PackedWeights = cutlass::Array<Weight, 2>;
+  auto decoded =
+      cutlass::NumericArrayConverter<cutlass::bfloat16_t, Weight, 2>{}(mscclpp::bit_cast<PackedWeights>(weights));
+  uint32_t expanded = uint32_t(expandE8M0ToBf16(uint8_t(scales))) | uint32_t(expandE8M0ToBf16(uint8_t(scales >> 8)))
+                                                                        << 16;
+  uint32_t result;
+  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(mscclpp::bit_cast<uint32_t>(decoded)), "r"(expanded));
+  return result;
+}
+#endif
 
 template <bool E5M2, bool Local = false, class Inputs>
 __device__ __forceinline__ void transformWeights(

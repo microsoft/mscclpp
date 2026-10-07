@@ -7,8 +7,8 @@ benchmarks, not the native library.
 
 ## Build
 
-Requires Linux, SM100 GPUs (for example GB200), CUDA nvcc/ptxas >=13.3, and
-runtime/toolkit libraries >=12.8. Ranks must use distinct GPUs within one active
+Requires Linux, SM100 or SM103 GPUs (for example GB200 or GB300), CUDA
+nvcc/ptxas and runtime/toolkit libraries >=13.0. Ranks must use distinct GPUs within one active
 NVLink fabric, including for multi-host runs. PCIe-only, InfiniBand-only, ROCm,
 and other GPU architectures are unsupported.
 
@@ -21,8 +21,10 @@ python -m pip install -e . -Ccmake.define.MSCCLPP_BUILD_EXT_MEGAMOE=ON
 MegaMoE is disabled by default. CMake fetches CUTLASS at
 `147295a3d4b75f3aeff247c25b8927cea9a7006a`; use
 `-Ccmake.define.MSCCLPP_MEGAMOE_CUTLASS_ROOT=/path/to/cutlass` to supply it locally.
-The native library is compiled for `sm_100a` independently of the core library's
-architecture list. Install a compatible Torch CUDA wheel separately.
+The native library contains both `sm_100a` and `sm_103a` cubins independently
+of the core library's architecture list. Install a compatible Torch CUDA wheel separately.
+CUDA 13.3 and newer use packed FP8/E8M0-to-BF16 conversion; CUDA 13.0-13.2
+automatically use the compatible CUTLASS conversion path.
 
 `src/ext/megamoe/megamoe.cu` constructs pipelines and dispatches warp roles.
 Compile-time tuning policy is isolated in `megamoe_specialization.hpp`: routed
@@ -126,7 +128,7 @@ requiring a full partial-buffer clear.
 The final completing CTA publishes GPU completion after acquiring all preceding
 CTA arrivals; every CTA waits for peer completion before reducing peer-written partials.
 
-The W4A8 path is routed-only and uses the builtin SM100
+The W4A8 path is routed-only and uses the builtin SM100/SM103
 M256/N64/K128/load9 block-scaled specialization with 16 warps. Separate weight
 and activation loader warps share a nine-stage pipeline. Both must publish their
 TMA transaction counts before a stage can become ready. Mainloop warps retain
@@ -428,7 +430,7 @@ must fit TMEM, compiled shared memory, registers, and resident-cluster limits.
 `moe.kernel_id`, `moe.kernel_config`, and `moe.shared_bytes` report the selection.
 
 Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
-`MSCCLPP_MEGAMOE_NVCC` selects nvcc >=13.3 and `CUDA_HOME` selects runtime
+`MSCCLPP_MEGAMOE_NVCC` selects nvcc >=13.0 and `CUDA_HOME` selects runtime
 development libraries (default `/usr/local/cuda`). For separately installed
 compiler/runtime packages, `MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS` accepts matching
 runtime include directories separated by `:`. Do not override the compiler's
@@ -554,7 +556,7 @@ MSCCLPP_TEST_MEGAMOE_SHARED=1 python -m pytest --noconftest \
   python/test/test_megamoe.py python/test/test_megamoe_shared.py -q
 ```
 
-GPU cases require SM100. Omitting `MSCCLPP_TEST_MEGAMOE_SHARED` skips the opt-in
+GPU cases require SM100 or SM103. Omitting `MSCCLPP_TEST_MEGAMOE_SHARED` skips the opt-in
 shared/router GPU cases. Single-GPU tests do not replace multi-rank `--check`
 and CUDA Graph validation on the target fabric.
 
