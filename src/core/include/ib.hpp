@@ -147,6 +147,11 @@ class IbCtx {
   bool isMlx5() const;
   bool isDataDirect() const;
   bool isVirtualFunction() const;
+
+  // Accessors used by the GPUNetIO (GDAKI) backend, which needs the raw
+  // ibverbs context / protection domain to create DOCA GPU-initiated QPs.
+  ibv_context* getContext() const { return ctx_; }
+  ibv_pd* getPd() const { return pd_; }
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -159,6 +164,9 @@ class IbCtx {
   bool isMlx5() const { return false; }
   bool isDataDirect() const { return false; }
   bool isVirtualFunction() const { return false; }
+
+  ibv_context* getContext() const { return nullptr; }
+  ibv_pd* getPd() const { return nullptr; }
 #endif
 
   const std::string& getDevName() const { return devName_; };
