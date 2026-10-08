@@ -102,7 +102,8 @@ def compiler_fixture(tmp_path, monkeypatch):
     for path in (
         package / "include/mscclpp/version.hpp",
         package / "lib/libmscclpp.so",
-        source / "megamoe.cu",
+        source / "megamoe_w8a16.cu",
+        source / "megamoe_w4a8.cu",
         source / "megamoe_launch.cu",
         source / "megamoe_jit.cu",
         source / "include/megamoe_kernel.hpp",
@@ -135,7 +136,7 @@ def test_compile_is_cached_and_uses_native_architecture(compiler_fixture):
     first = jit.compile_kernel(config, cache_dir=cache)
     assert not first.cache_hit and len(commands) == 4
     assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
-        "megamoe.cu",
+        "megamoe_w8a16.cu",
         "megamoe_launch.cu",
         "megamoe_jit.cu",
     ]
@@ -172,7 +173,13 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
         dispatch_stages=1,
     )
     compiled = jit.compile_kernel(config, cache_dir=cache)
-    assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 4
+    assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 5
+    assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
+        "megamoe_w8a16.cu",
+        "megamoe_w4a8.cu",
+        "megamoe_launch.cu",
+        "megamoe_jit.cu",
+    ]
     expected = {
         "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",
         "-DMSCCLPP_MEGAMOE_W4_TILE_N=128",
@@ -191,6 +198,7 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
     }
     for command in commands[:-1]:
         assert expected <= set(command)
+        assert command[command.index("-o") + 1] in commands[-1]
     manifest = json.loads(Path(compiled.path).with_name("manifest.json").read_text())
     assert manifest["version"] == 2
     assert manifest["build"]["kernel_kind"] == "w4a8"
@@ -204,7 +212,7 @@ def test_default_w4a8_policy_always_builds_a_module(compiler_fixture):
     cache, commands, _ = compiler_fixture
     compiled = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
     assert compiled.key != "builtin" and Path(compiled.path).is_file()
-    assert len(commands) == 4
+    assert len(commands) == 5
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])
@@ -212,13 +220,31 @@ def test_sm100_family_capabilities_use_one_jit_target(capability):
     assert jit._ARCHITECTURES[capability] == "sm_100f"
 
 
-@pytest.mark.parametrize("name", ["megamoe.cu", "megamoe_launch.cu", "megamoe_jit.cu"])
+@pytest.mark.parametrize("name", ["megamoe_w8a16.cu", "megamoe_launch.cu", "megamoe_jit.cu"])
 def test_missing_translation_unit_is_reported(compiler_fixture, name):
     _, commands, _ = compiler_fixture
     (jit._source_root() / name).unlink()
     with pytest.raises(FileNotFoundError, match="Required MegaMoE JIT source"):
         jit.compile_kernel(jit.KernelConfig(64, 6, 6))
     assert not commands
+
+
+def test_w4a8_translation_unit_is_required_only_for_w4a8(compiler_fixture):
+    cache, commands, _ = compiler_fixture
+    (jit._source_root() / "megamoe_w4a8.cu").unlink()
+    with pytest.raises(FileNotFoundError, match="Required MegaMoE JIT source.*megamoe_w4a8"):
+        jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
+    assert not commands
+    jit.compile_kernel(jit.KernelConfig(64, 6, 6), cache_dir=cache)
+    assert len(commands) == 4
+
+
+def test_installed_source_bundle_is_discovered(tmp_path, monkeypatch):
+    source = tmp_path / "share/mscclpp/megamoe"
+    source.mkdir(parents=True)
+    (source / "megamoe_w8a16.cu").write_text("fixture")
+    monkeypatch.setattr(jit, "_package_root", lambda: tmp_path)
+    assert jit._source_root() == source
 
 
 def test_concurrent_requests_publish_only_one_build(compiler_fixture):

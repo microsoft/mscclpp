@@ -32,7 +32,7 @@ __device__ uint2 readRoutingHeader(const P& p, uint64_t epoch, int rank) {
   return peerAt<mscclpp::LLPacket>(p, rank, p.symmetric.routingHeader)->read(uint32_t(epoch), SpinLimit);
 }
 
-__device__ int tokenRankAt(const Workspace& w, int worldSize, int token) {
+__device__ __forceinline__ int tokenRankAt(const Workspace& w, int worldSize, int token) {
   int low = 0;
   int high = worldSize;
   while (low + 1 < high) {
@@ -56,13 +56,13 @@ __device__ int readFixedRoute(const P& p, uint64_t epoch, int index, int routesP
   return localExpert(p, mscclpp::bit_cast<int>(packet.x), rank, token, slot);
 }
 
-__device__ void countRouteGroup(const Workspace& w, int expert, int lane) {
+__device__ __forceinline__ void countRouteGroup(const Workspace& w, int expert, int lane) {
   unsigned int group = __match_any_sync(0xffffffff, expert);
   if (expert >= 0 && lane == __ffs(group) - 1)
     atomicFetchAdd<int, scopeDevice>(w.counts + expert, __popc(group), memoryOrderRelaxed);
 }
 
-__device__ void fillRouteGroup(const Workspace& w, int expert, const Route& route, int lane) {
+__device__ __forceinline__ void fillRouteGroup(const Workspace& w, int expert, const Route& route, int lane) {
   unsigned int group = __match_any_sync(0xffffffff, expert);
   if (expert >= 0) {
     int leader = __ffs(group) - 1;

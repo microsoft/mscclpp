@@ -27,7 +27,8 @@ library's architecture list. It is compatible with compute capabilities 10.0,
 CUDA 13.3 and newer use packed FP8/E8M0-to-BF16 conversion; CUDA 13.0-13.2
 automatically use the compatible CUTLASS conversion path.
 
-`src/ext/megamoe/megamoe.cu` constructs pipelines and dispatches warp roles.
+`src/ext/megamoe/megamoe_w8a16.cu` and `megamoe_w4a8.cu` contain the separate
+W8A16 and W4A8 kernels, constructing pipelines and dispatching warp roles.
 Compile-time tuning policy is isolated in `megamoe_specialization.hpp`: routed
 M/N/K tiles, pipeline depths, and the routed/local warp schedules. The schedules
 assign epilogue, MMA, LoadA, LoadB, dispatch, and transform work; compile-time
@@ -37,8 +38,12 @@ Fixed role implementations live in `megamoe_roles.cuh`, while
 workspace layout, weight packing, plans, and launches; `megamoe_jit.cu` owns the
 JIT C ABI entrypoint. Other internal headers separate device state
 (`megamoe_device.cuh`), routing/dispatch (`megamoe_routing.cuh`), and
-SwiGLU/epilogue/top-k combine (`megamoe_epilogue.cuh`). All three CUDA files and
-their headers ship in the JIT source bundle.
+SwiGLU/epilogue/top-k combine (`megamoe_epilogue.cuh`). All four CUDA files and
+their headers ship in the JIT source bundle. W8A16 JIT builds omit the W4A8
+kernel source; W4A8 JIT and native builds include both precision-specific sources.
+`MSCCLPP_MEGAMOE_COMPILE_W4A8` is derived from the module kind, not a tuning
+option: it omits W4A8 types and launch paths from shared headers and host code
+when building W8A16-only JIT modules.
 
 W8A16 and W4A8 share the `KernelParameters` aggregate, `TilePolicy`, epilogue
 scratch layout, task indexing, and epilogue warp loop. Their common epilogue
@@ -173,6 +178,13 @@ Launch resources are borrowed from grid-constant parameters rather than copied
 into thread-local memory.
 Other capacities, intermediate widths, expert/top-k counts, and clamped
 activations use runtime configuration within a compiled hidden specialization.
+Shape-specialized H8192/I4096 and H9216/I4096-or-I4608 kernels also have a
+runtime-world-size entry for other supported EP sizes, including EP16 and EP64,
+and other expert/top-k counts. These entries consume the caller's `world_size`,
+`num_experts`, and `top_k` unchanged and read live peer token counts, preserving
+ragged routing. Only the existing EP4/EP32 fixed-token recipes omit those
+token-count exchanges; their restriction does not limit the runtime geometry
+accepted by native or user-supplied W4A8 JIT policies.
 Current W4A8 hidden specializations are 128, 384, 2176, 4096, 8192, 8704, and 9216.
 Adding another hidden size requires adding an explicit `megaMoeW4A8<Hidden>`
 case in `w4a8KernelEntry`; there is no dynamic `Hidden=0` W4A8 kernel.

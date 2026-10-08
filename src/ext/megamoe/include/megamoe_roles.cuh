@@ -10,6 +10,19 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
+template <class Pipeline, class Schedule>
+__device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp) {
+  typename Pipeline::Params params{};
+  params.role = warp == Schedule::MmaWarp ? Pipeline::ThreadCategory::Producer
+                                          : (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd
+                                                 ? Pipeline::ThreadCategory::Consumer
+                                                 : Pipeline::ThreadCategory::NonParticipant);
+  params.producer_arv_count = 1;
+  params.consumer_arv_count = ClusterM * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
+  params.initializing_warp = Schedule::EpilogueBegin;
+  return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
+}
+
 template <bool Local>
 __device__ __forceinline__ int fc1TaskTiles(int intermediate) {
   return 2 * intermediate / TilePolicy<Local>::M;

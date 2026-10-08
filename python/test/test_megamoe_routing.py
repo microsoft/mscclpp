@@ -472,6 +472,61 @@ def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, dire
                 _check_output(runtime, storage, sample, expected)
 
 
+@pytest.mark.parametrize("use_jit", [False, pytest.param(True, marks=_JIT_ONLY)], ids=["native", "jit-split-two-stage"])
+def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_jit):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    config = runtime.config(128, local_experts=2, top_k=2, mxfp4=True, hidden=8192, intermediate=4096)
+    kernel = None
+    if use_jit:
+        policy = W4A8KernelConfig(split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
+        kernel = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, kernel)
+        storage = _buffers(runtime, context)
+        counts = {count: max(0, count - runtime.rank) for count in (0, 1, 5)}
+        graphs = {}
+        for nominal, tokens in counts.items():
+            with torch.cuda.stream(case.stream):
+                _stage(storage, _sample(config, tokens, "hot_first"))
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            graphs[nominal] = graph
+
+        def check_selected_kernel():
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as profiler:
+                with torch.cuda.stream(case.stream):
+                    graphs[5].replay()
+                case.stream.synchronize()
+            kernels = [
+                event.name.replace(" ", "")
+                for event in profiler.events()
+                if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
+            ]
+            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,0" in kernels[0], kernels
+            if kernel is not None:
+                assert context.kernel_config == kernel.config
+
+        runtime.collective(check_selected_kernel)
+        for nominal in (5, 1, 0, 5):
+            tokens = counts[nominal]
+            for pattern in ("hot_first", "masked", "hot_last", "mixed"):
+                sample = _sample(config, tokens, pattern)
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    for _ in range(3):
+                        graphs[nominal].replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)
+
+
 @pytest.mark.parametrize(
     "kernel_values,e5m2,mxfp4,clamp,direct",
     [
@@ -569,6 +624,7 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         (8192, 32, 4096, -1.0, 16, 8, 8, 64, 9),
         (8192, 64, 4096, -1.0, 16, 8, 8, 64, 9),
         (8192, 128, 4096, -1.0, 16, 8, 8, 64, 9),
+        (8192, 128, 4096, -1.0, 4, 3, 8, 64, 9),
     ],
     ids=[
         "specialized-capacity-32",
@@ -584,6 +640,7 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         "h8192-specialized-capacity-32",
         "h8192-specialized-capacity-64",
         "h8192-specialized-capacity-128",
+        "h8192-runtime-experts-top-k",
     ],
 )
 def test_native_w4a8_configuration_selection_graph_reuse(
@@ -652,10 +709,11 @@ def test_native_w4a8_configuration_selection_graph_reuse(
             specialized_capacity = (hidden == 9216 and capacity in (32, 64, 128)) or (
                 hidden == 8192 and capacity in (16, 32, 64, 128)
             )
-            specialized = specialized_capacity and clamp < 0 and local_experts == 16 and top_k == 8
-            expected = (
-                f"megaMoeW4A8<{hidden},{intermediate},{runtime.world}" if specialized else f"megaMoeW4A8<{hidden},0,0"
-            )
+            specialized = specialized_capacity and clamp < 0
+            fixed_tokens = specialized and runtime.world in (4, 32) and local_experts == 16 and top_k == 8
+            expected_intermediate = intermediate if specialized else 0
+            expected_world = runtime.world if fixed_tokens else 0
+            expected = f"megaMoeW4A8<{hidden},{expected_intermediate},{expected_world}"
             assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
             assert context.effective_kernel_config["tile_n"] == expected_tile_n
             assert context.effective_kernel_config["load_stages"] == expected_load_stages

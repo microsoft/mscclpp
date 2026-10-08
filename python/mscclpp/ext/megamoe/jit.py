@@ -230,7 +230,7 @@ def _source_root():
     installed = _package_root() / "share/mscclpp/megamoe"
     checkout = Path(__file__).resolve().parents[4] / "src/ext/megamoe"
     for root in (installed, checkout):
-        if (root / "megamoe.cu").is_file():
+        if (root / "megamoe_w8a16.cu").is_file():
             return root
     raise FileNotFoundError("MegaMoE JIT sources are missing; reinstall a build with MSCCLPP_BUILD_EXT_MEGAMOE=ON")
 
@@ -417,7 +417,9 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         return CompiledKernel(config, "", "builtin", True)
     environment = runtime_fingerprint()
     source_root = _source_root()
-    sources = [source_root / name for name in ("megamoe.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
+    sources = [source_root / name for name in ("megamoe_w8a16.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
+    if isinstance(config, W4A8KernelConfig):
+        sources.insert(1, source_root / "megamoe_w4a8.cu")
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"Required MegaMoE JIT source not found: {source}")

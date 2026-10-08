@@ -66,6 +66,7 @@
 #else
 #define MSCCLPP_MEGAMOE_KERNEL_NAMESPACE mscclpp::megamoe
 #endif
+// Native builds include both precisions; W8A16 JIT modules omit W4A8 types and launch paths.
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE || MSCCLPP_MEGAMOE_JIT_W4A8
 #define MSCCLPP_MEGAMOE_COMPILE_W4A8 1
 #else
