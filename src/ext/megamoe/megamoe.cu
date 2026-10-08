@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <array>
+
 #include "megamoe_roles.cuh"
 
 #if MSCCLPP_MEGAMOE_COMPILE_W4A8
@@ -185,7 +187,6 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   using Parameters = W4A8Parameters;
   using Types = typename Parameters::Collective;
   using Mainloop = Types::Mainloop;
-  using Load = Types::Load;
   using Accumulate = Types::Accumulate;
   using Schedule = typename Types::WarpSchedule;
   static_assert(validW4RegisterBudget(Types::EpilogueWarps, Types::EpilogueRegisters, Types::TransferRegisters));
@@ -208,6 +209,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
   const int intermediate = p.config.intermediate;
+  // signalStart notifies a consumer stream of kernel entry, not output readiness.
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
     atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
   traceW4(W4TracePhase::Routing, true);
@@ -218,42 +220,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
 
   if (warp < Schedule::DispatchBegin) {
     if (threadIdx.x == 0) s.tmemReady.init(ClusterM);
-    typename Load::Params loadParams{};
-    bool loadWarp = warp == Schedule::LoadWarp ||
-                    (!Types::SplitPipelines && Types::LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
-    loadParams.role =
-        loadWarp ? Load::ThreadCategory::Producer
-                 : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
-    loadParams.is_leader = lane == 0 && cta == 0 && loadWarp;
-    loadParams.transaction_bytes =
-        Types::LoadWarps == 1
-            ? Mainloop::TmaTransactionBytes
-            : (warp == Schedule::LoadWarp ? Mainloop::WeightTransactionBytes : Mainloop::ActivationTransactionBytes);
-    if constexpr (Types::SplitPipelines) loadParams.transaction_bytes = Mainloop::WeightTransactionBytes;
-    loadParams.initializing_warp = Schedule::LoadWarp;
-    Load loadPipeline(s.mainloop, loadParams, ClusterShape{}, false_type{}, false_type{});
-    if constexpr (Types::LoadWarps == 2 && !Types::SplitPipelines) {
-      if (warp == Schedule::LoadWarp) {
-        // Both producers arrive with their own byte count; the stage becomes
-        // ready only after both arrivals and all four TMA copies have completed.
-        cutlass::arch::detail::initialize_barrier_array_pair_aligned<decltype(s.mainloop.full_barrier_),
-                                                                     decltype(s.mainloop.empty_barrier_), Load::Stages>(
-            s.mainloop.full_barrier_, s.mainloop.empty_barrier_, 2, 1);
-      }
-    } else {
-      Load::init_barriers(s.mainloop, loadParams, ClusterShape{});
-    }
+    auto loadPipeline = makeW4A8LoadPipeline<false, Types>(s.mainloop, warp, lane, cta);
     auto activationPipeline = [&](auto& activationStorage) {
       if constexpr (Types::SplitPipelines) {
-        auto activationParams = loadParams;
-        activationParams.role =
-            warp == Schedule::ActivationLoadWarp
-                ? Load::ThreadCategory::Producer
-                : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
-        activationParams.is_leader = lane == 0 && cta == 0 && warp == Schedule::ActivationLoadWarp;
-        activationParams.transaction_bytes = Mainloop::ActivationTransactionBytes;
-        activationParams.initializing_warp = Schedule::ActivationLoadWarp;
-        return Load(activationStorage, activationParams, ClusterShape{}, true_type{}, false_type{});
+        return makeW4A8LoadPipeline<true, Types>(activationStorage, warp, lane, cta);
       } else {
         return loadPipeline;
       }
@@ -285,7 +255,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
                       lane, cta, cluster, tasks);
     } else {
-      if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
+      if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
       cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * 32, 2);
       if (threadIdx.x == 0) {
         CUTE_UNROLL
@@ -310,7 +280,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cute::cluster_arrive_relaxed();
     if (warp < Schedule::DispatchEnd) {
       traceW4(W4TracePhase::Dispatch, true);
-      dispatchW4A8Tokens<Hidden>(p, s, warp - Schedule::DispatchBegin);
+      dispatchW4A8Tokens<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp - Schedule::DispatchBegin);
       traceW4(W4TracePhase::Dispatch, false);
     }
   }
@@ -322,18 +292,12 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   cute::cluster_sync();
   if (warp == Schedule::MmaWarp) {
     allocator.release_allocation_lock();
-    allocator.free(s.tmem, 512);
+    allocator.free(s.tmem, W4TmemColumns);
   }
   traceW4(W4TracePhase::OutputJoin, true);
-  if (threadIdx.x == 0) {
-    // The final arrival acquires every CTA's completed writes before the system release.
-    s.epilogue.routing.outputPublisher =
-        atomicFetchAdd<int, scopeDevice>(&p.workspace.control->completedCtas, 1, memoryOrderAcqRel) == gridDim.x - 1;
-  }
-  __syncthreads();
-  if (s.epilogue.routing.outputPublisher && threadIdx.x == 0)
-    *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
-  if (s.epilogue.routing.outputPublisher && threadIdx.x < p.config.worldSize) {
+  p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
+  if (blockIdx.x == 0 && threadIdx.x < p.config.worldSize) {
     MemoryDevice2DeviceSemaphoreDeviceHandle channel{
         at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
         peerAt<uint64_t>(p, threadIdx.x, p.symmetric.peerSignals) + p.config.rank,
@@ -351,32 +315,40 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   traceW4(W4TracePhase::Combine, false);
 }
 
+struct W4A8KernelRegistration {
+  int hidden;
+  int intermediate;
+  int worldSize;
+  W4A8KernelEntry entry;
+};
+
+template <int Hidden, int Intermediate = 0, int WorldSize = 0>
+constexpr W4A8KernelRegistration registerW4A8Kernel() {
+  return {Hidden, Intermediate, WorldSize, megaMoeW4A8<Hidden, Intermediate, WorldSize>};
+}
+
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
-  if (mscclpp::megamoe::detail::useSpecializedW4A8Kernel(config)) {
-    if (config.hidden == 8192) return config.worldSize == 4 ? megaMoeW4A8<8192, 4096, 4> : megaMoeW4A8<8192, 4096, 32>;
-    if (config.intermediate == 4096)
-      return config.worldSize == 4 ? megaMoeW4A8<9216, 4096, 4> : megaMoeW4A8<9216, 4096, 32>;
-    if (config.intermediate == 4608)
-      return config.worldSize == 4 ? megaMoeW4A8<9216, 4608, 4> : megaMoeW4A8<9216, 4608, 32>;
+  static constexpr std::array kernels{registerW4A8Kernel<128>(),
+                                      registerW4A8Kernel<384>(),
+                                      registerW4A8Kernel<2176>(),
+                                      registerW4A8Kernel<4096>(),
+                                      registerW4A8Kernel<8192>(),
+                                      registerW4A8Kernel<8704>(),
+                                      registerW4A8Kernel<9216>(),
+                                      registerW4A8Kernel<8192, 4096, 4>(),
+                                      registerW4A8Kernel<8192, 4096, 32>(),
+                                      registerW4A8Kernel<9216, 4096, 4>(),
+                                      registerW4A8Kernel<9216, 4096, 32>(),
+                                      registerW4A8Kernel<9216, 4608, 4>(),
+                                      registerW4A8Kernel<9216, 4608, 32>()};
+  bool specialized = mscclpp::megamoe::detail::useSpecializedW4A8Kernel(config);
+  int intermediate = specialized ? config.intermediate : 0;
+  int worldSize = specialized ? config.worldSize : 0;
+  for (const auto& kernel : kernels) {
+    if (kernel.hidden == config.hidden && kernel.intermediate == intermediate && kernel.worldSize == worldSize)
+      return kernel.entry;
   }
-  switch (config.hidden) {
-    case 128:
-      return megaMoeW4A8<128>;
-    case 384:
-      return megaMoeW4A8<384>;
-    case 2176:
-      return megaMoeW4A8<2176>;
-    case 4096:
-      return megaMoeW4A8<4096>;
-    case 8192:
-      return megaMoeW4A8<8192>;
-    case 8704:
-      return megaMoeW4A8<8704>;
-    case 9216:
-      return megaMoeW4A8<9216>;
-    default:
-      throw std::invalid_argument("MegaMoE W4A8 hidden size has no compiled specialization");
-  }
+  throw std::invalid_argument("MegaMoE W4A8 hidden size has no compiled specialization");
 }
 #endif
 

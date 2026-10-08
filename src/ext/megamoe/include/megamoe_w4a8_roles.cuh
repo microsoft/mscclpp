@@ -96,12 +96,10 @@ __device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int
 #endif
 }
 
-template <int Hidden, class P, class Storage>
+template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
 __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   using Types = typename P::Collective;
-  constexpr int DispatchBytes = Types::DispatchChunk;
-  constexpr int DispatchStages = Types::DispatchStages;
   static_assert(Hidden > 0);
   static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
   static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);

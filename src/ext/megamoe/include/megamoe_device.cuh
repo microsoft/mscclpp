@@ -27,6 +27,8 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 constexpr int Threads = WarpSchedule<false>::NumWarps * 32;
 constexpr int W4Threads = W4NumWarps * 32;
+// Reserve the full family-compatible TMEM allocation for accumulators and block scales.
+constexpr int W4TmemColumns = 512;
 constexpr int EntryRegisters = 128;
 constexpr int ComputeRegisters = 224;
 constexpr int TransferRegisters = 32;
@@ -59,7 +61,6 @@ struct Control {
   uint64_t routingOffsetsEpoch;
   uint64_t routingReadyEpoch;
   int tokenBlocks;
-  int completedCtas;
   int routingCountCtas;
   int routingFillCtas;
   int routingTokens;
@@ -203,10 +204,6 @@ struct W4DispatchStorageT {
 
 struct NoDispatchStorage {};
 
-struct RoutingStorage {
-  int outputPublisher;
-};
-
 template <int Tokens, bool SeparatePacked>
 struct EpilogueStorage;
 
@@ -215,19 +212,13 @@ struct alignas(128) EpilogueStorage<Tokens, false> {
   union {
     float scratch[128 * (Tokens + 1)];
     __bfloat16 packed[Tokens * 128];
-    RoutingStorage routing;
   };
-  static_assert(sizeof(RoutingStorage) <= sizeof(scratch));
 };
 
 template <int Tokens>
 struct alignas(128) EpilogueStorage<Tokens, true> {
-  union {
-    float scratch[128 * (Tokens + 1)];
-    RoutingStorage routing;
-  };
+  float scratch[128 * (Tokens + 1)];
   __bfloat16 packed[Tokens * 128];
-  static_assert(sizeof(RoutingStorage) <= sizeof(scratch));
 };
 
 template <bool E5M2, bool Local = false>

@@ -90,7 +90,6 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
   if (blockIdx.x == 0) {
     if (threadIdx.x == 0) {
       w.control->epoch = epoch;
-      w.control->completedCtas = 0;
       if constexpr (!FixedTokenCount) {
         w.control->routingCountCtas = 0;
         w.control->routingFillCtas = 0;
