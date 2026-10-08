@@ -59,8 +59,9 @@ class AlgorithmCollectionBuilder:
     ) -> AlgorithmCollection:
         if self._flag_buffer is None:
             self._flag_buffer = get_flag_buffer()
+        flag_buffer_ptr, flag_buffer_size, _owner = self._flag_buffer
         native_collection = self._builder.build_default_algorithms(
-            int(scratch_buffer), scratch_buffer_size, self._flag_buffer.data.ptr, self._flag_buffer.nbytes, rank
+            int(scratch_buffer), scratch_buffer_size, flag_buffer_ptr, flag_buffer_size, rank
         )
         return AlgorithmCollection(native_collection)
 
