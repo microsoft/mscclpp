@@ -91,6 +91,11 @@ implementation does not import CuPy or copy array contents. Keep the arrays aliv
 has finished using the packed pointers. Other parts of MSCCL++, including
 `GpuBuffer`, still require CuPy.
 
+`CommGroup` memory registration uses the same pointer extraction. NumPy and
+GPU arrays must also expose `size` and `itemsize` for calculating the byte count;
+PyTorch tensors use `numel()` and `element_size()`. The communication wrapper's
+implementation does not import CuPy.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
