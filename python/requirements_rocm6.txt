@@ -1,5 +1,4 @@
 mpi4py
-cupy
 prettytable
 netifaces
 pytest

@@ -18,7 +18,7 @@ import os
 import struct
 from typing import Callable
 
-import cupy as cp
+import numpy as np
 from mpi4py import MPI
 
 
@@ -26,13 +26,13 @@ def parse_dtype(dtype_str):
     """Convert a human-readable data type string to a numpy data type."""
     dtype_str = dtype_str.strip().lower()
     if dtype_str == "float16":
-        return cp.float16
+        return np.float16
     elif dtype_str in ("bfloat16", "bf16"):
-        return cp.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
+        return np.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
     elif dtype_str == "float32":
-        return cp.float32
+        return np.float32
     elif dtype_str == "int32":
-        return cp.int32
+        return np.int32
     else:
         raise ValueError(f"Unknown data type: {dtype_str}")
 
@@ -81,9 +81,9 @@ def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
 
 def bench_correctness(
     collective: str,
-    input_bufs: list[cp.ndarray],
-    result_bufs: list[cp.ndarray],
-    test_bufs: list[cp.ndarray],
+    input_bufs: list[GpuBuffer],
+    result_bufs: list[GpuBuffer],
+    test_bufs: list[GpuBuffer],
     dtype_str: str,
     rank: int,
     num_ranks: int,
@@ -102,7 +102,7 @@ def bench_correctness(
         stream_synchronize,
     )
 
-    type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
+    type_size = np.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in collective:
@@ -189,13 +189,13 @@ def build_bufs(
     collective: str,
     size: int,
     in_place: bool,
-    dtype: cp.dtype,
+    dtype: np.dtype,
     rank: int,
     num_ranks: int,
 ):
     """Allocate input/result/test buffers. Returns parallel lists (length 2 for sendrecv double-buffering,
     length 1 otherwise) so callers can iterate uniformly."""
-    type_size = cp.dtype(dtype).itemsize
+    type_size = np.dtype(dtype).itemsize
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
 
@@ -204,7 +204,9 @@ def build_bufs(
         n_slots = 2
         input_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
-        test_bufs = [cp.zeros(nelems, dtype=dtype) for _ in range(n_slots)]
+        test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
+        for buffer in test_bufs:
+            buffer.fill(0)
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -222,16 +224,19 @@ def build_bufs(
     result_buf = GpuBuffer(nelems_output, dtype=dtype)
     if in_place:
         if "allgather" in collective:
-            input_buf = cp.split(result_buf, num_ranks)[rank]
+            chunk = result_buf.size // num_ranks
+            input_buf = result_buf[rank * chunk : (rank + 1) * chunk]
         elif "reducescatter" in collective:
             input_buf = GpuBuffer(nelems_input, dtype=dtype)
-            result_buf = cp.split(input_buf, num_ranks)[rank]
+            chunk = input_buf.size // num_ranks
+            result_buf = input_buf[rank * chunk : (rank + 1) * chunk]
         else:
             input_buf = result_buf
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
-    test_buf = cp.zeros(nelems, dtype=dtype)
+    test_buf = GpuBuffer(nelems, dtype=dtype)
+    test_buf.fill(0)
 
     return [input_buf], [result_buf], [test_buf], nelems
 

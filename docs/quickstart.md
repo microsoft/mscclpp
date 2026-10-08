@@ -114,13 +114,13 @@ $ python -m pip install ".[cuda12]"
 $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm7]"
 ```
 
-> **Note:** A platform extra (`cuda12`, `cuda13`, `rocm6`, or `rocm7`) is required to install CuPy.
-> The CUDA extras install pre-built CuPy wheels and CUDA Python bindings. The ROCm extras install CuPy from source
-> and HIP Python for the matching ROCm major version, which require ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+> **Note:** Select a platform extra (`cuda12`, `cuda13`, `rocm6`, or `rocm7`) to install the
+> matching CUDA or HIP Python bindings. Running `pip install .` without an extra does not
+> install these bindings. CuPy is not required.
 
 Optional extras can be installed by specifying them in brackets. Available extras:
-- **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package and CUDA Python bindings for your CUDA version.
-- **`rocm6`**, **`rocm7`**: Install CuPy from source and HIP Python for AMD ROCm platforms.
+- **`cuda12`**, **`cuda13`**: Install CUDA Python bindings for your CUDA version.
+- **`rocm6`**, **`rocm7`**: Install HIP Python for the matching AMD ROCm major version.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
 
@@ -130,6 +130,12 @@ $ python -m pip install ".[cuda12,benchmark]"
 # Example: install with all extras for testing on CUDA 12
 $ python -m pip install ".[cuda12,benchmark,test]"
 ```
+
+The NCCL comparison in `python -m mscclpp_benchmark.allreduce_bench` also requires
+the vendor's NCCL (`libnccl.so.2`) or RCCL (`librccl.so.1`) system library.
+Set `MSCCLPP_BENCH_NCCL_LIBRARY` to its absolute shared-library path if it is not
+on the loader search path. Use the vendor library, not the MSCCL++ NCCL-compatible
+shim, for a meaningful comparison.
 
 (mrc-support)=
 ## MRC Support

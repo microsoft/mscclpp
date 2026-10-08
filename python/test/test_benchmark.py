@@ -4,13 +4,16 @@
 import json
 from types import SimpleNamespace
 
-import cupy as cp
+import numpy as np
 
 from mscclpp_benchmark.correctness import (
     _comparison_tolerance,
     _decode_bfloat16_array,
+    _decode_fp8_array,
+    _decode_fp8_scalar,
     _encode_bfloat16_values,
     _encode_correctness_input,
+    _encode_fp8_values,
     _stats_values,
 )
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore
@@ -19,29 +22,40 @@ from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedC
 def test_allgather_requires_exact_match():
     case = SimpleNamespace(
         collective="allgather",
-        dtype_spec=SimpleNamespace(name="float16", fp8_format=None, cupy_dtype=cp.float16),
+        dtype_spec=SimpleNamespace(name="float16", fp8_format=None, storage_dtype=np.float16),
     )
 
     assert _comparison_tolerance(case, 8) is None
 
 
 def test_bfloat16_round_to_nearest_even():
-    values = cp.asarray([1.0, -2.5, 1.00390625, 1.01171875], dtype=cp.float32)
+    values = np.asarray([1.0, -2.5, 1.00390625, 1.01171875], dtype=np.float32)
 
     encoded = _encode_bfloat16_values(values)
 
-    cp.testing.assert_array_equal(encoded, cp.asarray([0x3F80, 0xC020, 0x3F80, 0x3F82], dtype=cp.uint16))
+    np.testing.assert_array_equal(encoded, np.asarray([0x3F80, 0xC020, 0x3F80, 0x3F82], dtype=np.uint16))
 
 
 def test_bfloat16_raw_storage_round_trip():
-    case = SimpleNamespace(dtype_spec=SimpleNamespace(name="bfloat16", fp8_format=None, cupy_dtype=cp.uint16))
-    values = cp.asarray([-1.0, -0.25, 0.5, 1.0], dtype=cp.float32)
+    case = SimpleNamespace(dtype_spec=SimpleNamespace(name="bfloat16", fp8_format=None, storage_dtype=np.uint16))
+    values = np.asarray([-1.0, -0.25, 0.5, 1.0], dtype=np.float32)
 
     encoded = _encode_correctness_input(case, values)
 
-    assert encoded.dtype == cp.uint16
-    cp.testing.assert_array_equal(_decode_bfloat16_array(encoded), values)
-    cp.testing.assert_array_equal(_stats_values(case, encoded), values)
+    assert encoded.dtype == np.uint16
+    np.testing.assert_array_equal(_decode_bfloat16_array(encoded), values)
+    np.testing.assert_array_equal(_stats_values(case, encoded), values)
+
+
+def test_fp8_numpy_decoders_and_finite_round_trips():
+    bits = np.arange(256, dtype=np.uint8)
+    for fmt in ("e4m3fn", "e4m3fnuz", "e4m3b15"):
+        decoded = _decode_fp8_array(fmt, bits)
+        expected = np.asarray([_decode_fp8_scalar(fmt, int(byte)) for byte in bits])
+        np.testing.assert_allclose(decoded, expected, rtol=0, atol=0, equal_nan=True)
+        finite = decoded[~np.isnan(decoded)]
+        encoded = _encode_fp8_values(fmt, finite)
+        np.testing.assert_array_equal(_decode_fp8_array(fmt, encoded), finite)
 
 
 def test_selects_dtype_specific_configs_with_duplicate_sizes():

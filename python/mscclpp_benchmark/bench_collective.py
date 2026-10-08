@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-import cupy as cp
+import numpy as np
 from mpi4py import MPI
+
+if TYPE_CHECKING:
+    from mscclpp import GpuBuffer
 
 _mscclpp_module = None
 
@@ -84,7 +87,7 @@ def _mscclpp():
 @dataclass(frozen=True)
 class DTypeSpec:
     name: str
-    cupy_dtype: Any
+    storage_dtype: Any
     mscclpp_dtype: Any
     accum_dtype: Any | None = None
     fp8_format: str | None = None
@@ -106,8 +109,8 @@ class BenchmarkCase:
     collective: str
     message_size: int
     total_size: int
-    input: cp.ndarray
-    output: cp.ndarray
+    input: GpuBuffer
+    output: GpuBuffer
     dtype_spec: DTypeSpec
     symmetric_memory: bool = False
 
@@ -124,19 +127,19 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     mscclpp = _mscclpp()
     normalized = dtype_name.strip().lower().replace("-", "_")
     if normalized in {"float16", "fp16", "half"}:
-        return DTypeSpec("float16", cp.float16, mscclpp.DataType.float16)
+        return DTypeSpec("float16", np.float16, mscclpp.DataType.float16)
     if normalized in {"bfloat16", "bf16"}:
-        return DTypeSpec("bfloat16", cp.uint16, mscclpp.DataType.bfloat16)
+        return DTypeSpec("bfloat16", np.uint16, mscclpp.DataType.bfloat16)
     if normalized in {"float32", "fp32", "float"}:
-        return DTypeSpec("float32", cp.float32, mscclpp.DataType.float32)
+        return DTypeSpec("float32", np.float32, mscclpp.DataType.float32)
     if normalized in {"int32", "i32"}:
-        return DTypeSpec("int32", cp.int32, mscclpp.DataType.int32)
+        return DTypeSpec("int32", np.int32, mscclpp.DataType.int32)
     if normalized in {"uint8", "u8"}:
-        return DTypeSpec("uint8", cp.uint8, mscclpp.DataType.uint8)
+        return DTypeSpec("uint8", np.uint8, mscclpp.DataType.uint8)
     if normalized in {"float8_e4m3fn", "fp8_e4m3fn"}:
         return DTypeSpec(
             "float8_e4m3fn",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3fn,
             accum_dtype=mscclpp.DataType.float16,
             fp8_format="e4m3fn",
@@ -144,7 +147,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     if normalized in {"float8_e4m3fnuz", "fp8_e4m3fnuz"}:
         return DTypeSpec(
             "float8_e4m3fnuz",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3fnuz,
             accum_dtype=mscclpp.DataType.float16,
             fp8_format="e4m3fnuz",
@@ -152,7 +155,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     if normalized in {"float8_e4m3b15", "fp8_e4m3b15"}:
         return DTypeSpec(
             "float8_e4m3b15",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3b15,
             accum_dtype=mscclpp.DataType.float32,
             fp8_format="e4m3b15",
@@ -189,7 +192,7 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
 
     return DTypeSpec(
         name=dtype_spec.name,
-        cupy_dtype=dtype_spec.cupy_dtype,
+        storage_dtype=dtype_spec.storage_dtype,
         mscclpp_dtype=dtype_spec.mscclpp_dtype,
         accum_dtype=accum_dtype,
         fp8_format=dtype_spec.fp8_format,
@@ -354,12 +357,12 @@ def _make_case(
 
     if collective == _ALLREDUCE:
         if buffer_mode == "in-place":
-            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
             input_buffer = memory
             output = memory
         else:
-            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
-            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
         return BenchmarkCase(
             collective=collective,
             message_size=input_buffer.nbytes,
@@ -374,12 +377,12 @@ def _make_case(
         raise ValueError(f"Unsupported collective: {collective}")
 
     if buffer_mode == "in-place":
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
         start = comm_group.my_rank * nelems
         input_buffer = output[start : start + nelems]
     else:
-        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
 
     return BenchmarkCase(
         collective=collective,
