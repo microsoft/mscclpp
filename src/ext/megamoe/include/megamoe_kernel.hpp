@@ -29,6 +29,18 @@ struct NativeConfig {
   bool weightMxfp4 = false;
 };
 
+namespace detail {
+
+__host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
+  bool capacity32To128 = c.maxTokens == 32 || c.maxTokens == 64 || c.maxTokens == 128;
+  bool supportedShape = (c.hidden == 9216 && capacity32To128 && (c.intermediate == 4096 || c.intermediate == 4608)) ||
+                        (c.hidden == 8192 && (c.maxTokens == 16 || capacity32To128) && c.intermediate == 4096);
+  return c.weightMxfp4 && (c.worldSize == 4 || c.worldSize == 32) && c.numExperts == 16 * c.worldSize && c.topK == 8 &&
+         c.gateUpClamp < 0 && supportedShape;
+}
+
+}  // namespace detail
+
 struct SymmetricLayout {
   size_t bytes = 0;
   size_t input = 0;

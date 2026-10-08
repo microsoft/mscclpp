@@ -14,7 +14,8 @@
 // with C++20, PIC/hidden visibility,
 // -gencode=arch=compute_100f,code=sm_100f, --expt-relaxed-constexpr,
 // --expt-extended-lambda, MSCCLPP_USE_CUDA, MSCCLPP_MEGAMOE_JIT_MODULE=1,
-// the tile/stage specialization definitions, and a quoted MSCCLPP_MEGAMOE_JIT_ID.
+// MSCCLPP_MEGAMOE_JIT_W4A8=0/1, the matching policy definitions, and a
+// quoted MSCCLPP_MEGAMOE_JIT_ID.
 // Link the module against mscclpp, cudart, and the CUDA driver.
 #define MSCCLPP_MEGAMOE_JIT_ABI_VERSION 1
 #define MSCCLPP_MEGAMOE_JIT_ENTRYPOINT "mscclpp_megamoe_jit_get_api_v1"
@@ -30,6 +31,7 @@ typedef struct MegaMoeJitConfigV1 {
   int32_t topK;
   int32_t smMargin;
   int32_t weightE5M2;
+  int32_t weightMxfp4;
   float gateUpClamp;
 } MegaMoeJitConfigV1;
 
@@ -75,6 +77,17 @@ typedef struct MegaMoeJitApiV1 {
   int32_t clusterSize;
   int32_t accumulatorStages;
   int32_t architecture;
+  int32_t weightMxfp4;
+  int32_t numWarps;
+  int32_t transferRegisters;
+  int32_t loadWarps;
+  int32_t splitPipelines;
+  int32_t epilogueTokens;
+  int32_t epilogueWarps;
+  int32_t epilogueRegisters;
+  int32_t dispatchChunk;
+  int32_t dispatchWarps;
+  int32_t dispatchStages;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY];
   int (*preflight)(const MegaMoeJitConfigV1* config, MegaMoeJitLayoutV1* layout, char* error, size_t capacity);
   int (*packWeights)(const MegaMoeJitConfigV1* config, const MegaMoeJitWeightsV1* source,

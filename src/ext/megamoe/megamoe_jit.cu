@@ -56,11 +56,10 @@ int jitCall(char* error, size_t capacity, Function&& function) noexcept {
 }
 
 NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
-  if (!c || (c->weightE5M2 != 0 && c->weightE5M2 != 1))
+  if (!c || (c->weightE5M2 != 0 && c->weightE5M2 != 1) || (c->weightMxfp4 != 0 && c->weightMxfp4 != 1))
     throw std::invalid_argument("Invalid MegaMoE JIT configuration");
-  return NativeConfig{c->rank,       c->worldSize, c->maxTokens, c->hidden,           c->intermediate,
-                      c->numExperts, c->topK,      c->smMargin,  bool(c->weightE5M2), c->gateUpClamp,
-                      false};
+  return NativeConfig{c->rank, c->worldSize, c->maxTokens,        c->hidden,      c->intermediate,     c->numExperts,
+                      c->topK, c->smMargin,  bool(c->weightE5M2), c->gateUpClamp, bool(c->weightMxfp4)};
 }
 
 PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {
@@ -132,11 +131,32 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.configBytes = sizeof(MegaMoeJitConfigV1);
   api.weightsBytes = sizeof(MegaMoeJitWeightsV1);
   api.layoutBytes = sizeof(MegaMoeJitLayoutV1);
+#if MSCCLPP_MEGAMOE_JIT_W4A8
+  api.tileM = jit::detail::TileM;
+  api.tileN = jit::detail::W4TileN;
+  api.tileK = jit::detail::W4TileK;
+  api.loadStages = jit::detail::W4LoadStages;
+  api.transformStages = 0;
+  api.weightMxfp4 = 1;
+  api.numWarps = jit::detail::W4NumWarps;
+  api.transferRegisters = jit::detail::W4TransferRegisters;
+  api.loadWarps = jit::detail::W4LoadWarps;
+  api.splitPipelines = int(jit::detail::W4SplitPipelines);
+  api.epilogueTokens = jit::detail::W4EpilogueTokens;
+  api.epilogueWarps = jit::detail::W4EpilogueWarps;
+  api.epilogueRegisters = jit::detail::W4EpilogueRegisters;
+  api.dispatchChunk = jit::detail::W4DispatchChunk;
+  api.dispatchWarps = jit::detail::W4DispatchWarps;
+  api.dispatchStages = jit::detail::W4DispatchStages;
+#else
   api.tileM = jit::detail::TileM;
   api.tileN = jit::detail::TileN;
   api.tileK = jit::detail::TileK;
   api.loadStages = jit::detail::LoadStages;
   api.transformStages = jit::detail::TransformStages;
+  api.weightMxfp4 = 0;
+  api.numWarps = jit::detail::RoutedWarpSchedule::NumWarps;
+#endif
   api.clusterSize = jit::detail::ClusterM;
   api.accumulatorStages = 2;
   api.architecture = 1000;

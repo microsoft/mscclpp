@@ -6,9 +6,45 @@
 
 #include "megamoe_roles.cuh"
 
-namespace mscclpp::megamoe::detail {
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-__device__ __forceinline__ void publishW4A8Chunk(W4DispatchStorage& storage, int localWarp, int* counter, bool hasRow,
+template <bool Activation, class Types, class Storage>
+__device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp, int lane, int cta) {
+  using namespace cute;
+  using Load = typename Types::Load;
+  using Mainloop = typename Types::Mainloop;
+  using Schedule = typename Types::WarpSchedule;
+  constexpr int InitializingWarp = Activation ? Schedule::ActivationLoadWarp : Schedule::LoadWarp;
+  constexpr bool SharedProducers = !Activation && !Types::SplitPipelines && Types::LoadWarps == 2;
+  bool producer = warp == InitializingWarp || (SharedProducers && warp == Schedule::ActivationLoadWarp);
+  typename Load::Params params{};
+  params.role =
+      producer ? Load::ThreadCategory::Producer
+               : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
+  params.is_leader = lane == 0 && cta == 0 && producer;
+  params.transaction_bytes =
+      Activation ? Mainloop::ActivationTransactionBytes
+                 : (Types::LoadWarps == 1 ? Mainloop::TmaTransactionBytes
+                                          : (warp == Schedule::LoadWarp ? Mainloop::WeightTransactionBytes
+                                                                        : Mainloop::ActivationTransactionBytes));
+  if constexpr (Types::SplitPipelines && !Activation) params.transaction_bytes = Mainloop::WeightTransactionBytes;
+  params.initializing_warp = InitializingWarp;
+  Load pipeline(storage, params, ClusterShape{}, false_type{}, false_type{});
+  if constexpr (SharedProducers) {
+    if (warp == InitializingWarp) {
+      // Both loaders arrive before the shared stage can become ready.
+      cutlass::arch::detail::initialize_barrier_array_pair_aligned<decltype(storage.full_barrier_),
+                                                                   decltype(storage.empty_barrier_), Load::Stages>(
+          storage.full_barrier_, storage.empty_barrier_, 2, 1);
+    }
+  } else {
+    Load::init_barriers(storage, params, ClusterShape{});
+  }
+  return pipeline;
+}
+
+template <class Types, class Storage>
+__device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp, int* counter, bool hasRow,
                                                  uint32_t phase) {
 #if MSCCLPP_BULK_AVAILABLE
   // High bits count warp arrivals; low bits count the rows to publish.
@@ -19,7 +55,7 @@ __device__ __forceinline__ void publishW4A8Chunk(W4DispatchStorage& storage, int
   if (localWarp == 0) {
     uint32_t ready;
     POLL_MAYBE_JAILBREAK((ready = atomicLoad<uint32_t, cuda::thread_scope_block>(
-                              &storage.arrivals, memoryOrderAcquire)) < W4DispatchWarps * Arrival,
+                              &storage.arrivals, memoryOrderAcquire)) < Types::DispatchWarps * Arrival,
                          SpinLimit);
     uint32_t rows = ready & (Arrival - 1);
     if (rows) asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(rows) : "memory");
@@ -34,22 +70,23 @@ __device__ __forceinline__ void publishW4A8Chunk(W4DispatchStorage& storage, int
 #endif
 }
 
-template <class P>
-__device__ __forceinline__ void storeW4A8Chunk(const P& p, W4DispatchStorage& storage, int localWarp, int row,
-                                               int chunk, uint8_t* destination, int bytes, uint32_t& phase) {
+template <int DispatchBytes, int DispatchStages, class P, class Storage>
+__device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
+                                               uint8_t* destination, int bytes, uint32_t& phase) {
 #if MSCCLPP_BULK_AVAILABLE
   int lane = threadIdx.x % 32;
-  int stage = chunk % W4DispatchStages;
+  int stage = chunk % DispatchStages;
   if (lane == 0) {
     storage.barriers[localWarp][stage].wait(phase, SpinLimit);
-    bulkStore(destination + chunk * W4DispatchChunk, storage.tiles[localWarp][stage], bytes);
+    bulkStore(destination + chunk * DispatchBytes, storage.tiles[localWarp][stage], bytes);
     bulkStoreCommit();
     bulkFence();
   }
   __syncwarp();
   int k = 4 * lane;
   if (k < bytes / 32) {
-    size_t offset = p.fc1.layout_SFB(cute::make_coord(w4StorageRow(row), chunk * W4DispatchChunk + k * 32, 0));
+    size_t offset =
+        p.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * 32, 0));
     *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
         *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
   }
@@ -59,11 +96,16 @@ __device__ __forceinline__ void storeW4A8Chunk(const P& p, W4DispatchStorage& st
 #endif
 }
 
-template <int Hidden, class P>
-__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage& s, int localWarp) {
+template <int Hidden, class P, class Storage>
+__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
+  using Types = typename P::Collective;
+  constexpr int DispatchBytes = Types::DispatchChunk;
+  constexpr int DispatchStages = Types::DispatchStages;
   static_assert(Hidden > 0);
-  static_assert((W4DispatchChunk / 32 + 15) / 16 * 16 <= W4ScaleStageBytes);
+  static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
+  static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
+  static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
   const auto& w = p.workspace;
   int lane = threadIdx.x % 32;
   auto& barriers = s.dispatch.barriers[localWarp];
@@ -73,23 +115,24 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
       s.dispatch.publishedPhase = 0;
     }
     CUTE_UNROLL
-    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].relaxedInit();
+    for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].relaxedInit();
     bulkFence();
   }
-  cutlass::arch::NamedBarrier::sync(W4DispatchWarps * 32, 1);
-  uint32_t phases[W4DispatchStages] = {};
+  cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * 32, 1);
+  uint32_t phases[DispatchStages] = {};
   constexpr int hidden = Hidden;
-  constexpr int chunks = (Hidden + W4DispatchChunk - 1) / W4DispatchChunk;
-  constexpr int GroupsPerBlock = (W4TileN + W4DispatchWarps - 1) / W4DispatchWarps;
+  constexpr int chunks = (Hidden + DispatchBytes - 1) / DispatchBytes;
+  constexpr int TileN = P::Tiles::N;
+  constexpr int GroupsPerBlock = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
   uint32_t publicationPhase = 0;
   int groups = w.control->tokenBlocks * GroupsPerBlock;
   for (int group = blockIdx.x; group < groups; group += gridDim.x) {
     int block = group / GroupsPerBlock;
-    int firstRow = group % GroupsPerBlock * W4DispatchWarps;
+    int firstRow = group % GroupsPerBlock * Types::DispatchWarps;
     int rows = w.blocks[block].rows;
     if (firstRow >= rows) continue;
     int rowInBlock = firstRow + localWarp;
-    int row = block * W4TileN + rowInBlock;
+    int row = block * TileN + rowInBlock;
     bool hasRow = rowInBlock < rows;
     Route route{};
     if (hasRow) route = w.routes[row];
@@ -101,33 +144,35 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
     auto* sourceScale = hasRow ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
                                      size_t(route.token) * w4SourceScaleStride(hidden)
                                : nullptr;
-    auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow(row)) * hidden : nullptr;
+    auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * hidden : nullptr;
     auto load = [&](int chunk) {
-      int stage = chunk % W4DispatchStages;
-      int bytes = min(int(W4DispatchChunk), hidden - chunk * W4DispatchChunk);
+      int stage = chunk % DispatchStages;
+      int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
       int scaleBytes = (bytes / 32 + 15) / 16 * 16;
       barriers[stage].arriveAndExpect(bytes + scaleBytes);
-      bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * W4DispatchChunk, bytes, barriers[stage]);
-      bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (W4DispatchChunk / 32), scaleBytes,
+      bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+      bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
                barriers[stage]);
     };
     if (lane == 0 && hasRow) {
       bulkFence();
       CUTE_UNROLL
-      for (int stage = 0; stage < W4DispatchStages; ++stage)
+      for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
     }
     auto process = [&](int chunk) {
-      int stage = chunk % W4DispatchStages;
-      int bytes = min(int(W4DispatchChunk), hidden - chunk * W4DispatchChunk);
-      if (hasRow) storeW4A8Chunk(p, s.dispatch, localWarp, row, chunk, destination, bytes, phases[stage]);
+      int stage = chunk % DispatchStages;
+      int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
+      if (hasRow)
+        storeW4A8Chunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
+                                                      phases[stage]);
       if (lane == 0) {
-        auto* counter = w4InputChunkCounter(w, hidden, block, chunk);
+        auto* counter = w4InputChunkCounter<Types>(w, hidden, block, chunk);
         publicationPhase ^= 1u;
-        publishW4A8Chunk(s.dispatch, localWarp, counter, hasRow, publicationPhase);
-        if (hasRow && chunk + W4DispatchStages < chunks) {
+        publishW4A8Chunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
+        if (hasRow && chunk + DispatchStages < chunks) {
           bulkFence();
-          load(chunk + W4DispatchStages);
+          load(chunk + DispatchStages);
         }
       }
       __syncwarp();
@@ -137,28 +182,30 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, W4A8SharedStorage
   }
   if (lane == 0) {
     CUTE_UNROLL
-    for (int stage = 0; stage < W4DispatchStages; ++stage) barriers[stage].invalidate();
+    for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
   }
 #endif
 }
 
-template <class P>
-__device__ __forceinline__ void runW4A8LoadRole(const P& p, W4A8SharedStorage& s,
-                                                W4A8CollectiveTypes::Load& loadPipeline,
-                                                W4A8CollectiveTypes::Load& activationPipeline,
-                                                W4A8CollectiveTypes::Mainloop& fc1, W4A8CollectiveTypes::Mainloop& fc2,
-                                                const ProblemShape& shape1, const ProblemShape& shape2, int hidden,
-                                                int intermediate, int warp, int lane, int cta, int cluster, int tasks) {
+template <class P, class Storage>
+__device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                                typename P::Collective::Load& activationPipeline,
+                                                typename P::Collective::Mainloop& fc1,
+                                                typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
+                                                const ProblemShape& shape2, int hidden, int intermediate, int warp,
+                                                int lane, int cta, int cluster, int tasks) {
   using namespace cute;
-  using Load = W4A8CollectiveTypes::Load;
-  using Schedule = W4A8WarpSchedule;
-  auto& producerPipeline = W4SplitPipelines && warp == Schedule::ActivationLoadWarp ? activationPipeline : loadPipeline;
+  using Types = typename P::Collective;
+  using Load = typename P::Collective::Load;
+  using Schedule = typename Types::WarpSchedule;
+  auto& producerPipeline =
+      Types::SplitPipelines && warp == Schedule::ActivationLoadWarp ? activationPipeline : loadPipeline;
   auto state = cutlass::make_producer_start_state<Load>();
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
   for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
     Task task = taskAt(p, i, 0, hidden, intermediate);
-    if (!task.fc1 && (W4LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+    if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       traceW4(W4TracePhase::TokenReady, true, int(task.fc1));
       if (lane == 0)
         waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
@@ -173,7 +220,7 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, W4A8SharedStorage& s
     auto loadTiles = [&](int first, int count) {
       auto iterator = cute::make_coord_iterator(first, kTiles);
       auto result = [&](auto& firstMainloop, auto& secondMainloop) {
-        if constexpr (W4LoadWarps == 2) {
+        if constexpr (Types::LoadWarps == 2) {
           if (warp == Schedule::LoadWarp)
             return task.fc1 ? firstMainloop.template load<1>(producerPipeline, state, load1, coord, iterator, count,
                                                              task.tokens.rows)
@@ -190,13 +237,13 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, W4A8SharedStorage& s
       }(fc1, fc2);
       state = get<0>(result);
     };
-    if (task.fc1 && (W4LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
-      constexpr int TilesPerChunk = W4DispatchChunk / W4TileK;
+    if (task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+      constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
       for (int first = 0; first < kTiles; first += TilesPerChunk) {
         traceW4(W4TracePhase::TokenReady, true, first / TilesPerChunk);
         if (lane == 0)
-          waitAtLeast<int, scopeDevice>(w4InputChunkCounter(p.workspace, hidden, task.block, first / TilesPerChunk),
-                                        task.tokens.rows);
+          waitAtLeast<int, scopeDevice>(
+              w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
         __syncwarp();
         traceW4(W4TracePhase::TokenReady, false, first / TilesPerChunk);
         loadTiles(first, min(TilesPerChunk, kTiles - first));
@@ -209,18 +256,18 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, W4A8SharedStorage& s
   fc1.load_tail(producerPipeline, state);
 }
 
-template <class P, class TmemStorage>
-__device__ __forceinline__ void runW4A8MmaRole(const P& p, W4A8SharedStorage& s,
-                                               W4A8CollectiveTypes::Load& loadPipeline,
-                                               W4A8CollectiveTypes::Load& activationPipeline,
-                                               W4A8CollectiveTypes::Accumulate& accumulatePipeline,
-                                               W4A8CollectiveTypes::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                               int intermediate, int warp, int cta, int cluster, int tasks) {
+template <class P, class Storage, class TmemStorage>
+__device__ __forceinline__ void runW4A8MmaRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                               typename P::Collective::Load& activationPipeline,
+                                               typename P::Collective::Accumulate& accumulatePipeline,
+                                               typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage,
+                                               int hidden, int intermediate, int warp, int cta, int cluster,
+                                               int tasks) {
   using namespace cute;
-  using Mainloop = W4A8CollectiveTypes::Mainloop;
-  using Load = W4A8CollectiveTypes::Load;
-  using Accumulate = W4A8CollectiveTypes::Accumulate;
-  using Schedule = W4A8WarpSchedule;
+  using Mainloop = typename P::Collective::Mainloop;
+  using Load = typename P::Collective::Load;
+  using Accumulate = typename P::Collective::Accumulate;
+  using Schedule = typename P::Collective::WarpSchedule;
   if (warp == Schedule::MmaWarp && cta == 0) {
     typename Load::PipelineState loadState;
     auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
@@ -243,6 +290,6 @@ __device__ __forceinline__ void runW4A8MmaRole(const P& p, W4A8SharedStorage& s,
   }
 }
 
-}  // namespace mscclpp::megamoe::detail
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #endif  // MSCCLPP_EXT_MEGAMOE_W4A8_ROLES_CUH_

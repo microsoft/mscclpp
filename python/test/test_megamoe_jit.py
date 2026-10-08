@@ -46,6 +46,45 @@ def test_initial_specializations_fit_tmem(values):
     assert 2 * config.tile_n + config.tile_k // 2 * config.transform_stages <= 512
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"tile_n": 96},
+        {"tile_k": 64},
+        {"load_stages": 1},
+        {"load_stages": True},
+        {"num_warps": 8},
+        {"transfer_registers": 48},
+        {"load_warps": 3},
+        {"split_pipelines": 1},
+        {"load_warps": 1, "split_pipelines": True},
+        {"epilogue_tokens": 64},
+        {"tile_n": 32, "epilogue_tokens": 16, "epilogue_warps": 8},
+        {"epilogue_warps": 8, "epilogue_registers": 224, "transfer_registers": 128},
+        {"epilogue_registers": 201},
+        {"dispatch_chunk": 768},
+        {"dispatch_warps": 1},
+        {"dispatch_stages": 3},
+    ],
+)
+def test_w4a8_kernel_config_rejects_invalid(fields):
+    with pytest.raises(ValueError):
+        jit.W4A8KernelConfig(**fields)
+
+
+def test_w4a8_default_and_tuned_policies_validate():
+    assert jit.W4A8KernelConfig().tile_n == 64
+    tuned = jit.W4A8KernelConfig(
+        tile_n=128,
+        load_stages=7,
+        transfer_registers=64,
+        epilogue_warps=8,
+        epilogue_registers=208,
+        dispatch_chunk=4096,
+    )
+    assert tuned.epilogue_warps == 8 and tuned.dispatch_chunk == 4096
+
+
 def test_builtin_requires_neither_compiler_nor_gpu(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("builtin must not inspect the JIT toolchain")
@@ -113,6 +152,59 @@ def test_compile_is_cached_and_uses_native_architecture(compiler_fixture):
     again = jit.compile_kernel(config, cache_dir=cache)
     assert again.cache_hit and again.key == first.key and len(commands) == 4
     assert not list(cache.glob(".*"))
+
+
+def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture):
+    cache, commands, _ = compiler_fixture
+    config = jit.W4A8KernelConfig(
+        tile_n=128,
+        tile_k=128,
+        load_stages=7,
+        num_warps=16,
+        transfer_registers=64,
+        load_warps=2,
+        split_pipelines=False,
+        epilogue_tokens=32,
+        epilogue_warps=8,
+        epilogue_registers=208,
+        dispatch_chunk=4096,
+        dispatch_warps=4,
+        dispatch_stages=1,
+    )
+    compiled = jit.compile_kernel(config, cache_dir=cache)
+    assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 4
+    expected = {
+        "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",
+        "-DMSCCLPP_MEGAMOE_W4_TILE_N=128",
+        "-DMSCCLPP_MEGAMOE_W4_TILE_K=128",
+        "-DMSCCLPP_MEGAMOE_W4_LOAD_STAGES=7",
+        "-DMSCCLPP_MEGAMOE_W4_NUM_WARPS=16",
+        "-DMSCCLPP_MEGAMOE_W4_TRANSFER_REGISTERS=64",
+        "-DMSCCLPP_MEGAMOE_W4_LOAD_WARPS=2",
+        "-DMSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES=0",
+        "-DMSCCLPP_MEGAMOE_W4_EPILOGUE_TOKENS=32",
+        "-DMSCCLPP_MEGAMOE_W4_EPILOGUE_WARPS=8",
+        "-DMSCCLPP_MEGAMOE_W4_EPILOGUE_REGISTERS=208",
+        "-DMSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK=4096",
+        "-DMSCCLPP_MEGAMOE_W4_DISPATCH_WARPS=4",
+        "-DMSCCLPP_MEGAMOE_W4_DISPATCH_STAGES=1",
+    }
+    for command in commands[:-1]:
+        assert expected <= set(command)
+    manifest = json.loads(Path(compiled.path).with_name("manifest.json").read_text())
+    assert manifest["version"] == 2
+    assert manifest["build"]["kernel_kind"] == "w4a8"
+    assert manifest["build"]["config"] == {name: getattr(config, name) for name in config.__dataclass_fields__}
+    assert set(manifest["build"]["definitions"]) == expected
+    loaded = jit.load_cached_kernel(compiled.key, cache_dir=cache)
+    assert loaded.config == config and loaded.cache_hit
+
+
+def test_default_w4a8_policy_always_builds_a_module(compiler_fixture):
+    cache, commands, _ = compiler_fixture
+    compiled = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
+    assert compiled.key != "builtin" and Path(compiled.path).is_file()
+    assert len(commands) == 4
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])

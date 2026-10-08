@@ -71,12 +71,48 @@ void checkJit(int status, const char* error, const char* operation) {
 }
 
 MegaMoeJitConfigV1 jitConfig(const NativeConfig& c) {
-  return MegaMoeJitConfigV1{c.rank,       c.worldSize, c.maxTokens, c.hidden,          c.intermediate,
-                            c.numExperts, c.topK,      c.smMargin,  int(c.weightE5M2), c.gateUpClamp};
+  return MegaMoeJitConfigV1{c.rank, c.worldSize, c.maxTokens,       c.hidden,           c.intermediate, c.numExperts,
+                            c.topK, c.smMargin,  int(c.weightE5M2), int(c.weightMxfp4), c.gateUpClamp};
 }
 
 MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
   return MegaMoeJitWeightsV1{weights.fc1, weights.fc1Scale, weights.fc2, weights.fc2Scale};
+}
+
+bool validW8Metadata(const MegaMoeJitApiV1& api) {
+  const bool supported = (api.tileN == 32 && api.loadStages == 8 && api.transformStages == 7) ||
+                         (api.tileN == 32 && api.loadStages == 6 && api.transformStages == 7) ||
+                         (api.tileN == 64 && api.loadStages == 6 && api.transformStages == 6) ||
+                         (api.tileN == 128 && api.loadStages == 4 && api.transformStages == 4);
+  return api.weightMxfp4 == 0 && (api.tileM == 128 || api.tileM == 256) && !(api.tileM == 128 && api.tileK == 32) &&
+         (api.tileK == 32 || api.tileK == 64 || api.tileK == 128) && supported &&
+         api.numWarps == detail::RoutedWarpSchedule::NumWarps && api.transferRegisters == 0 && api.loadWarps == 0 &&
+         api.splitPipelines == 0 && api.epilogueTokens == 0 && api.epilogueWarps == 0 && api.epilogueRegisters == 0 &&
+         api.dispatchChunk == 0 && api.dispatchWarps == 0 && api.dispatchStages == 0;
+}
+
+bool validW4Metadata(const MegaMoeJitApiV1& api) {
+  const bool tileN = api.tileN == 32 || api.tileN == 64 || api.tileN == 128;
+  const bool tileK = api.tileK == 128 || api.tileK == 256 || api.tileK == 512;
+  const bool transfer = api.transferRegisters == 32 || api.transferRegisters == 64 || api.transferRegisters == 96 ||
+                        api.transferRegisters == 128;
+  const bool dispatchChunk = api.dispatchChunk == 512 || api.dispatchChunk == 1024 || api.dispatchChunk == 2048 ||
+                             api.dispatchChunk == 3072 || api.dispatchChunk == 4096;
+  const int64_t threads = int64_t(api.numWarps) * 32;
+  const int64_t epilogueThreads = int64_t(api.epilogueWarps) * 32;
+  const int64_t lowRegisterThreads = threads - epilogueThreads - 128;
+  const int64_t registerUse =
+      epilogueThreads * api.epilogueRegisters + int64_t(128) * api.transferRegisters + lowRegisterThreads * 32;
+  return api.weightMxfp4 == 1 && api.tileM == 256 && tileN && tileK && api.loadStages >= 2 && api.loadStages <= 10 &&
+         api.transformStages == 0 && (api.numWarps == 12 || api.numWarps == 16) && transfer &&
+         (api.loadWarps == 1 || api.loadWarps == 2) && (api.splitPipelines == 0 || api.splitPipelines == 1) &&
+         (!api.splitPipelines || api.loadWarps == 2) && (api.epilogueTokens == 16 || api.epilogueTokens == 32) &&
+         api.tileN % api.epilogueTokens == 0 && (api.epilogueWarps == 4 || api.epilogueWarps == 8) &&
+         api.epilogueRegisters >= 128 && api.epilogueRegisters <= 224 && api.epilogueRegisters % 8 == 0 &&
+         dispatchChunk && api.dispatchChunk % api.tileK == 0 && api.dispatchWarps >= 2 && api.dispatchWarps <= 4 &&
+         (api.dispatchStages == 1 || api.dispatchStages == 2) &&
+         api.epilogueWarps + 4 + api.dispatchWarps <= api.numWarps && lowRegisterThreads >= 0 &&
+         registerUse <= threads * 128;
 }
 
 struct JitModule {
@@ -87,7 +123,7 @@ struct JitModule {
     if (handle) (void)dlclose(handle);
   }
 
-  void load(const std::string& path, const std::string& id) {
+  void load(const std::string& path, const std::string& id, const NativeConfig& config) {
     if (!validKernelId(id))
       throw std::invalid_argument("MegaMoE kernel_id must be a 64-character lowercase hex digest");
     if (path.empty() || path.front() != '/')
@@ -103,17 +139,15 @@ struct JitModule {
     if (!api || api->abiVersion != MSCCLPP_MEGAMOE_JIT_ABI_VERSION || api->structBytes != sizeof(MegaMoeJitApiV1))
       throw std::invalid_argument("MegaMoE JIT module ABI version or function-table size mismatch");
     if (api->configBytes != sizeof(MegaMoeJitConfigV1) || api->weightsBytes != sizeof(MegaMoeJitWeightsV1) ||
-        api->layoutBytes != sizeof(MegaMoeJitLayoutV1) || (api->tileM != 128 && api->tileM != 256) ||
-        (api->tileM == 128 && api->tileK == 32) || (api->tileK != 32 && api->tileK != 64 && api->tileK != 128) ||
-        api->clusterSize != detail::ClusterM || api->accumulatorStages != 2 || api->architecture != 1000)
+        api->layoutBytes != sizeof(MegaMoeJitLayoutV1) || api->clusterSize != detail::ClusterM ||
+        api->accumulatorStages != 2 || api->architecture != 1000)
       throw std::invalid_argument("MegaMoE JIT module metadata does not match the native ABI");
     if (std::memcmp(api->kernelId, id.c_str(), MSCCLPP_MEGAMOE_JIT_ID_CAPACITY))
       throw std::invalid_argument("MegaMoE JIT module kernel_id does not match the requested specialization");
-    const bool supported = (api->tileN == 32 && api->loadStages == 8 && api->transformStages == 7) ||
-                           (api->tileN == 32 && api->loadStages == 6 && api->transformStages == 7) ||
-                           (api->tileN == 64 && api->loadStages == 6 && api->transformStages == 6) ||
-                           (api->tileN == 128 && api->loadStages == 4 && api->transformStages == 4);
-    if (!supported) throw std::invalid_argument("MegaMoE JIT module declares an unsupported specialization");
+    if (api->weightMxfp4 != int(config.weightMxfp4))
+      throw std::invalid_argument("MegaMoE JIT module precision does not match the context configuration");
+    if (!(config.weightMxfp4 ? validW4Metadata(*api) : validW8Metadata(*api)))
+      throw std::invalid_argument("MegaMoE JIT module declares an unsupported specialization policy");
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
     this->api = api;
@@ -143,7 +177,7 @@ size_t product(std::initializer_list<size_t> factors) {
 struct RankInfo {
   std::array<int, 10> config;
   int tag = 0;
-  std::array<int, 5> specialization;
+  std::array<int, 16> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
   size_t symmetricBytes = 0;
   size_t privateBytes = 0;
@@ -305,11 +339,10 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       p.workspaceBytes = getPrivateWorkspaceBytes(c);
       p.resources = preflightKernel(c);
     } else {
-      if (c.weightMxfp4) throw std::invalid_argument("MegaMoE W4A8 currently supports the builtin kernel only");
       // Even rejected modules must stay mapped until Impl synchronizes: CUDA
       // may still have deferred registration work referencing their host stubs.
       p.module = std::make_shared<JitModule>();
-      p.module->load(kernelPath, kernelId);
+      p.module->load(kernelPath, kernelId, c);
       p.kernelId = kernelId;
       const auto config = jitConfig(c);
       MegaMoeJitLayoutV1 layout{};
@@ -338,7 +371,24 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     }
     info = rankInfo(c, p.device);
     info.tag = tag;
-    info.specialization = {kernelTileM(), kernelTileN(), kernelTileK(), kernelLoadStages(), kernelTransformStages()};
+    const auto* api = p.module ? p.module->api : nullptr;
+    info.specialization = {
+        kernelTileM(),
+        kernelTileN(),
+        kernelTileK(),
+        kernelLoadStages(),
+        kernelTransformStages(),
+        int(c.weightMxfp4),
+        api ? api->numWarps : (c.weightMxfp4 ? detail::W4NumWarps : detail::RoutedWarpSchedule::NumWarps),
+        api ? api->transferRegisters : (c.weightMxfp4 ? detail::W4TransferRegisters : 0),
+        api ? api->loadWarps : (c.weightMxfp4 ? detail::W4LoadWarps : 0),
+        api ? api->splitPipelines : (c.weightMxfp4 ? int(detail::W4SplitPipelines) : 0),
+        api ? api->epilogueTokens : (c.weightMxfp4 ? detail::W4EpilogueTokens : 0),
+        api ? api->epilogueWarps : (c.weightMxfp4 ? detail::W4EpilogueWarps : 0),
+        api ? api->epilogueRegisters : (c.weightMxfp4 ? detail::W4EpilogueRegisters : 0),
+        api ? api->dispatchChunk : (c.weightMxfp4 ? detail::W4DispatchChunk : 0),
+        api ? api->dispatchWarps : (c.weightMxfp4 ? detail::W4DispatchWarps : 0),
+        api ? api->dispatchStages : (c.weightMxfp4 ? detail::W4DispatchStages : 0)};
     std::memcpy(info.kernelId, p.kernelId.c_str(), p.kernelId.size() + 1);
     info.symmetricBytes = p.layout.bytes;
     info.privateBytes = p.workspaceBytes;
@@ -451,6 +501,46 @@ int MegaMoeContext::kernelTransformStages() const {
   if (impl_->module) return impl_->module->api->transformStages;
   return impl_->config.weightMxfp4 ? 0 : detail::TransformStages;
 }
+int MegaMoeContext::kernelNumWarps() const {
+  if (impl_->module) return impl_->module->api->numWarps;
+  return impl_->config.weightMxfp4 ? detail::W4NumWarps : detail::RoutedWarpSchedule::NumWarps;
+}
+int MegaMoeContext::kernelTransferRegisters() const {
+  if (impl_->module) return impl_->module->api->transferRegisters;
+  return impl_->config.weightMxfp4 ? detail::W4TransferRegisters : 0;
+}
+int MegaMoeContext::kernelLoadWarps() const {
+  if (impl_->module) return impl_->module->api->loadWarps;
+  return impl_->config.weightMxfp4 ? detail::W4LoadWarps : 0;
+}
+bool MegaMoeContext::kernelSplitPipelines() const {
+  if (impl_->module) return bool(impl_->module->api->splitPipelines);
+  return impl_->config.weightMxfp4 && detail::W4SplitPipelines;
+}
+int MegaMoeContext::kernelEpilogueTokens() const {
+  if (impl_->module) return impl_->module->api->epilogueTokens;
+  return impl_->config.weightMxfp4 ? detail::W4EpilogueTokens : 0;
+}
+int MegaMoeContext::kernelEpilogueWarps() const {
+  if (impl_->module) return impl_->module->api->epilogueWarps;
+  return impl_->config.weightMxfp4 ? detail::W4EpilogueWarps : 0;
+}
+int MegaMoeContext::kernelEpilogueRegisters() const {
+  if (impl_->module) return impl_->module->api->epilogueRegisters;
+  return impl_->config.weightMxfp4 ? detail::W4EpilogueRegisters : 0;
+}
+int MegaMoeContext::kernelDispatchChunk() const {
+  if (impl_->module) return impl_->module->api->dispatchChunk;
+  return impl_->config.weightMxfp4 ? detail::W4DispatchChunk : 0;
+}
+int MegaMoeContext::kernelDispatchWarps() const {
+  if (impl_->module) return impl_->module->api->dispatchWarps;
+  return impl_->config.weightMxfp4 ? detail::W4DispatchWarps : 0;
+}
+int MegaMoeContext::kernelDispatchStages() const {
+  if (impl_->module) return impl_->module->api->dispatchStages;
+  return impl_->config.weightMxfp4 ? detail::W4DispatchStages : 0;
+}
 
 size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {
   int device;
@@ -471,7 +561,7 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
   // Cross-input aliases require the original ordered copies rather than concurrent staging.
   const bool fusedStage =
-      config().weightMxfp4 && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
+      config().weightMxfp4 && !impl_->jitPlan && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
       !overlaps(x, inputBytes, topkWeights(), routingBytes) && !overlaps(ids, routingBytes, input(), inputBytes) &&
       !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
       !overlaps(scores, routingBytes, input(), inputBytes) && !overlaps(scores, routingBytes, topkIds(), routingBytes);

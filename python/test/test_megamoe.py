@@ -3,10 +3,13 @@
 
 """Host-side API tests; numerical GPU validation is also available via --check."""
 
+from dataclasses import asdict
+
 import pytest
 
 from mscclpp.ext.megamoe import (
     MegaMoEConfig,
+    W4A8KernelConfig,
     dequantize_mxfp4,
     dequantize_mxfp8,
     quantize_mxfp4,
@@ -203,13 +206,19 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     first = dequantize_mxfp4(fc1, sf1, dtype=torch.float32)
     second = dequantize_mxfp4(fc2, sf2, dtype=torch.float32)
     context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
-    assert context.effective_kernel_config == {
+    assert {
+        name: context.effective_kernel_config[name]
+        for name in ("tile_m", "tile_n", "tile_k", "load_stages", "transform_stages")
+    } == {
         "tile_m": 256,
         "tile_n": 64,
         "tile_k": 128,
         "load_stages": 9,
         "transform_stages": 0,
     }
+    assert {name: context.effective_kernel_config[name] for name in asdict(W4A8KernelConfig())} == asdict(
+        W4A8KernelConfig()
+    )
     inputs = torch.randn((tokens, hidden), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
     ids = torch.arange(tokens, device=device, dtype=torch.int32).remainder(2)
     ids = torch.stack((ids, 1 - ids), dim=1).contiguous()

@@ -68,7 +68,7 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
         maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset));
       uint8_t scale = quantizeE8M0Scale(maximum);
       float other = __shfl_xor_sync(0xffffffff, activated, 1);
-      int row = w4StorageRow(task.block * KernelTileN + tokenOffset + token);
+      int row = w4StorageRow<typename P::Tiles>(task.block * KernelTileN + tokenOffset + token);
       int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
       if (lane == 0) p.workspace.hiddenScale[p.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
       if (lane % 2 == 0) {
@@ -219,7 +219,13 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
   using Tiles = typename P::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
-  constexpr int ChunkTokens = P::WeightMxfp4 ? W4EpilogueTokens : EpilogueTokens;
+  constexpr int ChunkTokens = [] {
+    if constexpr (P::WeightMxfp4) {
+      return P::Collective::EpilogueTokens;
+    } else {
+      return EpilogueTokens;
+    }
+  }();
   constexpr int WarpSize = 32;
   constexpr int EpilogueWarps = Schedule::EpilogueEnd - Schedule::EpilogueBegin;
   constexpr int EpilogueThreads = EpilogueWarps * WarpSize;

@@ -14,7 +14,7 @@ select them with ``-k configuration_selection``.
 """
 
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import timedelta
 import gc
 import os
@@ -511,13 +511,14 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         def check_kernel():
             assert context.kernel_config == jit.KernelConfig(*(kernel_values or (32, 8, 7)))
             if mxfp4:
-                assert context.effective_kernel_config == {
+                expected = {
                     "tile_m": 256,
                     "tile_n": 64,
                     "tile_k": 128,
                     "load_stages": 9,
                     "transform_stages": 0,
                 }
+                assert all(context.effective_kernel_config[name] == value for name, value in expected.items())
             if kernel_values is None:
                 assert context.kernel_id == "builtin"
 
@@ -553,17 +554,21 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
 
 
 @pytest.mark.parametrize(
-    "capacity,intermediate,clamp,local_experts,top_k,remaining_sms",
+    "hidden,capacity,intermediate,clamp,local_experts,top_k,remaining_sms,expected_tile_n,expected_load_stages",
     [
-        (32, 4096, -1.0, 16, 8, 8),
-        (64, 4096, -1.0, 16, 8, 8),
-        (128, 4096, -1.0, 16, 8, 8),
-        (64, 4608, -7.0, 16, 8, 8),
-        (64, 4096, -1.0, 16, 8, 2),
-        (65, 4096, -1.0, 16, 8, 8),
-        (64, 4096, 0.125, 16, 8, 8),
-        (64, 4096, -1.0, 8, 8, 8),
-        (64, 4096, -1.0, 16, 7, 8),
+        (9216, 32, 4096, -1.0, 16, 8, 8, 64, 9),
+        (9216, 64, 4096, -1.0, 16, 8, 8, 64, 9),
+        (9216, 128, 4096, -1.0, 16, 8, 8, 64, 9),
+        (9216, 64, 4608, -7.0, 16, 8, 8, 64, 9),
+        (9216, 64, 4096, -1.0, 16, 8, 2, 64, 9),
+        (9216, 65, 4096, -1.0, 16, 8, 8, 64, 9),
+        (9216, 64, 4096, 0.125, 16, 8, 8, 64, 9),
+        (9216, 64, 4096, -1.0, 8, 8, 8, 64, 9),
+        (9216, 64, 4096, -1.0, 16, 7, 8, 64, 9),
+        (8192, 16, 4096, -1.0, 16, 8, 8, 64, 9),
+        (8192, 32, 4096, -1.0, 16, 8, 8, 64, 9),
+        (8192, 64, 4096, -1.0, 16, 8, 8, 64, 9),
+        (8192, 128, 4096, -1.0, 16, 8, 8, 64, 9),
     ],
     ids=[
         "specialized-capacity-32",
@@ -575,10 +580,23 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         "generic-clamp",
         "generic-experts",
         "generic-top-k",
+        "h8192-specialized-capacity-16",
+        "h8192-specialized-capacity-32",
+        "h8192-specialized-capacity-64",
+        "h8192-specialized-capacity-128",
     ],
 )
 def test_native_w4a8_configuration_selection_graph_reuse(
-    configuration_runtime, capacity, intermediate, clamp, local_experts, top_k, remaining_sms
+    configuration_runtime,
+    hidden,
+    capacity,
+    intermediate,
+    clamp,
+    local_experts,
+    top_k,
+    remaining_sms,
+    expected_tile_n,
+    expected_load_stages,
 ):
     runtime, torch = configuration_runtime, configuration_runtime.torch
     config = runtime.config(
@@ -587,7 +605,7 @@ def test_native_w4a8_configuration_selection_graph_reuse(
         top_k=top_k,
         mxfp4=True,
         clamp=clamp,
-        hidden=9216,
+        hidden=hidden,
         intermediate=intermediate,
     )
     sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
@@ -597,8 +615,10 @@ def test_native_w4a8_configuration_selection_graph_reuse(
         context = case.create(config, weights)
         storage = _buffers(runtime, context)
         graphs = {}
-        # Keep EP32 CPU oracles small while retaining the specialized capacity.
-        sample_capacity = (8 if remaining_sms == 2 else 4) if runtime.world == 32 else capacity
+        # Keep H8192 and EP32 CPU oracles small while retaining the specialized capacity.
+        sample_capacity = (
+            4 if hidden == 8192 else ((8 if remaining_sms == 2 else 4) if runtime.world == 32 else capacity)
+        )
         if remaining_sms == 2:
 
             def check_planner_fallback():
@@ -629,9 +649,16 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            specialized = capacity in (32, 64, 128) and clamp < 0 and local_experts == 16 and top_k == 8
-            expected = f"megaMoeW4A8<9216,{intermediate},{runtime.world}>" if specialized else "megaMoeW4A8<9216,0,0>"
+            specialized_capacity = (hidden == 9216 and capacity in (32, 64, 128)) or (
+                hidden == 8192 and capacity in (16, 32, 64, 128)
+            )
+            specialized = specialized_capacity and clamp < 0 and local_experts == 16 and top_k == 8
+            expected = (
+                f"megaMoeW4A8<{hidden},{intermediate},{runtime.world}" if specialized else f"megaMoeW4A8<{hidden},0,0"
+            )
             assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
+            assert context.effective_kernel_config["tile_n"] == expected_tile_n
+            assert context.effective_kernel_config["load_stages"] == expected_load_stages
 
         runtime.collective(check_selected_kernel)
         for nominal in (sample_capacity, 1, 0, sample_capacity):
@@ -645,3 +672,53 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                         graphs[nominal].replay()
                 case.stream.synchronize()
                 _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+def test_native_w4a8_jit_profile_ep4_graph_correctness(configuration_runtime):
+    from mscclpp.ext.megamoe import compile_kernel, resolve_w4a8_kernel_config
+
+    runtime, torch = configuration_runtime, configuration_runtime.torch
+    if runtime.world != 4:
+        pytest.skip("W4A8 JIT graph correctness requires EP4")
+    config = runtime.config(
+        128,
+        local_experts=16,
+        top_k=8,
+        mxfp4=True,
+        hidden=8192,
+        intermediate=4096,
+    )
+    policy = resolve_w4a8_kernel_config(config)
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, module)
+        storage = _buffers(runtime, context)
+
+        def check_policy():
+            assert context.kernel_id == module.key
+            assert context.kernel_config == policy
+            effective = context.effective_kernel_config
+            assert {name: effective[name] for name in asdict(policy)} == asdict(policy)
+
+        runtime.collective(check_policy)
+        tokens = 4
+        first = _sample(config, tokens, "hot_first")
+        with torch.cuda.stream(case.stream):
+            _stage(storage, first)
+            _launch(context, storage, tokens, case.stream)
+        runtime.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        case.graphs.append(graph)
+        with torch.cuda.graph(graph, stream=case.stream):
+            _launch(context, storage, tokens, case.stream)
+        for pattern in ("hot_first", "mixed", "masked", "hot_last"):
+            sample = _sample(config, tokens, pattern)
+            expected = _routing_reference(config, sample, weights)
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                for _ in range(3):
+                    graph.replay()
+            case.stream.synchronize()
+            _check_output(runtime, storage, sample, expected)

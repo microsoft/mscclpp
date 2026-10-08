@@ -65,6 +65,26 @@ class MegaMoeContext {
   int kernelLoadStages() const;
   /// Return the routed transformed-weight pipeline depth.
   int kernelTransformStages() const;
+  /// Return the routed kernel warp count.
+  int kernelNumWarps() const;
+  /// Return the W4A8 transfer-role register budget, or zero for W8A16.
+  int kernelTransferRegisters() const;
+  /// Return the W4A8 loader-warp count, or zero for W8A16.
+  int kernelLoadWarps() const;
+  /// Return whether the W4A8 weight and activation loaders use separate pipelines.
+  bool kernelSplitPipelines() const;
+  /// Return the W4A8 epilogue token chunk, or zero for W8A16.
+  int kernelEpilogueTokens() const;
+  /// Return the W4A8 epilogue warp count, or zero for W8A16.
+  int kernelEpilogueWarps() const;
+  /// Return the W4A8 epilogue register budget, or zero for W8A16.
+  int kernelEpilogueRegisters() const;
+  /// Return the W4A8 dispatch chunk in bytes, or zero for W8A16.
+  int kernelDispatchChunk() const;
+  /// Return the W4A8 dispatch warp count, or zero for W8A16.
+  int kernelDispatchWarps() const;
+  /// Return the W4A8 dispatch pipeline depth, or zero for W8A16.
+  int kernelDispatchStages() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///

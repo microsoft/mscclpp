@@ -96,6 +96,16 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_tile_k", &MegaMoeContext::kernelTileK)
       .def_prop_ro("kernel_load_stages", &MegaMoeContext::kernelLoadStages)
       .def_prop_ro("kernel_transform_stages", &MegaMoeContext::kernelTransformStages)
+      .def_prop_ro("kernel_num_warps", &MegaMoeContext::kernelNumWarps)
+      .def_prop_ro("kernel_transfer_registers", &MegaMoeContext::kernelTransferRegisters)
+      .def_prop_ro("kernel_load_warps", &MegaMoeContext::kernelLoadWarps)
+      .def_prop_ro("kernel_split_pipelines", &MegaMoeContext::kernelSplitPipelines)
+      .def_prop_ro("kernel_epilogue_tokens", &MegaMoeContext::kernelEpilogueTokens)
+      .def_prop_ro("kernel_epilogue_warps", &MegaMoeContext::kernelEpilogueWarps)
+      .def_prop_ro("kernel_epilogue_registers", &MegaMoeContext::kernelEpilogueRegisters)
+      .def_prop_ro("kernel_dispatch_chunk", &MegaMoeContext::kernelDispatchChunk)
+      .def_prop_ro("kernel_dispatch_warps", &MegaMoeContext::kernelDispatchWarps)
+      .def_prop_ro("kernel_dispatch_stages", &MegaMoeContext::kernelDispatchStages)
       .def(
           "forward_shared",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {

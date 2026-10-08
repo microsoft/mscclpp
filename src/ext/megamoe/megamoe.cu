@@ -3,7 +3,7 @@
 
 #include "megamoe_roles.cuh"
 
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
 #include <stdexcept>
 
 #include "megamoe_w4a8_roles.cuh"
@@ -19,7 +19,7 @@ __device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::S
                                                  ? Pipeline::ThreadCategory::Consumer
                                                  : Pipeline::ThreadCategory::NonParticipant);
   params.producer_arv_count = 1;
-  params.consumer_arv_count = 256;
+  params.consumer_arv_count = ClusterM * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
   params.initializing_warp = Schedule::EpilogueBegin;
   return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
 }
@@ -174,17 +174,21 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
   return int(cudaMemcpyFromSymbol(events, w4TraceEvents, sizeof(w4TraceEvents)));
 }
 #endif
+#endif
 
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
 template <int Hidden, int Intermediate = 0, int WorldSize = 0>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* startSignal,
                                                             const int32_t* ids, const float* scores) {
   using namespace cute;
-  using Types = W4A8CollectiveTypes;
+  using Parameters = W4A8Parameters;
+  using Types = typename Parameters::Collective;
   using Mainloop = Types::Mainloop;
   using Load = Types::Load;
   using Accumulate = Types::Accumulate;
-  using Schedule = W4A8WarpSchedule;
+  using Schedule = typename Types::WarpSchedule;
+  static_assert(validW4RegisterBudget(Types::EpilogueWarps, Types::EpilogueRegisters, Types::TransferRegisters));
   NativeConfig configuration = parameters.config;
   if constexpr (WorldSize != 0) {
     static_assert(WorldSize == 4 || WorldSize == 32);
@@ -197,7 +201,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   }
   auto p = w4a8ParameterView(parameters, configuration);
   extern __shared__ __align__(1024) char storage[];
-  auto& s = *reinterpret_cast<W4A8SharedStorage*>(storage);
+  auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
   int warp = threadIdx.x / 32;
   int lane = threadIdx.x % 32;
   int cta = blockIdx.x % ClusterM;
@@ -215,32 +219,32 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (warp < Schedule::DispatchBegin) {
     if (threadIdx.x == 0) s.tmemReady.init(ClusterM);
     typename Load::Params loadParams{};
-    bool loadWarp =
-        warp == Schedule::LoadWarp || (!W4SplitPipelines && W4LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
+    bool loadWarp = warp == Schedule::LoadWarp ||
+                    (!Types::SplitPipelines && Types::LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
     loadParams.role =
         loadWarp ? Load::ThreadCategory::Producer
                  : (warp == Schedule::MmaWarp ? Load::ThreadCategory::Consumer : Load::ThreadCategory::NonParticipant);
     loadParams.is_leader = lane == 0 && cta == 0 && loadWarp;
     loadParams.transaction_bytes =
-        W4LoadWarps == 1
+        Types::LoadWarps == 1
             ? Mainloop::TmaTransactionBytes
             : (warp == Schedule::LoadWarp ? Mainloop::WeightTransactionBytes : Mainloop::ActivationTransactionBytes);
-    if constexpr (W4SplitPipelines) loadParams.transaction_bytes = Mainloop::WeightTransactionBytes;
+    if constexpr (Types::SplitPipelines) loadParams.transaction_bytes = Mainloop::WeightTransactionBytes;
     loadParams.initializing_warp = Schedule::LoadWarp;
     Load loadPipeline(s.mainloop, loadParams, ClusterShape{}, false_type{}, false_type{});
-    if constexpr (W4LoadWarps == 2 && !W4SplitPipelines) {
+    if constexpr (Types::LoadWarps == 2 && !Types::SplitPipelines) {
       if (warp == Schedule::LoadWarp) {
         // Both producers arrive with their own byte count; the stage becomes
         // ready only after both arrivals and all four TMA copies have completed.
         cutlass::arch::detail::initialize_barrier_array_pair_aligned<decltype(s.mainloop.full_barrier_),
-                                                                     decltype(s.mainloop.empty_barrier_), W4LoadStages>(
+                                                                     decltype(s.mainloop.empty_barrier_), Load::Stages>(
             s.mainloop.full_barrier_, s.mainloop.empty_barrier_, 2, 1);
       }
     } else {
       Load::init_barriers(s.mainloop, loadParams, ClusterShape{});
     }
     auto activationPipeline = [&](auto& activationStorage) {
-      if constexpr (W4SplitPipelines) {
+      if constexpr (Types::SplitPipelines) {
         auto activationParams = loadParams;
         activationParams.role =
             warp == Schedule::ActivationLoadWarp
@@ -257,7 +261,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule>(s.accumulated, warp);
     cutlass::arch::fence_barrier_init();
     loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
-    if constexpr (W4SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
+    if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     accumulatePipeline.init_masks(ClusterShape{});
     cutlass::arch::NamedBarrier::sync(Schedule::DispatchBegin * 32, 0);
     cute::cluster_arrive();
@@ -268,25 +272,27 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     int tokenBlocks = p.workspace.control->tokenBlocks;
     int tasks = tokenBlocks * (fc1TaskTiles<false>(intermediate) + fc2TaskTiles<false>(hidden));
     int localExperts = p.config.numExperts / p.config.worldSize;
-    ProblemShape shape1{2 * intermediate, w4StorageRow(p.workspace.poolRows), hidden, localExperts};
-    ProblemShape shape2{hidden, w4StorageRow(p.workspace.poolRows), intermediate, localExperts};
+    ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
+                        localExperts};
+    ProblemShape shape2{hidden, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), intermediate,
+                        localExperts};
 
     // Reconfigure the complete transfer warpgroup before its load/MMA roles diverge.
-    if (warp >= Schedule::EpilogueEnd) cutlass::arch::warpgroup_reg_dealloc<W4TransferRegisters>();
-    bool producerWarp = warp == Schedule::LoadWarp || (W4LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
+    if (warp >= Schedule::EpilogueEnd) cutlass::arch::warpgroup_reg_dealloc<Types::TransferRegisters>();
+    bool producerWarp = warp == Schedule::LoadWarp || (Types::LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
     if (producerWarp) {
       // Producers need initialized pipeline barriers, not the TMEM allocation.
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
                       lane, cta, cluster, tasks);
     } else {
       if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
-      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - W4LoadWarps) * 32, 2);
+      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * 32, 2);
       if (threadIdx.x == 0) {
         CUTE_UNROLL
         for (int peerCta = 0; peerCta < ClusterM; ++peerCta) s.tmemReady.arrive(peerCta);
       }
       s.tmemReady.wait(0);
-      using EpilogueTile = Shape<Int<TileM / ClusterM>, Int<W4TileN>>;
+      using EpilogueTile = Shape<Int<TileM / ClusterM>, Int<Parameters::Tiles::N>>;
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
@@ -346,7 +352,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
-  if (useSpecializedW4A8Kernel(config)) {
+  if (mscclpp::megamoe::detail::useSpecializedW4A8Kernel(config)) {
+    if (config.hidden == 8192) return config.worldSize == 4 ? megaMoeW4A8<8192, 4096, 4> : megaMoeW4A8<8192, 4096, 32>;
     if (config.intermediate == 4096)
       return config.worldSize == 4 ? megaMoeW4A8<9216, 4096, 4> : megaMoeW4A8<9216, 4096, 32>;
     if (config.intermediate == 4608)
@@ -361,6 +368,8 @@ W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
       return megaMoeW4A8<2176>;
     case 4096:
       return megaMoeW4A8<4096>;
+    case 8192:
+      return megaMoeW4A8<8192>;
     case 8704:
       return megaMoeW4A8<8704>;
     case 9216:

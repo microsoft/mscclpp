@@ -19,6 +19,8 @@ import tempfile
 import time
 
 _ARCHITECTURES = {(10, 0): "sm_100f", (10, 3): "sm_100f", (10, 7): "sm_100f"}
+_CACHE_FORMAT_VERSION = 2
+_BUILD_FORMAT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -60,26 +62,144 @@ class KernelConfig:
 
 
 @dataclass(frozen=True)
+class W4A8KernelConfig:
+    """Compile-time W4A8 policy for one external native JIT module."""
+
+    tile_n: int = 64
+    tile_k: int = 128
+    load_stages: int = 9
+    num_warps: int = 16
+    transfer_registers: int = 128
+    load_warps: int = 2
+    split_pipelines: bool = False
+    epilogue_tokens: int = 32
+    epilogue_warps: int = 4
+    epilogue_registers: int = 224
+    dispatch_chunk: int = 3072
+    dispatch_warps: int = 4
+    dispatch_stages: int = 1
+
+    def __post_init__(self):
+        allowed = (
+            ("tile_n", (32, 64, 128)),
+            ("tile_k", (128, 256, 512)),
+            ("num_warps", (12, 16)),
+            ("transfer_registers", (32, 64, 96, 128)),
+            ("load_warps", (1, 2)),
+            ("epilogue_tokens", (16, 32)),
+            ("epilogue_warps", (4, 8)),
+            ("dispatch_chunk", (512, 1024, 2048, 3072, 4096)),
+            ("dispatch_warps", (2, 3, 4)),
+            ("dispatch_stages", (1, 2)),
+        )
+        for name, values in allowed:
+            value = getattr(self, name)
+            if type(value) is not int or value not in values:
+                raise ValueError(f"{name} must be one of {values}")
+        if type(self.load_stages) is not int or not 2 <= self.load_stages <= 10:
+            raise ValueError("load_stages must be an integer in [2, 10]")
+        if type(self.epilogue_registers) is not int or not 128 <= self.epilogue_registers <= 224:
+            raise ValueError("epilogue_registers must be an integer in [128, 224]")
+        if self.epilogue_registers % 8:
+            raise ValueError("epilogue_registers must be divisible by 8")
+        if type(self.split_pipelines) is not bool:
+            raise ValueError("split_pipelines must be bool")
+        if self.split_pipelines and self.load_warps != 2:
+            raise ValueError("split_pipelines requires load_warps=2")
+        if self.tile_n % self.epilogue_tokens:
+            raise ValueError("epilogue_tokens must divide tile_n")
+        if self.dispatch_chunk % self.tile_k:
+            raise ValueError("dispatch_chunk must be divisible by tile_k")
+        if self.epilogue_warps + 4 + self.dispatch_warps > self.num_warps:
+            raise ValueError("warp roles exceed num_warps")
+        threads = self.num_warps * 32
+        epilogue_threads = self.epilogue_warps * 32
+        low_register_threads = threads - epilogue_threads - 128
+        registers = (
+            epilogue_threads * self.epilogue_registers + 128 * self.transfer_registers + low_register_threads * 32
+        )
+        if low_register_threads < 0 or registers > threads * 128:
+            raise ValueError("kernel configuration exceeds the CTA register budget")
+
+
+@dataclass(frozen=True)
 class CompiledKernel:
     """Prepared native module; retained by a context, never rebuilt by forward."""
 
-    config: KernelConfig
+    config: KernelConfig | W4A8KernelConfig
     path: str
     key: str
     cache_hit: bool
 
     def __post_init__(self):
-        if not isinstance(self.config, KernelConfig):
-            raise TypeError("config must be KernelConfig")
+        if not isinstance(self.config, (KernelConfig, W4A8KernelConfig)):
+            raise TypeError("config must be KernelConfig or W4A8KernelConfig")
         if not isinstance(self.path, str) or type(self.cache_hit) is not bool:
             raise TypeError("path must be a string and cache_hit must be bool")
         if self.key == "builtin":
-            if self.path or self.config != KernelConfig():
+            if self.path or not isinstance(self.config, KernelConfig) or self.config != KernelConfig():
                 raise ValueError("builtin kernel must use the default configuration and an empty path")
         elif not isinstance(self.key, str) or not re.fullmatch(r"[0-9a-f]{64}", self.key):
             raise ValueError("kernel key must be 'builtin' or a SHA256 hexadecimal digest")
         elif not isinstance(self.path, str) or not Path(self.path).is_absolute():
             raise ValueError("compiled kernel path must be absolute")
+
+
+def _config_kind(config):
+    if isinstance(config, KernelConfig):
+        return "w8a16"
+    if isinstance(config, W4A8KernelConfig):
+        return "w4a8"
+    raise TypeError("config must be KernelConfig or W4A8KernelConfig")
+
+
+def _config_from_build(build):
+    kind = build.get("kernel_kind")
+    values = build.get("config")
+    if not isinstance(values, dict):
+        raise ValueError("MegaMoE JIT manifest has an invalid configuration")
+    if kind == "w8a16":
+        return KernelConfig(**values)
+    if kind == "w4a8":
+        return W4A8KernelConfig(**values)
+    raise ValueError("MegaMoE JIT manifest has an unsupported kernel kind")
+
+
+def _compile_definitions(config):
+    if isinstance(config, KernelConfig):
+        return [
+            "-DMSCCLPP_MEGAMOE_JIT_W4A8=0",
+            f"-DMSCCLPP_MEGAMOE_TILE_N={config.tile_n}",
+            f"-DMSCCLPP_MEGAMOE_TILE_K={config.tile_k}",
+            f"-DMSCCLPP_MEGAMOE_TILE_M={config.tile_m}",
+            f"-DMSCCLPP_MEGAMOE_LOAD_STAGES={config.load_stages}",
+            f"-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES={config.transform_stages}",
+        ]
+    if isinstance(config, W4A8KernelConfig):
+        values = asdict(config)
+        names = {
+            "tile_n": "TILE_N",
+            "tile_k": "TILE_K",
+            "load_stages": "LOAD_STAGES",
+            "num_warps": "NUM_WARPS",
+            "transfer_registers": "TRANSFER_REGISTERS",
+            "load_warps": "LOAD_WARPS",
+            "split_pipelines": "SPLIT_PIPELINES",
+            "epilogue_tokens": "EPILOGUE_TOKENS",
+            "epilogue_warps": "EPILOGUE_WARPS",
+            "epilogue_registers": "EPILOGUE_REGISTERS",
+            "dispatch_chunk": "DISPATCH_CHUNK",
+            "dispatch_warps": "DISPATCH_WARPS",
+            "dispatch_stages": "DISPATCH_STAGES",
+        }
+        return [
+            "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",
+            *[
+                f"-DMSCCLPP_MEGAMOE_W4_{names[name]}={int(value) if isinstance(value, bool) else value}"
+                for name, value in values.items()
+            ],
+        ]
+    raise TypeError("config must be KernelConfig or W4A8KernelConfig")
 
 
 def _digest(value):
@@ -116,10 +236,20 @@ def _source_root():
 
 
 def _library(name):
-    path = _package_root() / "lib" / f"lib{name}.so.0"
-    if not path.is_file():
-        raise FileNotFoundError(f"Required native library not found: {path}")
-    return path.resolve()
+    installed = _package_root() / "lib" / f"lib{name}.so.0"
+    if installed.is_file():
+        return installed.resolve()
+    prefix = f"lib{name}.so"
+    loaded = sorted(
+        {
+            Path(line.split()[-1]).resolve()
+            for line in Path("/proc/self/maps").read_text().splitlines()
+            if "/" in line and Path(line.split()[-1]).name.startswith(prefix)
+        }
+    )
+    if len(loaded) == 1:
+        return loaded[0]
+    raise FileNotFoundError(f"Required native library not found: {installed}")
 
 
 def _check_device(device=None):
@@ -201,15 +331,20 @@ def _load_cached(key, cache_dir, environment):
         raise ValueError(f"Invalid MegaMoE JIT manifest: {folder}")
     build = manifest["build"]
     if (
-        manifest.get("version") != 1
+        manifest.get("version") != _CACHE_FORMAT_VERSION
         or manifest.get("key") != key
         or _digest(build) != key
         or build.get("environment") != environment
+        or build.get("version") != _BUILD_FORMAT_VERSION
+        or build.get("kernel_kind") not in ("w8a16", "w4a8")
         or not isinstance(build.get("config"), dict)
+        or not isinstance(build.get("definitions"), list)
         or not isinstance(manifest.get("module_sha256"), str)
     ):
         raise ValueError(f"Stale or incompatible MegaMoE JIT manifest: {folder}")
-    config = KernelConfig(**build["config"])
+    config = _config_from_build(build)
+    if build["definitions"] != _compile_definitions(config):
+        raise ValueError(f"Stale or incompatible MegaMoE JIT manifest: {folder}")
     module = folder / "kernel.so"
     if _file_hash(module) != manifest["module_sha256"]:
         raise ValueError(f"MegaMoE JIT module checksum mismatch: {module}")
@@ -274,11 +409,11 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
     ``MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS`` supplies path-separated matching runtime
     include directories when compiler and runtime packages are installed separately.
     """
-    if not isinstance(config, KernelConfig):
-        raise TypeError("config must be KernelConfig")
+    if not isinstance(config, (KernelConfig, W4A8KernelConfig)):
+        raise TypeError("config must be KernelConfig or W4A8KernelConfig")
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < float("inf"):
         raise ValueError("timeout must be finite and positive")
-    if config == KernelConfig():
+    if isinstance(config, KernelConfig) and config == KernelConfig():
         return CompiledKernel(config, "", "builtin", True)
     environment = runtime_fingerprint()
     source_root = _source_root()
@@ -286,9 +421,15 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"Required MegaMoE JIT source not found: {source}")
-    include_root = _package_root() / "include"
+    installed_include = _package_root() / "include"
+    checkout_include = source_root.parents[2] / "include"
+    build_include = _library("mscclpp").parent.parent / "include"
+    include_root = next(
+        (path for path in (installed_include, build_include) if (path / "mscclpp/version.hpp").is_file()),
+        installed_include,
+    )
     if not (include_root / "mscclpp/version.hpp").is_file():
-        raise FileNotFoundError(f"Installed MSCCL++ development headers are required: {include_root}")
+        raise FileNotFoundError(f"MSCCL++ development headers are required: {include_root}")
     cutlass_value = cutlass_root or os.environ.get("MSCCLPP_MEGAMOE_CUTLASS_ROOT")
     if cutlass_value is None:
         raise ValueError("Set MSCCLPP_MEGAMOE_CUTLASS_ROOT to the compatible CUTLASS checkout")
@@ -316,9 +457,12 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         for value in os.environ.get(name, "").split(os.pathsep)
         if value
     ]
+    definitions = _compile_definitions(config)
     build = {
-        "version": 1,
+        "version": _BUILD_FORMAT_VERSION,
+        "kernel_kind": _config_kind(config),
         "config": asdict(config),
+        "definitions": definitions,
         "environment": environment,
         "compiler": compiler_version,
         "cxx": _version(cxx),
@@ -359,18 +503,14 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 "-DMSCCLPP_USE_CUDA",
                 "-DMSCCLPP_MEGAMOE_JIT_MODULE=1",
                 f'-DMSCCLPP_MEGAMOE_JIT_ID="{key}"',
-                f"-DMSCCLPP_MEGAMOE_TILE_N={config.tile_n}",
-                f"-DMSCCLPP_MEGAMOE_TILE_K={config.tile_k}",
-                f"-DMSCCLPP_MEGAMOE_TILE_M={config.tile_m}",
-                f"-DMSCCLPP_MEGAMOE_LOAD_STAGES={config.load_stages}",
-                f"-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES={config.transform_stages}",
+                *definitions,
             ]
-            for include in (*extra_includes, include_root, source_root / "include", cutlass):
+            for include in (*extra_includes, checkout_include, include_root, source_root / "include", cutlass):
                 command.extend(["-I", str(include)])
             commands = [
                 [*command, "-c", str(source), "-o", str(obj)] for source, obj in zip(sources, objects, strict=True)
             ]
-            library_root = _package_root() / "lib"
+            library_root = _library("mscclpp").parent
             link = [
                 cxx,
                 "-shared",
@@ -391,7 +531,12 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 _run(link, log, timeout)
             for obj in objects:
                 obj.unlink()
-            manifest = {"version": 1, "key": key, "build": build, "module_sha256": _file_hash(module)}
+            manifest = {
+                "version": _CACHE_FORMAT_VERSION,
+                "key": key,
+                "build": build,
+                "module_sha256": _file_hash(module),
+            }
             (stage / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             os.replace(stage, destination)
     return CompiledKernel(config, str(destination / "kernel.so"), key, False)

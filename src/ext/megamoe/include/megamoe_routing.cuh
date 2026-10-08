@@ -78,7 +78,7 @@ template <bool FixedTokenCount, class P>
 __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids = nullptr,
                                     const float* scores = nullptr) {
   constexpr int WarpSize = 32;
-  constexpr int RoutingTileN = P::WeightMxfp4 ? W4TileN : TileN;
+  constexpr int RoutingTileN = P::Tiles::N;
   const auto& c = p.config;
   const auto& w = p.workspace;
   int warp = threadIdx.x / WarpSize;
@@ -268,8 +268,8 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
       w.inputReady[size_t(block) * ReadyStride] = 0;
       w.hiddenReady[size_t(block) * ReadyStride] = 0;
       if constexpr (P::WeightMxfp4)
-        for (int chunk = 0; chunk < w4InputChunks(c.hidden) - 1; ++chunk)
-          *w4InputChunkCounter(w, c.hidden, block, chunk) = 0;
+        for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(c.hidden) - 1; ++chunk)
+          *w4InputChunkCounter<typename P::Collective>(w, c.hidden, block, chunk) = 0;
     }
     if constexpr (FixedTokenCount) {
       int routesPerRank = tokens * c.topK;

@@ -13,7 +13,7 @@
 #include "megamoe_device.cuh"
 #include "megamoe_kernel.hpp"
 
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
 #include "megamoe_quantization.cuh"
 #endif
 
@@ -47,9 +47,11 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   const bool local = isLocalExpert(c);
   const int tileM = local ? LocalTileM : TileM;
   const int tileN = local ? LocalTileN : (c.weightMxfp4 ? W4TileN : TileN);
+  const int tokenStride = c.weightMxfp4 ? W4TokenStride : tileN;
+  const int inputChunks = c.weightMxfp4 ? (c.hidden + W4DispatchChunk - 1) / W4DispatchChunk : 1;
   const size_t rows =
       local ? aligned(c.maxTokens, LocalTokenAlignment) : aligned(routes + experts * (tileN - 1), tileN);
-  const size_t activationRows = c.weightMxfp4 ? rows / W4TileN * W4TokenStride : rows;
+  const size_t activationRows = c.weightMxfp4 ? rows / tileN * tokenStride : rows;
   if (activationRows > size_t(std::numeric_limits<int>::max()))
     throw std::invalid_argument("MegaMoE activation workspace exceeds 32-bit row indexing");
   if (rows > size_t(std::numeric_limits<int>::max()) ||
@@ -72,9 +74,9 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
     w.hiddenReady = at<int>(base, appendRegion(bytes, rows / tileN * readyStride * sizeof(int)));
     w.peerTokenCounts = at<int>(base, appendRegion(bytes, size_t(c.worldSize) * sizeof(int)));
     w.peerTokenOffsets = at<int>(base, appendRegion(bytes, size_t(c.worldSize + 1) * sizeof(int)));
-    if (c.weightMxfp4 && w4InputChunks(c.hidden) > 1)
-      w.inputChunkReady = at<int>(
-          base, appendRegion(bytes, rows / tileN * (w4InputChunks(c.hidden) - 1) * W4ReadyCounterStride * sizeof(int)));
+    if (c.weightMxfp4 && inputChunks > 1)
+      w.inputChunkReady =
+          at<int>(base, appendRegion(bytes, rows / tileN * (inputChunks - 1) * W4ReadyCounterStride * sizeof(int)));
     w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
     w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / tileN * sizeof(TokenBlock)));
     if (c.weightMxfp4) {
@@ -138,11 +140,13 @@ __global__ void packWeightsKernel(NativeConfig c, PackedWeights src, PackedWeigh
   }
 }
 
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
-using W4ScaleLayout = typename W4A8CollectiveTypes::Mainloop::LayoutSFA;
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
+template <class Types>
+using W4ScaleLayout = typename Types::Mainloop::LayoutSFA;
 
+template <class Types>
 __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedWeights dst,
-                                      W4ScaleLayout fc1ScaleLayout, W4ScaleLayout fc2ScaleLayout) {
+                                      W4ScaleLayout<Types> fc1ScaleLayout, W4ScaleLayout<Types> fc2ScaleLayout) {
   size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
   size_t stride = size_t(gridDim.x) * blockDim.x;
   int experts = c.numExperts / c.worldSize;
@@ -170,7 +174,8 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
   }
 }
 
-__global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat16* source) {
+template <class P>
+__global__ void quantizeInputKernel(P p, int tokens, const __bfloat16* source) {
   constexpr int ValuesPerThread = 8;
   constexpr int ThreadsPerBlockScale = 4;
   constexpr int BlockScalesPerCta = 128 / ThreadsPerBlockScale;
@@ -214,11 +219,12 @@ __global__ void quantizeInputKernel(W4A8Parameters p, int tokens, const __bfloat
   }
 }
 
-W4ScaleLayout makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
+template <class Types>
+W4ScaleLayout<Types> makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
   using namespace cute;
   ProblemShape shape{m, n, k, experts};
-  if (!activation) return W4A8CollectiveTypes::ScaleConfig::tile_atom_to_shape_SFA(shape);
-  auto layout = W4A8CollectiveTypes::ScaleConfig::tile_atom_to_shape_SFB(shape);
+  if (!activation) return Types::ScaleConfig::tile_atom_to_shape_SFA(shape);
+  auto layout = Types::ScaleConfig::tile_atom_to_shape_SFB(shape);
   return make_layout(cute::shape(layout), make_stride(get<0>(cute::stride(layout)), get<1>(cute::stride(layout)),
                                                       make_stride(_0{}, int32_t(0))));
 }
@@ -250,12 +256,12 @@ P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, 
     args.dA = make_stride(int64_t(k), _1{}, int64_t(m) * k);
     args.ptr_B = reinterpret_cast<decltype(args.ptr_B)>(input);
     args.dB = make_stride(int64_t(k), _1{}, int64_t(0));
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
     if constexpr (P::WeightMxfp4) {
       args.ptr_SFA = reinterpret_cast<decltype(args.ptr_SFA)>(weightScale);
-      args.layout_SFA = makeW4ScaleLayout(m, rows, k, experts, false);
+      args.layout_SFA = makeW4ScaleLayout<typename P::Collective>(m, rows, k, experts, false);
       args.ptr_SFB = reinterpret_cast<decltype(args.ptr_SFB)>(inputScale);
-      args.layout_SFB = makeW4ScaleLayout(m, rows, k, experts, true);
+      args.layout_SFB = makeW4ScaleLayout<typename P::Collective>(m, rows, k, experts, true);
       const size_t actualSfaBytes = size_t(cosize(args.layout_SFA));
       const size_t actualSfbBytes = size_t(cosize(args.layout_SFB));
       const size_t expectedSfaBytes = size_t(m) * (k / 32) * experts;
@@ -276,7 +282,7 @@ P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, 
     return Mainloop::to_underlying_arguments(shape, args, nullptr);
   };
   if constexpr (P::WeightMxfp4) {
-    const int activationRows = w4StorageRow(p.workspace.poolRows);
+    const int activationRows = w4StorageRow<typename P::Tiles>(p.workspace.poolRows);
     p.fc1 = make(2 * c.intermediate, c.hidden, activationRows, weights.fc1, weights.fc1Scale,
                  p.workspace.quantizedInput, p.workspace.inputScale);
     p.fc2 = make(c.hidden, c.intermediate, activationRows, weights.fc2, weights.fc2Scale, p.workspace.quantizedHidden,
@@ -306,7 +312,7 @@ cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, c
 }  // namespace detail
 
 struct KernelPlan {
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
   std::variant<detail::Parameters<false>, detail::Parameters<true>, detail::Parameters<false, true>,
                detail::Parameters<true, true>, detail::W4A8Parameters>
       params;
@@ -359,7 +365,7 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
     layout.routingPackets =
         detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(mscclpp::LLPacket));
   }
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {
     layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
     layout.quantizedInputScale =
@@ -383,15 +389,19 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
   if (!source.fc1 || !source.fc1Scale || !source.fc2 || !source.fc2Scale || !destination.fc1 || !destination.fc1Scale ||
       !destination.fc2 || !destination.fc2Scale)
     throw std::invalid_argument("MegaMoE weight buffers must be non-null");
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {
     int experts = c.numExperts / c.worldSize;
-    auto fc1ScaleLayout = detail::makeW4ScaleLayout(2 * c.intermediate, 1, c.hidden, experts, false);
-    auto fc2ScaleLayout = detail::makeW4ScaleLayout(c.hidden, 1, c.intermediate, experts, false);
-    if (size_t(cute::cosize(fc1ScaleLayout)) != size_t(experts) * 2 * c.intermediate * (c.hidden / 32) ||
-        size_t(cute::cosize(fc2ScaleLayout)) != size_t(experts) * c.hidden * (c.intermediate / 32))
-      throw std::invalid_argument("MegaMoE W4A8 weight-scale layout size is unsupported");
-    detail::packW4A8WeightsKernel<<<256, 256, 0, stream>>>(c, source, destination, fc1ScaleLayout, fc2ScaleLayout);
+    auto pack = [&]<class Types>() {
+      auto fc1ScaleLayout = detail::makeW4ScaleLayout<Types>(2 * c.intermediate, 1, c.hidden, experts, false);
+      auto fc2ScaleLayout = detail::makeW4ScaleLayout<Types>(c.hidden, 1, c.intermediate, experts, false);
+      if (size_t(cute::cosize(fc1ScaleLayout)) != size_t(experts) * 2 * c.intermediate * (c.hidden / 32) ||
+          size_t(cute::cosize(fc2ScaleLayout)) != size_t(experts) * c.hidden * (c.intermediate / 32))
+        throw std::invalid_argument("MegaMoE W4A8 weight-scale layout size is unsupported");
+      detail::packW4A8WeightsKernel<Types>
+          <<<256, 256, 0, stream>>>(c, source, destination, fc1ScaleLayout, fc2ScaleLayout);
+    };
+    pack.template operator()<detail::W4A8CollectiveTypes>();
     MSCCLPP_CUDATHROW(cudaGetLastError());
     return;
   }
@@ -429,9 +439,10 @@ KernelResources preflightKernel(const NativeConfig& c) {
     resources.ctas = std::min(resources.ctas, clusters * detail::ClusterM);
     if (resources.ctas < detail::ClusterM) throw std::runtime_error(name + " cannot keep a two-CTA cluster resident");
   };
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {
-    configure(detail::w4a8KernelEntry(c), detail::W4Threads, detail::EntryRegisters, sizeof(detail::W4A8SharedStorage));
+    configure(detail::w4a8KernelEntry(c), detail::W4A8Parameters::ThreadCount, detail::EntryRegisters,
+              sizeof(detail::W4A8SharedStorage));
     return resources;
   }
 #endif
@@ -466,7 +477,7 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
   plan->ctas = resources.ctas;
   plan->sharedBytes = resources.sharedBytes;
   plan->localExpert = detail::isLocalExpert(c);
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {
     plan->params = detail::makeParameters<detail::W4A8Parameters>(c, symmetric, peers, workspace, weights);
     return plan;
@@ -510,7 +521,7 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
         cudaLaunchAttribute attribute{};
         auto launch = detail::makeLaunchConfig(plan->ctas, std::decay_t<decltype(params)>::ThreadCount,
                                                plan->sharedBytes, stream, attribute);
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
         if constexpr (W4A8) {
           if (tokens) {
             dim3 threads(128);

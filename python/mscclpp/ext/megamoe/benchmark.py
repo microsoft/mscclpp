@@ -107,6 +107,14 @@ def main():
     parser.add_argument("--transform-stages", type=int, default=7)
     parser.add_argument("--tile-k", type=int, default=128)
     parser.add_argument("--cache-dir", default=None, help="local native kernel JIT cache")
+    parser.add_argument(
+        "--w4-profile",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="JSON",
+        help="JIT the exact W4A8 policy from JSON (omit JSON to use the packaged profile)",
+    )
     parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
     parser.add_argument("--rtol", type=float, default=0.05)
     parser.add_argument("--atol", type=float, default=0.01)
@@ -118,8 +126,10 @@ def main():
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     if args.e5m2 and args.mxfp4:
         parser.error("--e5m2 and --mxfp4 are mutually exclusive")
-    if args.mxfp4 and args.hidden not in (128, 384, 2176, 4096, 8704, 9216):
-        parser.error("--mxfp4 hidden must have a compiled specialization: 128, 384, 2176, 4096, 8704, or 9216")
+    if args.mxfp4 and args.hidden not in (128, 384, 2176, 4096, 8192, 8704, 9216):
+        parser.error("--mxfp4 hidden must have a compiled specialization: 128, 384, 2176, 4096, 8192, 8704, or 9216")
+    if args.w4_profile is not None and not args.mxfp4:
+        parser.error("--w4-profile requires --mxfp4")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
 
@@ -128,6 +138,7 @@ def main():
     from mscclpp import Communicator, TcpBootstrap
     from .api import MegaMoE, MegaMoEConfig, is_available
     from .jit import KernelConfig, compile_kernel
+    from .w4a8 import resolve_w4a8_kernel_config
 
     if not is_available():
         parser.error("MSCCL++ lacks native MegaMoE: build with MSCCLPP_BUILD_EXT_MEGAMOE=ON")
@@ -138,18 +149,6 @@ def main():
     if not torch.cuda.is_available():
         parser.error("native MegaMoE requires SM100-family CUDA GPUs")
     torch.cuda.set_device(local_rank)
-    kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
-    if args.mxfp4 and kernel_config != KernelConfig():
-        parser.error("--mxfp4 requires default JIT flags and uses the fixed M256/N64/K128/load9 kernel")
-    kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
-    torch.manual_seed(args.seed + rank)
-    # Gloo is used only for rendezvous, reporting, and the untimed reference.
-    # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
-    dist.init_process_group("gloo", rank=rank, world_size=world)
-    bootstrap = TcpBootstrap.create(rank, world)
-    port = args.bootstrap_port or int(os.environ["MASTER_PORT"]) + 1
-    bootstrap.initialize(f"{os.environ['MASTER_ADDR']}:{port}")
-    communicator = Communicator(bootstrap)
     config = MegaMoEConfig(
         rank=rank,
         world_size=world,
@@ -163,6 +162,20 @@ def main():
         weight_mxfp4=args.mxfp4,
         gate_up_clamp=args.gate_up_clamp,
     )
+    kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
+    if args.mxfp4 and kernel_config != KernelConfig():
+        parser.error("--mxfp4 uses W4A8 policies; the generic --tile/--stage flags must stay at their defaults")
+    if args.w4_profile is not None:
+        kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
+    kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
+    torch.manual_seed(args.seed + rank)
+    # Gloo is used only for rendezvous, reporting, and the untimed reference.
+    # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
+    dist.init_process_group("gloo", rank=rank, world_size=world)
+    bootstrap = TcpBootstrap.create(rank, world)
+    port = args.bootstrap_port or int(os.environ["MASTER_PORT"]) + 1
+    bootstrap.initialize(f"{os.environ['MASTER_ADDR']}:{port}")
+    communicator = Communicator(bootstrap)
     device = torch.device("cuda", local_rank)
     weights = _weights(config, device)
     start = time.perf_counter()

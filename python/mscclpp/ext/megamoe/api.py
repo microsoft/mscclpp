@@ -112,7 +112,8 @@ class MegaMoE:
     Order use on different streams explicitly with CUDA events. Shared experts,
     squash, unsquash, residuals, and router-weight normalization are not included.
 
-    ``kernel`` selects a routed ``KernelConfig`` or prepared ``CompiledKernel``.
+    ``kernel`` selects a routed ``KernelConfig``, ``W4A8KernelConfig``, or
+    prepared ``CompiledKernel``.
     Preparing modules before collective construction is recommended; neither
     forward nor graph replay compiles or tunes. The default uses the builtin
     kernel without a compiler dependency. Local shared experts remain unchanged.
@@ -140,7 +141,7 @@ class MegaMoE:
             )
         import torch
         from mscclpp import _mscclpp
-        from .jit import CompiledKernel, KernelConfig, compile_kernel
+        from .jit import CompiledKernel, KernelConfig, W4A8KernelConfig, compile_kernel
 
         if not torch.cuda.is_available() or torch.version.hip:
             raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100-family GPU; ROCm is unsupported")
@@ -166,14 +167,17 @@ class MegaMoE:
         _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
         if kernel is None:
             kernel = KernelConfig()
-        if not isinstance(kernel, (KernelConfig, CompiledKernel)):
-            raise TypeError("kernel must be KernelConfig, CompiledKernel, or None")
-        selected = kernel if isinstance(kernel, KernelConfig) else kernel.config
-        if config.weight_mxfp4 and selected != KernelConfig():
-            raise ValueError("MXFP4/MXFP8 currently supports the builtin kernel specialization only")
+        if not isinstance(kernel, (KernelConfig, W4A8KernelConfig, CompiledKernel)):
+            raise TypeError("kernel must be KernelConfig, W4A8KernelConfig, CompiledKernel, or None")
+        selected = kernel if isinstance(kernel, (KernelConfig, W4A8KernelConfig)) else kernel.config
+        if config.weight_mxfp4:
+            if isinstance(selected, KernelConfig) and selected != KernelConfig():
+                raise ValueError("MXFP4/MXFP8 requires the builtin kernel or a W4A8KernelConfig")
+        elif isinstance(selected, W4A8KernelConfig):
+            raise ValueError("W4A8KernelConfig requires weight_mxfp4=True")
         if (config.world_size, config.num_experts, config.top_k) == (1, 1, 1) and selected != KernelConfig():
             raise ValueError("JIT specialization applies to routed experts; the local shared kernel is fixed")
-        if isinstance(kernel, KernelConfig):
+        if isinstance(kernel, (KernelConfig, W4A8KernelConfig)):
             kernel = compile_kernel(kernel)
         self._kernel = kernel
         native_config = _mscclpp.CppMegaMoeConfig()
@@ -200,13 +204,29 @@ class MegaMoE:
     @property
     def effective_kernel_config(self):
         """Actual tile and pipeline values used by the native kernel."""
-        return {
+        policy = {
             "tile_m": self._native.kernel_tile_m,
             "tile_n": self._native.kernel_tile_n,
             "tile_k": self._native.kernel_tile_k,
             "load_stages": self._native.kernel_load_stages,
             "transform_stages": self._native.kernel_transform_stages,
         }
+        if self.config.weight_mxfp4:
+            policy.update(
+                {
+                    "num_warps": self._native.kernel_num_warps,
+                    "transfer_registers": self._native.kernel_transfer_registers,
+                    "load_warps": self._native.kernel_load_warps,
+                    "split_pipelines": self._native.kernel_split_pipelines,
+                    "epilogue_tokens": self._native.kernel_epilogue_tokens,
+                    "epilogue_warps": self._native.kernel_epilogue_warps,
+                    "epilogue_registers": self._native.kernel_epilogue_registers,
+                    "dispatch_chunk": self._native.kernel_dispatch_chunk,
+                    "dispatch_warps": self._native.kernel_dispatch_warps,
+                    "dispatch_stages": self._native.kernel_dispatch_stages,
+                }
+            )
+        return policy
 
     @property
     def kernel_id(self):

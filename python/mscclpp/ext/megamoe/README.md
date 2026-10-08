@@ -100,7 +100,9 @@ SwiGLU, then quantizes the unweighted hidden row to MXFP8. FC2 accumulates in
 FP32, applies the FP32 router weight, and emits BF16 partials for the existing
 FP32 top-k combination.
 
-Dispatch uses one 3 KiB input buffer with the corresponding K32 scales.
+Dispatch uses one 3 KiB input buffer with the corresponding K32 scales in the
+builtin policy. External W4A8 policies may select another validated chunk size;
+the packaged H8192/I4096/capacity-128 profile uses 4 KiB.
 Each chunk is published only after its values have reached the local input pool
 and its scales are visible in the MMA layout. The activation loader waits for all
 valid rows of the current N tile's chunk, then issues its K128 TMA loads; MMA
@@ -132,10 +134,11 @@ CTA arrivals; every CTA waits for peer completion before reducing peer-written p
 The W4A8 path is routed-only and uses the builtin SM100-family
 M256/N64/K128/load9 block-scaled specialization with 16 warps. Separate weight
 and activation loader warps share a nine-stage pipeline. Both must publish their
-TMA transaction counts before a stage can become ready. Mainloop warps retain
-128 registers, independently of the 32-register dispatch warps. FC1 quantization
-uses warp reductions over live token groups without staging the activated values
-back through shared memory or iterating through inactive groups.
+TMA transaction counts before a stage can become ready. Builtin W4A8 always
+retains the four-warp epilogue, 128-register transfer budget, and 3 KiB dispatch
+chunks. External `W4A8KernelConfig` modules can change every W4 policy value
+without adding a shape-specific CUDA entrypoint. FC1 quantization uses warp
+reductions over live token groups without iterating through inactive groups.
 MMA rounds the live token count up to 16 rows, and the second CTA's activation
 load shifts to the corresponding runtime half-tile. Accumulator and scale storage
 retain their allocated pitch. This reduces padded MMA work without reloading
@@ -154,6 +157,11 @@ H9216, and I4096 or I4608 select configuration-specialized kernels that assume
 every rank has the same live token count. These kernels calculate route offsets
 directly; other W4A8 configurations read token-count packets and build dynamic
 prefixes.
+Unclamped H8192/I4096 top-8 contexts with 16 local experts also use fixed-token
+specializations for capacities 16, 32, 64, and 128. The builtin uses the default
+N64 policy for every capacity. The packaged external profile keeps N64 for
+capacities through 64 and selects N128/load7, eight 208-register epilogue warps,
+a 64-register transfer group, and 4 KiB dispatch for capacity 128.
 Fixed-token routing retains each thread's route through the count/fill phases
 when planner capacity permits, and falls back to rereading routes with smaller
 CTA budgets. Warp-aggregated expert updates share count and cursor atomics, and
@@ -165,12 +173,11 @@ Launch resources are borrowed from grid-constant parameters rather than copied
 into thread-local memory.
 Other capacities, intermediate widths, expert/top-k counts, and clamped
 activations use runtime configuration within a compiled hidden specialization.
-Current W4A8 hidden specializations are 128, 384, 2176, 4096, 8704, and 9216.
+Current W4A8 hidden specializations are 128, 384, 2176, 4096, 8192, 8704, and 9216.
 Adding another hidden size requires adding an explicit `megaMoeW4A8<Hidden>`
 case in `w4a8KernelEntry`; there is no dynamic `Hidden=0` W4A8 kernel.
-Local shared experts and routed
-JIT specializations remain W8A16; passing a custom `KernelConfig` with
-`weight_mxfp4=True` is rejected.
+Local shared experts remain W8A16-only. Routed JIT modules support both
+`KernelConfig` (W8A16) and `W4A8KernelConfig` (W4A8).
 
 For an experimental native warp timeline, build with
 `-DMSCCLPP_MEGAMOE_W4_TRACE=1`. This enables bounded `%globaltimer` records on
@@ -188,10 +195,11 @@ releases each buffer only after its asynchronous use; the default shared-barrier
 schedule remains unchanged. Per-input waits are sequential observations, not
 independent TMA transfer-duration measurements.
 
-For controlled compile-time experiments, the `MSCCLPP_MEGAMOE_W4_` macros in
-`megamoe_specialization.hpp` select the token/K tiles, load stages, warp count,
-mainloop register budget, epilogue token chunk, and dispatch buffer geometry.
-Keep definitions consistent across a library's translation units and across ranks.
+For controlled compile-time experiments, the `MSCCLPP_MEGAMOE_W4_` definitions
+select the token/K tiles, load stages, warp count, transfer and epilogue register
+budgets, epilogue warp/token counts, and dispatch buffer geometry. The Python
+JIT builder emits these definitions from the normalized `W4A8KernelConfig`;
+keep manually supplied definitions consistent across translation units and ranks.
 
 Routing IDs must be in `[0,E)` and weights finite. Optional
 `validate_routing=True` checks values with a host synchronization and cannot be
@@ -302,9 +310,11 @@ These are different measurement scopes, not a kernel optimization; retain the
 isolated result when reporting independent-call latency.
 
 Add `--mxfp4` to benchmark the routed W4A8 path. This keeps BF16 public inputs,
-includes the input MXFP8 quantization kernel in timing, and reports the fixed
-effective M256/N64/K128/load9 specialization. It cannot be combined with
-`--e5m2` or nondefault JIT tile/stage flags.
+includes the input MXFP8 quantization kernel in timing, and uses the builtin
+M256/N64/K128/load9 specialization by default. Add `--w4-profile` to resolve and
+JIT the packaged exact-match W4 policy, or `--w4-profile path.json` for another
+validated profile. It cannot be combined with `--e5m2` or the generic W8A16
+tile/stage flags.
 
 ### Complete synthetic MoE layer
 
@@ -407,28 +417,43 @@ counts. Profiler samples can be distorted and must not replace unprofiled latenc
 
 ### JIT kernel specializations
 
-JIT compiles the **same native CUDA template** with different output-feature,
-token, and reduction tiles plus pipeline depths, leaving two-CTA clusters, two
-accumulator stages, packed conversion, numerical semantics, and the local shared
-kernel unchanged. Routed `tile_m` supports 128 and 256, and `tile_k` supports
-32, 64, and 128; M128 requires K64 or K128 so every scale transaction remains
-128-byte aligned. The local shared kernel remains M256/K128. The default
+JIT compiles the **same native CUDA templates** under a versioned internal ABI.
+`KernelConfig` selects W8A16 output-feature, token, reduction, and pipeline
+values. `W4A8KernelConfig` selects the W4A8 token/K tiles, loader policy, warp
+layout, register budgets, epilogue geometry, and dispatch pipeline. Two-CTA
+clusters, two accumulator stages, numerical semantics, and the local shared
+kernel remain unchanged. W8A16 routed `tile_m` supports 128 and 256, and
+`tile_k` supports 32, 64, and 128; M128 requires K64 or K128. Its default
 M256/N32/K128/load8/transform7 kernel remains precompiled and needs no compiler.
+Every `W4A8KernelConfig`, including the default N64 policy, builds a JIT module;
+omitting `kernel` still selects the builtin W4A8 kernel.
 
 ```python
-from mscclpp.ext.megamoe import KernelConfig, compile_kernel, MegaMoE
+from mscclpp.ext.megamoe import (
+    KernelConfig,
+    MegaMoE,
+    compile_kernel,
+    resolve_w4a8_kernel_config,
+)
 
 kernel = compile_kernel(
     KernelConfig(tile_m=128, tile_n=64, load_stages=6, transform_stages=6, tile_k=64)
 )
 moe = MegaMoE(config, communicator, fc1, fc1_scale, fc2, fc2_scale, kernel=kernel)
+
+w4_policy = resolve_w4a8_kernel_config(w4_config)
+w4_kernel = compile_kernel(w4_policy)
+w4_moe = MegaMoE(w4_config, communicator, fc1, sf1, fc2, sf2, kernel=w4_kernel)
 ```
 
 Prepare modules outside collective construction and CUDA Graph capture.
 `load_stages` jointly controls raw weights, scales, and activation prefetch;
 `transform_stages` controls converted weights in TMEM. M, N, K, and stage counts
 must fit TMEM, compiled shared memory, registers, and resident-cluster limits.
-`moe.kernel_id`, `moe.kernel_config`, and `moe.shared_bytes` report the selection.
+`moe.kernel_id`, `moe.kernel_config`, `moe.effective_kernel_config`, and
+`moe.shared_bytes` report the selection. W4A8 JIT launches stage BF16 input and
+routing metadata into the registered ABI buffers before the module quantizes
+and launches, preserving CUDA Graph replay semantics.
 
 Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
 `MSCCLPP_MEGAMOE_NVCC` selects nvcc >=13.0 and `CUDA_HOME` selects runtime
@@ -441,8 +466,9 @@ The cache defaults to `$XDG_CACHE_HOME/mscclpp/megamoe` (or
 `~/.cache/mscclpp/megamoe`); override it with `MSCCLPP_MEGAMOE_CACHE_DIR`.
 File locking avoids duplicate builds on a host. Modules and manifests use
 content-addressed keys and checksums; compilation failures are explicit and
-logs are retained. Kernel cache keys cover native libraries, JIT sources,
-headers, and toolchains, but not benchmark-only frontend code. Offline profile
+logs are retained. Cache format 2 records the precision and every normalized
+policy definition, matching internal JIT ABI v2. Kernel cache keys cover native
+libraries, JIT sources, headers, and toolchains, but not benchmark-only frontend code. Offline profile
 selection separately fingerprints the frontend, so a frontend change rejects a
 stale profile without recompiling an otherwise identical kernel.
 `load_cached_kernel(key)` reuses a compatible module without nvcc or a CUTLASS
@@ -453,6 +479,32 @@ performance policy such as GPU clocks or power limits.
 Different variants require separate contexts and workspace layouts. Keep their
 graphs/contexts alive while in use; neither forward nor replay compiles, tunes,
 or changes the selected variant. All ranks must select the same variant.
+
+### Packaged W4A8 JIT policy profile
+
+[`megamoe_w4a8_profiles.json`](megamoe_w4a8_profiles.json) is a versioned,
+strict-schema policy file. `resolve_w4a8_kernel_config()` exactly matches EP
+size, capacity, H/I, local experts, top-k, precision, and clamp mode. Missing
+coverage raises `W4A8KernelProfileMismatchError`; there is no nearest-shape or
+builtin fallback.
+
+The packaged H8192/I4096, top-8, 16-local-expert entries cover EP4 and EP32:
+
+| Capacity | W4A8 policy |
+| ---: | --- |
+| 16 / 32 / 64 | N64/K128/load9, 4 epilogue warps, 224 epilogue registers, 128 transfer registers, 3 KiB dispatch |
+| 128 | N128/K128/load7, 8 epilogue warps, 208 epilogue registers, 64 transfer registers, 4 KiB dispatch |
+
+```python
+from mscclpp.ext.megamoe import compile_kernel, resolve_w4a8_kernel_config
+
+policy = resolve_w4a8_kernel_config(config)
+module = compile_kernel(policy)
+```
+
+Use `load_w4a8_kernel_profiles(path)` to validate and inspect another profile
+before collective construction. JSON policy values, not H8192-specific C++
+constants or entry functions, own the tuned capacity-128 selection.
 
 ### Offline autotuning and profile reuse
 
@@ -567,7 +619,8 @@ non-default kernels, module lifetime, and graph replay:
 
 ```bash
 python -m pytest --noconftest \
-  python/test/test_megamoe_jit.py python/test/test_megamoe_autotune.py -q
+  python/test/test_megamoe_jit.py python/test/test_megamoe_w4a8.py \
+  python/test/test_megamoe_autotune.py -q
 ```
 
 Routing-planner boundary, masking, and changing-routing graph tests:
@@ -578,4 +631,5 @@ MSCCLPP_TEST_MEGAMOE_ROUTING=1 python -m pytest --noconftest \
 ```
 
 The same file supports two/four-rank `torchrun` execution. Add
-`MSCCLPP_TEST_MEGAMOE_JIT=1` to cover each routed JIT specialization.
+`MSCCLPP_TEST_MEGAMOE_JIT=1` to cover routed JIT specializations, including the
+packaged H8192/I4096 W4A8 policy and staged-input CUDA Graph replay on EP4.

@@ -39,7 +39,7 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 // Reuse CUTLASS A/SF layouts with an explicit token-tile pipeline. N32 needs
 // quarter-tile SFB selection, which the stock collective does not implement.
-template <class Base>
+template <class Base, int TileN, int TileK, int LoadStages, bool SplitPipelines>
 struct W4A8Mainloop {
   using ElementA = typename Base::ElementA;
   using ElementB = typename Base::ElementB;
@@ -53,18 +53,18 @@ struct W4A8Mainloop {
   using AtomThrShapeMNK = typename Base::AtomThrShapeMNK;
   using MainloopPipeline = typename Base::MainloopPipeline;
   using MainloopPipelineState = typename MainloopPipeline::PipelineState;
-  using KernelTile = cute::Shape<cute::Int<256>, cute::Int<W4TileN>, cute::Int<W4TileK>>;
+  using KernelTile = cute::Shape<cute::Int<256>, cute::Int<TileN>, cute::Int<TileK>>;
   using TiledMma = decltype(cute::make_tiled_mma(
       cute::SM100_MMA_MXF8F6F4_2x1SM_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 256,
-                                        W4TileN, cute::UMMA::Major::K, cute::UMMA::Major::K>{}));
+                                        TileN, cute::UMMA::Major::K, cute::UMMA::Major::K>{}));
   using ScaleMma = typename Base::TiledMMA_SF;
   using SmemLayoutA = typename Base::SmemLayoutA;
   using SmemLayoutSFA = typename Base::SmemLayoutSFA;
   using SmemLayoutSFB = typename Base::SmemLayoutSFB;
   using SmemLayoutB = decltype(cute::UMMA::tile_to_mma_shape(
       typename Base::SmemLayoutAtomB{},
-      cute::append(cute::partition_shape_B(TiledMma{}, cute::make_shape(cute::Int<W4TileN>{}, cute::Int<W4TileK>{})),
-                   cute::Int<W4LoadStages>{}),
+      cute::append(cute::partition_shape_B(TiledMma{}, cute::make_shape(cute::Int<TileN>{}, cute::Int<TileK>{})),
+                   cute::Int<LoadStages>{}),
       cute::Step<cute::_1, cute::_2, cute::_3>{}));
   using ClusterLayout = typename Base::Params::ClusterLayout_VMNK;
   using TmaB = decltype(cute::make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
@@ -147,7 +147,7 @@ struct W4A8Mainloop {
     auto sfa = params.tma_load_sfa.get_tma_tensor(cute::shape(params.layout_SFA));
     auto originalSfb = params.tma_load_sfb.get_tma_tensor(cute::shape(params.layout_SFB));
     auto sfbShape = make_shape(
-        make_shape(cute::shape<0, 0>(originalSfb), make_shape(Int<128 / W4TileN>{}, cute::shape<0, 1>(originalSfb))),
+        make_shape(cute::shape<0, 0>(originalSfb), make_shape(Int<128 / TileN>{}, cute::shape<0, 1>(originalSfb))),
         cute::shape<1>(originalSfb), cute::shape<2>(originalSfb));
     auto sfbStride = make_stride(make_stride(stride<0, 0>(originalSfb), make_stride(_0{}, stride<0, 1>(originalSfb))),
                                  stride<1>(originalSfb), stride<2>(originalSfb));
@@ -221,7 +221,7 @@ struct W4A8Mainloop {
     auto originalB = inputs.tBgB_nkl(_, n, _, expert);
     // A two-CTA MMA splits activation rows at its runtime N/2, not the allocated tile's N/2.
     auto rowLayout = params.tma_load_b.get_tma_tensor(make_shape(1, 1, 1)).layout();
-    auto rowOffset = rowLayout(make_coord(cta * (mmaRows(validRows) - W4TileN) / 2, 0, 0));
+    auto rowOffset = rowLayout(make_coord(cta * (mmaRows(validRows) - TileN) / 2, 0, 0));
     auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
@@ -264,7 +264,7 @@ struct W4A8Mainloop {
     auto [loadState, accState] = states;
     auto [tiled, a, b, sfa, sfb, copyA, sourceA, targetA, copyB, sourceB, targetB] = inputs;
     tiled.idesc_.n_dim_ = mmaRows(validRows) >> 3;
-    sfb.data() = sfb.data().get() + (get<1>(coord) % (128 / W4TileN)) * (W4TileN / 32);
+    sfb.data() = sfb.data().get() + (get<1>(coord) % (128 / TileN)) * (TileN / 32);
     traceW4(W4TracePhase::AccumulatorFree, true, accState.index());
     accPipe.producer_acquire(accState);
     traceW4(W4TracePhase::AccumulatorFree, false, accState.index());
@@ -279,14 +279,14 @@ struct W4A8Mainloop {
       // Nonblocking probes sample both operands before either blocking wait.
       weightReady +=
           cutlass::arch::ClusterBarrier::test_wait(loadPipe.producer_get_barrier(loadState), loadState.phase(), 1);
-      if constexpr (W4SplitPipelines)
+      if constexpr (SplitPipelines)
         activationReady += cutlass::arch::ClusterBarrier::test_wait(activationPipe.producer_get_barrier(loadState),
                                                                     loadState.phase(), 1);
 #endif
       auto start = traceW4Clock();
       loadPipe.consumer_wait(loadState);
       waitNs += traceW4Clock() - start;
-      if constexpr (W4SplitPipelines) {
+      if constexpr (SplitPipelines) {
         start = traceW4Clock();
         activationPipe.consumer_wait(loadState);
         activationWaitNs += traceW4Clock() - start;
@@ -319,11 +319,11 @@ struct W4A8Mainloop {
       issueNs += traceW4Clock() - start;
       start = traceW4Clock();
       loadPipe.consumer_release(loadState);
-      if constexpr (W4SplitPipelines) activationPipe.consumer_release(loadState);
+      if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
       releaseNs += traceW4Clock() - start;
       ++loadState;
     }
-    if constexpr (W4SplitPipelines) {
+    if constexpr (SplitPipelines) {
       traceW4Total(W4TracePhase::MmaWeightWait, waitNs, iterations);
       traceW4Total(W4TracePhase::MmaActivationWait, activationWaitNs, iterations);
       traceW4Count(W4TracePhase::WeightReadyAtEntry, weightReady, iterations);

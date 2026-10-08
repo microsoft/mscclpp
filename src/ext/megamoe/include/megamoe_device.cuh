@@ -32,8 +32,15 @@ constexpr int ComputeRegisters = 224;
 constexpr int TransferRegisters = 32;
 // Reconfiguration redistributes the CTA's entry allocation, not the entire SM register file.
 static_assert(256 * ComputeRegisters + (Threads - 256) * TransferRegisters <= Threads * EntryRegisters);
-static_assert(128 * ComputeRegisters + 128 * W4TransferRegisters + (W4Threads - 256) * TransferRegisters <=
-              W4Threads * EntryRegisters);
+constexpr bool validW4RegisterBudget(int epilogueWarps, int epilogueRegisters, int transferRegisters) {
+  int epilogueThreads = epilogueWarps * 32;
+  constexpr int NonEpilogueComputeThreads = 128;
+  int dispatchThreads = W4Threads - epilogueThreads - NonEpilogueComputeThreads;
+  return dispatchThreads >= 0 && epilogueThreads * epilogueRegisters + NonEpilogueComputeThreads * transferRegisters +
+                                         dispatchThreads * TransferRegisters <=
+                                     W4Threads * EntryRegisters;
+}
+static_assert(validW4RegisterBudget(W4EpilogueWarps, W4EpilogueRegisters, W4TransferRegisters));
 constexpr int LocalThreads = WarpSchedule<true>::NumWarps * 32;
 constexpr int LocalEntryRegisters = 168;
 constexpr int LocalComputeRegisters = 232;
@@ -44,12 +51,6 @@ constexpr int EpilogueTokens = 32;
 constexpr int DispatchChunkBytes = 2048;
 constexpr int DispatchWarpCount = 4;
 constexpr int64_t SpinLimit = 1000000000;
-
-__host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
-  return c.weightMxfp4 && (c.worldSize == 4 || c.worldSize == 32) &&
-         (c.maxTokens == 32 || c.maxTokens == 64 || c.maxTokens == 128) && c.numExperts == 16 * c.worldSize &&
-         c.topK == 8 && c.gateUpClamp < 0 && c.hidden == 9216 && (c.intermediate == 4096 || c.intermediate == 4608);
-}
 
 struct Control {
   DeviceSyncer gridBarrier;
@@ -105,21 +106,26 @@ struct Workspace {
   int poolRows;
 };
 
+template <class Tiles>
 __host__ __device__ constexpr int w4StorageRow(int row) {
   // Block-scaled MMA requires an even TMEM scale-column address. N32 tiles
   // therefore occupy alternating halves of a 64-row activation/scale pitch.
-  return row / W4TileN * W4TokenStride + row % W4TileN;
+  return row / Tiles::N * Tiles::TokenStride + row % Tiles::N;
 }
 
 __host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return (hidden / 32 + 15) / 16 * 16; }
 
-__host__ __device__ constexpr int w4InputChunks(int hidden) { return (hidden + W4DispatchChunk - 1) / W4DispatchChunk; }
+template <class Types>
+__host__ __device__ constexpr int w4InputChunks(int hidden) {
+  return (hidden + Types::DispatchChunk - 1) / Types::DispatchChunk;
+}
 
 // Keep independently updated block/chunk counters in separate 128-byte slots.
 constexpr int W4ReadyCounterStride = 32;
 
+template <class Types>
 __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidden, int block, int chunk) {
-  int chunks = w4InputChunks(hidden);
+  int chunks = w4InputChunks<Types>(hidden);
   // The last chunk also publishes full-row readiness.
   return chunk == chunks - 1 ? w.inputReady + size_t(block) * W4ReadyCounterStride
                              : w.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
@@ -131,8 +137,16 @@ struct KernelParameters {
   template <class T>
   using Resource = std::conditional_t<Borrowed, const T&, T>;
   using Collective = Types;
-  using Tiles = TilePolicy<Local, Mxfp4>;
-  static constexpr int ThreadCount = Local ? LocalThreads : (Mxfp4 ? W4Threads : Threads);
+  using Tiles = typename Types::Tiles;
+  static constexpr int ThreadCount = [] {
+    if constexpr (Local) {
+      return LocalThreads;
+    } else if constexpr (Mxfp4) {
+      return Types::NumWarps * 32;
+    } else {
+      return Threads;
+    }
+  }();
   static constexpr bool WeightE5M2 = E5M2;
   static constexpr bool WeightMxfp4 = Mxfp4;
   static constexpr bool LocalExpert = Local;
@@ -157,13 +171,14 @@ using KernelEntry = void (*)(Parameters<E5M2, (LocalMode != 0)>, int, __bfloat16
 template <bool E5M2, int LocalMode>
 KernelEntry<E5M2, LocalMode> kernelEntry();
 
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
 using W4A8Parameters = KernelParameters<W4A8CollectiveTypes, false, false, true>;
-using W4A8ParameterView = KernelParameters<W4A8CollectiveTypes, false, false, true, true>;
 
 // Borrow grid-constant launch resources while owning only the specialized configuration.
-__device__ __forceinline__ W4A8ParameterView w4a8ParameterView(const W4A8Parameters& p, NativeConfig config) {
-  return {config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
+template <class P>
+__device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
+  using View = KernelParameters<typename P::Collective, false, false, true, true>;
+  return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
@@ -175,11 +190,13 @@ struct DispatchStorage {
   BulkBarrier barriers[DispatchWarpCount][2];
 };
 
-constexpr int W4ScaleStageBytes = 128;
-struct W4DispatchStorage {
-  alignas(128) uint8_t tiles[W4DispatchWarps][W4DispatchStages][W4DispatchChunk];
-  BulkBarrier barriers[W4DispatchWarps][W4DispatchStages];
-  alignas(128) uint8_t scales[W4DispatchWarps][W4DispatchStages][W4ScaleStageBytes];
+template <class Types>
+struct W4DispatchStorageT {
+  static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
+  static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
+  alignas(128) uint8_t tiles[Types::DispatchWarps][Types::DispatchStages][Types::DispatchChunk];
+  BulkBarrier barriers[Types::DispatchWarps][Types::DispatchStages];
+  alignas(128) uint8_t scales[Types::DispatchWarps][Types::DispatchStages][ScaleStageBytes];
   uint32_t arrivals;
   uint32_t publishedPhase;
 };
@@ -225,17 +242,19 @@ struct alignas(1024) SharedStorage {
   std::conditional_t<Local, NoDispatchStorage, DispatchStorage> dispatch;
 };
 
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
-struct alignas(1024) W4A8SharedStorage {
-  W4A8CollectiveTypes::Mainloop::TensorStorage tensors;
-  W4A8CollectiveTypes::Load::SharedStorage mainloop;
-  std::conditional_t<W4SplitPipelines, W4A8CollectiveTypes::Load::SharedStorage, NoDispatchStorage> activationLoad;
-  W4A8CollectiveTypes::Accumulate::SharedStorage accumulated;
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
+template <class Types>
+struct alignas(1024) W4A8SharedStorageT {
+  typename Types::Mainloop::TensorStorage tensors;
+  typename Types::Load::SharedStorage mainloop;
+  std::conditional_t<Types::SplitPipelines, typename Types::Load::SharedStorage, NoDispatchStorage> activationLoad;
+  typename Types::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
   cutlass::arch::ClusterBarrier tmemReady;
-  EpilogueStorage<W4EpilogueTokens, false> epilogue;
-  W4DispatchStorage dispatch;
+  EpilogueStorage<Types::EpilogueTokens, false> epilogue;
+  W4DispatchStorageT<Types> dispatch;
 };
+using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
 #endif
 
 template <class T>

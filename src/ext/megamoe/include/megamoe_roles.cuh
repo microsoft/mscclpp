@@ -60,7 +60,7 @@ __device__ __forceinline__ int taskKTiles(const P&, const Task& task, int hidden
 
 template <class P>
 __device__ __forceinline__ auto taskCoord(const P&, const Task& task, int cta) {
-  constexpr int BlockStride = P::WeightMxfp4 ? W4TokenStride / W4TileN : 1;
+  constexpr int BlockStride = P::WeightMxfp4 ? P::Tiles::TokenStride / P::Tiles::N : 1;
   return cute::make_coord(task.m * ClusterM + cta, task.block * BlockStride, 0, task.tokens.expert);
 }
 
@@ -70,7 +70,15 @@ __device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat
                                                 int intermediate, int cluster, int tasks) {
   constexpr bool Local = LocalMode != 0;
   static_assert(P::LocalExpert == Local);
-  constexpr int RoleRegisters = Local ? LocalComputeRegisters : ComputeRegisters;
+  constexpr int RoleRegisters = [] {
+    if constexpr (Local) {
+      return LocalComputeRegisters;
+    } else if constexpr (P::WeightMxfp4) {
+      return P::Collective::EpilogueRegisters;
+    } else {
+      return ComputeRegisters;
+    }
+  }();
   constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
   typename Accumulate::PipelineState state;
