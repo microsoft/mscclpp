@@ -16,7 +16,7 @@ extern "C" int mscclpp_megamoe_w8_trace_copy(void* events, size_t bytes, uint32_
 template <bool E5M2, int LocalMode = 0>
 __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
                              1) void megaMoe(__grid_constant__ const Parameters<E5M2, (LocalMode != 0)> p, int tokens,
-                                             __bfloat16* output, uint32_t* startSignal) {
+                                             __bfloat16* output, uint32_t* kernelEntrySignal) {
   using namespace cute;
   using Types = CollectiveTypes<E5M2, (LocalMode != 0)>;
   using Mainloop = typename Types::Mainloop;
@@ -36,8 +36,8 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
   const int intermediate = p.config.intermediate;
-  if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
-    atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
+  if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
+    atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   if constexpr (Local) {
     if (tokens == 0) return;
   } else {

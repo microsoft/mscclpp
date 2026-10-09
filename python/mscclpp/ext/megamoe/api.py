@@ -67,6 +67,8 @@ class MegaMoEConfig:
             raise ValueError("weight_mxfp4 must be bool")
         if self.weight_e5m2 and self.weight_mxfp4:
             raise ValueError("weight_e5m2 and weight_mxfp4 are mutually exclusive")
+        if self.weight_mxfp4 and self.hidden < 4096:
+            raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
         if self.weight_mxfp4 and (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
             raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
@@ -224,6 +226,7 @@ class MegaMoE:
                     "dispatch_chunk": self._native.kernel_dispatch_chunk,
                     "dispatch_warps": self._native.kernel_dispatch_warps,
                     "dispatch_stages": self._native.kernel_dispatch_stages,
+                    "fixed_token_count": self._native.kernel_fixed_token_count,
                 }
             )
         return policy
@@ -325,6 +328,9 @@ class MegaMoE:
         participate in the same launch order, but token counts may differ or be
         zero. Optional value validation synchronizes and is forbidden in capture;
         ordinary validation of shape/dtype/contiguity is always performed.
+        W4A8 ``fixed_token_count=True`` is a captured-decode opt-in: captured
+        input row counts must match across ranks, but masked routes may differ.
+        Use expert ID -1 for unused slots, including every slot of a padded row.
 
         Pass an output allocated before capture for stable graph replay storage.
         The caller must preserve graph inputs/outputs and this context across

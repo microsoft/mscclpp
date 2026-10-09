@@ -85,6 +85,8 @@ class MegaMoeContext {
   int kernelDispatchWarps() const;
   /// Return the W4A8 dispatch pipeline depth, or zero for W8A16.
   int kernelDispatchStages() const;
+  /// Return whether captured W4A8 decode assumes equal input row counts on all ranks.
+  bool kernelFixedTokenCount() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///
@@ -94,6 +96,8 @@ class MegaMoeContext {
   /// No allocation, registration, host synchronization, or host epoch update occurs
   /// here. This method is CUDA Graph capturable. Caller-owned arrays and this
   /// context must outlive all queued execution and every graph replay.
+  /// W4A8 modules with fixed token counts require equal captured input row counts
+  /// across ranks. Expert ID -1 masks unused slots; valid route counts may differ.
   /// @param signalStart Reset and publish an execution-start signal for waitUntilStarted().
   /// This opt-in adds a reset/event before the kernel; ordinary forwards do not.
   void forward(const void* input, const int32_t* topkIds, const float* topkWeights, void* output, int numTokens,

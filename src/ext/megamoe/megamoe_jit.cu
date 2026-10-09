@@ -111,7 +111,7 @@ int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t*
 
 void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
 
-int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* startSignal, int32_t shared,
+int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, int32_t shared,
               char* error, size_t capacity) noexcept {
   return jitCall(error, capacity, [&] {
     if (!plan || (shared != 0 && shared != 1)) throw std::invalid_argument("Invalid MegaMoE JIT launch");
@@ -119,7 +119,7 @@ int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* 
     if (shared) {
       jit::launchNativeSharedExpert(native, tokens, output, reinterpret_cast<cudaStream_t>(stream));
     } else {
-      jit::launchNativeMegaMoe(native, tokens, output, reinterpret_cast<cudaStream_t>(stream), startSignal);
+      jit::launchNativeMegaMoe(native, tokens, output, reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
     }
   });
 }
@@ -173,4 +173,8 @@ const MegaMoeJitApiV1 JitApi = [] {
 
 extern "C" __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_jit_get_api_v1() {
   return &JitApi;
+}
+
+extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1() {
+  return int(MSCCLPP_MEGAMOE_JIT_W4A8 && mscclpp::megamoe::jit::detail::W4FixedTokenCount);
 }

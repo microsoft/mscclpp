@@ -118,6 +118,7 @@ bool validW4Metadata(const MegaMoeJitApiV1& api) {
 struct JitModule {
   void* handle = nullptr;
   const MegaMoeJitApiV1* api = nullptr;
+  bool fixedTokenCount = false;
 
   ~JitModule() {
     if (handle) (void)dlclose(handle);
@@ -148,6 +149,17 @@ struct JitModule {
       throw std::invalid_argument("MegaMoE JIT module precision does not match the context configuration");
     if (!(config.weightMxfp4 ? validW4Metadata(*api) : validW8Metadata(*api)))
       throw std::invalid_argument("MegaMoE JIT module declares an unsupported specialization policy");
+    if (config.weightMxfp4) {
+      (void)dlerror();
+      auto routing = reinterpret_cast<int (*)()>(dlsym(handle, MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT));
+      const char* routingError = dlerror();
+      if (routingError || !routing)
+        throw std::invalid_argument("MegaMoE W4A8 JIT module is missing routing policy metadata; recompile it");
+      int fixed = routing();
+      if (fixed != 0 && fixed != 1)
+        throw std::invalid_argument("MegaMoE W4A8 JIT module declares an invalid fixed-token policy");
+      fixedTokenCount = bool(fixed);
+    }
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
     this->api = api;
@@ -277,7 +289,7 @@ struct MegaMoeContext::Impl {
   std::unique_ptr<GpuBuffer<char>> symmetric;
   std::shared_ptr<char> workspace;
   std::shared_ptr<uint64_t> peerBases;
-  std::shared_ptr<uint32_t> startSignal;
+  std::shared_ptr<uint32_t> kernelEntrySignal;
   cudaEvent_t startResetEvent = nullptr;
   bool startRecorded = false;
   std::array<std::shared_ptr<uint8_t>, 4> weightBuffers;
@@ -304,7 +316,7 @@ struct MegaMoeContext::Impl {
     peerMemories.clear();
     localMemory = RegisteredMemory{};
     weightBuffers = {};
-    startSignal.reset();
+    kernelEntrySignal.reset();
     peerBases.reset();
     workspace.reset();
     symmetric.reset();
@@ -400,7 +412,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     p.symmetric = std::make_unique<GpuBuffer<char>>(p.layout.bytes);
     p.workspace = mscclpp::detail::gpuCallocShared<char>(p.workspaceBytes);
     p.peerBases = mscclpp::detail::gpuCallocShared<uint64_t>(c.worldSize);
-    p.startSignal = mscclpp::detail::gpuCallocShared<uint32_t>(1);
+    p.kernelEntrySignal = mscclpp::detail::gpuCallocShared<uint32_t>(1);
     MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
     p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
     size_t localExperts = c.numExperts / c.worldSize;
@@ -541,6 +553,10 @@ int MegaMoeContext::kernelDispatchStages() const {
   if (impl_->module) return impl_->module->api->dispatchStages;
   return impl_->config.weightMxfp4 ? detail::W4DispatchStages : 0;
 }
+bool MegaMoeContext::kernelFixedTokenCount() const {
+  if (impl_->module) return impl_->module->fixedTokenCount;
+  return impl_->config.weightMxfp4 && detail::W4FixedTokenCount;
+}
 
 size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {
   int device;
@@ -578,10 +594,10 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   }
   impl_->startRecorded = false;
   if (signalStart) {
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(impl_->startSignal.get(), 0, sizeof(uint32_t), stream));
+    MSCCLPP_CUDATHROW(cudaMemsetAsync(impl_->kernelEntrySignal.get(), 0, sizeof(uint32_t), stream));
     MSCCLPP_CUDATHROW(cudaEventRecord(impl_->startResetEvent, stream));
   }
-  auto* signal = signalStart ? impl_->startSignal.get() : nullptr;
+  auto* signal = signalStart ? impl_->kernelEntrySignal.get() : nullptr;
   if (impl_->jitPlan) {
     char error[ErrorCapacity]{};
     checkJit(
@@ -618,8 +634,8 @@ void MegaMoeContext::waitUntilStarted(cudaStream_t stream) {
   if (!impl_->startRecorded)
     throw std::invalid_argument("MegaMoE waitUntilStarted requires a preceding signalStart forward");
   MSCCLPP_CUDATHROW(cudaStreamWaitEvent(stream, impl_->startResetEvent, 0));
-  MSCCLPP_CUTHROW(
-      cuStreamWaitValue32(stream, reinterpret_cast<CUdeviceptr>(impl_->startSignal.get()), 1, CU_STREAM_WAIT_VALUE_EQ));
+  MSCCLPP_CUTHROW(cuStreamWaitValue32(stream, reinterpret_cast<CUdeviceptr>(impl_->kernelEntrySignal.get()), 1,
+                                      CU_STREAM_WAIT_VALUE_EQ));
 }
 
 }  // namespace mscclpp::megamoe

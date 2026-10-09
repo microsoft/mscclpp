@@ -183,7 +183,7 @@ __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig confi
 }
 
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
-W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config);
+W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 #endif
 
 struct DispatchStorage {

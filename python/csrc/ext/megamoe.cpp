@@ -106,6 +106,7 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_dispatch_chunk", &MegaMoeContext::kernelDispatchChunk)
       .def_prop_ro("kernel_dispatch_warps", &MegaMoeContext::kernelDispatchWarps)
       .def_prop_ro("kernel_dispatch_stages", &MegaMoeContext::kernelDispatchStages)
+      .def_prop_ro("kernel_fixed_token_count", &MegaMoeContext::kernelFixedTokenCount)
       .def(
           "forward_shared",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {

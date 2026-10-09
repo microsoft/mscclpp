@@ -29,24 +29,6 @@ struct NativeConfig {
   bool weightMxfp4 = false;
 };
 
-namespace detail {
-
-__host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
-  bool capacity32To128 = c.maxTokens == 32 || c.maxTokens == 64 || c.maxTokens == 128;
-  bool supportedShape = (c.hidden == 9216 && capacity32To128 && (c.intermediate == 4096 || c.intermediate == 4608)) ||
-                        (c.hidden == 8192 && (c.maxTokens == 16 || capacity32To128) && c.intermediate == 4096) ||
-                        (c.hidden == 4096 && (c.maxTokens == 128 || c.maxTokens == 190) && c.intermediate == 6656);
-  return c.weightMxfp4 && c.gateUpClamp < 0 && supportedShape;
-}
-
-__host__ __device__ constexpr bool useFixedTokenCountW4A8Kernel(const NativeConfig& c) {
-  bool supportedExperts =
-      c.hidden == 4096 && c.intermediate == 6656 ? c.numExperts == 32 * c.worldSize : c.numExperts == 16 * c.worldSize;
-  return useSpecializedW4A8Kernel(c) && (c.worldSize == 4 || c.worldSize == 32) && supportedExperts && c.topK == 8;
-}
-
-}  // namespace detail
-
 struct SymmetricLayout {
   size_t bytes = 0;
   size_t input = 0;
@@ -104,9 +86,10 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& config, void* s
 int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream,
-                         uint32_t* startSignal = nullptr);
+                         uint32_t* kernelEntrySignal = nullptr);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
-                      const float* scores, int numTokens, void* output, cudaStream_t stream, uint32_t* startSignal);
+                      const float* scores, int numTokens, void* output, cudaStream_t stream,
+                      uint32_t* kernelEntrySignal);
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
                               cudaStream_t stream);
 

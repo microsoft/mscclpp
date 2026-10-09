@@ -126,8 +126,8 @@ def main():
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     if args.e5m2 and args.mxfp4:
         parser.error("--e5m2 and --mxfp4 are mutually exclusive")
-    if args.mxfp4 and args.hidden not in (128, 384, 2176, 4096, 8192, 8704, 9216):
-        parser.error("--mxfp4 hidden must have a compiled specialization: 128, 384, 2176, 4096, 8192, 8704, or 9216")
+    if args.mxfp4 and (args.hidden, args.intermediate) not in ((4096, 6656), (8192, 4096), (9216, 4096), (9216, 4608)):
+        parser.error("--mxfp4 H/I must be 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if args.w4_profile is not None and not args.mxfp4:
         parser.error("--w4-profile requires --mxfp4")
     if not args.graph and args.graph_timing != "isolated":

@@ -45,12 +45,21 @@ __device__ __forceinline__ int tokenRankAt(const Workspace& w, int worldSize, in
   return low;
 }
 
-template <class P>
-__device__ int readFixedRoute(const P& p, uint64_t epoch, int index, int routesPerRank, Route& route) {
-  int rank = index / routesPerRank;
-  int local = index - rank * routesPerRank;
-  int token = local / p.config.topK;
-  int slot = local % p.config.topK;
+template <bool FixedTokenCount, class P>
+__device__ int readPlannedRoute(const P& p, uint64_t epoch, int index, int tokens, Route& route) {
+  int rank, token, slot;
+  if constexpr (FixedTokenCount) {
+    int routesPerRank = tokens * p.config.topK;
+    rank = index / routesPerRank;
+    int local = index - rank * routesPerRank;
+    token = local / p.config.topK;
+    slot = local % p.config.topK;
+  } else {
+    int ordinal = index / p.config.topK;
+    rank = tokenRankAt(p.workspace, p.config.worldSize, ordinal);
+    token = ordinal - p.workspace.peerTokenOffsets[rank];
+    slot = index % p.config.topK;
+  }
   uint2 packet = readRoutePacket(p, epoch, rank, token, slot);
   route = Route{rank, token, slot, mscclpp::bit_cast<float>(packet.y)};
   return localExpert(p, mscclpp::bit_cast<int>(packet.x), rank, token, slot);
@@ -74,9 +83,10 @@ __device__ __forceinline__ void fillRouteGroup(const Workspace& w, int expert, c
   }
 }
 
-template <bool FixedTokenCount, class P>
+template <bool CachedRoutes, bool FixedTokenCount, class P>
 __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids = nullptr,
                                     const float* scores = nullptr) {
+  static_assert(!FixedTokenCount || CachedRoutes);
   constexpr int WarpSize = 32;
   constexpr int RoutingTileN = P::Tiles::N;
   const auto& c = p.config;
@@ -139,8 +149,8 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
         if (lane == 0) {
           w.peerTokenOffsets[c.worldSize] = preceding;
           w.control->routingTokens = preceding;
-          w.control->routingPlannerCtas =
-              min(int(gridDim.x), max(1, (preceding + P::ThreadCount - 1) / P::ThreadCount));
+          int items = CachedRoutes ? preceding * c.topK : preceding;
+          w.control->routingPlannerCtas = min(int(gridDim.x), max(1, 1 + (items - 1) / P::ThreadCount));
           atomicStore<uint64_t, scopeDevice>(&w.control->routingInitEpoch, epoch, memoryOrderRelease);
         }
       }
@@ -151,10 +161,10 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
   int plannerCtas;
   if constexpr (FixedTokenCount) {
     totalTokens = c.worldSize * tokens * c.topK;
-    plannerCtas = min(int(gridDim.x), max(1, (totalTokens + P::ThreadCount - 1) / P::ThreadCount));
+    plannerCtas = min(int(gridDim.x), max(1, 1 + (totalTokens - 1) / P::ThreadCount));
   } else {
     waitAtLeast<uint64_t, scopeDevice>(&w.control->routingInitEpoch, epoch);
-    totalTokens = w.control->routingTokens;
+    totalTokens = w.control->routingTokens * (CachedRoutes ? c.topK : 1);
     plannerCtas = w.control->routingPlannerCtas;
   }
   int plannerThread = blockIdx.x * P::ThreadCount + threadIdx.x;
@@ -163,11 +173,10 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
   Route cachedRoute{};
   int cachedExpert = -1;
   if (blockIdx.x < plannerCtas) {
-    if constexpr (FixedTokenCount) {
-      int routesPerRank = tokens * c.topK;
+    if constexpr (CachedRoutes) {
       if (cacheRoute) {
         if (plannerThread < totalTokens)
-          cachedExpert = readFixedRoute(p, epoch, plannerThread, routesPerRank, cachedRoute);
+          cachedExpert = readPlannedRoute<FixedTokenCount>(p, epoch, plannerThread, tokens, cachedRoute);
         countRouteGroup(w, cachedExpert, lane);
       } else {
         // Keep tail lanes participating in the warp's expert grouping.
@@ -175,7 +184,7 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
           int index = first + threadIdx.x;
           int expert = -1;
           Route route{};
-          if (index < totalTokens) expert = readFixedRoute(p, epoch, index, routesPerRank, route);
+          if (index < totalTokens) expert = readPlannedRoute<FixedTokenCount>(p, epoch, index, tokens, route);
           countRouteGroup(w, expert, lane);
         }
       }
@@ -194,7 +203,7 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
     }
     __syncthreads();
     if (warp == 0) {
-      int last = FixedTokenCount && plannerCtas == 1;
+      int last = CachedRoutes && plannerCtas == 1;
       if (lane == 0 && !last)
         last = atomicFetchAdd<int, scopeDevice>(&w.control->routingCountCtas, 1, memoryOrderAcqRel) == plannerCtas - 1;
       last = __shfl_sync(0xffffffff, last, 0);
@@ -215,17 +224,16 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
           if (expert < experts) {
             w.starts[expert] = firstBlock * RoutingTileN;
             w.cursors[expert] = 0;
-            if constexpr (FixedTokenCount) {
-              // Counts and arrival counters are cleared for the next ordered forward.
-              w.counts[expert] = 0;
-            } else {
+            // Clear after the count join so eager and captured routing can alternate.
+            w.counts[expert] = 0;
+            if constexpr (!CachedRoutes) {
               for (int localBlock = 0; localBlock < blocks; ++localBlock) {
                 int row = localBlock * RoutingTileN;
                 w.blocks[firstBlock + localBlock] = TokenBlock{expert, min(int(RoutingTileN), count - row)};
               }
             }
           }
-          if constexpr (FixedTokenCount) {
+          if constexpr (CachedRoutes) {
             if (__any_sync(0xffffffff, blocks > 1)) {
               int batchBlocks = __shfl_sync(0xffffffff, scan, WarpSize - 1);
               for (int first = 0; first < batchBlocks; first += WarpSize) {
@@ -253,7 +261,7 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
         }
         __syncwarp();
         if (lane == 0) {
-          if constexpr (FixedTokenCount) w.control->routingCountCtas = 0;
+          w.control->routingCountCtas = 0;
           w.control->tokenBlocks = precedingBlocks;
           atomicStore<uint64_t, scopeDevice>(&w.control->routingOffsetsEpoch, epoch, memoryOrderRelease);
         }
@@ -270,8 +278,7 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
         for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(c.hidden) - 1; ++chunk)
           *w4InputChunkCounter<typename P::Collective>(w, c.hidden, block, chunk) = 0;
     }
-    if constexpr (FixedTokenCount) {
-      int routesPerRank = tokens * c.topK;
+    if constexpr (CachedRoutes) {
       if (cacheRoute) {
         fillRouteGroup(w, cachedExpert, cachedRoute, lane);
       } else {
@@ -279,7 +286,7 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
           int index = first + threadIdx.x;
           int expert = -1;
           Route route{};
-          if (index < totalTokens) expert = readFixedRoute(p, epoch, index, routesPerRank, route);
+          if (index < totalTokens) expert = readPlannedRoute<FixedTokenCount>(p, epoch, index, tokens, route);
           fillRouteGroup(w, expert, route, lane);
         }
       }
@@ -300,11 +307,11 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
     }
     __syncthreads();
     if (threadIdx.x == 0) {
-      bool last = FixedTokenCount && plannerCtas == 1;
+      bool last = CachedRoutes && plannerCtas == 1;
       if (!last)
         last = atomicFetchAdd<int, scopeDevice>(&w.control->routingFillCtas, 1, memoryOrderAcqRel) == plannerCtas - 1;
       if (last) {
-        if constexpr (FixedTokenCount) w.control->routingFillCtas = 0;
+        w.control->routingFillCtas = 0;
         atomicStore<uint64_t, scopeDevice>(&w.control->routingReadyEpoch, epoch, memoryOrderRelease);
       }
     }
@@ -314,9 +321,9 @@ __device__ void preparePacketRoutes(const P& p, int tokens, const int32_t* ids =
   __syncthreads();
 }
 
-template <bool FixedTokenCount = false, class P>
+template <bool CachedRoutes = false, bool FixedTokenCount = false, class P>
 __device__ void prepareRoutes(const P& p, int tokens, const int32_t* ids = nullptr, const float* scores = nullptr) {
-  preparePacketRoutes<FixedTokenCount>(p, tokens, ids, scores);
+  preparePacketRoutes<CachedRoutes, FixedTokenCount>(p, tokens, ids, scores);
 }
 
 template <bool E5M2>

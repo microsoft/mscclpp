@@ -69,7 +69,8 @@ def _validate_profile(value):
     for entry in value["entries"]:
         _fields(entry, ("match", "config"), ("match", "config"), "W4A8 kernel profile entry")
         match = _validate_match(entry["match"])
-        _fields(entry["config"], _CONFIG_FIELDS, _CONFIG_FIELDS, "W4A8 kernel config")
+        required_config = tuple(name for name in _CONFIG_FIELDS if name != "fixed_token_count")
+        _fields(entry["config"], _CONFIG_FIELDS, required_config, "W4A8 kernel config")
         config = asdict(W4A8KernelConfig(**entry["config"]))
         key = json.dumps(match, sort_keys=True, separators=(",", ":"))
         if key in seen:

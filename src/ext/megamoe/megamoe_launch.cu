@@ -340,6 +340,10 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE smMargin must be nonnegative and gateUpClamp must be finite");
   if (c.weightE5M2 && c.weightMxfp4)
     throw std::invalid_argument("MegaMoE weightE5M2 and weightMxfp4 are mutually exclusive");
+  if (c.weightMxfp4 && c.hidden < 4096) throw std::invalid_argument("MegaMoE W4A8 requires hidden >= 4096");
+#if MSCCLPP_MEGAMOE_COMPILE_W4A8
+  if (c.weightMxfp4) (void)detail::w4a8KernelEntry(c);
+#endif
   if (c.weightMxfp4 && detail::isLocalExpert(c))
     throw std::invalid_argument("MegaMoE W4A8 currently supports routed experts only");
   if (size_t(c.worldSize) * c.maxTokens * c.topK > size_t(std::numeric_limits<int>::max()))
@@ -443,6 +447,8 @@ KernelResources preflightKernel(const NativeConfig& c) {
   if (c.weightMxfp4) {
     configure(detail::w4a8KernelEntry(c), detail::W4A8Parameters::ThreadCount, detail::EntryRegisters,
               sizeof(detail::W4A8SharedStorage));
+    configure(detail::w4a8KernelEntry(c, true), detail::W4A8Parameters::ThreadCount, detail::EntryRegisters,
+              sizeof(detail::W4A8SharedStorage));
     return resources;
   }
 #endif
@@ -500,8 +506,8 @@ size_t kernelPlanSharedBytes(const KernelPlan& plan) { return plan.sharedBytes; 
 
 namespace {
 void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream,
-                uint32_t* startSignal, bool unweightedShared, const void* input = nullptr, const int32_t* ids = nullptr,
-                const float* scores = nullptr) {
+                uint32_t* kernelEntrySignal, bool unweightedShared, const void* input = nullptr,
+                const int32_t* ids = nullptr, const float* scores = nullptr) {
   if (!plan) throw std::invalid_argument("MegaMoE kernel plan is null");
   if (unweightedShared && !plan->localExpert)
     throw std::invalid_argument("Shared forward requires a single local expert");
@@ -523,6 +529,8 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
                                                plan->sharedBytes, stream, attribute);
 #if MSCCLPP_MEGAMOE_COMPILE_W4A8
         if constexpr (W4A8) {
+          cudaStreamCaptureStatus capture;
+          MSCCLPP_CUDATHROW(cudaStreamIsCapturing(stream, &capture));
           if (tokens) {
             dim3 threads(128);
             dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
@@ -530,15 +538,16 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
                                                                         static_cast<const __bfloat16*>(input));
             MSCCLPP_CUDATHROW(cudaGetLastError());
           }
-          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config), params, tokens,
-                                               static_cast<__bfloat16*>(output), startSignal, ids, scores));
+          MSCCLPP_CUDATHROW(cudaLaunchKernelEx(
+              &launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive), params, tokens,
+              static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
           return;
         }
 #endif
         if constexpr (!W4A8) {
           auto run = [&]<int LocalMode>(std::integral_constant<int, LocalMode>) {
             MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::kernelEntry<E5M2, LocalMode>(), params, tokens,
-                                                 static_cast<__bfloat16*>(output), startSignal));
+                                                 static_cast<__bfloat16*>(output), kernelEntrySignal));
           };
           if constexpr (std::decay_t<decltype(params)>::LocalExpert) {
             if (unweightedShared) {
@@ -555,13 +564,13 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
 }  // namespace
 
 void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream,
-                         uint32_t* startSignal) {
-  launchPlan(plan, tokens, output, stream, startSignal, false);
+                         uint32_t* kernelEntrySignal) {
+  launchPlan(plan, tokens, output, stream, kernelEntrySignal, false);
 }
 
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
-                      const float* scores, int tokens, void* output, cudaStream_t stream, uint32_t* startSignal) {
-  launchPlan(plan, tokens, output, stream, startSignal, false, input, ids, scores);
+                      const float* scores, int tokens, void* output, cudaStream_t stream, uint32_t* kernelEntrySignal) {
+  launchPlan(plan, tokens, output, stream, kernelEntrySignal, false, input, ids, scores);
 }
 
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream) {

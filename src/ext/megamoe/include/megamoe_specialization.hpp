@@ -58,6 +58,9 @@
 #ifndef MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES
 #define MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES 1
 #endif
+#ifndef MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT
+#define MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT 0
+#endif
 #ifndef MSCCLPP_MEGAMOE_JIT_W4A8
 #define MSCCLPP_MEGAMOE_JIT_W4A8 0
 #endif
@@ -95,6 +98,8 @@ constexpr int W4EpilogueRegisters = MSCCLPP_MEGAMOE_W4_EPILOGUE_REGISTERS;
 constexpr int W4DispatchChunk = MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK;
 constexpr int W4DispatchWarps = MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS;
 constexpr int W4DispatchStages = MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES;
+constexpr bool W4FixedTokenCount = MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT != 0;
+static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
 constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
 static_assert(W4TileN == 32 || W4TileN == 64 || W4TileN == 128);
 static_assert(W4TileK == 128 || W4TileK == 256 || W4TileK == 512);

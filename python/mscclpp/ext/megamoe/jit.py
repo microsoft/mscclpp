@@ -63,7 +63,11 @@ class KernelConfig:
 
 @dataclass(frozen=True)
 class W4A8KernelConfig:
-    """Compile-time W4A8 policy for one external native JIT module."""
+    """Compile-time W4A8 policy for one external native JIT module.
+
+    ``fixed_token_count=True`` opts captured decode into equal input row counts
+    on all ranks. Masked routes may still differ. False supports ragged prefill.
+    """
 
     tile_n: int = 64
     tile_k: int = 128
@@ -78,6 +82,7 @@ class W4A8KernelConfig:
     dispatch_chunk: int = 3072
     dispatch_warps: int = 4
     dispatch_stages: int = 1
+    fixed_token_count: bool = False
 
     def __post_init__(self):
         allowed = (
@@ -104,6 +109,8 @@ class W4A8KernelConfig:
             raise ValueError("epilogue_registers must be divisible by 8")
         if type(self.split_pipelines) is not bool:
             raise ValueError("split_pipelines must be bool")
+        if type(self.fixed_token_count) is not bool:
+            raise ValueError("fixed_token_count must be bool")
         if self.split_pipelines and self.load_warps != 2:
             raise ValueError("split_pipelines requires load_warps=2")
         if self.tile_n % self.epilogue_tokens:
@@ -191,6 +198,7 @@ def _compile_definitions(config):
             "dispatch_chunk": "DISPATCH_CHUNK",
             "dispatch_warps": "DISPATCH_WARPS",
             "dispatch_stages": "DISPATCH_STAGES",
+            "fixed_token_count": "FIXED_TOKEN_COUNT",
         }
         return [
             "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",

@@ -18,9 +18,9 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 #endif
 #endif
 
-template <int Hidden, int Intermediate = 0, int WorldSize = 0>
+template <int Hidden, int Intermediate, bool CachedRoutes = false, bool FixedTokenCount = false>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
-                                                            int tokens, __bfloat16* output, uint32_t* startSignal,
+                                                            int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
                                                             const int32_t* ids, const float* scores) {
   using namespace cute;
   using Parameters = W4A8Parameters;
@@ -30,15 +30,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   using Schedule = typename Types::WarpSchedule;
   static_assert(validW4RegisterBudget(Types::EpilogueWarps, Types::EpilogueRegisters, Types::TransferRegisters));
   NativeConfig configuration = parameters.config;
-  if constexpr (Intermediate != 0) {
-    configuration.hidden = Hidden;
-    configuration.intermediate = Intermediate;
-    configuration.gateUpClamp = -1.0f;
-  }
-  if constexpr (WorldSize != 0) {
-    static_assert(WorldSize > 0);
-    configuration.worldSize = WorldSize;
-  }
+  configuration.hidden = Hidden;
+  configuration.intermediate = Intermediate;
   auto p = w4a8ParameterView(parameters, configuration);
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
@@ -48,12 +41,12 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
   const int intermediate = p.config.intermediate;
-  // signalStart notifies a consumer stream of kernel entry, not output readiness.
-  if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
-    atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
+  // Notify a consumer stream of kernel entry, not output readiness.
+  if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
+    atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   traceKernel(KernelTracePhase::Routing, true);
   // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
-  prepareRoutes<WorldSize != 0>(p, tokens, ids, scores);
+  prepareRoutes<CachedRoutes, FixedTokenCount>(p, tokens, ids, scores);
   traceKernel(KernelTracePhase::Routing, false);
   cute::TMEM::Allocator2Sm allocator;
 
@@ -153,45 +146,25 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
 }
 
 struct W4A8KernelRegistration {
-  int hidden;
-  int intermediate;
-  int worldSize;
+  bool (*matches)(const NativeConfig&);
   W4A8KernelEntry entry;
+  W4A8KernelEntry captureEntry;
 };
 
-template <int Hidden, int Intermediate = 0, int WorldSize = 0>
+template <int Hidden, int Intermediate>
 constexpr W4A8KernelRegistration registerW4A8Kernel() {
-  return {Hidden, Intermediate, WorldSize, megaMoeW4A8<Hidden, Intermediate, WorldSize>};
+  static_assert(Hidden >= 4096);
+  return {[](const NativeConfig& config) { return config.hidden == Hidden && config.intermediate == Intermediate; },
+          megaMoeW4A8<Hidden, Intermediate>, megaMoeW4A8<Hidden, Intermediate, true, W4FixedTokenCount>};
 }
 
-W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
-  static constexpr std::array kernels{registerW4A8Kernel<128>(),
-                                      registerW4A8Kernel<384>(),
-                                      registerW4A8Kernel<2176>(),
-                                      registerW4A8Kernel<4096>(),
-                                      registerW4A8Kernel<8192>(),
-                                      registerW4A8Kernel<8704>(),
-                                      registerW4A8Kernel<9216>(),
-                                      registerW4A8Kernel<4096, 6656>(),
-                                      registerW4A8Kernel<8192, 4096>(),
-                                      registerW4A8Kernel<9216, 4096>(),
-                                      registerW4A8Kernel<9216, 4608>(),
-                                      registerW4A8Kernel<4096, 6656, 4>(),
-                                      registerW4A8Kernel<4096, 6656, 32>(),
-                                      registerW4A8Kernel<8192, 4096, 4>(),
-                                      registerW4A8Kernel<8192, 4096, 32>(),
-                                      registerW4A8Kernel<9216, 4096, 4>(),
-                                      registerW4A8Kernel<9216, 4096, 32>(),
-                                      registerW4A8Kernel<9216, 4608, 4>(),
-                                      registerW4A8Kernel<9216, 4608, 32>()};
-  bool specialized = mscclpp::megamoe::detail::useSpecializedW4A8Kernel(config);
-  int intermediate = specialized ? config.intermediate : 0;
-  int worldSize = mscclpp::megamoe::detail::useFixedTokenCountW4A8Kernel(config) ? config.worldSize : 0;
+W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing) {
+  static constexpr std::array kernels{registerW4A8Kernel<4096, 6656>(), registerW4A8Kernel<8192, 4096>(),
+                                      registerW4A8Kernel<9216, 4096>(), registerW4A8Kernel<9216, 4608>()};
   for (const auto& kernel : kernels) {
-    if (kernel.hidden == config.hidden && kernel.intermediate == intermediate && kernel.worldSize == worldSize)
-      return kernel.entry;
+    if (kernel.matches(config)) return capturing ? kernel.captureEntry : kernel.entry;
   }
-  throw std::invalid_argument("MegaMoE W4A8 hidden size has no compiled specialization");
+  throw std::invalid_argument("MegaMoE W4A8 H/I has no compiled specialization");
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

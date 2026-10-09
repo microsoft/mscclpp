@@ -19,6 +19,7 @@
 // Link the module against mscclpp, cudart, and the CUDA driver.
 #define MSCCLPP_MEGAMOE_JIT_ABI_VERSION 1
 #define MSCCLPP_MEGAMOE_JIT_ENTRYPOINT "mscclpp_megamoe_jit_get_api_v1"
+#define MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT "mscclpp_megamoe_jit_fixed_token_count_v1"
 #define MSCCLPP_MEGAMOE_JIT_ID_CAPACITY 65
 
 typedef struct MegaMoeJitConfigV1 {
@@ -95,7 +96,7 @@ typedef struct MegaMoeJitApiV1 {
   int (*createPlan)(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases, void* workspace,
                     const MegaMoeJitWeightsV1* weights, void** plan, char* error, size_t capacity);
   void (*destroyPlan)(void* plan);
-  int (*launch)(void* plan, int32_t numTokens, void* output, void* stream, uint32_t* startSignal, int32_t shared,
+  int (*launch)(void* plan, int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, int32_t shared,
                 char* error, size_t capacity);
 } MegaMoeJitApiV1;
 
@@ -105,6 +106,8 @@ typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
 extern "C" {
 #endif
 __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_jit_get_api_v1(void);
+// Supplemental W4A8 policy metadata; the V1 function-table layout remains unchanged.
+__attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1(void);
 #ifdef __cplusplus
 }
 #endif

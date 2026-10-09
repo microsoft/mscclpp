@@ -52,6 +52,8 @@ def test_config_preserves_positional_gate_clamp():
         {"sm_margin": -1},
         {"weight_e5m2": 1},
         {"weight_mxfp4": 1},
+        {"weight_mxfp4": True, "hidden": 128},
+        {"weight_mxfp4": True, "hidden": 3968},
         {"weight_e5m2": True, "weight_mxfp4": True},
         {"world_size": 1, "num_experts": 1, "top_k": 1, "weight_mxfp4": True},
         {"gate_up_clamp": float("nan")},
@@ -160,15 +162,15 @@ def test_mxfp4_canonical_rounding_and_layout():
 @pytest.mark.parametrize(
     "tokens,hidden,intermediate",
     [
-        (1, 128, 256),
-        (15, 128, 256),
-        (17, 128, 256),
-        (31, 384, 640),
-        (33, 2176, 640),
-        (49, 384, 640),
-        (63, 384, 640),
-        (65, 384, 640),
-        (2, 8704, 128),
+        (1, 4096, 6656),
+        (15, 4096, 6656),
+        (17, 4096, 6656),
+        (31, 4096, 6656),
+        (33, 4096, 6656),
+        (49, 4096, 6656),
+        (63, 4096, 6656),
+        (65, 4096, 6656),
+        (2, 8192, 4096),
     ],
 )
 def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate):
@@ -293,11 +295,11 @@ def test_native_empty_and_idle_roles_graph_replay(e5m2, mxfp4):
     config = _config(
         world_size=1,
         max_tokens=1,
-        hidden=128,
-        intermediate=128,
+        hidden=4096 if mxfp4 else 128,
+        intermediate=6656 if mxfp4 else 128,
         num_experts=2,
         top_k=1,
-        sm_margin=max(0, sms - 32),
+        sm_margin=0 if mxfp4 else max(0, sms - 32),
         weight_e5m2=e5m2,
         weight_mxfp4=mxfp4,
     )
@@ -307,7 +309,9 @@ def test_native_empty_and_idle_roles_graph_replay(e5m2, mxfp4):
         torch.manual_seed(5471)
         context = MegaMoE(config, Communicator(bootstrap), *_weights(config, device))
     assert context.cta_count >= 8
-    inputs = torch.full((1, 128), 0.125, device=device, dtype=torch.bfloat16)
+    if mxfp4:
+        assert context.cta_count // 2 > 2 * config.intermediate // 256 + config.hidden // 256
+    inputs = torch.full((1, config.hidden), 0.125, device=device, dtype=torch.bfloat16)
     ids = torch.zeros((1, 1), device=device, dtype=torch.int32)
     scores = torch.ones((1, 1), device=device, dtype=torch.float32)
     expected = context(inputs, ids, scores).clone()
@@ -331,6 +335,26 @@ def test_native_empty_and_idle_roles_graph_replay(e5m2, mxfp4):
             assert torch.all(output == 7)
     del graph, graphs, context
     gc.collect()
+
+
+def test_native_w4a8_rejects_unregistered_dimensions():
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+    from mscclpp.ext.megamoe.benchmark import _weights
+
+    torch = pytest.importorskip("torch")
+    if not is_available() or not torch.cuda.is_available():
+        pytest.skip("requires native MegaMoE and NVIDIA CUDA")
+    if torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7)):
+        pytest.skip("requires an SM100-family GPU")
+    config = _config(
+        world_size=1, max_tokens=1, hidden=4096, intermediate=128, num_experts=2, top_k=1, weight_mxfp4=True
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    weights = _weights(config, torch.device("cuda", torch.cuda.current_device()))
+    with pytest.raises(ValueError, match="H/I has no compiled specialization"):
+        MegaMoE(config, Communicator(bootstrap), *weights)
 
 
 def test_native_views_staging_and_graph_lifetime():

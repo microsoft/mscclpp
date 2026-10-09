@@ -157,44 +157,57 @@ issuing epilogue warp drains destination completion before the CTA publishes its
 arrival. This overlaps return traffic without weakening peer visibility.
 E8M0 scale selection compares FP32 exponent/mantissa bits directly, preserving
 the ceiling-power-of-two rule without a floating-point division.
-Unclamped EP4/E64 and EP32/E512 contexts with capacity 32, 64, or 128, top-8,
-H9216, and I4096 or I4608 select configuration-specialized kernels that assume
-every rank has the same live token count. These kernels calculate route offsets
-directly; other W4A8 configurations read token-count packets and build dynamic
-prefixes.
-Unclamped H8192/I4096 top-8 contexts with 16 local experts also use fixed-token
-specializations for capacities 16, 32, 64, and 128. The builtin uses the default
+The template registration table lists the only supported W4A8 H/I combinations:
+4096/6656, 8192/4096, 9216/4096, and 9216/4608. Other dimensions fail preflight
+explicitly; there is no generic dimension fallback. Token capacity and activation
+clamping remain runtime inputs.
+World size, expert count, and top-k remain runtime inputs for every entry.
+The builtin uses the default
 N64 policy for every capacity. The packaged external profile keeps N64 for
 capacities through 64 and selects N128/load7, eight 208-register epilogue warps,
 a 64-register transfer group, and 4 KiB dispatch for capacity 128.
-Unclamped EP4 H4096/I6656 top-8 contexts with 32 local experts and capacities
-128 or 190 also use fixed-token routing. For capacity 128, the packaged external
+For H4096/I6656 capacity 128, the packaged external
 profile keeps N64/K128/load9, uses eight 176-register epilogue warps, retains
 128 transfer registers, and dispatches the H4096 input as one 4 KiB chunk.
 For the capacity-190 skewed-routing profile, it selects N128/K128/load7, eight
 208-register epilogue warps, a 64-register transfer group, and the same 4 KiB
 dispatch.
-Fixed-token routing retains each thread's route through the count/fill phases
+During CUDA Graph capture, W4A8 selects a cached/warp-aggregated routing kernel.
+Eager launches retain dynamic token-count routing. By default, captured prefill
+also reads each rank's input row count and constructs peer prefixes, supporting
+different row counts, including empty ranks.
+For decode, opt into `W4A8KernelConfig(fixed_token_count=True)`: every rank must
+submit the same captured input row count, but the number of valid routes may
+differ. Mark unused expert slots with ID `-1`, including all slots of a padded
+row. Those slots do not contribute to expert counts or output combination.
+Only this explicit option skips the captured token-count exchange.
+
+```python
+prefill_policy = W4A8KernelConfig()  # Dynamic row counts across ranks.
+decode_policy = W4A8KernelConfig(fixed_token_count=True)  # Equal rows, independent masks.
+# Pass the selected policy as kernel=... when constructing MegaMoE outside capture.
+```
+
+Native compile-time experiments can use
+`MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=1`, consistently across translation units.
+The JIT V1 function-table layout and ABI version remain unchanged; a separate
+metadata export reports this routing option. Recompile older W4A8 modules that
+do not export routing metadata.
+Both captured modes retain each thread's route through the count/fill phases
 when planner capacity permits, and falls back to rereading routes with smaller
 CTA budgets. Warp-aggregated expert updates share count and cursor atomics, and
 warps distribute block construction for experts spanning multiple token blocks.
 Count and arrival counters are cleared after their last use for the next ordered
-forward, eliminating the fixed-token initialization epoch wait while retaining
-the offset and final routing-ready publication.
+forward, including transitions between eager and captured routing. Fixed-row
+decode omits the initialization epoch wait but retains the offset and final
+routing-ready publication.
 Launch resources are borrowed from grid-constant parameters rather than copied
 into thread-local memory.
-Other capacities, intermediate widths, expert/top-k counts, and clamped
-activations use runtime configuration within a compiled hidden specialization.
-Shape-specialized H8192/I4096 and H9216/I4096-or-I4608 kernels also have a
-runtime-world-size entry for other supported EP sizes, including EP16 and EP64,
-and other expert/top-k counts. These entries consume the caller's `world_size`,
-`num_experts`, and `top_k` unchanged and read live peer token counts, preserving
-ragged routing. Only the existing EP4/EP32 fixed-token recipes omit those
-token-count exchanges; their restriction does not limit the runtime geometry
-accepted by native or user-supplied W4A8 JIT policies.
-Current W4A8 hidden specializations are 128, 384, 2176, 4096, 8192, 8704, and 9216.
-Adding another hidden size requires adding an explicit `megaMoeW4A8<Hidden>`
-case in `w4a8KernelEntry`; there is no dynamic `Hidden=0` W4A8 kernel.
+The runtime geometry is not limited to measured EP4/EP32 profiles; other supported
+EP sizes, including EP16 and EP64, use the same compiled entries.
+W4A8 requires H >= 4096; smaller dimensions remain supported by W8A16.
+Adding another H/I pair requires an explicit `registerW4A8Kernel<Hidden, Intermediate>`
+entry in `w4a8KernelEntry`.
 Local shared experts remain W8A16-only. Routed JIT modules support both
 `KernelConfig` (W8A16) and `W4A8KernelConfig` (W4A8).
 

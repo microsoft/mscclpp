@@ -65,6 +65,7 @@ def test_initial_specializations_fit_tmem(values):
         {"dispatch_chunk": 768},
         {"dispatch_warps": 1},
         {"dispatch_stages": 3},
+        {"fixed_token_count": 1},
     ],
 )
 def test_w4a8_kernel_config_rejects_invalid(fields):
@@ -195,6 +196,7 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
         "-DMSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK=4096",
         "-DMSCCLPP_MEGAMOE_W4_DISPATCH_WARPS=4",
         "-DMSCCLPP_MEGAMOE_W4_DISPATCH_STAGES=1",
+        "-DMSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=0",
     }
     for command in commands[:-1]:
         assert expected <= set(command)
@@ -213,6 +215,17 @@ def test_default_w4a8_policy_always_builds_a_module(compiler_fixture):
     compiled = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
     assert compiled.key != "builtin" and Path(compiled.path).is_file()
     assert len(commands) == 5
+
+
+def test_fixed_token_count_is_an_explicit_cached_compile_option(compiler_fixture):
+    cache, commands, _ = compiler_fixture
+    dynamic = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
+    fixed = jit.compile_kernel(jit.W4A8KernelConfig(fixed_token_count=True), cache_dir=cache)
+    assert dynamic.key != fixed.key
+    assert len(commands) == 10
+    assert all("-DMSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=1" in command for command in commands[5:9])
+    loaded = jit.load_cached_kernel(fixed.key, cache_dir=cache)
+    assert loaded.config.fixed_token_count is True
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])

@@ -68,7 +68,7 @@ def _routing_reference(config, sample, weights):
     return partial.sum(dim=1).to(torch.bfloat16)
 
 
-def _sample(config, tokens, pattern):
+def _sample(config, tokens, pattern, *, valid_tokens=None):
     import torch
 
     generator = torch.Generator().manual_seed(4813 + config.rank)
@@ -101,6 +101,8 @@ def _sample(config, tokens, pattern):
         # Keep the last capacity slot live, including a thread's second cached ID.
         ids[-1] = config.num_experts - 1
         scores[-1] = 0.75
+    if valid_tokens is not None:
+        ids[valid_tokens:] = -1
     scores[ids == -1] = float("nan")
     inputs[(ids == -1).all(dim=1)] = float("nan")
     return inputs, ids.contiguous(), scores
@@ -153,7 +155,7 @@ class _Runtime:
         return result
 
     def config(
-        self, capacity, *, local_experts=8, top_k=2, e5m2=False, mxfp4=False, clamp=-1.0, hidden=128, intermediate=128
+        self, capacity, *, local_experts=8, top_k=2, e5m2=False, mxfp4=False, clamp=-1.0, hidden=None, intermediate=None
     ):
         from mscclpp.ext.megamoe import MegaMoEConfig
 
@@ -162,8 +164,8 @@ class _Runtime:
             rank=self.rank,
             world_size=self.world,
             max_tokens=capacity,
-            hidden=hidden,
-            intermediate=intermediate,
+            hidden=hidden if hidden is not None else (4096 if mxfp4 else 128),
+            intermediate=intermediate if intermediate is not None else (6656 if mxfp4 else 128),
             num_experts=local_experts * self.world,
             top_k=top_k,
             sm_margin=max(0, sms - 8),
@@ -443,7 +445,7 @@ def test_native_routing_local_expert_boundary(routing_runtime, local_experts, mx
 @pytest.mark.parametrize("capacity,direct", [(33, False), (129, True), (512, True)])
 def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct):
     runtime, torch = routing_runtime, routing_runtime.torch
-    config = runtime.config(capacity, local_experts=2, top_k=2, mxfp4=True, hidden=2176, intermediate=256)
+    config = runtime.config(capacity, local_experts=2, top_k=2, mxfp4=True, hidden=4096, intermediate=6656)
     weights = _host_weights(config)
     with _native_case(runtime) as case:
         context = case.create(config, weights)
@@ -509,7 +511,7 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,0" in kernels[0], kernels
+            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,true,false>" in kernels[0], kernels
             if kernel is not None:
                 assert context.kernel_config == kernel.config
 
@@ -551,8 +553,8 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         e5m2=e5m2,
         mxfp4=mxfp4,
         clamp=clamp,
-        hidden=384,
-        intermediate=640,
+        hidden=4096 if mxfp4 else 384,
+        intermediate=6656 if mxfp4 else 640,
     )
     assert config.world_size * config.max_tokens * config.top_k <= 1024
     weights = _host_weights(config)
@@ -625,6 +627,8 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         (8192, 64, 4096, -1.0, 16, 8, 8, 64, 9),
         (8192, 128, 4096, -1.0, 16, 8, 8, 64, 9),
         (8192, 128, 4096, -1.0, 4, 3, 8, 64, 9),
+        (4096, 128, 6656, -1.0, 32, 8, 8, 64, 9),
+        (4096, 190, 6656, -1.0, 32, 8, 8, 64, 9),
     ],
     ids=[
         "specialized-capacity-32",
@@ -641,6 +645,8 @@ def test_native_routing_graph_reuse(routing_runtime, kernel_values, e5m2, mxfp4,
         "h8192-specialized-capacity-64",
         "h8192-specialized-capacity-128",
         "h8192-runtime-experts-top-k",
+        "h4096-i6656-capacity-128",
+        "h4096-i6656-capacity-190",
     ],
 )
 def test_native_w4a8_configuration_selection_graph_reuse(
@@ -674,7 +680,7 @@ def test_native_w4a8_configuration_selection_graph_reuse(
         graphs = {}
         # Keep H8192 and EP32 CPU oracles small while retaining the specialized capacity.
         sample_capacity = (
-            4 if hidden == 8192 else ((8 if remaining_sms == 2 else 4) if runtime.world == 32 else capacity)
+            4 if hidden in (4096, 8192) else ((8 if remaining_sms == 2 else 4) if runtime.world == 32 else capacity)
         )
         if remaining_sms == 2:
 
@@ -706,14 +712,7 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            specialized_capacity = (hidden == 9216 and capacity in (32, 64, 128)) or (
-                hidden == 8192 and capacity in (16, 32, 64, 128)
-            )
-            specialized = specialized_capacity and clamp < 0
-            fixed_tokens = specialized and runtime.world in (4, 32) and local_experts == 16 and top_k == 8
-            expected_intermediate = intermediate if specialized else 0
-            expected_world = runtime.world if fixed_tokens else 0
-            expected = f"megaMoeW4A8<{hidden},{expected_intermediate},{expected_world}"
+            expected = f"megaMoeW4A8<{hidden},{intermediate},true,false>"
             assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
             assert context.effective_kernel_config["tile_n"] == expected_tile_n
             assert context.effective_kernel_config["load_stages"] == expected_load_stages
@@ -730,6 +729,74 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                         graphs[nominal].replay()
                 case.stream.synchronize()
                 _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize("remaining_sms", [2, 8])
+def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remaining_sms):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    config = runtime.config(129, local_experts=2, top_k=2, mxfp4=True, hidden=4096, intermediate=6656)
+    sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
+    config = replace(config, sm_margin=max(0, sms - remaining_sms))
+    policy = W4A8KernelConfig(fixed_token_count=True, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, module)
+        storage = _buffers(runtime, context)
+        graphs = {}
+
+        def check_fixed_policy():
+            assert context.effective_kernel_config["fixed_token_count"] is True
+
+        runtime.collective(check_fixed_policy)
+        for tokens in (0, 129):
+            sample = _sample(config, tokens, "hot_first", valid_tokens=max(0, tokens - runtime.rank))
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            graphs[tokens] = graph
+
+        def check_selected_kernel():
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as profiler:
+                with torch.cuda.stream(case.stream):
+                    graphs[129].replay()
+                case.stream.synchronize()
+            kernels = [
+                event.name.replace(" ", "")
+                for event in profiler.events()
+                if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
+            ]
+            assert len(kernels) == 1 and "megaMoeW4A8<4096,6656,true,true>" in kernels[0], kernels
+            assert context.cta_count <= remaining_sms
+
+        runtime.collective(check_selected_kernel)
+        for tokens in (129, 0, 129):
+            for pattern in ("hot_first", "mixed", "masked", "hot_last"):
+                sample = _sample(config, tokens, pattern, valid_tokens=min(tokens, runtime.rank + 1))
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    for _ in range(3):
+                        graphs[tokens].replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)
+            # Eager prefill can still submit different row counts on each rank.
+            eager_tokens = max(0, 5 - runtime.rank)
+            sample = _sample(config, eager_tokens, "mixed")
+            expected = _routing_reference(config, sample, weights)
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                _launch(context, storage, eager_tokens, case.stream)
+            case.stream.synchronize()
+            _check_output(runtime, storage, sample, expected)
 
 
 @_JIT_ONLY
