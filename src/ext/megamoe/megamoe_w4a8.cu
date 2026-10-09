@@ -9,26 +9,11 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE
-extern "C" int mscclpp_megamoe_w4_trace_reset() {
-  void* counts = nullptr;
-  auto result = cudaGetSymbolAddress(&counts, w4TraceCounts);
-  if (result != cudaSuccess) return int(result);
-  result = cudaMemset(counts, 0, sizeof(w4TraceCounts));
-  if (result != cudaSuccess) return int(result);
-  bool enabled = true;
-  return int(cudaMemcpyToSymbol(w4TraceEnabled, &enabled, sizeof(enabled)));
-}
+#if MSCCLPP_MEGAMOE_TRACE
+extern "C" int mscclpp_megamoe_w4_trace_reset() { return int(resetKernelTrace()); }
 
 extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_t* counts, size_t countBytes) {
-  if (!events || !counts || bytes < sizeof(w4TraceEvents) || countBytes < sizeof(w4TraceCounts))
-    return int(cudaErrorInvalidValue);
-  bool enabled = false;
-  auto result = cudaMemcpyToSymbol(w4TraceEnabled, &enabled, sizeof(enabled));
-  if (result != cudaSuccess) return int(result);
-  result = cudaMemcpyFromSymbol(counts, w4TraceCounts, sizeof(w4TraceCounts));
-  if (result != cudaSuccess) return int(result);
-  return int(cudaMemcpyFromSymbol(events, w4TraceEvents, sizeof(w4TraceEvents)));
+  return int(copyKernelTrace(events, bytes, counts, countBytes));
 }
 #endif
 #endif
@@ -57,8 +42,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   auto p = w4a8ParameterView(parameters, configuration);
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
-  int warp = threadIdx.x / 32;
-  int lane = threadIdx.x % 32;
+  int warp = threadIdx.x / warpSize;
+  int lane = threadIdx.x % warpSize;
   int cta = blockIdx.x % ClusterM;
   int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
@@ -66,10 +51,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   // signalStart notifies a consumer stream of kernel entry, not output readiness.
   if (blockIdx.x == 0 && threadIdx.x == 0 && startSignal)
     atomicStore<uint32_t, scopeDevice>(startSignal, 1, memoryOrderRelease);
-  traceW4(W4TracePhase::Routing, true);
+  traceKernel(KernelTracePhase::Routing, true);
   // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
   prepareRoutes<WorldSize != 0>(p, tokens, ids, scores);
-  traceW4(W4TracePhase::Routing, false);
+  traceKernel(KernelTracePhase::Routing, false);
   cute::TMEM::Allocator2Sm allocator;
 
   if (warp < Schedule::DispatchBegin) {
@@ -87,7 +72,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     accumulatePipeline.init_masks(ClusterShape{});
-    cutlass::arch::NamedBarrier::sync(Schedule::DispatchBegin * 32, 0);
+    cutlass::arch::NamedBarrier::sync(Schedule::DispatchBegin * warpSize, 0);
     cute::cluster_arrive();
     cute::cluster_wait();
 
@@ -110,7 +95,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
                       lane, cta, cluster, tasks);
     } else {
       if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
-      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * 32, 2);
+      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * warpSize, 2);
       if (threadIdx.x == 0) {
         CUTE_UNROLL
         for (int peerCta = 0; peerCta < ClusterM; ++peerCta) s.tmemReady.arrive(peerCta);
@@ -128,45 +113,43 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       }
     }
   } else {
-    // Keep the loader's register budget independent of dispatch's 32-register role.
+    // Lower dispatch/idle warp groups to 32 registers per thread to fund epilogue growth.
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
     // Arrive without waiting so copies overlap the compute-side initialization.
     cute::cluster_arrive_relaxed();
     if (warp < Schedule::DispatchEnd) {
-      traceW4(W4TracePhase::Dispatch, true);
+      traceKernel(KernelTracePhase::Dispatch, true);
       dispatchW4A8Tokens<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp - Schedule::DispatchBegin);
-      traceW4(W4TracePhase::Dispatch, false);
+      traceKernel(KernelTracePhase::Dispatch, false);
     }
   }
-  // Compute has waited for initialization; this CTA join lets dispatch safely
-  // reuse the completed cluster phase without a separate initialization wait.
+  // Join even idle roles before the next register reconfiguration.
   __syncthreads();
-  if (!(warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd))
+  if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd)
+    cutlass::arch::warpgroup_reg_dealloc<EntryRegisters>();
+  else
     cutlass::arch::warpgroup_reg_alloc<EntryRegisters>();
   cute::cluster_sync();
   if (warp == Schedule::MmaWarp) {
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
-  traceW4(W4TracePhase::OutputJoin, true);
+  traceKernel(KernelTracePhase::OutputJoin, true);
   p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
   if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
-  if (blockIdx.x == 0 && threadIdx.x < p.config.worldSize) {
-    MemoryDevice2DeviceSemaphoreDeviceHandle channel{
-        at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
-        peerAt<uint64_t>(p, threadIdx.x, p.symmetric.peerSignals) + p.config.rank,
-        at<uint64_t>(p.local, p.symmetric.expectedPeerSignals) + threadIdx.x};
-    channel.incExpectedInbound();
-    channel.signal();
+  if (threadIdx.x < p.config.worldSize) {
+    // Only CTA0 consumes the peer notification; followers observe the same epoch.
+    if (blockIdx.x == 0)
+      signalAndWait(p, threadIdx.x);
+    else
+      waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
+                                         p.workspace.control->epoch);
   }
-  if (threadIdx.x < p.config.worldSize)
-    waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
-                                       p.workspace.control->epoch);
   __syncthreads();
-  traceW4(W4TracePhase::OutputJoin, false);
-  traceW4(W4TracePhase::Combine, true);
+  traceKernel(KernelTracePhase::OutputJoin, false);
+  traceKernel(KernelTracePhase::Combine, true);
   combineResults(p, tokens, output);
-  traceW4(W4TracePhase::Combine, false);
+  traceKernel(KernelTracePhase::Combine, false);
 }
 
 struct W4A8KernelRegistration {
@@ -182,14 +165,25 @@ constexpr W4A8KernelRegistration registerW4A8Kernel() {
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config) {
-  static constexpr std::array kernels{registerW4A8Kernel<128>(),           registerW4A8Kernel<384>(),
-                                      registerW4A8Kernel<2176>(),          registerW4A8Kernel<4096>(),
-                                      registerW4A8Kernel<8192>(),          registerW4A8Kernel<8704>(),
-                                      registerW4A8Kernel<9216>(),          registerW4A8Kernel<8192, 4096>(),
-                                      registerW4A8Kernel<9216, 4096>(),    registerW4A8Kernel<9216, 4608>(),
-                                      registerW4A8Kernel<8192, 4096, 4>(), registerW4A8Kernel<8192, 4096, 32>(),
-                                      registerW4A8Kernel<9216, 4096, 4>(), registerW4A8Kernel<9216, 4096, 32>(),
-                                      registerW4A8Kernel<9216, 4608, 4>(), registerW4A8Kernel<9216, 4608, 32>()};
+  static constexpr std::array kernels{registerW4A8Kernel<128>(),
+                                      registerW4A8Kernel<384>(),
+                                      registerW4A8Kernel<2176>(),
+                                      registerW4A8Kernel<4096>(),
+                                      registerW4A8Kernel<8192>(),
+                                      registerW4A8Kernel<8704>(),
+                                      registerW4A8Kernel<9216>(),
+                                      registerW4A8Kernel<4096, 6656>(),
+                                      registerW4A8Kernel<8192, 4096>(),
+                                      registerW4A8Kernel<9216, 4096>(),
+                                      registerW4A8Kernel<9216, 4608>(),
+                                      registerW4A8Kernel<4096, 6656, 4>(),
+                                      registerW4A8Kernel<4096, 6656, 32>(),
+                                      registerW4A8Kernel<8192, 4096, 4>(),
+                                      registerW4A8Kernel<8192, 4096, 32>(),
+                                      registerW4A8Kernel<9216, 4096, 4>(),
+                                      registerW4A8Kernel<9216, 4096, 32>(),
+                                      registerW4A8Kernel<9216, 4608, 4>(),
+                                      registerW4A8Kernel<9216, 4608, 32>()};
   bool specialized = mscclpp::megamoe::detail::useSpecializedW4A8Kernel(config);
   int intermediate = specialized ? config.intermediate : 0;
   int worldSize = mscclpp::megamoe::detail::useFixedTokenCountW4A8Kernel(config) ? config.worldSize : 0;

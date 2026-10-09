@@ -274,6 +274,65 @@ def test_native_mxfp4_routed_quantization_and_graph(tokens, hidden, intermediate
     gc.collect()
 
 
+@pytest.mark.parametrize("e5m2,mxfp4", [(False, False), (True, False), (False, True)])
+def test_native_empty_and_idle_roles_graph_replay(e5m2, mxfp4):
+    import gc
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+    from mscclpp.ext.megamoe.benchmark import _weights
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sms = torch.cuda.get_device_properties(device).multi_processor_count
+    config = _config(
+        world_size=1,
+        max_tokens=1,
+        hidden=128,
+        intermediate=128,
+        num_experts=2,
+        top_k=1,
+        sm_margin=max(0, sms - 32),
+        weight_e5m2=e5m2,
+        weight_mxfp4=mxfp4,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    with torch.random.fork_rng(devices=[device]):
+        torch.manual_seed(5471)
+        context = MegaMoE(config, Communicator(bootstrap), *_weights(config, device))
+    assert context.cta_count >= 8
+    inputs = torch.full((1, 128), 0.125, device=device, dtype=torch.bfloat16)
+    ids = torch.zeros((1, 1), device=device, dtype=torch.int32)
+    scores = torch.ones((1, 1), device=device, dtype=torch.float32)
+    expected = context(inputs, ids, scores).clone()
+    output = torch.empty_like(inputs)
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    graphs = {}
+    for tokens in (0, 1):
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            context(inputs[:tokens], ids[:tokens], scores[:tokens], output=output[:tokens], stream=stream)
+        graphs[tokens] = graph
+    for tokens in (1, 0) * 10:
+        with torch.cuda.stream(stream):
+            output.fill_(7)
+            graphs[tokens].replay()
+        stream.synchronize()
+        if tokens:
+            torch.testing.assert_close(output, expected, rtol=0, atol=0)
+        else:
+            assert torch.all(output == 7)
+    del graph, graphs, context
+    gc.collect()
+
+
 def test_native_views_staging_and_graph_lifetime():
     import gc
     from mscclpp import Communicator, TcpBootstrap

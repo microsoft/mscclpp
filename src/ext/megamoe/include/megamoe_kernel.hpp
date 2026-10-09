@@ -34,13 +34,15 @@ namespace detail {
 __host__ __device__ constexpr bool useSpecializedW4A8Kernel(const NativeConfig& c) {
   bool capacity32To128 = c.maxTokens == 32 || c.maxTokens == 64 || c.maxTokens == 128;
   bool supportedShape = (c.hidden == 9216 && capacity32To128 && (c.intermediate == 4096 || c.intermediate == 4608)) ||
-                        (c.hidden == 8192 && (c.maxTokens == 16 || capacity32To128) && c.intermediate == 4096);
+                        (c.hidden == 8192 && (c.maxTokens == 16 || capacity32To128) && c.intermediate == 4096) ||
+                        (c.hidden == 4096 && (c.maxTokens == 128 || c.maxTokens == 190) && c.intermediate == 6656);
   return c.weightMxfp4 && c.gateUpClamp < 0 && supportedShape;
 }
 
 __host__ __device__ constexpr bool useFixedTokenCountW4A8Kernel(const NativeConfig& c) {
-  return useSpecializedW4A8Kernel(c) && (c.worldSize == 4 || c.worldSize == 32) && c.numExperts == 16 * c.worldSize &&
-         c.topK == 8;
+  bool supportedExperts =
+      c.hidden == 4096 && c.intermediate == 6656 ? c.numExperts == 32 * c.worldSize : c.numExperts == 16 * c.worldSize;
+  return useSpecializedW4A8Kernel(c) && (c.worldSize == 4 || c.worldSize == 32) && supportedExperts && c.topK == 8;
 }
 
 }  // namespace detail

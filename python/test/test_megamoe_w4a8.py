@@ -51,6 +51,28 @@ def test_packaged_w4a8_t128_policy_exact_matches(world_size):
     )
 
 
+def test_packaged_h4096_i6656_t128_policy_exact_matches():
+    policy = resolve_w4a8_kernel_config(_config(128, hidden=4096, intermediate=6656, num_experts=128))
+    assert policy == W4A8KernelConfig(
+        transfer_registers=128,
+        epilogue_warps=8,
+        epilogue_registers=176,
+        dispatch_chunk=4096,
+    )
+
+
+def test_packaged_h4096_i6656_case_g_policy_exact_matches():
+    policy = resolve_w4a8_kernel_config(_config(190, hidden=4096, intermediate=6656, num_experts=128))
+    assert policy == W4A8KernelConfig(
+        tile_n=128,
+        load_stages=7,
+        transfer_registers=64,
+        epilogue_warps=8,
+        epilogue_registers=208,
+        dispatch_chunk=4096,
+    )
+
+
 @pytest.mark.parametrize(
     "config",
     [

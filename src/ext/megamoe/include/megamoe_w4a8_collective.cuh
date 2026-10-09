@@ -228,12 +228,12 @@ struct W4A8Mainloop {
     uint64_t waitNs = 0, issueNs = 0;
     const int iterations = kTiles;
     for (; kTiles > 0; --kTiles, ++iterator) {
-      auto start = traceW4Clock();
+      auto start = traceKernelClock();
       pipe.producer_acquire(state);
-      waitNs += traceW4Clock() - start;
+      waitNs += traceKernelClock() - start;
       auto* barrier = pipe.producer_get_barrier(state);
       int stage = state.index();
-      start = traceW4Clock();
+      start = traceKernelClock();
       if (elect_one_sync()) {
         if constexpr (Operands != 2) {
           copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, TMA::CacheHintSm100::EVICT_FIRST), a(_, *iterator),
@@ -248,11 +248,11 @@ struct W4A8Mainloop {
                sfb(_, *iterator), inputs.tBsSFB(_, stage));
         }
       }
-      issueNs += traceW4Clock() - start;
+      issueNs += traceKernelClock() - start;
       ++state;
     }
-    traceW4Total(W4TracePhase::LoadAcquire, waitNs, iterations);
-    traceW4Total(W4TracePhase::TmaIssue, issueNs, iterations);
+    traceKernelTotal(KernelTracePhase::LoadAcquire, waitNs, iterations);
+    traceKernelTotal(KernelTracePhase::TmaIssue, issueNs, iterations);
     return make_tuple(state, iterator);
   }
   __device__ void load_tail(MainloopPipeline pipe, MainloopPipelineState state) const { pipe.producer_tail(state); }
@@ -265,9 +265,9 @@ struct W4A8Mainloop {
     auto [tiled, a, b, sfa, sfb, copyA, sourceA, targetA, copyB, sourceB, targetB] = inputs;
     tiled.idesc_.n_dim_ = mmaRows(validRows) >> 3;
     sfb.data() = sfb.data().get() + (get<1>(coord) % (128 / TileN)) * (TileN / 32);
-    traceW4(W4TracePhase::AccumulatorFree, true, accState.index());
+    traceKernel(KernelTracePhase::AccumulatorFree, true, accState.index());
     accPipe.producer_acquire(accState);
-    traceW4(W4TracePhase::AccumulatorFree, false, accState.index());
+    traceKernel(KernelTracePhase::AccumulatorFree, false, accState.index());
     tiled.accumulate_ = UMMA::ScaleOut::Zero;
     uint64_t waitNs = 0, activationWaitNs = 0, issueNs = 0, releaseNs = 0;
     uint32_t weightReady = 0, activationReady = 0;
@@ -275,7 +275,7 @@ struct W4A8Mainloop {
     const bool issuer = elect_one_sync();
     const uint32_t destination = raw_pointer_cast(get<0>(accumulators).data());
     for (; kTiles > 0; --kTiles) {
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE == 1
+#if MSCCLPP_MEGAMOE_TRACE == 1
       // Nonblocking probes sample both operands before either blocking wait.
       weightReady +=
           cutlass::arch::ClusterBarrier::test_wait(loadPipe.producer_get_barrier(loadState), loadState.phase(), 1);
@@ -283,16 +283,16 @@ struct W4A8Mainloop {
         activationReady += cutlass::arch::ClusterBarrier::test_wait(activationPipe.producer_get_barrier(loadState),
                                                                     loadState.phase(), 1);
 #endif
-      auto start = traceW4Clock();
+      auto start = traceKernelClock();
       loadPipe.consumer_wait(loadState);
-      waitNs += traceW4Clock() - start;
+      waitNs += traceKernelClock() - start;
       if constexpr (SplitPipelines) {
-        start = traceW4Clock();
+        start = traceKernelClock();
         activationPipe.consumer_wait(loadState);
-        activationWaitNs += traceW4Clock() - start;
+        activationWaitNs += traceKernelClock() - start;
       }
       int stage = loadState.index();
-      start = traceW4Clock();
+      start = traceKernelClock();
       if (issuer) {
         copy(copyA, sourceA(_, _, _, _, stage), targetA);
         copy(copyB, sourceB(_, _, _, _, stage), targetB);
@@ -316,24 +316,24 @@ struct W4A8Mainloop {
         }
       }
       tiled.accumulate_ = UMMA::ScaleOut::One;
-      issueNs += traceW4Clock() - start;
-      start = traceW4Clock();
+      issueNs += traceKernelClock() - start;
+      start = traceKernelClock();
       loadPipe.consumer_release(loadState);
       if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
-      releaseNs += traceW4Clock() - start;
+      releaseNs += traceKernelClock() - start;
       ++loadState;
     }
     if constexpr (SplitPipelines) {
-      traceW4Total(W4TracePhase::MmaWeightWait, waitNs, iterations);
-      traceW4Total(W4TracePhase::MmaActivationWait, activationWaitNs, iterations);
-      traceW4Count(W4TracePhase::WeightReadyAtEntry, weightReady, iterations);
-      traceW4Count(W4TracePhase::ActivationReadyAtEntry, activationReady, iterations);
+      traceKernelTotal(KernelTracePhase::MmaWeightWait, waitNs, iterations);
+      traceKernelTotal(KernelTracePhase::MmaActivationWait, activationWaitNs, iterations);
+      traceKernelCount(KernelTracePhase::WeightReadyAtEntry, weightReady, iterations);
+      traceKernelCount(KernelTracePhase::ActivationReadyAtEntry, activationReady, iterations);
     } else {
-      traceW4Total(W4TracePhase::MmaInputWait, waitNs, iterations);
-      traceW4Count(W4TracePhase::InputReadyAtEntry, weightReady, iterations);
+      traceKernelTotal(KernelTracePhase::MmaInputWait, waitNs, iterations);
+      traceKernelCount(KernelTracePhase::InputReadyAtEntry, weightReady, iterations);
     }
-    traceW4Total(W4TracePhase::MmaIssue, issueNs, iterations);
-    traceW4Total(W4TracePhase::StageRelease, releaseNs, iterations);
+    traceKernelTotal(KernelTracePhase::MmaIssue, issueNs, iterations);
+    traceKernelTotal(KernelTracePhase::StageRelease, releaseNs, iterations);
     return loadState;
   }
 };

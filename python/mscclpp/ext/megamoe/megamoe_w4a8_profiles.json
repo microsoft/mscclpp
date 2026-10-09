@@ -6,6 +6,60 @@
     {
       "match": {
         "world_size": 4,
+        "max_tokens": 128,
+        "hidden": 4096,
+        "intermediate": 6656,
+        "local_experts": 32,
+        "top_k": 8,
+        "weight_mxfp4": true,
+        "gate_up_clamp": "negative"
+      },
+      "config": {
+        "tile_n": 64,
+        "tile_k": 128,
+        "load_stages": 9,
+        "num_warps": 16,
+        "transfer_registers": 128,
+        "load_warps": 2,
+        "split_pipelines": false,
+        "epilogue_tokens": 32,
+        "epilogue_warps": 8,
+        "epilogue_registers": 176,
+        "dispatch_chunk": 4096,
+        "dispatch_warps": 4,
+        "dispatch_stages": 1
+      }
+    },
+    {
+      "match": {
+        "world_size": 4,
+        "max_tokens": 190,
+        "hidden": 4096,
+        "intermediate": 6656,
+        "local_experts": 32,
+        "top_k": 8,
+        "weight_mxfp4": true,
+        "gate_up_clamp": "negative"
+      },
+      "config": {
+        "tile_n": 128,
+        "tile_k": 128,
+        "load_stages": 7,
+        "num_warps": 16,
+        "transfer_registers": 64,
+        "load_warps": 2,
+        "split_pipelines": false,
+        "epilogue_tokens": 32,
+        "epilogue_warps": 8,
+        "epilogue_registers": 208,
+        "dispatch_chunk": 4096,
+        "dispatch_warps": 4,
+        "dispatch_stages": 1
+      }
+    },
+    {
+      "match": {
+        "world_size": 4,
         "max_tokens": 16,
         "hidden": 8192,
         "intermediate": 4096,
@@ -222,9 +276,9 @@
   ],
   "provenance": {
     "created_at": "2026-10-08",
-    "measured_at": "2026-10-07",
+    "measured_at": "2026-10-09",
     "hardware": "NVIDIA GB200, validated on EP4 and tuned on EP32",
-    "source": "H8192/I4096 top-8 W4A8 resident-kernel tuning",
-    "scope": "unclamped routed experts with 16 local experts and equal live token counts"
+    "source": "H4096/I6656 and H8192/I4096 top-8 W4A8 resident-kernel tuning",
+    "scope": "unclamped routed experts with exact-match local expert counts and equal live token counts"
   }
 }

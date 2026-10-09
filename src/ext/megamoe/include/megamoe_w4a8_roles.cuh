@@ -47,7 +47,7 @@ template <class Types, class Storage>
 __device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp, int* counter, bool hasRow,
                                                  uint32_t phase) {
 #if MSCCLPP_BULK_AVAILABLE
-  // High bits count warp arrivals; low bits count the rows to publish.
+  // Every warp arrives, including padded rows; only live rows contribute to readiness.
   constexpr uint32_t Arrival = 1u << 16;
   uint32_t contribution = Arrival + uint32_t(hasRow);
   uint32_t sharedCounter = static_cast<uint32_t>(__cvta_generic_to_shared(&storage.arrivals));
@@ -74,7 +74,7 @@ template <int DispatchBytes, int DispatchStages, class P, class Storage>
 __device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
                                                uint8_t* destination, int bytes, uint32_t& phase) {
 #if MSCCLPP_BULK_AVAILABLE
-  int lane = threadIdx.x % 32;
+  int lane = threadIdx.x % warpSize;
   int stage = chunk % DispatchStages;
   if (lane == 0) {
     storage.barriers[localWarp][stage].wait(phase, SpinLimit);
@@ -105,7 +105,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
   static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
   const auto& w = p.workspace;
-  int lane = threadIdx.x % 32;
+  int lane = threadIdx.x % warpSize;
   auto& barriers = s.dispatch.barriers[localWarp];
   if (lane == 0) {
     if (localWarp == 0) {
@@ -116,20 +116,23 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].relaxedInit();
     bulkFence();
   }
-  cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * 32, 1);
-  uint32_t phases[DispatchStages] = {};
+  // All dispatch warps must observe the leader's cleared counters before publishing.
+  cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
+  uint32_t loadPhases[DispatchStages] = {};
   constexpr int hidden = Hidden;
   constexpr int chunks = (Hidden + DispatchBytes - 1) / DispatchBytes;
   constexpr int TileN = P::Tiles::N;
   constexpr int GroupsPerBlock = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
+  // This parity hands off the shared counter, independently of each TMA stage's parity.
   uint32_t publicationPhase = 0;
   int groups = w.control->tokenBlocks * GroupsPerBlock;
   for (int group = blockIdx.x; group < groups; group += gridDim.x) {
     int block = group / GroupsPerBlock;
-    int firstRow = group % GroupsPerBlock * Types::DispatchWarps;
+    int groupFirstRow = group % GroupsPerBlock * Types::DispatchWarps;
     int rows = w.blocks[block].rows;
-    if (firstRow >= rows) continue;
-    int rowInBlock = firstRow + localWarp;
+    // Skip wholly empty groups; padded tail warps still join every publication.
+    if (groupFirstRow >= rows) continue;
+    int rowInBlock = groupFirstRow + localWarp;
     int row = block * TileN + rowInBlock;
     bool hasRow = rowInBlock < rows;
     Route route{};
@@ -163,7 +166,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
       int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
       if (hasRow)
         storeW4A8Chunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
-                                                      phases[stage]);
+                                                      loadPhases[stage]);
       if (lane == 0) {
         auto* counter = w4InputChunkCounter<Types>(w, hidden, block, chunk);
         publicationPhase ^= 1u;
@@ -204,17 +207,17 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
     Task task = taskAt(p, i, 0, hidden, intermediate);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
-      traceW4(W4TracePhase::TokenReady, true, int(task.fc1));
+      traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
       if (lane == 0)
         waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
                                       fc1CompletionCount<false>(intermediate));
       __syncwarp();
-      traceW4(W4TracePhase::TokenReady, false, int(task.fc1));
+      traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
     }
     auto coord = taskCoord(p, task, cta);
     int kTiles = taskKTiles(p, task, hidden, intermediate);
-    auto phase = task.fc1 ? W4TracePhase::LoadFc1 : W4TracePhase::LoadFc2;
-    traceW4(phase, true, i);
+    auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+    traceKernel(phase, true, i);
     auto loadTiles = [&](int first, int count) {
       auto iterator = cute::make_coord_iterator(first, kTiles);
       auto result = [&](auto& firstMainloop, auto& secondMainloop) {
@@ -238,18 +241,18 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
     if (task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
       for (int first = 0; first < kTiles; first += TilesPerChunk) {
-        traceW4(W4TracePhase::TokenReady, true, first / TilesPerChunk);
+        traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
         if (lane == 0)
           waitAtLeast<int, scopeDevice>(
               w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
         __syncwarp();
-        traceW4(W4TracePhase::TokenReady, false, first / TilesPerChunk);
+        traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
         loadTiles(first, min(TilesPerChunk, kTiles - first));
       }
     } else {
       loadTiles(0, kTiles);
     }
-    traceW4(phase, false, i);
+    traceKernel(phase, false, i);
   }
   fc1.load_tail(producerPipeline, state);
 }
@@ -275,12 +278,12 @@ __device__ __forceinline__ void runW4A8MmaRole(const P& p, Storage& s, typename 
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
       auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
-      auto phase = task.fc1 ? W4TracePhase::MmaFc1 : W4TracePhase::MmaFc2;
-      traceW4(phase, true, i);
+      auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
+      traceKernel(phase, true, i);
       loadState =
           fc1.mma(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
                   make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord, kTiles, task.tokens.rows);
-      traceW4(phase, false, i);
+      traceKernel(phase, false, i);
       accumulatePipeline.producer_commit(accumulateState);
       ++accumulateState;
     }

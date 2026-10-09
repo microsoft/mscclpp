@@ -167,6 +167,13 @@ specializations for capacities 16, 32, 64, and 128. The builtin uses the default
 N64 policy for every capacity. The packaged external profile keeps N64 for
 capacities through 64 and selects N128/load7, eight 208-register epilogue warps,
 a 64-register transfer group, and 4 KiB dispatch for capacity 128.
+Unclamped EP4 H4096/I6656 top-8 contexts with 32 local experts and capacities
+128 or 190 also use fixed-token routing. For capacity 128, the packaged external
+profile keeps N64/K128/load9, uses eight 176-register epilogue warps, retains
+128 transfer registers, and dispatches the H4096 input as one 4 KiB chunk.
+For the capacity-190 skewed-routing profile, it selects N128/K128/load7, eight
+208-register epilogue warps, a 64-register transfer group, and the same 4 KiB
+dispatch.
 Fixed-token routing retains each thread's route through the count/fill phases
 when planner capacity permits, and falls back to rereading routes with smaller
 CTA budgets. Warp-aggregated expert updates share count and cursor atomics, and
@@ -192,14 +199,19 @@ Local shared experts remain W8A16-only. Routed JIT modules support both
 `KernelConfig` (W8A16) and `W4A8KernelConfig` (W4A8).
 
 For an experimental native warp timeline, build with
-`-DMSCCLPP_MEGAMOE_W4_TRACE=1`. This enables bounded `%globaltimer` records on
+`-DMSCCLPP_MEGAMOE_TRACE=1`. This enables a shared recorder implementation for
+W8A16 and W4A8, with bounded `%globaltimer` records on
 the first two CTAs, with separate routing, dispatch, loader acquire/issue, MMA
-wait/issue, epilogue, output-join, and local top-k reduction ranges. The debug
-`mscclpp_megamoe_w4_trace_reset/copy` exports must be called only after the
-context's CUDA work is synchronized. This is native C++ instrumentation, not
+wait/issue, epilogue, output-join, and local top-k reduction ranges.
+Recorder storage remains translation-unit-local: the debug
+`mscclpp_megamoe_w4_trace_reset/copy` and `mscclpp_megamoe_w8_trace_reset/copy`
+exports control their respective kernels independently and must be called only
+after the context's CUDA work is synchronized. Existing W4 event codes, buffer
+layout, exports and the `MSCCLPP_MEGAMOE_W4_TRACE` flag remain compatible.
+This is native C++ instrumentation, not
 CuTe DSL's `run-iket`; normal builds compile it out. Trace durations include
 instrumentation overhead and must not be used as uninstrumented latency.
-`-DMSCCLPP_MEGAMOE_W4_TRACE=2` retains coarse ranges but removes per-K timestamp
+`-DMSCCLPP_MEGAMOE_TRACE=2` retains coarse ranges but removes per-K timestamp
 reads and readiness probes, for lower-perturbation graph-phase measurements.
 `-DMSCCLPP_MEGAMOE_W4_SPLIT_PIPELINES=1` separates weight/SFA and activation/SFB
 barriers for diagnosis with two loaders. The MMA waits for both inputs and

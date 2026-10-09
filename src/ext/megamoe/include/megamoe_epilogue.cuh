@@ -234,9 +234,9 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
   auto matrix = accumulators(make_coord(_, _), _0{}, _0{}, state.index());
   CUTE_STATIC_ASSERT_V(size<0>(matrix) == Int<CtaTileM>{});
   CUTE_STATIC_ASSERT_V(size<1>(matrix) == Int<KernelTileN>{});
-  if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::EpilogueReady, true, int(task.fc1));
+  traceKernel(KernelTracePhase::EpilogueReady, true, int(task.fc1));
   pipeline.consumer_wait(state);
-  if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::EpilogueReady, false, int(task.fc1));
+  traceKernel(KernelTracePhase::EpilogueReady, false, int(task.fc1));
   for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += ChunkTokens) {
     int validRows = min(int(ChunkTokens), task.tokens.rows - tokenOffset);
     // Load one token chunk from TMEM into per-thread FP32 registers.
@@ -252,10 +252,11 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
     cutlass::arch::fence_view_async_tmem_load();
     if (tokenOffset + ChunkTokens >= task.tokens.rows) pipeline.consumer_release(state);
     if (task.fc1) {
-      if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::ActivationQuantize, true, tokenOffset);
+      constexpr auto Phase = P::WeightMxfp4 ? KernelTracePhase::ActivationQuantize : KernelTracePhase::Activation;
+      traceKernel(Phase, true, tokenOffset);
       activateFc1Chunk<LocalMode, EpilogueThreads, ChunkTokens>(p, task, s, values, coordinates, tokenOffset, validRows,
                                                                 intermediate);
-      if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::ActivationQuantize, false, tokenOffset);
+      traceKernel(Phase, false, tokenOffset);
       // Local and quantized FC1 write hidden directly instead of staging a bulk store.
       if constexpr (Local || P::WeightMxfp4) continue;
     } else {
@@ -264,10 +265,11 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
     // Publish the packed BF16 tile before warp leaders launch bulk stores.
     bulkFence();
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-    if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::Fc2Store, true, tokenOffset);
+    auto phase = task.fc1 ? KernelTracePhase::Fc1Store : KernelTracePhase::Fc2Store;
+    traceKernel(phase, true, tokenOffset);
     storeOutputChunk<LocalMode, EpilogueWarps>(p, task, s, directOutput, tokenOffset, validRows, hidden, intermediate,
                                                warp, lane);
-    if constexpr (P::WeightMxfp4) traceW4(W4TracePhase::Fc2Store, false, tokenOffset);
+    traceKernel(phase, false, tokenOffset);
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
   }
   ++state;

@@ -4,13 +4,26 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_TRACE_CUH_
 #define MSCCLPP_EXT_MEGAMOE_TRACE_CUH_
 
+#include <cstddef>
 #include <cstdint>
 
 #include "megamoe_specialization.hpp"
 
+#ifndef MSCCLPP_MEGAMOE_TRACE
+#if defined(MSCCLPP_MEGAMOE_W4_TRACE)
+#define MSCCLPP_MEGAMOE_TRACE MSCCLPP_MEGAMOE_W4_TRACE
+#else
+#define MSCCLPP_MEGAMOE_TRACE 0
+#endif
+#endif
+
+#if MSCCLPP_MEGAMOE_TRACE
+#include <cuda_runtime.h>
+#endif
+
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-enum class W4TracePhase : uint32_t {
+enum class KernelTracePhase : uint32_t {
   Routing,
   Dispatch,
   TokenReady,
@@ -33,38 +46,69 @@ enum class W4TracePhase : uint32_t {
   MmaActivationWait,
   WeightReadyAtEntry,
   ActivationReadyAtEntry,
-  InputReadyAtEntry
+  InputReadyAtEntry,
+  TransformFc1,
+  TransformFc2,
+  Activation,
+  Fc1Store
 };
 
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE
-constexpr int W4TraceWarps = 2 * 16;
-constexpr int W4TraceCapacity = 8192;
-struct W4TraceEvent {
+#if MSCCLPP_MEGAMOE_TRACE
+constexpr int KernelTraceCtas = 2;
+constexpr int KernelTraceWarpsPerCta = 16;
+constexpr int KernelTraceTracks = KernelTraceCtas * KernelTraceWarpsPerCta;
+constexpr int KernelTraceCapacity = 8192;
+struct KernelTraceEvent {
   uint64_t timestamp;
   uint32_t code;
   int32_t payload;
 };
-static __device__ bool w4TraceEnabled = false;
-static __device__ uint32_t w4TraceCounts[W4TraceWarps];
-static __device__ W4TraceEvent w4TraceEvents[W4TraceWarps * W4TraceCapacity];
+// Each kernel TU owns its recorder and its matching reset/copy exports.
+static __device__ bool kernelTraceEnabled = false;
+static __device__ uint32_t kernelTraceCounts[KernelTraceTracks];
+static __device__ KernelTraceEvent kernelTraceEvents[KernelTraceTracks * KernelTraceCapacity];
+
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+static inline cudaError_t resetKernelTrace() {
+  void* counts = nullptr;
+  auto result = cudaGetSymbolAddress(&counts, kernelTraceCounts);
+  if (result != cudaSuccess) return result;
+  result = cudaMemset(counts, 0, sizeof(kernelTraceCounts));
+  if (result != cudaSuccess) return result;
+  bool enabled = true;
+  return cudaMemcpyToSymbol(kernelTraceEnabled, &enabled, sizeof(enabled));
+}
+
+static inline cudaError_t copyKernelTrace(void* events, size_t bytes, uint32_t* counts, size_t countBytes) {
+  if (!events || !counts || bytes < sizeof(kernelTraceEvents) || countBytes < sizeof(kernelTraceCounts))
+    return cudaErrorInvalidValue;
+  bool enabled = false;
+  auto result = cudaMemcpyToSymbol(kernelTraceEnabled, &enabled, sizeof(enabled));
+  if (result != cudaSuccess) return result;
+  result = cudaMemcpyFromSymbol(counts, kernelTraceCounts, sizeof(kernelTraceCounts));
+  if (result != cudaSuccess) return result;
+  return cudaMemcpyFromSymbol(events, kernelTraceEvents, sizeof(kernelTraceEvents));
+}
+#endif
 #endif
 
-__device__ __forceinline__ void traceW4(W4TracePhase phase, bool begin, int32_t payload = 0) {
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE
-  if (blockIdx.x < 2 && threadIdx.x % 32 == 0 && w4TraceEnabled) {
-    int track = blockIdx.x * 16 + threadIdx.x / 32;
-    uint32_t index = w4TraceCounts[track]++;
-    if (index < W4TraceCapacity) {
+__device__ __forceinline__ void traceKernel(KernelTracePhase phase, bool begin, int32_t payload = 0) {
+#if MSCCLPP_MEGAMOE_TRACE
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
+      kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+    uint32_t index = kernelTraceCounts[track]++;
+    if (index < KernelTraceCapacity) {
       uint64_t timestamp;
       asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(timestamp) : : "memory");
-      w4TraceEvents[track * W4TraceCapacity + index] = {timestamp, uint32_t(phase) * 2 + !begin, payload};
+      kernelTraceEvents[track * KernelTraceCapacity + index] = {timestamp, uint32_t(phase) * 2 + !begin, payload};
     }
   }
 #endif
 }
 
-__device__ __forceinline__ uint64_t traceW4Clock() {
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE == 1
+__device__ __forceinline__ uint64_t traceKernelClock() {
+#if MSCCLPP_MEGAMOE_TRACE == 1
   uint64_t timestamp;
   asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(timestamp) : : "memory");
   return timestamp;
@@ -73,24 +117,26 @@ __device__ __forceinline__ uint64_t traceW4Clock() {
 #endif
 }
 
-__device__ __forceinline__ void traceW4Total(W4TracePhase phase, uint64_t nanoseconds, int count) {
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE == 1
-  if (blockIdx.x < 2 && threadIdx.x % 32 == 0 && w4TraceEnabled) {
-    int track = blockIdx.x * 16 + threadIdx.x / 32;
-    uint32_t index = w4TraceCounts[track]++;
-    if (index < W4TraceCapacity)
-      w4TraceEvents[track * W4TraceCapacity + index] = {nanoseconds, 0x80000000u | uint32_t(phase), count};
+__device__ __forceinline__ void traceKernelTotal(KernelTracePhase phase, uint64_t nanoseconds, int count) {
+#if MSCCLPP_MEGAMOE_TRACE == 1
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
+      kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+    uint32_t index = kernelTraceCounts[track]++;
+    if (index < KernelTraceCapacity)
+      kernelTraceEvents[track * KernelTraceCapacity + index] = {nanoseconds, 0x80000000u | uint32_t(phase), count};
   }
 #endif
 }
 
-__device__ __forceinline__ void traceW4Count(W4TracePhase phase, uint32_t ready, int attempts) {
-#if defined(MSCCLPP_MEGAMOE_W4_TRACE) && MSCCLPP_MEGAMOE_W4_TRACE == 1
-  if (blockIdx.x < 2 && threadIdx.x % 32 == 0 && w4TraceEnabled) {
-    int track = blockIdx.x * 16 + threadIdx.x / 32;
-    uint32_t index = w4TraceCounts[track]++;
-    if (index < W4TraceCapacity)
-      w4TraceEvents[track * W4TraceCapacity + index] = {ready, 0x20000000u | uint32_t(phase), attempts};
+__device__ __forceinline__ void traceKernelCount(KernelTracePhase phase, uint32_t ready, int attempts) {
+#if MSCCLPP_MEGAMOE_TRACE == 1
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
+      kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+    uint32_t index = kernelTraceCounts[track]++;
+    if (index < KernelTraceCapacity)
+      kernelTraceEvents[track * KernelTraceCapacity + index] = {ready, 0x20000000u | uint32_t(phase), attempts};
   }
 #endif
 }

@@ -92,7 +92,6 @@ __device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat
       return ComputeRegisters;
     }
   }();
-  constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
   typename Accumulate::PipelineState state;
   for (int i = cluster; i < tasks; i += gridDim.x / ClusterM)
@@ -101,10 +100,9 @@ __device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat
 #if MSCCLPP_BULK_AVAILABLE
   if constexpr (Local || P::WeightMxfp4) {
     // Deferred peer stores must land before the CTA publishes its completion.
-    if (threadIdx.x % 32 == 0) bulkStoreWait();
+    if (threadIdx.x % warpSize == 0) bulkStoreWait();
   }
 #endif
-  cutlass::arch::warpgroup_reg_dealloc<RestoreRegisters>();
 }
 
 template <bool E5M2, bool Local, class LoadA, class Transform, class Mainloop, class Accumulators>
@@ -114,18 +112,19 @@ __device__ __forceinline__ void runTransformRole(const Parameters<E5M2, Local>& 
                                                  const ProblemShape& shape1, Accumulators accumulators, int hidden,
                                                  int intermediate, int cluster, int tasks) {
   constexpr int RoleRegisters = Local ? LocalComputeRegisters : ComputeRegisters;
-  constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
   typename LoadA::PipelineState loadState;
   auto transformState = cutlass::make_producer_start_state<Transform>();
   auto inputs = fc1.transform_init(p.fc1, shape1, accumulators, s.tensors);
   for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
     Task task = taskAt(p, i, tokens, hidden, intermediate);
+    auto phase = task.fc1 ? KernelTracePhase::TransformFc1 : KernelTracePhase::TransformFc2;
+    traceKernel(phase, true, i);
     transformWeights<E5M2, Local>(loadPipeline, loadState, transformPipeline, transformState, inputs,
                                   taskKTiles(p, task, hidden, intermediate));
+    traceKernel(phase, false, i);
   }
   transformPipeline.producer_tail(transformState);
-  cutlass::arch::warpgroup_reg_dealloc<RestoreRegisters>();
 }
 
 template <bool E5M2, bool Local, class Schedule, class LoadA, class LoadB, class Transform, class Accumulate,
@@ -141,8 +140,11 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
   cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
   if constexpr (Schedule::HasDispatch) {
     static_assert(Schedule::DispatchEnd - Schedule::DispatchBegin == DispatchWarpCount);
-    if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd)
+    if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
+      traceKernel(KernelTracePhase::Dispatch, true);
       dispatchTokens(p, s, warp - Schedule::DispatchBegin);
+      traceKernel(KernelTracePhase::Dispatch, false);
+    }
   }
   if (warp == Schedule::LoadAWarp && lane == 0) {
     auto state = cutlass::make_producer_start_state<LoadA>();
@@ -153,8 +155,11 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
       auto iterator = cute::make_coord_iterator(0, kTiles);
+      auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+      traceKernel(phase, true, i);
       auto result = task.fc1 ? fc1.load_A(p.fc1, aPipeline, state, load1, coord, iterator, kTiles)
                              : fc2.load_A(p.fc2, aPipeline, state, load2, coord, iterator, kTiles);
+      traceKernel(phase, false, i);
       state = get<0>(result);
     }
     aPipeline.producer_tail(state);
@@ -174,8 +179,11 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
       auto iterator = cute::make_coord_iterator(0, kTiles);
+      auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+      traceKernel(phase, true, i);
       auto result = task.fc1 ? fc1.load_B(p.fc1, bPipeline, state, load1, coord, iterator, kTiles)
                              : fc2.load_B(p.fc2, bPipeline, state, load2, coord, iterator, kTiles);
+      traceKernel(phase, false, i);
       state = get<0>(result);
     }
     bPipeline.producer_tail(state);
@@ -186,8 +194,11 @@ __device__ __forceinline__ void runTransferRole(const Parameters<E5M2, Local>& p
     auto inputs = fc1.mma_init(accumulators, s.tensors);
     for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
       Task task = taskAt(p, i, tokens, hidden, intermediate);
+      auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
+      traceKernel(phase, true, i);
       auto result = mmaTiles<E5M2, Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
                                           taskKTiles(p, task, hidden, intermediate));
+      traceKernel(phase, false, i);
       bState = get<0>(result);
       tState = get<1>(result);
       cState = get<2>(result);

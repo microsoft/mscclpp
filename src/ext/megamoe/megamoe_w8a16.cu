@@ -5,6 +5,14 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
+#if (!defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_TRACE
+extern "C" int mscclpp_megamoe_w8_trace_reset() { return int(resetKernelTrace()); }
+
+extern "C" int mscclpp_megamoe_w8_trace_copy(void* events, size_t bytes, uint32_t* counts, size_t countBytes) {
+  return int(copyKernelTrace(events, bytes, counts, countBytes));
+}
+#endif
+
 template <bool E5M2, int LocalMode = 0>
 __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
                              1) void megaMoe(__grid_constant__ const Parameters<E5M2, (LocalMode != 0)> p, int tokens,
@@ -22,8 +30,8 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   constexpr int KernelTileN = Local ? LocalTileN : TileN;
   constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   auto& s = *reinterpret_cast<SharedStorage<E5M2, Local>*>(storage);
-  int warp = threadIdx.x / 32;
-  int lane = threadIdx.x % 32;
+  int warp = threadIdx.x / warpSize;
+  int lane = threadIdx.x % warpSize;
   int cta = blockIdx.x % ClusterM;
   int cluster = blockIdx.x / ClusterM;
   const int hidden = p.config.hidden;
@@ -33,7 +41,9 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
   if constexpr (Local) {
     if (tokens == 0) return;
   } else {
+    traceKernel(KernelTracePhase::Routing, true);
     prepareRoutes(p, tokens);
+    traceKernel(KernelTracePhase::Routing, false);
   }
 
   typename LoadA::Params aParams{};
@@ -97,11 +107,12 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
     runTransferRole<E5M2, Local, Schedule>(p, tokens, s, aPipeline, bPipeline, tPipeline, cPipeline, fc1, fc2, shape1,
                                            shape2, acc, hidden, intermediate, warp, lane, cta, cluster, tasks);
   }
-  // An idle transfer warp must not reclaim registers before every compute warp
-  // has acquired its budget and finished; that can deadlock the initial allocation.
+  // Join even idle roles before releasing compute registers or reclaiming transfer registers.
   __syncthreads();
-  if (!(warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) &&
-      !(warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd))
+  if ((warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) ||
+      (warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd))
+    cutlass::arch::warpgroup_reg_dealloc<RestoreRegisters>();
+  else
     cutlass::arch::warpgroup_reg_alloc<RestoreRegisters>();
   cute::cluster_sync();
   if (warp == Schedule::MmaWarp) {
@@ -109,6 +120,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
     allocator.free(s.tmem, 512);
   }
   if constexpr (!Local) {
+    traceKernel(KernelTracePhase::OutputJoin, true);
     p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
     // Bulk stores have landed; CTA/grid joins transfer their completion to these publishers.
     if (blockIdx.x == 0 && threadIdx.x < p.config.worldSize) {
@@ -116,7 +128,10 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : Threads),
       signalAndWait(p, threadIdx.x);
     }
     p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    traceKernel(KernelTracePhase::Combine, true);
     combineResults(p, tokens, output);
+    traceKernel(KernelTracePhase::Combine, false);
   }
 }
 

@@ -733,19 +733,26 @@ def test_native_w4a8_configuration_selection_graph_reuse(
 
 
 @_JIT_ONLY
-def test_native_w4a8_jit_profile_ep4_graph_correctness(configuration_runtime):
+@pytest.mark.parametrize(
+    "capacity,hidden,intermediate,local_experts",
+    [(128, 8192, 4096, 16), (128, 4096, 6656, 32), (190, 4096, 6656, 32)],
+    ids=["h8192-i4096", "h4096-i6656", "h4096-i6656-case-g"],
+)
+def test_native_w4a8_jit_profile_ep4_graph_correctness(
+    configuration_runtime, capacity, hidden, intermediate, local_experts
+):
     from mscclpp.ext.megamoe import compile_kernel, resolve_w4a8_kernel_config
 
     runtime, torch = configuration_runtime, configuration_runtime.torch
     if runtime.world != 4:
         pytest.skip("W4A8 JIT graph correctness requires EP4")
     config = runtime.config(
-        128,
-        local_experts=16,
+        capacity,
+        local_experts=local_experts,
         top_k=8,
         mxfp4=True,
-        hidden=8192,
-        intermediate=4096,
+        hidden=hidden,
+        intermediate=intermediate,
     )
     policy = resolve_w4a8_kernel_config(config)
     module = runtime.collective(lambda: compile_kernel(policy))
