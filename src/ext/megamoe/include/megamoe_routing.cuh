@@ -9,7 +9,7 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <class P>
-__device__ int localExpert(const P& p, int id, int rank, int token, int slot) {
+MSCCLPP_DEVICE_INLINE int localExpert(const P& p, int id, int rank, int token, int slot) {
   if (id < -1 || id >= p.config.numExperts) {
     printf("MegaMoE rank %d: invalid expert %d from rank %d, token %d, slot %d\n", p.config.rank, id, rank, token,
            slot);
@@ -22,17 +22,17 @@ __device__ int localExpert(const P& p, int id, int rank, int token, int slot) {
 }
 
 template <class P>
-__device__ uint2 readRoutePacket(const P& p, uint64_t epoch, int rank, int token, int slot) {
+MSCCLPP_DEVICE_INLINE uint2 readRoutePacket(const P& p, uint64_t epoch, int rank, int token, int slot) {
   auto packets = peerAt<mscclpp::LLPacket>(p, rank, p.symmetric.routingPackets);
   return packets[token * p.config.topK + slot].read(uint32_t(epoch), SpinLimit);
 }
 
 template <class P>
-__device__ uint2 readRoutingHeader(const P& p, uint64_t epoch, int rank) {
+MSCCLPP_DEVICE_INLINE uint2 readRoutingHeader(const P& p, uint64_t epoch, int rank) {
   return peerAt<mscclpp::LLPacket>(p, rank, p.symmetric.routingHeader)->read(uint32_t(epoch), SpinLimit);
 }
 
-__device__ __forceinline__ int tokenRankAt(const Workspace& w, int worldSize, int token) {
+MSCCLPP_DEVICE_INLINE int tokenRankAt(const Workspace& w, int worldSize, int token) {
   int low = 0;
   int high = worldSize;
   while (low + 1 < high) {
@@ -46,7 +46,7 @@ __device__ __forceinline__ int tokenRankAt(const Workspace& w, int worldSize, in
 }
 
 template <bool FixedTokenCount, class P>
-__device__ int readPlannedRoute(const P& p, uint64_t epoch, int index, int tokens, Route& route) {
+MSCCLPP_DEVICE_INLINE int readPlannedRoute(const P& p, uint64_t epoch, int index, int tokens, Route& route) {
   int rank, token, slot;
   if constexpr (FixedTokenCount) {
     int routesPerRank = tokens * p.config.topK;
@@ -65,13 +65,13 @@ __device__ int readPlannedRoute(const P& p, uint64_t epoch, int index, int token
   return localExpert(p, mscclpp::bit_cast<int>(packet.x), rank, token, slot);
 }
 
-__device__ __forceinline__ void countRouteGroup(const Workspace& w, int expert, int lane) {
+MSCCLPP_DEVICE_INLINE void countRouteGroup(const Workspace& w, int expert, int lane) {
   unsigned int group = __match_any_sync(0xffffffff, expert);
   if (expert >= 0 && lane == __ffs(group) - 1)
     atomicFetchAdd<int, scopeDevice>(w.counts + expert, __popc(group), memoryOrderRelaxed);
 }
 
-__device__ __forceinline__ void fillRouteGroup(const Workspace& w, int expert, const Route& route, int lane) {
+MSCCLPP_DEVICE_INLINE void fillRouteGroup(const Workspace& w, int expert, const Route& route, int lane) {
   unsigned int group = __match_any_sync(0xffffffff, expert);
   if (expert >= 0) {
     int leader = __ffs(group) - 1;
@@ -84,7 +84,7 @@ __device__ __forceinline__ void fillRouteGroup(const Workspace& w, int expert, c
 }
 
 template <class P>
-__device__ __forceinline__ int plannerCtaCount(int items) {
+MSCCLPP_DEVICE_INLINE int plannerCtaCount(int items) {
   return min(int(gridDim.x), max(1, 1 + (items - 1) / P::ThreadCount));
 }
 
@@ -92,8 +92,8 @@ __device__ __forceinline__ int plannerCtaCount(int items) {
 // them without another flag. Publishers are a prefix of the planner CTAs, which orders the local topk
 // copies used by the epilogue before routingReadyEpoch.
 template <bool CachedRoutes, class P>
-__device__ __forceinline__ void publishRoutePackets(const P& p, int tokens, const int32_t* ids, const float* scores,
-                                                    uint64_t epoch) {
+MSCCLPP_DEVICE_INLINE void publishRoutePackets(const P& p, int tokens, const int32_t* ids, const float* scores,
+                                               uint64_t epoch) {
   int routes = tokens * p.config.topK;
   int publishers = plannerCtaCount<P>(CachedRoutes ? routes : tokens);
   if (blockIdx.x >= publishers) return;
@@ -110,7 +110,7 @@ __device__ __forceinline__ void publishRoutePackets(const P& p, int tokens, cons
 // Dynamic row counts (CTA0 only): exchange per-rank token counts and build peer token prefixes.
 // The work is O(worldSize): peers are strided over the CTA, so one CTA covers any EP size.
 template <bool CachedRoutes, class P>
-__device__ void exchangeTokenCounts(const P& p, int tokens, uint64_t epoch) {
+MSCCLPP_DEVICE_INLINE void exchangeTokenCounts(const P& p, int tokens, uint64_t epoch) {
   constexpr int WarpSize = 32;
   const auto& c = p.config;
   const auto& w = p.workspace;
@@ -155,7 +155,7 @@ __device__ void exchangeTokenCounts(const P& p, int tokens, uint64_t epoch) {
 
 // Elect the last of `ctas` arrivals and clear the counter for the next launch. Arrivals are acq_rel,
 // so the winner observes every CTA's planner writes before publishing the next phase.
-__device__ __forceinline__ bool lastArrival(int* arrivals, int ctas) {
+MSCCLPP_DEVICE_INLINE bool lastArrival(int* arrivals, int ctas) {
   if (ctas == 1) return true;
   if (atomicFetchAdd<int, scopeDevice>(arrivals, 1, memoryOrderAcqRel) != ctas - 1) return false;
   *arrivals = 0;
@@ -163,7 +163,7 @@ __device__ __forceinline__ bool lastArrival(int* arrivals, int ctas) {
 }
 
 // Wait until the last planner publishes a routing phase for this epoch.
-__device__ __forceinline__ void waitRoutingPhase(uint64_t* phase, uint64_t epoch) {
+MSCCLPP_DEVICE_INLINE void waitRoutingPhase(uint64_t* phase, uint64_t epoch) {
   if (threadIdx.x == 0) waitAtLeast<uint64_t, scopeDevice>(phase, epoch);
   __syncthreads();
 }
@@ -171,8 +171,8 @@ __device__ __forceinline__ void waitRoutingPhase(uint64_t* phase, uint64_t epoch
 // Count each local expert's routes. Captured routing assigns one route per thread and keeps it in
 // registers for the fill phase when the planner covers all routes; eager routing walks tokens.
 template <bool CachedRoutes, bool FixedTokenCount, class P>
-__device__ __forceinline__ void countRoutes(const P& p, int tokens, uint64_t epoch, int items, int plannerCtas,
-                                            int& cachedExpert, Route& cachedRoute) {
+MSCCLPP_DEVICE_INLINE void countRoutes(const P& p, int tokens, uint64_t epoch, int items, int plannerCtas,
+                                       int& cachedExpert, Route& cachedRoute) {
   const auto& c = p.config;
   const auto& w = p.workspace;
   int lane = threadIdx.x % 32;
@@ -273,7 +273,7 @@ __device__ void planTokenBlocks(const P& p, uint64_t epoch) {
 }
 
 template <class P>
-__device__ __forceinline__ void resetReadyCounters(const P& p, int plannerCtas) {
+MSCCLPP_DEVICE_INLINE void resetReadyCounters(const P& p, int plannerCtas) {
   const auto& w = p.workspace;
   int plannerStride = plannerCtas * P::ThreadCount;
   for (int block = blockIdx.x * P::ThreadCount + threadIdx.x; block < w.control->tokenBlocks; block += plannerStride) {
@@ -288,8 +288,8 @@ __device__ __forceinline__ void resetReadyCounters(const P& p, int plannerCtas) 
 
 // Write each route to its expert-major row, reusing the route cached by countRoutes when present.
 template <bool CachedRoutes, bool FixedTokenCount, class P>
-__device__ __forceinline__ void fillRoutes(const P& p, int tokens, uint64_t epoch, int items, int plannerCtas,
-                                           int cachedExpert, const Route& cachedRoute) {
+MSCCLPP_DEVICE_INLINE void fillRoutes(const P& p, int tokens, uint64_t epoch, int items, int plannerCtas,
+                                      int cachedExpert, const Route& cachedRoute) {
   const auto& c = p.config;
   const auto& w = p.workspace;
   int lane = threadIdx.x % 32;
@@ -372,7 +372,7 @@ __device__ void prepareRoutes(const P& p, int tokens, const int32_t* ids = nullp
 }
 
 template <bool E5M2>
-__device__ __forceinline__ void dispatchTokens(const Parameters<E5M2>& p, SharedStorage<E5M2>& s, int localWarp) {
+MSCCLPP_DEVICE_INLINE void dispatchTokens(const Parameters<E5M2>& p, SharedStorage<E5M2>& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   const auto& w = p.workspace;
   if (threadIdx.x % 32 == 0) {
