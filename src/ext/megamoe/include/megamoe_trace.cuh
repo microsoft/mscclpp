@@ -94,6 +94,9 @@ static inline cudaError_t copyKernelTrace(void* events, size_t bytes, uint32_t* 
 
 __device__ __forceinline__ void traceKernel(KernelTracePhase phase, bool begin, int32_t payload = 0) {
 #if MSCCLPP_MEGAMOE_TRACE
+#if defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) && MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY
+  if (phase != KernelTracePhase::Routing) return;
+#endif
   if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
       kernelTraceEnabled) {
     int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;

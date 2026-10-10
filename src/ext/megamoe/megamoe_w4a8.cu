@@ -18,7 +18,7 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 #endif
 #endif
 
-template <int Hidden, int Intermediate, bool CachedRoutes = false, bool FixedTokenCount = false>
+template <int Hidden, int Intermediate, bool FixedTokenCount = false>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
                                                             const int32_t* ids, const float* scores) {
@@ -45,10 +45,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   traceKernel(KernelTracePhase::Routing, true);
-  // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers. CachedRoutes is the
-  // graph-capture planner: each thread keeps one route in registers between the count and fill phases and
-  // aggregates expert atomics per warp, avoiding a second peer packet read.
-  prepareRoutes<CachedRoutes, FixedTokenCount>(p, tokens, ids, scores);
+  // Sources push routes into every rank's local inbox; count and fill scan that local inbox.
+  prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
   traceKernel(KernelTracePhase::Routing, false);
   cute::TMEM::Allocator2Sm allocator;
 
@@ -157,7 +155,7 @@ template <int Hidden, int Intermediate>
 constexpr W4A8KernelRegistration registerW4A8Kernel() {
   static_assert(Hidden >= 4096);
   return {[](const NativeConfig& config) { return config.hidden == Hidden && config.intermediate == Intermediate; },
-          megaMoeW4A8<Hidden, Intermediate>, megaMoeW4A8<Hidden, Intermediate, true, W4FixedTokenCount>};
+          megaMoeW4A8<Hidden, Intermediate>, megaMoeW4A8<Hidden, Intermediate, W4FixedTokenCount>};
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing) {

@@ -367,7 +367,7 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   if (!detail::isLocalExpert(c)) {
     layout.routingHeader = detail::appendRegion(layout.bytes, sizeof(mscclpp::LLPacket));
     layout.routingPackets =
-        detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(mscclpp::LLPacket));
+        detail::appendRegion(layout.bytes, size_t(c.worldSize) * c.maxTokens * c.topK * sizeof(mscclpp::LL8Packet));
   }
 #if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {

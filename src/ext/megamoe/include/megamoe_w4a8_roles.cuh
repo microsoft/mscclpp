@@ -156,11 +156,13 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
       bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
                barriers[stage]);
     };
+    float routeWeight = 0.0f;
     if (lane == 0 && hasRow) {
       bulkFence();
       CUTE_UNROLL
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
+      routeWeight = loadRouteWeight(p, route);
     }
     auto process = [&](int chunk) {
       int stage = chunk % DispatchStages;
@@ -170,6 +172,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
                                                       loadPhases[stage]);
       if (lane == 0) {
         auto* counter = w4InputChunkCounter<Types>(w, hidden, block, chunk);
+        if (hasRow && chunk == chunks - 1) w.routes[row].weight = routeWeight;
         publicationPhase ^= 1u;
         publishW4A8Chunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
         if (hasRow && chunk + DispatchStages < chunks) {
@@ -179,7 +182,6 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
       }
       __syncwarp();
     };
-    CUTE_UNROLL
     for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
   }
   if (lane == 0) {

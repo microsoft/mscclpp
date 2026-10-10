@@ -511,7 +511,7 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,true,false>" in kernels[0], kernels
+            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,false>" in kernels[0], kernels
             if kernel is not None:
                 assert context.kernel_config == kernel.config
 
@@ -712,7 +712,7 @@ def test_native_w4a8_configuration_selection_graph_reuse(
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            expected = f"megaMoeW4A8<{hidden},{intermediate},true,false>"
+            expected = f"megaMoeW4A8<{hidden},{intermediate},false>"
             assert len(kernels) == 1 and expected in kernels[0], (expected, kernels)
             assert context.effective_kernel_config["tile_n"] == expected_tile_n
             assert context.effective_kernel_config["load_stages"] == expected_load_stages
@@ -774,7 +774,7 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            assert len(kernels) == 1 and "megaMoeW4A8<4096,6656,true,true>" in kernels[0], kernels
+            assert len(kernels) == 1 and "megaMoeW4A8<4096,6656,true>" in kernels[0], kernels
             assert context.cta_count <= remaining_sms
 
         runtime.collective(check_selected_kernel)
