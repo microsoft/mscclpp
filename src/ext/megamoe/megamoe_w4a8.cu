@@ -45,7 +45,9 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   traceKernel(KernelTracePhase::Routing, true);
-  // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers.
+  // Routing publishes a local ready epoch before GEMM reuses the tensor staging buffers. CachedRoutes is the
+  // graph-capture planner: each thread keeps one route in registers between the count and fill phases and
+  // aggregates expert atomics per warp, avoiding a second peer packet read.
   prepareRoutes<CachedRoutes, FixedTokenCount>(p, tokens, ids, scores);
   traceKernel(KernelTracePhase::Routing, false);
   cute::TMEM::Allocator2Sm allocator;

@@ -27,7 +27,8 @@
         "epilogue_registers": 176,
         "dispatch_chunk": 4096,
         "dispatch_warps": 4,
-        "dispatch_stages": 1
+        "dispatch_stages": 1,
+        "fixed_token_count": true
       }
     },
     {

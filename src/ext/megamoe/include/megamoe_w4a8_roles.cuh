@@ -107,16 +107,16 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   const auto& w = p.workspace;
   int lane = threadIdx.x % warpSize;
   auto& barriers = s.dispatch.barriers[localWarp];
-  if (lane == 0) {
-    if (localWarp == 0) {
-      s.dispatch.arrivals = 0;
-      s.dispatch.publishedPhase = 0;
-    }
-    CUTE_UNROLL
-    for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].relaxedInit();
+  if (lane == 0 && localWarp == 0) {
+    s.dispatch.arrivals = 0;
+    s.dispatch.publishedPhase = 0;
+  }
+  // Each warp owns its stage barriers, so separate lanes initialize them concurrently.
+  if (lane < DispatchStages) {
+    barriers[lane].relaxedInit();
     bulkFence();
   }
-  // All dispatch warps must observe the leader's cleared counters before publishing.
+  // All dispatch warps must observe the leader's cleared counters and initialized barriers before publishing.
   cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
   uint32_t loadPhases[DispatchStages] = {};
   constexpr int hidden = Hidden;
@@ -128,11 +128,12 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   int groups = w.control->tokenBlocks * GroupsPerBlock;
   for (int group = blockIdx.x; group < groups; group += gridDim.x) {
     int block = group / GroupsPerBlock;
-    int groupFirstRow = group % GroupsPerBlock * Types::DispatchWarps;
+    int firstRowIndexInGroup = group % GroupsPerBlock * Types::DispatchWarps;
     int rows = w.blocks[block].rows;
-    // Skip wholly empty groups; padded tail warps still join every publication.
-    if (groupFirstRow >= rows) continue;
-    int rowInBlock = groupFirstRow + localWarp;
+    // A group covers one row per dispatch warp. Skip groups fully past the live rows; padded tail warps in a
+    // partially live group still arrive with hasRow=false so the shared publication counter remains convergent.
+    if (firstRowIndexInGroup >= rows) continue;
+    int rowInBlock = firstRowIndexInGroup + localWarp;
     int row = block * TileN + rowInBlock;
     bool hasRow = rowInBlock < rows;
     Route route{};

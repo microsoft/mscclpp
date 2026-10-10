@@ -58,6 +58,7 @@ def test_packaged_h4096_i6656_t128_policy_exact_matches():
         epilogue_warps=8,
         epilogue_registers=176,
         dispatch_chunk=4096,
+        fixed_token_count=True,
     )
 
 

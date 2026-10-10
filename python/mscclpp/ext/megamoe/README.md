@@ -108,6 +108,7 @@ FP32 top-k combination.
 Dispatch uses one 3 KiB input buffer with the corresponding K32 scales in the
 builtin policy. External W4A8 policies may select another validated chunk size;
 the packaged H8192/I4096/capacity-128 profile uses 4 KiB.
+Each route row pulls its source into the existing expert-major input layout.
 Each chunk is published only after its values have reached the local input pool
 and its scales are visible in the MMA layout. The activation loader waits for all
 valid rows of the current N tile's chunk, then issues its K128 TMA loads; MMA
