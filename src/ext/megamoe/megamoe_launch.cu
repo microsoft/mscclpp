@@ -198,16 +198,16 @@ __global__ void quantizeInputKernel(P p, int tokens, const __bfloat16* source) {
       mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
 
       float maximum = 0.0f;
-      CUTE_UNROLL
+      #pragma unroll
       for (int i = 0; i < ValuesPerThread; ++i) maximum = fmaxf(maximum, fabsf(decoded[i]));
       unsigned int activeMask = __activemask();
-      CUTE_UNROLL
+      #pragma unroll
       for (int offset = ThreadsPerBlockScale / 2; offset > 0; offset /= 2)
         maximum = fmaxf(maximum, __shfl_xor_sync(activeMask, maximum, offset, ThreadsPerBlockScale));
       uint8_t scale = quantizeE8M0Scale(maximum);
       float inverse = inverseE8M0Scale(scale);
       mscclpp::f32x8 normalized;
-      CUTE_UNROLL
+      #pragma unroll
       for (int i = 0; i < ValuesPerThread; ++i) normalized[i] = decoded[i] * inverse;
       mscclpp::f8_e4m3x8 quantized = mscclpp::to<mscclpp::f8_e4m3x8>(normalized);
       auto output = at<uint8_t>(p.local, p.symmetric.quantizedInput) + size_t(token) * p.config.hidden + block * 32 +

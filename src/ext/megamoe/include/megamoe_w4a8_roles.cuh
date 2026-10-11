@@ -160,7 +160,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     float routeWeight = 0.0f;
     if (lane == 0 && hasRow) {
       bulkFence();
-      CUTE_UNROLL
+      #pragma unroll
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
       routeWeight = loadRouteWeight(p, route);
@@ -186,7 +186,7 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
   }
   if (lane == 0) {
-    CUTE_UNROLL
+    #pragma unroll
     for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
   }
 #endif

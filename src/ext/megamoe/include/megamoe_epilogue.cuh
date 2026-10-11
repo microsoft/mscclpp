@@ -61,7 +61,7 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
   constexpr int GateUpGroupSize = 16;
   constexpr int GateUpPairSize = 2 * GateUpGroupSize;
 
-  CUTE_UNROLL
+  #pragma unroll
   for (int i = 0; i < size(values); ++i) {
     auto coord = coordinates(i);
     if constexpr (P::WeightMxfp4)
@@ -84,7 +84,7 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
       float2 activated = swigluPair(*reinterpret_cast<const float2*>(gateAddress),
                                     *reinterpret_cast<const float2*>(upAddress), p.config.gateUpClamp);
       float maximum = fmaxf(fabsf(activated.x), fabsf(activated.y));
-      CUTE_UNROLL
+      #pragma unroll
       for (int offset = 8; offset > 0; offset /= 2)
         maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, 16));
       uint8_t scale = quantizeE8M0Scale(maximum);
@@ -99,7 +99,7 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
   } else {
     constexpr int FoldedValuesPerThread = ChunkTokens * CtaFc1M / EpilogueThreads;
     static_assert(ChunkTokens * CtaFc1M % EpilogueThreads == 0);
-    CUTE_UNROLL
+    #pragma unroll
     for (int j = 0; j < FoldedValuesPerThread; ++j) {
       int i = threadIdx.x + j * EpilogueThreads;
       int token = i / CtaFc1M;
@@ -147,7 +147,7 @@ __device__ __forceinline__ void packFc2Chunk(const P& p, const Task& task, Stora
   constexpr int KernelTileN = P::Tiles::N;
   constexpr int CtaTileM = P::Tiles::CtaM;
 
-  CUTE_UNROLL
+  #pragma unroll
   for (int i = 0; i < size(values); ++i) {
     auto coord = coordinates(i);
     int token = int(get<1>(coord));
@@ -313,12 +313,12 @@ struct ResultAccumulator {
 template <class Element, int Elements>
 struct ResultVectorOps {
   __device__ __forceinline__ static void accumulate(ResultAccumulator<Elements>& accumulator, const Element* source) {
-    CUTE_UNROLL
+    #pragma unroll
     for (int element = 0; element < Elements; ++element) accumulator.values[element] += float(source[element]);
   }
 
   __device__ __forceinline__ static void store(Element* destination, const ResultAccumulator<Elements>& accumulator) {
-    CUTE_UNROLL
+    #pragma unroll
     for (int element = 0; element < Elements; ++element) destination[element] = Element(accumulator.values[element]);
   }
 };
@@ -348,7 +348,7 @@ struct ResultVectorOps<__bfloat16, 8> {
 
   __device__ __forceinline__ static void store(__bfloat16* destination, const ResultAccumulator<8>& accumulator) {
     if ((reinterpret_cast<uintptr_t>(destination) & 15) != 0) {
-      CUTE_UNROLL
+      #pragma unroll
       for (int element = 0; element < 8; ++element) destination[element] = __bfloat16(accumulator.values[element]);
       return;
     }
