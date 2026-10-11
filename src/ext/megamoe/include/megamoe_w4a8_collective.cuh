@@ -304,8 +304,8 @@ struct W4A8Mainloop {
       if (issuer) {
         copy(copyA, sourceA(_, _, _, _, stage), targetA);
         copy(copyB, sourceB(_, _, _, _, stage), targetB);
-        // Pipeline waits/releases remain warp-wide.
-        #pragma unroll
+// Pipeline waits/releases remain warp-wide.
+#pragma unroll
         for (int k = 0; k < size<2>(a); ++k) {
           uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
           uint32_t scaleB = raw_pointer_cast(sfb(_, _, k).data());

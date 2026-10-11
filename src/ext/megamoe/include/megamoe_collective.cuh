@@ -174,9 +174,9 @@ __device__ __forceinline__ void transformWeights(
     load.consumer_release(loadState);
     ++loadState;
 
-    // Keep E8M0 in its byte representation: the stock mixed-input helper only
-    // multiplies scales when their element type already matches the MMA type.
-    #pragma unroll
+// Keep E8M0 in its byte representation: the stock mixed-input helper only
+// multiplies scales when their element type already matches the MMA type.
+#pragma unroll
     for (int i = 0; i < size(packedConverted); ++i) {
       uint16_t scales = uint16_t(scaleBytes(2 * i)) | (uint16_t(scaleBytes(2 * i + 1)) << 8);
       packedConverted(i) = decodeScaledPair<E5M2>(packedRaw(i), scales);

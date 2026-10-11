@@ -92,7 +92,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
       cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * warpSize, 2);
       if (threadIdx.x == 0) {
-        #pragma unroll
+#pragma unroll
         for (int peerCta = 0; peerCta < ClusterSize; ++peerCta) s.tmemReady.arrive(peerCta);
       }
       s.tmemReady.wait(0);

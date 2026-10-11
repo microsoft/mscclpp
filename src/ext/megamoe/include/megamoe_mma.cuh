@@ -94,7 +94,7 @@ __device__ __forceinline__ auto mmaTiles(
     if (Local ? localIssuer : routedIssuer) {
       uint32_t destination = Local ? localDestination : routedDestination;
       uint32_t instruction = Local ? localInstruction : routedInstruction;
-      #pragma unroll
+#pragma unroll
       for (int k = 0; k < size<2>(weights); ++k) {
         auto weight = a(_, _, k);
         auto activation = b(_, _, k);

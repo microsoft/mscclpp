@@ -146,7 +146,7 @@ MSCCLPP_DEVICE_INLINE void exchangeTokenCounts(const P& p, int tokens, uint64_t 
     int peer = base + lane;
     int peerTokens = peer < c.worldSize ? w.peerTokenCounts[peer] : 0;
     int scan = peerTokens;
-    #pragma unroll
+#pragma unroll
     for (int distance = 1; distance < WarpSize; distance *= 2) {
       int other = __shfl_up_sync(0xffffffff, scan, distance);
       if (lane >= distance) scan += other;
@@ -205,7 +205,7 @@ __device__ void planTokenBlocks(const P& p, uint64_t epoch) {
     int count = expert < experts ? w.counts[expert] : 0;
     int blocks = (count + RoutingTileN - 1) / RoutingTileN;
     int scan = blocks;
-    #pragma unroll
+#pragma unroll
     for (int distance = 1; distance < WarpSize; distance *= 2) {
       int other = __shfl_up_sync(0xffffffff, scan, distance);
       if (lane >= distance) scan += other;
@@ -224,7 +224,7 @@ __device__ void planTokenBlocks(const P& p, uint64_t epoch) {
       for (int first = 0; first < batchBlocks; first += WarpSize) {
         int block = first + lane;
         int owner = 0;
-        #pragma unroll
+#pragma unroll
         for (int step = WarpSize / 2; step > 0; step /= 2) {
           int candidate = owner + step;
           int end = __shfl_sync(0xffffffff, scan, candidate - 1);
