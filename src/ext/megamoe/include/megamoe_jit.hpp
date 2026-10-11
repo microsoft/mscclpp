@@ -20,6 +20,9 @@
 #define MSCCLPP_MEGAMOE_JIT_ABI_VERSION 1
 #define MSCCLPP_MEGAMOE_JIT_ENTRYPOINT "mscclpp_megamoe_jit_get_api_v1"
 #define MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT "mscclpp_megamoe_jit_fixed_token_count_v1"
+#define MSCCLPP_MEGAMOE_JIT_OPTIMIZATION_FLAGS_ENTRYPOINT "mscclpp_megamoe_jit_optimization_flags_v1"
+#define MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS 1u
+#define MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS 2u
 #define MSCCLPP_MEGAMOE_JIT_ID_CAPACITY 65
 
 typedef struct MegaMoeJitConfigV1 {
@@ -108,6 +111,7 @@ extern "C" {
 __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_jit_get_api_v1(void);
 // Supplemental W4A8 policy metadata; the V1 function-table layout remains unchanged.
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1(void);
+__attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1(void);
 #ifdef __cplusplus
 }
 #endif

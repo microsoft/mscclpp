@@ -67,6 +67,11 @@ class W4A8KernelConfig:
 
     ``fixed_token_count=True`` opts captured decode into equal input row counts
     on all ranks. Masked routes may still differ. False supports ragged prefill.
+    ``expert_major_tasks`` orders output tiles across each expert's token blocks.
+    ``cache_weights`` retains weights at normal rather than evict-first L2 priority.
+    Both optimizations are independent compile-time tuning options, disabled by default.
+    ``cluster_size`` selects one or two cooperating CTAs. The output-feature
+    tile is 128 elements per CTA (128 or 256 per cluster); ``tile_n`` is unchanged.
     """
 
     tile_n: int = 64
@@ -83,9 +88,13 @@ class W4A8KernelConfig:
     dispatch_warps: int = 4
     dispatch_stages: int = 1
     fixed_token_count: bool = False
+    expert_major_tasks: bool = False
+    cache_weights: bool = False
+    cluster_size: int = 2
 
     def __post_init__(self):
         allowed = (
+            ("cluster_size", (1, 2)),
             ("tile_n", (32, 64, 128)),
             ("tile_k", (128, 256, 512)),
             ("num_warps", (12, 16)),
@@ -111,6 +120,9 @@ class W4A8KernelConfig:
             raise ValueError("split_pipelines must be bool")
         if type(self.fixed_token_count) is not bool:
             raise ValueError("fixed_token_count must be bool")
+        for name in ("expert_major_tasks", "cache_weights"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"{name} must be bool")
         if self.split_pipelines and self.load_warps != 2:
             raise ValueError("split_pipelines requires load_warps=2")
         if self.tile_n % self.epilogue_tokens:
@@ -199,6 +211,9 @@ def _compile_definitions(config):
             "dispatch_warps": "DISPATCH_WARPS",
             "dispatch_stages": "DISPATCH_STAGES",
             "fixed_token_count": "FIXED_TOKEN_COUNT",
+            "expert_major_tasks": "EXPERT_MAJOR_TASKS",
+            "cache_weights": "CACHE_WEIGHTS",
+            "cluster_size": "CLUSTER_SIZE",
         }
         return [
             "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",

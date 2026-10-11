@@ -39,8 +39,11 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 // Reuse CUTLASS A/SF layouts with an explicit token-tile pipeline. N32 needs
 // quarter-tile SFB selection, which the stock collective does not implement.
-template <class Base, int TileN, int TileK, int LoadStages, bool SplitPipelines>
+template <class Base, int TileN, int TileK, int LoadStages, bool SplitPipelines, int ClusterSize>
 struct W4A8Mainloop {
+  static_assert(ClusterSize == 1 || ClusterSize == 2);
+  using ClusterShape = cute::Shape<cute::Int<ClusterSize>, cute::_1, cute::_1>;
+  using CacheHint = cute::conditional_t<ClusterSize == 1, cute::TMA::CacheHintSm90, cute::TMA::CacheHintSm100>;
   using ElementA = typename Base::ElementA;
   using ElementB = typename Base::ElementB;
   using ArrayElementA = typename Base::ArrayElementA;
@@ -53,10 +56,14 @@ struct W4A8Mainloop {
   using AtomThrShapeMNK = typename Base::AtomThrShapeMNK;
   using MainloopPipeline = typename Base::MainloopPipeline;
   using MainloopPipelineState = typename MainloopPipeline::PipelineState;
-  using KernelTile = cute::Shape<cute::Int<256>, cute::Int<TileN>, cute::Int<TileK>>;
-  using TiledMma = decltype(cute::make_tiled_mma(
+  using KernelTile = cute::Shape<cute::Int<128 * ClusterSize>, cute::Int<TileN>, cute::Int<TileK>>;
+  using MmaOp = cute::conditional_t<
+      ClusterSize == 1,
+      cute::SM100_MMA_MXF8F6F4_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 128, TileN,
+                                  cute::UMMA::Major::K, cute::UMMA::Major::K>,
       cute::SM100_MMA_MXF8F6F4_2x1SM_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 256,
-                                        TileN, cute::UMMA::Major::K, cute::UMMA::Major::K>{}));
+                                        TileN, cute::UMMA::Major::K, cute::UMMA::Major::K>>;
+  using TiledMma = decltype(cute::make_tiled_mma(MmaOp{}));
   using ScaleMma = typename Base::TiledMMA_SF;
   using SmemLayoutA = typename Base::SmemLayoutA;
   using SmemLayoutSFA = typename Base::SmemLayoutSFA;
@@ -88,12 +95,12 @@ struct W4A8Mainloop {
     LayoutSFB layout_SFB;
   };
   static constexpr uint32_t TmaTransactionBytes =
-      Base::TmaTransactionBytes - 2 *
+      Base::TmaTransactionBytes - ClusterSize *
                                       (cute::cosize(cute::take<0, 3>(typename Base::SmemLayoutB{})) -
                                        cute::cosize(cute::take<0, 3>(SmemLayoutB{}))) *
                                       cute::sizeof_bits_v<ElementB> / 8;
   static constexpr uint32_t WeightTransactionBytes =
-      2 *
+      ClusterSize *
       (cute::cosize(cute::take<0, 3>(SmemLayoutA{})) * cute::sizeof_bits_v<ElementA> +
        cute::cosize(cute::take<0, 3>(SmemLayoutSFA{})) * cute::sizeof_bits_v<ElementSF>) /
       8;
@@ -201,7 +208,7 @@ struct W4A8Mainloop {
     auto sb = make_tensor(make_smem_ptr(s.smem_SFB.begin()), SmemLayoutSFB{});
     auto ta = make_tensor(tmem.tCtSFA.data(), filter_zeros(tmem.tCtSFA.layout()));
     auto tb = make_tensor(tmem.tCtSFB.data(), filter_zeros(tmem.tCtSFB.layout()));
-    using Utccp = SM100_UTCCP_4x32dp128bit_2cta;
+    using Utccp = cute::conditional_t<ClusterSize == 1, SM100_UTCCP_4x32dp128bit_1cta, SM100_UTCCP_4x32dp128bit_2cta>;
     auto ca = make_utccp_copy(Utccp{}, ta);
     auto cb = make_utccp_copy(Utccp{}, tb);
     auto sfa = get_utccp_smem_desc_tensor<Utccp>(
@@ -216,12 +223,12 @@ struct W4A8Mainloop {
   __device__ auto load(MainloopPipeline pipe, MainloopPipelineState state, const Inputs& inputs, Coord coord,
                        Iterator iterator, int kTiles, int validRows) const {
     using namespace cute;
-    int m = get<0>(coord) / 2, n = get<1>(coord), expert = get<3>(coord);
+    int m = get<0>(coord) / ClusterSize, n = get<1>(coord), expert = get<3>(coord);
     auto a = inputs.tAgA_mkl(_, m, _, expert);
     auto originalB = inputs.tBgB_nkl(_, n, _, expert);
     // A two-CTA MMA splits activation rows at its runtime N/2, not the allocated tile's N/2.
     auto rowLayout = params.tma_load_b.get_tma_tensor(make_shape(1, 1, 1)).layout();
-    auto rowOffset = rowLayout(make_coord(cta * (mmaRows(validRows) - TileN) / 2, 0, 0));
+    auto rowOffset = rowLayout(make_coord(cta * (mmaRows(validRows) - TileN) / ClusterSize, 0, 0));
     auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
@@ -236,16 +243,17 @@ struct W4A8Mainloop {
       start = traceKernelClock();
       if (elect_one_sync()) {
         if constexpr (Operands != 2) {
-          copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, TMA::CacheHintSm100::EVICT_FIRST), a(_, *iterator),
+          constexpr auto weightHint = W4CacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
+          copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
                inputs.tAsA(_, stage));
-          copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, TMA::CacheHintSm100::EVICT_FIRST),
-               sfa(_, *iterator), inputs.tAsSFA(_, stage));
+          copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, weightHint), sfa(_, *iterator),
+               inputs.tAsSFA(_, stage));
         }
         if constexpr (Operands != 1) {
-          copy(params.tma_load_b.with(*barrier, inputs.mcast_mask_b, TMA::CacheHintSm100::EVICT_LAST), b(_, *iterator),
+          copy(params.tma_load_b.with(*barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
                inputs.tBsB(_, stage));
-          copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, TMA::CacheHintSm100::EVICT_LAST),
-               sfb(_, *iterator), inputs.tBsSFB(_, stage));
+          copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
+               inputs.tBsSFB(_, stage));
         }
       }
       issueNs += traceKernelClock() - start;
@@ -306,13 +314,23 @@ struct W4A8Mainloop {
           uint64_t descriptorA = a(_, _, k, stage)(0);
           uint64_t descriptorB = b(_, _, k, stage)(0);
           uint32_t accumulate = k == 0 ? uint32_t(tiled.accumulate_) : 1;
-          asm volatile(
-              "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
-              "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale"
-              " [%0], %1, %2, %3, [%4], [%5], p; }"
-              :
-              : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
-                "r"(accumulate));
+          if constexpr (ClusterSize == 1) {
+            asm volatile(
+                "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale"
+                " [%0], %1, %2, %3, [%4], [%5], p; }"
+                :
+                : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                  "r"(accumulate));
+          } else {
+            asm volatile(
+                "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale"
+                " [%0], %1, %2, %3, [%4], [%5], p; }"
+                :
+                : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                  "r"(accumulate));
+          }
         }
       }
       tiled.accumulate_ = UMMA::ScaleOut::One;

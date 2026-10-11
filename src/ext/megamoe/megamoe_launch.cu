@@ -45,7 +45,7 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   const size_t experts = c.numExperts / c.worldSize;
   const size_t routes = size_t(c.worldSize) * c.maxTokens * c.topK;
   const bool local = isLocalExpert(c);
-  const int tileM = local ? LocalTileM : TileM;
+  const int tileM = local ? LocalTileM : (c.weightMxfp4 ? W4TileM : TileM);
   const int tileN = local ? LocalTileN : (c.weightMxfp4 ? W4TileN : TileN);
   const int tokenStride = c.weightMxfp4 ? W4TokenStride : tileN;
   const int inputChunks = c.weightMxfp4 ? (c.hidden + W4DispatchChunk - 1) / W4DispatchChunk : 1;
@@ -79,6 +79,8 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
           at<int>(base, appendRegion(bytes, rows / tileN * (inputChunks - 1) * W4ReadyCounterStride * sizeof(int)));
     w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
     w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / tileN * sizeof(TokenBlock)));
+    if (c.weightMxfp4 && W4ExpertMajorTasks)
+      w.expertBlockDivisors = at<cutlass::FastDivmod>(base, appendRegion(bytes, experts * sizeof(cutlass::FastDivmod)));
     if (c.weightMxfp4) {
       w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * c.hidden));
       w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.hidden)));
@@ -296,9 +298,9 @@ P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, 
 }
 
 cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, cudaStream_t stream,
-                                    cudaLaunchAttribute& attribute) {
+                                    cudaLaunchAttribute& attribute, int clusterSize) {
   attribute.id = cudaLaunchAttributeClusterDimension;
-  attribute.val.clusterDim = {ClusterM, 1, 1};
+  attribute.val.clusterDim = {static_cast<unsigned int>(clusterSize), 1, 1};
   cudaLaunchConfig_t launch{};
   launch.gridDim = dim3(ctas);
   launch.blockDim = dim3(threads);
@@ -422,9 +424,10 @@ KernelResources preflightKernel(const NativeConfig& c) {
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, resources.device));
   if (properties.major != 10 || (properties.minor != 0 && properties.minor != 3 && properties.minor != 7))
     throw std::invalid_argument("Native MegaMoE currently requires an SM100-family GPU");
-  if (c.smMargin > properties.multiProcessorCount - 2)
-    throw std::invalid_argument("MegaMoE smMargin must leave at least two SMs");
-  resources.ctas = (properties.multiProcessorCount - c.smMargin) / detail::ClusterM * detail::ClusterM;
+  const int clusterSize = c.weightMxfp4 ? detail::W4ClusterSize : detail::ClusterM;
+  if (c.smMargin > properties.multiProcessorCount - clusterSize)
+    throw std::invalid_argument("MegaMoE smMargin must leave enough SMs for the selected cluster");
+  resources.ctas = (properties.multiProcessorCount - c.smMargin) / clusterSize * clusterSize;
   const std::string name = c.weightMxfp4 ? "MegaMoE W4A8" : "MegaMoE";
   auto configure = [&](auto kernel, int threads, int entryRegisters, size_t sharedBytes) {
     resources.sharedBytes = std::max(resources.sharedBytes, sharedBytes);
@@ -437,11 +440,12 @@ KernelResources preflightKernel(const NativeConfig& c) {
     MSCCLPP_CUDATHROW(
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
     cudaLaunchAttribute attribute{};
-    auto launch = detail::makeLaunchConfig(resources.ctas, threads, resources.sharedBytes, nullptr, attribute);
+    auto launch =
+        detail::makeLaunchConfig(resources.ctas, threads, resources.sharedBytes, nullptr, attribute, clusterSize);
     int clusters = 0;
     MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
-    resources.ctas = std::min(resources.ctas, clusters * detail::ClusterM);
-    if (resources.ctas < detail::ClusterM) throw std::runtime_error(name + " cannot keep a two-CTA cluster resident");
+    resources.ctas = std::min(resources.ctas, clusters * clusterSize);
+    if (resources.ctas < clusterSize) throw std::runtime_error(name + " cannot keep the selected cluster resident");
   };
 #if MSCCLPP_MEGAMOE_COMPILE_W4A8
   if (c.weightMxfp4) {
@@ -525,8 +529,9 @@ void launchPlan(const std::shared_ptr<KernelPlan>& plan, int tokens, void* outpu
           MSCCLPP_CUDATHROW(cudaMemsetAsync(params.workspace.hiddenReady, 0, tokenBlocks * sizeof(int), stream));
         }
         cudaLaunchAttribute attribute{};
-        auto launch = detail::makeLaunchConfig(plan->ctas, std::decay_t<decltype(params)>::ThreadCount,
-                                               plan->sharedBytes, stream, attribute);
+        auto launch =
+            detail::makeLaunchConfig(plan->ctas, std::decay_t<decltype(params)>::ThreadCount, plan->sharedBytes, stream,
+                                     attribute, std::decay_t<decltype(params)>::Tiles::ClusterSize);
 #if MSCCLPP_MEGAMOE_COMPILE_W4A8
         if constexpr (W4A8) {
           cudaStreamCaptureStatus capture;

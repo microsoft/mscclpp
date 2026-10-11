@@ -92,6 +92,7 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("private_bytes", &MegaMoeContext::privateBytes)
       .def_prop_ro("kernel_id", &MegaMoeContext::kernelId)
       .def_prop_ro("kernel_tile_m", &MegaMoeContext::kernelTileM)
+      .def_prop_ro("kernel_cluster_size", &MegaMoeContext::kernelClusterSize)
       .def_prop_ro("kernel_tile_n", &MegaMoeContext::kernelTileN)
       .def_prop_ro("kernel_tile_k", &MegaMoeContext::kernelTileK)
       .def_prop_ro("kernel_load_stages", &MegaMoeContext::kernelLoadStages)
@@ -107,6 +108,8 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_dispatch_warps", &MegaMoeContext::kernelDispatchWarps)
       .def_prop_ro("kernel_dispatch_stages", &MegaMoeContext::kernelDispatchStages)
       .def_prop_ro("kernel_fixed_token_count", &MegaMoeContext::kernelFixedTokenCount)
+      .def_prop_ro("kernel_expert_major_tasks", &MegaMoeContext::kernelExpertMajorTasks)
+      .def_prop_ro("kernel_cache_weights", &MegaMoeContext::kernelCacheWeights)
       .def(
           "forward_shared",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {

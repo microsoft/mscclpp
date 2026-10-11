@@ -151,8 +151,6 @@ class MegaMoE:
         self.device = torch.device("cuda", torch.cuda.current_device())
         if torch.cuda.get_device_capability(self.device) not in ((10, 0), (10, 3), (10, 7)):
             raise RuntimeError("Native MegaMoE currently requires an SM100-family GPU")
-        if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - 2:
-            raise ValueError("sm_margin must leave at least two SMs")
         stream = self._stream(stream)
         with torch.cuda.stream(stream):
             if torch.cuda.is_current_stream_capturing():
@@ -177,6 +175,9 @@ class MegaMoE:
                 raise ValueError("MXFP4/MXFP8 requires the builtin kernel or a W4A8KernelConfig")
         elif isinstance(selected, W4A8KernelConfig):
             raise ValueError("W4A8KernelConfig requires weight_mxfp4=True")
+        cluster_size = selected.cluster_size if isinstance(selected, W4A8KernelConfig) else 2
+        if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - cluster_size:
+            raise ValueError(f"sm_margin must leave at least {cluster_size} SMs for the selected cluster")
         if (config.world_size, config.num_experts, config.top_k) == (1, 1, 1) and selected != KernelConfig():
             raise ValueError("JIT specialization applies to routed experts; the local shared kernel is fixed")
         if isinstance(kernel, (KernelConfig, W4A8KernelConfig)):
@@ -227,6 +228,9 @@ class MegaMoE:
                     "dispatch_warps": self._native.kernel_dispatch_warps,
                     "dispatch_stages": self._native.kernel_dispatch_stages,
                     "fixed_token_count": self._native.kernel_fixed_token_count,
+                    "expert_major_tasks": self._native.kernel_expert_major_tasks,
+                    "cache_weights": self._native.kernel_cache_weights,
+                    "cluster_size": self._native.kernel_cluster_size,
                 }
             )
         return policy

@@ -14,6 +14,7 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
   using Load = typename Types::Load;
   using Mainloop = typename Types::Mainloop;
   using Schedule = typename Types::WarpSchedule;
+  using ClusterShape = typename Types::ClusterShape;
   constexpr int InitializingWarp = Activation ? Schedule::ActivationLoadWarp : Schedule::LoadWarp;
   constexpr bool SharedProducers = !Activation && !Types::SplitPipelines && Types::LoadWarps == 2;
   bool producer = warp == InitializingWarp || (SharedProducers && warp == Schedule::ActivationLoadWarp);
@@ -207,13 +208,13 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   auto state = cutlass::make_producer_start_state<Load>();
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
-  for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
+  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
     Task task = taskAt(p, i, 0, hidden, intermediate);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
       if (lane == 0)
         waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                      fc1CompletionCount<false>(intermediate));
+                                      fc1CompletionCount<false, true>(intermediate));
       __syncwarp();
       traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
     }
@@ -276,7 +277,7 @@ __device__ __forceinline__ void runW4A8MmaRole(const P& p, Storage& s, typename 
     typename Load::PipelineState loadState;
     auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
     auto mmaInputs = fc1.mma_init(tmemStorage, s.tensors);
-    for (int i = cluster; i < tasks; i += gridDim.x / ClusterM) {
+    for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
       Task task = taskAt(p, i, 0, hidden, intermediate);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);

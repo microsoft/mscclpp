@@ -61,6 +61,15 @@
 #ifndef MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT
 #define MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT 0
 #endif
+#ifndef MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS
+#define MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS 0
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS
+#define MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS 0
+#endif
+#ifndef MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE
+#define MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE 2
+#endif
 #ifndef MSCCLPP_MEGAMOE_JIT_W4A8
 #define MSCCLPP_MEGAMOE_JIT_W4A8 0
 #endif
@@ -85,6 +94,9 @@ constexpr int TileN = MSCCLPP_MEGAMOE_TILE_N;
 constexpr int TileK = MSCCLPP_MEGAMOE_TILE_K;
 constexpr int LoadStages = MSCCLPP_MEGAMOE_LOAD_STAGES;
 constexpr int TransformStages = MSCCLPP_MEGAMOE_TRANSFORM_STAGES;
+constexpr int W4ClusterSize = MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE;
+constexpr int W4TileM = 128 * W4ClusterSize;
+static_assert(W4ClusterSize == 1 || W4ClusterSize == 2);
 constexpr int W4TileN = MSCCLPP_MEGAMOE_W4_TILE_N;
 constexpr int W4TileK = MSCCLPP_MEGAMOE_W4_TILE_K;
 constexpr int W4LoadStages = MSCCLPP_MEGAMOE_W4_LOAD_STAGES;
@@ -99,7 +111,11 @@ constexpr int W4DispatchChunk = MSCCLPP_MEGAMOE_W4_DISPATCH_CHUNK;
 constexpr int W4DispatchWarps = MSCCLPP_MEGAMOE_W4_DISPATCH_WARPS;
 constexpr int W4DispatchStages = MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES;
 constexpr bool W4FixedTokenCount = MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT != 0;
+constexpr bool W4ExpertMajorTasks = MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS != 0;
+constexpr bool W4CacheWeights = MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS != 0;
 static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
+static_assert(MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 0 || MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 1);
+static_assert(MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 0 || MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 1);
 constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
 static_assert(W4TileN == 32 || W4TileN == 64 || W4TileN == 128);
 static_assert(W4TileK == 128 || W4TileK == 256 || W4TileK == 512);
@@ -136,11 +152,12 @@ static_assert((TileN == 32 && LoadStages == 8 && TransformStages == 7) ||
 
 template <bool Local, bool Mxfp4 = false, int W4TileN_ = W4TileN, int W4TileK_ = W4TileK>
 struct TilePolicy {
-  static constexpr int M = Local ? LocalTileM : TileM;
+  static constexpr int ClusterSize = Mxfp4 ? W4ClusterSize : ClusterM;
+  static constexpr int M = Local ? LocalTileM : (Mxfp4 ? W4TileM : TileM);
   static constexpr int N = Local ? LocalTileN : (Mxfp4 ? W4TileN_ : TileN);
   static constexpr int K = Local ? LocalTileK : (Mxfp4 ? W4TileK_ : TileK);
   static constexpr int TokenStride = Mxfp4 ? (N < 64 ? 64 : N) : N;
-  static constexpr int CtaM = M / ClusterM;
+  static constexpr int CtaM = M / ClusterSize;
   static constexpr int Fc1M = M / 2;
   static constexpr int CtaFc1M = CtaM / 2;
 };

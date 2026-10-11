@@ -98,6 +98,7 @@ struct Workspace {
   int* peerTokenOffsets;
   Route* routes;
   TokenBlock* blocks;
+  cutlass::FastDivmod* expertBlockDivisors;
   __bfloat16* input;
   __bfloat16* hidden;
   uint8_t* quantizedInput;

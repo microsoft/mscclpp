@@ -28,6 +28,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   using Mainloop = Types::Mainloop;
   using Accumulate = Types::Accumulate;
   using Schedule = typename Types::WarpSchedule;
+  using ClusterShape = typename Types::ClusterShape;
+  constexpr int ClusterSize = Parameters::Tiles::ClusterSize;
   static_assert(validW4RegisterBudget(Types::EpilogueWarps, Types::EpilogueRegisters, Types::TransferRegisters));
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
@@ -37,8 +39,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
   int warp = threadIdx.x / warpSize;
   int lane = threadIdx.x % warpSize;
-  int cta = blockIdx.x % ClusterM;
-  int cluster = blockIdx.x / ClusterM;
+  int cta = blockIdx.x % ClusterSize;
+  int cluster = blockIdx.x / ClusterSize;
   const int hidden = p.config.hidden;
   const int intermediate = p.config.intermediate;
   // Notify a consumer stream of kernel entry, not output readiness.
@@ -48,10 +50,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   // Sources push routes into every rank's local inbox; count and fill scan that local inbox.
   prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
   traceKernel(KernelTracePhase::Routing, false);
-  cute::TMEM::Allocator2Sm allocator;
+  cute::conditional_t<ClusterSize == 1, cute::TMEM::Allocator1Sm, cute::TMEM::Allocator2Sm> allocator;
 
   if (warp < Schedule::DispatchBegin) {
-    if (threadIdx.x == 0) s.tmemReady.init(ClusterM);
+    if (threadIdx.x == 0) s.tmemReady.init(ClusterSize);
     auto loadPipeline = makeW4A8LoadPipeline<false, Types>(s.mainloop, warp, lane, cta);
     auto activationPipeline = [&](auto& activationStorage) {
       if constexpr (Types::SplitPipelines) {
@@ -60,7 +62,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
         return loadPipeline;
       }
     }(s.activationLoad);
-    auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule>(s.accumulated, warp);
+    auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
     cutlass::arch::fence_barrier_init();
     loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
@@ -72,7 +74,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     Mainloop fc1(p.fc1, ClusterShape{}, cta);
     Mainloop fc2(p.fc2, ClusterShape{}, cta);
     int tokenBlocks = p.workspace.control->tokenBlocks;
-    int tasks = tokenBlocks * (fc1TaskTiles<false>(intermediate) + fc2TaskTiles<false>(hidden));
+    int tasks = tokenBlocks * (fc1TaskTiles<false, true>(intermediate) + fc2TaskTiles<false, true>(hidden));
     int localExperts = p.config.numExperts / p.config.worldSize;
     ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
                         localExperts};
@@ -91,10 +93,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * warpSize, 2);
       if (threadIdx.x == 0) {
         CUTE_UNROLL
-        for (int peerCta = 0; peerCta < ClusterM; ++peerCta) s.tmemReady.arrive(peerCta);
+        for (int peerCta = 0; peerCta < ClusterSize; ++peerCta) s.tmemReady.arrive(peerCta);
       }
       s.tmemReady.wait(0);
-      using EpilogueTile = Shape<Int<TileM / ClusterM>, Int<Parameters::Tiles::N>>;
+      using EpilogueTile = Shape<Int<Parameters::Tiles::CtaM>, Int<Parameters::Tiles::N>>;
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {

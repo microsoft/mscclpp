@@ -27,6 +27,73 @@ library's architecture list. It is compatible with compute capabilities 10.0,
 CUDA 13.3 and newer use packed FP8/E8M0-to-BF16 conversion; CUDA 13.0-13.2
 automatically use the compatible CUTLASS conversion path.
 
+W4A8 activation uses packed FP32 SwiGLU and disjoint token slices for each
+epilogue warpgroup. Two independent `W4A8KernelConfig` flags control the other
+optimizations for every supported W4A8 shape and EP size:
+
+| Flag | `False` (default) | `True` |
+| --- | --- | --- |
+| `expert_major_tasks` | Process output tiles within each token block | Process token blocks within each expert's output tile, improving weight reuse |
+| `cache_weights` | Evict-first L2 hints for weights and weight scales | Normal L2 priority for weights and weight scales |
+
+These flags are compile-time choices, not a hard-coded small/large-token
+threshold. Tune all four combinations together with tile sizes, pipeline
+depths, and warp counts for each workload. When task reordering is enabled,
+routing prepares expert block divisors on every forward, including graph
+replay; when disabled, its workspace and preparation are omitted. W8A16 is
+unchanged.
+
+For example, prepare separate **tuning candidates** for small and large token
+counts before graph capture:
+
+```python
+from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+small = W4A8KernelConfig(expert_major_tasks=False, cache_weights=False)
+large = W4A8KernelConfig(
+    tile_n=128, load_stages=7, transfer_registers=64,
+    epilogue_warps=8, epilogue_registers=208, dispatch_chunk=4096,
+    expert_major_tasks=True, cache_weights=True,
+)
+kernel = compile_kernel(large)
+# Pass kernel=kernel when constructing MegaMoE, before graph capture.
+```
+
+The existing exact-match W4A8 profiles can store these flags separately for each
+token capacity. Older profile JSON without the flags defaults both to `False`.
+Each combination has its own JIT cache key, and `effective_kernel_config` reports
+the flags actually compiled. All ranks must select the same policy. Existing
+compiled W4A8 modules without optimization metadata must be recompiled.
+These example candidates do not replace the default kernel or promise a speedup;
+measure the complete application scope on the target device.
+
+`W4A8KernelConfig.cluster_size` independently selects one or two cooperating
+CTAs per cluster; the default is `2`. This selects the matching MMA, TMA and
+TMEM operations, synchronization, and occupancy checks, not just the launch
+grid. One CTA computes a 128-feature tile; two CTAs compute a 256-feature tile.
+The token tile remains `tile_n`, and `num_warps` is the number of warps **per
+CTA**, not per cluster.
+
+```python
+from dataclasses import replace
+from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+# Example tuning candidates, not universal small/large-token winners.
+one_cta = W4A8KernelConfig(cluster_size=1, load_stages=5)
+two_cta = replace(one_cta, cluster_size=2)
+one_cta_kernel = compile_kernel(one_cta)
+two_cta_kernel = compile_kernel(two_cta)
+```
+
+Cluster size participates in the JIT cache key and profile JSON. Older profiles
+without `cluster_size` retain two CTAs. `effective_kernel_config["cluster_size"]`
+and `["tile_m"]` report the actual cluster size and feature tile. All EP ranks
+must select the same kernel policy; cluster size does not change the EP world
+size. Tune pipeline depth separately for each variant: a policy that fits two
+CTAs can exceed a single CTA's shared-memory limit and is rejected at preflight.
+No automatic token threshold is applied, and the builtin kernel and W8A16
+remain two-CTA implementations.
+
 `src/ext/megamoe/megamoe_w8a16.cu` and `megamoe_w4a8.cu` contain the separate
 W8A16 and W4A8 kernels, constructing pipelines and dispatching warp roles.
 Compile-time tuning policy is isolated in `megamoe_specialization.hpp`: routed
@@ -247,8 +314,10 @@ them to the FP32 FC2 result after intermediate MXFP8 quantization. FC2 partials
 are BF16; top-k combination sums in FP32 and returns BF16.
 
 `sm_margin` caps persistent CTA usage: margin 32 on a 152-SM GB200 permits at most
-120 CTAs. `moe.cta_count` reports the actual count after occupancy and two-CTA
-cluster alignment. This is not a fixed SM-ID partition or exclusive reservation.
+120 CTAs. `moe.cta_count` reports the actual count after occupancy and alignment
+to the selected cluster size (two by default). `sm_margin` must leave at least
+one full cluster; a single-CTA W4A8 policy can run with just one SM available.
+This is not a fixed SM-ID partition or exclusive reservation.
 `moe.workspace_bytes` reports workspace sizes, excluding packed weights.
 Use `sm_margin=0` for routed-only measurements; reserve CTAs only when another
 concurrent branch needs them.
@@ -457,10 +526,10 @@ counts. Profiler samples can be distorted and must not replace unprofiled latenc
 
 JIT compiles the **same native CUDA templates** under a versioned internal ABI.
 `KernelConfig` selects W8A16 output-feature, token, reduction, and pipeline
-values. `W4A8KernelConfig` selects the W4A8 token/K tiles, loader policy, warp
-layout, register budgets, epilogue geometry, and dispatch pipeline. Two-CTA
-clusters, two accumulator stages, numerical semantics, and the local shared
-kernel remain unchanged. W8A16 routed `tile_m` supports 128 and 256, and
+values. `W4A8KernelConfig` selects the W4A8 cluster size, token/K tiles, loader
+policy, warp layout, register budgets, epilogue geometry, and dispatch pipeline.
+Two accumulator stages, numerical semantics, and the local shared kernel remain
+unchanged. W8A16 retains two-CTA clusters; its routed `tile_m` supports 128 and 256, and
 `tile_k` supports 32, 64, and 128; M128 requires K64 or K128. Its default
 M256/N32/K128/load8/transform7 kernel remains precompiled and needs no compiler.
 Every `W4A8KernelConfig`, including the default N64 policy, builds a JIT module;

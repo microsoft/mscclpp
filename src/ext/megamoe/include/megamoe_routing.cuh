@@ -58,13 +58,13 @@ MSCCLPP_DEVICE_INLINE int readPlannedRoute(const P& p, uint64_t epoch, int index
 }
 
 MSCCLPP_DEVICE_INLINE void countRouteGroup(const Workspace& w, int expert, int lane) {
-  unsigned int group = __match_any_sync(0xffffffff, expert);
+  unsigned int group = __match_any_sync(__activemask(), expert);
   if (expert >= 0 && lane == __ffs(group) - 1)
     atomicFetchAdd<int, scopeDevice>(w.counts + expert, __popc(group), memoryOrderRelaxed);
 }
 
 MSCCLPP_DEVICE_INLINE void fillRouteGroup(const Workspace& w, int expert, const Route& route, int lane) {
-  unsigned int group = __match_any_sync(0xffffffff, expert);
+  unsigned int group = __match_any_sync(__activemask(), expert);
   if (expert >= 0) {
     int leader = __ffs(group) - 1;
     int base = 0;
@@ -215,6 +215,8 @@ __device__ void planTokenBlocks(const P& p, uint64_t epoch) {
       w.starts[expert] = firstBlock * RoutingTileN;
       w.cursors[expert] = 0;
       w.counts[expert] = 0;
+      if constexpr (P::WeightMxfp4 && W4ExpertMajorTasks)
+        w.expertBlockDivisors[expert] = cutlass::FastDivmod(max(1, blocks));
     }
     // Warps distribute block construction for experts spanning several token blocks.
     if (__any_sync(0xffffffff, blocks > 1)) {

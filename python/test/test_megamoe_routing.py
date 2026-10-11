@@ -443,9 +443,10 @@ def test_native_routing_local_expert_boundary(routing_runtime, local_experts, mx
 
 
 @pytest.mark.parametrize("capacity,direct", [(33, False), (129, True), (512, True)])
-def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct):
+@pytest.mark.parametrize("top_k", [1, 2])
+def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct, top_k):
     runtime, torch = routing_runtime, routing_runtime.torch
-    config = runtime.config(capacity, local_experts=2, top_k=2, mxfp4=True, hidden=4096, intermediate=6656)
+    config = runtime.config(capacity, local_experts=2, top_k=top_k, mxfp4=True, hidden=4096, intermediate=6656)
     weights = _host_weights(config)
     with _native_case(runtime) as case:
         context = case.create(config, weights)
@@ -797,6 +798,234 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
                 _launch(context, storage, eager_tokens, case.stream)
             case.stream.synchronize()
             _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize("clamp", [-1.0, 0.125])
+@pytest.mark.parametrize("cluster_size", [1, 2], ids=["cta1", "cta2"])
+@pytest.mark.parametrize(
+    "hidden,intermediate,tile_n,expert_major_tasks,cache_weights",
+    [
+        (4096, 6656, 128, False, False),
+        (4096, 6656, 128, True, False),
+        (4096, 6656, 128, False, True),
+        (4096, 6656, 128, True, True),
+        (8192, 4096, 64, True, True),
+        (9216, 4096, 32, True, True),
+        (9216, 4608, 128, True, True),
+    ],
+    ids=[
+        "h4096-i6656-default",
+        "h4096-i6656-order",
+        "h4096-i6656-cache",
+        "h4096-i6656-both",
+        "h8192-i4096-n64",
+        "h9216-i4096-n32",
+        "h9216-i4608-n128",
+    ],
+)
+def test_native_w4a8_expert_task_order_graph_reuse(
+    routing_runtime, clamp, cluster_size, hidden, intermediate, tile_n, expert_major_tasks, cache_weights
+):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    capacity = tile_n + 1
+    config = runtime.config(
+        capacity, local_experts=3, top_k=2, mxfp4=True, clamp=clamp, hidden=hidden, intermediate=intermediate
+    )
+    policy = W4A8KernelConfig(
+        tile_n=tile_n,
+        load_stages=5 if cluster_size == 1 else 7,
+        transfer_registers=64,
+        epilogue_warps=8 if tile_n == 128 else 4,
+        epilogue_registers=208,
+        dispatch_chunk=4096,
+        expert_major_tasks=expert_major_tasks,
+        cache_weights=cache_weights,
+        cluster_size=cluster_size,
+    )
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, module)
+
+        def check_policy():
+            effective = context.effective_kernel_config
+            assert effective["expert_major_tasks"] is expert_major_tasks
+            assert effective["cache_weights"] is cache_weights
+            assert effective["cluster_size"] == cluster_size
+            assert effective["tile_m"] == 128 * cluster_size
+            assert context.cta_count >= cluster_size and context.cta_count % cluster_size == 0
+
+        runtime.collective(check_policy)
+        storage = _buffers(runtime, context)
+        with torch.cuda.stream(case.stream):
+            _stage(storage, _sample(config, capacity, "hot_first"))
+            _launch(context, storage, capacity, case.stream)
+        runtime.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        case.graphs.append(graph)
+        with torch.cuda.graph(graph, stream=case.stream):
+            _launch(context, storage, capacity, case.stream)
+        peer = (runtime.rank + 1) % runtime.world
+        for active in (tile_n // 2, tile_n // 2 + 1, capacity, 0, tile_n // 2):
+            sample = _sample(config, capacity, "hot_first", valid_tokens=active)
+            sample[1][:active].fill_(peer * config.local_experts)
+            # Duplicated slots reach the next rank with exactly N or N+2 expert rows.
+            assert active * config.top_k == int((sample[1] >= 0).sum())
+            expected = _routing_reference(config, sample, weights)
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                for _ in range(3):
+                    graph.replay()
+            case.stream.synchronize()
+            _check_output(runtime, storage, sample, expected)
+        for pattern in ("hot_first", "hot_last", "mixed", "masked", "random", "two_hot_peers"):
+            sample = _sample(config, capacity, "random" if pattern == "two_hot_peers" else pattern)
+            if pattern == "two_hot_peers":
+                local_ids = (torch.arange(capacity) % 2 * 2).to(torch.int32)
+                sample[1].copy_((peer * config.local_experts + local_ids[:, None]).expand_as(sample[1]))
+                counts = torch.bincount(local_ids, minlength=config.local_experts) * config.top_k
+                assert counts.tolist() == [tile_n + 2, 0, tile_n]
+            expected = _routing_reference(config, sample, weights)
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                for _ in range(3):
+                    graph.replay()
+            case.stream.synchronize()
+            _check_output(runtime, storage, sample, expected)
+        # Eager execution retains unequal per-rank token counts after fixed-shape graph replays.
+        tokens = max(0, capacity - runtime.rank)
+        sample = _sample(config, tokens, "mixed")
+        expected = _routing_reference(config, sample, weights)
+        with torch.cuda.stream(case.stream):
+            _stage(storage, sample)
+            _launch(context, storage, tokens, case.stream)
+        case.stream.synchronize()
+        _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize("flag", ["expert_major_tasks", "cache_weights", "cluster_size"])
+def test_native_w4a8_optimization_flags_must_match_across_ranks(routing_runtime, flag):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime = routing_runtime
+    if runtime.world == 1:
+        pytest.skip("policy agreement requires multiple ranks")
+    config = runtime.config(1, local_experts=1, top_k=1, mxfp4=True)
+    policy = W4A8KernelConfig(
+        tile_n=128,
+        load_stages=5,
+        transfer_registers=64,
+        epilogue_warps=8,
+        epilogue_registers=208,
+        dispatch_chunk=4096,
+        **{flag: 1 + runtime.rank % 2 if flag == "cluster_size" else bool(runtime.rank % 2)},
+    )
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        with pytest.raises(ValueError, match="kernel IDs, specialization metadata, and workspace sizes must match"):
+            case.create(config, weights, module)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize("cluster_size,remaining_sms", [(1, 1), (1, 3), (2, 2), (2, 3)])
+def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(routing_runtime, cluster_size, remaining_sms):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    config = runtime.config(65, local_experts=2, top_k=2, mxfp4=True)
+    sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
+    config = replace(config, sm_margin=sms - remaining_sms)
+    policy = W4A8KernelConfig(
+        cluster_size=cluster_size,
+        load_stages=5,
+        fixed_token_count=True,
+        split_pipelines=True,
+        dispatch_chunk=2048,
+        dispatch_stages=2,
+        expert_major_tasks=True,
+        cache_weights=True,
+    )
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, module)
+
+        def check_cluster():
+            assert context.cta_count == remaining_sms // cluster_size * cluster_size
+            assert context.effective_kernel_config["cluster_size"] == cluster_size
+
+        runtime.collective(check_cluster)
+        storage = _buffers(runtime, context)
+        for tokens in (0, 65):
+            with torch.cuda.stream(case.stream):
+                _stage(storage, _sample(config, tokens, "hot_first"))
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            for pattern in ("mixed", "hot_last", "masked", "hot_first"):
+                sample = _sample(config, tokens, pattern)
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    for _ in range(3):
+                        graph.replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize(
+    "tile_n,tile_k,load_stages,load_warps,epilogue_tokens",
+    [(32, 128, 5, 1, 16), (64, 256, 3, 2, 32), (32, 512, 2, 1, 16)],
+    ids=["n32-k128-loader1", "n64-k256-loader2", "n32-k512-loader1"],
+)
+def test_native_w4a8_cluster_variants_match(
+    routing_runtime, tile_n, tile_k, load_stages, load_warps, epilogue_tokens
+):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    config = runtime.config(tile_n + 1, local_experts=2, top_k=2, mxfp4=True)
+    modules = [
+        runtime.collective(
+            lambda cluster_size=cluster_size: compile_kernel(
+                W4A8KernelConfig(
+                    cluster_size=cluster_size, tile_n=tile_n, tile_k=tile_k,
+                    load_stages=load_stages, load_warps=load_warps, num_warps=12,
+                    epilogue_tokens=epilogue_tokens, dispatch_chunk=2048,
+                    expert_major_tasks=True, cache_weights=True,
+                )
+            )
+        )
+        for cluster_size in (1, 2)
+    ]
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        contexts = [case.create(config, weights, module) for module in modules]
+        buffers = [_buffers(runtime, context) for context in contexts]
+        for pattern in ("mixed", "hot_last", "masked", "hot_first"):
+            sample = _sample(config, config.max_tokens, pattern)
+            expected = _routing_reference(config, sample, weights)
+            outputs = []
+            for context, storage in zip(contexts, buffers):
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    _launch(context, storage, config.max_tokens, case.stream)
+                case.stream.synchronize()
+                outputs.append(_check_output(runtime, storage, sample, expected))
+            runtime.collective(
+                lambda: torch.testing.assert_close(
+                    outputs[0].view(torch.int16), outputs[1].view(torch.int16), rtol=0, atol=0
+                )
+            )
 
 
 @_JIT_ONLY

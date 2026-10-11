@@ -102,6 +102,52 @@ def test_w4a8_profile_schema_rejects_unknown_policy_fields(tmp_path):
         load_w4a8_kernel_profiles(path)
 
 
+def test_existing_w4a8_profiles_default_new_optimization_flags_off():
+    profile = load_w4a8_kernel_profiles()
+    assert all(
+        entry["config"]["expert_major_tasks"] is False and entry["config"]["cache_weights"] is False
+        for entry in profile["entries"]
+    )
+    assert all(entry["config"]["cluster_size"] == 2 for entry in profile["entries"])
+
+
+@pytest.mark.parametrize("expert_major_tasks,cache_weights", [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("cluster_size", [1, 2])
+def test_w4a8_profiles_select_optimization_flags_per_token_bucket(
+    tmp_path, expert_major_tasks, cache_weights, cluster_size
+):
+    profile = load_w4a8_kernel_profiles()
+    profile["entries"] = profile["entries"][:2]
+    small, large = profile["entries"]
+    small["config"]["expert_major_tasks"] = False
+    small["config"]["cache_weights"] = False
+    small["config"]["cluster_size"] = cluster_size
+    large["config"]["expert_major_tasks"] = expert_major_tasks
+    large["config"]["cache_weights"] = cache_weights
+    path = tmp_path / "policies.json"
+    path.write_text(json.dumps(profile))
+    small_policy = resolve_w4a8_kernel_config(
+        _config(128, hidden=4096, intermediate=6656, num_experts=128), profile_path=path
+    )
+    large_policy = resolve_w4a8_kernel_config(
+        _config(190, hidden=4096, intermediate=6656, num_experts=128), profile_path=path
+    )
+    assert small_policy.expert_major_tasks is False and small_policy.cache_weights is False
+    assert small_policy.cluster_size == cluster_size
+    assert large_policy.cluster_size == 2
+    assert large_policy.expert_major_tasks is expert_major_tasks
+    assert large_policy.cache_weights is cache_weights
+
+
+def test_legacy_w4a8_profile_without_cluster_size_defaults_to_two_ctas(tmp_path):
+    profile = load_w4a8_kernel_profiles()
+    for entry in profile["entries"]:
+        entry["config"].pop("cluster_size")
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(profile))
+    assert all(entry["config"]["cluster_size"] == 2 for entry in load_w4a8_kernel_profiles(path)["entries"])
+
+
 def test_w4a8_profile_schema_rejects_duplicates_and_versions(tmp_path):
     packaged = Path(__file__).parents[1] / "mscclpp" / "ext" / "megamoe" / "megamoe_w4a8_profiles.json"
     value = json.loads(packaged.read_text())

@@ -132,7 +132,7 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.weightsBytes = sizeof(MegaMoeJitWeightsV1);
   api.layoutBytes = sizeof(MegaMoeJitLayoutV1);
 #if MSCCLPP_MEGAMOE_JIT_W4A8
-  api.tileM = jit::detail::TileM;
+  api.tileM = jit::detail::W4TileM;
   api.tileN = jit::detail::W4TileN;
   api.tileK = jit::detail::W4TileK;
   api.loadStages = jit::detail::W4LoadStages;
@@ -157,7 +157,7 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.weightMxfp4 = 0;
   api.numWarps = jit::detail::RoutedWarpSchedule::NumWarps;
 #endif
-  api.clusterSize = jit::detail::ClusterM;
+  api.clusterSize = MSCCLPP_MEGAMOE_JIT_W4A8 ? jit::detail::W4ClusterSize : jit::detail::ClusterM;
   api.accumulatorStages = 2;
   api.architecture = 1000;
   std::memcpy(api.kernelId, JitId, sizeof(JitId));
@@ -177,4 +177,10 @@ extern "C" __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp
 
 extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1() {
   return int(MSCCLPP_MEGAMOE_JIT_W4A8 && mscclpp::megamoe::jit::detail::W4FixedTokenCount);
+}
+
+extern "C" __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1() {
+  if constexpr (!MSCCLPP_MEGAMOE_JIT_W4A8) return 0;
+  return (mscclpp::megamoe::jit::detail::W4ExpertMajorTasks ? MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS : 0u) |
+         (mscclpp::megamoe::jit::detail::W4CacheWeights ? MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS : 0u);
 }

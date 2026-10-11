@@ -29,6 +29,25 @@ __device__ __forceinline__ float swiglu(float gate, float up, float probability,
 
 #if MSCCLPP_BULK_AVAILABLE
 
+__device__ __forceinline__ float2 swigluPair(float2 gate, float2 up, float clamp) {
+  if (clamp >= 0) {
+    gate.x = fminf(gate.x, clamp);
+    gate.y = fminf(gate.y, clamp);
+    up.x = fmaxf(-clamp, fminf(up.x, clamp));
+    up.y = fmaxf(-clamp, fminf(up.y, clamp));
+  }
+  float2 product = __fmul2_rn(gate, up);
+  float2 exponent = __fmul2_rn(gate, make_float2(-1.4426950408889634f, -1.4426950408889634f));
+  float2 denominator;
+  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(denominator.x) : "f"(exponent.x));
+  asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(denominator.y) : "f"(exponent.y));
+  denominator = __fadd2_rn(denominator, make_float2(1.0f, 1.0f));
+  float2 inverse;
+  asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(inverse.x) : "f"(denominator.x));
+  asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(inverse.y) : "f"(denominator.y));
+  return __fmul2_rn(product, inverse);
+}
+
 template <int LocalMode, int EpilogueThreads, int ChunkTokens, class P, class Storage, class Values, class Coordinates>
 __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, Storage& s, const Values& values,
                                                  const Coordinates& coordinates, int tokenOffset, int validRows,
@@ -45,37 +64,35 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
   CUTE_UNROLL
   for (int i = 0; i < size(values); ++i) {
     auto coord = coordinates(i);
-    s.epilogue.scratch[(int(get<0>(coord)) % CtaTileM) * (ChunkTokens + 1) + int(get<1>(coord))] = values(i);
+    if constexpr (P::WeightMxfp4)
+      s.epilogue.scratch[int(get<1>(coord)) * CtaTileM + int(get<0>(coord))] = values(i);
+    else
+      s.epilogue.scratch[(int(get<0>(coord)) % CtaTileM) * (ChunkTokens + 1) + int(get<1>(coord))] = values(i);
   }
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 
   if constexpr (P::WeightMxfp4) {
-    static_assert(CtaFc1M % 32 == 0);
-    constexpr int GroupsPerRow = CtaFc1M / 32;
+    static_assert(CtaFc1M == 64);
     constexpr int EpilogueWarps = EpilogueThreads / 32;
     const int lane = threadIdx.x % 32;
     const int warp = threadIdx.x / 32;
-    for (int group = warp; group < validRows * GroupsPerRow; group += EpilogueWarps) {
-      int token = group / GroupsPerRow;
-      int feature = group % GroupsPerRow * 32 + lane;
+    for (int token = warp; token < validRows; token += EpilogueWarps) {
+      int feature = lane / 16 * 32 + lane % 16 * 2;
       int gateRow = feature / GateUpGroupSize * GateUpPairSize + feature % GateUpGroupSize;
-      float gate = s.epilogue.scratch[gateRow * (ChunkTokens + 1) + token];
-      float up = s.epilogue.scratch[(gateRow + GateUpGroupSize) * (ChunkTokens + 1) + token];
-      float activated = swiglu(gate, up, 1.0f, p.config.gateUpClamp);
-      float maximum = fabsf(activated);
+      auto* gateAddress = s.epilogue.scratch + token * CtaTileM + gateRow;
+      auto* upAddress = gateAddress + GateUpGroupSize;
+      float2 activated = swigluPair(*reinterpret_cast<const float2*>(gateAddress),
+                                    *reinterpret_cast<const float2*>(upAddress), p.config.gateUpClamp);
+      float maximum = fmaxf(fabsf(activated.x), fabsf(activated.y));
       CUTE_UNROLL
-      for (int offset = 16; offset > 0; offset /= 2)
-        maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset));
+      for (int offset = 8; offset > 0; offset /= 2)
+        maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, 16));
       uint8_t scale = quantizeE8M0Scale(maximum);
-      float other = __shfl_xor_sync(0xffffffff, activated, 1);
       int row = w4StorageRow<typename P::Tiles>(task.block * KernelTileN + tokenOffset + token);
-      int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
-      if (lane == 0) p.workspace.hiddenScale[p.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
-      if (lane % 2 == 0) {
-        auto destination =
-            reinterpret_cast<uint16_t*>(p.workspace.quantizedHidden + size_t(row) * intermediate + column);
-        *destination = quantizeE4M3Pair(activated, other, inverseE8M0Scale(scale));
-      }
+      int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
+      if (lane % 16 == 0) p.workspace.hiddenScale[p.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
+      auto destination = reinterpret_cast<uint16_t*>(p.workspace.quantizedHidden + size_t(row) * intermediate + column);
+      *destination = quantizeE4M3Pair(activated.x, activated.y, inverseE8M0Scale(scale));
     }
     asm volatile("fence.proxy.async.global;" ::: "memory");
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
@@ -107,7 +124,7 @@ __device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, S
         }
         __bfloat16 folded = active ? __bfloat16(swiglu(gate, up, probability, p.config.gateUpClamp)) : __bfloat16(0.0f);
         if constexpr (Local) {
-          int column = task.m * Tiles::Fc1M + (blockIdx.x % ClusterM) * CtaFc1M + feature;
+          int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
           p.workspace.hidden[size_t(row) * intermediate + column] = folded;
         } else {
           s.epilogue.packed[i] = folded;
@@ -160,7 +177,7 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
 
   if constexpr (Local) {
     if (!task.fc1 && (reinterpret_cast<uintptr_t>(directOutput) & 15) != 0) {
-      int feature = task.m * Tiles::M + (blockIdx.x % ClusterM) * CtaTileM;
+      int feature = task.m * Tiles::M + (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
       if (feature < hidden) {
         for (int token = warp; token < validRows; token += EpilogueWarps) {
           size_t offset = size_t(task.block * KernelTileN + tokenOffset + token) * hidden + feature;
@@ -177,7 +194,7 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
   if (lane != 0) return;
   bool fc1 = !P::WeightMxfp4 && task.fc1;
   int width = fc1 ? CtaFc1M : CtaTileM;
-  int feature = task.m * width * ClusterM + (blockIdx.x % ClusterM) * width;
+  int feature = task.m * width * Tiles::ClusterSize + (blockIdx.x % Tiles::ClusterSize) * width;
   if constexpr (P::WeightMxfp4) {
     if (feature >= hidden) return;
   }
@@ -240,13 +257,20 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
   for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += ChunkTokens) {
     int validRows = min(int(ChunkTokens), task.tokens.rows - tokenOffset);
     // Load one token chunk from TMEM into per-thread FP32 registers.
-    auto acc =
-        local_tile(matrix, make_shape(Int<CtaTileM>{}, Int<ChunkTokens>{}), make_coord(0, tokenOffset / ChunkTokens));
+    // Each W4A8 warpgroup reads a distinct token slice instead of aliasing the first 128 TMEM rows.
+    constexpr int ReaderGroups = P::WeightMxfp4 ? EpilogueThreads / CtaTileM : 1;
+    constexpr int ReadTokens = ChunkTokens / ReaderGroups;
+    int readerGroup = P::WeightMxfp4 ? threadIdx.x / CtaTileM : 0;
+    int readerThread = P::WeightMxfp4 ? threadIdx.x % CtaTileM : threadIdx.x;
+    auto acc = local_tile(matrix, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}),
+                          make_coord(0, tokenOffset / ReadTokens + readerGroup));
     auto copyOp = make_tmem_copy(SM100_TMEM_LOAD_32dp32b8x{}, acc);
-    auto threadCopy = copyOp.get_slice(threadIdx.x);
+    auto threadCopy = copyOp.get_slice(readerThread);
     auto source = threadCopy.partition_S(acc);
     auto identity = make_identity_tensor(make_shape(Int<CtaTileM>{}, Int<ChunkTokens>{}));
-    auto coordinates = threadCopy.partition_D(identity);
+    auto readIdentity =
+        local_tile(identity, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}), make_coord(0, readerGroup));
+    auto coordinates = threadCopy.partition_D(readIdentity);
     auto values = make_tensor<float>(shape(coordinates));
     copy(copyOp, source, values);
     cutlass::arch::fence_view_async_tmem_load();

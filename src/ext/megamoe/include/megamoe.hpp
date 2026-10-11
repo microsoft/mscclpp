@@ -57,6 +57,8 @@ class MegaMoeContext {
   const std::string& kernelId() const;
   /// Return the routed output-feature tile width (the shared expert always uses 256).
   int kernelTileM() const;
+  /// Return the number of cooperating CTAs per cluster.
+  int kernelClusterSize() const;
   /// Return the routed token tile width (the shared expert always uses 128).
   int kernelTileN() const;
   /// Return the routed reduction tile width (the shared expert always uses 128).
@@ -87,6 +89,10 @@ class MegaMoeContext {
   int kernelDispatchStages() const;
   /// Return whether captured W4A8 decode assumes equal input row counts on all ranks.
   bool kernelFixedTokenCount() const;
+  /// Return whether W4A8 tasks reuse an output tile across each expert's token blocks.
+  bool kernelExpertMajorTasks() const;
+  /// Return whether W4A8 weights use normal rather than evict-first L2 priority.
+  bool kernelCacheWeights() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///

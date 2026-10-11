@@ -66,6 +66,15 @@ def test_initial_specializations_fit_tmem(values):
         {"dispatch_warps": 1},
         {"dispatch_stages": 3},
         {"fixed_token_count": 1},
+        {"expert_major_tasks": 1},
+        {"expert_major_tasks": "true"},
+        {"cache_weights": 0},
+        {"cache_weights": "false"},
+        {"cluster_size": 0},
+        {"cluster_size": 3},
+        {"cluster_size": True},
+        {"cluster_size": 1.0},
+        {"cluster_size": "1"},
     ],
 )
 def test_w4a8_kernel_config_rejects_invalid(fields):
@@ -75,6 +84,7 @@ def test_w4a8_kernel_config_rejects_invalid(fields):
 
 def test_w4a8_default_and_tuned_policies_validate():
     assert jit.W4A8KernelConfig().tile_n == 64
+    assert jit.W4A8KernelConfig().cluster_size == 2
     tuned = jit.W4A8KernelConfig(
         tile_n=128,
         load_stages=7,
@@ -172,6 +182,8 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
         dispatch_chunk=4096,
         dispatch_warps=4,
         dispatch_stages=1,
+        expert_major_tasks=True,
+        cache_weights=True,
     )
     compiled = jit.compile_kernel(config, cache_dir=cache)
     assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 5
@@ -197,6 +209,9 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
         "-DMSCCLPP_MEGAMOE_W4_DISPATCH_WARPS=4",
         "-DMSCCLPP_MEGAMOE_W4_DISPATCH_STAGES=1",
         "-DMSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=0",
+        "-DMSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS=1",
+        "-DMSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS=1",
+        "-DMSCCLPP_MEGAMOE_W4_CLUSTER_SIZE=2",
     }
     for command in commands[:-1]:
         assert expected <= set(command)
@@ -226,6 +241,45 @@ def test_fixed_token_count_is_an_explicit_cached_compile_option(compiler_fixture
     assert all("-DMSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=1" in command for command in commands[5:9])
     loaded = jit.load_cached_kernel(fixed.key, cache_dir=cache)
     assert loaded.config.fixed_token_count is True
+
+
+@pytest.mark.parametrize("cluster_size", [1, 2])
+def test_w4a8_optimization_flags_are_independent_cached_compile_options(compiler_fixture, cluster_size):
+    cache, commands, _ = compiler_fixture
+    default = jit.W4A8KernelConfig()
+    assert default.expert_major_tasks is False and default.cache_weights is False
+    keys = set()
+    for expert_major_tasks, cache_weights in ((False, False), (True, False), (False, True), (True, True)):
+        config = jit.W4A8KernelConfig(
+            expert_major_tasks=expert_major_tasks, cache_weights=cache_weights, cluster_size=cluster_size
+        )
+        before = len(commands)
+        compiled = jit.compile_kernel(config, cache_dir=cache)
+        keys.add(compiled.key)
+        assert len(commands) == before + 5
+        for command in commands[before : before + 4]:
+            assert f"-DMSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS={int(expert_major_tasks)}" in command
+            assert f"-DMSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS={int(cache_weights)}" in command
+        loaded = jit.load_cached_kernel(compiled.key, cache_dir=cache)
+        assert loaded.config == config and loaded.cache_hit
+        assert jit.compile_kernel(config, cache_dir=cache).cache_hit
+        assert len(commands) == before + 5
+    assert len(keys) == 4
+
+
+def test_w4a8_cluster_size_has_distinct_cache_keys_and_compile_definitions(compiler_fixture):
+    cache, commands, _ = compiler_fixture
+    kernels = {}
+    for cluster_size in (1, 2):
+        config = jit.W4A8KernelConfig(cluster_size=cluster_size)
+        before = len(commands)
+        kernels[cluster_size] = jit.compile_kernel(config, cache_dir=cache)
+        for command in commands[before : before + 4]:
+            assert f"-DMSCCLPP_MEGAMOE_W4_CLUSTER_SIZE={cluster_size}" in command
+        assert jit.load_cached_kernel(kernels[cluster_size].key, cache_dir=cache).config == config
+        assert jit.compile_kernel(config, cache_dir=cache).cache_hit
+        assert len(commands) == before + 5
+    assert kernels[1].key != kernels[2].key
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])

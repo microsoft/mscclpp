@@ -73,18 +73,21 @@ struct W4A8CollectiveTypesT {
   static constexpr int DispatchChunk = DispatchChunk_;
   static constexpr int DispatchWarps = DispatchWarps_;
   static constexpr int DispatchStages = DispatchStages_;
+  using ClusterShape = cute::Shape<cute::Int<W4ClusterSize>, cute::_1, cute::_1>;
   using WarpSchedule = W4A8WarpScheduleT<NumWarps, EpilogueWarps, DispatchWarps>;
   using Tiles = TilePolicy<false, true, TileN_, TileK_>;
-  using W4TileShape = cute::Shape<cute::Int<TileM>, cute::Int<(TileN_ < 64 ? 64 : TileN_)>, cute::Int<TileK_>>;
+  using W4TileShape = cute::Shape<cute::Int<W4TileM>, cute::Int<(TileN_ < 64 ? 64 : TileN_)>, cute::Int<TileK_>>;
   using Weight = cutlass::mx_float4_t<cutlass::float_e2m1_t>;
   using Activation = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
   using Scale = cutlass::float_ue8m0_t;
+  using KernelSchedule =
+      cute::conditional_t<W4ClusterSize == 1, cutlass::gemm::KernelTmaWarpSpecialized1SmMxf8f6f4Sm100,
+                          cutlass::gemm::KernelTmaWarpSpecialized2SmMxf8f6f4Sm100>;
   using Builder = typename cutlass::gemm::collective::CollectiveBuilder<
       cutlass::arch::Sm100, cutlass::arch::OpClassBlockScaledTensorOp, Weight, cutlass::layout::RowMajor, 128,
       Activation, cutlass::layout::ColumnMajor, 16, float, W4TileShape, ClusterShape,
-      cutlass::gemm::collective::StageCount<LoadStages_>,
-      cutlass::gemm::KernelTmaWarpSpecialized2SmMxf8f6f4Sm100>::CollectiveOp;
-  using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, LoadStages_, SplitPipelines>;
+      cutlass::gemm::collective::StageCount<LoadStages_>, KernelSchedule>::CollectiveOp;
+  using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, LoadStages_, SplitPipelines, W4ClusterSize>;
   using Load = typename Mainloop::MainloopPipeline;
   using Accumulate = cutlass::PipelineUmmaAsync<2, typename Mainloop::AtomThrShapeMNK>;
   using ScaleConfig = typename Mainloop::Sm1xxBlkScaledConfig;

@@ -10,7 +10,7 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-template <class Pipeline, class Schedule>
+template <class Pipeline, class Schedule, class KernelClusterShape = ClusterShape>
 __device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp) {
   typename Pipeline::Params params{};
   params.role = warp == Schedule::MmaWarp ? Pipeline::ThreadCategory::Producer
@@ -18,32 +18,32 @@ __device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::S
                                                  ? Pipeline::ThreadCategory::Consumer
                                                  : Pipeline::ThreadCategory::NonParticipant);
   params.producer_arv_count = 1;
-  params.consumer_arv_count = ClusterM * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
+  params.consumer_arv_count = cute::size(KernelClusterShape{}) * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
   params.initializing_warp = Schedule::EpilogueBegin;
-  return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
+  return Pipeline(storage, params, KernelClusterShape{}, cute::true_type{}, cute::false_type{});
 }
 
-template <bool Local>
+template <bool Local, bool Mxfp4 = false>
 __device__ __forceinline__ int fc1TaskTiles(int intermediate) {
-  return 2 * intermediate / TilePolicy<Local>::M;
+  return 2 * intermediate / TilePolicy<Local, Mxfp4>::M;
 }
 
-template <bool Local>
+template <bool Local, bool Mxfp4 = false>
 __device__ __forceinline__ int fc2TaskTiles(int hidden) {
-  return (hidden + TilePolicy<Local>::M - 1) / TilePolicy<Local>::M;
+  return (hidden + TilePolicy<Local, Mxfp4>::M - 1) / TilePolicy<Local, Mxfp4>::M;
 }
 
-template <bool Local>
+template <bool Local, bool Mxfp4 = false>
 __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
-  return ClusterM * fc1TaskTiles<Local>(intermediate);
+  return TilePolicy<Local, Mxfp4>::ClusterSize * fc1TaskTiles<Local, Mxfp4>(intermediate);
 }
 
 template <class P>
 __device__ Task taskAt(const P& p, int ordinal, int tokens, int hidden, int intermediate) {
   constexpr bool Local = P::LocalExpert;
   constexpr int KernelTileN = P::Tiles::N;
-  int fc1Tiles = fc1TaskTiles<Local>(intermediate);
-  int fc2Tiles = fc2TaskTiles<Local>(hidden);
+  int fc1Tiles = fc1TaskTiles<Local, P::WeightMxfp4>(intermediate);
+  int fc2Tiles = fc2TaskTiles<Local, P::WeightMxfp4>(hidden);
   int tokenBlocks = Local ? (tokens + KernelTileN - 1) / KernelTileN : p.workspace.control->tokenBlocks;
   int fc1Tasks = tokenBlocks * fc1Tiles;
   bool fc1 = ordinal < fc1Tasks;
@@ -52,6 +52,13 @@ __device__ Task taskAt(const P& p, int ordinal, int tokens, int hidden, int inte
   int block, m;
   if constexpr (P::WeightMxfp4) {
     (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
+    if constexpr (W4ExpertMajorTasks) {
+      int expert = p.workspace.blocks[block].expert;
+      int first = p.workspace.starts[expert] / KernelTileN;
+      int offset;
+      p.workspace.expertBlockDivisors[expert](m, offset, local - first * tiles);
+      block = first + offset;
+    }
   } else {
     block = local / tiles;
     m = local % tiles;
@@ -74,7 +81,7 @@ __device__ __forceinline__ int taskKTiles(const P&, const Task& task, int hidden
 template <class P>
 __device__ __forceinline__ auto taskCoord(const P&, const Task& task, int cta) {
   constexpr int BlockStride = P::WeightMxfp4 ? P::Tiles::TokenStride / P::Tiles::N : 1;
-  return cute::make_coord(task.m * ClusterM + cta, task.block * BlockStride, 0, task.tokens.expert);
+  return cute::make_coord(task.m * P::Tiles::ClusterSize + cta, task.block * BlockStride, 0, task.tokens.expert);
 }
 
 template <int LocalMode, class Schedule, class P, class Storage, class Accumulate, class Accumulators>
@@ -94,7 +101,7 @@ __device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat
   }();
   cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
   typename Accumulate::PipelineState state;
-  for (int i = cluster; i < tasks; i += gridDim.x / ClusterM)
+  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize)
     epilogue<LocalMode, Schedule>(p, taskAt(p, i, tokens, hidden, intermediate), s, pipeline, state, accumulators,
                                   output, hidden, intermediate);
 #if MSCCLPP_BULK_AVAILABLE
