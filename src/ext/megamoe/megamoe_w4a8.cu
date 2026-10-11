@@ -4,6 +4,8 @@
 #include <array>
 #include <stdexcept>
 
+#include "megamoe_roles.cuh"
+#include "megamoe_routing.cuh"
 #include "megamoe_w4a8_roles.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
@@ -112,11 +114,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
     // Arrive without waiting so copies overlap the compute-side initialization.
     cute::cluster_arrive_relaxed();
-    if (warp < Schedule::DispatchEnd) {
-      traceKernel(KernelTracePhase::Dispatch, true);
-      dispatchW4A8Tokens<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp - Schedule::DispatchBegin);
-      traceKernel(KernelTracePhase::Dispatch, false);
-    }
+    runW4A8DispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
   }
   // Join even idle roles before the next register reconfiguration.
   __syncthreads();

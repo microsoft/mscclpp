@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "megamoe_roles.cuh"
+#include "megamoe_routing.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 

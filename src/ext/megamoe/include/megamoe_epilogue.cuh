@@ -6,6 +6,7 @@
 
 #include "megamoe_device.cuh"
 #include "megamoe_quantization.cuh"
+#include "megamoe_tasks.cuh"
 #include "megamoe_trace.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
@@ -301,6 +302,34 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
     constexpr int ReadyStride = P::WeightMxfp4 ? W4ReadyCounterStride : 1;
     auto* counter = p.workspace.hiddenReady + size_t(task.block) * ReadyStride;
     asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
+  }
+#endif
+}
+
+template <int LocalMode, class Schedule, class P, class Storage, class Accumulate, class Accumulators>
+__device__ __forceinline__ void runEpilogueRole(const P& p, int tokens, __bfloat16* output, Storage& s,
+                                                Accumulate& pipeline, Accumulators accumulators, int hidden,
+                                                int intermediate, int cluster, int tasks) {
+  constexpr bool Local = LocalMode != 0;
+  static_assert(P::LocalExpert == Local);
+  constexpr int RoleRegisters = [] {
+    if constexpr (Local) {
+      return LocalComputeRegisters;
+    } else if constexpr (P::WeightMxfp4) {
+      return P::Collective::EpilogueRegisters;
+    } else {
+      return ComputeRegisters;
+    }
+  }();
+  cutlass::arch::warpgroup_reg_alloc<RoleRegisters>();
+  typename Accumulate::PipelineState state;
+  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize)
+    epilogue<LocalMode, Schedule>(p, taskAt(p, i, tokens, hidden, intermediate), s, pipeline, state, accumulators,
+                                  output, hidden, intermediate);
+#if MSCCLPP_BULK_AVAILABLE
+  if constexpr (Local || P::WeightMxfp4) {
+    // Deferred peer stores must land before the CTA publishes its completion.
+    if (threadIdx.x % warpSize == 0) bulkStoreWait();
   }
 #endif
 }

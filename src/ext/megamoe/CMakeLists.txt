@@ -55,6 +55,7 @@ install(FILES megamoe_w8a16.cu megamoe_w4a8.cu megamoe_launch.cu megamoe_jit.cu 
     DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}")
 install(FILES
     include/megamoe_collective.cuh
+    include/megamoe_dispatch.cuh
     include/megamoe_quantization.cuh
     include/megamoe_w4a8_collective.cuh
     include/megamoe_w4a8_roles.cuh
@@ -64,6 +65,7 @@ install(FILES
     include/megamoe_mma.cuh
     include/megamoe_roles.cuh
     include/megamoe_routing.cuh
+    include/megamoe_tasks.cuh
     include/megamoe_kernel.hpp
     include/megamoe_jit.hpp
     include/megamoe_specialization.hpp
