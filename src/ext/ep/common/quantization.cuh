@@ -69,6 +69,20 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
 }
 
+MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToMxfp8(const mscclpp::bf16x8& source, uint8_t& scale,
+                                                               int laneId) {
+  const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
+  const float maximum = laneGroupMax<4>(maxAbsF32x8(values, 0.0f), laneId);
+  scale = mscclpp::detail::quantizeE8M0Scale(maximum);
+  const float inverse = mscclpp::detail::inverseE8M0Scale(scale);
+  mscclpp::f32x8 scaled;
+#pragma unroll
+  for (int element = 0; element < mscclpp::f32x8::Size; ++element) {
+    scaled[element] = values[element] * inverse;
+  }
+  return mscclpp::to<mscclpp::f8_e4m3x8>(scaled);
+}
+
 }  // namespace ep
 }  // namespace mscclpp
 

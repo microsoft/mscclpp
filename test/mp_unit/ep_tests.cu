@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_data_types.hpp>
@@ -15,6 +17,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -853,6 +856,385 @@ void runThroughputPerformance(mscclpp::ep::MoERuntime& runtime, mscclpp::Communi
   }
 }
 
+int mxfp8TestExpert(int source, int token, int lane, int ranks, int topk, int generation) {
+  if (token % 7 == 0 || (token % 2 == 0 && lane == topk - 1)) return -1;
+  const int destination = (source + token + lane / 2 + generation) % ranks;
+  return destination * 32 + (token + generation + (token % 3 == 0 ? 0 : lane % 2)) % 32;
+}
+
+Bf16 mxfp8TestValue(int source, int token, int column, int generation) {
+  // An exactly representable token marker identifies unordered latency rows.
+  if (column < 32) {
+    const int value = column < 3 ? (token >> (4 * column)) & 15 : (column == 3 ? generation & 15 : 0);
+    return static_cast<Bf16>(column == 31 ? 16.0f : static_cast<float>(value));
+  }
+  constexpr std::array<uint16_t, 12> Boundaries{0x0000, 0x0001, 0x007f, 0x0080, 0x3f80, 0x3fdf,
+                                                0x3fe0, 0x3fe1, 0x43df, 0x43e0, 0x43e1, 0x7f7f};
+  const int block = column / 32;
+  const int selector = (source * 3 + token + block + generation) % 16;
+  const uint16_t maximum = selector < static_cast<int>(Boundaries.size())
+                               ? Boundaries[selector]
+                               : (token * 131 + block * 17 + source * 11 + generation * 271) % 0x7f80;
+  const int decrement = column % 32 == (token + block) % 32 ? 0 : column % 32;
+  const uint16_t magnitude = maximum > decrement ? maximum - decrement : 0;
+  return std::bit_cast<Bf16>(static_cast<uint16_t>(magnitude | ((column + token) % 2 ? 0x8000 : 0)));
+}
+
+uint8_t referenceMxfp8Scale(const std::array<Bf16, 32>& values) {
+  double maximum = 0.0;
+  for (const auto value : values) maximum = std::max(maximum, std::abs(static_cast<double>(static_cast<float>(value))));
+  if (maximum == 0.0) return 127;
+  return static_cast<uint8_t>(127 + std::clamp(static_cast<int>(std::ceil(std::log2(maximum / 448.0))), -126, 127));
+}
+
+__global__ void stageMxfp8RankMajorOutput(Bf16* output, const void* input, const uint8_t* scales, const int* ids,
+                                          const float* weights, const int* counts, int rows, int capacity, int hidden,
+                                          int topk, int invalidExpert, bool quantized, bool directSend) {
+  const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? topk : 1);
+  for (size_t index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; index < elements;
+       index += static_cast<size_t>(gridDim.x) * blockDim.x) {
+    const size_t route = index / hidden;
+    const int row = directSend ? route / topk : route;
+    float weight = 0.0f;
+    if (row % capacity < counts[row / capacity]) {
+      if (directSend) {
+        const int expert = ids[static_cast<size_t>(row) * topk + route % topk];
+        weight = expert >= 0 && expert < invalidExpert ? 1.0f : 0.0f;
+      } else {
+        for (int lane = 0; lane < topk; ++lane) {
+          const int expert = ids[static_cast<size_t>(row) * topk + lane];
+          if (expert >= 0 && expert < invalidExpert) weight += weights[static_cast<size_t>(row) * topk + lane];
+        }
+      }
+    }
+    float value = 0.0f;
+    if (weight != 0.0f) {
+      value = quantized ? fp8ToFloat(static_cast<const Fp8E4M3*>(input)[static_cast<size_t>(row) * hidden]) *
+                              ldexpf(1.0f, int(scales[static_cast<size_t>(row) * (hidden / 32)]) - 127)
+                        : static_cast<float>(static_cast<const Bf16*>(input)[static_cast<size_t>(row) * hidden]);
+      value = (value + 1.0f) * weight;
+    }
+    output[index] = static_cast<Bf16>(value);
+  }
+}
+
+void runMxfp8Correctness(mscclpp::Communicator& communicator, mscclpp::ep::CombineMode combineMode, int hidden,
+                         int tokens, int topk, bool useGraph) {
+  using namespace mscclpp::ep;
+  const int rank = communicator.bootstrap()->getRank();
+  const int ranks = communicator.bootstrap()->getNranks();
+  const int experts = ranks * 32;
+  const int capacity = 2 * tokens + 3;
+  const int blocks = std::max(ranks + 2, 24);
+  MoERuntime runtime(communicator, MoEMode::LATENCY, capacity, hidden, experts, topk, DispatchLayout::RANK_MAJOR,
+                     combineMode);
+  ASSERT_TRUE(runtime.isAvailable());
+  runtime.initialize();
+  ASSERT_NE(runtime.dispatchOutputBuffer(), runtime.combineInputBuffer());
+  ASSERT_NE(runtime.outputScalesBuffer(), nullptr);
+  CudaStream stream;
+  mscclpp::GpuBuffer<Bf16> input(static_cast<size_t>(capacity) * hidden);
+  mscclpp::GpuBuffer<Bf16> output(input.nelems());
+  mscclpp::GpuBuffer<int64_t> routes(static_cast<size_t>(capacity) * topk);
+  mscclpp::GpuBuffer<float> weights(routes.nelems());
+  mscclpp::GpuBuffer<int> counts(ranks);
+  const bool directSend = combineMode == CombineMode::DIRECT_SEND;
+
+  for (int iteration = 0; iteration < 5; ++iteration) {
+    const bool quantized = iteration != 0;
+    const bool useWeights = iteration % 2 == 0;
+    const int activeCapacity = tokens + iteration % 2;
+    const int rows = ranks * activeCapacity;
+    std::vector<int> sourceCounts(ranks);
+    for (int source = 0; source < ranks; ++source) {
+      sourceCounts[source] = iteration == 2 ? 0 : (iteration == 3 ? std::max(1, tokens / 2) : tokens);
+      if (iteration == 1) sourceCounts[source] = source == 0 && ranks > 1 ? 0 : std::max(0, tokens - source % 3);
+    }
+    const int numTokens = sourceCounts[rank];
+    std::vector<Bf16> hostInput(static_cast<size_t>(numTokens) * hidden);
+    std::vector<int64_t> hostRoutes(static_cast<size_t>(numTokens) * topk);
+    std::vector<float> hostWeights(hostRoutes.size(), 0.125f);
+    for (int token = 0; token < numTokens; ++token) {
+      for (int lane = 0; lane < topk; ++lane) {
+        hostRoutes[static_cast<size_t>(token) * topk + lane] =
+            mxfp8TestExpert(rank, token, lane, ranks, topk, iteration);
+      }
+    }
+    if (numTokens > 0) {
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(routes.data(), hostRoutes.data(), hostRoutes.size() * sizeof(int64_t),
+                                        cudaMemcpyHostToDevice, stream));
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(weights.data(), hostWeights.data(), hostWeights.size() * sizeof(float),
+                                        cudaMemcpyHostToDevice, stream));
+    }
+    const LatencyDispatchRequest request{
+        .output = runtime.dispatchOutputBuffer(),
+        .outputScales = quantized ? runtime.outputScalesBuffer() : nullptr,
+        .outputSrcInfo = nullptr,
+        .outputTopkIdx = static_cast<int*>(runtime.outputTopkIdsBuffer()),
+        .outputTopkWeights = static_cast<float*>(runtime.outputTopkWeightsBuffer()),
+        .outputLayoutRange = nullptr,
+        .outputCount = counts.data(),
+        .input = numTokens == 0 ? nullptr : input.data(),
+        .topkIdx = numTokens == 0 ? nullptr : routes.data(),
+        .topkWeights = useWeights ? weights.data() : nullptr,
+        .numTokens = numTokens,
+        .maxTokensPerRank = activeCapacity,
+        .invalidTokenExpertId = experts,
+        .dispatchDataType = quantized ? DispatchDataType::MXFP8_E4M3 : DispatchDataType::BF16,
+        .numBlocks = blocks,
+        .stream = stream,
+    };
+    auto operation = [&] {
+      const auto handle = runtime.dispatch(DispatchRequest{request});
+      const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? topk : 1);
+      stageMxfp8RankMajorOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+          static_cast<Bf16*>(runtime.combineInputBuffer()), request.output,
+          static_cast<const uint8_t*>(runtime.outputScalesBuffer()), request.outputTopkIdx, request.outputTopkWeights,
+          counts.data(), rows, activeCapacity, hidden, topk, experts, quantized, directSend);
+      MSCCLPP_CUDATHROW(cudaGetLastError());
+      runtime.combine(
+          CombineRequest{LatencyCombineRequest{output.data(), runtime.combineInputBuffer(), handle, blocks, stream}});
+    };
+    CudaGraph graph;
+    if (useGraph) {
+      // Latency's existing host epoch protocol needs distinct epochs within a replay.
+      graph.capture(stream, [&] {
+        operation();
+        operation();
+      });
+    }
+    for (int replay = 0; replay < (useGraph ? 3 : 2); ++replay) {
+      const int generation = iteration + replay * 5;
+      for (int token = 0; token < numTokens; ++token) {
+        for (int column = 0; column < hidden; ++column) {
+          hostInput[static_cast<size_t>(token) * hidden + column] = mxfp8TestValue(rank, token, column, generation);
+        }
+      }
+      if (numTokens > 0) {
+        MSCCLPP_CUDATHROW(cudaMemcpyAsync(input.data(), hostInput.data(), hostInput.size() * sizeof(Bf16),
+                                          cudaMemcpyHostToDevice, stream));
+      }
+      if (useGraph)
+        graph.launch(stream);
+      else
+        operation();
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+      std::vector<int> receivedCounts(ranks);
+      std::vector<int> receivedIds(static_cast<size_t>(rows) * topk);
+      std::vector<float> receivedWeights(receivedIds.size());
+      std::vector<uint8_t> received(static_cast<size_t>(rows) * hidden * (quantized ? 1 : sizeof(Bf16)));
+      std::vector<uint8_t> receivedScales(static_cast<size_t>(rows) * (hidden / 32));
+      mscclpp::gpuMemcpy<int>(receivedCounts.data(), counts.data(), ranks, cudaMemcpyDeviceToHost);
+      mscclpp::gpuMemcpy<int>(receivedIds.data(), request.outputTopkIdx, receivedIds.size(), cudaMemcpyDeviceToHost);
+      mscclpp::gpuMemcpy<float>(receivedWeights.data(), request.outputTopkWeights, receivedWeights.size(),
+                                cudaMemcpyDeviceToHost);
+      MSCCLPP_CUDATHROW(cudaMemcpy(received.data(), request.output, received.size(), cudaMemcpyDeviceToHost));
+      if (quantized) {
+        MSCCLPP_CUDATHROW(
+            cudaMemcpy(receivedScales.data(), request.outputScales, receivedScales.size(), cudaMemcpyDeviceToHost));
+      }
+      std::string error;
+      auto check = [&](bool condition, std::string_view message) {
+        if (!condition && error.empty()) error = message;
+      };
+      for (int source = 0; source < ranks; ++source) {
+        std::vector<bool> expected(sourceCounts[source], false), seen(sourceCounts[source], false);
+        for (int token = 0; token < sourceCounts[source]; ++token) {
+          for (int lane = 0; lane < topk; ++lane) {
+            const int expert = mxfp8TestExpert(source, token, lane, ranks, topk, iteration);
+            if (expert >= 0 && expert / 32 == rank) expected[token] = true;
+          }
+        }
+        check(receivedCounts[source] == std::count(expected.begin(), expected.end(), true), "rank count mismatch");
+        for (int slot = 0; slot < activeCapacity; ++slot) {
+          const size_t row = static_cast<size_t>(source) * activeCapacity + slot;
+          if (slot >= receivedCounts[source]) {
+            for (int lane = 0; lane < topk; ++lane) {
+              check(receivedIds[row * topk + lane] == experts && receivedWeights[row * topk + lane] == 0.0f,
+                    "padding metadata mismatch");
+            }
+            continue;
+          }
+          auto marker = [&](int column) {
+            if (quantized) {
+              return static_cast<float>(std::bit_cast<Fp8E4M3>(received[row * hidden + column])) *
+                     std::ldexp(1.0f, int(receivedScales[row * (hidden / 32)]) - 127);
+            }
+            Bf16 value;
+            std::memcpy(&value, received.data() + (row * hidden + column) * sizeof(Bf16), sizeof(Bf16));
+            return static_cast<float>(value);
+          };
+          const float tokenValue = marker(0) + 16.0f * marker(1) + 256.0f * marker(2);
+          if (!std::isfinite(tokenValue) || tokenValue < 0 || tokenValue >= sourceCounts[source]) {
+            check(false, "invalid token marker");
+            continue;
+          }
+          const int token = static_cast<int>(tokenValue);
+          check(expected[token] && !seen[token], "missing or duplicated token");
+          seen[token] = true;
+          check(marker(3) == (generation & 15), "stale input after replay");
+          for (int lane = 0; lane < topk; ++lane) {
+            const int expert = mxfp8TestExpert(source, token, lane, ranks, topk, iteration);
+            const bool local = expert >= 0 && expert / 32 == rank;
+            const int expectedId = local ? expert : experts;
+            check(receivedIds[row * topk + lane] == expectedId, "routed expert mismatch");
+            check(receivedWeights[row * topk + lane] == (local ? (useWeights ? 0.125f : 1.0f) : 0.0f),
+                  "routed weight mismatch");
+          }
+          for (int block = 0; block < hidden / 32; ++block) {
+            std::array<Bf16, 32> reference;
+            for (int element = 0; element < 32; ++element) {
+              reference[element] = mxfp8TestValue(source, token, block * 32 + element, generation);
+            }
+            const uint8_t scale = referenceMxfp8Scale(reference);
+            if (quantized) check(receivedScales[row * (hidden / 32) + block] == scale, "E8M0 scale mismatch");
+            for (int element = 0; element < 32; ++element) {
+              const size_t index = row * hidden + block * 32 + element;
+              if (quantized) {
+                const float scaled = static_cast<float>(reference[element]) * std::ldexp(1.0f, 127 - int(scale));
+                const uint8_t value = std::bit_cast<uint8_t>(static_cast<Fp8E4M3>(scaled));
+                if (received[index] != value) {
+                  check(false, "E4M3 byte mismatch at row " + std::to_string(row) + " column " +
+                                   std::to_string(block * 32 + element));
+                }
+              } else {
+                check(std::memcmp(received.data() + index * sizeof(Bf16), &reference[element], sizeof(Bf16)) == 0,
+                      "BF16 regression");
+              }
+            }
+          }
+        }
+        check(seen == expected, "received token set mismatch");
+      }
+      std::vector<Bf16> combined(hostInput.size());
+      if (numTokens > 0)
+        mscclpp::gpuMemcpy<Bf16>(combined.data(), output.data(), combined.size(), cudaMemcpyDeviceToHost);
+      for (int token = 0; token < numTokens; ++token) {
+        int validRoutes = 0;
+        for (int lane = 0; lane < topk; ++lane) {
+          validRoutes += mxfp8TestExpert(rank, token, lane, ranks, topk, iteration) >= 0;
+        }
+        const float expected = ((token & 15) + 1) * validRoutes * (useWeights ? 0.125f : 1.0f);
+        for (int column = 0; column < hidden; ++column) {
+          check(static_cast<float>(combined[static_cast<size_t>(token) * hidden + column]) == expected,
+                "BF16 combine mismatch");
+        }
+      }
+      assertCollectiveSuccess(
+          error, "rank-major MXFP8 hidden=" + std::to_string(hidden) + " iteration=" + std::to_string(iteration));
+    }
+    communicator.bootstrap()->barrier();
+  }
+  communicator.bootstrap()->barrier();
+}
+
+void runMxfp8Performance(mscclpp::Communicator& communicator, int tokens) {
+  using namespace mscclpp::ep;
+  constexpr int Hidden = 4096;
+  constexpr int Pairs = 16;
+  constexpr int Samples = 5;
+  constexpr int Replays = 20;
+  const int rank = communicator.bootstrap()->getRank();
+  const int ranks = communicator.bootstrap()->getNranks();
+  const int experts = ranks * 32;
+  int device, sms;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+  const int blocks = std::min(sms, 130);
+  const int combineBlocks = std::min(sms, 128);
+  MoERuntime runtime(communicator, MoEMode::LATENCY, tokens, Hidden, experts, NumTopk, DispatchLayout::RANK_MAJOR);
+  runtime.initialize();
+  CudaStream stream;
+  mscclpp::GpuBuffer<Bf16> input(static_cast<size_t>(tokens) * Hidden);
+  mscclpp::GpuBuffer<Bf16> output(input.nelems());
+  mscclpp::GpuBuffer<int64_t> routes(static_cast<size_t>(tokens) * NumTopk);
+  mscclpp::GpuBuffer<float> weights(routes.nelems());
+  mscclpp::GpuBuffer<int> counts(ranks);
+  std::vector<int64_t> hostRoutes(routes.nelems());
+  for (int token = 0; token < tokens; ++token) {
+    for (int lane = 0; lane < NumTopk; ++lane) {
+      hostRoutes[static_cast<size_t>(token) * NumTopk + lane] = ((rank + token + lane / 2) % ranks) * 32 + lane;
+    }
+  }
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(routes.data(), hostRoutes.data(), hostRoutes.size() * sizeof(int64_t),
+                                    cudaMemcpyHostToDevice, stream));
+  initializeInputs<<<numBlocks(input.nelems()), Threads, 0, stream>>>(input.data(), weights.data(), rank, tokens,
+                                                                      Hidden, 32);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  auto combine = [&](const DispatchHandle& handle) {
+    runtime.combine(CombineRequest{
+        LatencyCombineRequest{output.data(), runtime.combineInputBuffer(), handle, combineBlocks, stream}});
+  };
+  std::array<cudaEvent_t, Pairs> starts{}, ends{};
+  for (int pair = 0; pair < Pairs; ++pair) {
+    MSCCLPP_CUDATHROW(cudaEventCreate(&starts[pair]));
+    MSCCLPP_CUDATHROW(cudaEventCreate(&ends[pair]));
+  }
+  std::array<double, 2> timings{};
+  for (int format = 0; format < 2; ++format) {
+    const LatencyDispatchRequest request{
+        .output = runtime.dispatchOutputBuffer(),
+        .outputScales = format == 0 ? nullptr : runtime.outputScalesBuffer(),
+        .outputSrcInfo = nullptr,
+        .outputTopkIdx = static_cast<int*>(runtime.outputTopkIdsBuffer()),
+        .outputTopkWeights = static_cast<float*>(runtime.outputTopkWeightsBuffer()),
+        .outputLayoutRange = nullptr,
+        .outputCount = counts.data(),
+        .input = input.data(),
+        .topkIdx = routes.data(),
+        .topkWeights = weights.data(),
+        .numTokens = tokens,
+        .maxTokensPerRank = tokens,
+        .invalidTokenExpertId = experts,
+        .dispatchDataType = format == 0 ? DispatchDataType::BF16 : DispatchDataType::MXFP8_E4M3,
+        .numBlocks = blocks,
+        .stream = stream,
+    };
+    auto dispatch = [&] { return runtime.dispatch(DispatchRequest{request}); };
+    for (int warmup = 0; warmup < 3; ++warmup) {
+      const auto handle = dispatch();
+      combine(handle);
+    }
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    CudaGraph graph;
+    graph.capture(stream, [&] {
+      for (int pair = 0; pair < Pairs; ++pair) {
+        MSCCLPP_CUDATHROW(cudaEventRecordWithFlags(starts[pair], stream, cudaEventRecordExternal));
+        const auto handle = dispatch();
+        MSCCLPP_CUDATHROW(cudaEventRecordWithFlags(ends[pair], stream, cudaEventRecordExternal));
+        combine(handle);
+      }
+    });
+    std::vector<double> measurements;
+    for (int sample = 0; sample < Samples; ++sample) {
+      communicator.bootstrap()->barrier();
+      for (int replay = 0; replay < Replays; ++replay) graph.launch(stream);
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      for (int pair = 0; pair < Pairs; ++pair) {
+        float milliseconds;
+        MSCCLPP_CUDATHROW(cudaEventElapsedTime(&milliseconds, starts[pair], ends[pair]));
+        measurements.push_back(milliseconds * 1000.0);
+      }
+    }
+    std::sort(measurements.begin(), measurements.end());
+    const double median = measurements[measurements.size() / 2];
+    MPI_Allreduce(&median, &timings[format], 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  }
+  for (int pair = 0; pair < Pairs; ++pair) {
+    MSCCLPP_CUDATHROW(cudaEventDestroy(starts[pair]));
+    MSCCLPP_CUDATHROW(cudaEventDestroy(ends[pair]));
+  }
+  if (rank == 0) {
+    const std::string label =
+        "rank-major-dispatch/latency/tokens=" + std::to_string(tokens) + "/blocks=" + std::to_string(blocks);
+    mscclpp::test::reportPerfResult(label + "/bf16", timings[0], "us");
+    mscclpp::test::reportPerfResult(label + "/mxfp8", timings[1], "us");
+    mscclpp::test::reportPerfResult(label + "/quantization-overhead", (timings[1] / timings[0] - 1.0) * 100.0, "%");
+  }
+  communicator.bootstrap()->barrier();
+}
+
 }  // namespace
 
 class MoERuntimeTest : public CommunicatorTestBase {
@@ -1107,4 +1489,175 @@ PERF_TEST(MoERuntimeTest, ThroughputPerformance) {
   }
   runtime.reset();
   communicator->bootstrap()->barrier();
+}
+
+class Mxfp8RuntimeTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override {
+    if (gEnv->worldSize > 64) {
+      SKIP_TEST() << "MXFP8 runtime tests require 1-64 GPUs in one IPC domain";
+    }
+    const int device = rankToLocalRank(gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaSetDevice(device));
+    int major;
+    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+    if (major < 9) SKIP_TEST() << "MXFP8 dispatch tests require SM90 or newer";
+    setNumRanksToUse(gEnv->worldSize);
+    CommunicatorTestBase::SetUp();
+    if (communicator->bootstrap()->getNranksPerIpcDomain() != gEnv->worldSize) {
+      SKIP_TEST() << "MXFP8 runtime tests require all GPUs in one IPC domain";
+    }
+  }
+};
+
+TEST(Mxfp8RuntimeTest, LatencyCorrectness) {
+  using namespace mscclpp::ep;
+  for (const auto combine : {CombineMode::RANK_LOCAL_REDUCE, CombineMode::DIRECT_SEND}) {
+    runMxfp8Correctness(*communicator, combine, 1024, 9, 8, false);
+    runMxfp8Correctness(*communicator, combine, 4096, 17, 8, false);
+    runMxfp8Correctness(*communicator, combine, 4352, 5, 3, false);
+  }
+  runMxfp8Correctness(*communicator, CombineMode::RANK_LOCAL_REDUCE, 9216, 53, 8, false);
+}
+
+TEST(Mxfp8RuntimeTest, GraphReplay) {
+  using namespace mscclpp::ep;
+  runMxfp8Correctness(*communicator, CombineMode::RANK_LOCAL_REDUCE, 4096, 7, 8, true);
+}
+
+TEST(Mxfp8RuntimeTest, RequestValidation) {
+  using namespace mscclpp::ep;
+  for (const auto mode : {MoEMode::LATENCY, MoEMode::THROUGHPUT}) {
+    MoERuntime runtime(*communicator, mode, 1, 4096, gEnv->worldSize * 32, 8,
+                       mode == MoEMode::LATENCY ? DispatchLayout::EXPERT_MAJOR : DispatchLayout::TOKEN_MAJOR);
+    runtime.initialize();
+    if (mode == MoEMode::LATENCY) {
+      LatencyDispatchRequest request{};
+      request.maxTokensPerRank = 1;
+      request.dispatchDataType = DispatchDataType::MXFP8_E4M3;
+      ASSERT_TRUE(rejectsEpRequest([&] { runtime.dispatch(DispatchRequest{request}); }));
+    } else {
+      ThroughputDispatchRequest request{};
+      request.maxTokensPerRank = 1;
+      request.numBlocks = std::max(gEnv->worldSize + 2, 24);
+      request.dispatchDataType = DispatchDataType::MXFP8_E4M3;
+      ASSERT_TRUE(rejectsEpRequest([&] { runtime.dispatch(DispatchRequest{request}); }));
+    }
+    communicator->bootstrap()->barrier();
+  }
+  {
+    MoERuntime runtime(*communicator, MoEMode::LATENCY, 1, 4096, gEnv->worldSize * 32, 8, DispatchLayout::RANK_MAJOR);
+    runtime.initialize();
+    LatencyDispatchRequest request{};
+    request.output = runtime.dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime.outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime.outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.dispatchDataType = DispatchDataType::MXFP8_E4M3;
+    ASSERT_TRUE(rejectsEpRequest([&] { runtime.dispatch(DispatchRequest{request}); }));
+    communicator->bootstrap()->barrier();
+  }
+  MoERuntime runtime(*communicator, MoEMode::THROUGHPUT, 1, 4096, gEnv->worldSize * 32, 8, DispatchLayout::RANK_MAJOR);
+  runtime.initialize();
+  ThroughputDispatchRequest request{};
+  request.maxTokensPerRank = 1;
+  request.numBlocks = std::max(gEnv->worldSize + 2, 24);
+  request.dispatchDataType = DispatchDataType::MXFP8_E4M3;
+  ASSERT_TRUE(rejectsEpRequest([&] { runtime.dispatch(DispatchRequest{request}); }));
+  communicator->bootstrap()->barrier();
+}
+
+TEST(Mxfp8RuntimeTest, ThroughputPrequantizedInput) {
+  using namespace mscclpp::ep;
+  constexpr int Tokens = 3;
+  constexpr int Capacity = 5;
+  constexpr int Hidden = 256;
+  constexpr int Blocks = 24;
+  const int rank = gEnv->rank;
+  const int ranks = gEnv->worldSize;
+  const int source = (rank + ranks - 1) % ranks;
+  CudaStream stream;
+  mscclpp::GpuBuffer<Bf16> reference(Tokens * Hidden), output(Tokens * Hidden);
+  mscclpp::GpuBuffer<Fp8E4M3> input(Tokens * Hidden);
+  mscclpp::GpuBuffer<float> scales(Tokens * (Hidden / 128)), weights(Tokens * NumTopk);
+  mscclpp::GpuBuffer<int64_t> routes(Tokens * NumTopk);
+  std::vector<int64_t> hostRoutes(routes.nelems());
+  for (size_t index = 0; index < hostRoutes.size(); ++index) {
+    hostRoutes[index] = ((rank + 1) % ranks) * 32 + index % NumTopk;
+  }
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(routes.data(), hostRoutes.data(), hostRoutes.size() * sizeof(int64_t),
+                                    cudaMemcpyHostToDevice, stream));
+  initializeInputs<<<numBlocks(reference.nelems()), Threads, 0, stream>>>(reference.data(), weights.data(), rank,
+                                                                          Tokens, Hidden, 0);
+  initializeThroughputFp8<<<numBlocks(input.nelems()), Threads, 0, stream>>>(input.data(), scales.data(),
+                                                                             reference.data(), Tokens, Hidden);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+  for (const auto layout : {DispatchLayout::TOKEN_MAJOR, DispatchLayout::RANK_MAJOR}) {
+    MoERuntime runtime(*communicator, MoEMode::THROUGHPUT, Capacity, Hidden, ranks * 32, NumTopk, layout);
+    runtime.initialize();
+    const int rows = layout == DispatchLayout::RANK_MAJOR ? ranks * Capacity : Tokens;
+    const int firstRow = layout == DispatchLayout::RANK_MAJOR ? source * Capacity : 0;
+    std::vector<float> hostRowWeights(rows, 0.0f);
+    std::fill_n(hostRowWeights.begin() + firstRow, Tokens, 1.0f);
+    mscclpp::GpuBuffer<float> rowWeights(rows);
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync(rowWeights.data(), hostRowWeights.data(), rows * sizeof(float),
+                                      cudaMemcpyHostToDevice, stream));
+    ThroughputDispatchRequest request{
+        .input = input.data(),
+        .inputScales = scales.data(),
+        .topkIdx = routes.data(),
+        .topkWeights = weights.data(),
+        .numTokens = Tokens,
+        .maxTokensPerRank = Capacity,
+        .dispatchDataType = DispatchDataType::FP8_E4M3,
+        .numBlocks = Blocks,
+        .stream = stream,
+        .prepareHandle = runtime.prepare({routes.data(), Tokens, Capacity, Blocks, stream}),
+    };
+    auto unsupported = request;
+    unsupported.dispatchDataType = DispatchDataType::MXFP8_E4M3;
+    ASSERT_TRUE(rejectsEpRequest([&] { runtime.dispatch(DispatchRequest{unsupported}); }));
+    auto operation = [&] {
+      const auto handle = runtime.dispatch(DispatchRequest{request});
+      stageThroughputFp8ExpertOutput<<<numBlocks(static_cast<size_t>(rows) * Hidden), Threads, 0, stream>>>(
+          static_cast<Bf16*>(runtime.combineInputBuffer()), static_cast<const Fp8E4M3*>(runtime.dispatchOutputBuffer()),
+          static_cast<const float*>(runtime.outputScalesBuffer()), rowWeights.data(), rows, Hidden);
+      MSCCLPP_CUDATHROW(cudaGetLastError());
+      runtime.combine(CombineRequest{ThroughputCombineRequest{output.data(), handle, Blocks, stream}});
+    };
+    operation();
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    CudaGraph graph;
+    graph.capture(stream, operation);
+    for (int replay = 0; replay < 3; ++replay) graph.launch(stream);
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+
+    std::string error = checkOutput(output.data(), rank, Tokens, Hidden, 0.0f);
+    std::vector<uint8_t> received(Tokens * Hidden);
+    MSCCLPP_CUDATHROW(cudaMemcpy(received.data(),
+                                 static_cast<uint8_t*>(runtime.dispatchOutputBuffer()) + firstRow * Hidden,
+                                 received.size(), cudaMemcpyDeviceToHost));
+    const uint8_t expected = std::bit_cast<uint8_t>(static_cast<Fp8E4M3>(1.0f));
+    if (error.empty() &&
+        !std::all_of(received.begin(), received.end(), [=](uint8_t value) { return value == expected; })) {
+      error = "Throughput changed prequantized FP8 bytes";
+    }
+    std::vector<float> receivedScales(Tokens * (Hidden / 128));
+    mscclpp::gpuMemcpy<float>(receivedScales.data(),
+                              static_cast<float*>(runtime.outputScalesBuffer()) + firstRow * (Hidden / 128),
+                              receivedScales.size(), cudaMemcpyDeviceToHost);
+    for (size_t index = 0; index < receivedScales.size() && error.empty(); ++index) {
+      if (receivedScales[index] != testTokenValue(source, Tokens, index / (Hidden / 128), 0)) {
+        error = "Throughput changed prequantized FP8 scales";
+      }
+    }
+    assertCollectiveSuccess(error, "throughput prequantized FP8 regression");
+    communicator->bootstrap()->barrier();
+  }
+}
+
+PERF_TEST(Mxfp8RuntimeTest, DispatchPerformance) {
+  for (const int tokens : {32, 128, 512, 1024, 4096}) runMxfp8Performance(*communicator, tokens);
 }
