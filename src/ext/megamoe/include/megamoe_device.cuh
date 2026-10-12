@@ -160,11 +160,14 @@ struct W4DispatchStorageT {
 
 struct EmptyStorage {};
 
+// FC2 BF16 rows are padded by 16 bytes so transposing stmatrix row writes are bank-conflict free.
+constexpr int PackedRowStride = 128 + 8;
+
 template <int Tokens>
 struct alignas(128) EpilogueStorage {
   union {
     float scratch[128 * (Tokens + 1)];
-    __bfloat16 packed[Tokens * 128];
+    __bfloat16 packed[Tokens * PackedRowStride];
   };
 };
 

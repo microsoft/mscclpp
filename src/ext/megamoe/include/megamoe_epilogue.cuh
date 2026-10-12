@@ -117,21 +117,49 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 }
 
-template <class KernelParams, class Storage, class Values, class Coordinates>
-MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& task, Storage& s, const Values& values,
-                                        const Coordinates& coordinates, int tokenOffset, int validRows) {
+// 16-datapath TMEM loads return stmatrix fragments: for each 8-column group, thread t receives lanes t/4 and
+// t/4 + 8 at columns 2(t%4) and 2(t%4) + 1.
+template <int Groups>
+MSCCLPP_DEVICE_INLINE void loadFc2Accumulators(uint32_t address, uint32_t (&data)[4 * Groups]) {
   using namespace cute;
-  constexpr int KernelTileN = KernelParams::Tiles::N;
-  constexpr int CtaTileM = KernelParams::Tiles::CtaM;
+  if constexpr (Groups == 4) {
+    SM100_TMEM_LOAD_16dp256b4x::copy(address, data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                                     data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
+  } else if constexpr (Groups == 2) {
+    SM100_TMEM_LOAD_16dp256b2x::copy(address, data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+  } else {
+    static_assert(Groups == 1);
+    SM100_TMEM_LOAD_16dp256b1x::copy(address, data[0], data[1], data[2], data[3]);
+  }
+}
 
+// Scales a warp's 32 FC2 features x ReadTokens tokens by route weights in pairs and writes token-major BF16 rows
+// with transposing stmatrix. Padded tokens are never stored, so they are not masked.
+template <int ReadTokens, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& task, Storage& s,
+                                        const uint32_t (&accumulator)[2][ReadTokens / 2], int tokenOffset,
+                                        int readerGroup) {
+  constexpr int KernelTileN = KernelParams::Tiles::N;
+  static_assert(KernelParams::Tiles::CtaM == 128 && ReadTokens % 8 == 0);
+  int lane = threadIdx.x % 32;
+  int firstToken = readerGroup * ReadTokens;
+  const Route* routes = params.workspace.routes + task.block * KernelTileN + tokenOffset + firstToken;
+  // Matrix m of each x4 store holds the warp's features [8m, 8m + 8); lane 8m + j addresses token row j.
+  auto* rows = s.epilogue.packed + (firstToken + lane % 8) * PackedRowStride + threadIdx.x / 32 % 4 * 32 + lane / 8 * 8;
 #pragma unroll
-  for (int i = 0; i < size(values); ++i) {
-    auto coord = coordinates(i);
-    int token = int(get<1>(coord));
-    float value = 0.0f;
-    if (token < validRows)
-      value = values(i) * params.workspace.routes[task.block * KernelTileN + tokenOffset + token].weight;
-    s.epilogue.packed[token * CtaTileM + int(get<0>(coord)) % CtaTileM] = __bfloat16(value);
+  for (int group = 0; group < ReadTokens / 8; ++group) {
+    int token = group * 8 + lane % 4 * 2;
+    float2 weights = make_float2(routes[token].weight, routes[token + 1].weight);
+    uint32_t words[4];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      // Matrices 0..3 are lanes t/4 and t/4 + 8 of the first, then the second 16-lane half.
+      const uint32_t* pair = accumulator[i / 2] + group * 4 + i % 2 * 2;
+      mscclpp::f32x2 scaled = __fmul2_rn(make_float2(__uint_as_float(pair[0]), __uint_as_float(pair[1])), weights);
+      words[i] = mscclpp::bit_cast<uint32_t>(mscclpp::to<mscclpp::bf16x2>(scaled));
+    }
+    cute::SM90_U16x8_STSM_T::copy(words[0], words[1], words[2], words[3],
+                                  *reinterpret_cast<cute::uint128_t*>(rows + group * 8 * PackedRowStride));
   }
 }
 
@@ -148,7 +176,7 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
     auto output = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
     size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
-    bulkStore(output + offset, s.epilogue.packed + token * CtaTileM, CtaTileM * sizeof(__bfloat16));
+    bulkStore(output + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
     bulkStoreCommit();
     bulkStoreWaitSource<4>();
   }
@@ -182,29 +210,38 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
   traceKernel(KernelTracePhase::EpilogueReady, false, int(task.fc1));
   for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += ChunkTokens) {
     int validRows = min(int(ChunkTokens), task.tokens.rows - tokenOffset);
+    bool lastChunk = tokenOffset + ChunkTokens >= task.tokens.rows;
     int readerGroup = threadIdx.x / CtaTileM;
-    int readerThread = threadIdx.x % CtaTileM;
-    auto acc = local_tile(matrix, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}),
-                          make_coord(0, tokenOffset / ReadTokens + readerGroup));
-    auto copyOp = make_tmem_copy(SM100_TMEM_LOAD_32dp32b8x{}, acc);
-    auto threadCopy = copyOp.get_slice(readerThread);
-    auto source = threadCopy.partition_S(acc);
-    auto identity = make_identity_tensor(make_shape(Int<CtaTileM>{}, Int<ChunkTokens>{}));
-    auto readIdentity =
-        local_tile(identity, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}), make_coord(0, readerGroup));
-    auto coordinates = threadCopy.partition_D(readIdentity);
-    auto values = make_tensor<float>(shape(coordinates));
-    copy(copyOp, source, values);
-    cutlass::arch::fence_view_async_tmem_load();
-    if (tokenOffset + ChunkTokens >= task.tokens.rows) pipeline.consumer_release(state);
     if (task.fc1) {
+      int readerThread = threadIdx.x % CtaTileM;
+      auto acc = local_tile(matrix, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}),
+                            make_coord(0, tokenOffset / ReadTokens + readerGroup));
+      auto copyOp = make_tmem_copy(SM100_TMEM_LOAD_32dp32b8x{}, acc);
+      auto threadCopy = copyOp.get_slice(readerThread);
+      auto source = threadCopy.partition_S(acc);
+      auto identity = make_identity_tensor(make_shape(Int<CtaTileM>{}, Int<ChunkTokens>{}));
+      auto readIdentity =
+          local_tile(identity, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}), make_coord(0, readerGroup));
+      auto coordinates = threadCopy.partition_D(readIdentity);
+      auto values = make_tensor<float>(shape(coordinates));
+      copy(copyOp, source, values);
+      cutlass::arch::fence_view_async_tmem_load();
+      if (lastChunk) pipeline.consumer_release(state);
       traceKernel(KernelTracePhase::ActivationQuantize, true, tokenOffset);
       activateFc1Chunk<EpilogueThreads, ChunkTokens>(params, task, s, values, coordinates, tokenOffset, validRows,
-                                                     intermediate, tokenOffset + ChunkTokens >= task.tokens.rows);
+                                                     intermediate, lastChunk);
       traceKernel(KernelTracePhase::ActivationQuantize, false, tokenOffset);
       continue;
     }
-    packFc2Chunk(params, task, s, values, coordinates, tokenOffset, validRows);
+    // FC2 reads both 16-lane halves of the warp's TMEM lane quarter as stmatrix fragments.
+    uint32_t accumulator[2][ReadTokens / 2];
+    uint32_t address = raw_pointer_cast(matrix.data()) + tokenOffset + readerGroup * ReadTokens;
+#pragma unroll
+    for (int half = 0; half < 2; ++half)
+      loadFc2Accumulators<ReadTokens / 8>(address + uint32_t((warp % 4 * 32 + half * 16) << 16), accumulator[half]);
+    cutlass::arch::fence_view_async_tmem_load();
+    if (lastChunk) pipeline.consumer_release(state);
+    packFc2Chunk<ReadTokens>(params, task, s, accumulator, tokenOffset, readerGroup);
     bulkFence();
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
     traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
