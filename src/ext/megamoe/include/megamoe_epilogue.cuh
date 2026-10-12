@@ -169,18 +169,21 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
   using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
-  if (lane != 0) return;
+  constexpr int WarpTokens = (KernelParams::Collective::EpilogueTokens + EpilogueWarps - 1) / EpilogueWarps;
+  static_assert(WarpTokens <= 32);
   int feature = task.m * CtaTileM * Tiles::ClusterSize + (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
   if (feature >= hidden) return;
-  for (int token = warp; token < validRows; token += EpilogueWarps) {
+  // Lane l of warp w stores token w + l * EpilogueWarps with its own bulk copy, so route and peer lookups run in
+  // parallel; each issuing lane owns its bulk group and drains the shared-memory reads before the next chunk.
+  int token = warp + lane * EpilogueWarps;
+  if (lane < WarpTokens && token < validRows) {
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
     auto output = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
     size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
     bulkStore(output + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
     bulkStoreCommit();
-    bulkStoreWaitSource<4>();
+    bulkStoreWaitSource();
   }
-  bulkStoreWaitSource();
 }
 
 #endif  // MSCCLPP_BULK_AVAILABLE
@@ -267,92 +270,116 @@ MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& 
     epilogue<Schedule>(params, taskAt(params, i, hidden, intermediate), s, pipeline, state, accumulators, hidden,
                        intermediate);
 #if MSCCLPP_BULK_AVAILABLE
-  if (threadIdx.x % warpSize == 0) bulkStoreWait();
+  // Every lane may own FC2 bulk stores; they must complete before the CTA publishes its completion.
+  bulkStoreWait();
 #endif
 }
 
-template <int Elements>
-struct ResultAccumulator {
-  float values[Elements] = {};
-};
+// 16-byte partial loads each combine thread keeps in flight; enough to cover memory latency at full bandwidth.
+constexpr int CombineLoads = 16;
+// Vectors per lane per warp task; more keeps their FP32 conversions live past the 128-register budget.
+constexpr int CombineItems = 8;
+// Widest slot batch. Only it loops over batches for larger topK, carrying FP32 sums between them.
+constexpr int CombineSlots = 8;
 
-template <class Element, int Elements>
-struct ResultVectorOps {
-  MSCCLPP_DEVICE_INLINE static void accumulate(ResultAccumulator<Elements>& accumulator, const Element* source) {
+MSCCLPP_DEVICE_INLINE void storeCombined(__bfloat16* destination, const mscclpp::f32x8& sums, bool aligned) {
+  auto values = mscclpp::to<mscclpp::bf16x8>(sums);
+  if (aligned) {
+    *reinterpret_cast<uint4*>(destination) = values.storage;
+    return;
+  }
 #pragma unroll
-    for (int element = 0; element < Elements; ++element) accumulator.values[element] += float(source[element]);
-  }
-
-  MSCCLPP_DEVICE_INLINE static void store(Element* destination, const ResultAccumulator<Elements>& accumulator) {
-#pragma unroll
-    for (int element = 0; element < Elements; ++element) destination[element] = Element(accumulator.values[element]);
-  }
-};
-
-template <>
-struct ResultVectorOps<__bfloat16, 8> {
-  MSCCLPP_DEVICE_INLINE static void accumulate(ResultAccumulator<8>& accumulator, const __bfloat16* source) {
-    uint32_t word0, word1, word2, word3;
-    asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
-                 : "=r"(word0), "=r"(word1), "=r"(word2), "=r"(word3)
-                 : "l"(source)
-                 : "memory");
-    accumulator.values[0] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0)));
-    accumulator.values[1] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word0 >> 16)));
-    accumulator.values[2] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1)));
-    accumulator.values[3] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word1 >> 16)));
-    accumulator.values[4] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2)));
-    accumulator.values[5] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word2 >> 16)));
-    accumulator.values[6] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3)));
-    accumulator.values[7] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3 >> 16)));
-  }
-
-  MSCCLPP_DEVICE_INLINE static uint32_t pack(float low, float high) {
-    return uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(low))) |
-           uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(high))) << 16;
-  }
-
-  MSCCLPP_DEVICE_INLINE static void store(__bfloat16* destination, const ResultAccumulator<8>& accumulator) {
-    if ((reinterpret_cast<uintptr_t>(destination) & 15) != 0) {
-#pragma unroll
-      for (int element = 0; element < 8; ++element) destination[element] = __bfloat16(accumulator.values[element]);
-      return;
-    }
-    uint32_t word0 = pack(accumulator.values[0], accumulator.values[1]);
-    uint32_t word1 = pack(accumulator.values[2], accumulator.values[3]);
-    uint32_t word2 = pack(accumulator.values[4], accumulator.values[5]);
-    uint32_t word3 = pack(accumulator.values[6], accumulator.values[7]);
-    asm volatile("st.global.v4.u32 [%0], {%1, %2, %3, %4};"
-                 :
-                 : "l"(destination), "r"(word0), "r"(word1), "r"(word2), "r"(word3)
-                 : "memory");
-  }
-};
-
-template <class Element, int Elements>
-MSCCLPP_DEVICE_INLINE void reduceResultVector(const Element* partial, int rowStride, int topK, Element* output,
-                                              const int* routeIds = nullptr) {
-  ResultAccumulator<Elements> accumulator;
-  for (int slot = 0; slot < topK; ++slot) {
-    if (routeIds && routeIds[slot] < 0) continue;
-    ResultVectorOps<Element, Elements>::accumulate(accumulator, partial + size_t(slot) * rowStride);
-  }
-  ResultVectorOps<Element, Elements>::store(output, accumulator);
+  for (int element = 0; element < values.Size; ++element) destination[element] = values.data[element];
 }
 
-template <class KernelParams>
-MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
-  constexpr int Elements = 8;
-  auto partial = at<__bfloat16>(params.local, params.symmetric.partialOutput);
+// Sums the routed partial rows of every token in FP32 slot order and rounds once to BF16. A warp task covers Items
+// consecutive warp-wide vectors of one token row; each lane issues all Slots * Items 16-byte loads before accumulating.
+// Narrower batches require topK <= Slots, so their sums never stay live across loads.
+template <int Hidden, int Slots, class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, __bfloat16* output) {
+  constexpr int WarpSize = 32;
+  constexpr int Elements = mscclpp::bf16x8::Size;
+  constexpr int Vectors = Hidden / Elements;
+  constexpr int Items = CombineLoads / Slots < CombineItems ? CombineLoads / Slots : CombineItems;
+  constexpr int TaskVectors = Items * WarpSize;
+  constexpr int TokenTasks = (Vectors + TaskVectors - 1) / TaskVectors;
+  static_assert(Hidden % Elements == 0 && CombineLoads % Slots == 0 && Slots <= CombineSlots);
+  const int topK = params.config.topK;
+  auto partial = reinterpret_cast<const uint4*>(at<__bfloat16>(params.local, params.symmetric.partialOutput));
   auto routeIds = at<int>(params.local, params.symmetric.topkIds);
-  for (size_t i = blockIdx.x * KernelParams::ThreadCount + threadIdx.x;
-       i < size_t(tokens) * (params.config.hidden / Elements); i += gridDim.x * KernelParams::ThreadCount) {
-    size_t token = i / (params.config.hidden / Elements);
-    int feature = Elements * (i % (params.config.hidden / Elements));
-    auto source = partial + size_t(token) * params.config.topK * params.config.hidden + feature;
-    reduceResultVector<__bfloat16, Elements>(source, params.config.hidden, params.config.topK, output + Elements * i,
-                                             routeIds + size_t(token) * params.config.topK);
+  bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
+  int lane = threadIdx.x % WarpSize;
+  int warps = gridDim.x * (KernelParams::ThreadCount / WarpSize);
+  int tasks = tokens * TokenTasks;
+  // Route ids of the first slot batch are loaded one task ahead, so partial loads never wait on them.
+  auto loadIds = [&](int task, int(&ids)[Slots]) {
+#pragma unroll
+    for (int slot = 0; slot < Slots; ++slot)
+      ids[slot] = task < tasks && slot < topK ? routeIds[task / TokenTasks * topK + slot] : -1;
+  };
+  int task = blockIdx.x * (KernelParams::ThreadCount / WarpSize) + threadIdx.x / WarpSize;
+  int nextIds[Slots];
+  loadIds(task, nextIds);
+  for (; task < tasks; task += warps) {
+    int token = task / TokenTasks;
+    int first = task % TokenTasks * TaskVectors + lane;
+    int taskIds[Slots];
+#pragma unroll
+    for (int slot = 0; slot < Slots; ++slot) taskIds[slot] = nextIds[slot];
+    loadIds(task + warps, nextIds);
+    mscclpp::f32x8 sums[Items];
+#pragma unroll
+    for (int item = 0; item < Items; ++item) {
+#pragma unroll
+      for (int element = 0; element < Elements; ++element) sums[item].data[element] = 0.0f;
+    }
+    for (int base = 0; base < (Slots == CombineSlots ? topK : 1); base += Slots) {
+      bool routed[Slots];
+#pragma unroll
+      for (int slot = 0; slot < Slots; ++slot)
+        routed[slot] = base == 0 ? taskIds[slot] >= 0 : base + slot < topK && routeIds[token * topK + base + slot] >= 0;
+      // L2-only loads: peers write the partial rows during this kernel. Unrouted slots read as +0, which is the same
+      // as skipping them: the sums start at +0, and round-to-nearest addition yields -0 only from two -0 operands.
+      const uint4* source = partial + size_t(token * topK + base) * Vectors + first;
+      mscclpp::bf16x8 values[Slots][Items];
+#pragma unroll
+      for (int slot = 0; slot < Slots; ++slot) {
+#pragma unroll
+        for (int item = 0; item < Items; ++item) {
+          values[slot][item].storage = make_uint4(0, 0, 0, 0);
+          if (routed[slot] && (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors))
+            values[slot][item].storage = __ldcg(source + slot * Vectors + item * WarpSize);
+        }
+      }
+#pragma unroll
+      for (int item = 0; item < Items; ++item) {
+#pragma unroll
+        for (int slot = 0; slot < Slots; ++slot) {
+          auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot][item]);
+#pragma unroll
+          for (int element = 0; element < Elements; ++element) sums[item].data[element] += partialValues.data[element];
+        }
+      }
+    }
+#pragma unroll
+    for (int item = 0; item < Items; ++item) {
+      if (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors)
+        storeCombined(output + (size_t(token) * Vectors + first + item * WarpSize) * Elements, sums[item], aligned);
+    }
   }
+}
+
+template <int Hidden, class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
+  const int topK = params.config.topK;
+  if (topK == 1)
+    combineSlots<Hidden, 1>(params, tokens, output);
+  else if (topK == 2)
+    combineSlots<Hidden, 2>(params, tokens, output);
+  else if (topK <= 4)
+    combineSlots<Hidden, 4>(params, tokens, output);
+  else
+    combineSlots<Hidden, CombineSlots>(params, tokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

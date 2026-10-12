@@ -145,7 +145,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   __syncthreads();
   traceKernel(KernelTracePhase::OutputJoin, false);
   traceKernel(KernelTracePhase::Combine, true);
-  combineResults(p, tokens, output);
+  combineResults<Hidden>(p, tokens, output);
   traceKernel(KernelTracePhase::Combine, false);
 }
 
