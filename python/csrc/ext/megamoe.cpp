@@ -107,6 +107,7 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_fixed_token_count", &MegaMoeContext::kernelFixedTokenCount)
       .def_prop_ro("kernel_expert_major_tasks", &MegaMoeContext::kernelExpertMajorTasks)
       .def_prop_ro("kernel_cache_weights", &MegaMoeContext::kernelCacheWeights)
+      .def_prop_ro("kernel_adaptive_cache_weights", &MegaMoeContext::kernelAdaptiveCacheWeights)
       .def(
           "wait_until_started",
           [](MegaMoeContext& self, uintptr_t stream) { self.waitUntilStarted(reinterpret_cast<cudaStream_t>(stream)); },

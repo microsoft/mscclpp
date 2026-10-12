@@ -151,8 +151,12 @@ struct JitModule {
     if (optimizationError || !optimizations)
       throw std::invalid_argument("MegaMoE W4A8 JIT module is missing optimization policy metadata; recompile it");
     optimizationFlags = optimizations();
-    if (optimizationFlags & ~(MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS | MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS))
+    if (optimizationFlags & ~(MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS | MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS |
+                              MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS))
       throw std::invalid_argument("MegaMoE W4A8 JIT module declares unsupported optimization flags");
+    if ((optimizationFlags & MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS) &&
+        (optimizationFlags & MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS))
+      throw std::invalid_argument("MegaMoE W4A8 static and adaptive weight caching are mutually exclusive");
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
     this->api = api;
@@ -182,7 +186,7 @@ size_t product(std::initializer_list<size_t> factors) {
 struct RankInfo {
   std::array<int, 8> config;
   int tag = 0;
-  std::array<int, 17> specialization;
+  std::array<int, 18> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
   size_t symmetricBytes = 0;
   size_t privateBytes = 0;
@@ -393,6 +397,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
                            api ? api->dispatchStages : detail::W4DispatchStages,
                            int(kernelExpertMajorTasks()),
                            int(kernelCacheWeights()),
+                           int(kernelAdaptiveCacheWeights()),
                            kernelClusterSize()};
     std::memcpy(info.kernelId, p.kernelId.c_str(), p.kernelId.size() + 1);
     info.symmetricBytes = p.layout.bytes;
@@ -558,6 +563,10 @@ bool MegaMoeContext::kernelExpertMajorTasks() const {
 bool MegaMoeContext::kernelCacheWeights() const {
   if (impl_->module) return (impl_->module->optimizationFlags & MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS) != 0;
   return detail::W4CacheWeights;
+}
+bool MegaMoeContext::kernelAdaptiveCacheWeights() const {
+  if (impl_->module) return (impl_->module->optimizationFlags & MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS) != 0;
+  return detail::W4AdaptiveCacheWeights;
 }
 
 size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {

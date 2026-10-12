@@ -103,7 +103,9 @@ def test_w4a8_profile_schema_rejects_unknown_policy_fields(tmp_path):
 def test_existing_w4a8_profiles_default_new_optimization_flags_off():
     profile = load_w4a8_kernel_profiles()
     assert all(
-        entry["config"]["expert_major_tasks"] is False and entry["config"]["cache_weights"] is False
+        entry["config"]["expert_major_tasks"] is False
+        and entry["config"]["cache_weights"] is False
+        and entry["config"]["adaptive_cache_weights"] is False
         for entry in profile["entries"]
     )
     assert all(entry["config"]["cluster_size"] == 2 for entry in profile["entries"])
@@ -144,6 +146,22 @@ def test_legacy_w4a8_profile_without_cluster_size_defaults_to_two_ctas(tmp_path)
     path = tmp_path / "legacy.json"
     path.write_text(json.dumps(profile))
     assert all(entry["config"]["cluster_size"] == 2 for entry in load_w4a8_kernel_profiles(path)["entries"])
+
+
+def test_w4a8_profiles_roundtrip_adaptive_cache_policy(tmp_path):
+    profile = load_w4a8_kernel_profiles()
+    for entry in profile["entries"]:
+        entry["config"]["adaptive_cache_weights"] = True
+    path = tmp_path / "adaptive.json"
+    path.write_text(json.dumps(profile))
+    policy = resolve_w4a8_kernel_config(_config(), profile_path=path)
+    assert policy.adaptive_cache_weights is True
+    assert policy.cache_weights is False
+
+    profile["entries"][0]["config"]["cache_weights"] = True
+    path.write_text(json.dumps(profile))
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        load_w4a8_kernel_profiles(path)
 
 
 def test_w4a8_profile_schema_rejects_duplicates_and_versions(tmp_path):

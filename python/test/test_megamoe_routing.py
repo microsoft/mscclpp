@@ -653,15 +653,19 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
 @pytest.mark.parametrize("clamp", [-1.0, 0.125])
 @pytest.mark.parametrize("cluster_size", [1, 2], ids=["cta1", "cta2"])
 @pytest.mark.parametrize(
-    "hidden,intermediate,tile_n,expert_major_tasks,cache_weights",
+    "hidden,intermediate,tile_n,expert_major_tasks,cache_weights,adaptive_cache_weights",
     [
-        (4096, 6656, 128, False, False),
-        (4096, 6656, 128, True, False),
-        (4096, 6656, 128, False, True),
-        (4096, 6656, 128, True, True),
-        (8192, 4096, 64, True, True),
-        (9216, 4096, 32, True, True),
-        (9216, 4608, 128, True, True),
+        (4096, 6656, 128, False, False, False),
+        (4096, 6656, 128, True, False, False),
+        (4096, 6656, 128, False, True, False),
+        (4096, 6656, 128, True, True, False),
+        (8192, 4096, 64, True, True, False),
+        (9216, 4096, 32, True, True, False),
+        (9216, 4608, 128, True, True, False),
+        (4096, 6656, 128, False, False, True),
+        (4096, 6656, 128, True, False, True),
+        (8192, 4096, 64, True, False, True),
+        (9216, 4096, 32, True, False, True),
     ],
     ids=[
         "h4096-i6656-default",
@@ -671,10 +675,22 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
         "h8192-i4096-n64",
         "h9216-i4096-n32",
         "h9216-i4608-n128",
+        "h4096-i6656-adaptive",
+        "h4096-i6656-order-adaptive",
+        "h8192-i4096-n64-adaptive",
+        "h9216-i4096-n32-adaptive",
     ],
 )
 def test_native_w4a8_expert_task_order_graph_reuse(
-    routing_runtime, clamp, cluster_size, hidden, intermediate, tile_n, expert_major_tasks, cache_weights
+    routing_runtime,
+    clamp,
+    cluster_size,
+    hidden,
+    intermediate,
+    tile_n,
+    expert_major_tasks,
+    cache_weights,
+    adaptive_cache_weights,
 ):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
@@ -690,6 +706,7 @@ def test_native_w4a8_expert_task_order_graph_reuse(
         dispatch_chunk=4096,
         expert_major_tasks=expert_major_tasks,
         cache_weights=cache_weights,
+        adaptive_cache_weights=adaptive_cache_weights,
         cluster_size=cluster_size,
     )
     module = runtime.collective(lambda: compile_kernel(policy))
@@ -701,6 +718,7 @@ def test_native_w4a8_expert_task_order_graph_reuse(
             effective = context.effective_kernel_config
             assert effective["expert_major_tasks"] is expert_major_tasks
             assert effective["cache_weights"] is cache_weights
+            assert effective["adaptive_cache_weights"] is adaptive_cache_weights
             assert effective["cluster_size"] == cluster_size
             assert effective["tile_m"] == 128 * cluster_size
             assert context.cta_count >= cluster_size and context.cta_count % cluster_size == 0
@@ -754,7 +772,7 @@ def test_native_w4a8_expert_task_order_graph_reuse(
 
 
 @_JIT_ONLY
-@pytest.mark.parametrize("flag", ["expert_major_tasks", "cache_weights", "cluster_size"])
+@pytest.mark.parametrize("flag", ["expert_major_tasks", "cache_weights", "adaptive_cache_weights", "cluster_size"])
 def test_native_w4a8_optimization_flags_must_match_across_ranks(routing_runtime, flag):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
@@ -780,7 +798,10 @@ def test_native_w4a8_optimization_flags_must_match_across_ranks(routing_runtime,
 
 @_JIT_ONLY
 @pytest.mark.parametrize("cluster_size,remaining_sms", [(1, 1), (1, 3), (2, 2), (2, 3)])
-def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(routing_runtime, cluster_size, remaining_sms):
+@pytest.mark.parametrize("adaptive_cache_weights", [False, True], ids=["static-cache", "adaptive-cache"])
+def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(
+    routing_runtime, cluster_size, remaining_sms, adaptive_cache_weights
+):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
@@ -795,7 +816,8 @@ def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(routing_runtime, c
         dispatch_chunk=2048,
         dispatch_stages=2,
         expert_major_tasks=True,
-        cache_weights=True,
+        cache_weights=not adaptive_cache_weights,
+        adaptive_cache_weights=adaptive_cache_weights,
     )
     module = runtime.collective(lambda: compile_kernel(policy))
     weights = _host_weights(config)
@@ -829,12 +851,15 @@ def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(routing_runtime, c
 
 
 @_JIT_ONLY
+@pytest.mark.parametrize("adaptive_cache_weights", [False, True], ids=["static-cache", "adaptive-cache"])
 @pytest.mark.parametrize(
     "tile_n,tile_k,load_stages,load_warps,epilogue_tokens",
     [(32, 128, 5, 1, 16), (64, 256, 3, 2, 32), (32, 512, 2, 1, 16)],
     ids=["n32-k128-loader1", "n64-k256-loader2", "n32-k512-loader1"],
 )
-def test_native_w4a8_cluster_variants_match(routing_runtime, tile_n, tile_k, load_stages, load_warps, epilogue_tokens):
+def test_native_w4a8_cluster_variants_match(
+    routing_runtime, tile_n, tile_k, load_stages, load_warps, epilogue_tokens, adaptive_cache_weights
+):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
@@ -852,7 +877,8 @@ def test_native_w4a8_cluster_variants_match(routing_runtime, tile_n, tile_k, loa
                     epilogue_tokens=epilogue_tokens,
                     dispatch_chunk=2048,
                     expert_major_tasks=True,
-                    cache_weights=True,
+                    cache_weights=not adaptive_cache_weights,
+                    adaptive_cache_weights=adaptive_cache_weights,
                 )
             )
         )

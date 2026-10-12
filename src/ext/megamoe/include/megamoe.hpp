@@ -89,8 +89,11 @@ class MegaMoeContext {
   bool kernelFixedTokenCount() const;
   /// Return whether W4A8 tasks reuse an output tile across each expert's token blocks.
   bool kernelExpertMajorTasks() const;
-  /// Return whether W4A8 weights use normal rather than evict-first L2 priority.
+  /// Return whether all W4A8 weights and their scales use normal L2 priority.
   bool kernelCacheWeights() const;
+  /// Return whether W4A8 weights and their scales use normal L2 priority only for experts spanning multiple token
+  /// tiles.
+  bool kernelAdaptiveCacheWeights() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///

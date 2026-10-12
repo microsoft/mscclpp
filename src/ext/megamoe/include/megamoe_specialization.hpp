@@ -52,6 +52,9 @@
 #ifndef MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS
 #define MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS 0
 #endif
+#ifndef MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS
+#define MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS 0
+#endif
 #ifndef MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE
 #define MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE 2
 #endif
@@ -82,6 +85,7 @@ constexpr int W4DispatchStages = MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES;
 constexpr bool W4FixedTokenCount = MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT != 0;
 constexpr bool W4ExpertMajorTasks = MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS != 0;
 constexpr bool W4CacheWeights = MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS != 0;
+constexpr bool W4AdaptiveCacheWeights = MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS != 0;
 constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
 
 static_assert(W4ClusterSize == 1 || W4ClusterSize == 2);
@@ -105,6 +109,8 @@ static_assert(W4EpilogueWarps + 4 + W4DispatchWarps <= W4NumWarps);
 static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
 static_assert(MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 0 || MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 1);
 static_assert(MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 0 || MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 1);
+static_assert(MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS == 0 || MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS == 1);
+static_assert(!(W4CacheWeights && W4AdaptiveCacheWeights), "Static and adaptive weight caching are mutually exclusive");
 
 template <int TileN_ = W4TileN, int TileK_ = W4TileK>
 struct TilePolicy {

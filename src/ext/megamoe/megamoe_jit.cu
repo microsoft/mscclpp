@@ -164,5 +164,6 @@ extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_
 
 extern "C" __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1() {
   return (mscclpp::megamoe::jit::detail::W4ExpertMajorTasks ? MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS : 0u) |
-         (mscclpp::megamoe::jit::detail::W4CacheWeights ? MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS : 0u);
+         (mscclpp::megamoe::jit::detail::W4CacheWeights ? MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS : 0u) |
+         (mscclpp::megamoe::jit::detail::W4AdaptiveCacheWeights ? MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS : 0u);
 }

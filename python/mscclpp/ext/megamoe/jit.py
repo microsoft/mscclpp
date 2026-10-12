@@ -30,8 +30,10 @@ class W4A8KernelConfig:
     ``fixed_token_count=True`` opts captured decode into equal input row counts
     on all ranks. Masked routes may still differ. False supports ragged prefill.
     ``expert_major_tasks`` orders output tiles across each expert's token blocks.
-    ``cache_weights`` retains weights at normal rather than evict-first L2 priority.
-    Both optimizations are independent compile-time tuning options, disabled by default.
+    ``cache_weights`` gives all weights and their scales normal rather than evict-first
+    L2 priority. Alternatively, ``adaptive_cache_weights`` selects normal priority only
+    when an expert's total routed rows exceed ``tile_n``. The two cache policies are
+    mutually exclusive and independent of ``expert_major_tasks``; all default to false.
     ``cluster_size`` selects one or two cooperating CTAs. The output-feature
     tile is 128 elements per CTA (128 or 256 per cluster); ``tile_n`` is unchanged.
     """
@@ -53,6 +55,7 @@ class W4A8KernelConfig:
     expert_major_tasks: bool = False
     cache_weights: bool = False
     cluster_size: int = 2
+    adaptive_cache_weights: bool = False
 
     def __post_init__(self):
         allowed = (
@@ -82,9 +85,11 @@ class W4A8KernelConfig:
             raise ValueError("split_pipelines must be bool")
         if type(self.fixed_token_count) is not bool:
             raise ValueError("fixed_token_count must be bool")
-        for name in ("expert_major_tasks", "cache_weights"):
+        for name in ("expert_major_tasks", "cache_weights", "adaptive_cache_weights"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be bool")
+        if self.cache_weights and self.adaptive_cache_weights:
+            raise ValueError("cache_weights and adaptive_cache_weights are mutually exclusive")
         if self.split_pipelines and self.load_warps != 2:
             raise ValueError("split_pipelines requires load_warps=2")
         if self.tile_n % self.epilogue_tokens:
@@ -162,6 +167,7 @@ def _compile_definitions(config):
             "fixed_token_count": "FIXED_TOKEN_COUNT",
             "expert_major_tasks": "EXPERT_MAJOR_TASKS",
             "cache_weights": "CACHE_WEIGHTS",
+            "adaptive_cache_weights": "ADAPTIVE_CACHE_WEIGHTS",
             "cluster_size": "CLUSTER_SIZE",
         }
         return [

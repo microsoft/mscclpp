@@ -205,6 +205,7 @@ class MegaMoE:
             "fixed_token_count": self._native.kernel_fixed_token_count,
             "expert_major_tasks": self._native.kernel_expert_major_tasks,
             "cache_weights": self._native.kernel_cache_weights,
+            "adaptive_cache_weights": self._native.kernel_adaptive_cache_weights,
             "cluster_size": self._native.kernel_cluster_size,
         }
         return policy

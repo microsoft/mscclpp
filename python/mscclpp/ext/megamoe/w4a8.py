@@ -66,7 +66,13 @@ def _validate_profile(value):
     for entry in value["entries"]:
         _fields(entry, ("match", "config"), ("match", "config"), "W4A8 kernel profile entry")
         match = _validate_match(entry["match"])
-        optional_config = ("fixed_token_count", "expert_major_tasks", "cache_weights", "cluster_size")
+        optional_config = (
+            "fixed_token_count",
+            "expert_major_tasks",
+            "cache_weights",
+            "cluster_size",
+            "adaptive_cache_weights",
+        )
         required_config = tuple(name for name in _CONFIG_FIELDS if name not in optional_config)
         _fields(entry["config"], _CONFIG_FIELDS, required_config, "W4A8 kernel config")
         config = asdict(W4A8KernelConfig(**entry["config"]))

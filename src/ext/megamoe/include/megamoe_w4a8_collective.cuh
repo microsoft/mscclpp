@@ -221,7 +221,7 @@ struct W4A8Mainloop {
 
   template <int Operands = 0, class Inputs, class Coord, class Iterator>
   __device__ auto load(MainloopPipeline pipe, MainloopPipelineState state, const Inputs& inputs, Coord coord,
-                       Iterator iterator, int kTiles, int validRows) const {
+                       Iterator iterator, int kTiles, int validRows, bool cacheWeights) const {
     using namespace cute;
     int m = get<0>(coord) / ClusterSize, n = get<1>(coord), expert = get<3>(coord);
     auto a = inputs.tAgA_mkl(_, m, _, expert);
@@ -232,6 +232,7 @@ struct W4A8Mainloop {
     auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
+    const auto weightHint = cacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
     uint64_t waitNs = 0, issueNs = 0;
     const int iterations = kTiles;
     for (; kTiles > 0; --kTiles, ++iterator) {
@@ -243,7 +244,6 @@ struct W4A8Mainloop {
       start = traceKernelClock();
       if (elect_one_sync()) {
         if constexpr (Operands != 2) {
-          constexpr auto weightHint = W4CacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
           copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
                inputs.tAsA(_, stage));
           copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, weightHint), sfa(_, *iterator),

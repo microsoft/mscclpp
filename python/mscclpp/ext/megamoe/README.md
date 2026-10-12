@@ -87,6 +87,27 @@ Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
 `fixed_token_count=True` is intended for captured decode where every rank uses
 the same token-row count; route masks may still differ.
 
+Weight values and their E8M0 scales support three L2 cache policies:
+
+| Policy | Configuration | L2 priority |
+| --- | --- | --- |
+| Static streaming (default) | Both cache flags false | Evict-first for every expert |
+| Static retention | `cache_weights=True` | Normal for every expert |
+| Adaptive retention | `adaptive_cache_weights=True` | Normal when total expert rows exceed `tile_n`; otherwise evict-first |
+
+`cache_weights` and `adaptive_cache_weights` are mutually exclusive. Adaptive
+selection uses the expert's total routed rows from all ranks and slots for the
+current launch, not the current block's tail length. It reuses the final routing
+cursors, adds no workspace, and selects the hint once per task outside the K
+loop. The last block of a multi-block expert therefore retains normal priority.
+Activation cache hints, tile sizes, task order, and synchronization are unchanged.
+This option is independent of `expert_major_tasks` and disabled by default;
+compare policies on the same workload before enabling it.
+
+```python
+kernel = compile_kernel(W4A8KernelConfig(adaptive_cache_weights=True))
+```
+
 Packaged exact-match policies can be loaded with
 `resolve_w4a8_kernel_config`. Resident-grid results can be loaded with
 `resolve_resident_tuning`.

@@ -45,6 +45,15 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
   return pipeline;
 }
 
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int expert) {
+  if constexpr (W4AdaptiveCacheWeights) {
+    // After routingReadyEpoch, each cursor is the expert's total routed row count for this launch.
+    return params.workspace.cursors[expert] > KernelParams::Tiles::N;
+  }
+  return W4CacheWeights;
+}
+
 template <class P, class Storage>
 __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
                                                 typename P::Collective::Load& activationPipeline,
@@ -63,6 +72,8 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   auto load2 = fc2.load_init(shape2, s.tensors);
   for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
     Task task = taskAt(p, i, hidden, intermediate);
+    const bool cacheWeights =
+        (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens.expert);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
       if (lane == 0)
@@ -81,16 +92,18 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
         if constexpr (Types::LoadWarps == 2) {
           if (warp == Schedule::LoadWarp)
             return task.fc1 ? firstMainloop.template load<1>(producerPipeline, state, load1, coord, iterator, count,
-                                                             task.tokens.rows)
+                                                             task.tokens.rows, cacheWeights)
                             : secondMainloop.template load<1>(producerPipeline, state, load2, coord, iterator, count,
-                                                              task.tokens.rows);
+                                                              task.tokens.rows, cacheWeights);
           return task.fc1 ? firstMainloop.template load<2>(producerPipeline, state, load1, coord, iterator, count,
-                                                           task.tokens.rows)
+                                                           task.tokens.rows, cacheWeights)
                           : secondMainloop.template load<2>(producerPipeline, state, load2, coord, iterator, count,
-                                                            task.tokens.rows);
+                                                            task.tokens.rows, cacheWeights);
         } else {
-          return task.fc1 ? firstMainloop.load(loadPipeline, state, load1, coord, iterator, count, task.tokens.rows)
-                          : secondMainloop.load(loadPipeline, state, load2, coord, iterator, count, task.tokens.rows);
+          return task.fc1 ? firstMainloop.load(loadPipeline, state, load1, coord, iterator, count, task.tokens.rows,
+                                               cacheWeights)
+                          : secondMainloop.load(loadPipeline, state, load2, coord, iterator, count, task.tokens.rows,
+                                                cacheWeights);
         }
       }(fc1, fc2);
       state = get<0>(result);
