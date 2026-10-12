@@ -23,11 +23,20 @@ __device__ __forceinline__ float inverseE8M0Scale(uint8_t scale) {
   return __uint_as_float(scale == 254 ? 0x00400000u : uint32_t(254 - scale) << 23);
 }
 
-__device__ __forceinline__ uint16_t quantizeE4M3Pair(float first, float second, float inverse) {
-  mscclpp::f32x2 values;
-  values.data[0] = first * inverse;
-  values.data[1] = second * inverse;
-  return mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(values));
+template <class Values>
+__device__ __forceinline__ auto quantizeE4M3(const Values& values, float inverse) {
+  constexpr int N = Values::Size;
+  static_assert(std::is_same_v<typename Values::ElementType, float> && N % 4 == 0);
+  mscclpp::VectorType<__fp8_e4m3, N> quantized;
+#pragma unroll
+  for (int i = 0; i < N; i += 4) {
+    // Assemble whole words; byte-wise vector assembly costs extra permutes per pair.
+    mscclpp::f32x2 low = __fmul2_rn(make_float2(values[i], values[i + 1]), make_float2(inverse, inverse));
+    mscclpp::f32x2 high = __fmul2_rn(make_float2(values[i + 2], values[i + 3]), make_float2(inverse, inverse));
+    quantized.words[i / 4] = uint32_t(mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(low))) |
+                             uint32_t(mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(high))) << 16;
+  }
+  return quantized;
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

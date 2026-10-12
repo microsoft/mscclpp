@@ -13,13 +13,7 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 #if MSCCLPP_BULK_AVAILABLE
 
-__device__ __forceinline__ float2 swigluPair(float2 gate, float2 up, float clamp) {
-  if (clamp >= 0) {
-    gate.x = fminf(gate.x, clamp);
-    gate.y = fminf(gate.y, clamp);
-    up.x = fmaxf(-clamp, fminf(up.x, clamp));
-    up.y = fmaxf(-clamp, fminf(up.y, clamp));
-  }
+MSCCLPP_DEVICE_INLINE float2 swigluPair(float2 gate, float2 up) {
   float2 product = __fmul2_rn(gate, up);
   float2 exponent = __fmul2_rn(gate, make_float2(-1.4426950408889634f, -1.4426950408889634f));
   float2 denominator;
@@ -32,57 +26,103 @@ __device__ __forceinline__ float2 swigluPair(float2 gate, float2 up, float clamp
   return __fmul2_rn(product, inverse);
 }
 
-template <int EpilogueThreads, int ChunkTokens, class P, class Storage, class Values, class Coordinates>
-__device__ __forceinline__ void activateFc1Chunk(const P& p, const Task& task, Storage& s, const Values& values,
-                                                 const Coordinates& coordinates, int tokenOffset, int validRows,
-                                                 int intermediate) {
+// Token-major FC1 scratch. XOR-swizzling 16-byte chunks by token parity and 32-row gate/up group keeps both
+// the per-row TMEM spills and the per-token vector activation loads free of shared-memory bank conflicts.
+template <int CtaTileM>
+MSCCLPP_DEVICE_INLINE int fc1ScratchIndex(int token, int row) {
+  static_assert(CtaTileM == 128);
+  int group = row / 32;
+  int swizzle = ((group & 1) << 2) | ((token & 1) << 1) | (group >> 1);
+  return token * CtaTileM + (row ^ (swizzle << 2));
+}
+
+template <int EpilogueThreads, int ChunkTokens, class KernelParams, class Storage, class Values, class Coordinates>
+MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Task& task, Storage& s,
+                                            const Values& values, const Coordinates& coordinates, int tokenOffset,
+                                            int validRows, int intermediate, bool lastChunk) {
   using namespace cute;
-  using Tiles = typename P::Tiles;
+  using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
   constexpr int CtaFc1M = Tiles::CtaFc1M;
   constexpr int GateUpGroupSize = 16;
-  constexpr int GateUpPairSize = 2 * GateUpGroupSize;
+  constexpr int ScaleGroupSize = 32;
+  // Each thread activates consecutive features of one token; ThreadsPerScale lanes share one E8M0 scale.
+  constexpr int Features = ChunkTokens * CtaFc1M / EpilogueThreads;
+  constexpr int ThreadsPerToken = CtaFc1M / Features;
+  constexpr int ThreadsPerScale = ScaleGroupSize / Features;
+  static_assert(CtaFc1M == 64 && (Features == 4 || Features == 8 || Features == 16));
+  using Activations = mscclpp::VectorType<float, Features>;
 
 #pragma unroll
   for (int i = 0; i < size(values); ++i) {
     auto coord = coordinates(i);
-    s.epilogue.scratch[int(get<1>(coord)) * CtaTileM + int(get<0>(coord))] = values(i);
+    s.epilogue.scratch[fc1ScratchIndex<CtaTileM>(int(get<1>(coord)), int(get<0>(coord)))] = values(i);
   }
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 
-  static_assert(CtaFc1M == 64);
-  constexpr int EpilogueWarps = EpilogueThreads / 32;
-  const int lane = threadIdx.x % 32;
-  const int warp = threadIdx.x / 32;
-  for (int token = warp; token < validRows; token += EpilogueWarps) {
-    int feature = lane / 16 * 32 + lane % 16 * 2;
-    int gateRow = feature / GateUpGroupSize * GateUpPairSize + feature % GateUpGroupSize;
-    auto* gateAddress = s.epilogue.scratch + token * CtaTileM + gateRow;
-    auto* upAddress = gateAddress + GateUpGroupSize;
-    float2 activated = swigluPair(*reinterpret_cast<const float2*>(gateAddress),
-                                  *reinterpret_cast<const float2*>(upAddress), p.config.gateUpClamp);
-    float maximum = fmaxf(fabsf(activated.x), fabsf(activated.y));
+  int token = threadIdx.x / ThreadsPerToken;
+  // Warps holding only padded tokens skip the work; scale shuffles never cross a warp.
+  if (threadIdx.x / 32 * (32 / ThreadsPerToken) < validRows) {
+    int feature = threadIdx.x % ThreadsPerToken * Features;
+    int gateRow = feature / GateUpGroupSize * 2 * GateUpGroupSize + feature % GateUpGroupSize;
+    Activations gate, up;
 #pragma unroll
-    for (int offset = 8; offset > 0; offset /= 2)
-      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, 16));
+    for (int i = 0; i < Features / 4; ++i) {
+      reinterpret_cast<mscclpp::f32x4*>(&gate)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
+          s.epilogue.scratch + fc1ScratchIndex<CtaTileM>(token, gateRow + 4 * i));
+      reinterpret_cast<mscclpp::f32x4*>(&up)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
+          s.epilogue.scratch + fc1ScratchIndex<CtaTileM>(token, gateRow + GateUpGroupSize + 4 * i));
+    }
+    // Clamp in one uniform pass so the activation below stays a single basic block.
+    if (float clamp = params.config.gateUpClamp; clamp >= 0) {
+#pragma unroll
+      for (int i = 0; i < Features; ++i) {
+        gate[i] = fminf(gate[i], clamp);
+        up[i] = fmaxf(-clamp, fminf(up[i], clamp));
+      }
+    }
+    Activations activated;
+#pragma unroll
+    for (int i = 0; i < Features; i += 2) {
+      float2 pair = swigluPair(make_float2(gate[i], gate[i + 1]), make_float2(up[i], up[i + 1]));
+      activated[i] = pair.x;
+      activated[i + 1] = pair.y;
+    }
+    Activations magnitude;
+#pragma unroll
+    for (int i = 0; i < Features; ++i) magnitude[i] = fabsf(activated[i]);
+#pragma unroll
+    for (int width = Features / 2; width > 0; width /= 2) {
+#pragma unroll
+      for (int i = 0; i < width; ++i) magnitude[i] = fmaxf(magnitude[i], magnitude[i + width]);
+    }
+    float maximum = magnitude[0];
+#pragma unroll
+    for (int offset = ThreadsPerScale / 2; offset > 0; offset /= 2)
+      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset));
     uint8_t scale = quantizeE8M0Scale(maximum);
-    int row = w4StorageRow<typename P::Tiles>(task.block * KernelTileN + tokenOffset + token);
-    int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
-    if (lane % 16 == 0) p.workspace.hiddenScale[p.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
-    auto destination = reinterpret_cast<uint16_t*>(p.workspace.quantizedHidden + size_t(row) * intermediate + column);
-    *destination = quantizeE4M3Pair(activated.x, activated.y, inverseE8M0Scale(scale));
+    auto quantized = quantizeE4M3(activated, inverseE8M0Scale(scale));
+    if (token < validRows) {
+      int row = w4StorageRow<Tiles>(task.block * KernelTileN + tokenOffset + token);
+      int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
+      if (threadIdx.x % ThreadsPerScale == 0)
+        params.workspace.hiddenScale[params.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
+      *reinterpret_cast<decltype(quantized)*>(params.workspace.quantizedHidden + size_t(row) * intermediate + column) =
+          quantized;
+    }
   }
-  asm volatile("fence.proxy.async.global;" ::: "memory");
+  // FC2 loads hidden through TMA; order every generic store of this task before its completion release.
+  if (lastChunk) asm volatile("fence.proxy.async.global;" ::: "memory");
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 }
 
-template <class P, class Storage, class Values, class Coordinates>
-__device__ __forceinline__ void packFc2Chunk(const P& p, const Task& task, Storage& s, const Values& values,
-                                             const Coordinates& coordinates, int tokenOffset, int validRows) {
+template <class KernelParams, class Storage, class Values, class Coordinates>
+MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& task, Storage& s, const Values& values,
+                                        const Coordinates& coordinates, int tokenOffset, int validRows) {
   using namespace cute;
-  constexpr int KernelTileN = P::Tiles::N;
-  constexpr int CtaTileM = P::Tiles::CtaM;
+  constexpr int KernelTileN = KernelParams::Tiles::N;
+  constexpr int CtaTileM = KernelParams::Tiles::CtaM;
 
 #pragma unroll
   for (int i = 0; i < size(values); ++i) {
@@ -90,24 +130,24 @@ __device__ __forceinline__ void packFc2Chunk(const P& p, const Task& task, Stora
     int token = int(get<1>(coord));
     float value = 0.0f;
     if (token < validRows)
-      value = values(i) * p.workspace.routes[task.block * KernelTileN + tokenOffset + token].weight;
+      value = values(i) * params.workspace.routes[task.block * KernelTileN + tokenOffset + token].weight;
     s.epilogue.packed[token * CtaTileM + int(get<0>(coord)) % CtaTileM] = __bfloat16(value);
   }
 }
 
-template <int EpilogueWarps, class P, class Storage>
-__device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, Storage& s, int tokenOffset,
-                                                 int validRows, int hidden, int warp, int lane) {
-  using Tiles = typename P::Tiles;
+template <int EpilogueWarps, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Task& task, Storage& s, int tokenOffset,
+                                            int validRows, int hidden, int warp, int lane) {
+  using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
   if (lane != 0) return;
   int feature = task.m * CtaTileM * Tiles::ClusterSize + (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
   if (feature >= hidden) return;
   for (int token = warp; token < validRows; token += EpilogueWarps) {
-    Route route = p.workspace.routes[task.block * KernelTileN + tokenOffset + token];
-    auto output = peerAt<__bfloat16>(p, route.rank, p.symmetric.partialOutput);
-    size_t offset = (size_t(route.token) * p.config.topK + route.slot) * p.config.hidden + feature;
+    Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
+    auto output = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
+    size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
     bulkStore(output + offset, s.epilogue.packed + token * CtaTileM, CtaTileM * sizeof(__bfloat16));
     bulkStoreCommit();
     bulkStoreWaitSource<4>();
@@ -117,16 +157,16 @@ __device__ __forceinline__ void storeOutputChunk(const P& p, const Task& task, S
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <class Schedule, class P, class Storage, class Pipeline, class Accumulators>
-__device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& s, Pipeline& pipeline,
-                                         typename Pipeline::PipelineState& state, Accumulators accumulators, int hidden,
-                                         int intermediate) {
+template <class Schedule, class KernelParams, class Storage, class Pipeline, class Accumulators>
+MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task, Storage& s, Pipeline& pipeline,
+                                    typename Pipeline::PipelineState& state, Accumulators accumulators, int hidden,
+                                    int intermediate) {
 #if MSCCLPP_BULK_AVAILABLE
   using namespace cute;
-  using Tiles = typename P::Tiles;
+  using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
-  constexpr int ChunkTokens = P::Collective::EpilogueTokens;
+  constexpr int ChunkTokens = KernelParams::Collective::EpilogueTokens;
   constexpr int WarpSize = 32;
   constexpr int EpilogueWarps = Schedule::EpilogueEnd - Schedule::EpilogueBegin;
   constexpr int EpilogueThreads = EpilogueWarps * WarpSize;
@@ -159,34 +199,36 @@ __device__ __forceinline__ void epilogue(const P& p, const Task& task, Storage& 
     if (tokenOffset + ChunkTokens >= task.tokens.rows) pipeline.consumer_release(state);
     if (task.fc1) {
       traceKernel(KernelTracePhase::ActivationQuantize, true, tokenOffset);
-      activateFc1Chunk<EpilogueThreads, ChunkTokens>(p, task, s, values, coordinates, tokenOffset, validRows,
-                                                     intermediate);
+      activateFc1Chunk<EpilogueThreads, ChunkTokens>(params, task, s, values, coordinates, tokenOffset, validRows,
+                                                     intermediate, tokenOffset + ChunkTokens >= task.tokens.rows);
       traceKernel(KernelTracePhase::ActivationQuantize, false, tokenOffset);
       continue;
     }
-    packFc2Chunk(p, task, s, values, coordinates, tokenOffset, validRows);
+    packFc2Chunk(params, task, s, values, coordinates, tokenOffset, validRows);
     bulkFence();
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
     traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
-    storeOutputChunk<EpilogueWarps>(p, task, s, tokenOffset, validRows, hidden, warp, lane);
+    storeOutputChunk<EpilogueWarps>(params, task, s, tokenOffset, validRows, hidden, warp, lane);
     traceKernel(KernelTracePhase::Fc2Store, false, tokenOffset);
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
   }
   ++state;
   if (task.fc1 && threadIdx.x == 0) {
-    auto* counter = p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride;
+    auto* counter = params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride;
     asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
   }
 #endif
 }
 
-template <class Schedule, class P, class Storage, class Accumulate, class Accumulators>
-__device__ __forceinline__ void runEpilogueRole(const P& p, Storage& s, Accumulate& pipeline, Accumulators accumulators,
-                                                int hidden, int intermediate, int cluster, int tasks) {
-  cutlass::arch::warpgroup_reg_alloc<P::Collective::EpilogueRegisters>();
+template <class Schedule, class KernelParams, class Storage, class Accumulate, class Accumulators>
+MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& s, Accumulate& pipeline,
+                                           Accumulators accumulators, int hidden, int intermediate, int cluster,
+                                           int tasks) {
+  cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
   typename Accumulate::PipelineState state;
-  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize)
-    epilogue<Schedule>(p, taskAt(p, i, hidden, intermediate), s, pipeline, state, accumulators, hidden, intermediate);
+  for (int i = cluster; i < tasks; i += gridDim.x / KernelParams::Tiles::ClusterSize)
+    epilogue<Schedule>(params, taskAt(params, i, hidden, intermediate), s, pipeline, state, accumulators, hidden,
+                       intermediate);
 #if MSCCLPP_BULK_AVAILABLE
   if (threadIdx.x % warpSize == 0) bulkStoreWait();
 #endif
@@ -199,12 +241,12 @@ struct ResultAccumulator {
 
 template <class Element, int Elements>
 struct ResultVectorOps {
-  __device__ __forceinline__ static void accumulate(ResultAccumulator<Elements>& accumulator, const Element* source) {
+  MSCCLPP_DEVICE_INLINE static void accumulate(ResultAccumulator<Elements>& accumulator, const Element* source) {
 #pragma unroll
     for (int element = 0; element < Elements; ++element) accumulator.values[element] += float(source[element]);
   }
 
-  __device__ __forceinline__ static void store(Element* destination, const ResultAccumulator<Elements>& accumulator) {
+  MSCCLPP_DEVICE_INLINE static void store(Element* destination, const ResultAccumulator<Elements>& accumulator) {
 #pragma unroll
     for (int element = 0; element < Elements; ++element) destination[element] = Element(accumulator.values[element]);
   }
@@ -212,7 +254,7 @@ struct ResultVectorOps {
 
 template <>
 struct ResultVectorOps<__bfloat16, 8> {
-  __device__ __forceinline__ static void accumulate(ResultAccumulator<8>& accumulator, const __bfloat16* source) {
+  MSCCLPP_DEVICE_INLINE static void accumulate(ResultAccumulator<8>& accumulator, const __bfloat16* source) {
     uint32_t word0, word1, word2, word3;
     asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
                  : "=r"(word0), "=r"(word1), "=r"(word2), "=r"(word3)
@@ -228,12 +270,12 @@ struct ResultVectorOps<__bfloat16, 8> {
     accumulator.values[7] += float(mscclpp::bit_cast<__bfloat16>(uint16_t(word3 >> 16)));
   }
 
-  __device__ __forceinline__ static uint32_t pack(float low, float high) {
+  MSCCLPP_DEVICE_INLINE static uint32_t pack(float low, float high) {
     return uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(low))) |
            uint32_t(mscclpp::bit_cast<uint16_t>(__bfloat16(high))) << 16;
   }
 
-  __device__ __forceinline__ static void store(__bfloat16* destination, const ResultAccumulator<8>& accumulator) {
+  MSCCLPP_DEVICE_INLINE static void store(__bfloat16* destination, const ResultAccumulator<8>& accumulator) {
     if ((reinterpret_cast<uintptr_t>(destination) & 15) != 0) {
 #pragma unroll
       for (int element = 0; element < 8; ++element) destination[element] = __bfloat16(accumulator.values[element]);
@@ -251,8 +293,8 @@ struct ResultVectorOps<__bfloat16, 8> {
 };
 
 template <class Element, int Elements>
-__device__ __forceinline__ void reduceResultVector(const Element* partial, int rowStride, int topK, Element* output,
-                                                   const int* routeIds = nullptr) {
+MSCCLPP_DEVICE_INLINE void reduceResultVector(const Element* partial, int rowStride, int topK, Element* output,
+                                              const int* routeIds = nullptr) {
   ResultAccumulator<Elements> accumulator;
   for (int slot = 0; slot < topK; ++slot) {
     if (routeIds && routeIds[slot] < 0) continue;
@@ -261,18 +303,18 @@ __device__ __forceinline__ void reduceResultVector(const Element* partial, int r
   ResultVectorOps<Element, Elements>::store(output, accumulator);
 }
 
-template <class P>
-__device__ __forceinline__ void combineResults(const P& p, int tokens, __bfloat16* output) {
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
   constexpr int Elements = 8;
-  auto partial = at<__bfloat16>(p.local, p.symmetric.partialOutput);
-  auto routeIds = at<int>(p.local, p.symmetric.topkIds);
-  for (size_t i = blockIdx.x * P::ThreadCount + threadIdx.x; i < size_t(tokens) * (p.config.hidden / Elements);
-       i += gridDim.x * P::ThreadCount) {
-    size_t token = i / (p.config.hidden / Elements);
-    int feature = Elements * (i % (p.config.hidden / Elements));
-    auto source = partial + size_t(token) * p.config.topK * p.config.hidden + feature;
-    reduceResultVector<__bfloat16, Elements>(source, p.config.hidden, p.config.topK, output + Elements * i,
-                                             routeIds + size_t(token) * p.config.topK);
+  auto partial = at<__bfloat16>(params.local, params.symmetric.partialOutput);
+  auto routeIds = at<int>(params.local, params.symmetric.topkIds);
+  for (size_t i = blockIdx.x * KernelParams::ThreadCount + threadIdx.x;
+       i < size_t(tokens) * (params.config.hidden / Elements); i += gridDim.x * KernelParams::ThreadCount) {
+    size_t token = i / (params.config.hidden / Elements);
+    int feature = Elements * (i % (params.config.hidden / Elements));
+    auto source = partial + size_t(token) * params.config.topK * params.config.hidden + feature;
+    reduceResultVector<__bfloat16, Elements>(source, params.config.hidden, params.config.topK, output + Elements * i,
+                                             routeIds + size_t(token) * params.config.topK);
   }
 }
 
