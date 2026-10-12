@@ -61,7 +61,6 @@ def _validate_profile(value):
         "num_experts",
         "local_experts",
         "top_k",
-        "weight_mxfp4",
         "gate_up_clamp",
         "graph_batch",
         "graph_timing",
@@ -79,7 +78,7 @@ def _validate_profile(value):
         raise ValueError("compute_capability must contain two nonnegative integers")
     for field in ("sm_count", "world_size", "hidden", "num_experts", "local_experts", "top_k", "graph_batch"):
         _integer(selection[field], field, 1)
-    if selection["weight_mxfp4"] is not True or selection["gate_up_clamp"] != "negative":
+    if selection["gate_up_clamp"] != "negative":
         raise ValueError("resident tuning profile currently requires unclamped W4A8")
     if selection["graph_timing"] not in ("isolated", "steady-state"):
         raise ValueError("unsupported graph timing mode")
@@ -90,7 +89,6 @@ def _validate_profile(value):
         "tile_n",
         "tile_k",
         "load_stages",
-        "transform_stages",
         "cluster_m",
         "num_warps",
         "transfer_registers",
@@ -118,7 +116,6 @@ def _validate_profile(value):
         "dispatch_stages",
     ):
         _integer(policy[field], field, 1)
-    _integer(policy["transform_stages"], "transform_stages")
     if type(policy["split_pipelines"]) is not bool:
         raise ValueError("split_pipelines must be bool")
     hints = policy["tma_cache_hints"]
@@ -264,7 +261,6 @@ def resolve_resident_tuning(
         "num_experts": config.num_experts,
         "local_experts": config.local_experts,
         "top_k": config.top_k,
-        "weight_mxfp4": config.weight_mxfp4,
         "gate_up_clamp": "negative" if config.gate_up_clamp < 0 else "nonnegative",
         "graph_batch": graph_batch,
         "graph_timing": graph_timing,

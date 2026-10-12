@@ -19,46 +19,8 @@ import tempfile
 import time
 
 _ARCHITECTURES = {(10, 0): "sm_100f", (10, 3): "sm_100f", (10, 7): "sm_100f"}
-_CACHE_FORMAT_VERSION = 2
-_BUILD_FORMAT_VERSION = 2
-
-
-@dataclass(frozen=True)
-class KernelConfig:
-    """Routed-kernel specialization; local shared and precision stay fixed.
-
-    ``load_stages`` controls raw weights, scales, and activations together.
-    ``transform_stages`` controls the converted BF16 weights in TMEM.
-    """
-
-    tile_n: int = 32
-    load_stages: int = 8
-    transform_stages: int = 7
-    tile_k: int = 128
-    tile_m: int = 256
-
-    def __post_init__(self):
-        for name, allowed in (
-            ("tile_m", (128, 256)),
-            ("tile_n", (32, 64, 128)),
-            ("load_stages", (4, 6, 8)),
-            ("transform_stages", (2, 3, 4, 5, 6, 7)),
-            ("tile_k", (32, 64, 128)),
-        ):
-            value = getattr(self, name)
-            if type(value) is not int or value not in allowed:
-                raise ValueError(f"{name} must be one of {allowed}")
-        if (self.tile_n, self.load_stages, self.transform_stages) not in (
-            (32, 8, 7),
-            (32, 6, 7),
-            (64, 6, 6),
-            (128, 4, 4),
-        ):
-            raise ValueError("unsupported tile_n/load_stages/transform_stages combination")
-        if self.tile_m == 128 and self.tile_k == 32:
-            raise ValueError("tile_m=128 requires tile_k=64 or 128")
-        if 2 * self.tile_n + self.tile_k // 2 * self.transform_stages > 512:
-            raise ValueError("kernel configuration exceeds the 512-column TMEM budget")
+_CACHE_FORMAT_VERSION = 3
+_BUILD_FORMAT_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -145,18 +107,18 @@ class W4A8KernelConfig:
 class CompiledKernel:
     """Prepared native module; retained by a context, never rebuilt by forward."""
 
-    config: KernelConfig | W4A8KernelConfig
+    config: W4A8KernelConfig
     path: str
     key: str
     cache_hit: bool
 
     def __post_init__(self):
-        if not isinstance(self.config, (KernelConfig, W4A8KernelConfig)):
-            raise TypeError("config must be KernelConfig or W4A8KernelConfig")
+        if not isinstance(self.config, W4A8KernelConfig):
+            raise TypeError("config must be W4A8KernelConfig")
         if not isinstance(self.path, str) or type(self.cache_hit) is not bool:
             raise TypeError("path must be a string and cache_hit must be bool")
         if self.key == "builtin":
-            if self.path or not isinstance(self.config, KernelConfig) or self.config != KernelConfig():
+            if self.path or self.config != W4A8KernelConfig():
                 raise ValueError("builtin kernel must use the default configuration and an empty path")
         elif not isinstance(self.key, str) or not re.fullmatch(r"[0-9a-f]{64}", self.key):
             raise ValueError("kernel key must be 'builtin' or a SHA256 hexadecimal digest")
@@ -165,11 +127,9 @@ class CompiledKernel:
 
 
 def _config_kind(config):
-    if isinstance(config, KernelConfig):
-        return "w8a16"
     if isinstance(config, W4A8KernelConfig):
         return "w4a8"
-    raise TypeError("config must be KernelConfig or W4A8KernelConfig")
+    raise TypeError("config must be W4A8KernelConfig")
 
 
 def _config_from_build(build):
@@ -177,23 +137,12 @@ def _config_from_build(build):
     values = build.get("config")
     if not isinstance(values, dict):
         raise ValueError("MegaMoE JIT manifest has an invalid configuration")
-    if kind == "w8a16":
-        return KernelConfig(**values)
     if kind == "w4a8":
         return W4A8KernelConfig(**values)
     raise ValueError("MegaMoE JIT manifest has an unsupported kernel kind")
 
 
 def _compile_definitions(config):
-    if isinstance(config, KernelConfig):
-        return [
-            "-DMSCCLPP_MEGAMOE_JIT_W4A8=0",
-            f"-DMSCCLPP_MEGAMOE_TILE_N={config.tile_n}",
-            f"-DMSCCLPP_MEGAMOE_TILE_K={config.tile_k}",
-            f"-DMSCCLPP_MEGAMOE_TILE_M={config.tile_m}",
-            f"-DMSCCLPP_MEGAMOE_LOAD_STAGES={config.load_stages}",
-            f"-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES={config.transform_stages}",
-        ]
     if isinstance(config, W4A8KernelConfig):
         values = asdict(config)
         names = {
@@ -216,13 +165,12 @@ def _compile_definitions(config):
             "cluster_size": "CLUSTER_SIZE",
         }
         return [
-            "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",
             *[
                 f"-DMSCCLPP_MEGAMOE_W4_{names[name]}={int(value) if isinstance(value, bool) else value}"
                 for name, value in values.items()
             ],
         ]
-    raise TypeError("config must be KernelConfig or W4A8KernelConfig")
+    raise TypeError("config must be W4A8KernelConfig")
 
 
 def _digest(value):
@@ -253,7 +201,7 @@ def _source_root():
     installed = _package_root() / "share/mscclpp/megamoe"
     checkout = Path(__file__).resolve().parents[4] / "src/ext/megamoe"
     for root in (installed, checkout):
-        if (root / "megamoe_w8a16.cu").is_file():
+        if (root / "megamoe_w4a8.cu").is_file():
             return root
     raise FileNotFoundError("MegaMoE JIT sources are missing; reinstall a build with MSCCLPP_BUILD_EXT_MEGAMOE=ON")
 
@@ -359,7 +307,7 @@ def _load_cached(key, cache_dir, environment):
         or _digest(build) != key
         or build.get("environment") != environment
         or build.get("version") != _BUILD_FORMAT_VERSION
-        or build.get("kernel_kind") not in ("w8a16", "w4a8")
+        or build.get("kernel_kind") != "w4a8"
         or not isinstance(build.get("config"), dict)
         or not isinstance(build.get("definitions"), list)
         or not isinstance(manifest.get("module_sha256"), str)
@@ -377,7 +325,7 @@ def _load_cached(key, cache_dir, environment):
 def load_cached_kernel(key, *, cache_dir=None):
     """Load a prepared module without nvcc or CUTLASS; reject stale/corrupt entries."""
     if key == "builtin":
-        return CompiledKernel(KernelConfig(), "", "builtin", True)
+        return CompiledKernel(W4A8KernelConfig(), "", "builtin", True)
     return _load_cached(key, cache_dir, runtime_fingerprint())
 
 
@@ -432,17 +380,15 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
     ``MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS`` supplies path-separated matching runtime
     include directories when compiler and runtime packages are installed separately.
     """
-    if not isinstance(config, (KernelConfig, W4A8KernelConfig)):
-        raise TypeError("config must be KernelConfig or W4A8KernelConfig")
+    if not isinstance(config, W4A8KernelConfig):
+        raise TypeError("config must be W4A8KernelConfig")
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < float("inf"):
         raise ValueError("timeout must be finite and positive")
-    if isinstance(config, KernelConfig) and config == KernelConfig():
+    if config == W4A8KernelConfig():
         return CompiledKernel(config, "", "builtin", True)
     environment = runtime_fingerprint()
     source_root = _source_root()
-    sources = [source_root / name for name in ("megamoe_w8a16.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
-    if isinstance(config, W4A8KernelConfig):
-        sources.insert(1, source_root / "megamoe_w4a8.cu")
+    sources = [source_root / name for name in ("megamoe_w4a8.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"Required MegaMoE JIT source not found: {source}")
@@ -459,8 +405,8 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
     if cutlass_value is None:
         raise ValueError("Set MSCCLPP_MEGAMOE_CUTLASS_ROOT to the compatible CUTLASS checkout")
     cutlass = Path(cutlass_value).expanduser().resolve() / "include"
-    if not (cutlass / "cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp").is_file():
-        raise FileNotFoundError(f"SM100-family mixed-input CUTLASS headers not found: {cutlass}")
+    if not (cutlass / "cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp").is_file():
+        raise FileNotFoundError(f"SM100-family block-scaled CUTLASS headers not found: {cutlass}")
     cuda_root = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda")).expanduser().resolve()
     compiler = _tool(nvcc or os.environ.get("MSCCLPP_MEGAMOE_NVCC", str(cuda_root / "bin/nvcc")), "nvcc")
     cxx = _tool(os.environ.get("CXX", "c++"), "C++ compiler")

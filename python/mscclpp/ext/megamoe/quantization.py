@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Canonical MXFP8/MXFP4 K32 utilities without kernel-specific swizzles."""
+"""Canonical W4A8 MXFP4 weight and E4M3 activation K32 utilities."""
 
 
-def quantize_mxfp8(weights, *, e5m2=False):
-    """Quantize finite floating-point [...,K] weights into FP8 plus uint8 E8M0.
+def quantize_mxfp8(weights):
+    """Quantize finite floating-point [...,K] activations into E4M3 plus E8M0.
 
     Each group of 32 consecutive K elements uses a power-of-two scale, rounded
     upward to avoid saturation. Zero groups use scale 1. This offline helper may
@@ -19,7 +19,7 @@ def quantize_mxfp8(weights, *, e5m2=False):
         raise ValueError("weights must have at least two dimensions and K divisible by 32")
     if not bool(torch.isfinite(weights).all()):
         raise ValueError("MXFP8 weights must be finite")
-    dtype = torch.float8_e5m2 if e5m2 else torch.float8_e4m3fn
+    dtype = torch.float8_e4m3fn
     blocks = weights.float().reshape(*weights.shape[:-1], -1, 32)
     maximum = blocks.abs().amax(dim=-1)
     exponent = torch.ceil(torch.log2(maximum / torch.finfo(dtype).max))
@@ -33,8 +33,8 @@ def dequantize_mxfp8(weights, scales, *, dtype=None):
     """Decode canonical FP8 weights and row-major uint8 E8M0 K32 scales."""
     import torch
 
-    if not isinstance(weights, torch.Tensor) or weights.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
-        raise TypeError("weights must have dtype float8_e4m3fn or float8_e5m2")
+    if not isinstance(weights, torch.Tensor) or weights.dtype != torch.float8_e4m3fn:
+        raise TypeError("weights must have dtype float8_e4m3fn")
     if weights.ndim < 2 or weights.shape[-1] == 0 or weights.shape[-1] % 32:
         raise ValueError("weights must have K divisible by 32")
     if (

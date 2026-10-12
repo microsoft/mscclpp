@@ -56,10 +56,9 @@ int jitCall(char* error, size_t capacity, Function&& function) noexcept {
 }
 
 NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
-  if (!c || (c->weightE5M2 != 0 && c->weightE5M2 != 1) || (c->weightMxfp4 != 0 && c->weightMxfp4 != 1))
-    throw std::invalid_argument("Invalid MegaMoE JIT configuration");
-  return NativeConfig{c->rank, c->worldSize, c->maxTokens,        c->hidden,      c->intermediate,     c->numExperts,
-                      c->topK, c->smMargin,  bool(c->weightE5M2), c->gateUpClamp, bool(c->weightMxfp4)};
+  if (!c) throw std::invalid_argument("Invalid MegaMoE JIT configuration");
+  return NativeConfig{c->rank,       c->worldSize, c->maxTokens, c->hidden,     c->intermediate,
+                      c->numExperts, c->topK,      c->smMargin,  c->gateUpClamp};
 }
 
 PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {
@@ -111,16 +110,12 @@ int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t*
 
 void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
 
-int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, int32_t shared,
-              char* error, size_t capacity) noexcept {
+int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
+              size_t capacity) noexcept {
   return jitCall(error, capacity, [&] {
-    if (!plan || (shared != 0 && shared != 1)) throw std::invalid_argument("Invalid MegaMoE JIT launch");
-    const auto& native = *static_cast<JitPlan*>(plan);
-    if (shared) {
-      jit::launchNativeSharedExpert(native, tokens, output, reinterpret_cast<cudaStream_t>(stream));
-    } else {
-      jit::launchNativeMegaMoe(native, tokens, output, reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
-    }
+    if (!plan) throw std::invalid_argument("Invalid MegaMoE JIT launch");
+    jit::launchNativeW4A8(*static_cast<JitPlan*>(plan), nullptr, nullptr, nullptr, tokens, output,
+                          reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
   });
 }
 
@@ -131,13 +126,13 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.configBytes = sizeof(MegaMoeJitConfigV1);
   api.weightsBytes = sizeof(MegaMoeJitWeightsV1);
   api.layoutBytes = sizeof(MegaMoeJitLayoutV1);
-#if MSCCLPP_MEGAMOE_JIT_W4A8
   api.tileM = jit::detail::W4TileM;
   api.tileN = jit::detail::W4TileN;
   api.tileK = jit::detail::W4TileK;
   api.loadStages = jit::detail::W4LoadStages;
-  api.transformStages = 0;
-  api.weightMxfp4 = 1;
+  api.clusterSize = jit::detail::W4ClusterSize;
+  api.accumulatorStages = 2;
+  api.architecture = 1000;
   api.numWarps = jit::detail::W4NumWarps;
   api.transferRegisters = jit::detail::W4TransferRegisters;
   api.loadWarps = jit::detail::W4LoadWarps;
@@ -148,18 +143,6 @@ const MegaMoeJitApiV1 JitApi = [] {
   api.dispatchChunk = jit::detail::W4DispatchChunk;
   api.dispatchWarps = jit::detail::W4DispatchWarps;
   api.dispatchStages = jit::detail::W4DispatchStages;
-#else
-  api.tileM = jit::detail::TileM;
-  api.tileN = jit::detail::TileN;
-  api.tileK = jit::detail::TileK;
-  api.loadStages = jit::detail::LoadStages;
-  api.transformStages = jit::detail::TransformStages;
-  api.weightMxfp4 = 0;
-  api.numWarps = jit::detail::RoutedWarpSchedule::NumWarps;
-#endif
-  api.clusterSize = MSCCLPP_MEGAMOE_JIT_W4A8 ? jit::detail::W4ClusterSize : jit::detail::ClusterM;
-  api.accumulatorStages = 2;
-  api.architecture = 1000;
   std::memcpy(api.kernelId, JitId, sizeof(JitId));
   api.preflight = jitPreflight;
   api.packWeights = jitPack;
@@ -176,11 +159,10 @@ extern "C" __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp
 }
 
 extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1() {
-  return int(MSCCLPP_MEGAMOE_JIT_W4A8 && mscclpp::megamoe::jit::detail::W4FixedTokenCount);
+  return int(mscclpp::megamoe::jit::detail::W4FixedTokenCount);
 }
 
 extern "C" __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1() {
-  if constexpr (!MSCCLPP_MEGAMOE_JIT_W4A8) return 0;
   return (mscclpp::megamoe::jit::detail::W4ExpertMajorTasks ? MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS : 0u) |
          (mscclpp::megamoe::jit::detail::W4CacheWeights ? MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS : 0u);
 }

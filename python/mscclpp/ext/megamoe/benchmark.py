@@ -12,21 +12,15 @@ import time
 
 def _weights(config, device):
     import torch
-    from .quantization import quantize_mxfp4, quantize_mxfp8
+    from .quantization import quantize_mxfp4
 
     tensors = []
     for m, k in ((2 * config.intermediate, config.hidden), (config.hidden, config.intermediate)):
-        value_shape = (config.local_experts, m, k // 2) if config.weight_mxfp4 else (config.local_experts, m, k)
-        dtype = (
-            torch.uint8 if config.weight_mxfp4 else (torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn)
-        )
-        values = torch.empty(value_shape, dtype=dtype, device=device)
+        values = torch.empty((config.local_experts, m, k // 2), dtype=torch.uint8, device=device)
         scales = torch.empty((config.local_experts, m, k // 32), dtype=torch.uint8, device=device)
         for expert in range(config.local_experts):
             source = torch.randn((m, k), dtype=torch.float32, device=device) / k**0.5
-            quantized, scale = (
-                quantize_mxfp4(source) if config.weight_mxfp4 else quantize_mxfp8(source, e5m2=config.weight_e5m2)
-            )
+            quantized, scale = quantize_mxfp4(source)
             values[expert].copy_(quantized)
             scales[expert].copy_(scale)
         tensors.extend((values, scales))
@@ -40,6 +34,8 @@ def _reference(config, inputs, ids, scores, weights):
     from .quantization import dequantize_mxfp4, dequantize_mxfp8, quantize_mxfp8
 
     def gather(tensor):
+        if config.world_size == 1:
+            return tensor
         host = tensor.cpu()
         gathered = [torch.empty_like(host) for _ in range(config.world_size)]
         dist.all_gather(gathered, host)
@@ -52,27 +48,20 @@ def _reference(config, inputs, ids, scores, weights):
         token, slot = torch.where(all_ids == config.rank * config.local_experts + expert)
         if not token.numel():
             continue
-        dequantize = dequantize_mxfp4 if config.weight_mxfp4 else dequantize_mxfp8
-        decoded_dtype = torch.float32 if config.weight_mxfp4 else torch.bfloat16
-        first = dequantize(fc1[expert], fc1_scale[expert], dtype=decoded_dtype).float()
-        second = dequantize(fc2[expert], fc2_scale[expert], dtype=decoded_dtype).float()
-        expert_input = all_inputs[token].float()
-        if config.weight_mxfp4:
-            expert_input = dequantize_mxfp8(*quantize_mxfp8(expert_input), dtype=torch.float32)
+        first = dequantize_mxfp4(fc1[expert], fc1_scale[expert], dtype=torch.float32)
+        second = dequantize_mxfp4(fc2[expert], fc2_scale[expert], dtype=torch.float32)
+        expert_input = dequantize_mxfp8(*quantize_mxfp8(all_inputs[token].float()), dtype=torch.float32)
         gate, up = (expert_input @ first.T).chunk(2, dim=-1)
         if config.gate_up_clamp >= 0:
             gate = gate.clamp(max=config.gate_up_clamp)
             up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
         hidden = functional.silu(gate) * up
-        if config.weight_mxfp4:
-            hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
-            result = (hidden @ second.T) * all_scores[token, slot, None]
-        else:
-            hidden = (hidden * all_scores[token, slot, None]).to(torch.bfloat16)
-            result = hidden.float() @ second.T
+        hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
+        result = (hidden @ second.T) * all_scores[token, slot, None]
         partial[token, slot] = result.to(torch.bfloat16).float()
     host_partial = partial.cpu()
-    dist.all_reduce(host_partial)
+    if config.world_size > 1:
+        dist.all_reduce(host_partial)
     first_token = config.rank * inputs.shape[0]
     return host_partial[first_token : first_token + inputs.shape[0]].sum(dim=1).to(inputs.device, torch.bfloat16)
 
@@ -86,10 +75,6 @@ def main():
     parser.add_argument("--top-k", type=int, default=7)
     parser.add_argument("--sm-margin", type=int, default=32)
     parser.add_argument("--gate-up-clamp", type=float, default=-1.0)
-    parser.add_argument("--e5m2", action="store_true")
-    parser.add_argument(
-        "--mxfp4", action="store_true", help="MXFP4 weights with dynamically quantized MXFP8 activations"
-    )
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
@@ -101,11 +86,6 @@ def main():
     )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
-    parser.add_argument("--tile-m", type=int, default=256)
-    parser.add_argument("--tile-n", type=int, default=32)
-    parser.add_argument("--load-stages", type=int, default=8)
-    parser.add_argument("--transform-stages", type=int, default=7)
-    parser.add_argument("--tile-k", type=int, default=128)
     parser.add_argument("--cache-dir", default=None, help="local native kernel JIT cache")
     parser.add_argument(
         "--w4-profile",
@@ -124,12 +104,8 @@ def main():
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
-    if args.e5m2 and args.mxfp4:
-        parser.error("--e5m2 and --mxfp4 are mutually exclusive")
-    if args.mxfp4 and (args.hidden, args.intermediate) not in ((4096, 6656), (8192, 4096), (9216, 4096), (9216, 4608)):
-        parser.error("--mxfp4 H/I must be 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
-    if args.w4_profile is not None and not args.mxfp4:
-        parser.error("--w4-profile requires --mxfp4")
+    if (args.hidden, args.intermediate) not in ((4096, 6656), (8192, 4096), (9216, 4096), (9216, 4608)):
+        parser.error("W4A8 H/I must be 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
 
@@ -137,7 +113,7 @@ def main():
     import torch.distributed as dist
     from mscclpp import Communicator, TcpBootstrap
     from .api import MegaMoE, MegaMoEConfig, is_available
-    from .jit import KernelConfig, compile_kernel
+    from .jit import W4A8KernelConfig, compile_kernel
     from .w4a8 import resolve_w4a8_kernel_config
 
     if not is_available():
@@ -158,13 +134,9 @@ def main():
         num_experts=args.experts,
         top_k=args.top_k,
         sm_margin=args.sm_margin,
-        weight_e5m2=args.e5m2,
-        weight_mxfp4=args.mxfp4,
         gate_up_clamp=args.gate_up_clamp,
     )
-    kernel_config = KernelConfig(args.tile_n, args.load_stages, args.transform_stages, args.tile_k, args.tile_m)
-    if args.mxfp4 and kernel_config != KernelConfig():
-        parser.error("--mxfp4 uses W4A8 policies; the generic --tile/--stage flags must stay at their defaults")
+    kernel_config = W4A8KernelConfig()
     if args.w4_profile is not None:
         kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
     kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)

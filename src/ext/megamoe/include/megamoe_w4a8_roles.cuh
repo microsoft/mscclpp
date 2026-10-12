@@ -62,12 +62,12 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
   for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-    Task task = taskAt(p, i, 0, hidden, intermediate);
+    Task task = taskAt(p, i, hidden, intermediate);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
       if (lane == 0)
         waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                      fc1CompletionCount<false, true>(intermediate));
+                                      fc1CompletionCount<P>(intermediate));
       __syncwarp();
       traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
     }

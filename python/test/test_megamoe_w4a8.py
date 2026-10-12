@@ -26,7 +26,6 @@ def _config(tokens=128, world_size=4, **overrides):
         "intermediate": 4096,
         "num_experts": 16 * world_size,
         "top_k": 8,
-        "weight_mxfp4": True,
     }
     fields.update(overrides)
     return MegaMoEConfig(**fields)
@@ -83,7 +82,6 @@ def test_packaged_h4096_i6656_case_g_policy_exact_matches():
         _config(128, intermediate=4608),
         _config(128, num_experts=32),
         _config(128, top_k=7),
-        _config(128, weight_mxfp4=False),
         _config(128, gate_up_clamp=0.125),
     ],
 )

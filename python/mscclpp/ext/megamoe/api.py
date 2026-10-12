@@ -31,9 +31,7 @@ class MegaMoEConfig:
     num_experts: int
     top_k: int
     sm_margin: int = 0
-    weight_e5m2: bool = False
     gate_up_clamp: float = -1.0
-    weight_mxfp4: bool = False
 
     def __post_init__(self):
         for name in (
@@ -61,15 +59,9 @@ class MegaMoEConfig:
             raise ValueError("top_k must be in [1, min(32, num_experts)]")
         if self.world_size * self.max_tokens * self.top_k > 2**31 - 1:
             raise ValueError("routing capacity exceeds signed 32-bit indexing")
-        if not isinstance(self.weight_e5m2, bool):
-            raise ValueError("weight_e5m2 must be bool")
-        if not isinstance(self.weight_mxfp4, bool):
-            raise ValueError("weight_mxfp4 must be bool")
-        if self.weight_e5m2 and self.weight_mxfp4:
-            raise ValueError("weight_e5m2 and weight_mxfp4 are mutually exclusive")
-        if self.weight_mxfp4 and self.hidden < 4096:
+        if self.hidden < 4096:
             raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
-        if self.weight_mxfp4 and (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
+        if (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
             raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
@@ -101,9 +93,8 @@ class MegaMoE:
     """Routed SwiGLU experts with CUDA Graph-compatible MSCCL++ communication.
 
     Construction is collective, outside graph capture, on one SM100-family GPU per rank
-    in the same active NVLink fabric. By default, ``fc1`` and ``fc2`` are canonical
-    FP8 tensors [local_experts, 2*I, H] and [local_experts, H, I]. With
-    ``weight_mxfp4=True``, they are packed uint8 [local_experts, 2*I, H//2] and
+    in the same active NVLink fabric. ``fc1`` and ``fc2`` are packed uint8
+    [local_experts, 2*I, H//2] and
     [local_experts, H, I//2], with the even K element in the lower nibble. The
     first I FC1 rows are gate and the second I rows are up. Scales are canonical
     uint8 E8M0 tensors [local_experts, M, K//32]. Weights are packed into
@@ -114,8 +105,7 @@ class MegaMoE:
     Order use on different streams explicitly with CUDA events. Shared experts,
     squash, unsquash, residuals, and router-weight normalization are not included.
 
-    ``kernel`` selects a routed ``KernelConfig``, ``W4A8KernelConfig``, or
-    prepared ``CompiledKernel``.
+    ``kernel`` selects a ``W4A8KernelConfig`` or prepared ``CompiledKernel``.
     Preparing modules before collective construction is recommended; neither
     forward nor graph replay compiles or tunes. The default uses the builtin
     kernel without a compiler dependency. Local shared experts remain unchanged.
@@ -143,7 +133,7 @@ class MegaMoE:
             )
         import torch
         from mscclpp import _mscclpp
-        from .jit import CompiledKernel, KernelConfig, W4A8KernelConfig, compile_kernel
+        from .jit import CompiledKernel, W4A8KernelConfig, compile_kernel, load_cached_kernel
 
         if not torch.cuda.is_available() or torch.version.hip:
             raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100-family GPU; ROCm is unsupported")
@@ -156,31 +146,21 @@ class MegaMoE:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError("Construct MegaMoE before CUDA Graph capture")
         e, h, i = config.local_experts, config.hidden, config.intermediate
-        dtype = (
-            torch.uint8 if config.weight_mxfp4 else (torch.float8_e5m2 if config.weight_e5m2 else torch.float8_e4m3fn)
-        )
-        fc1_shape = (e, 2 * i, h // 2) if config.weight_mxfp4 else (e, 2 * i, h)
-        fc2_shape = (e, h, i // 2) if config.weight_mxfp4 else (e, h, i)
-        _tensor(fc1, "fc1", fc1_shape, dtype, self.device)
+        fc1_shape = (e, 2 * i, h // 2)
+        fc2_shape = (e, h, i // 2)
+        _tensor(fc1, "fc1", fc1_shape, torch.uint8, self.device)
         _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
-        _tensor(fc2, "fc2", fc2_shape, dtype, self.device)
+        _tensor(fc2, "fc2", fc2_shape, torch.uint8, self.device)
         _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
         if kernel is None:
-            kernel = KernelConfig()
-        if not isinstance(kernel, (KernelConfig, W4A8KernelConfig, CompiledKernel)):
-            raise TypeError("kernel must be KernelConfig, W4A8KernelConfig, CompiledKernel, or None")
-        selected = kernel if isinstance(kernel, (KernelConfig, W4A8KernelConfig)) else kernel.config
-        if config.weight_mxfp4:
-            if isinstance(selected, KernelConfig) and selected != KernelConfig():
-                raise ValueError("MXFP4/MXFP8 requires the builtin kernel or a W4A8KernelConfig")
-        elif isinstance(selected, W4A8KernelConfig):
-            raise ValueError("W4A8KernelConfig requires weight_mxfp4=True")
-        cluster_size = selected.cluster_size if isinstance(selected, W4A8KernelConfig) else 2
+            kernel = load_cached_kernel("builtin")
+        if not isinstance(kernel, (W4A8KernelConfig, CompiledKernel)):
+            raise TypeError("kernel must be W4A8KernelConfig, CompiledKernel, or None")
+        selected = kernel if isinstance(kernel, W4A8KernelConfig) else kernel.config
+        cluster_size = selected.cluster_size
         if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - cluster_size:
             raise ValueError(f"sm_margin must leave at least {cluster_size} SMs for the selected cluster")
-        if (config.world_size, config.num_experts, config.top_k) == (1, 1, 1) and selected != KernelConfig():
-            raise ValueError("JIT specialization applies to routed experts; the local shared kernel is fixed")
-        if isinstance(kernel, (KernelConfig, W4A8KernelConfig)):
+        if isinstance(kernel, W4A8KernelConfig):
             kernel = compile_kernel(kernel)
         self._kernel = kernel
         native_config = _mscclpp.CppMegaMoeConfig()
@@ -212,27 +192,21 @@ class MegaMoE:
             "tile_n": self._native.kernel_tile_n,
             "tile_k": self._native.kernel_tile_k,
             "load_stages": self._native.kernel_load_stages,
-            "transform_stages": self._native.kernel_transform_stages,
+            "num_warps": self._native.kernel_num_warps,
+            "transfer_registers": self._native.kernel_transfer_registers,
+            "load_warps": self._native.kernel_load_warps,
+            "split_pipelines": self._native.kernel_split_pipelines,
+            "epilogue_tokens": self._native.kernel_epilogue_tokens,
+            "epilogue_warps": self._native.kernel_epilogue_warps,
+            "epilogue_registers": self._native.kernel_epilogue_registers,
+            "dispatch_chunk": self._native.kernel_dispatch_chunk,
+            "dispatch_warps": self._native.kernel_dispatch_warps,
+            "dispatch_stages": self._native.kernel_dispatch_stages,
+            "fixed_token_count": self._native.kernel_fixed_token_count,
+            "expert_major_tasks": self._native.kernel_expert_major_tasks,
+            "cache_weights": self._native.kernel_cache_weights,
+            "cluster_size": self._native.kernel_cluster_size,
         }
-        if self.config.weight_mxfp4:
-            policy.update(
-                {
-                    "num_warps": self._native.kernel_num_warps,
-                    "transfer_registers": self._native.kernel_transfer_registers,
-                    "load_warps": self._native.kernel_load_warps,
-                    "split_pipelines": self._native.kernel_split_pipelines,
-                    "epilogue_tokens": self._native.kernel_epilogue_tokens,
-                    "epilogue_warps": self._native.kernel_epilogue_warps,
-                    "epilogue_registers": self._native.kernel_epilogue_registers,
-                    "dispatch_chunk": self._native.kernel_dispatch_chunk,
-                    "dispatch_warps": self._native.kernel_dispatch_warps,
-                    "dispatch_stages": self._native.kernel_dispatch_stages,
-                    "fixed_token_count": self._native.kernel_fixed_token_count,
-                    "expert_major_tasks": self._native.kernel_expert_major_tasks,
-                    "cache_weights": self._native.kernel_cache_weights,
-                    "cluster_size": self._native.kernel_cluster_size,
-                }
-            )
         return policy
 
     @property
@@ -292,35 +266,6 @@ class MegaMoE:
         stream = self._stream(stream)
         with torch.cuda.device(self.device):
             self._native.wait_until_started(stream.cuda_stream)
-
-    def forward_shared(self, inputs, *, output=None, stream=None):
-        """Enqueue an unweighted local SwiGLU expert without routing metadata.
-
-        Requires ``world_size=1``, ``num_experts=1``, and ``top_k=1``.
-        Uses the same FP32 activation arithmetic, BF16 handoff/output, clamping,
-        and stream/lifetime rules as ``forward`` with ID zero and weight one.
-        Input staging is retained unless ``inputs`` is an exact ``input_view``
-        alias. No token dispatch or final top-k reduction is needed.
-        """
-        import torch
-
-        if (self.config.world_size, self.config.num_experts, self.config.top_k) != (1, 1, 1):
-            raise ValueError("forward_shared requires world_size=1, num_experts=1, top_k=1")
-        stream = self._stream(stream)
-        if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
-            raise ValueError("inputs must be a rank-2 torch.Tensor")
-        tokens = inputs.shape[0]
-        if tokens > self.config.max_tokens:
-            raise ValueError("input token count exceeds max_tokens")
-        _tensor(inputs, "inputs", (tokens, self.config.hidden), torch.bfloat16, self.device)
-        with torch.cuda.device(self.device), torch.cuda.stream(stream):
-            if output is None:
-                output = torch.empty((tokens, self.config.hidden), dtype=torch.bfloat16, device=self.device)
-            _tensor(output, "output", (tokens, self.config.hidden), torch.bfloat16, self.device)
-            inputs.record_stream(stream)
-            output.record_stream(stream)
-            self._native.forward_shared(inputs.data_ptr(), output.data_ptr(), tokens, stream.cuda_stream)
-        return output
 
     def forward(
         self, inputs, topk_ids, topk_weights, *, output=None, stream=None, validate_routing=False, signal_start=False

@@ -66,8 +66,6 @@ void register_megamoe(nb::module_& m) {
       .def_rw("num_experts", &NativeConfig::numExperts)
       .def_rw("top_k", &NativeConfig::topK)
       .def_rw("sm_margin", &NativeConfig::smMargin)
-      .def_rw("weight_e5m2", &NativeConfig::weightE5M2)
-      .def_rw("weight_mxfp4", &NativeConfig::weightMxfp4)
       .def_rw("gate_up_clamp", &NativeConfig::gateUpClamp);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(
@@ -96,7 +94,6 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_tile_n", &MegaMoeContext::kernelTileN)
       .def_prop_ro("kernel_tile_k", &MegaMoeContext::kernelTileK)
       .def_prop_ro("kernel_load_stages", &MegaMoeContext::kernelLoadStages)
-      .def_prop_ro("kernel_transform_stages", &MegaMoeContext::kernelTransformStages)
       .def_prop_ro("kernel_num_warps", &MegaMoeContext::kernelNumWarps)
       .def_prop_ro("kernel_transfer_registers", &MegaMoeContext::kernelTransferRegisters)
       .def_prop_ro("kernel_load_warps", &MegaMoeContext::kernelLoadWarps)
@@ -110,13 +107,6 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_fixed_token_count", &MegaMoeContext::kernelFixedTokenCount)
       .def_prop_ro("kernel_expert_major_tasks", &MegaMoeContext::kernelExpertMajorTasks)
       .def_prop_ro("kernel_cache_weights", &MegaMoeContext::kernelCacheWeights)
-      .def(
-          "forward_shared",
-          [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {
-            self.forwardShared(reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output), tokens,
-                               reinterpret_cast<cudaStream_t>(stream));
-          },
-          nb::arg("input"), nb::arg("output"), nb::arg("num_tokens"), nb::arg("stream"))
       .def(
           "wait_until_started",
           [](MegaMoeContext& self, uintptr_t stream) { self.waitUntilStarted(reinterpret_cast<cudaStream_t>(stream)); },

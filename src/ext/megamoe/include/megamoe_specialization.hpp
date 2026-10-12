@@ -4,21 +4,6 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_SPECIALIZATION_HPP_
 #define MSCCLPP_EXT_MEGAMOE_SPECIALIZATION_HPP_
 
-#ifndef MSCCLPP_MEGAMOE_TILE_N
-#define MSCCLPP_MEGAMOE_TILE_N 32
-#endif
-#ifndef MSCCLPP_MEGAMOE_TILE_M
-#define MSCCLPP_MEGAMOE_TILE_M 256
-#endif
-#ifndef MSCCLPP_MEGAMOE_TILE_K
-#define MSCCLPP_MEGAMOE_TILE_K 128
-#endif
-#ifndef MSCCLPP_MEGAMOE_LOAD_STAGES
-#define MSCCLPP_MEGAMOE_LOAD_STAGES 8
-#endif
-#ifndef MSCCLPP_MEGAMOE_TRANSFORM_STAGES
-#define MSCCLPP_MEGAMOE_TRANSFORM_STAGES 7
-#endif
 #ifndef MSCCLPP_MEGAMOE_W4_TILE_N
 #define MSCCLPP_MEGAMOE_W4_TILE_N 64
 #endif
@@ -70,33 +55,17 @@
 #ifndef MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE
 #define MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE 2
 #endif
-#ifndef MSCCLPP_MEGAMOE_JIT_W4A8
-#define MSCCLPP_MEGAMOE_JIT_W4A8 0
-#endif
+
 #if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
 #define MSCCLPP_MEGAMOE_KERNEL_NAMESPACE mscclpp::megamoe::jit
 #else
 #define MSCCLPP_MEGAMOE_KERNEL_NAMESPACE mscclpp::megamoe
 #endif
-// Native builds include both precisions; W8A16 JIT modules omit W4A8 types and launch paths.
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE || MSCCLPP_MEGAMOE_JIT_W4A8
-#define MSCCLPP_MEGAMOE_COMPILE_W4A8 1
-#else
-#define MSCCLPP_MEGAMOE_COMPILE_W4A8 0
-#endif
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-// Performance-tunable tile and pipeline policy.
-constexpr int ClusterM = 2;
-constexpr int TileM = MSCCLPP_MEGAMOE_TILE_M;
-constexpr int TileN = MSCCLPP_MEGAMOE_TILE_N;
-constexpr int TileK = MSCCLPP_MEGAMOE_TILE_K;
-constexpr int LoadStages = MSCCLPP_MEGAMOE_LOAD_STAGES;
-constexpr int TransformStages = MSCCLPP_MEGAMOE_TRANSFORM_STAGES;
 constexpr int W4ClusterSize = MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE;
 constexpr int W4TileM = 128 * W4ClusterSize;
-static_assert(W4ClusterSize == 1 || W4ClusterSize == 2);
 constexpr int W4TileN = MSCCLPP_MEGAMOE_W4_TILE_N;
 constexpr int W4TileK = MSCCLPP_MEGAMOE_W4_TILE_K;
 constexpr int W4LoadStages = MSCCLPP_MEGAMOE_W4_LOAD_STAGES;
@@ -113,10 +82,9 @@ constexpr int W4DispatchStages = MSCCLPP_MEGAMOE_W4_DISPATCH_STAGES;
 constexpr bool W4FixedTokenCount = MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT != 0;
 constexpr bool W4ExpertMajorTasks = MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS != 0;
 constexpr bool W4CacheWeights = MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS != 0;
-static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
-static_assert(MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 0 || MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 1);
-static_assert(MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 0 || MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 1);
 constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
+
+static_assert(W4ClusterSize == 1 || W4ClusterSize == 2);
 static_assert(W4TileN == 32 || W4TileN == 64 || W4TileN == 128);
 static_assert(W4TileK == 128 || W4TileK == 256 || W4TileK == 512);
 static_assert(W4LoadStages >= 2 && W4LoadStages <= 10);
@@ -134,65 +102,22 @@ static_assert(W4DispatchChunk % W4TileK == 0);
 static_assert(W4DispatchWarps >= 2 && W4DispatchWarps <= 4);
 static_assert(W4DispatchStages == 1 || W4DispatchStages == 2);
 static_assert(W4EpilogueWarps + 4 + W4DispatchWarps <= W4NumWarps);
-constexpr int LocalTileM = 256;
-constexpr int LocalTileN = 128;
-constexpr int LocalTileK = 128;
-static_assert(TileM == 128 || TileM == 256, "MegaMoE routed M must be 128 or 256");
-static_assert(TileN > 0 && TileN % 32 == 0, "MegaMoE routed N must be a positive multiple of 32");
-static_assert(TileK == 32 || TileK == 64 || TileK == 128, "MegaMoE routed K must be 32, 64, or 128");
-static_assert(TileM == 256 || TileK >= 64, "MegaMoE M128 requires K64 or K128 for 128B scale transactions");
-static_assert(TileM % (ClusterM * 32) == 0, "MegaMoE per-CTA M must preserve gate/up K32 packing");
-static_assert(LoadStages > 0 && TransformStages > 0, "MegaMoE pipeline depths must be positive");
-static_assert(2 * TileN + TileK / 2 * TransformStages <= 512, "MegaMoE specialization exceeds 512 TMEM columns");
-static_assert((TileN == 32 && LoadStages == 8 && TransformStages == 7) ||
-                  (TileN == 32 && LoadStages == 6 && TransformStages == 7) ||
-                  (TileN == 64 && LoadStages == 6 && TransformStages == 6) ||
-                  (TileN == 128 && LoadStages == 4 && TransformStages == 4),
-              "Unsupported MegaMoE routed specialization");
+static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
+static_assert(MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 0 || MSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS == 1);
+static_assert(MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 0 || MSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS == 1);
 
-template <bool Local, bool Mxfp4 = false, int W4TileN_ = W4TileN, int W4TileK_ = W4TileK>
+template <int TileN_ = W4TileN, int TileK_ = W4TileK>
 struct TilePolicy {
-  static constexpr int ClusterSize = Mxfp4 ? W4ClusterSize : ClusterM;
-  static constexpr int M = Local ? LocalTileM : (Mxfp4 ? W4TileM : TileM);
-  static constexpr int N = Local ? LocalTileN : (Mxfp4 ? W4TileN_ : TileN);
-  static constexpr int K = Local ? LocalTileK : (Mxfp4 ? W4TileK_ : TileK);
-  static constexpr int TokenStride = Mxfp4 ? (N < 64 ? 64 : N) : N;
+  static constexpr int ClusterSize = W4ClusterSize;
+  static constexpr int M = W4TileM;
+  static constexpr int N = TileN_;
+  static constexpr int K = TileK_;
+  static constexpr int TokenStride = N < 64 ? 64 : N;
   static constexpr int CtaM = M / ClusterSize;
   static constexpr int Fc1M = M / 2;
   static constexpr int CtaFc1M = CtaM / 2;
 };
 
-// Performance-tunable warp assignments. The role implementations and pipeline
-// types are independent of these physical warp IDs.
-struct RoutedWarpSchedule {
-  static constexpr int NumWarps = 16;
-  static constexpr int EpilogueBegin = 0;
-  static constexpr int EpilogueEnd = 4;
-  static constexpr int MmaWarp = 4;
-  static constexpr int LoadAWarp = 5;
-  static constexpr int LoadBWarp = 6;
-  static constexpr int DispatchBegin = 8;
-  static constexpr int DispatchEnd = 12;
-  static constexpr int TransformBegin = 12;
-  static constexpr int TransformEnd = 16;
-  static constexpr bool HasDispatch = true;
-};
-
-struct LocalWarpSchedule {
-  static constexpr int NumWarps = 12;
-  static constexpr int EpilogueBegin = 0;
-  static constexpr int EpilogueEnd = 4;
-  static constexpr int MmaWarp = 4;
-  static constexpr int LoadAWarp = 5;
-  static constexpr int LoadBWarp = 6;
-  static constexpr int DispatchBegin = 0;
-  static constexpr int DispatchEnd = 0;
-  static constexpr int TransformBegin = 8;
-  static constexpr int TransformEnd = 12;
-  static constexpr bool HasDispatch = false;
-};
-
-#if MSCCLPP_MEGAMOE_COMPILE_W4A8
 template <int NumWarps_, int EpilogueWarps, int DispatchWarps>
 struct W4A8WarpScheduleT {
   static constexpr int NumWarps = NumWarps_;
@@ -203,65 +128,9 @@ struct W4A8WarpScheduleT {
   static constexpr int ActivationLoadWarp = EpilogueEnd + 2;
   static constexpr int DispatchBegin = EpilogueEnd + 4;
   static constexpr int DispatchEnd = DispatchBegin + DispatchWarps;
-  static constexpr bool HasDispatch = true;
 };
 
 using W4A8WarpSchedule = W4A8WarpScheduleT<W4NumWarps, W4EpilogueWarps, W4DispatchWarps>;
-#endif
-
-template <bool Local>
-struct WarpSchedule;
-
-template <>
-struct WarpSchedule<false> : RoutedWarpSchedule {};
-
-template <>
-struct WarpSchedule<true> : LocalWarpSchedule {};
-
-constexpr bool warpInRange(int warp, int begin, int end) { return warp >= begin && warp < end; }
-
-constexpr bool warpRangesOverlap(int firstBegin, int firstEnd, int secondBegin, int secondEnd) {
-  return firstBegin < secondEnd && secondBegin < firstEnd;
-}
-
-template <class Schedule>
-constexpr bool validWarpSchedule() {
-  constexpr bool fixedGroups =
-      Schedule::NumWarps > 0 && Schedule::NumWarps % 4 == 0 && Schedule::EpilogueBegin == 0 &&
-      Schedule::EpilogueEnd - Schedule::EpilogueBegin == 4 && Schedule::EpilogueEnd <= Schedule::NumWarps &&
-      Schedule::TransformBegin >= 0 && Schedule::TransformBegin % 4 == 0 &&
-      Schedule::TransformEnd - Schedule::TransformBegin == 4 && Schedule::TransformEnd <= Schedule::NumWarps &&
-      !warpRangesOverlap(Schedule::EpilogueBegin, Schedule::EpilogueEnd, Schedule::TransformBegin,
-                         Schedule::TransformEnd);
-  constexpr bool singletonRoles =
-      warpInRange(Schedule::MmaWarp, 0, Schedule::NumWarps) &&
-      warpInRange(Schedule::LoadAWarp, 0, Schedule::NumWarps) &&
-      warpInRange(Schedule::LoadBWarp, 0, Schedule::NumWarps) && Schedule::MmaWarp != Schedule::LoadAWarp &&
-      Schedule::MmaWarp != Schedule::LoadBWarp && Schedule::LoadAWarp != Schedule::LoadBWarp;
-  constexpr bool singletonRolesAreTransfer =
-      !warpInRange(Schedule::MmaWarp, Schedule::EpilogueBegin, Schedule::EpilogueEnd) &&
-      !warpInRange(Schedule::MmaWarp, Schedule::TransformBegin, Schedule::TransformEnd) &&
-      !warpInRange(Schedule::LoadAWarp, Schedule::EpilogueBegin, Schedule::EpilogueEnd) &&
-      !warpInRange(Schedule::LoadAWarp, Schedule::TransformBegin, Schedule::TransformEnd) &&
-      !warpInRange(Schedule::LoadBWarp, Schedule::EpilogueBegin, Schedule::EpilogueEnd) &&
-      !warpInRange(Schedule::LoadBWarp, Schedule::TransformBegin, Schedule::TransformEnd);
-  constexpr bool dispatch =
-      Schedule::HasDispatch
-          ? Schedule::DispatchBegin % 4 == 0 && Schedule::DispatchEnd - Schedule::DispatchBegin == 4 &&
-                Schedule::DispatchBegin >= 0 && Schedule::DispatchEnd <= Schedule::NumWarps &&
-                !warpRangesOverlap(Schedule::DispatchBegin, Schedule::DispatchEnd, Schedule::EpilogueBegin,
-                                   Schedule::EpilogueEnd) &&
-                !warpRangesOverlap(Schedule::DispatchBegin, Schedule::DispatchEnd, Schedule::TransformBegin,
-                                   Schedule::TransformEnd) &&
-                !warpInRange(Schedule::MmaWarp, Schedule::DispatchBegin, Schedule::DispatchEnd) &&
-                !warpInRange(Schedule::LoadAWarp, Schedule::DispatchBegin, Schedule::DispatchEnd) &&
-                !warpInRange(Schedule::LoadBWarp, Schedule::DispatchBegin, Schedule::DispatchEnd)
-          : Schedule::DispatchBegin == Schedule::DispatchEnd;
-  return fixedGroups && singletonRoles && singletonRolesAreTransfer && dispatch;
-}
-
-static_assert(validWarpSchedule<RoutedWarpSchedule>(), "Invalid routed MegaMoE warp schedule");
-static_assert(validWarpSchedule<LocalWarpSchedule>(), "Invalid local MegaMoE warp schedule");
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 

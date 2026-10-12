@@ -7,16 +7,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Internal, versioned C ABI. No C++ objects, CUDA headers, ownership transfer of
-// caller buffers, or exceptions cross the module boundary. Changing any layout
-// or its semantics requires a new ABI version and exported entrypoint.
-// Compile megamoe_w8a16.cu, megamoe_launch.cu, and megamoe_jit.cu (not runtime.cc),
-// plus megamoe_w4a8.cu for W4A8 modules, with C++20, PIC/hidden visibility,
-// -gencode=arch=compute_100f,code=sm_100f, --expt-relaxed-constexpr,
-// --expt-extended-lambda, MSCCLPP_USE_CUDA, MSCCLPP_MEGAMOE_JIT_MODULE=1,
-// MSCCLPP_MEGAMOE_JIT_W4A8=0/1, the matching policy definitions, and a
+// Internal W4A8 C ABI. No C++ objects, CUDA headers, ownership transfer of
+// caller buffers, or exceptions cross the module boundary. The contract remains V1.
+// Compile megamoe_w4a8.cu, megamoe_launch.cu, and megamoe_jit.cu with C++20,
+// PIC/hidden visibility, -gencode=arch=compute_100f,code=sm_100f,
+// --expt-relaxed-constexpr, --expt-extended-lambda, MSCCLPP_USE_CUDA,
+// MSCCLPP_MEGAMOE_JIT_MODULE=1, the matching W4 policy definitions, and a
 // quoted MSCCLPP_MEGAMOE_JIT_ID.
-// Link the module against mscclpp, cudart, and the CUDA driver.
 #define MSCCLPP_MEGAMOE_JIT_ABI_VERSION 1
 #define MSCCLPP_MEGAMOE_JIT_ENTRYPOINT "mscclpp_megamoe_jit_get_api_v1"
 #define MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT "mscclpp_megamoe_jit_fixed_token_count_v1"
@@ -34,8 +31,6 @@ typedef struct MegaMoeJitConfigV1 {
   int32_t numExperts;
   int32_t topK;
   int32_t smMargin;
-  int32_t weightE5M2;
-  int32_t weightMxfp4;
   float gateUpClamp;
 } MegaMoeJitConfigV1;
 
@@ -65,8 +60,6 @@ typedef struct MegaMoeJitLayoutV1 {
 // Status 0 is success, 1 is invalid input/configuration, 2 is a runtime error.
 // On failure, callbacks write a NUL-terminated diagnostic to the caller's error
 // buffer when its capacity is nonzero. A failed create leaves *plan == NULL.
-// Preflight checks device support and cluster occupancy without allocating GPU
-// workspace. Streams are CUDA cudaStream_t values passed as opaque pointers.
 typedef struct MegaMoeJitApiV1 {
   uint32_t abiVersion;
   uint32_t structBytes;
@@ -77,11 +70,9 @@ typedef struct MegaMoeJitApiV1 {
   int32_t tileN;
   int32_t tileK;
   int32_t loadStages;
-  int32_t transformStages;
   int32_t clusterSize;
   int32_t accumulatorStages;
   int32_t architecture;
-  int32_t weightMxfp4;
   int32_t numWarps;
   int32_t transferRegisters;
   int32_t loadWarps;
@@ -99,8 +90,8 @@ typedef struct MegaMoeJitApiV1 {
   int (*createPlan)(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases, void* workspace,
                     const MegaMoeJitWeightsV1* weights, void** plan, char* error, size_t capacity);
   void (*destroyPlan)(void* plan);
-  int (*launch)(void* plan, int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, int32_t shared,
-                char* error, size_t capacity);
+  int (*launch)(void* plan, int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
+                size_t capacity);
 } MegaMoeJitApiV1;
 
 typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
@@ -109,7 +100,6 @@ typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
 extern "C" {
 #endif
 __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_jit_get_api_v1(void);
-// Supplemental W4A8 policy metadata; the V1 function-table layout remains unchanged.
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1(void);
 __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1(void);
 #ifdef __cplusplus

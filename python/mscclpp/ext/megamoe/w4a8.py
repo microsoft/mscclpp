@@ -20,7 +20,6 @@ _MATCH_FIELDS = (
     "intermediate",
     "local_experts",
     "top_k",
-    "weight_mxfp4",
     "gate_up_clamp",
 )
 _CONFIG_FIELDS = tuple(field.name for field in fields(W4A8KernelConfig))
@@ -47,8 +46,6 @@ def _validate_match(value):
         _integer(value[name], name)
     if value["hidden"] % 128 or value["intermediate"] % 128:
         raise ValueError("W4A8 profile hidden and intermediate must be divisible by 128")
-    if value["weight_mxfp4"] is not True:
-        raise ValueError("W4A8 profile entries require weight_mxfp4=true")
     if value["gate_up_clamp"] != "negative":
         raise ValueError("W4A8 profile entries currently require an unclamped activation")
     return dict(value)
@@ -113,7 +110,6 @@ def resolve_w4a8_kernel_config(config, *, profile_path=None):
         "intermediate": config.intermediate,
         "local_experts": config.local_experts,
         "top_k": config.top_k,
-        "weight_mxfp4": config.weight_mxfp4,
         "gate_up_clamp": "negative" if config.gate_up_clamp < 0 else "nonnegative",
     }
     profile = load_w4a8_kernel_profiles(profile_path)

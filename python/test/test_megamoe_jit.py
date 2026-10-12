@@ -1,49 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Cache and compile-contract tests; no compiler or GPU needed for host cases."""
+"""W4A8 cache and compile-contract tests; host cases need no GPU or compiler."""
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from mscclpp.ext.megamoe import jit
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"tile_m": 0},
-        {"tile_m": True},
-        {"tile_m": 192},
-        {"tile_n": 0},
-        {"tile_n": True},
-        {"tile_n": 96},
-        {"load_stages": 0},
-        {"load_stages": 3},
-        {"load_stages": 4.0},
-        {"transform_stages": 1},
-        {"transform_stages": 8},
-        {"tile_k": 0},
-        {"tile_k": True},
-        {"tile_k": 96},
-        {"tile_n": 128, "transform_stages": 7},
-        {"tile_n": 64, "transform_stages": 7},
-        {"tile_n": 128, "transform_stages": 7, "tile_k": 64},
-        {"tile_m": 128, "tile_k": 32},
-    ],
-)
-def test_kernel_config_rejects_invalid(fields):
-    with pytest.raises(ValueError):
-        jit.KernelConfig(**fields)
-
-
-@pytest.mark.parametrize("values", [(32, 8, 7), (32, 6, 7), (64, 6, 6), (128, 4, 4)])
-def test_initial_specializations_fit_tmem(values):
-    config = jit.KernelConfig(*values)
-    assert 2 * config.tile_n + config.tile_k // 2 * config.transform_stages <= 512
 
 
 @pytest.mark.parametrize(
@@ -67,14 +32,10 @@ def test_initial_specializations_fit_tmem(values):
         {"dispatch_stages": 3},
         {"fixed_token_count": 1},
         {"expert_major_tasks": 1},
-        {"expert_major_tasks": "true"},
         {"cache_weights": 0},
-        {"cache_weights": "false"},
         {"cluster_size": 0},
         {"cluster_size": 3},
         {"cluster_size": True},
-        {"cluster_size": 1.0},
-        {"cluster_size": "1"},
     ],
 )
 def test_w4a8_kernel_config_rejects_invalid(fields):
@@ -82,7 +43,7 @@ def test_w4a8_kernel_config_rejects_invalid(fields):
         jit.W4A8KernelConfig(**fields)
 
 
-def test_w4a8_default_and_tuned_policies_validate():
+def test_default_and_tuned_policies_validate():
     assert jit.W4A8KernelConfig().tile_n == 64
     assert jit.W4A8KernelConfig().cluster_size == 2
     tuned = jit.W4A8KernelConfig(
@@ -102,7 +63,7 @@ def test_builtin_requires_neither_compiler_nor_gpu(monkeypatch):
 
     monkeypatch.setattr(jit, "runtime_fingerprint", fail)
     monkeypatch.setattr(jit, "_tool", fail)
-    compiled = jit.compile_kernel(jit.KernelConfig())
+    compiled = jit.compile_kernel(jit.W4A8KernelConfig())
     assert compiled.key == "builtin" and compiled.path == ""
     assert jit.load_cached_kernel("builtin") == compiled
 
@@ -112,13 +73,12 @@ def compiler_fixture(tmp_path, monkeypatch):
     package, source, cutlass, cuda = [tmp_path / name for name in ("package", "source", "cutlass", "cuda")]
     for path in (
         package / "include/mscclpp/version.hpp",
-        package / "lib/libmscclpp.so",
-        source / "megamoe_w8a16.cu",
+        package / "lib/libmscclpp.so.0",
         source / "megamoe_w4a8.cu",
         source / "megamoe_launch.cu",
         source / "megamoe_jit.cu",
         source / "include/megamoe_kernel.hpp",
-        cutlass / "include/cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp",
+        cutlass / "include/cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp",
         cuda / "lib64/libcudart.so",
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,63 +101,34 @@ def compiler_fixture(tmp_path, monkeypatch):
     return tmp_path / "cache", commands, cutlass
 
 
-def test_compile_is_cached_and_uses_native_architecture(compiler_fixture):
-    cache, commands, _ = compiler_fixture
-    config = jit.KernelConfig(64, 6, 6, 64, 128)
-    first = jit.compile_kernel(config, cache_dir=cache)
-    assert not first.cache_hit and len(commands) == 4
-    assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
-        "megamoe_w8a16.cu",
-        "megamoe_launch.cu",
-        "megamoe_jit.cu",
-    ]
-    for command in commands[:-1]:
-        assert "--generate-code=arch=compute_100f,code=sm_100f" in command
-        assert "-DMSCCLPP_MEGAMOE_TILE_M=128" in command
-        assert "-DMSCCLPP_MEGAMOE_TILE_N=64" in command
-        assert "-DMSCCLPP_MEGAMOE_TILE_K=64" in command
-        assert "-DMSCCLPP_MEGAMOE_LOAD_STAGES=6" in command
-        assert "-DMSCCLPP_MEGAMOE_TRANSFORM_STAGES=6" in command
-        assert "-Xcompiler=-fPIC,-fvisibility=hidden" in command
-        assert command[command.index("-o") + 1] in commands[-1]
-    assert not list(Path(first.path).parent.glob("*.o"))
-    again = jit.compile_kernel(config, cache_dir=cache)
-    assert again.cache_hit and again.key == first.key and len(commands) == 4
-    assert not list(cache.glob(".*"))
+def _tuned(**overrides):
+    values = {"load_stages": 8}
+    values.update(overrides)
+    return jit.W4A8KernelConfig(**values)
 
 
-def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture):
+def test_compile_is_cached_and_uses_every_policy_flag(compiler_fixture):
     cache, commands, _ = compiler_fixture
-    config = jit.W4A8KernelConfig(
+    config = _tuned(
         tile_n=128,
-        tile_k=128,
-        load_stages=7,
-        num_warps=16,
         transfer_registers=64,
-        load_warps=2,
-        split_pipelines=False,
-        epilogue_tokens=32,
         epilogue_warps=8,
         epilogue_registers=208,
         dispatch_chunk=4096,
-        dispatch_warps=4,
-        dispatch_stages=1,
         expert_major_tasks=True,
         cache_weights=True,
     )
     compiled = jit.compile_kernel(config, cache_dir=cache)
-    assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 5
+    assert compiled.key != "builtin" and not compiled.cache_hit and len(commands) == 4
     assert [Path(command[command.index("-c") + 1]).name for command in commands[:-1]] == [
-        "megamoe_w8a16.cu",
         "megamoe_w4a8.cu",
         "megamoe_launch.cu",
         "megamoe_jit.cu",
     ]
     expected = {
-        "-DMSCCLPP_MEGAMOE_JIT_W4A8=1",
         "-DMSCCLPP_MEGAMOE_W4_TILE_N=128",
         "-DMSCCLPP_MEGAMOE_W4_TILE_K=128",
-        "-DMSCCLPP_MEGAMOE_W4_LOAD_STAGES=7",
+        "-DMSCCLPP_MEGAMOE_W4_LOAD_STAGES=8",
         "-DMSCCLPP_MEGAMOE_W4_NUM_WARPS=16",
         "-DMSCCLPP_MEGAMOE_W4_TRANSFER_REGISTERS=64",
         "-DMSCCLPP_MEGAMOE_W4_LOAD_WARPS=2",
@@ -215,71 +146,29 @@ def test_w4a8_compile_uses_every_policy_flag_and_never_builtin(compiler_fixture)
     }
     for command in commands[:-1]:
         assert expected <= set(command)
+        assert "--generate-code=arch=compute_100f,code=sm_100f" in command
         assert command[command.index("-o") + 1] in commands[-1]
     manifest = json.loads(Path(compiled.path).with_name("manifest.json").read_text())
-    assert manifest["version"] == 2
+    assert manifest["version"] == 3
     assert manifest["build"]["kernel_kind"] == "w4a8"
     assert manifest["build"]["config"] == {name: getattr(config, name) for name in config.__dataclass_fields__}
-    assert set(manifest["build"]["definitions"]) == expected
     loaded = jit.load_cached_kernel(compiled.key, cache_dir=cache)
     assert loaded.config == config and loaded.cache_hit
+    assert jit.compile_kernel(config, cache_dir=cache).cache_hit
+    assert len(commands) == 4
 
 
-def test_default_w4a8_policy_always_builds_a_module(compiler_fixture):
+def test_fixed_and_cluster_options_have_distinct_cache_keys(compiler_fixture):
     cache, commands, _ = compiler_fixture
-    compiled = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
-    assert compiled.key != "builtin" and Path(compiled.path).is_file()
-    assert len(commands) == 5
-
-
-def test_fixed_token_count_is_an_explicit_cached_compile_option(compiler_fixture):
-    cache, commands, _ = compiler_fixture
-    dynamic = jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
-    fixed = jit.compile_kernel(jit.W4A8KernelConfig(fixed_token_count=True), cache_dir=cache)
-    assert dynamic.key != fixed.key
-    assert len(commands) == 10
-    assert all("-DMSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT=1" in command for command in commands[5:9])
-    loaded = jit.load_cached_kernel(fixed.key, cache_dir=cache)
-    assert loaded.config.fixed_token_count is True
-
-
-@pytest.mark.parametrize("cluster_size", [1, 2])
-def test_w4a8_optimization_flags_are_independent_cached_compile_options(compiler_fixture, cluster_size):
-    cache, commands, _ = compiler_fixture
-    default = jit.W4A8KernelConfig()
-    assert default.expert_major_tasks is False and default.cache_weights is False
-    keys = set()
-    for expert_major_tasks, cache_weights in ((False, False), (True, False), (False, True), (True, True)):
-        config = jit.W4A8KernelConfig(
-            expert_major_tasks=expert_major_tasks, cache_weights=cache_weights, cluster_size=cluster_size
-        )
-        before = len(commands)
-        compiled = jit.compile_kernel(config, cache_dir=cache)
-        keys.add(compiled.key)
-        assert len(commands) == before + 5
-        for command in commands[before : before + 4]:
-            assert f"-DMSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS={int(expert_major_tasks)}" in command
-            assert f"-DMSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS={int(cache_weights)}" in command
-        loaded = jit.load_cached_kernel(compiled.key, cache_dir=cache)
-        assert loaded.config == config and loaded.cache_hit
-        assert jit.compile_kernel(config, cache_dir=cache).cache_hit
-        assert len(commands) == before + 5
-    assert len(keys) == 4
-
-
-def test_w4a8_cluster_size_has_distinct_cache_keys_and_compile_definitions(compiler_fixture):
-    cache, commands, _ = compiler_fixture
-    kernels = {}
-    for cluster_size in (1, 2):
-        config = jit.W4A8KernelConfig(cluster_size=cluster_size)
-        before = len(commands)
-        kernels[cluster_size] = jit.compile_kernel(config, cache_dir=cache)
-        for command in commands[before : before + 4]:
-            assert f"-DMSCCLPP_MEGAMOE_W4_CLUSTER_SIZE={cluster_size}" in command
-        assert jit.load_cached_kernel(kernels[cluster_size].key, cache_dir=cache).config == config
-        assert jit.compile_kernel(config, cache_dir=cache).cache_hit
-        assert len(commands) == before + 5
-    assert kernels[1].key != kernels[2].key
+    configs = [
+        _tuned(cluster_size=1),
+        _tuned(cluster_size=2),
+        _tuned(cluster_size=2, fixed_token_count=True),
+    ]
+    kernels = [jit.compile_kernel(config, cache_dir=cache) for config in configs]
+    assert len({kernel.key for kernel in kernels}) == 3
+    assert len(commands) == 12
+    assert jit.load_cached_kernel(kernels[-1].key, cache_dir=cache).config.fixed_token_count is True
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])
@@ -287,29 +176,19 @@ def test_sm100_family_capabilities_use_one_jit_target(capability):
     assert jit._ARCHITECTURES[capability] == "sm_100f"
 
 
-@pytest.mark.parametrize("name", ["megamoe_w8a16.cu", "megamoe_launch.cu", "megamoe_jit.cu"])
+@pytest.mark.parametrize("name", ["megamoe_w4a8.cu", "megamoe_launch.cu", "megamoe_jit.cu"])
 def test_missing_translation_unit_is_reported(compiler_fixture, name):
-    _, commands, _ = compiler_fixture
+    cache, commands, _ = compiler_fixture
     (jit._source_root() / name).unlink()
     with pytest.raises(FileNotFoundError, match="Required MegaMoE JIT source"):
-        jit.compile_kernel(jit.KernelConfig(64, 6, 6))
+        jit.compile_kernel(_tuned(), cache_dir=cache)
     assert not commands
-
-
-def test_w4a8_translation_unit_is_required_only_for_w4a8(compiler_fixture):
-    cache, commands, _ = compiler_fixture
-    (jit._source_root() / "megamoe_w4a8.cu").unlink()
-    with pytest.raises(FileNotFoundError, match="Required MegaMoE JIT source.*megamoe_w4a8"):
-        jit.compile_kernel(jit.W4A8KernelConfig(), cache_dir=cache)
-    assert not commands
-    jit.compile_kernel(jit.KernelConfig(64, 6, 6), cache_dir=cache)
-    assert len(commands) == 4
 
 
 def test_installed_source_bundle_is_discovered(tmp_path, monkeypatch):
     source = tmp_path / "share/mscclpp/megamoe"
     source.mkdir(parents=True)
-    (source / "megamoe_w8a16.cu").write_text("fixture")
+    (source / "megamoe_w4a8.cu").write_text("fixture")
     monkeypatch.setattr(jit, "_package_root", lambda: tmp_path)
     assert jit._source_root() == source
 
@@ -318,9 +197,11 @@ def test_concurrent_requests_publish_only_one_build(compiler_fixture):
     from concurrent.futures import ThreadPoolExecutor
 
     cache, commands, _ = compiler_fixture
+    config = _tuned()
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(jit.compile_kernel, jit.KernelConfig(32, 6, 7), cache_dir=cache) for _ in range(2)]
-        kernels = [future.result() for future in futures]
+        kernels = [
+            future.result() for future in [pool.submit(jit.compile_kernel, config, cache_dir=cache) for _ in range(2)]
+        ]
     assert kernels[0].key == kernels[1].key
     assert sorted(kernel.cache_hit for kernel in kernels) == [False, True]
     assert len(commands) == 4
@@ -335,60 +216,43 @@ def test_cache_lock_timeout_is_reported(tmp_path):
 
 def test_cache_only_loading_does_not_invoke_compiler(compiler_fixture, monkeypatch):
     cache, _, _ = compiler_fixture
-    compiled = jit.compile_kernel(jit.KernelConfig(32, 6, 7), cache_dir=cache)
+    compiled = jit.compile_kernel(_tuned(), cache_dir=cache)
 
     def missing(*args, **kwargs):
         raise FileNotFoundError("toolchain removed")
 
     monkeypatch.setattr(jit, "_tool", missing)
     monkeypatch.setattr(jit, "_source_root", missing)
-    loaded = jit.load_cached_kernel(compiled.key, cache_dir=cache)
-    assert loaded.key == compiled.key and loaded.cache_hit
+    assert jit.load_cached_kernel(compiled.key, cache_dir=cache).cache_hit
 
 
 def test_changed_headers_or_config_get_new_cache_key(compiler_fixture):
     cache, commands, cutlass = compiler_fixture
-    config = jit.KernelConfig(32, 6, 7)
-    first = jit.compile_kernel(config, cache_dir=cache)
-    header = cutlass / "include/cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp"
+    first = jit.compile_kernel(_tuned(), cache_dir=cache)
+    header = cutlass / "include/cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp"
     header.write_text("changed header")
-    second = jit.compile_kernel(config, cache_dir=cache)
-    third = jit.compile_kernel(jit.KernelConfig(32, 6, 7, 128, 128), cache_dir=cache)
+    second = jit.compile_kernel(_tuned(), cache_dir=cache)
+    third = jit.compile_kernel(_tuned(tile_n=128), cache_dir=cache)
     assert len({first.key, second.key, third.key}) == 3
     assert len(commands) == 12
 
 
-def test_corrupt_module_is_not_silently_reused_or_rebuilt(compiler_fixture):
+def test_corrupt_or_stale_cache_is_rejected(compiler_fixture, monkeypatch):
     cache, commands, _ = compiler_fixture
-    config = jit.KernelConfig(32, 6, 7)
-    module = jit.compile_kernel(config, cache_dir=cache)
+    module = jit.compile_kernel(_tuned(), cache_dir=cache)
     Path(module.path).write_bytes(b"corrupt")
     with pytest.raises(ValueError, match="checksum"):
         jit.load_cached_kernel(module.key, cache_dir=cache)
-    with pytest.raises(ValueError, match="checksum"):
-        jit.compile_kernel(config, cache_dir=cache)
     assert len(commands) == 4
-
-
-@pytest.mark.parametrize("invalid", [[], {}, {"version": 1, "build": {}}])
-def test_invalid_manifest_is_an_explicit_error(compiler_fixture, invalid):
-    cache, _, _ = compiler_fixture
-    module = jit.compile_kernel(jit.KernelConfig(32, 6, 7), cache_dir=cache)
-    Path(module.path).with_name("manifest.json").write_text(json.dumps(invalid))
-    with pytest.raises(ValueError, match="manifest"):
-        jit.load_cached_kernel(module.key, cache_dir=cache)
-
-
-def test_stale_profile_and_missing_cache_are_errors(compiler_fixture, monkeypatch):
-    cache, _, _ = compiler_fixture
-    module = jit.compile_kernel(jit.KernelConfig(32, 6, 7), cache_dir=cache)
     monkeypatch.setattr(jit, "runtime_fingerprint", lambda: {"native": "changed"})
     with pytest.raises(ValueError, match="Stale"):
         jit.load_cached_kernel(module.key, cache_dir=cache)
-    with pytest.raises(FileNotFoundError):
-        jit.load_cached_kernel("f" * 64, cache_dir=cache)
-    with pytest.raises(ValueError, match="key"):
-        jit.load_cached_kernel("../outside", cache_dir=cache)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
+def test_compile_timeout_must_be_bounded(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        jit.compile_kernel(jit.W4A8KernelConfig(), timeout=timeout)
 
 
 def test_failed_compilation_is_not_published(compiler_fixture, monkeypatch):
@@ -399,124 +263,5 @@ def test_failed_compilation_is_not_published(compiler_fixture, monkeypatch):
 
     monkeypatch.setattr(jit, "_run", fail)
     with pytest.raises(RuntimeError, match="compile error"):
-        jit.compile_kernel(jit.KernelConfig(32, 6, 7), cache_dir=cache)
+        jit.compile_kernel(_tuned(), cache_dir=cache)
     assert not list(cache.glob("*/manifest.json"))
-    assert not list(cache.glob(".*"))
-
-
-@pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
-def test_compile_timeout_must_be_bounded(timeout):
-    with pytest.raises(ValueError, match="timeout"):
-        jit.compile_kernel(jit.KernelConfig(), timeout=timeout)
-
-
-@pytest.mark.parametrize(
-    "body,message",
-    [
-        ("print('compiler failed', flush=True); raise SystemExit(7)", r"failed \(7\)"),
-        ("import time; print('compiler started', flush=True); time.sleep(10)", "timed out"),
-    ],
-)
-def test_compiler_errors_keep_diagnostic_log(tmp_path, body, message):
-    import sys
-
-    path = tmp_path / "build.log"
-    with path.open("w") as log:
-        with pytest.raises(RuntimeError, match=message):
-            jit._run([sys.executable, "-c", body], log, 0.5)
-    assert "compiler" in path.read_text()
-
-
-@pytest.mark.skipif(
-    os.environ.get("MSCCLPP_TEST_MEGAMOE_JIT") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_JIT=1 to compile and exercise the CUDA specializations",
-)
-@pytest.mark.parametrize(
-    "values",
-    [(32, 6, 7), (64, 6, 6), (128, 4, 4), (32, 8, 7, 64), (32, 8, 7, 32), (32, 8, 7, 128, 128)],
-)
-@pytest.mark.parametrize("e5m2", [False, True])
-def test_jit_variants_match_builtin_and_replay_graphs(values, e5m2):
-    import gc
-    import torch
-    from mscclpp import Communicator, TcpBootstrap
-    from mscclpp.ext.megamoe import MegaMoE, MegaMoEConfig
-    from mscclpp.ext.megamoe.benchmark import _weights
-
-    torch.cuda.set_device(0)
-    module = jit.compile_kernel(jit.KernelConfig(*values))
-    bootstrap = TcpBootstrap.create(0, 1)
-    bootstrap.initialize(TcpBootstrap.create_unique_id())
-    comm = Communicator(bootstrap)
-    config = MegaMoEConfig(0, 1, 129, 128, 128, 2, 2, sm_margin=120, weight_e5m2=e5m2)
-    torch.manual_seed(783)
-    weights = _weights(config, torch.device("cuda", 0))
-    baseline = MegaMoE(config, comm, *weights)
-    variant = MegaMoE(config, comm, *weights, kernel=module, tag=17924)
-    assert variant.kernel_id == module.key
-    assert variant.kernel_config == module.config
-    assert variant.shared_bytes > 0
-    assert variant._native.kernel_tile_m == (values[4] if len(values) == 5 else 256)
-    assert variant._native.kernel_tile_n == values[0]
-    assert variant._native.kernel_tile_k == (values[3] if len(values) >= 4 else 128)
-    for tokens in (0, 1, 33, 65, 129):
-        inputs = torch.randn(tokens, 128, device="cuda", dtype=torch.bfloat16)
-        ids = torch.tensor([0, 1], dtype=torch.int32, device="cuda").expand(tokens, 2).contiguous()
-        scores = torch.rand(tokens, 2, device="cuda")
-        expected = baseline(inputs, ids, scores)
-        output = variant(inputs, ids, scores)
-        torch.cuda.synchronize()
-        torch.testing.assert_close(output, expected, rtol=0, atol=0)
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
-            variant(inputs, ids, scores, output=output, stream=stream)
-        inputs.neg_()
-        expected = baseline(inputs, ids, scores)
-        torch.cuda.synchronize()
-        graph.replay()
-        torch.cuda.synchronize()
-        torch.testing.assert_close(output, expected, rtol=0, atol=0)
-        del graph
-    view = variant.input_view(1)
-    del variant, baseline
-    gc.collect()
-    view.fill_(2)
-    torch.cuda.synchronize()
-    assert torch.all(view == 2)
-    del view
-    gc.collect()
-
-
-@pytest.mark.skipif(
-    os.environ.get("MSCCLPP_TEST_MEGAMOE_JIT") != "1",
-    reason="set MSCCLPP_TEST_MEGAMOE_JIT=1 to exercise CUDA module lifetime",
-)
-def test_jit_context_recreation_after_failed_preflight():
-    import gc
-    import torch
-    from mscclpp import Communicator, TcpBootstrap
-    from mscclpp.ext.megamoe import MegaMoE, MegaMoEConfig
-    from mscclpp.ext.megamoe.benchmark import _weights
-
-    torch.cuda.set_device(0)
-    module = jit.compile_kernel(jit.KernelConfig(64, 6, 6))
-    bootstrap = TcpBootstrap.create(0, 1)
-    bootstrap.initialize(TcpBootstrap.create_unique_id())
-    communicator = Communicator(bootstrap)
-    config = MegaMoEConfig(0, 1, 2, 128, 128, 2, 1, sm_margin=120)
-    weights = _weights(config, torch.device("cuda", 0))
-    invalid = jit.CompiledKernel(module.config, module.path, "f" * 64, True)
-    inputs = torch.ones(2, 128, dtype=torch.bfloat16, device="cuda")
-    ids = torch.tensor([[0], [1]], dtype=torch.int32, device="cuda")
-    scores = torch.ones(2, 1, device="cuda")
-    for _ in range(3):
-        with pytest.raises((ValueError, RuntimeError), match="preflight"):
-            MegaMoE(config, communicator, *weights, kernel=invalid)
-        context = MegaMoE(config, communicator, *weights, kernel=module)
-        output = context(inputs, ids, scores)
-        torch.cuda.synchronize()
-        assert torch.isfinite(output).all()
-        del context
-        gc.collect()

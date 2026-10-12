@@ -24,11 +24,11 @@ if(NOT MSCCLPP_MEGAMOE_CUTLASS_ROOT)
     endif()
     set(MSCCLPP_MEGAMOE_CUTLASS_ROOT "${megamoe_cutlass_SOURCE_DIR}")
 endif()
-if(NOT EXISTS "${MSCCLPP_MEGAMOE_CUTLASS_ROOT}/include/cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp")
-    message(FATAL_ERROR "MegaMoE needs CUTLASS with the SM100 mixed-input collective. Set MSCCLPP_MEGAMOE_CUTLASS_ROOT.")
+if(NOT EXISTS "${MSCCLPP_MEGAMOE_CUTLASS_ROOT}/include/cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp")
+    message(FATAL_ERROR "MegaMoE needs CUTLASS with the SM100 block-scaled collective. Set MSCCLPP_MEGAMOE_CUTLASS_ROOT.")
 endif()
 
-add_library(mscclpp_megamoe SHARED runtime.cc megamoe_w8a16.cu megamoe_w4a8.cu megamoe_launch.cu)
+add_library(mscclpp_megamoe SHARED runtime.cc megamoe_w4a8.cu megamoe_launch.cu)
 target_include_directories(mscclpp_megamoe PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -51,7 +51,7 @@ install(TARGETS mscclpp_megamoe LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(FILES LICENSE.cutlass DESTINATION ${INSTALL_PREFIX}/licenses/mscclpp_megamoe)
 
 set(MEGAMOE_JIT_INSTALL_DIR "${INSTALL_PREFIX}/share/mscclpp/megamoe")
-install(FILES megamoe_w8a16.cu megamoe_w4a8.cu megamoe_launch.cu megamoe_jit.cu LICENSE.cutlass "${PROJECT_SOURCE_DIR}/LICENSE"
+install(FILES megamoe_w4a8.cu megamoe_launch.cu megamoe_jit.cu LICENSE.cutlass "${PROJECT_SOURCE_DIR}/LICENSE"
     DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}")
 install(FILES
     include/megamoe_collective.cuh

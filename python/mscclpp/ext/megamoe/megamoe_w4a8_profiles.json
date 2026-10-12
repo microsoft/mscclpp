@@ -11,7 +11,6 @@
         "intermediate": 6656,
         "local_experts": 32,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -39,7 +38,6 @@
         "intermediate": 6656,
         "local_experts": 32,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -66,7 +64,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -93,7 +90,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -120,7 +116,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -147,7 +142,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -174,7 +168,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -201,7 +194,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -228,7 +220,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {
@@ -255,7 +246,6 @@
         "intermediate": 4096,
         "local_experts": 16,
         "top_k": 8,
-        "weight_mxfp4": true,
         "gate_up_clamp": "negative"
       },
       "config": {

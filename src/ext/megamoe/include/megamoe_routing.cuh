@@ -206,8 +206,7 @@ __device__ void planTokenBlocks(const P& p, uint64_t epoch) {
       w.starts[expert] = firstBlock * RoutingTileN;
       w.cursors[expert] = 0;
       w.counts[expert] = 0;
-      if constexpr (P::WeightMxfp4 && W4ExpertMajorTasks)
-        w.expertBlockDivisors[expert] = cutlass::FastDivmod(max(1, blocks));
+      if constexpr (W4ExpertMajorTasks) w.expertBlockDivisors[expert] = cutlass::FastDivmod(max(1, blocks));
     }
     // Warps distribute block construction for experts spanning several token blocks.
     if (__any_sync(0xffffffff, blocks > 1)) {
@@ -245,12 +244,10 @@ MSCCLPP_DEVICE_INLINE void resetReadyCounters(const P& p, int plannerCtas) {
   const auto& w = p.workspace;
   int plannerStride = plannerCtas * P::ThreadCount;
   for (int block = blockIdx.x * P::ThreadCount + threadIdx.x; block < w.control->tokenBlocks; block += plannerStride) {
-    constexpr int ReadyStride = P::WeightMxfp4 ? W4ReadyCounterStride : 1;
-    w.inputReady[size_t(block) * ReadyStride] = 0;
-    w.hiddenReady[size_t(block) * ReadyStride] = 0;
-    if constexpr (P::WeightMxfp4)
-      for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(p.config.hidden) - 1; ++chunk)
-        *w4InputChunkCounter<typename P::Collective>(w, p.config.hidden, block, chunk) = 0;
+    w.inputReady[size_t(block) * W4ReadyCounterStride] = 0;
+    w.hiddenReady[size_t(block) * W4ReadyCounterStride] = 0;
+    for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(p.config.hidden) - 1; ++chunk)
+      *w4InputChunkCounter<typename P::Collective>(w, p.config.hidden, block, chunk) = 0;
   }
 }
 

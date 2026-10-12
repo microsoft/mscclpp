@@ -19,14 +19,12 @@ struct NativeConfig {
   int worldSize = 1;
   int maxTokens = 32;
   int hidden = 4096;
-  int intermediate = 4352;
+  int intermediate = 6656;
   int numExperts = 512;
   int topK = 7;
   int smMargin = 0;
-  bool weightE5M2 = false;
   // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
   float gateUpClamp = -1.0f;
-  bool weightMxfp4 = false;
 };
 
 struct SymmetricLayout {
@@ -64,10 +62,9 @@ struct KernelResources {
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 
-// MXFP8 weights are canonical [E_local, 2I, H] / [E_local, H, I]. MXFP4
-// weights are packed uint8 [E_local, 2I, H/2] / [E_local, H, I/2], with
-// the lower nibble holding the even K element. Both use canonical row-major
-// E8M0 scales [E_local, M, K/32].
+// MXFP4 weights are packed uint8 [E_local, 2I, H/2] / [E_local, H, I/2],
+// with the lower nibble holding the even K element. Scales use canonical
+// row-major E8M0 [E_local, M, K/32].
 void packNativeWeights(const NativeConfig& config, const PackedWeights& source, const PackedWeights& destination,
                        cudaStream_t stream);
 
@@ -85,13 +82,9 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& config, void* s
                                              const PackedWeights& weights);
 int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
-void launchNativeMegaMoe(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream,
-                         uint32_t* kernelEntrySignal = nullptr);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
                       const float* scores, int numTokens, void* output, cudaStream_t stream,
                       uint32_t* kernelEntrySignal);
-void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
-                              cudaStream_t stream);
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE
 

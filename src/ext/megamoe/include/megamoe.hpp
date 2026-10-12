@@ -19,7 +19,7 @@ namespace mscclpp::megamoe {
 /// launches (including graph replays) must be ordered on a single CUDA stream.
 class MegaMoeContext {
  public:
-  /// Collectively create a context and pack canonical MXFP8 or packed MXFP4 weights.
+  /// Collectively create a context and pack canonical MXFP4 weights.
   /// @param communicator Communicator spanning one NVLink fabric.
   /// @param config Identical configuration on all ranks, except for rank.
   /// @param weights Canonical local weights and E8M0 K32 scales. MXFP4 values
@@ -55,37 +55,35 @@ class MegaMoeContext {
   size_t privateBytes() const;
   /// Return the specialization digest, or "builtin" for the builtin module.
   const std::string& kernelId() const;
-  /// Return the routed output-feature tile width (the shared expert always uses 256).
+  /// Return the routed output-feature tile width.
   int kernelTileM() const;
   /// Return the number of cooperating CTAs per cluster.
   int kernelClusterSize() const;
-  /// Return the routed token tile width (the shared expert always uses 128).
+  /// Return the routed token tile width.
   int kernelTileN() const;
-  /// Return the routed reduction tile width (the shared expert always uses 128).
+  /// Return the routed reduction tile width.
   int kernelTileK() const;
   /// Return the routed raw-weight/scale/activation load pipeline depth.
   int kernelLoadStages() const;
-  /// Return the routed transformed-weight pipeline depth.
-  int kernelTransformStages() const;
   /// Return the routed kernel warp count.
   int kernelNumWarps() const;
-  /// Return the W4A8 transfer-role register budget, or zero for W8A16.
+  /// Return the W4A8 transfer-role register budget.
   int kernelTransferRegisters() const;
-  /// Return the W4A8 loader-warp count, or zero for W8A16.
+  /// Return the W4A8 loader-warp count.
   int kernelLoadWarps() const;
   /// Return whether the W4A8 weight and activation loaders use separate pipelines.
   bool kernelSplitPipelines() const;
-  /// Return the W4A8 epilogue token chunk, or zero for W8A16.
+  /// Return the W4A8 epilogue token chunk.
   int kernelEpilogueTokens() const;
-  /// Return the W4A8 epilogue warp count, or zero for W8A16.
+  /// Return the W4A8 epilogue warp count.
   int kernelEpilogueWarps() const;
-  /// Return the W4A8 epilogue register budget, or zero for W8A16.
+  /// Return the W4A8 epilogue register budget.
   int kernelEpilogueRegisters() const;
-  /// Return the W4A8 dispatch chunk in bytes, or zero for W8A16.
+  /// Return the W4A8 dispatch chunk in bytes.
   int kernelDispatchChunk() const;
-  /// Return the W4A8 dispatch warp count, or zero for W8A16.
+  /// Return the W4A8 dispatch warp count.
   int kernelDispatchWarps() const;
-  /// Return the W4A8 dispatch pipeline depth, or zero for W8A16.
+  /// Return the W4A8 dispatch pipeline depth.
   int kernelDispatchStages() const;
   /// Return whether captured W4A8 decode assumes equal input row counts on all ranks.
   bool kernelFixedTokenCount() const;
@@ -116,11 +114,6 @@ class MegaMoeContext {
   /// before reusing the context, including before the next graph replay.
   /// @param stream Consumer stream on the context's device.
   void waitUntilStarted(cudaStream_t stream);
-
-  /// Enqueue one unweighted local expert without routing metadata or communication.
-  /// Requires worldSize=1, numExperts=1, topK=1. Inputs/outputs are BF16
-  /// [numTokens, hidden]. Shares the context's nonconcurrent workspace lifetime.
-  void forwardShared(const void* input, void* output, int numTokens, cudaStream_t stream);
 
  private:
   size_t validateForward(const void* input, void* output, int numTokens) const;

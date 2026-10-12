@@ -4,14 +4,16 @@
   "kind": "mscclpp-native-megamoe-resident-tuning",
   "selection": {
     "device_name": "NVIDIA GB200",
-    "compute_capability": [10, 0],
+    "compute_capability": [
+      10,
+      0
+    ],
     "sm_count": 152,
     "world_size": 32,
     "hidden": 9216,
     "num_experts": 512,
     "local_experts": 16,
     "top_k": 8,
-    "weight_mxfp4": true,
     "gate_up_clamp": "negative",
     "graph_batch": 10,
     "graph_timing": "steady-state"
@@ -21,7 +23,6 @@
     "tile_n": 64,
     "tile_k": 128,
     "load_stages": 9,
-    "transform_stages": 0,
     "cluster_m": 2,
     "num_warps": 16,
     "transfer_registers": 128,
@@ -42,7 +43,10 @@
     {
       "intermediate": 4096,
       "tokens": 32,
-      "winner": {"sm_margin": 4, "ctas": 148},
+      "winner": {
+        "sm_margin": 4,
+        "ctas": 148
+      },
       "measurement": {
         "resident_median_us": 175.0818,
         "bf16_e2e_median_us": 176.862401,
@@ -53,7 +57,10 @@
     {
       "intermediate": 4096,
       "tokens": 64,
-      "winner": {"sm_margin": 4, "ctas": 148},
+      "winner": {
+        "sm_margin": 4,
+        "ctas": 148
+      },
       "measurement": {
         "resident_median_us": 183.33795,
         "bf16_e2e_median_us": 185.107195,
@@ -64,7 +71,10 @@
     {
       "intermediate": 4096,
       "tokens": 128,
-      "winner": {"sm_margin": 2, "ctas": 150},
+      "winner": {
+        "sm_margin": 2,
+        "ctas": 150
+      },
       "measurement": {
         "resident_median_us": 283.7823,
         "bf16_e2e_median_us": 284.945607,
@@ -75,7 +85,10 @@
     {
       "intermediate": 4608,
       "tokens": 32,
-      "winner": {"sm_margin": 4, "ctas": 148},
+      "winner": {
+        "sm_margin": 4,
+        "ctas": 148
+      },
       "measurement": {
         "resident_median_us": 195.68665,
         "bf16_e2e_median_us": 197.495997,
@@ -86,7 +99,10 @@
     {
       "intermediate": 4608,
       "tokens": 64,
-      "winner": {"sm_margin": 6, "ctas": 146},
+      "winner": {
+        "sm_margin": 6,
+        "ctas": 146
+      },
       "measurement": {
         "resident_median_us": 201.34895,
         "bf16_e2e_median_us": 202.921605,
@@ -97,7 +113,10 @@
     {
       "intermediate": 4608,
       "tokens": 128,
-      "winner": {"sm_margin": 2, "ctas": 150},
+      "winner": {
+        "sm_margin": 2,
+        "ctas": 150
+      },
       "measurement": {
         "resident_median_us": 321.6229,
         "bf16_e2e_median_us": 323.364794,

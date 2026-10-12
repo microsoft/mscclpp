@@ -4,8 +4,12 @@
 #include <array>
 #include <stdexcept>
 
+#include "megamoe_dispatch.cuh"
+#include "megamoe_epilogue.cuh"
+#include "megamoe_mma.cuh"
 #include "megamoe_roles.cuh"
 #include "megamoe_routing.cuh"
+#include "megamoe_tasks.cuh"
 #include "megamoe_w4a8_roles.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
@@ -76,7 +80,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     Mainloop fc1(p.fc1, ClusterShape{}, cta);
     Mainloop fc2(p.fc2, ClusterShape{}, cta);
     int tokenBlocks = p.workspace.control->tokenBlocks;
-    int tasks = tokenBlocks * (fc1TaskTiles<false, true>(intermediate) + fc2TaskTiles<false, true>(hidden));
+    int tasks = tokenBlocks * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
     int localExperts = p.config.numExperts / p.config.worldSize;
     ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
                         localExperts};
@@ -102,11 +106,11 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
-        runEpilogueRole<0, Schedule>(p, tokens, output, s, accumulatePipeline, tmemStorage.accumulators, hidden,
-                                     intermediate, cluster, tasks);
+        runEpilogueRole<Schedule>(p, s, accumulatePipeline, tmemStorage.accumulators, hidden, intermediate, cluster,
+                                  tasks);
       } else {
-        runW4A8MmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden,
-                       intermediate, warp, cta, cluster, tasks);
+        runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
+                   warp, cta, cluster, tasks);
       }
     }
   } else {

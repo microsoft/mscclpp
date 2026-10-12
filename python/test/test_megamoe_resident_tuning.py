@@ -23,7 +23,6 @@ def _config(intermediate=4096, tokens=32, **overrides):
         "intermediate": intermediate,
         "num_experts": 512,
         "top_k": 8,
-        "weight_mxfp4": True,
     }
     fields.update(overrides)
     return MegaMoEConfig(**fields)
@@ -66,7 +65,6 @@ def test_packaged_resident_winners(intermediate, tokens, sm_margin, ctas):
         (_config(tokens=32, hidden=8704), {}, "hidden"),
         (_config(tokens=32, num_experts=1024), {}, "num_experts"),
         (_config(tokens=32, top_k=7), {}, "top_k"),
-        (_config(tokens=32, weight_mxfp4=False), {}, "weight_mxfp4"),
         (_config(tokens=32, gate_up_clamp=0.125), {}, "gate_up_clamp"),
         (_config(intermediate=4352, tokens=32), {}, "no exact resident tuning entry"),
     ],

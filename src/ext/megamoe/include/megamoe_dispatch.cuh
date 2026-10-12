@@ -18,75 +18,6 @@ MSCCLPP_DEVICE_INLINE float loadRouteWeight(const P& p, const Route& route) {
   return mscclpp::bit_cast<float>(bits);
 }
 
-template <bool E5M2>
-MSCCLPP_DEVICE_INLINE void dispatchTokens(const Parameters<E5M2>& p, SharedStorage<E5M2>& s, int localWarp) {
-#if MSCCLPP_BULK_AVAILABLE
-  const auto& w = p.workspace;
-  if (threadIdx.x % 32 == 0) {
-    auto& barriers = s.dispatch.barriers[localWarp];
-    barriers[0].relaxedInit();
-    barriers[1].relaxedInit();
-    bulkFence();
-    uint32_t phases[2] = {0, 0};
-    int bytes = p.config.hidden * sizeof(__bfloat16);
-    int chunks = 1 + (bytes - 1) / DispatchChunkBytes;
-    for (int row = blockIdx.x * DispatchWarpCount + localWarp; row < w.control->tokenBlocks * TileN;
-         row += gridDim.x * DispatchWarpCount) {
-      if (row % TileN >= w.blocks[row / TileN].rows) continue;
-      Route route = w.routes[row];
-      if (route.rank < 0) continue;
-      // prepareRoutes consumed this peer's current-epoch route packet, which is
-      // published by a kernel launched after the peer's same-stream input staging.
-      auto src = reinterpret_cast<const uint8_t*>(peerAt<__bfloat16>(p, route.rank, p.symmetric.input) +
-                                                  size_t(route.token) * p.config.hidden);
-      auto dst = reinterpret_cast<uint8_t*>(w.input + size_t(row) * p.config.hidden);
-      auto load = [&](int chunk) {
-        int stage = chunk % 2;
-        int size = min(int(DispatchChunkBytes), bytes - chunk * DispatchChunkBytes);
-        barriers[stage].arriveAndExpect(size);
-        bulkLoad(s.dispatch.tiles[localWarp][stage], src + chunk * DispatchChunkBytes, size, barriers[stage]);
-      };
-      load(0);
-      if (chunks > 1) load(1);
-      float routeWeight = loadRouteWeight(p, route);
-      for (int chunk = 0; chunk < chunks; ++chunk) {
-        int stage = chunk % 2;
-        int size = min(int(DispatchChunkBytes), bytes - chunk * DispatchChunkBytes);
-        barriers[stage].wait(phases[stage], SpinLimit);
-        // No generic shared-memory access between these two async-proxy copies.
-        bulkStore(dst + chunk * DispatchChunkBytes, s.dispatch.tiles[localWarp][stage], size);
-        bulkStoreCommit();
-        if (chunk + 2 < chunks) {
-          bulkStoreWaitSource();
-          load(chunk + 2);
-        }
-      }
-      bulkStoreWait();
-      w.routes[row].weight = routeWeight;
-      auto* counter = w.inputReady + row / TileN;
-      asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(uint32_t(1)) : "memory");
-    }
-    barriers[0].invalidate();
-    barriers[1].invalidate();
-  }
-#endif
-}
-
-template <bool Local, class Schedule, class P, class Storage>
-__device__ __forceinline__ void runDispatchRole(const P& p, Storage& s, int warp) {
-  static_assert(Schedule::HasDispatch == !Local);
-  if constexpr (Schedule::HasDispatch) {
-    static_assert(Schedule::DispatchEnd - Schedule::DispatchBegin == DispatchWarpCount);
-    if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
-      traceKernel(KernelTracePhase::Dispatch, true);
-      dispatchTokens(p, s, warp - Schedule::DispatchBegin);
-      traceKernel(KernelTracePhase::Dispatch, false);
-    }
-  }
-}
-
-#if MSCCLPP_MEGAMOE_COMPILE_W4A8
-
 template <class Types, class Storage>
 __device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp, int* counter, bool hasRow,
                                                  uint32_t phase) {
@@ -244,8 +175,6 @@ __device__ __forceinline__ void runW4A8DispatchRole(const P& p, Storage& s, int 
     traceKernel(KernelTracePhase::Dispatch, false);
   }
 }
-
-#endif  // MSCCLPP_MEGAMOE_COMPILE_W4A8
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
