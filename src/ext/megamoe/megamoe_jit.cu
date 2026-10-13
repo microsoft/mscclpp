@@ -110,13 +110,18 @@ int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t*
 
 void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
 
-int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
-              size_t capacity) noexcept {
+int jitLaunchDirect(void* plan, const void* input, const int32_t* ids, const float* scores, int32_t tokens,
+                    void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) noexcept {
   return jitCall(error, capacity, [&] {
     if (!plan) throw std::invalid_argument("Invalid MegaMoE JIT launch");
-    jit::launchNativeW4A8(*static_cast<JitPlan*>(plan), nullptr, nullptr, nullptr, tokens, output,
+    jit::launchNativeW4A8(*static_cast<JitPlan*>(plan), input, ids, scores, tokens, output,
                           reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
   });
+}
+
+int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
+              size_t capacity) noexcept {
+  return jitLaunchDirect(plan, nullptr, nullptr, nullptr, tokens, output, stream, kernelEntrySignal, error, capacity);
 }
 
 const MegaMoeJitApiV1 JitApi = [] {
@@ -166,4 +171,11 @@ extern "C" __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_o
   return (mscclpp::megamoe::jit::detail::W4ExpertMajorTasks ? MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS : 0u) |
          (mscclpp::megamoe::jit::detail::W4CacheWeights ? MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS : 0u) |
          (mscclpp::megamoe::jit::detail::W4AdaptiveCacheWeights ? MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS : 0u);
+}
+
+extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch_direct_v1(
+    void* plan, const void* input, const int32_t* topkIds, const float* topkWeights, int32_t numTokens, void* output,
+    void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) {
+  return jitLaunchDirect(plan, input, topkIds, topkWeights, numTokens, output, stream, kernelEntrySignal, error,
+                         capacity);
 }

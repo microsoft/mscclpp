@@ -564,6 +564,12 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
             assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,false>" in kernels[0], kernels
+            copies = [
+                event.name
+                for event in profiler.events()
+                if event.device_type == torch.autograd.DeviceType.CUDA and "memcpy" in event.name.lower()
+            ]
+            assert not copies, f"caller inputs must be staged inside the launch: {copies}"
             if kernel is not None:
                 assert context.kernel_config == kernel.config
 

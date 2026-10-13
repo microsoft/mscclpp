@@ -106,6 +106,7 @@ bool validW4Metadata(const MegaMoeJitApiV1& api) {
 struct JitModule {
   void* handle = nullptr;
   const MegaMoeJitApiV1* api = nullptr;
+  MegaMoeJitLaunchDirectV1 launchDirect = nullptr;
   bool fixedTokenCount = false;
   uint32_t optimizationFlags = 0;
 
@@ -157,6 +158,12 @@ struct JitModule {
     if ((optimizationFlags & MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS) &&
         (optimizationFlags & MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS))
       throw std::invalid_argument("MegaMoE W4A8 static and adaptive weight caching are mutually exclusive");
+    (void)dlerror();
+    launchDirect =
+        reinterpret_cast<MegaMoeJitLaunchDirectV1>(dlsym(handle, MSCCLPP_MEGAMOE_JIT_LAUNCH_DIRECT_ENTRYPOINT));
+    const char* launchError = dlerror();
+    if (launchError || !launchDirect)
+      throw std::invalid_argument("MegaMoE W4A8 JIT module is missing the direct launch entrypoint; recompile it");
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
     this->api = api;
@@ -588,9 +595,8 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
   // Cross-input aliases require the original ordered copies rather than concurrent staging.
   const bool fusedStage =
-      !impl_->jitPlan && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
-      !overlaps(x, inputBytes, topkWeights(), routingBytes) && !overlaps(ids, routingBytes, input(), inputBytes) &&
-      !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
+      !overlaps(x, inputBytes, topkIds(), routingBytes) && !overlaps(x, inputBytes, topkWeights(), routingBytes) &&
+      !overlaps(ids, routingBytes, input(), inputBytes) && !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
       !overlaps(scores, routingBytes, input(), inputBytes) && !overlaps(scores, routingBytes, topkIds(), routingBytes);
   if (fusedStage) {
     validateStage(input(), x, inputBytes);
@@ -609,14 +615,17 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     MSCCLPP_CUDATHROW(cudaEventRecord(impl_->startResetEvent, stream));
   }
   auto* signal = signalStart ? impl_->kernelEntrySignal.get() : nullptr;
+  // Fused staging hands the caller arrays to the kernels; ordered copies leave them on the staged workspace.
+  const void* launchInput = fusedStage ? x : nullptr;
+  const int32_t* launchIds = fusedStage ? ids : nullptr;
+  const float* launchScores = fusedStage ? scores : nullptr;
   if (impl_->jitPlan) {
     char error[ErrorCapacity]{};
-    checkJit(impl_->module->api->launch(impl_->jitPlan->handle, tokens, output, stream, signal, error, sizeof(error)),
+    checkJit(impl_->module->launchDirect(impl_->jitPlan->handle, launchInput, launchIds, launchScores, tokens, output,
+                                         stream, signal, error, sizeof(error)),
              error, "launch");
-  } else if (fusedStage) {
-    launchNativeW4A8(impl_->plan, x, ids, scores, tokens, output, stream, signal);
   } else {
-    launchNativeW4A8(impl_->plan, nullptr, nullptr, nullptr, tokens, output, stream, signal);
+    launchNativeW4A8(impl_->plan, launchInput, launchIds, launchScores, tokens, output, stream, signal);
   }
   impl_->startRecorded = signalStart;
 }
