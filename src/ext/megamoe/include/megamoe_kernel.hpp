@@ -41,7 +41,7 @@ struct SymmetricLayout {
   size_t quantizedInputScale = 0;
   size_t quantizedInputReady = 0;
   size_t routedInputReady = 0;
-  size_t routingHeader = 0;
+  size_t routingHeaders = 0;
   size_t routingPackets = 0;
 };
 

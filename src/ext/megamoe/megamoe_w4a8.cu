@@ -24,6 +24,11 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 #endif
 #endif
 
+template <class P>
+struct FinalOutputParameterView : P {
+  __bfloat16* finalOutput;
+};
+
 template <int Hidden, int Intermediate, bool FixedTokenCount = false>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
@@ -40,7 +45,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
-  auto p = w4a8ParameterView(parameters, configuration);
+  auto view = w4a8ParameterView(parameters, configuration);
+  auto p = FinalOutputParameterView<decltype(view)>{view, output};
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
   int warp = threadIdx.x / warpSize;
@@ -53,7 +59,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   traceKernel(KernelTracePhase::Routing, true);
-  // Sources push routes into every rank's local inbox; count and fill scan that local inbox.
+  // Local routes read source inputs directly; remote routes consume current-epoch packets.
   prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
   traceKernel(KernelTracePhase::Routing, false);
   cute::conditional_t<ClusterSize == 1, cute::TMEM::Allocator1Sm, cute::TMEM::Allocator2Sm> allocator;
@@ -131,8 +137,11 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
+  // EP1/topK=1 FC2 has already drained its direct TMA stores. No peer can still contribute and there is no
+  // partial-output consumer, so kernel completion provides the only remaining ordering.
+  if (p.config.worldSize == 1 && p.config.topK == 1) return;
   traceKernel(KernelTracePhase::OutputJoin, true);
-  p.workspace.control->gridBarrier.sync(gridDim.x, SpinLimit);
+  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
   if (threadIdx.x < p.config.worldSize) {
     // Only CTA0 consumes the peer notification; followers observe the same epoch.

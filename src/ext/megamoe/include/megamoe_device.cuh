@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <mscclpp/bulk_device.hpp>
-#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel_device.hpp>
@@ -43,19 +42,19 @@ constexpr bool validW4RegisterBudget(int epilogueWarps, int epilogueRegisters, i
 static_assert(validW4RegisterBudget(W4EpilogueWarps, W4EpilogueRegisters, W4TransferRegisters));
 
 struct Control {
-  DeviceSyncer gridBarrier;
   uint64_t epoch;
-  uint64_t routingInitEpoch;
-  uint64_t routingOffsetsEpoch;
-  uint64_t routingReadyEpoch;
   int tokenBlocks;
-  int routingCountCtas;
-  int routingFillCtas;
-  int routingTokens;
-  int routingPlannerCtas;
+  uint32_t residentGridSyncState;
 };
 
-struct Route {
+// Routing exchanges a rank's routes in chunks of one route per kernel thread; even an empty batch has one chunk.
+constexpr int RouteChunk = W4Threads;
+
+__host__ __device__ constexpr int routeChunks(int routes) {
+  return routes > RouteChunk ? routes / RouteChunk + (routes % RouteChunk != 0) : 1;
+}
+
+struct alignas(16) Route {
   int rank;
   int token;
   int slot;
@@ -82,8 +81,6 @@ struct Workspace {
   int* inputReady;
   int* hiddenReady;
   int* inputChunkReady;
-  int* peerTokenCounts;
-  int* peerTokenOffsets;
   Route* routes;
   TokenBlock* blocks;
   cutlass::FastDivmod* expertBlockDivisors;
@@ -171,9 +168,22 @@ struct alignas(128) EpilogueStorage {
   };
 };
 
+// Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
+// RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached
+// routes stay aligned.
+constexpr int RouteSegmentBatch = 32;
+
+__host__ __device__ constexpr size_t routingScratchHeaderInts(int localExperts, int worldSize) {
+  return (2 * size_t(localExperts) + 3 * size_t(worldSize) + 2 * RouteSegmentBatch + 3 + 1) / 2 * 2;
+}
+
 template <class Types>
 struct alignas(1024) W4A8SharedStorageT {
-  typename Types::Mainloop::TensorStorage tensors;
+  // Routing finishes before GEMM uses these buffers; pipeline state and dispatch flags remain separate.
+  union {
+    typename Types::Mainloop::TensorStorage tensors;
+    int routing[sizeof(typename Types::Mainloop::TensorStorage) / sizeof(int)];
+  };
   typename Types::Load::SharedStorage mainloop;
   std::conditional_t<Types::SplitPipelines, typename Types::Load::SharedStorage, EmptyStorage> activationLoad;
   typename Types::Accumulate::SharedStorage accumulated;
@@ -193,6 +203,20 @@ __host__ __device__ T* at(void* base, size_t offset) {
 template <class T, auto Scope>
 __device__ void waitAtLeast(T* address, T value) {
   POLL_MAYBE_JAILBREAK((atomicLoad<T, Scope>(address, memoryOrderAcquire) < value), SpinLimit);
+}
+
+// Sense-reversing barrier for a complete resident 1D grid. Every CTA must call each round, CTA0 must participate,
+// and the zero-initialized state cannot be shared by concurrent grids.
+MSCCLPP_DEVICE_INLINE void syncResidentGrid(uint32_t* state, int ctas) {
+  constexpr uint32_t Phase = 1u << 31;
+  __syncthreads();
+  if (ctas == 1) return;
+  if (threadIdx.x == 0) {
+    uint32_t increment = blockIdx.x == 0 ? Phase - uint32_t(ctas - 1) : 1u;
+    uint32_t phase = atomicFetchAdd<uint32_t, scopeDevice>(state, increment, memoryOrderRelease) & Phase;
+    POLL_MAYBE_JAILBREAK((atomicLoad<uint32_t, scopeDevice>(state, memoryOrderAcquire) & Phase) == phase, SpinLimit);
+  }
+  __syncthreads();
 }
 
 template <class T, class P>

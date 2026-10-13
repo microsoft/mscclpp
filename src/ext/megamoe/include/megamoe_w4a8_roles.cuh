@@ -48,7 +48,7 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
 template <class KernelParams>
 MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int expert) {
   if constexpr (W4AdaptiveCacheWeights) {
-    // After routingReadyEpoch, each cursor is the expert's total routed row count for this launch.
+    // After prepareRoutes, each cursor is the expert's total routed row count for this launch.
     return params.workspace.cursors[expert] > KernelParams::Tiles::N;
   }
   return W4CacheWeights;

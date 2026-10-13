@@ -178,8 +178,17 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
   int token = warp + lane * EpilogueWarps;
   if (lane < WarpTokens && token < validRows) {
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
-    auto output = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
-    size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+    __bfloat16* output;
+    size_t offset;
+    if (params.config.worldSize == 1 && params.config.topK == 1) {
+      // Delivered also finalizes a unique local contribution by TMA store; BF16 TMA reduction is only needed
+      // when another contribution targets the same token.
+      output = params.finalOutput;
+      offset = size_t(route.token) * hidden + feature;
+    } else {
+      output = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
+      offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+    }
     bulkStore(output + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
     bulkStoreCommit();
     bulkStoreWaitSource();

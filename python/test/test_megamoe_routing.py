@@ -373,6 +373,126 @@ def test_native_routing_local_expert_boundary(routing_runtime, local_experts):
         _check_output(runtime, buffers, sample, expected)
 
 
+@_JIT_ONLY
+@pytest.mark.parametrize("cluster_size,num_warps,ctas", [(2, 16, 2), (1, 12, 1), (1, 16, 3)])
+@pytest.mark.parametrize("fixed_token_count", [False, True])
+def test_native_routing_reservation_boundary_graph_reuse(
+    routing_runtime, fixed_token_count, cluster_size, num_warps, ctas
+):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    policy = W4A8KernelConfig(
+        cluster_size=cluster_size,
+        num_warps=num_warps,
+        load_stages=5 if cluster_size == 1 else 9,
+        fixed_token_count=fixed_token_count,
+        expert_major_tasks=True,
+        adaptive_cache_weights=True,
+    )
+    # Sizes around four routes per resident thread make warps scan several 32-route groups.
+    routing_slots = ctas * policy.num_warps * 32 * 4
+    boundary = routing_slots // (runtime.world * 2)
+    config = runtime.config(boundary + 1, local_experts=2, top_k=2)
+    sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
+    config = replace(config, sm_margin=sms - ctas)
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        context = case.create(config, weights, module)
+
+        def check_policy():
+            assert context.cta_count == ctas
+            assert context.effective_kernel_config["adaptive_cache_weights"] is True
+
+        runtime.collective(check_policy)
+        storage = _buffers(runtime, context)
+        graphs = {}
+        for tokens in (0, boundary - 1, boundary, boundary + 1):
+            sample = _sample(config, tokens, "masked")
+            with torch.cuda.stream(case.stream):
+                _stage(storage, sample)
+                _launch(context, storage, tokens, case.stream)
+            runtime.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            case.graphs.append(graph)
+            with torch.cuda.graph(graph, stream=case.stream):
+                _launch(context, storage, tokens, case.stream)
+            graphs[tokens] = graph
+        for tokens in (boundary + 1, 0, boundary, boundary - 1, 0, boundary + 1):
+            for pattern in ("mixed", "masked", "hot_last"):
+                valid_tokens = policy.tile_n + 2 if pattern == "hot_last" else 3
+                sample = _sample(config, tokens, pattern, valid_tokens=valid_tokens)
+                if tokens and pattern != "masked":
+                    sample[0][-1].fill_(0.125)
+                    sample[1][-1].fill_(config.num_experts - 1)
+                    sample[2][-1].fill_(0.75)
+                expected = _routing_reference(config, sample, weights)
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    for _ in range(3):
+                        graphs[tokens].replay()
+                case.stream.synchronize()
+                _check_output(runtime, storage, sample, expected)
+
+
+@_JIT_ONLY
+@pytest.mark.parametrize("fixed_token_count", [False, True])
+def test_native_routing_scratch_overflow_graph_reuse(routing_runtime, fixed_token_count):
+    from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
+
+    runtime, torch = routing_runtime, routing_runtime.torch
+    # The smallest tensor storage caches about 5.3K local routes per CTA. Balanced 1024-token samples (and, on
+    # multiple ranks, 512-token hot samples) overflow one CTA, which then rescans its routes; eight CTAs keep every
+    # sample cached.
+    policy = W4A8KernelConfig(cluster_size=1, tile_n=32, load_stages=2, fixed_token_count=fixed_token_count)
+    config = runtime.config(1024, local_experts=8, top_k=8)
+    sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
+    configs = [replace(config, sm_margin=sms - 1), config]
+    module = runtime.collective(lambda: compile_kernel(policy))
+    weights = _host_weights(config)
+    with _native_case(runtime) as case:
+        contexts = [case.create(config, weights, module) for config in configs]
+
+        def check_ctas():
+            assert [context.cta_count for context in contexts] == [1, 8]
+
+        runtime.collective(check_ctas)
+        buffers = [_buffers(runtime, context) for context in contexts]
+        graphs = {}
+        for tokens in (512, 1024):
+            sample = _sample(config, tokens, "masked")
+            for index, (context, storage) in enumerate(zip(contexts, buffers)):
+                with torch.cuda.stream(case.stream):
+                    _stage(storage, sample)
+                    _launch(context, storage, tokens, case.stream)
+                runtime.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                case.graphs.append(graph)
+                with torch.cuda.graph(graph, stream=case.stream):
+                    _launch(context, storage, tokens, case.stream)
+                graphs[index, tokens] = graph
+        references = {}
+        for tokens, patterns in ((1024, ("balanced", "mixed")), (512, ("hot_first", "random")), (1024, ("balanced",))):
+            for pattern in patterns:
+                sample = _sample(config, tokens, pattern)
+                if (tokens, pattern) not in references:
+                    references[tokens, pattern] = _routing_reference(config, sample, weights)
+                outputs = []
+                for index, storage in enumerate(buffers):
+                    with torch.cuda.stream(case.stream):
+                        _stage(storage, sample)
+                        for _ in range(2):
+                            graphs[index, tokens].replay()
+                    case.stream.synchronize()
+                    outputs.append(_check_output(runtime, storage, sample, references[tokens, pattern]))
+                runtime.collective(
+                    lambda: torch.testing.assert_close(
+                        outputs[0].view(torch.int16), outputs[1].view(torch.int16), rtol=0, atol=0
+                    )
+                )
+
+
 @pytest.mark.parametrize("capacity,direct", [(33, False), (129, True), (512, True)])
 @pytest.mark.parametrize("top_k", [1, 2])
 def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, direct, top_k):

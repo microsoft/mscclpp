@@ -11,10 +11,17 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <class P>
 MSCCLPP_DEVICE_INLINE float loadRouteWeight(const P& p, const Route& route) {
-  auto* address =
-      peerAt<float>(p, route.rank, p.symmetric.topkWeights) + size_t(route.token) * p.config.topK + route.slot;
+  size_t index = size_t(route.token) * p.config.topK + route.slot;
   uint32_t bits;
-  asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(bits) : "l"(address) : "memory");
+  if (route.rank == p.config.rank) {
+    auto* address = at<float>(p.local, p.symmetric.topkWeights) + index;
+    asm volatile("ld.volatile.global.u32 %0, [%1];" : "=r"(bits) : "l"(address) : "memory");
+  } else {
+    // Each remote score has its own epoch, so it does not rely on the ID packet to publish side data.
+    auto* packets = peerAt<mscclpp::LL8Packet>(p, route.rank, p.symmetric.routingPackets);
+    size_t packetIndex = size_t(route.rank) * p.config.maxTokens * p.config.topK + index;
+    bits = packets[packetIndex].read(uint32_t(p.workspace.control->epoch), SpinLimit);
+  }
   return mscclpp::bit_cast<float>(bits);
 }
 
@@ -114,8 +121,8 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     Route route{};
     if (hasRow) route = w.routes[row];
     hasRow = hasRow && route.rank >= 0;
-    // prepareRoutes consumed this peer's current-epoch route packet, which is
-    // published by a kernel launched after the peer's same-stream quantization.
+    // Local input quantization precedes this kernel; remote inputs are ordered by
+    // the source's current-epoch route packets consumed in prepareRoutes.
     auto* source =
         hasRow ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInput) + size_t(route.token) * hidden : nullptr;
     auto* sourceScale = hasRow ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +

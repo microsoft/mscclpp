@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
@@ -55,8 +56,6 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   w.cursors = at<int>(base, appendRegion(bytes, experts * sizeof(int)));
   w.inputReady = at<int>(base, appendRegion(bytes, rows / W4TileN * W4ReadyCounterStride * sizeof(int)));
   w.hiddenReady = at<int>(base, appendRegion(bytes, rows / W4TileN * W4ReadyCounterStride * sizeof(int)));
-  w.peerTokenCounts = at<int>(base, appendRegion(bytes, size_t(c.worldSize) * sizeof(int)));
-  w.peerTokenOffsets = at<int>(base, appendRegion(bytes, size_t(c.worldSize + 1) * sizeof(int)));
   if (inputChunks > 1)
     w.inputChunkReady =
         at<int>(base, appendRegion(bytes, rows / W4TileN * (inputChunks - 1) * W4ReadyCounterStride * sizeof(int)));
@@ -228,16 +227,19 @@ W4A8Parameters makeParameters(const NativeConfig& c, void* symmetric, const uint
 }
 
 cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, cudaStream_t stream,
-                                    cudaLaunchAttribute& attribute, int clusterSize) {
-  attribute.id = cudaLaunchAttributeClusterDimension;
-  attribute.val.clusterDim = {static_cast<unsigned int>(clusterSize), 1, 1};
+                                    std::array<cudaLaunchAttribute, 2>& attributes, int clusterSize) {
+  attributes[0].id = cudaLaunchAttributeClusterDimension;
+  attributes[0].val.clusterDim = {static_cast<unsigned int>(clusterSize), 1, 1};
+  // Routing and the output join synchronize the complete resident grid.
+  attributes[1].id = cudaLaunchAttributeCooperative;
+  attributes[1].val.cooperative = 1;
   cudaLaunchConfig_t launch{};
   launch.gridDim = dim3(ctas);
   launch.blockDim = dim3(threads);
   launch.dynamicSmemBytes = sharedBytes;
   launch.stream = stream;
-  launch.attrs = &attribute;
-  launch.numAttrs = 1;
+  launch.attrs = attributes.data();
+  launch.numAttrs = attributes.size();
   return launch;
 }
 
@@ -265,6 +267,9 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE W4A8 supports routed experts only");
   if (size_t(c.worldSize) * c.maxTokens * c.topK > size_t(std::numeric_limits<int>::max()))
     throw std::invalid_argument("MegaMoE routing capacity exceeds 32-bit indexing");
+  if (detail::routingScratchHeaderInts(c.numExperts / c.worldSize, c.worldSize) >
+      sizeof(detail::W4A8SharedStorage::routing) / sizeof(int))
+    throw std::invalid_argument("MegaMoE W4A8 local experts exceed the specialization's routing scratch");
   (void)detail::w4a8KernelEntry(c);
 }
 
@@ -280,7 +285,8 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   layout.peerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.expectedPeerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.tokenCount = detail::appendRegion(layout.bytes, sizeof(int));
-  layout.routingHeader = detail::appendRegion(layout.bytes, sizeof(mscclpp::LLPacket));
+  layout.routingHeaders = detail::appendRegion(
+      layout.bytes, size_t(c.worldSize) * detail::routeChunks(c.maxTokens * c.topK) * sizeof(mscclpp::LLPacket));
   layout.routingPackets =
       detail::appendRegion(layout.bytes, size_t(c.worldSize) * c.maxTokens * c.topK * sizeof(mscclpp::LL8Packet));
   layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
@@ -337,9 +343,9 @@ KernelResources preflightKernel(const NativeConfig& c) {
       throw std::invalid_argument("MegaMoE W4A8 specialization exceeds the device's shared memory limit");
     MSCCLPP_CUDATHROW(
         cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
-    cudaLaunchAttribute attribute{};
+    std::array<cudaLaunchAttribute, 2> launchAttributes{};
     auto launch = detail::makeLaunchConfig(resources.ctas, detail::W4A8Parameters::ThreadCount, resources.sharedBytes,
-                                           nullptr, attribute, detail::W4ClusterSize);
+                                           nullptr, launchAttributes, detail::W4ClusterSize);
     int clusters = 0;
     MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
     resources.ctas = std::min(resources.ctas, clusters * detail::W4ClusterSize);
@@ -384,9 +390,9 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(params, tokens, static_cast<const __bfloat16*>(input));
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
-  cudaLaunchAttribute attribute{};
+  std::array<cudaLaunchAttribute, 2> launchAttributes{};
   auto launch = detail::makeLaunchConfig(plan->ctas, detail::W4A8Parameters::ThreadCount, plan->sharedBytes, stream,
-                                         attribute, detail::W4ClusterSize);
+                                         launchAttributes, detail::W4ClusterSize);
   MSCCLPP_CUDATHROW(
       cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive),
                          params, tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));

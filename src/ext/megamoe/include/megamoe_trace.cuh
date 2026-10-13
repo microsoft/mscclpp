@@ -121,7 +121,7 @@ __device__ __forceinline__ uint64_t traceKernelClock() {
 }
 
 __device__ __forceinline__ void traceKernelTotal(KernelTracePhase phase, uint64_t nanoseconds, int count) {
-#if MSCCLPP_MEGAMOE_TRACE == 1
+#if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
   if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
       kernelTraceEnabled) {
     int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
@@ -133,7 +133,7 @@ __device__ __forceinline__ void traceKernelTotal(KernelTracePhase phase, uint64_
 }
 
 __device__ __forceinline__ void traceKernelCount(KernelTracePhase phase, uint32_t ready, int attempts) {
-#if MSCCLPP_MEGAMOE_TRACE == 1
+#if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
   if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
       kernelTraceEnabled) {
     int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
