@@ -61,6 +61,7 @@ struct DispatchHandle::Impl {
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.dispatchDataType),
+        quantScale_(request.quantScale),
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
@@ -77,6 +78,7 @@ struct DispatchHandle::Impl {
   int numTokens_;
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
+  float quantScale_ = 1.0f;
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
   std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };

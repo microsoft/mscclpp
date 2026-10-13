@@ -87,7 +87,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputTopkIdxPtr,
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
              int maxTokensPerRank, int invalidTokenExpertId, DispatchDataType dataType, int numBlocks,
-             uintptr_t streamPtr) {
+             uintptr_t streamPtr, float quantScale) {
             return self.dispatch(DispatchRequest{LatencyDispatchRequest{
                 .output = pointer(outputPtr),
                 .outputScales = pointer(outputScalesPtr),
@@ -105,13 +105,15 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .dispatchDataType = dataType,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
+                .quantScale = quantScale,
             }});
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
           nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"),
-          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::keep_alive<0, 1>())
+          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::arg("quant_scale") = 1.0f,
+          nb::keep_alive<0, 1>())
       .def(
           "dispatch_throughput",
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t inputScalesPtr, uintptr_t topkIdxPtr,

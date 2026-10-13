@@ -47,6 +47,8 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Static FP8 quantization multiplier; one for non-static formats.
+  float quantScale_ = 1.0f;
 };
 
 struct KernelConfigCache {

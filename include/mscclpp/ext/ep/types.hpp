@@ -48,7 +48,7 @@ enum class CombineMode {
 enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
-  /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
+  /// FP8 E4M3 payload. Scale representation depends on mode and layout.
   FP8_E4M3
 };
 
@@ -149,6 +149,11 @@ struct LatencyDispatchRequest {
   int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Static FP8 quantization multiplier for latency RANK_MAJOR.
+  ///
+  /// The input is already quantized as E4M3(real * quantScale). Combine
+  /// dequantizes matching expert output with 1 / quantScale.
+  float quantScale = 1.0f;
 };
 
 /// Arguments for throughput-mode dispatch.
@@ -226,11 +231,11 @@ class DispatchHandle {
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
-  /// Local BF16 results produced by expert computation.
+  /// Local BF16 or static-scale FP8 results produced by expert computation.
   ///
   /// Rank-major input must be the runtime-owned combineInputBuffer(), with
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
-  /// before hidden for DIRECT_SEND.
+  /// before hidden for DIRECT_SEND. Its dtype matches the dispatch handle.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

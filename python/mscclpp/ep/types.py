@@ -20,16 +20,20 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 class QuantConfig:
     """Payload format and optional quantization scales.
 
-    FP8 E4M3 uses one FP32 scale per 128 hidden elements.
-    For FP8 dispatch, latency quantizes BF16 input
+    FP8 E4M3 normally uses one FP32 scale per 128 hidden elements.
+    For EXPERT_MAJOR FP8 dispatch, latency quantizes BF16 input
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
     input scales with shape ``[num_tokens, hidden // 128]``.
+    Latency RANK_MAJOR instead accepts externally quantized FP8 and uses the
+    scalar multiplier ``scale``: values are stored as E4M3 after multiplication
+    by ``scale`` and dequantized during combine with ``1 / scale``.
     BF16 dispatch does not use scales.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
+    scale: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -184,8 +188,10 @@ class DispatchOutput:
 
     Runtime-owned views retain native storage even after slicing, but their
     contents are reused by later operations. Throughput uses separate dispatch
-    and BF16 combine buffers, including when dispatch emits FP8. Except for
-    latency EXPERT_MAJOR, write expert results into ``combine_input_buffer``.
+    and BF16 combine buffers, including when dispatch emits FP8. Latency
+    RANK_MAJOR static FP8 uses the same scalar convention for ``tokens`` and
+    ``combine_input_buffer``. Except for latency EXPERT_MAJOR, write expert
+    results into ``combine_input_buffer``.
     """
 
     tokens: torch.Tensor

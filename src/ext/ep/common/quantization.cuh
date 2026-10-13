@@ -69,6 +69,14 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
 }
 
+MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(Fp8E4M3 value, float dequantScale) {
+  mscclpp::f8_e4m3x2 packed;
+  packed.data[0] = value;
+  packed.data[1] = value;
+  const float converted = mscclpp::to<mscclpp::f32x2>(packed).data[0];
+  return converted == 0.0f ? converted : converted * dequantScale;
+}
+
 }  // namespace ep
 }  // namespace mscclpp
 

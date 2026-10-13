@@ -95,6 +95,54 @@ def test_config_validation_at_construction(ep_group):
         with pytest.raises(ValueError, match="init=False"):
             replace(config, **{name: 0})
 
+    static_fp8 = replace(
+        config,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5),
+    )
+    assert static_fp8.quant.scale == 0.5
+    with pytest.raises(ValueError, match="requires quant.scale"):
+        replace(
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3),
+        )
+    for scale in (0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="finite and positive"):
+            replace(
+                config,
+                output_layout=DispatchLayout.RANK_MAJOR,
+                quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=scale),
+            )
+    with pytest.raises(TypeError, match="real number"):
+        replace(
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale="1.0"),
+        )
+    with pytest.raises(ValueError, match="does not accept block_scales"):
+        replace(
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            quant=QuantConfig(
+                format=DispatchDataType.FP8_E4M3,
+                block_scales=torch.empty(1),
+                scale=1.0,
+            ),
+        )
+    with pytest.raises(ValueError, match="BF16 dispatch does not accept a scalar scale"):
+        replace(config, quant=QuantConfig(format=DispatchDataType.BF16, scale=1.0))
+    with pytest.raises(ValueError, match="only by latency RANK_MAJOR FP8"):
+        replace(config, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0))
+    with pytest.raises(ValueError, match="only by latency RANK_MAJOR FP8"):
+        replace(
+            config,
+            mode=MoEMode.THROUGHPUT,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            invalid_token_expert_id=None,
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0),
+        )
+
 
 @pytest.mark.parametrize("mode", [MoEMode.LATENCY, MoEMode.THROUGHPUT])
 def test_config_resolution_at_construction(ep_group, mode):
@@ -151,7 +199,32 @@ CASES = [
     (MoEMode.LATENCY, DispatchLayout.EXPERT_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.DIRECT_SEND, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.RANK_LOCAL_REDUCE, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND, False),
+    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.RANK_LOCAL_REDUCE, False),
+    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.DIRECT_SEND, False),
 ]
+
+
+def _static_fp8_combine_reference(input, routes, weights, world_size, combine_mode, apply_router_weights, scale):
+    valid_routes = routes >= 0
+    dequantized_input = (input.float() * scale).to(torch.float8_e4m3fn).float() / scale
+
+    if combine_mode == CombineMode.DIRECT_SEND:
+        route_values = torch.where(valid_routes[..., None], dequantized_input[:, None, :], 0)
+        if apply_router_weights is False:
+            route_values = route_values * weights[..., None]
+            reference = (route_values * scale).to(torch.float8_e4m3fn).float().sum(dim=1) / scale
+        else:
+            route_values = (route_values * scale).to(torch.float8_e4m3fn).float() / scale
+            reference = (route_values * weights[..., None]).sum(dim=1)
+    else:
+        reference = torch.zeros_like(input, dtype=torch.float32)
+        for rank in range(world_size):
+            rank_routes = valid_routes & (routes // NUM_LOCAL_EXPERTS == rank)
+            rank_weight = torch.where(rank_routes, weights, 0).sum(dim=-1, keepdim=True)
+            rank_partial = (dequantized_input * rank_weight * scale).to(torch.float8_e4m3fn)
+            reference += rank_partial.float() / scale
+
+    return reference.to(torch.bfloat16).float()
 
 
 def _run_dispatch_combine_case(
@@ -197,11 +270,14 @@ def _run_dispatch_combine_case(
                 (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
             ).float() * NUM_TOPK
             input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
-            quant = QuantConfig(format=data_type)
+            static_scale = 0.5 if fp8 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR else None
+            quant = QuantConfig(format=data_type, scale=static_scale)
             dispatch_input = input
             if fp8 and mode == MoEMode.THROUGHPUT:
                 dispatch_input = torch.ones_like(input, dtype=torch.float8_e4m3fn)
                 quant.block_scales = values[:, None].expand(-1, hidden_size // 128).contiguous()
+            elif static_scale is not None:
+                dispatch_input = (input.float() * static_scale).to(torch.float8_e4m3fn)
 
             result, handle = runtime.dispatch(
                 dispatch_input,
@@ -214,6 +290,10 @@ def _run_dispatch_combine_case(
             )
             assert result.tokens.data_ptr() == runtime.get_dispatch_output_buffer().data_ptr()
             assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
+            if static_scale is not None:
+                assert result.quant.scale == static_scale
+                assert result.quant.block_scales is None
+                assert result.combine_input_buffer.dtype == torch.float8_e4m3fn
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
             counts = (
@@ -231,11 +311,14 @@ def _run_dispatch_combine_case(
                 assert result.topk_ids.data_ptr() == runtime._runtime.output_topk_ids_buffer_ptr()
                 assert result.weights.data_ptr() == runtime._runtime.output_topk_weights_buffer_ptr()
                 assert result.combine_input_buffer.data_ptr() == runtime._runtime.combine_input_buffer_ptr()
+            dispatched_bytes = None
             if mode == MoEMode.THROUGHPUT:
                 assert result.combine_input_buffer.data_ptr() != result.tokens.data_ptr()
                 dispatched_bytes = result.tokens.view(torch.uint8).clone()
                 if fp8:
                     assert result.quant.block_scales.data_ptr() == runtime._runtime.output_scales_buffer_ptr()
+            elif static_scale is not None:
+                dispatched_bytes = result.tokens.view(torch.uint8).clone()
 
             if mode == MoEMode.THROUGHPUT:
                 valid_rows = (
@@ -252,9 +335,12 @@ def _run_dispatch_combine_case(
 
             tokens = result.tokens.float()
             if fp8:
-                assert result.quant.block_scales.dtype == torch.float32
-                assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], hidden_size // 128)
-                tokens = tokens * result.quant.block_scales.repeat_interleave(128, dim=-1)
+                if static_scale is None:
+                    assert result.quant.block_scales.dtype == torch.float32
+                    assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], hidden_size // 128)
+                    tokens = tokens * result.quant.block_scales.repeat_interleave(128, dim=-1)
+                else:
+                    tokens = tokens / static_scale
             if valid_rows is not None:
                 tokens = torch.where(valid_rows[..., None], tokens, 0)
 
@@ -267,12 +353,21 @@ def _run_dispatch_combine_case(
                 expert_output = torch.where(valid_routes[..., None], tokens[..., None, :], 0)
                 if apply_router_weights is False:
                     expert_output = expert_output * result.weights[..., None]
-                expert_output = expert_output.to(torch.bfloat16)
+                expert_output = (
+                    (expert_output * static_scale).to(torch.float8_e4m3fn)
+                    if static_scale is not None
+                    else expert_output.to(torch.bfloat16)
+                )
             else:
                 local_weights = (
                     result.weights if valid_rows is None else torch.where(valid_rows[..., None], result.weights, 0)
                 )
-                expert_output = (tokens * local_weights.sum(dim=-1, keepdim=True)).to(torch.bfloat16)
+                expert_output = tokens * local_weights.sum(dim=-1, keepdim=True)
+                expert_output = (
+                    (expert_output * static_scale).to(torch.float8_e4m3fn)
+                    if static_scale is not None
+                    else expert_output.to(torch.bfloat16)
+                )
             if result.combine_input_buffer is not None:
                 result.combine_input_buffer.copy_(expert_output)
                 expert_output = result.combine_input_buffer
@@ -280,11 +375,40 @@ def _run_dispatch_combine_case(
             combined = runtime.combine(expert_output, handle, stream=stream, apply_router_weights=apply_router_weights)
             expected_weights = torch.where(routes >= 0, weights, 0)
             expected = input.float() * expected_weights.sum(dim=-1, keepdim=True)
+            if static_scale is not None:
+                expected = _static_fp8_combine_reference(
+                    input,
+                    routes,
+                    weights,
+                    ep_group.nranks,
+                    combine_mode,
+                    apply_router_weights,
+                    static_scale,
+                )
             stream.synchronize()
             torch.testing.assert_close(combined.float(), expected, rtol=0, atol=1 if fp8 else 0)
             torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / NUM_TOPK), rtol=0, atol=0)
             if mode == MoEMode.THROUGHPUT:
                 torch.testing.assert_close(result.tokens.view(torch.uint8), dispatched_bytes, rtol=0, atol=0)
+            elif static_scale is not None:
+                for source in range(ep_group.nranks):
+                    expected_values = []
+                    for token in range(num_tokens):
+                        source_routes = token_routes(source, ep_group.nranks, token, num_tokens)
+                        if any(
+                            expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank for expert in source_routes
+                        ):
+                            source_value = ((token + source * num_tokens) % 15 + 1) * NUM_TOPK
+                            expected_values.append(source_value * static_scale)
+                    expected_rows = (
+                        torch.tensor(expected_values, device="cuda")[:, None]
+                        .expand(-1, hidden_size)
+                        .to(torch.float8_e4m3fn)
+                        .contiguous()
+                    )
+                    actual_bytes = dispatched_bytes[source, : len(expected_values)].flatten().sort().values
+                    expected_bytes = expected_rows.view(torch.uint8).flatten().sort().values
+                    torch.testing.assert_close(actual_bytes, expected_bytes, rtol=0, atol=0)
 
             expected_counts = [0] * (ep_group.nranks if layout == DispatchLayout.RANK_MAJOR else NUM_LOCAL_EXPERTS)
             received_rows, expected_ids, expected_recv_weights = [], [], []
@@ -556,3 +680,107 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
                 torch.testing.assert_close(output, input * (destination + 1), rtol=0, atol=0)
             if prepared and num_tokens == 0:
                 torch.testing.assert_close(output_count, torch.zeros_like(output_count), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize(
+    "data_type,scale",
+    [
+        (DispatchDataType.BF16, None),
+        (DispatchDataType.FP8_E4M3, 1.0),
+        (DispatchDataType.FP8_E4M3, 0.5),
+        (DispatchDataType.FP8_E4M3, torch.finfo(torch.float32).tiny / 16),
+    ],
+)
+def test_latency_rank_major_graph_replay(ep_group, combine_mode, data_type, scale):
+    num_tokens, capacity, active_capacity = 2, 4, 3
+    fp8 = data_type == DispatchDataType.FP8_E4M3
+    quant = QuantConfig(format=data_type, scale=scale)
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=combine_mode,
+        num_experts=ep_group.nranks,
+        hidden_size=1024,
+        topk=1,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            input = torch.empty(
+                (num_tokens, 1024),
+                dtype=torch.float8_e4m3fn if fp8 else torch.bfloat16,
+                device="cuda",
+            )
+            routes = torch.full(
+                (num_tokens, 1),
+                (ep_group.my_rank + 1) % ep_group.nranks,
+                dtype=torch.int64,
+                device="cuda",
+            )
+            weights = torch.tensor([[1.0], [0.0]], dtype=torch.float32, device="cuda")
+            out = torch.empty((num_tokens, 1024), dtype=torch.bfloat16, device="cuda")
+
+            def operation():
+                result, handle = runtime.dispatch(
+                    input,
+                    routes,
+                    weights,
+                    quant,
+                    runtime_max_tokens_per_rank=active_capacity,
+                )
+                if combine_mode == CombineMode.DIRECT_SEND:
+                    result.combine_input_buffer[..., 0, :].copy_(result.tokens)
+                else:
+                    tokens = result.tokens.float()
+                    if fp8:
+                        tokens = torch.where(tokens == 0, tokens, tokens * (1.0 / scale))
+                    rank_partials = tokens * result.weights.sum(dim=-1, keepdim=True)
+                    if fp8:
+                        rank_partials = (rank_partials * scale).to(torch.float8_e4m3fn)
+                    else:
+                        rank_partials = rank_partials.to(torch.bfloat16)
+                    result.combine_input_buffer.copy_(rank_partials)
+                return result, handle, runtime.combine(result.combine_input_buffer, handle, out=out)
+
+            input.fill_(1.0 if not fp8 else scale)
+            operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                result, handle, output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            for value, destination in (
+                (2.0, (ep_group.my_rank + 1) % ep_group.nranks),
+                (4.0, -1),
+                (6.0, ep_group.my_rank),
+            ):
+                input.fill_(value if not fp8 else value * scale)
+                routes.fill_(destination)
+                graph.replay()
+                stream.synchronize()
+                ep_group.barrier()
+                if fp8:
+                    dequantized = input.float()
+                    expected = torch.where(
+                        dequantized == 0,
+                        dequantized,
+                        dequantized * (1.0 / scale),
+                    ).to(torch.bfloat16)
+                else:
+                    expected = torch.full_like(output, value)
+                if destination < 0:
+                    expected.zero_()
+                expected[1].zero_()
+                torch.testing.assert_close(output, expected, rtol=0, atol=0)
+
+            if fp8:
+                assert result.quant.scale == scale
+            else:
+                assert result.quant is None
+            assert handle.output_info.quant is result.quant
