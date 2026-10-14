@@ -35,31 +35,41 @@ MSCCLPP_DEVICE_INLINE Route prepareRoute(WorkspaceView& workspaceView, const int
   return {dstRank, destinationSlot, firstLaneForRank};
 }
 
+// Each destination's leader lane writes the whole masked top-k row of that destination, so all destination rows of a
+// token are written concurrently instead of one destination after another.
 MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
                                         const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
                                         const Route& route, int tokenIdx, int nTopk, int nLocalExperts,
                                         int maxTokensPerRank, int invalidTokenExpertId) {
-  const int laneId = getLaneId();
-  const int candidateExpert =
-      laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
-  const float candidateWeight =
-      laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
-  unsigned int leaderMask = warpLaneMask(route.dstRank >= 0 && route.isLeader);
-  while (leaderMask != 0) {
-    const int leaderLane = __ffs(leaderMask) - 1;
-    const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
-    const int destinationSlot = __shfl_sync(0xffffffff, route.destinationSlot, leaderLane);
-    if (laneId < nTopk) {
-      auto* destinationTopkIdx = reinterpret_cast<int*>(transport.mappedBuffer(outputTopkIdx, destinationRank));
-      auto* destinationTopkWeights =
-          reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
-      const size_t outputIdx =
-          (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
-      const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
-      destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
+  if (route.dstRank >= 0 && route.isLeader) {
+    const size_t outputIdx = (static_cast<size_t>(transport.rank_) * maxTokensPerRank + route.destinationSlot) * nTopk;
+    auto* destinationTopkIdx = static_cast<int*>(transport.mappedBuffer(outputTopkIdx, route.dstRank)) + outputIdx;
+    auto* destinationTopkWeights =
+        static_cast<float*>(transport.mappedBuffer(outputTopkWeights, route.dstRank)) + outputIdx;
+    const int64_t* tokenTopkIdx = topkIndices + static_cast<size_t>(tokenIdx) * nTopk;
+    const float* tokenTopkWeights =
+        topkWeights == nullptr ? nullptr : topkWeights + static_cast<size_t>(tokenIdx) * nTopk;
+    const int firstLocalExpert = route.dstRank * nLocalExperts;
+    auto maskedEntry = [&](int k, int& expert, float& weight) {
+      const int routedExpert = static_cast<int>(tokenTopkIdx[k]);
+      const float routedWeight = tokenTopkWeights == nullptr ? 1.0f : tokenTopkWeights[k];
+      const bool isLocal = routedExpert >= firstLocalExpert && routedExpert < firstLocalExpert + nLocalExperts;
+      expert = isLocal ? routedExpert : invalidTokenExpertId;
+      weight = isLocal ? routedWeight : 0.0f;
+    };
+    if (nTopk % mscclpp::i32x4::Size == 0) {
+      // The output rows are 16-byte aligned when they hold a multiple of four entries.
+      for (int k = 0; k < nTopk; k += mscclpp::i32x4::Size) {
+        mscclpp::i32x4 experts;
+        mscclpp::f32x4 weights;
+#pragma unroll
+        for (int i = 0; i < mscclpp::i32x4::Size; ++i) maskedEntry(k + i, experts[i], weights[i]);
+        *reinterpret_cast<mscclpp::i32x4*>(destinationTopkIdx + k) = experts;
+        *reinterpret_cast<mscclpp::f32x4*>(destinationTopkWeights + k) = weights;
+      }
+    } else {
+      for (int k = 0; k < nTopk; ++k) maskedEntry(k, destinationTopkIdx[k], destinationTopkWeights[k]);
     }
-    leaderMask &= leaderMask - 1;
   }
   __syncwarp();
 }

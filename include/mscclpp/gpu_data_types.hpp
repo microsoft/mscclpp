@@ -312,25 +312,6 @@ MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
   return u.t;
 }
 
-namespace detail {
-
-MSCCLPP_DEVICE_INLINE uint8_t quantizeE8M0Scale(float maximum) {
-  if (maximum == 0.0f) return 127;
-  const uint32_t bits = bit_cast<uint32_t>(maximum);
-  const uint32_t exponent = (bits >> 23) & 0xff;
-  if (exponent == 0xff) return 254;
-  // 448 = 1.75 * 2^8; compare the significand directly instead of dividing.
-  const int scale = int(exponent) - 8 + int((bits & 0x7fffff) > 0x600000);
-  return uint8_t(scale < 1 ? 1 : (scale > 254 ? 254 : scale));
-}
-
-MSCCLPP_DEVICE_INLINE float inverseE8M0Scale(uint8_t scale) {
-  // The reciprocal of 2^127 is a representable FP32 subnormal, not zero.
-  return bit_cast<float>(scale == 254 ? 0x00400000u : uint32_t(254 - scale) << 23);
-}
-
-}  // namespace detail
-
 template <typename T>
 MSCCLPP_DEVICE_INLINE T clip(T val) {
   return val;
