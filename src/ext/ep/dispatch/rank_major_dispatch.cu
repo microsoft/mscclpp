@@ -49,13 +49,13 @@ MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* out
     const int64_t* tokenTopkIdx = topkIndices + static_cast<size_t>(tokenIdx) * nTopk;
     const float* tokenTopkWeights =
         topkWeights == nullptr ? nullptr : topkWeights + static_cast<size_t>(tokenIdx) * nTopk;
-    const int firstLocalExpert = route.dstRank * nLocalExperts;
+    const int firstDstExpert = route.dstRank * nLocalExperts;
     auto maskedEntry = [&](int k, int& expert, float& weight) {
       const int routedExpert = static_cast<int>(tokenTopkIdx[k]);
       const float routedWeight = tokenTopkWeights == nullptr ? 1.0f : tokenTopkWeights[k];
-      const bool isLocal = routedExpert >= firstLocalExpert && routedExpert < firstLocalExpert + nLocalExperts;
-      expert = isLocal ? routedExpert : invalidTokenExpertId;
-      weight = isLocal ? routedWeight : 0.0f;
+      const bool isDstExpert = routedExpert >= firstDstExpert && routedExpert < firstDstExpert + nLocalExperts;
+      expert = isDstExpert ? routedExpert : invalidTokenExpertId;
+      weight = isDstExpert ? routedWeight : 0.0f;
     };
     if (nTopk % mscclpp::i32x4::Size == 0) {
       // The output rows are 16-byte aligned when they hold a multiple of four entries.

@@ -84,8 +84,6 @@ class MoERuntime {
   /// MXFP8_E4M3 scales are contiguous uint8_t [numRanks, maxTokensPerRank,
   /// hidden / 32], with E8M0 byte s representing 2^(s - 127).
   /// Throughput FP8_E4M3 instead uses float [row, hidden / 128] scales.
-  /// Rank-major padding has unspecified payload and scales; ignore it using
-  /// the received counts and routing metadata.
   void* outputScalesBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
   ///
@@ -94,10 +92,6 @@ class MoERuntime {
   /// maxTokensPerRank, not the runtime capacity, determines the rank stride.
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned BF16 combine input buffer.
-  /// Rank-major dispatch and combine storage do not overlap, so an expert
-  /// computation may read the former while writing the latter.
-  /// For rank-major RANK_LOCAL_REDUCE, write one already-weighted sum of local
-  /// expert contributions per received token.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///
@@ -144,7 +138,7 @@ class MoERuntime {
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
   /// @warning Latency epoch advancement is host-side. Replaying a graph with
-  /// a single dispatch/combine pair is not supported; use THROUGHPUT for that pattern.
+  /// a single dispatch/combine pair is not supported.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a
