@@ -63,18 +63,18 @@ The shared
 `benchmark` settings (`warmup`, `iterations`, `seed`, `output_dir`) can be
 overridden with `--warmup`, `--iterations`, `--seed`, and `--output-dir`.
 
-This supports MSCCL++ or NCCL-EP BF16 expert-major low-latency communication on two
-or four local GPUs, equal contiguous expert placement, and the same PyTorch reference
-SwiGLU compute. `cuda_graph: false` preserves eager execution. Select
+This supports MSCCL++ or NCCL-EP BF16 native communication on two
+or four local GPUs, equal contiguous expert placement, and PyTorch reference
+SwiGLU compute by default. `cuda_graph: false` preserves eager execution. Select
 `--graph mlp` (`cuda_graph: mlp`) to capture only the local
-expert MLPs: gate/up/down GEMMs, SiLU, and multiplication. Dispatch and combine
-remain eager, with routing weights applied by combine. Capture and library
+expert MLPs and any local layout packing/weighted reduction. Dispatch and combine
+remain eager, with routing weights applied exactly once. Capture and library
 warmup happen before benchmark warmup and timing; replay uses current dispatched
 data in fixed buffers with fixed expert counts. Timing still covers the entire
 dispatch/MLP/combine interval, including eager launch gaps and peer waits.
 `run.json` records `cuda_graph_scope: mlp_only` for these runs.
-Other communication/compute backends,
-precisions, full-pipeline graphs, overlap, and multi-node execution are rejected rather than
+Other communication backends, unsupported compute format pairs,
+full-pipeline graphs, overlap, and multi-node execution are rejected rather than
 silently substituted. Each expert has independent seeded gate/up/down matrices.
 Supported hidden dimensions are 4096, 4352, 5120, 6656, 7168, 8192, 8704, and 9216;
 top-k is at most nine and cannot exceed the global expert count.
@@ -82,6 +82,165 @@ These common workload limits are retained for both backends to allow comparable
 runs; they are not a list of every dimension supported by NCCL-EP.
 No trained model, text dataset, router GEMM, backward pass, or optimizer is used.
 The `decode` and `prefill` names describe token batch sizes, not full-model tasks.
+
+### Independent communication mode and layout
+
+`--mode {latency,throughput}` selects the native communication algorithm;
+`--layout {expert_major,rank_major,token_major}` selects its receive layout.
+Defaults remain **latency + expert_major**. YAML uses `environment.mode` and
+`environment.layout`; older configurations missing these fields receive the same
+defaults. Each CLI flag overrides only its own field. There is no automatic mode
+switch, emulated communication layout, or fallback for an invalid combination.
+
+| Backend | Mode | Supported native layouts |
+|---|---|---|
+| MSCCL++ | latency | `expert_major`, `rank_major` |
+| MSCCL++ | throughput | `token_major`, `rank_major` |
+| NCCL-EP | latency (`LOW_LATENCY`) | `expert_major`, `rank_major` |
+| NCCL-EP | throughput (`HIGH_THROUGHPUT`) | `expert_major`, `token_major` (native `FLAT`) |
+
+NCCL-EP `RANK_MAJOR` is LL-only; `FLAT` is HT-only. HT expert-major is
+expert-grouped **2D slots**, not LL's padded 3D expert tensor. MSCCL++
+throughput rank-major has fixed-capacity source-rank zones, unlike its compact
+token-major receive view. This benchmark does not expose the separate latency
+`rank_major_topk_expanded` layout.
+
+```bash
+# Native compact token-major throughput:
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced --gpus 2 \
+  --backend mscclpp --mode throughput --layout token_major --graph mlp
+
+# Native rank-major latency (also supported with --backend nccl):
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced --gpus 2 \
+  --backend mscclpp --mode latency --layout rank_major --graph none
+
+# NCCL-EP native HT flat/token-major:
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced --gpus 2 \
+  --backend nccl --mode throughput --layout token_major --graph mlp
+```
+
+All supported pairs use the shared Torch or either supported FlashInfer compute
+pair, eagerly or with an MLP-only graph. The local adapter selects valid expert
+assignments using current dispatch IDs, packs expert slots, computes each expert,
+and applies routing weights in FP32 before writing BF16 native combine rows.
+Same-token selections of multiple local experts are independent until this
+reduction. Unused rank-zone metadata is masked using native counters; empty
+experts/ranks do not enter GEMMs. Native LL expert-major retains its original
+combine-applied weighting. Row selection, packing, weighting and reduction are
+**inside the MLP timing interval and graph**, not hidden preprocessing.
+
+Routing/counts stay fixed; MSCCL++ throughput reuses its public dispatch handle
+cache and runtime-owned receive pool. NCCL-EP HT uses handle-time counters and
+expert offsets with default alignment zero (equivalent to one: no expert padding). Stable data/metadata
+addresses are checked during graph replay. Receive capacity, IDs/weights, packed
+adapter workspaces and the MSCCL++ fixed native throughput pool are included in
+the conservative memory estimate. MSCCL++ throughput is limited to 1024 local
+experts, 65536 worst-case received rows, and a 1 GiB receive payload. This benchmark requires even
+tokens/rank for NCCL-EP throughput to satisfy native S2D transfer alignment.
+All modes require a supported single-node GPU IPC/NVLink topology; installed
+runtime API, compiler, hardware and allocation failures are errors, not fallback
+requests. `run.json` records requested configuration, resolved communication
+mode/algorithm, actual layout (including NCCL's `flat` spelling), and graph scope.
+
+### Optional MX expert compute
+
+Communication and the external input remain **BF16**, independently
+of compute precision. The default is still `--compute-backend torch` with BF16
+activations and weights. Select the experimental grouped implementation using
+three independent flags (no additional environment/model presets):
+
+```bash
+# BF16 activations, MXFP8 weight-only inline dequantization:
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced --gpus 2 --backend mscclpp \
+  --compute-backend cutlass_flashinfer --activation-dtype bf16 --weight-dtype mxfp8 \
+  --graph mlp --warmup 3 --iterations 10
+
+# Native mixed blockscaled MXFP8 activations / MXFP4 weights:
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced --gpus 2 --backend nccl \
+  --compute-backend cutlass_flashinfer --activation-dtype mxfp8 --weight-dtype mxfp4 \
+  --graph mlp --warmup 3 --iterations 10
+```
+
+Either compute pair works with `--backend mscclpp` or `--backend nccl`; choose
+`--graph none` for eager compute. YAML optionally supplies
+`compute: {activation_dtype: bf16, weight_dtype: bf16}`, separate from
+`input.dtype: bf16` and `environment.compute_backend`. Missing compute fields
+default to BF16. CLI flags override only their corresponding fields.
+`cutlass_flashinfer` supports **only** BF16/MXFP8 and MXFP8/MXFP4, not BF16/BF16.
+Selecting it without changing the default weight format fails with guidance;
+plain `fp8`/`fp4` are not aliases for MX formats.
+
+| Activation / weight | Actual implementation at both GEMMs |
+|---|---|
+| BF16 / MXFP8 | FlashInfer **cuTile**, weight tiles dequantized inline to BF16 before BF16 MMA; **not native BF16/MXFP8 MMA** |
+| MXFP8 / MXFP4 | FlashInfer **CuTe/CUTLASS DSL**, native E4M3 × E2M1 blockscaled MMA, FP32 accumulation; FC1 fuses SwiGLU and MXFP8 intermediate quantization |
+
+Weights use the same independently seeded gate/up/down matrices as the Torch
+baseline, transposed to `[expert,N,K]`, then quantized once outside timing.
+Only one expert's BF16 staging matrices are live at a time; no expanded BF16
+weight bank is retained. MXFP8 payloads are E4M3; MXFP4 packs two E2M1 values
+per byte, low nibble first. Both use E8M0 scale bytes per **32 reduction elements**,
+not NVFP4 block16/global scales. CuTile uses linear weight scales and full
+up-then-gate rows; CuTe uses 128×4 MMA-swizzled weight/intermediate scales,
+linear input scales, and alternating 64 up/64 gate rows.
+
+Valid rows are packed from padded expert slots on **every iteration** and
+unpacked afterward. Each compact row remains a separate expert assignment,
+including when one token selects multiple experts on the same rank. CuTe's local
+finalize uses top-k one and unit weights into compact **expert-slot** outputs,
+not original token outputs. The communication adapter still applies routing
+weights exactly once. Counts/schedules/indices are precomputed for fixed routing;
+empty experts and entirely empty ranks are supported.
+
+The **MLP event interval and MLP graph include packing, initial BF16→MXFP8
+quantization, quantized-buffer copies, GEMMs, SwiGLU, intermediate quantization,
+output initialization/scatter, and unpacking** as applicable. Initial quantization
+is not cached between iterations: graph-private quantizer allocations and copies
+are captured and replayed against current BF16 dispatch data. Graphs exclude
+dispatch/combine. These are pipeline phase intervals including launches/movement,
+**not pure GEMM kernel timings**; no blanket performance advantage is claimed.
+`run.json` records actual implementation, payload/scale formats and layouts,
+communication dtype, dependency versions, and timed operations.
+
+Current support is restricted to **SM100/SM103 Blackwell**, CUDA 13 PyTorch,
+and hidden/intermediate dimensions divisible by 128 (plus the common communication
+limits above). Validation used GB300/SM103; SM100 is supported by the selected
+FlashInfer kernels but was not exercised here. Experimental lower-level APIs are
+pinned by preflight checks to `flashinfer-python==0.7.1`,
+`nvidia-cutlass-dsl==4.8.0`; the BF16/MXFP8 path additionally requires
+`cuda-tile==1.6.0` and `nvidia-cuda-tileiras==13.4.92`.
+Install these optional dependencies separately in a compatible environment:
+
+```bash
+python -m pip install 'flashinfer-python==0.7.1' 'nvidia-cutlass-dsl==4.8.0'
+# Additionally for BF16/MXFP8:
+python -m pip install 'cuda-tile==1.6.0' 'nvidia-cuda-tileiras==13.4.92'
+```
+
+Inspect resolver changes before installing: do not replace a working Torch/CUDA
+runtime just to add the standalone tile compiler. The validated environment retained
+Torch 2.14.0+cu130 and CUDA runtime 13.0 with the isolated tileiras 13.4.92 compiler.
+Torch compute never imports FlashInfer; NCCL-EP still does not require MSCCL++.
+There is no fallback on missing dependencies, incompatible versions, or hardware.
+Preflight estimates include packed payloads/scales, single-expert staging peak,
+activation workspaces and graph-private allocations; native runtime/allocator
+allocations are not an exact bound. Ranks collectively reject insufficient memory
+before allocating the expert bank.
+
+Correctness tests independently decode scale bytes/nibbles, check known-value
+layouts, compare dequantized-operand GEMMs separately from quantization error,
+and exercise both adapters, eager/graph, changed inputs, uneven/empty experts,
+multiple tiles, and same-token local expert selections. Arithmetic relative-L2
+tolerance is 0.004 (BF16 weight-only MLP 0.006); mixed FC1 quantization-boundary
+tolerance is 0.015, and combined mixed distributed tolerance is 0.03.
+Observed random-weight total error against unquantized FP32 math was approximately
+5% for weight-only and 20–23% for mixed MX; these are **not trained-model accuracy
+claims**, nor the arithmetic tolerances.
 
 ### NCCL-EP backend
 
@@ -116,24 +275,28 @@ execution or `--graph mlp` for the same MLP-only graph mode. For example:
 Both backends use the same input generation, routing, seeded expert matrices,
 preallocated buffers, compute, and phase timing. The NCCL unique ID is exchanged
 over the existing CPU Gloo group; this benchmark needs no MPI. Run on a supported
-single-node NVLink GPU system; multi-node/throughput execution is not implemented.
+single-node NVLink GPU system; multi-node execution is not implemented.
 NCCL initialization and any kernel compilation happen before measurement.
 
 Implementation files under `test/python/ep/moe_bench/`:
 
 - `backends/__init__.py`: lazy backend factory and fixed-buffer adapter contract.
-- `backends/mscclpp.py`: the existing MSCCL++ latency communication path.
-- `backends/nccl.py`: NCCL communicator, expert-major handle, dispatch counters,
+- `backends/mscclpp.py`: MSCCL++ native latency and throughput paths.
+- `backends/nccl.py`: NCCL communicator, LL/HT handles, dispatch counters,
   weighted combine, version metadata, and ordered resource teardown.
-- `worker.py`: shared dispatch → PyTorch SwiGLU → combine pipeline and timings.
+- `worker.py`: shared dispatch → expert SwiGLU → combine pipeline and timings.
+- `compute.py` / `compute_flashinfer.py`: default Torch reference and lazy optional grouped MX compute.
+- `layout.py`: shared native-row selection, expert packing, and weighted reduction.
 - `config.py` / `configs.yaml`: named workload presets and default environment settings.
 - `test_backends.py`: dependency isolation, API wiring, and cleanup tests;
   `test_moe_bench.py`: per-backend distributed mathematical reference.
 
 Combine consumes the **computed expert output**, not the dispatched input.
-NCCL-EP applies the original FP32 routing weights when gathering BF16 expert
+NCCL-EP LL expert-major applies the original FP32 routing weights when gathering BF16 expert
 outputs. Unlike MSCCL++ `RANK_LOCAL_REDUCE`, it does not round intermediate
 per-rank partial sums to BF16, so results need not be bitwise identical.
+Rank-major/token-major adapters instead round locally reduced rank partials to
+BF16; NCCL-EP HT expert-major rounds each weighted expert row to BF16.
 `run.json` records the actual backend, algorithm, combine mode, and installed
 backend/runtime versions; NCCL runs are not labeled `rank_local_reduce`.
 
@@ -147,10 +310,12 @@ two hot experts with top-k eight can account for at most 25% of assignments.
 Routing weights are positive and normalized per token. Inputs, routing, and
 expert matrices remain fixed throughout a run.
 
-Each timed iteration includes dispatch, valid-row expert GEMMs, SwiGLU, and
-combine. Expert counts are determined once outside timing, so no GEMMs run over
-padded rows and no receive-count CPU synchronization is required per iteration.
-Reusable buffers hold GEMM outputs. This is a reference implementation:
+Each timed iteration includes dispatch, expert GEMMs, SwiGLU, and combine.
+Expert counts are determined once outside timing, so no receive-count CPU
+synchronization is required per iteration. Torch computes only valid prefixes;
+grouped MX kernels round active expert tiles to 16 or 128 rows, rather than
+computing the full padded communication capacity.
+Reusable buffers hold GEMM outputs. The default Torch path is a reference implementation:
 per-expert Python launches and GPU idle gaps are included in the CUDA-event
 interval and can dominate small workloads. It is not optimized grouped GEMM.
 Host barriers before iterations and completion synchronization after their end
@@ -170,7 +335,8 @@ counts and maximum/mean rank load expose routing imbalance.
 Dispatch, MLP, and combine are also timed separately on each rank, using four
 CUDA events at the boundaries of the three phases on the current stream. There
 is no synchronization between phases. MLP includes all expert GEMMs, SwiGLU,
-and per-expert launch gaps, rather than isolated GEMM kernel time. Communication
+launch gaps, and MX packing/quantization/unpacking where selected, rather than
+isolated GEMM kernel time. Communication
 times include peer waiting, and event-recording overhead affects the measured
 pipeline. Phase durations are adjacent intervals; the total is measured directly
 from the first to last event. Phase means/p50/p95 are reported per rank, not as
@@ -204,6 +370,8 @@ reference comparison (including repeated calls and different routing loads):
 MOE_BENCH_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
 # Optional NCCL-EP coverage (separate worker processes for each backend):
 MOE_BENCH_NCCL_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
+# Optional MX coverage for BOTH adapters; check GPU availability first:
+MOE_BENCH_MX_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench/test_compute_flashinfer.py -q
 ```
 
 ## Runtime architecture

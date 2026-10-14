@@ -11,10 +11,16 @@ import yaml
 # Common workload dimensions, constrained by MSCCL++ expert-major combine.
 SUPPORTED_D_MODEL = (4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216)
 BENCHMARK_DEFAULTS = {"warmup": 10, "iterations": 100, "seed": 42, "output_dir": "benchmark_results"}
+COMPUTE_DEFAULTS = {"activation_dtype": "bf16", "weight_dtype": "bf16"}
+COMMUNICATION_DEFAULTS = {"mode": "latency", "layout": "expert_major"}
+SUPPORTED_LAYOUTS = {
+    "mscclpp": {"latency": ("expert_major", "rank_major"), "throughput": ("token_major", "rank_major")},
+    "nccl": {"latency": ("expert_major", "rank_major"), "throughput": ("expert_major", "token_major")},
+}
 _FIELDS = {
     "model": {"d_model", "num_experts", "top_k", "intermediate_size", "activation"},
     "input": {"tokens_per_rank", "dtype"},
-    "environment": {"num_gpus", "communication_backend", "compute_backend", "cuda_graph"},
+    "environment": {"num_gpus", "communication_backend", "compute_backend", "cuda_graph", "mode", "layout"},
     "routing": {"kind"},
     "benchmark": set(BENCHMARK_DEFAULTS),
 }
@@ -47,6 +53,9 @@ def _choice(value, choices, path):
 
 
 def _validate_section(section, value, path):
+    if section == "environment":
+        _mapping(value, path)
+        value = {**COMMUNICATION_DEFAULTS, **value}
     fields = _FIELDS[section]
     if section == "routing" and isinstance(value, dict) and value.get("kind") == "hot_experts":
         fields = fields | {"expert_ids", "probability_mass"}
@@ -64,8 +73,10 @@ def _validate_section(section, value, path):
     elif section == "environment":
         _choice(value["num_gpus"], (2, 4), f"{path}.num_gpus")
         _choice(value["communication_backend"], ("mscclpp", "nccl"), f"{path}.communication_backend")
-        _choice(value["compute_backend"], ("torch",), f"{path}.compute_backend")
+        _choice(value["compute_backend"], ("torch", "cutlass_flashinfer"), f"{path}.compute_backend")
         _choice(value["cuda_graph"], (False, "mlp"), f"{path}.cuda_graph")
+        _choice(value["mode"], ("latency", "throughput"), f"{path}.mode")
+        _choice(value["layout"], ("expert_major", "rank_major", "token_major"), f"{path}.layout")
     elif section == "routing":
         _choice(value["kind"], ("balanced", "uniform", "hot_experts"), f"{path}.kind")
         if value["kind"] == "hot_experts":
@@ -91,9 +102,49 @@ def _validate_section(section, value, path):
 
 def validate_config(config: dict) -> None:
     """Raise ValueError for malformed, unsupported, or incompatible settings."""
-    _fields(config, set(_FIELDS), "config")
+    _mapping(config, "config")
+    _fields({key: value for key, value in config.items() if key != "compute"}, set(_FIELDS), "config")
     for section, value in config.items():
+        if section == "compute":
+            continue
         _validate_section(section, value, section)
+    environment = {**COMMUNICATION_DEFAULTS, **config["environment"]}
+    communication, mode, layout = (environment[key] for key in ("communication_backend", "mode", "layout"))
+    supported = SUPPORTED_LAYOUTS[communication][mode]
+    if layout not in supported:
+        raise ValueError(
+            f"{communication} mode={mode} does not support layout={layout}; supported layouts: {supported}"
+        )
+    if communication == "nccl" and mode == "throughput" and config["input"]["tokens_per_rank"] % 2:
+        raise ValueError("NCCL-EP throughput benchmark requires even tokens_per_rank for native S2D transfer alignment")
+    if communication == "mscclpp" and mode == "throughput":
+        if config["model"]["num_experts"] // environment["num_gpus"] > 1024:
+            raise ValueError("MSCCL++ throughput supports at most 1024 local experts")
+        if environment["num_gpus"] * config["input"]["tokens_per_rank"] > 65536:
+            raise ValueError("MSCCL++ throughput receive pool supports at most 65536 rows (num_gpus * tokens_per_rank)")
+        capacity = environment["num_gpus"] * config["input"]["tokens_per_rank"]
+        if capacity * config["model"]["d_model"] * 2 > 65536 * 16384:
+            raise ValueError("MSCCL++ throughput worst-case receive payload exceeds the native 1 GiB pool")
+    compute = config.get("compute", COMPUTE_DEFAULTS)
+    _fields(compute, set(COMPUTE_DEFAULTS), "compute", required=False)
+    activation = compute.get("activation_dtype", "bf16")
+    weight = compute.get("weight_dtype", "bf16")
+    _choice(activation, ("bf16", "mxfp8"), "compute.activation_dtype")
+    _choice(weight, ("bf16", "mxfp8", "mxfp4"), "compute.weight_dtype")
+    backend = config["environment"]["compute_backend"]
+    pairs = (("bf16", "bf16"),) if backend == "torch" else (("bf16", "mxfp8"), ("mxfp8", "mxfp4"))
+    if (activation, weight) not in pairs:
+        raise ValueError(
+            f"{backend} requires (activation_dtype, weight_dtype) in {pairs}; "
+            "set --activation-dtype and --weight-dtype explicitly"
+        )
+    if backend == "cutlass_flashinfer":
+        for dimension in ("d_model", "intermediate_size"):
+            if config["model"][dimension] % 128:
+                raise ValueError(f"cutlass_flashinfer requires model.{dimension} divisible by 128")
+        assignments = config["environment"]["num_gpus"] * config["input"]["tokens_per_rank"] * config["model"]["top_k"]
+        if assignments + 128 * config["model"]["num_experts"] > 2**31 - 1:
+            raise ValueError("cutlass_flashinfer padded assignment schedule must fit in int32")
     experts = config["model"]["num_experts"]
     if experts % config["environment"]["num_gpus"]:
         raise ValueError("model.num_experts must be divisible by environment.num_gpus")
@@ -112,6 +163,7 @@ def load_config(
     input_name: str,
     routing: str,
     environment_overrides: dict | None = None,
+    compute_overrides: dict | None = None,
     overrides: dict | None = None,
 ) -> dict:
     """Resolve named presets and environment defaults with separate overrides."""
@@ -120,7 +172,7 @@ def load_config(
             document = yaml.safe_load(stream)
     except (OSError, yaml.YAMLError) as error:
         raise ValueError(f"Cannot load configuration {path}: {error}") from error
-    _fields(document, set(_CATEGORIES) | {"environment", "benchmark"}, "configuration", required=False)
+    _fields(document, set(_CATEGORIES) | {"environment", "benchmark", "compute"}, "configuration", required=False)
     for category, section in _CATEGORIES.items():
         if category not in document:
             raise ValueError(f"configuration: missing preset category {category!r}")
@@ -134,8 +186,11 @@ def load_config(
     _fields(benchmark, _FIELDS["benchmark"], "benchmark", required=False)
     resolved = {
         "benchmark": {**BENCHMARK_DEFAULTS, **benchmark},
-        "environment": deepcopy(document["environment"]),
+        "environment": {**COMMUNICATION_DEFAULTS, **deepcopy(document["environment"])},
     }
+    compute = document.get("compute", {})
+    _fields(compute, set(COMPUTE_DEFAULTS), "compute", required=False)
+    resolved["compute"] = {**COMPUTE_DEFAULTS, **compute}
     selections = {"models": model, "inputs": input_name, "routing": routing}
     for category, name in selections.items():
         presets = document[category]
@@ -151,5 +206,8 @@ def load_config(
     if overrides is not None:
         _fields(overrides, _FIELDS["benchmark"], "overrides", required=False)
         resolved["benchmark"].update({key: value for key, value in overrides.items() if value is not None})
+    if compute_overrides is not None:
+        _fields(compute_overrides, set(COMPUTE_DEFAULTS), "compute_overrides", required=False)
+        resolved["compute"].update({key: value for key, value in compute_overrides.items() if value is not None})
     validate_config(resolved)
     return resolved

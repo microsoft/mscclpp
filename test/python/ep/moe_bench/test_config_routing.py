@@ -35,10 +35,12 @@ def _load_document(document, **kwargs):
 
 def test_presets_and_defaults():
     config = _config()
-    assert set(config) == {"model", "input", "environment", "routing", "benchmark"}
+    assert set(config) == {"model", "input", "environment", "routing", "benchmark", "compute"}
     assert config["benchmark"] == BENCHMARK_DEFAULTS
     assert config["model"]["d_model"] == 4096
     assert config["environment"] == {
+        "mode": "latency",
+        "layout": "expert_major",
         "num_gpus": 4,
         "communication_backend": "mscclpp",
         "compute_backend": "torch",
@@ -83,6 +85,8 @@ def test_mlp_graph_is_explicit_and_opt_in():
 def test_environment_combinations(backend, world, graph):
     config = _config(environment_overrides={"communication_backend": backend, "num_gpus": world, "cuda_graph": graph})
     assert config["environment"] == {
+        "mode": "latency",
+        "layout": "expert_major",
         "num_gpus": world,
         "communication_backend": backend,
         "compute_backend": "torch",
@@ -228,7 +232,7 @@ def test_invalid_values(section, key, value):
 @pytest.mark.parametrize("section", ["model", "input", "environment", "routing", "benchmark"])
 def test_missing_and_unknown_resolved_fields(section):
     config = _config()
-    del config[section][next(iter(config[section]))]
+    del config[section]["num_gpus" if section == "environment" else next(iter(config[section]))]
     with pytest.raises(ValueError, match="missing fields"):
         validate_config(config)
     config = _config()

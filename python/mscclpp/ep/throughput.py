@@ -269,9 +269,11 @@ class ThroughputRuntime(Runtime):
             num_output_tokens = int(send_head.size(0))
             num_topk = int(topk_weights.size(1)) if topk_weights is not None else 0
             combined_x = torch.empty((num_output_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+            # Empty received weights have a null data pointer; native optional
+            # weight input/output pointers must either both be null or neither.
             combined_topk_weights = (
                 torch.empty((num_output_tokens, num_topk), dtype=torch.float32, device="cuda")
-                if topk_weights is not None
+                if topk_weights is not None and topk_weights.numel() > 0
                 else None
             )
             self.cpp_runtime.combine(
@@ -400,7 +402,9 @@ class ThroughputRuntime(Runtime):
         )
 
         self.cpp_runtime.dispatch(
-            _ptr(recv_x),
+            # Empty tensors report data_ptr()==0, but native dispatch still
+            # requires the registered receive-pool address on an empty rank.
+            self.cpp_runtime.dispatch_output_buffer_ptr(),
             _ptr(recv_x_scales),
             _ptr(recv_topk_idx),
             _ptr(recv_topk_weights),

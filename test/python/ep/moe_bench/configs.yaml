@@ -49,10 +49,16 @@ inputs:
     dtype: bf16
 
 environment:
+  mode: latency
+  layout: expert_major
   num_gpus: 4
   communication_backend: mscclpp
   compute_backend: torch
   cuda_graph: false
+
+compute:
+  activation_dtype: bf16
+  weight_dtype: bf16
 
 routing:
   balanced:

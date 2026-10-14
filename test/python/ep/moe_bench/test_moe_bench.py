@@ -20,11 +20,11 @@ import torch.nn.functional as F
 
 if __package__:
     from .compute import ExpertMLP, estimate_tensor_bytes, make_expert_weights, make_input
-    from .config import load_config
+    from .config import SUPPORTED_LAYOUTS, load_config
     from .results import latency_stats, save_results, summarize, write_json
 else:
     from compute import ExpertMLP, estimate_tensor_bytes, make_expert_weights, make_input
-    from config import load_config
+    from config import SUPPORTED_LAYOUTS, load_config
     from results import latency_stats, save_results, summarize, write_json
 
 
@@ -196,6 +196,7 @@ def test_input_reproducibility_without_global_rng_mutation():
 def test_launcher_records_failure_without_summary(tmp_path, options, environment):
     import yaml
 
+    environment = {"mode": "latency", "layout": "expert_major", **environment}
     config = tiny_config()
     document = {
         "models": {"tiny": config["model"]},
@@ -246,13 +247,15 @@ def test_cli_environment_defaults():
     from .run import parse_args
 
     args = parse_args(["--model", "small", "--input", "decode", "--routing", "balanced"])
-    assert args.backend is args.gpus is args.graph is None
+    assert args.backend is args.gpus is args.graph is args.mode is args.layout is None
 
 
 @pytest.mark.parametrize(
     "flag,value",
     [
         ("--backend", "unknown"),
+        ("--mode", "auto"),
+        ("--layout", "rank_major_topk_expanded"),
         ("--gpus", "8"),
         ("--gpus", "true"),
         ("--gpus", "2.0"),
@@ -275,6 +278,8 @@ def test_cli_rejects_invalid_environment_options(flag, value):
     [
         ([], {}),
         (["--backend", "nccl"], {"communication_backend": "nccl"}),
+        (["--layout", "rank_major"], {"layout": "rank_major"}),
+        (["--mode", "throughput", "--layout", "token_major"], {"mode": "throughput", "layout": "token_major"}),
         (["--gpus", "2"], {"num_gpus": 2}),
         (["--graph", "none"], {"cuda_graph": False}),
         (["--graph", "mlp"], {"cuda_graph": "mlp"}),
@@ -362,11 +367,26 @@ def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch,
     assert shlex.split(metadata["invocation"]["worker_command"]) == commands[0]
 
 
+def assert_idle_gpus():
+    """Opt-in tests must not compete with other users' GPU workloads."""
+    processes = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True)
+    usage = subprocess.check_output(
+        ["nvidia-smi", "--query-gpu=index,memory.used,memory.free,utilization.gpu", "--format=csv,noheader,nounits"],
+        text=True,
+    )
+    print(f"GPU availability before test:\n{usage}", flush=True)
+    assert not processes.strip(), "Shared GPUs occupied; refusing to run"
+    for row in csv.reader(usage.splitlines()):
+        _, used, free, utilization = map(int, row)
+        assert used <= 64 and free > 1024 and utilization == 0, "Shared GPUs not idle; refusing to run"
+
+
 @pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
 def test_distributed_reference(backend):
     variable = "MOE_BENCH_GPU_TESTS" if backend == "mscclpp" else "MOE_BENCH_NCCL_GPU_TESTS"
     if os.environ.get(variable) != "1":
         pytest.skip(f"Set {variable}=1 for the {backend} two-GPU test")
+    assert_idle_gpus()
     subprocess.run(
         [
             sys.executable,
@@ -391,7 +411,9 @@ def distributed_reference(backend):
     rank, world, device = initialize()
     pipeline = None
     try:
-        for graph_mode, routing in itertools.product(
+        combinations = [(mode, layout) for mode, layouts in SUPPORTED_LAYOUTS[backend].items() for layout in layouts]
+        for (mode, layout), graph_mode, routing in itertools.product(
+            combinations,
             (False, "mlp"),
             (
                 {"kind": "balanced"},
@@ -403,6 +425,11 @@ def distributed_reference(backend):
             config["routing"] = routing
             config["environment"]["cuda_graph"] = graph_mode
             config["environment"]["communication_backend"] = backend
+            config["environment"].update(mode=mode, layout=layout)
+            if backend == "nccl" and mode == "throughput":
+                config["input"]["tokens_per_rank"] = 4
+            if rank == 0:
+                print(f"Testing {backend}/{mode}/{layout}, graph={graph_mode}, routing={routing['kind']}", flush=True)
             pipeline = Pipeline(config, rank, device)
             assert (pipeline.mlp_graph is not None) == (graph_mode == "mlp")
             local_experts = config["model"]["num_experts"] // world
