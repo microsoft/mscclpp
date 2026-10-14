@@ -79,17 +79,18 @@ def save_results(run_dir, latencies, config, metadata, expert_load):
         "distributed_latency": "maximum rank duration per iteration, not a globally synchronized wall clock",
         "throughput": "original global input tokens / mean distributed iteration duration",
         "routing": "fixed; generation and expert counts excluded from timing",
-        "compute": "BF16 PyTorch reference SwiGLU, not optimized grouped GEMM",
+        "compute": metadata.get("compute_implementation", "torch_bf16"),
         "warmup_included": False,
         "percentiles": "linear interpolation",
         "phase_timing": "adjacent CUDA events on the same stream; no synchronization between phases",
         "event_initialization": "all native CUDA events materialized before warmup; warmup includes phase recording",
-        "mlp": "all expert GEMMs, SwiGLU, and per-expert launch gaps; not isolated GEMM kernel time",
+        "mlp": metadata.get("mlp_timed_operations", "all expert GEMMs, SwiGLU, and per-expert launch gaps")
+        + "; not isolated GEMM kernel time",
         "timing_overhead": "phase event recording is included; communication intervals include peer waits",
         "summary_phases": "per-rank only; global total is not the sum of independently slowest phases",
     }
     write_json(run_dir / "run.json", run)
-    print("\nMoE benchmark (PyTorch reference compute)", flush=True)
+    print(f"\nMoE benchmark ({metadata.get('compute_implementation', 'torch_bf16')})", flush=True)
     print(" | ".join(f"{name}: {value}" for name, value in run["presets"].items()))
     settings = config["benchmark"]
     print(

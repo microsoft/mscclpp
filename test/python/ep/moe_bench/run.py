@@ -26,6 +26,17 @@ def parse_args(argv=None):
     parser.add_argument("--model", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--backend", choices=("mscclpp", "nccl"), help="Override environment.communication_backend")
+    parser.add_argument(
+        "--mode", choices=("latency", "throughput"), help="Native communication algorithm; default latency"
+    )
+    parser.add_argument(
+        "--layout",
+        choices=("expert_major", "rank_major", "token_major"),
+        help="Native dispatch layout; default expert_major",
+    )
+    parser.add_argument("--compute-backend", choices=("torch", "cutlass_flashinfer"))
+    parser.add_argument("--activation-dtype", choices=("bf16", "mxfp8"), help="Internal compute activation format")
+    parser.add_argument("--weight-dtype", choices=("bf16", "mxfp8", "mxfp4"), help="Internal compute weight format")
     parser.add_argument("--gpus", type=int, choices=(2, 4), help="Override environment.num_gpus")
     parser.add_argument(
         "--graph", choices=("none", "mlp"), help="Override environment.cuda_graph (none disables graphs)"
@@ -47,9 +58,13 @@ def main():
         routing=args.routing,
         environment_overrides={
             "communication_backend": args.backend,
+            "mode": args.mode,
+            "layout": args.layout,
+            "compute_backend": args.compute_backend,
             "num_gpus": args.gpus,
             "cuda_graph": False if args.graph == "none" else args.graph,
         },
+        compute_overrides={"activation_dtype": args.activation_dtype, "weight_dtype": args.weight_dtype},
         overrides={
             "warmup": args.warmup,
             "iterations": args.iterations,
@@ -108,6 +123,13 @@ def main():
         required = config["environment"]["num_gpus"]
         if available < required:
             raise RuntimeError(f"Requested {required} GPUs, but only {available} CUDA GPUs are visible")
+        if config["environment"]["compute_backend"] == "cutlass_flashinfer":
+            if __package__:
+                from .compute_flashinfer import preflight
+            else:
+                from compute_flashinfer import preflight
+            for device in range(required):
+                preflight(config, device)
         returncode = subprocess.run(command, check=False).returncode
         if returncode != 0:
             raise SystemExit(returncode if returncode > 0 else 128 - returncode)

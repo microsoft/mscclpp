@@ -15,15 +15,17 @@ import torch
 import torch.distributed as dist
 
 if __package__:
-    from .backends import create_backend
-    from .compute import ExpertMLP, estimate_tensor_bytes, make_input
+    from .backends import create_backend, preflight_backend
+    from .compute import create_mlp, estimate_tensor_bytes, make_input
     from .config import validate_config
+    from .layout import LayoutMLP, assignment_counts, local_route_ids
     from .results import save_results
     from .routing import make_routing
 else:
-    from backends import create_backend
-    from compute import ExpertMLP, estimate_tensor_bytes, make_input
+    from backends import create_backend, preflight_backend
+    from compute import create_mlp, estimate_tensor_bytes, make_input
     from config import validate_config
+    from layout import LayoutMLP, assignment_counts, local_route_ids
     from results import save_results
     from routing import make_routing
 
@@ -40,7 +42,7 @@ def initialize():
 
 
 class Pipeline:
-    """A fixed-routing, expert-major dispatch/MLP/combine iteration."""
+    """Fixed-routing native dispatch, layout-aware expert compute, and combine."""
 
     @torch.inference_mode()
     def __init__(self, config, rank, device):
@@ -62,51 +64,94 @@ class Pipeline:
         if any(item["estimated_tensor_bytes"] > item["free_bytes"] * 0.8 for item in budgets):
             raise RuntimeError(f"Tensor estimate exceeds 80% of available GPU memory; reduce workload: {budgets}")
         self.memory_estimates = budgets
-        self.x = make_input(config, rank, device)
-        self.ids, self.weights = ids.to(device), weights.to(device)
-        shape = (local_experts, world * inputs["tokens_per_rank"], model["d_model"])
-        self.recv = torch.empty(shape, dtype=torch.bfloat16, device=device)
-        self.expert_output = torch.empty_like(self.recv)
-        self.output = torch.empty_like(self.x)
-        self.mlp = ExpertMLP(config, rank, self.counts, device)
+        # Compile optional kernels before entering any native GPU collectives.
+        # Exchange failures over Gloo so peers cannot enter dispatch while one
+        # rank has failed dependency loading, allocation, or compilation.
+        error = None
+        try:
+            preflight_backend(config)
+            self.x = make_input(config, rank, device)
+            # Throughput's fixed-routing cache checks tensor version counters.
+            with torch.inference_mode(False):
+                self.ids, self.weights = ids.to(device), weights.to(device)
+            shape = (local_experts, world * inputs["tokens_per_rank"], model["d_model"])
+            self.recv = torch.empty(shape, dtype=torch.bfloat16, device=device)
+            self.expert_output = torch.empty_like(self.recv)
+            self.output = torch.empty_like(self.x)
+            self.mlp = create_mlp(config, rank, self.counts, device)
+            if environment["compute_backend"] != "torch":
+                self.recv.zero_()
+                self.mlp(self.recv, self.expert_output)
+                torch.cuda.synchronize()
+        except (RuntimeError, ImportError, ValueError, OSError, AssertionError) as exception:
+            error = f"rank {rank}: {type(exception).__name__}: {exception}"
+        errors = [None] * world
+        dist.all_gather_object(errors, error)
+        if any(errors):
+            raise RuntimeError(f"Runtime/compute initialization failed before communication: {errors}")
         with ExitStack() as resources:
             self.backend = create_backend(
                 config, rank, self.x, self.ids, self.weights, self.recv, self.expert_output, self.output
             )
-            resources.callback(self.backend.close)
-            self._initialize_compute(environment["cuda_graph"])
+            resources.callback(self.close)
+            error = None
+            try:
+                self._initialize_compute(environment["cuda_graph"])
+            except (RuntimeError, ValueError, AssertionError) as exception:
+                error = f"rank {rank}: {type(exception).__name__}: {exception}"
+                print(f"Compute warmup/capture failed: {error}", flush=True)
+            dist.all_gather_object(errors, error)
+            if any(errors):
+                raise RuntimeError(f"Compute warmup/capture failed: {errors}")
             resources.pop_all()
 
+    @torch.inference_mode()
     def _initialize_compute(self, graph_mode):
         # Fixed routing permits count reads outside timing, without padded GEMMs
         # or device-to-host count synchronization inside every iteration.
         tokens, counts = self.backend.dispatch()
-        actual_counts = counts.cpu().tolist()
-        count_matches = torch.tensor(int(actual_counts == self.counts))
-        dist.all_reduce(count_matches, op=dist.ReduceOp.MIN)
-        if not count_matches.item():
-            raise RuntimeError("Dispatch counts differ from the fixed routing; refusing to benchmark")
-        self.mlp(tokens, self.expert_output)
+        error = None
+        try:
+            if getattr(self.backend, "adapt_layout", False):
+                counts = assignment_counts(local_route_ids(self.backend), len(self.counts))
+                self.mlp = LayoutMLP(self.mlp, self.counts, self.recv, self.expert_output, self.backend)
+            self.native_recv = tokens
+            self.native_signature = self._dispatch_signature(tokens)
+            actual_counts = counts.cpu().tolist()
+            if actual_counts != self.counts:
+                raise RuntimeError(f"Dispatch counts {actual_counts} differ from fixed routing {self.counts}")
+            self.mlp(tokens, self.expert_output)
+            torch.cuda.synchronize()
+        except (RuntimeError, ValueError, AssertionError) as exception:
+            error = f"rank {dist.get_rank()}: {type(exception).__name__}: {exception}"
+        errors = [None] * dist.get_world_size()
+        dist.all_gather_object(errors, error)
+        if any(errors):
+            # Dispatch/combine are paired native collectives. Drain the pair on
+            # every rank before reporting local conversion/compute failures.
+            self.backend.combine_buffer.zero_()
         self.backend.combine()
         torch.cuda.synchronize()
+        if any(errors):
+            raise RuntimeError(f"Dispatched-layout compute initialization failed: {errors}")
         self.mlp_graph = None
         if graph_mode == "mlp":
-            if (
-                tokens.data_ptr() != self.recv.data_ptr()
-                or tokens.shape != self.recv.shape
-                or tokens.stride() != self.recv.stride()
-            ):
-                raise RuntimeError("MLP graph requires dispatch to reuse the fixed receive buffer")
             capture_stream = torch.cuda.Stream()
             capture_stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(capture_stream):
                 for _ in range(3):
-                    self.mlp(self.recv, self.expert_output)
+                    self.mlp(self.native_recv, self.expert_output)
             torch.cuda.current_stream().wait_stream(capture_stream)
             self.mlp_graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.mlp_graph, stream=capture_stream):
-                self.mlp(self.recv, self.expert_output)
+                self.mlp(self.native_recv, self.expert_output)
             torch.cuda.synchronize()
+
+    def _dispatch_signature(self, tokens):
+        signature = (tokens.data_ptr(), tokens.shape, tokens.stride())
+        if getattr(self.backend, "adapt_layout", False):
+            signature += (self.backend.route_ids.data_ptr(), self.backend.route_weights.data_ptr())
+        return signature
 
     @torch.inference_mode()
     def step(self, events=None):
@@ -114,6 +159,8 @@ class Pipeline:
         if events is not None:
             events[0].record(stream)
         tokens, _ = self.backend.dispatch()
+        if self.mlp_graph is not None and self._dispatch_signature(tokens) != self.native_signature:
+            raise RuntimeError("Native dispatch buffers changed; MLP graph replay would use stale input/metadata")
         if events is not None:
             events[1].record(stream)
         if self.mlp_graph is None:
@@ -128,8 +175,9 @@ class Pipeline:
         return self.output
 
     def close(self):
-        self.backend.close()
         self.mlp_graph = None
+        self.native_recv = None
+        self.backend.close()
 
     def load_statistics(self):
         world = self.config["environment"]["num_gpus"]
@@ -202,6 +250,7 @@ def run(config, run_dir):
                 "torch_version": torch.__version__,
                 "cuda_version": torch.version.cuda,
                 **pipeline.backend.metadata,
+                **pipeline.mlp.metadata,
                 "cuda_graph_scope": "mlp_only" if pipeline.mlp_graph is not None else "none",
                 "bf16_reduced_precision_reduction": False,
                 "tensor_memory_estimates": pipeline.memory_estimates,

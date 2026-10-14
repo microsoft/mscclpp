@@ -41,8 +41,9 @@ def fake_nccl(monkeypatch):
     core.Communicator = SimpleNamespace(init=Mock(return_value=comm))
     core.get_version = lambda: SimpleNamespace(libnccl=SimpleNamespace(version="2.30.7"))
     ep = ModuleType("nccl.ep")
-    ep.Algorithm = SimpleNamespace(LOW_LATENCY="low-latency")
-    ep.Layout = SimpleNamespace(EXPERT_MAJOR="expert-major")
+    ep.Algorithm = SimpleNamespace(LOW_LATENCY="low-latency", HIGH_THROUGHPUT="high-throughput")
+    ep.Layout = SimpleNamespace(EXPERT_MAJOR="expert-major", RANK_MAJOR="rank-major", FLAT="flat")
+    ep.ExpertIdKind = SimpleNamespace(LOCAL="local")
     ep.Group = SimpleNamespace(create=Mock(return_value=group))
     ep.Tensor = Mock(side_effect=lambda buffer: SimpleNamespace(buffer=buffer))
     for name in (
@@ -74,6 +75,58 @@ def fake_nccl(monkeypatch):
 
     monkeypatch.setattr(nccl_adapter.dist, "broadcast_object_list", broadcast)
     return SimpleNamespace(core=core, ep=ep, group=group, handle=handle, destroyed=destroyed, stream=stream)
+
+
+@pytest.mark.parametrize(
+    "mode,layout", [("latency", "rank_major"), ("throughput", "expert_major"), ("throughput", "token_major")]
+)
+def test_nccl_native_layout_wiring(fake_nccl, mode, layout):
+    config = tiny_config()
+    config["environment"].update(communication_backend="nccl", mode=mode, layout=layout)
+    config["input"]["tokens_per_rank"] = 4
+    x, ids, weights, recv, expert_output, output = buffers()
+
+    def create_handle(*args, layout_info, **kwargs):
+        if layout_info is not None:
+            layout_info.expert_counters.buffer.copy_(torch.tensor([2, 0, 1, 0]))
+            layout_info.recv_total_counter.buffer.fill_(3)
+            if layout_info.expert_offsets is not None:
+                layout_info.expert_offsets.buffer.copy_(torch.tensor([0, 2, 2, 3]))
+        return fake_nccl.handle
+
+    fake_nccl.group.create_handle.side_effect = create_handle
+    adapter = create_backend(config, 0, x, ids, weights, recv, expert_output, output)
+    assert adapter.adapt_layout
+    assert adapter.combine_inputs.tokens.buffer is adapter.combine_buffer
+    assert adapter.combine_outputs.topk_weights is None
+    assert adapter.dispatch_inputs.topk_weights.buffer is weights
+    assert (
+        fake_nccl.group.create_handle.call_args.args[0]
+        == {"rank_major": "rank-major", "expert_major": "expert-major", "token_major": "flat"}[layout]
+    )
+    if mode == "throughput":
+        capacity = 16 if layout == "expert_major" else 8
+        assert adapter.recv.shape == (capacity, 4096)
+        assert adapter.layout is None
+        assert fake_nccl.ep.Group.create.call_args.args[1].max_recv_tokens_per_rank == capacity
+        if layout == "expert_major":
+            assert adapter.route_ids[:4, 0].tolist() == [0, 0, 2, -1]
+            assert adapter.dispatch_outputs.topk_weights.buffer.shape == (capacity,)
+        else:
+            assert adapter.route_valid_rows.tolist() == [True] * 3 + [False] * 5
+    else:
+        assert adapter.recv.shape == (2, 4, 4096)
+        assert adapter.layout.recv_topk_idx_kind == "local"
+    adapter.close()
+
+
+def test_nccl_missing_throughput_api_fails_before_collectives(fake_nccl):
+    config = tiny_config()
+    config["environment"].update(communication_backend="nccl", mode="throughput", layout="token_major")
+    del fake_nccl.ep.Algorithm.HIGH_THROUGHPUT
+    with pytest.raises(RuntimeError, match="does not expose a throughput algorithm"):
+        nccl_adapter.preflight(config)
+    fake_nccl.core.get_unique_id.assert_not_called()
 
 
 @pytest.mark.parametrize("rank", [0, 1])
