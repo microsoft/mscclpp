@@ -281,8 +281,9 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
-  // Captured graphs reuse their recorded epoch; rank-major combine performs a
-  // replay-safe device rendezvous before reading peer buffers.
+  // Graph replay does not advance this host epoch. Rank-major latency graphs
+  // therefore require at least two captured dispatch/combine pairs so adjacent
+  // dispatches use different recorded epochs.
   ++context.epoch_;
 }
 

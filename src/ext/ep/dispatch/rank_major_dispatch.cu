@@ -179,25 +179,6 @@ MSCCLPP_DEVICE_INLINE void writeCounts(const TransportView& transport, const int
   }
 }
 
-MSCCLPP_DEVICE_INLINE void invalidateCountsForReplay(const TransportView& transport, int nExperts, int nRanks,
-                                                     void* recvBuffer, void* workspace, uint32_t epoch) {
-  if (blockIdx.x == 0) {
-    auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
-    for (int sourceRank = static_cast<int>(threadIdx.x); sourceRank < nRanks;
-         sourceRank += static_cast<int>(blockDim.x)) {
-      rankTokenCounts[sourceRank].write(0, ~epoch);
-    }
-    __syncthreads();
-    for (int peerRank = static_cast<int>(threadIdx.x); peerRank < nRanks; peerRank += static_cast<int>(blockDim.x)) {
-      if (!transport.isSelf(peerRank)) {
-        transport.baseMemoryChannels_[peerRank].signal();
-        transport.baseMemoryChannels_[peerRank].wait(-1);
-      }
-    }
-  }
-  WorkspaceView(workspace, nRanks, nExperts).combineSyncer_->sync(gridDim.x, -1);
-}
-
 MSCCLPP_DEVICE_INLINE void dispatchNotify(const TransportView& transport, int nExperts, int nRanks,
                                           const int64_t* __restrict__ topkIndices, int nTokens, int nTopk,
                                           void* recvBuffer, void* workspace, uint32_t epoch, int* sharedMem) {
@@ -280,7 +261,6 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(context);
   const uint32_t epoch = workload.epoch_;
 
-  invalidateCountsForReplay(transport, nExperts, nRanks, recvBuffer, context->workspace_, epoch);
   dispatchSend<Hidden, DataType, ScaleBlockSize>(
       output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
       nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch, sharedMem);
