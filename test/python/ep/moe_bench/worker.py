@@ -15,19 +15,23 @@ import torch
 import torch.distributed as dist
 
 if __package__:
-    from .backends import create_backend, preflight_backend
-    from .compute import create_mlp, estimate_tensor_bytes, make_input
+    from .communication_backends import create_backend, preflight_backend
+    from .compute_backends import create_mlp
     from .config import validate_config
     from .layout import LayoutMLP, assignment_counts, local_route_ids
+    from .memory import estimate_tensor_bytes
     from .results import save_results
     from .routing import make_routing
+    from .workload import make_input
 else:
-    from backends import create_backend, preflight_backend
-    from compute import create_mlp, estimate_tensor_bytes, make_input
+    from communication_backends import create_backend, preflight_backend
+    from compute_backends import create_mlp
     from config import validate_config
     from layout import LayoutMLP, assignment_counts, local_route_ids
+    from memory import estimate_tensor_bytes
     from results import save_results
     from routing import make_routing
+    from workload import make_input
 
 
 def initialize():

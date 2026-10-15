@@ -12,10 +12,10 @@ import pytest
 import torch
 import yaml
 
-from .backends import create_backend
-from .compute import estimate_tensor_bytes
-from .config import SUPPORTED_LAYOUTS, load_config, validate_config
-from .layout import LayoutMLP, assignment_counts, local_route_ids
+from ..communication_backends import create_backend
+from ..memory import estimate_tensor_bytes
+from ..config import SUPPORTED_LAYOUTS, load_config, validate_config
+from ..layout import LayoutMLP, assignment_counts, local_route_ids
 from .test_moe_bench import tiny_config
 
 
@@ -39,7 +39,7 @@ def test_support_matrix(backend, mode, layout, monkeypatch):
 
 
 def test_old_yaml_gets_defaults_without_mutation():
-    path = Path(__file__).with_name("configs.yaml")
+    path = Path(__file__).resolve().parents[1] / "configs.yaml"
     document = yaml.safe_load(path.read_text())
     del document["environment"]["mode"], document["environment"]["layout"]
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
@@ -95,8 +95,8 @@ def test_native_payload_capacity_and_adapter_memory():
 
 
 def test_initial_layout_failure_drains_native_collective(monkeypatch):
-    from .worker import Pipeline
-    from . import worker
+    from ..worker import Pipeline
+    from .. import worker
 
     pipeline = Pipeline.__new__(Pipeline)
     pipeline.counts = [1]

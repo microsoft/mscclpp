@@ -19,18 +19,23 @@ import torch
 import torch.nn.functional as F
 
 if __package__:
-    from .compute import ExpertMLP, estimate_tensor_bytes, make_expert_weights, make_input
-    from .config import SUPPORTED_LAYOUTS, load_config
-    from .results import latency_stats, save_results, summarize, write_json
+    from ..compute_backends.torch_reference import ExpertMLP
+    from ..config import SUPPORTED_LAYOUTS, load_config
+    from ..memory import estimate_tensor_bytes
+    from ..results import latency_stats, save_results, summarize, write_json
+    from ..workload import make_expert_weights, make_input
 else:
-    from compute import ExpertMLP, estimate_tensor_bytes, make_expert_weights, make_input
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from compute_backends.torch_reference import ExpertMLP
     from config import SUPPORTED_LAYOUTS, load_config
+    from memory import estimate_tensor_bytes
     from results import latency_stats, save_results, summarize, write_json
+    from workload import make_expert_weights, make_input
 
 
 def tiny_config():
     config = load_config(
-        Path(__file__).with_name("configs.yaml"),
+        Path(__file__).resolve().parents[1] / "configs.yaml",
         model="small",
         input_name="decode",
         routing="balanced",
@@ -92,7 +97,7 @@ def test_zero_work_phase():
 
 
 def test_timing_events_materialized_before_measurement(monkeypatch):
-    from .worker import make_timing_events
+    from ..worker import make_timing_events
 
     recorded = []
 
@@ -211,7 +216,7 @@ def test_launcher_records_failure_without_summary(tmp_path, options, environment
     result = subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).with_name("run.py")),
+            str(Path(__file__).resolve().parents[1] / "run.py"),
             "--config",
             str(config_path),
             "--model",
@@ -244,7 +249,7 @@ def test_launcher_records_failure_without_summary(tmp_path, options, environment
 
 
 def test_cli_environment_defaults():
-    from .run import parse_args
+    from ..run import parse_args
 
     args = parse_args(["--model", "small", "--input", "decode", "--routing", "balanced"])
     assert args.backend is args.gpus is args.graph is args.mode is args.layout is None
@@ -266,7 +271,7 @@ def test_cli_environment_defaults():
     ],
 )
 def test_cli_rejects_invalid_environment_options(flag, value):
-    from .run import parse_args
+    from ..run import parse_args
 
     with pytest.raises(SystemExit) as error:
         parse_args(["--model", "small", "--input", "decode", "--routing", "balanced", flag, value])
@@ -291,9 +296,9 @@ def test_cli_rejects_invalid_environment_options(flag, value):
 )
 def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch, options, expected):
     import yaml
-    from . import run as launcher
+    from .. import run as launcher
 
-    document = yaml.safe_load(Path(__file__).with_name("configs.yaml").read_text())
+    document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
     document["environment"]["cuda_graph"] = "mlp"
     config_path = tmp_path / "configs.yaml"
     config_path.write_text(yaml.safe_dump(document))

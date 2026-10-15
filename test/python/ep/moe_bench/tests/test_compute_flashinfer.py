@@ -18,15 +18,26 @@ import torch.nn.functional as F
 import yaml
 
 if __package__:
-    from .compute import create_mlp, estimate_tensor_bytes, make_expert_weights
-    from .compute_flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
-    from .config import SUPPORTED_LAYOUTS, load_config, validate_config
+    from ..compute_backends import create_mlp
+    from ..compute_backends.flashinfer import (
+        fc1_weight,
+        make_schedule,
+        preflight,
+        quantize_activations,
+        quantize_weights,
+    )
+    from ..config import SUPPORTED_LAYOUTS, load_config, validate_config
+    from ..memory import estimate_tensor_bytes
+    from ..workload import make_expert_weights
     from .test_moe_bench import assert_idle_gpus, tiny_config
 else:
-    from compute import create_mlp, estimate_tensor_bytes, make_expert_weights
-    from compute_flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from compute_backends import create_mlp
+    from compute_backends.flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
     from config import SUPPORTED_LAYOUTS, load_config, validate_config
+    from memory import estimate_tensor_bytes
     from test_moe_bench import assert_idle_gpus, tiny_config
+    from workload import make_expert_weights
 
 
 def mx_config():
@@ -75,7 +86,7 @@ def test_optional_compute_defaults_and_overrides():
     del config["compute"]
     validate_config(config)
     assert tiny_config()["compute"] == {"activation_dtype": "bf16", "weight_dtype": "bf16"}
-    document = yaml.safe_load(Path(__file__).with_name("configs.yaml").read_text())
+    document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
         resolved = load_config(
             "unused",
@@ -105,7 +116,7 @@ def test_alignment_rejected(dimension):
 
 
 def test_cli_compute_flags():
-    from .run import parse_args
+    from ..run import parse_args
 
     base = ["--model", "small", "--input", "decode", "--routing", "balanced"]
     args = parse_args(base)
@@ -126,7 +137,8 @@ def test_cli_compute_flags():
 
 @pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
 def test_launcher_compute_overrides(tmp_path, monkeypatch, backend):
-    from . import compute_flashinfer, run as launcher
+    from .. import run as launcher
+    from ..compute_backends import flashinfer as compute_flashinfer
 
     config = mx_config()
     monkeypatch.setattr(
@@ -176,7 +188,7 @@ def test_launcher_compute_overrides(tmp_path, monkeypatch, backend):
 
 @pytest.mark.parametrize("stage", ["compile", "capture"])
 def test_initialization_failure_coordination_and_cleanup(monkeypatch, stage):
-    from . import worker
+    from .. import worker
 
     config = tiny_config()
     monkeypatch.setattr(worker.dist, "get_world_size", lambda: 2)
@@ -211,18 +223,18 @@ def guarded(name, *args, **kwargs):
         raise AssertionError('Unexpected optional import: ' + name)
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
-from compute import create_mlp
-from test_moe_bench import tiny_config
+from moe_bench.compute_backends import create_mlp
+from moe_bench.tests.test_moe_bench import tiny_config
 config = tiny_config()
 config['model']['d_model'] = 16
 create_mlp(config, 0, [1, 0, 1, 0], 'cpu')
-import worker
+from moe_bench import worker
 """
-    subprocess.run([sys.executable, "-c", source], cwd=Path(__file__).parent, check=True, timeout=30)
+    subprocess.run([sys.executable, "-c", source], cwd=Path(__file__).resolve().parents[2], check=True, timeout=30)
 
 
 def test_preflight_rejects_versions_and_devices(monkeypatch):
-    from . import compute_flashinfer as module
+    from ..compute_backends import flashinfer as module
 
     monkeypatch.setattr(module, "version", lambda name: "wrong")
     with pytest.raises(RuntimeError, match="requires tested"):

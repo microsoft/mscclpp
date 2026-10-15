@@ -7,10 +7,10 @@ from importlib.metadata import PackageNotFoundError, version
 
 import torch
 
-if __package__:
-    from .compute import make_expert_weights
+if __package__ == "compute_backends":
+    from workload import make_expert_weights
 else:
-    from compute import make_expert_weights
+    from ..workload import make_expert_weights
 
 
 def preflight(config, device):
