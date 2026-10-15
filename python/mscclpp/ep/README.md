@@ -275,3 +275,30 @@ Runtime views are reused by later operations, not independent results.
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
+
+## MSCCL++ EP benchmark
+
+`python -m mscclpp_benchmark.ep.run_ep_bench_python` measures paired dispatch
+and combine through the Python API. It supports latency RANK_MAJOR FP8 with the
+same fixed scalar contract as the runtime: the harness creates
+`q = E4M3(real * S)`, dispatches `q`, writes static-scale FP8 identity-expert
+output into the runtime combine buffer, and verifies BF16 token output.
+
+For 32 ranks across eight four-GPU hosts, the following configuration has 32
+experts per rank:
+
+```bash
+export MASTER_ADDR=<rank-0-reachable-address>
+export EP_KERNEL_TIMER=events
+
+mpirun -np 32 python -m mscclpp_benchmark.ep.run_ep_bench_python \
+    --backend mscclpp --mode latency --ep-layout rank_major \
+    --combine-mode direct_send --dispatch-dtype fp8_e4m3 \
+    --static-fp8-scale 1.0 --num-tokens 4 --hidden 4096 \
+    --num-experts 1024 --num-topk 7 --cuda-graph \
+    --iters-per-graph 50 --validate
+```
+
+Input generation, fixed-scale quantization, routing generation, and synthetic
+identity-expert staging happen outside the timed loop. CUDA-event results cover
+communication dispatch plus combine; combine always writes BF16.
