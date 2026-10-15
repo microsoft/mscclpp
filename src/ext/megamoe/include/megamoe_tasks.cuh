@@ -37,9 +37,12 @@ __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate) {
   if constexpr (W4ExpertMajorTasks) {
     int expert = p.workspace.blocks[block].expert;
     int first = p.workspace.starts[expert] / KernelTileN;
-    int offset;
-    p.workspace.expertBlockDivisors[expert](m, offset, local - first * tiles);
-    block = first + offset;
+    auto divisor = p.workspace.expertBlockDivisors[expert];
+    if (block - first < divisor.divisor) {
+      int offset;
+      divisor(m, offset, local - first * tiles);
+      block = first + offset;
+    }
   }
   return Task{fc1, block, m, p.workspace.blocks[block]};
 }

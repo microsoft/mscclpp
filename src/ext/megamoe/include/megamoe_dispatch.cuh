@@ -110,7 +110,8 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   int groups = w.control->tokenBlocks * GroupsPerBlock;
   for (int group = blockIdx.x; group < groups; group += gridDim.x) {
     int block = group / GroupsPerBlock;
-    int firstRowIndexInGroup = group % GroupsPerBlock * Types::DispatchWarps;
+    int groupInBlock = (group % GroupsPerBlock) ^ (block & (GroupsPerBlock - 1));
+    int firstRowIndexInGroup = groupInBlock * Types::DispatchWarps;
     int rows = w.blocks[block].rows;
     // A group covers one row per dispatch warp. Skip groups fully past the live rows; padded tail warps in a
     // partially live group still arrive with hasRow=false so the shared publication counter remains convergent.

@@ -26,38 +26,64 @@ MSCCLPP_DEVICE_INLINE float2 swigluPair(float2 gate, float2 up) {
   return __fmul2_rn(product, inverse);
 }
 
-// Token-major FC1 scratch. XOR-swizzling 16-byte chunks by token parity and 32-row gate/up group keeps both
-// the per-row TMEM spills and the per-token vector activation loads free of shared-memory bank conflicts.
-template <int CtaTileM>
-MSCCLPP_DEVICE_INLINE int fc1ScratchIndex(int token, int row) {
-  static_assert(CtaTileM == 128);
-  int group = row / 32;
-  int swizzle = ((group & 1) << 2) | ((token & 1) << 1) | (group >> 1);
-  return token * CtaTileM + (row ^ (swizzle << 2));
+// Token-major post-SwiGLU FC1 scratch [ChunkTokens, 64].
+template <int CtaFc1M>
+MSCCLPP_DEVICE_INLINE int fc1ScratchIndex(int token, int feature) {
+  static_assert(CtaFc1M == 64);
+  int swizzle = ((token & 3) << 2) | (((token >> 3) & 1) << 4);
+  return token * CtaFc1M + (feature ^ swizzle);
 }
 
 template <int EpilogueThreads, int ChunkTokens, class KernelParams, class Storage, class Values, class Coordinates>
 MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Task& task, Storage& s,
-                                            const Values& values, const Coordinates& coordinates, int tokenOffset,
-                                            int validRows, int intermediate, bool lastChunk) {
+                                            const Values& values, const Coordinates&, int tokenOffset, int validRows,
+                                            int intermediate, bool lastChunk) {
   using namespace cute;
   using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
   constexpr int CtaTileM = Tiles::CtaM;
   constexpr int CtaFc1M = Tiles::CtaFc1M;
-  constexpr int GateUpGroupSize = 16;
   constexpr int ScaleGroupSize = 32;
+  constexpr int ReaderGroups = EpilogueThreads / CtaTileM;
+  constexpr int ReadTokens = ChunkTokens / ReaderGroups;
+  constexpr int HalfTokens = ReadTokens / 2;
   // Each thread activates consecutive features of one token; ThreadsPerScale lanes share one E8M0 scale.
   constexpr int Features = ChunkTokens * CtaFc1M / EpilogueThreads;
   constexpr int ThreadsPerToken = CtaFc1M / Features;
   constexpr int ThreadsPerScale = ScaleGroupSize / Features;
-  static_assert(CtaFc1M == 64 && (Features == 4 || Features == 8 || Features == 16));
+  static_assert(CtaFc1M == 64 && HalfTokens % 2 == 0 && (Features == 4 || Features == 8 || Features == 16));
   using Activations = mscclpp::VectorType<float, Features>;
 
+  // Lanes 0..15 hold gate and lanes 16..31 hold up for the same 16 features and ReadTokens tokens.
+  // Pair them across offset 16 to evaluate SwiGLU in registers before writing half-width scratch.
+  int lane = threadIdx.x % 32;
+  int warpInGroup = (threadIdx.x % CtaTileM) / 32;
+  int readerGroup = threadIdx.x / CtaTileM;
+  bool isUp = (lane & 16) != 0;
+  int outFeature = warpInGroup * 16 + (lane & 15);
+  int baseToken = readerGroup * ReadTokens + (isUp ? HalfTokens : 0);
+  float gate[HalfTokens], up[HalfTokens];
 #pragma unroll
-  for (int i = 0; i < size(values); ++i) {
-    auto coord = coordinates(i);
-    s.epilogue.scratch[fc1ScratchIndex<CtaTileM>(int(get<1>(coord)), int(get<0>(coord)))] = values(i);
+  for (int i = 0; i < HalfTokens; ++i) {
+    float mySend = isUp ? values(i) : values(i + HalfTokens);
+    float other = __shfl_xor_sync(0xffffffff, mySend, 16);
+    gate[i] = isUp ? other : values(i);
+    up[i] = isUp ? values(i + HalfTokens) : other;
+  }
+  if (float clamp = params.config.gateUpClamp; clamp >= 0) {
+#pragma unroll
+    for (int i = 0; i < HalfTokens; ++i) {
+      gate[i] = fminf(gate[i], clamp);
+      up[i] = fmaxf(-clamp, fminf(up[i], clamp));
+    }
+  }
+  if (tokenOffset > 0)
+    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+#pragma unroll
+  for (int i = 0; i < HalfTokens; i += 2) {
+    float2 pair = swigluPair(make_float2(gate[i], gate[i + 1]), make_float2(up[i], up[i + 1]));
+    s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i, outFeature)] = pair.x;
+    s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i + 1, outFeature)] = pair.y;
   }
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 
@@ -65,29 +91,11 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
   // Warps holding only padded tokens skip the work; scale shuffles never cross a warp.
   if (threadIdx.x / 32 * (32 / ThreadsPerToken) < validRows) {
     int feature = threadIdx.x % ThreadsPerToken * Features;
-    int gateRow = feature / GateUpGroupSize * 2 * GateUpGroupSize + feature % GateUpGroupSize;
-    Activations gate, up;
-#pragma unroll
-    for (int i = 0; i < Features / 4; ++i) {
-      reinterpret_cast<mscclpp::f32x4*>(&gate)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
-          s.epilogue.scratch + fc1ScratchIndex<CtaTileM>(token, gateRow + 4 * i));
-      reinterpret_cast<mscclpp::f32x4*>(&up)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
-          s.epilogue.scratch + fc1ScratchIndex<CtaTileM>(token, gateRow + GateUpGroupSize + 4 * i));
-    }
-    // Clamp in one uniform pass so the activation below stays a single basic block.
-    if (float clamp = params.config.gateUpClamp; clamp >= 0) {
-#pragma unroll
-      for (int i = 0; i < Features; ++i) {
-        gate[i] = fminf(gate[i], clamp);
-        up[i] = fmaxf(-clamp, fminf(up[i], clamp));
-      }
-    }
     Activations activated;
 #pragma unroll
-    for (int i = 0; i < Features; i += 2) {
-      float2 pair = swigluPair(make_float2(gate[i], gate[i + 1]), make_float2(up[i], up[i + 1]));
-      activated[i] = pair.x;
-      activated[i + 1] = pair.y;
+    for (int i = 0; i < Features / 4; ++i) {
+      reinterpret_cast<mscclpp::f32x4*>(&activated)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
+          s.epilogue.scratch + fc1ScratchIndex<CtaFc1M>(token, feature + 4 * i));
     }
     Activations magnitude;
 #pragma unroll
@@ -113,8 +121,10 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
     }
   }
   // FC2 loads hidden through TMA; order every generic store of this task before its completion release.
-  if (lastChunk) asm volatile("fence.proxy.async.global;" ::: "memory");
-  cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+  if (lastChunk) {
+    asm volatile("fence.proxy.async.global;" ::: "memory");
+    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+  }
 }
 
 // 16-datapath TMEM loads return stmatrix fragments: for each 8-column group, thread t receives lanes t/4 and
@@ -191,7 +201,6 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
     }
     bulkStore(output + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
     bulkStoreCommit();
-    bulkStoreWaitSource();
   }
 }
 
@@ -253,13 +262,15 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
       loadFc2Accumulators<ReadTokens / 8>(address + uint32_t((warp % 4 * 32 + half * 16) << 16), accumulator[half]);
     cutlass::arch::fence_view_async_tmem_load();
     if (lastChunk) pipeline.consumer_release(state);
-    packFc2Chunk<ReadTokens>(params, task, s, accumulator, tokenOffset, readerGroup);
+    bulkStoreWaitSource();
+    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+    if (readerGroup * ReadTokens < validRows)
+      packFc2Chunk<ReadTokens>(params, task, s, accumulator, tokenOffset, readerGroup);
     bulkFence();
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
     traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
     storeOutputChunk<EpilogueWarps>(params, task, s, tokenOffset, validRows, hidden, warp, lane);
     traceKernel(KernelTracePhase::Fc2Store, false, tokenOffset);
-    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
   }
   ++state;
   if (task.fc1 && threadIdx.x == 0) {

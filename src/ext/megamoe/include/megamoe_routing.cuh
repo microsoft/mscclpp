@@ -329,7 +329,8 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
       w.starts[expert] = firstBlock * RoutingTileN;
       // Downstream cache policies read each expert's total routed rows.
       w.cursors[expert] = count;
-      if constexpr (W4ExpertMajorTasks) w.expertBlockDivisors[expert] = makeExpertBlockDivisor(max(1, blocks));
+      if constexpr (W4ExpertMajorTasks)
+        w.expertBlockDivisors[expert] = makeExpertBlockDivisor(max(1, count / RoutingTileN));
     }
     if (expert < experts && routeOffsets) routeOffsets[expert] += firstBlock * RoutingTileN;
     for (int block = blockIdx.x; block < blocks; block += gridDim.x)

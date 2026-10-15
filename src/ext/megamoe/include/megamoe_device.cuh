@@ -163,7 +163,7 @@ constexpr int PackedRowStride = 128 + 8;
 template <int Tokens>
 struct alignas(128) EpilogueStorage {
   union {
-    float scratch[128 * (Tokens + 1)];
+    float scratch[64 * Tokens];
     __bfloat16 packed[Tokens * PackedRowStride];
   };
 };

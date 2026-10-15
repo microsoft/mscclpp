@@ -140,9 +140,7 @@ __global__ void quantizeInputKernel(P p, int tokens, const __bfloat16* source) {
       auto staged = at<__bfloat16>(p.local, p.symmetric.input) + size_t(token) * p.config.hidden + block * 32;
       auto input = source ? source + size_t(token) * p.config.hidden + block * 32 : staged;
       auto values = input + lane * ValuesPerThread;
-      auto stagedValues = staged + lane * ValuesPerThread;
       int4 packed = *reinterpret_cast<const int4*>(values);
-      if (values != stagedValues) *reinterpret_cast<int4*>(stagedValues) = packed;
       mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
       mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
 
