@@ -19,23 +19,23 @@ import yaml
 
 if __package__:
     from .compute import create_mlp, estimate_tensor_bytes, make_expert_weights
-    from .compute_flashinfer import fc1_weight, make_schedule, preflight, quantize
+    from .compute_flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
     from .config import SUPPORTED_LAYOUTS, load_config, validate_config
     from .test_moe_bench import assert_idle_gpus, tiny_config
 else:
     from compute import create_mlp, estimate_tensor_bytes, make_expert_weights
-    from compute_flashinfer import fc1_weight, make_schedule, preflight, quantize
+    from compute_flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
     from config import SUPPORTED_LAYOUTS, load_config, validate_config
     from test_moe_bench import assert_idle_gpus, tiny_config
 
 
-def mx_config(mixed=False):
+def mx_config():
     config = tiny_config()
     config["model"]["intermediate_size"] = 128
     config["environment"]["compute_backend"] = "cutlass_flashinfer"
     config["compute"] = {
-        "activation_dtype": "mxfp8" if mixed else "bf16",
-        "weight_dtype": "mxfp4" if mixed else "mxfp8",
+        "activation_dtype": "mxfp8",
+        "weight_dtype": "mxfp4",
     }
     return config
 
@@ -52,7 +52,6 @@ def test_config_pairs(backend, activation, weight):
     config["compute"] = {"activation_dtype": activation, "weight_dtype": weight}
     valid = (backend, activation, weight) in (
         ("torch", "bf16", "bf16"),
-        ("cutlass_flashinfer", "bf16", "mxfp8"),
         ("cutlass_flashinfer", "mxfp8", "mxfp4"),
     )
     if valid:
@@ -62,23 +61,31 @@ def test_config_pairs(backend, activation, weight):
             validate_config(config)
 
 
+def test_weight_only_rejected():
+    config = mx_config()
+    config["compute"] = {"activation_dtype": "bf16", "weight_dtype": "mxfp8"}
+    with pytest.raises(ValueError, match="BF16/MXFP8 weight-only compute.*not supported"):
+        validate_config(config)
+    with pytest.raises(ValueError, match="requires MXFP8 activations and MXFP4 weights"):
+        preflight(config, "cpu")
+
+
 def test_optional_compute_defaults_and_overrides():
     config = tiny_config()
     del config["compute"]
     validate_config(config)
     assert tiny_config()["compute"] == {"activation_dtype": "bf16", "weight_dtype": "bf16"}
     document = yaml.safe_load(Path(__file__).with_name("configs.yaml").read_text())
-    document["environment"]["compute_backend"] = "cutlass_flashinfer"
-    document["compute"] = {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
         resolved = load_config(
             "unused",
             model="small",
             input_name="decode",
             routing="balanced",
-            compute_overrides={"activation_dtype": "bf16", "weight_dtype": "mxfp8"},
+            environment_overrides={"compute_backend": "cutlass_flashinfer"},
+            compute_overrides={"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"},
         )
-    assert resolved["compute"] == {"activation_dtype": "bf16", "weight_dtype": "mxfp8"}
+    assert resolved["compute"] == {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
     assert resolved["input"]["dtype"] == "bf16"
     for compute in ({"dtype": "mxfp8"}, [], None):
         config["compute"] = compute
@@ -107,17 +114,21 @@ def test_cli_compute_flags():
         base + ["--compute-backend", "cutlass_flashinfer", "--activation-dtype", "mxfp8", "--weight-dtype", "mxfp4"]
     )
     assert (args.compute_backend, args.activation_dtype, args.weight_dtype) == ("cutlass_flashinfer", "mxfp8", "mxfp4")
-    for flag, value in (("--compute-backend", "flashinfer"), ("--activation-dtype", "fp8"), ("--weight-dtype", "fp4")):
+    for flag, value in (
+        ("--compute-backend", "flashinfer"),
+        ("--activation-dtype", "fp8"),
+        ("--weight-dtype", "fp4"),
+        ("--weight-dtype", "mxfp8"),
+    ):
         with pytest.raises(SystemExit):
             parse_args(base + [flag, value])
 
 
-@pytest.mark.parametrize("mixed", [False, True])
 @pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-def test_launcher_compute_overrides(tmp_path, monkeypatch, mixed, backend):
+def test_launcher_compute_overrides(tmp_path, monkeypatch, backend):
     from . import compute_flashinfer, run as launcher
 
-    config = mx_config(mixed)
+    config = mx_config()
     monkeypatch.setattr(
         sys,
         "argv",
@@ -219,11 +230,11 @@ def test_preflight_rejects_versions_and_devices(monkeypatch):
     versions = {
         "flashinfer-python": "0.7.1",
         "nvidia-cutlass-dsl": "4.8.0",
-        "cuda-tile": "1.6.0",
-        "nvidia-cuda-tileiras": "13.4.92",
     }
     monkeypatch.setattr(module, "version", versions.__getitem__)
     monkeypatch.setattr(torch.version, "cuda", "13.0")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (10, 3))
+    assert preflight(mx_config(), 0) == versions
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (9, 0))
     with pytest.raises(RuntimeError, match="SM100/SM103"):
         preflight(mx_config(), 0)
@@ -234,36 +245,33 @@ def test_preflight_rejects_versions_and_devices(monkeypatch):
         preflight(mx_config(), 0)
 
 
-@pytest.mark.parametrize("mixed", [False, True])
-def test_schedule_and_weight_orientation(mixed):
+def test_schedule_and_weight_orientation():
     counts = [7, 0, 129]
-    slots, experts, limits, tiles, padded = make_schedule(
-        counts, 128 if mixed else 16, -1 if mixed else sum(counts), "cpu"
-    )
-    valid = slots[slots >= 0] if mixed else slots[slots < sum(counts)]
+    slots, experts, limits, tiles = make_schedule(counts, "cpu")
+    valid = slots[slots >= 0]
     assert valid.tolist() == list(range(sum(counts)))
     assert 1 not in experts.tolist()
-    assert tiles.item() == len(experts) and padded.item() == len(slots)
-    assert limits[-1] == (128 if mixed else 16) + 129
+    assert tiles.item() == len(experts) == 3
+    assert len(slots) == 384
+    assert limits[-1] == 128 + 129
     gate = torch.arange(256 * 128).reshape(256, 128)
     up = -gate
-    packed = fc1_weight(gate, up, mixed)
+    packed = fc1_weight(gate, up)
     for column in range(128):
-        up_row = (column // 64) * 128 + column % 64 if mixed else column
-        gate_row = up_row + 64 if mixed else column + 128
+        up_row = (column // 64) * 128 + column % 64
+        gate_row = up_row + 64
         assert torch.equal(packed[up_row], up[:, column])
         assert torch.equal(packed[gate_row], gate[:, column])
 
 
-@pytest.mark.parametrize("mixed", [False, True])
-def test_memory_estimate(mixed):
-    config = mx_config(mixed)
+def test_memory_estimate():
+    config = mx_config()
     config["model"]["num_experts"] = 128
     config["model"]["intermediate_size"] = 8192
     counts = [3] * 64
     estimate = estimate_tensor_bytes(config, counts)
     elements = 3 * 64 * 4096 * 8192
-    packed_weights = elements // (2 if mixed else 1) + elements // 32
+    packed_weights = elements // 2 + elements // 32
     assert estimate > packed_weights + 6 * 4096 * 8192
     assert estimate < elements * 2
     config["environment"]["cuda_graph"] = "mlp"
@@ -311,42 +319,44 @@ def relative_error(actual, expected):
 def layout_reference(device):
     rows, k = 129, 256
     exponent = (torch.arange(rows, device=device)[:, None] + 3 * torch.arange(k // 32, device=device)[None, :]) % 11 - 5
-    for bits, maximum in ((4, 6.0), (8, 448.0)):
+    for quantizer, bits, maximum, swizzled in (
+        (quantize_weights, 4, 6.0, True),
+        (quantize_activations, 8, 448.0, False),
+    ):
         values = torch.zeros(rows, k // 32, 32, device=device)
         values[:, :, 0], values[:, :, 1], values[:, :, 2] = maximum, -maximum, maximum / 2
         values *= torch.exp2(exponent.float())[:, :, None]
         x = values.reshape(rows, k).bfloat16()
-        for swizzled in (False, True):
-            q, sf = quantize(x, bits, swizzled)
-            codes = unswizzle(sf, rows, k) if swizzled else sf.reshape(rows, k // 32)
-            assert torch.equal(codes, (exponent + 127).to(torch.uint8))
-            assert torch.equal(decode(q, sf, bits, swizzled), x.float())
-            q, sf = quantize(torch.zeros_like(x), bits, swizzled)
-            assert not decode(q, sf, bits, swizzled).count_nonzero()
+        q, sf = quantizer(x)
+        codes = unswizzle(sf, rows, k) if swizzled else sf.reshape(rows, k // 32)
+        assert torch.equal(codes, (exponent + 127).to(torch.uint8))
+        assert torch.equal(decode(q, sf, bits, swizzled), x.float())
+        q, sf = quantizer(torch.zeros_like(x))
+        assert not decode(q, sf, bits, swizzled).count_nonzero()
 
 
-def projection_reference(x, weights, mixed):
+def projection_reference(x, weights):
     first, down = weights
-    proj = (reference_quant8(x) if mixed else x.float()) @ first.T
-    if mixed:
-        chunks = proj.reshape(x.shape[0], -1, 2, 64)
-        up, gate = chunks[:, :, 0].reshape(x.shape[0], -1), chunks[:, :, 1].reshape(x.shape[0], -1)
-        act = reference_quant8(F.silu(gate) * up)
-    else:
-        up, gate = proj.bfloat16().float().chunk(2, dim=-1)
-        act = (F.silu(gate) * up).bfloat16().float()
+    proj = reference_quant8(x) @ first.T
+    chunks = proj.reshape(x.shape[0], -1, 2, 64)
+    up, gate = chunks[:, :, 0].reshape(x.shape[0], -1), chunks[:, :, 1].reshape(x.shape[0], -1)
+    act = reference_quant8(F.silu(gate) * up)
     return (act @ down.T).bfloat16()
 
 
 @torch.inference_mode()
-def multitile_reference(mixed, rank, device):
-    config = mx_config(mixed)
+def multitile_reference(rank, device):
+    config = mx_config()
     config["model"]["num_experts"] = 6
     config["input"]["tokens_per_rank"] = 65
     counts = [7, 0, 129]
     free, _ = torch.cuda.mem_get_info(device)
     assert estimate_tensor_bytes(config, counts) < free * 0.8
     mlp = create_mlp(config, rank, counts, device)
+    assert mlp.metadata["compute_implementation"] == "cute_native_mxfp8_mxfp4"
+    assert mlp.metadata["native_mixed_mma"]
+    assert mlp.metadata["initial_activation_quantization_timed"]
+    assert mlp.metadata["communication_dtype"] == "bf16"
     generator = torch.Generator(device=device).manual_seed(8107 + rank)
     tokens = torch.randn(3, 130, mlp.hidden, device=device, dtype=torch.bfloat16, generator=generator)
     out = torch.full_like(tokens, float("nan"))
@@ -365,7 +375,7 @@ def multitile_reference(mixed, rank, device):
         graph.replay()
         captured = out.clone()
         mlp(tokens, out)
-        offset = padded_offset = 0
+        padded_offset = 0
         for expert, count in enumerate(counts):
             if not count:
                 assert torch.isnan(out[expert]).all()
@@ -373,21 +383,16 @@ def multitile_reference(mixed, rank, device):
             actual = out[expert, :count]
             assert torch.equal(actual, captured[expert, :count])
             assert torch.isnan(out[expert, count:]).all()
-            weights = [decode(w[expert], sf[expert], mlp.bits, mixed) for w, sf in zip(mlp.weights, mlp.scales)]
-            expected = projection_reference(tokens[expert, :count], weights, mixed)
-            assert relative_error(actual, expected) < (0.025 if mixed else 0.006)
-            if mixed:
-                all_act = decode(mlp.activation, mlp.activation_scales, 8, True)
-                act = all_act[padded_offset : padded_offset + count]
-                first = reference_quant8(tokens[expert, :count]) @ weights[0].T
-                chunks = first.reshape(count, -1, 2, 64)
-                up, gate = chunks[:, :, 0].reshape(count, -1), chunks[:, :, 1].reshape(count, -1)
-                assert relative_error(act, reference_quant8(F.silu(gate) * up)) < 0.015
-                padded_offset += (count + 127) // 128 * 128
-            else:
-                first = tokens[expert, :count].float() @ weights[0].T
-                assert relative_error(mlp.gemm1[offset : offset + count], first) < 0.004
-                act = mlp.activation[offset : offset + count].float()
+            weights = [decode(w[expert], sf[expert], 4, True) for w, sf in zip(mlp.weights, mlp.scales)]
+            expected = projection_reference(tokens[expert, :count], weights)
+            assert relative_error(actual, expected) < 0.025
+            all_act = decode(mlp.activation, mlp.activation_scales, 8, True)
+            act = all_act[padded_offset : padded_offset + count]
+            first = reference_quant8(tokens[expert, :count]) @ weights[0].T
+            chunks = first.reshape(count, -1, 2, 64)
+            up, gate = chunks[:, :, 0].reshape(count, -1), chunks[:, :, 1].reshape(count, -1)
+            assert relative_error(act, reference_quant8(F.silu(gate) * up)) < 0.015
+            padded_offset += (count + 127) // 128 * 128
             arithmetic = relative_error(actual, act @ weights[1].T)
             assert arithmetic < 0.004
             maxima["arithmetic_relative_l2"] = max(maxima["arithmetic_relative_l2"], arithmetic)
@@ -399,15 +404,13 @@ def multitile_reference(mixed, rank, device):
             error = relative_error(actual, unquantized)
             # This loose sanity bound is NOT an arithmetic tolerance or a claim
             # about trained-model accuracy. Quantization error is reported separately.
-            assert error < (0.4 if mixed else 0.12)
+            assert error < 0.4
             maxima["total_quantization_relative_l2"] = max(maxima["total_quantization_relative_l2"], error)
-            offset += count
-    print(f"rank {rank} mixed={mixed} multitile/graph metrics: {maxima}", flush=True)
+    print(f"rank {rank} MXFP8/MXFP4 multitile/graph metrics: {maxima}", flush=True)
 
 
 @pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-@pytest.mark.parametrize("mixed", [False, True])
-def test_distributed_mx_reference(backend, mixed):
+def test_distributed_mx_reference(backend):
     if os.environ.get("MOE_BENCH_MX_GPU_TESTS") != "1":
         pytest.skip("Set MOE_BENCH_MX_GPU_TESTS=1 on idle SM100/SM103 GPUs")
     assert_idle_gpus()
@@ -421,7 +424,6 @@ def test_distributed_mx_reference(backend, mixed):
             "--nproc-per-node=2",
             str(Path(__file__).resolve()),
             backend,
-            str(int(mixed)),
         ],
         check=True,
         timeout=900,
@@ -429,7 +431,7 @@ def test_distributed_mx_reference(backend, mixed):
 
 
 @torch.inference_mode()
-def distributed_reference(backend, mixed):
+def distributed_reference(backend):
     import torch.distributed as dist
     from worker import Pipeline, initialize
 
@@ -438,7 +440,7 @@ def distributed_reference(backend, mixed):
     pipeline = None
     try:
         layout_reference(device)
-        multitile_reference(mixed, rank, device)
+        multitile_reference(rank, device)
         combinations = [(mode, layout) for mode, layouts in SUPPORTED_LAYOUTS[backend].items() for layout in layouts]
         for (mode, layout), graph, routing in itertools.product(
             combinations,
@@ -449,7 +451,7 @@ def distributed_reference(backend, mixed):
                 {"kind": "hot_experts", "expert_ids": [0, 1], "probability_mass": 0.999},
             ),
         ):
-            config = mx_config(mixed)
+            config = mx_config()
             config["environment"].update(communication_backend=backend, cuda_graph=graph, mode=mode, layout=layout)
             if backend == "nccl" and mode == "throughput":
                 config["input"]["tokens_per_rank"] = 4
@@ -458,12 +460,11 @@ def distributed_reference(backend, mixed):
             mlp = getattr(pipeline.mlp, "mlp", pipeline.mlp)
             if rank == 0:
                 print(
-                    f"Testing MX {backend}/{mode}/{layout}, mixed={mixed}, graph={graph}, routing={routing['kind']}",
+                    f"Testing MX {backend}/{mode}/{layout}, graph={graph}, routing={routing['kind']}",
                     flush=True,
                 )
             decoded = [
-                [decode(w[e], sf[e], mlp.bits, mixed) for w, sf in zip(mlp.weights, mlp.scales)]
-                for e in range(len(mlp.counts))
+                [decode(w[e], sf[e], 4, True) for w, sf in zip(mlp.weights, mlp.scales)] for e in range(len(mlp.counts))
             ]
             global_decoded = []
             for expert in range(config["model"]["num_experts"]):
@@ -471,15 +472,10 @@ def distributed_reference(backend, mixed):
                 # Build weight layout independently of production fc1_weight.
                 up, gate = raw[1].T, raw[0].T
                 first = torch.empty(2 * mlp.inter, mlp.hidden, device=device, dtype=torch.bfloat16)
-                if mixed:
-                    for start in range(0, mlp.inter, 64):
-                        first[2 * start : 2 * start + 64] = up[start : start + 64]
-                        first[2 * start + 64 : 2 * start + 128] = gate[start : start + 64]
-                else:
-                    first[: mlp.inter], first[mlp.inter :] = up, gate
-                global_decoded.append(
-                    [decode(*quantize(w, mlp.bits, mixed), mlp.bits, mixed) for w in (first, raw[2].T)]
-                )
+                for start in range(0, mlp.inter, 64):
+                    first[2 * start : 2 * start + 64] = up[start : start + 64]
+                    first[2 * start + 64 : 2 * start + 128] = gate[start : start + 64]
+                global_decoded.append([decode(*quantize_weights(w), 4, True) for w in (first, raw[2].T)])
             previous = None
             for revision in range(2):
                 pipeline.step()
@@ -487,10 +483,8 @@ def distributed_reference(backend, mixed):
                 graph_result = pipeline.output.clone()
                 for expert, count in enumerate(pipeline.counts):
                     if count:
-                        expected = projection_reference(pipeline.recv[expert, :count], decoded[expert], mixed)
-                        assert relative_error(pipeline.expert_output[expert, :count], expected) < (
-                            0.025 if mixed else 0.006
-                        )
+                        expected = projection_reference(pipeline.recv[expert, :count], decoded[expert])
+                        assert relative_error(pipeline.expert_output[expert, :count], expected) < 0.025
                 # Replay and eager must consume the same new BF16 dispatch data.
                 eager_experts = torch.empty_like(pipeline.expert_output)
                 mlp(pipeline.recv, eager_experts)
@@ -506,7 +500,7 @@ def distributed_reference(backend, mixed):
                 for expert, weights in enumerate(global_decoded):
                     token, slot = (pipeline.ids == expert).nonzero(as_tuple=True)
                     if len(token):
-                        routes[token, slot] = projection_reference(pipeline.x[token], weights, mixed)
+                        routes[token, slot] = projection_reference(pipeline.x[token], weights)
                 expected = torch.zeros_like(pipeline.x, dtype=torch.float32)
                 for destination in range(world if backend == "mscclpp" else 1):
                     partial = torch.zeros_like(expected)
@@ -516,7 +510,7 @@ def distributed_reference(backend, mixed):
                             weight = weight.masked_fill(pipeline.ids[:, slot] // len(mlp.counts) != destination, 0)
                         partial.addcmul_(routes[:, slot].float(), weight[:, None])
                     expected.add_(partial.bfloat16().float() if backend == "mscclpp" else partial)
-                assert relative_error(graph_result, expected.bfloat16()) < (0.03 if mixed else 0.009)
+                assert relative_error(graph_result, expected.bfloat16()) < 0.03
                 if previous is not None:
                     assert not torch.equal(previous, graph_result)
                 previous = graph_result
@@ -529,7 +523,7 @@ def distributed_reference(backend, mixed):
             pipeline = None
         if rank == 0:
             print(
-                f"MX distributed {backend} mixed={mixed}: {6 * len(combinations)} pipelines, "
+                f"MX distributed {backend}: {6 * len(combinations)} pipelines, "
                 f"{12 * len(combinations)} changed-input comparisons passed",
                 flush=True,
             )
@@ -542,4 +536,4 @@ def distributed_reference(backend, mixed):
 
 
 if __name__ == "__main__":
-    distributed_reference(sys.argv[1], bool(int(sys.argv[2])))
+    distributed_reference(sys.argv[1])

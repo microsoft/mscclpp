@@ -36,7 +36,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--compute-backend", choices=("torch", "cutlass_flashinfer"))
     parser.add_argument("--activation-dtype", choices=("bf16", "mxfp8"), help="Internal compute activation format")
-    parser.add_argument("--weight-dtype", choices=("bf16", "mxfp8", "mxfp4"), help="Internal compute weight format")
+    parser.add_argument("--weight-dtype", choices=("bf16", "mxfp4"), help="Internal compute weight format")
     parser.add_argument("--gpus", type=int, choices=(2, 4), help="Override environment.num_gpus")
     parser.add_argument(
         "--graph", choices=("none", "mlp"), help="Override environment.cuda_graph (none disables graphs)"

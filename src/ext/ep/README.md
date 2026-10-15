@@ -122,8 +122,8 @@ token-major receive view. This benchmark does not expose the separate latency
   --backend nccl --mode throughput --layout token_major --graph mlp
 ```
 
-All supported pairs use the shared Torch or either supported FlashInfer compute
-pair, eagerly or with an MLP-only graph. The local adapter selects valid expert
+All supported pairs use the shared Torch or native FlashInfer compute
+mode, eagerly or with an MLP-only graph. The local adapter selects valid expert
 assignments using current dispatch IDs, packs expert slots, computes each expert,
 and applies routing weights in FP32 before writing BF16 native combine rows.
 Same-token selections of multiple local experts are independent until this
@@ -153,12 +153,6 @@ activations and weights. Select the experimental grouped implementation using
 three independent flags (no additional environment/model presets):
 
 ```bash
-# BF16 activations, MXFP8 weight-only inline dequantization:
-.venv/bin/python test/python/ep/moe_bench/run.py \
-  --model small --input decode --routing balanced --gpus 2 --backend mscclpp \
-  --compute-backend cutlass_flashinfer --activation-dtype bf16 --weight-dtype mxfp8 \
-  --graph mlp --warmup 3 --iterations 10
-
 # Native mixed blockscaled MXFP8 activations / MXFP4 weights:
 .venv/bin/python test/python/ep/moe_bench/run.py \
   --model small --input decode --routing balanced --gpus 2 --backend nccl \
@@ -166,18 +160,19 @@ three independent flags (no additional environment/model presets):
   --graph mlp --warmup 3 --iterations 10
 ```
 
-Either compute pair works with `--backend mscclpp` or `--backend nccl`; choose
+Both Torch BF16/BF16 and FlashInfer MXFP8/MXFP4 work with `--backend mscclpp` or `--backend nccl`; choose
 `--graph none` for eager compute. YAML optionally supplies
 `compute: {activation_dtype: bf16, weight_dtype: bf16}`, separate from
 `input.dtype: bf16` and `environment.compute_backend`. Missing compute fields
 default to BF16. CLI flags override only their corresponding fields.
-`cutlass_flashinfer` supports **only** BF16/MXFP8 and MXFP8/MXFP4, not BF16/BF16.
+`torch` supports **only** BF16/BF16; `cutlass_flashinfer` supports **only** MXFP8/MXFP4.
+BF16/MXFP8 weight-only compute is not supported because it has no native MMA path.
 Selecting it without changing the default weight format fails with guidance;
 plain `fp8`/`fp4` are not aliases for MX formats.
 
 | Activation / weight | Actual implementation at both GEMMs |
 |---|---|
-| BF16 / MXFP8 | FlashInfer **cuTile**, weight tiles dequantized inline to BF16 before BF16 MMA; **not native BF16/MXFP8 MMA** |
+| BF16 / BF16 | PyTorch BF16 reference |
 | MXFP8 / MXFP4 | FlashInfer **CuTe/CUTLASS DSL**, native E4M3 × E2M1 blockscaled MMA, FP32 accumulation; FC1 fuses SwiGLU and MXFP8 intermediate quantization |
 
 Weights use the same independently seeded gate/up/down matrices as the Torch
@@ -185,8 +180,7 @@ baseline, transposed to `[expert,N,K]`, then quantized once outside timing.
 Only one expert's BF16 staging matrices are live at a time; no expanded BF16
 weight bank is retained. MXFP8 payloads are E4M3; MXFP4 packs two E2M1 values
 per byte, low nibble first. Both use E8M0 scale bytes per **32 reduction elements**,
-not NVFP4 block16/global scales. CuTile uses linear weight scales and full
-up-then-gate rows; CuTe uses 128×4 MMA-swizzled weight/intermediate scales,
+not NVFP4 block16/global scales. CuTe uses 128×4 MMA-swizzled weight/intermediate scales,
 linear input scales, and alternating 64 up/64 gate rows.
 
 Valid rows are packed from padded expert slots on **every iteration** and
@@ -212,19 +206,15 @@ and hidden/intermediate dimensions divisible by 128 (plus the common communicati
 limits above). Validation used GB300/SM103; SM100 is supported by the selected
 FlashInfer kernels but was not exercised here. Experimental lower-level APIs are
 pinned by preflight checks to `flashinfer-python==0.7.1`,
-`nvidia-cutlass-dsl==4.8.0`; the BF16/MXFP8 path additionally requires
-`cuda-tile==1.6.0` and `nvidia-cuda-tileiras==13.4.92`.
+`nvidia-cutlass-dsl==4.8.0`.
 Install these optional dependencies separately in a compatible environment:
 
 ```bash
 python -m pip install 'flashinfer-python==0.7.1' 'nvidia-cutlass-dsl==4.8.0'
-# Additionally for BF16/MXFP8:
-python -m pip install 'cuda-tile==1.6.0' 'nvidia-cuda-tileiras==13.4.92'
 ```
 
 Inspect resolver changes before installing: do not replace a working Torch/CUDA
-runtime just to add the standalone tile compiler. The validated environment retained
-Torch 2.14.0+cu130 and CUDA runtime 13.0 with the isolated tileiras 13.4.92 compiler.
+runtime. The validated environment retained Torch 2.14.0+cu130 and CUDA runtime 13.0.
 Torch compute never imports FlashInfer; NCCL-EP still does not require MSCCL++.
 There is no fallback on missing dependencies, incompatible versions, or hardware.
 Preflight estimates include packed payloads/scales, single-expert staging peak,
@@ -236,10 +226,10 @@ Correctness tests independently decode scale bytes/nibbles, check known-value
 layouts, compare dequantized-operand GEMMs separately from quantization error,
 and exercise both adapters, eager/graph, changed inputs, uneven/empty experts,
 multiple tiles, and same-token local expert selections. Arithmetic relative-L2
-tolerance is 0.004 (BF16 weight-only MLP 0.006); mixed FC1 quantization-boundary
+tolerance is 0.004; mixed FC1 quantization-boundary
 tolerance is 0.015, and combined mixed distributed tolerance is 0.03.
 Observed random-weight total error against unquantized FP32 math was approximately
-5% for weight-only and 20–23% for mixed MX; these are **not trained-model accuracy
+20–23% for mixed MX; these are **not trained-model accuracy
 claims**, nor the arithmetic tolerances.
 
 ### NCCL-EP backend

@@ -105,21 +105,17 @@ def estimate_tensor_bytes(config, counts):
     workspace = 4 * max(counts, default=0) * intermediate
     inputs_and_output = 4 * inputs["tokens_per_rank"] * hidden
     if environment["compute_backend"] == "cutlass_flashinfer":
-        mixed = config.get("compute", {}).get("weight_dtype") == "mxfp4"
         # Both dimensions are multiples of 128, so weight scales need no padding.
         elements = 3 * local_experts * hidden * intermediate
-        weights = elements // (2 if mixed else 1) + elements // 32
+        weights = elements // 2 + elements // 32
         # Only one expert's original BF16 matrices and packing/quantization
         # temporaries are live at once, never an expanded BF16 expert bank.
         staging = 14 * hidden * intermediate
         rows = sum(counts)
         padded = sum((count + 127) // 128 * 128 for count in counts)
         workspace = 4 * rows * hidden  # BF16 packed input and output
-        if mixed:
-            workspace += 2 * (rows * hidden + rows * hidden // 32)  # quant outputs + stable copies
-            workspace += padded * intermediate + padded * intermediate // 32
-        else:
-            workspace += 18 * rows * intermediate  # BF16 FC1/activation plus FP32 SwiGLU temporaries
+        workspace += 2 * (rows * hidden + rows * hidden // 32)  # quant outputs + stable copies
+        workspace += padded * intermediate + padded * intermediate // 32
         workspace += 32 * (padded + rows + local_experts)  # schedules, indices, unit weights
         if environment["cuda_graph"] == "mlp":
             workspace *= 2  # graph-private quant/elementwise allocations and warmup pool
