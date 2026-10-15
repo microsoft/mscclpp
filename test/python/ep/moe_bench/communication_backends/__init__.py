@@ -30,7 +30,7 @@ def preflight_backend(config):
 
 def create_backend(config, rank, x, ids, weights, recv, expert_output, output):
     backend = config["environment"]["communication_backend"]
-    if __package__ == "backends":
+    if __package__ == "communication_backends":
         from config import SUPPORTED_LAYOUTS
     else:
         from ..config import SUPPORTED_LAYOUTS

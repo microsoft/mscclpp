@@ -270,16 +270,20 @@ NCCL initialization and any kernel compilation happen before measurement.
 
 Implementation files under `test/python/ep/moe_bench/`:
 
-- `backends/__init__.py`: lazy backend factory and fixed-buffer adapter contract.
-- `backends/mscclpp.py`: MSCCL++ native latency and throughput paths.
-- `backends/nccl.py`: NCCL communicator, LL/HT handles, dispatch counters,
+- `communication_backends/__init__.py`: lazy backend factory and fixed-buffer adapter contract.
+- `communication_backends/mscclpp.py`: MSCCL++ native latency and throughput paths.
+- `communication_backends/nccl.py`: NCCL communicator, LL/HT handles, dispatch counters,
   weighted combine, version metadata, and ordered resource teardown.
 - `worker.py`: shared dispatch → expert SwiGLU → combine pipeline and timings.
-- `compute.py` / `compute_flashinfer.py`: default Torch reference and lazy optional grouped MX compute.
+- `compute_backends/__init__.py`: lazy compute factory.
+- `compute_backends/torch_reference.py` / `compute_backends/flashinfer.py`: default Torch reference and optional grouped MX compute.
+- `workload.py`: shared seeded synthetic inputs and expert weights.
+- `memory.py`: conservative tensor memory estimates.
 - `layout.py`: shared native-row selection, expert packing, and weighted reduction.
 - `config.py` / `configs.yaml`: named workload presets and default environment settings.
-- `test_backends.py`: dependency isolation, API wiring, and cleanup tests;
-  `test_moe_bench.py`: per-backend distributed mathematical reference.
+- `tests/`: CPU unit tests and opt-in distributed reference tests.
+  `tests/test_backends.py` covers dependency isolation, API wiring, and cleanup;
+  `tests/test_moe_bench.py` covers per-backend distributed mathematical reference.
 
 Combine consumes the **computed expert output**, not the dispatched input.
 NCCL-EP LL expert-major applies the original FP32 routing weights when gathering BF16 expert
@@ -357,11 +361,11 @@ Development coverage includes CPU tests and an opt-in two-GPU mathematical
 reference comparison (including repeated calls and different routing loads):
 
 ```bash
-MOE_BENCH_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
+MOE_BENCH_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench/tests -q
 # Optional NCCL-EP coverage (separate worker processes for each backend):
-MOE_BENCH_NCCL_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench -q
+MOE_BENCH_NCCL_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench/tests -q
 # Optional MX coverage for BOTH adapters; check GPU availability first:
-MOE_BENCH_MX_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench/test_compute_flashinfer.py -q
+MOE_BENCH_MX_GPU_TESTS=1 python -m pytest test/python/ep/moe_bench/tests/test_compute_flashinfer.py -q
 ```
 
 ## Runtime architecture

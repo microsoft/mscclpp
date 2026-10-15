@@ -11,10 +11,10 @@ import pytest
 import torch
 import yaml
 
-from .config import BENCHMARK_DEFAULTS, SUPPORTED_D_MODEL, load_config, validate_config
-from .routing import make_routing
+from ..config import BENCHMARK_DEFAULTS, SUPPORTED_D_MODEL, load_config, validate_config
+from ..routing import make_routing
 
-PRESETS = Path(__file__).with_name("configs.yaml")
+PRESETS = Path(__file__).resolve().parents[1] / "configs.yaml"
 
 
 def _config(**kwargs):

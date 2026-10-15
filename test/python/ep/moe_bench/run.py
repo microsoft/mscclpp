@@ -125,9 +125,9 @@ def main():
             raise RuntimeError(f"Requested {required} GPUs, but only {available} CUDA GPUs are visible")
         if config["environment"]["compute_backend"] == "cutlass_flashinfer":
             if __package__:
-                from .compute_flashinfer import preflight
+                from .compute_backends.flashinfer import preflight
             else:
-                from compute_flashinfer import preflight
+                from compute_backends.flashinfer import preflight
             for device in range(required):
                 preflight(config, device)
         returncode = subprocess.run(command, check=False).returncode

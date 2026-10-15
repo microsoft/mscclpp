@@ -12,8 +12,8 @@ from unittest.mock import Mock
 import pytest
 import torch
 
-from .backends import create_backend
-from .backends import nccl as nccl_adapter
+from ..communication_backends import create_backend
+from ..communication_backends import nccl as nccl_adapter
 from .test_moe_bench import tiny_config
 
 
@@ -215,9 +215,9 @@ class BlockOptionalRuntimes:
             raise AssertionError('Eager optional import: ' + fullname)
 sys.meta_path.insert(0, BlockOptionalRuntimes())
 from moe_bench import worker
-from moe_bench.backends import nccl, mscclpp
+from moe_bench.communication_backends import nccl, mscclpp
 """,
-            str(Path(__file__).resolve().parents[1]),
+            str(Path(__file__).resolve().parents[2]),
         ],
         check=True,
         timeout=30,
@@ -232,7 +232,7 @@ def test_unknown_backend_is_not_substituted():
 
 
 def test_multinode_launch_rejected_before_cuda(monkeypatch):
-    from .worker import initialize
+    from ..worker import initialize
 
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "2")
     monkeypatch.setenv("WORLD_SIZE", "4")
@@ -244,7 +244,7 @@ def test_multinode_launch_rejected_before_cuda(monkeypatch):
 
 
 def test_mscclpp_adapter_preserves_contract(monkeypatch):
-    from .backends import mscclpp as adapter_module
+    from ..communication_backends import mscclpp as adapter_module
 
     native = ModuleType("mscclpp")
     native.__version__ = "test-version"
