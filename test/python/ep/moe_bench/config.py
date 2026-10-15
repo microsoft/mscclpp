@@ -130,9 +130,11 @@ def validate_config(config: dict) -> None:
     activation = compute.get("activation_dtype", "bf16")
     weight = compute.get("weight_dtype", "bf16")
     _choice(activation, ("bf16", "mxfp8"), "compute.activation_dtype")
-    _choice(weight, ("bf16", "mxfp8", "mxfp4"), "compute.weight_dtype")
+    if weight == "mxfp8":
+        raise ValueError("MXFP8 weights (including BF16/MXFP8 weight-only compute) are not supported; use MXFP8/MXFP4")
+    _choice(weight, ("bf16", "mxfp4"), "compute.weight_dtype")
     backend = config["environment"]["compute_backend"]
-    pairs = (("bf16", "bf16"),) if backend == "torch" else (("bf16", "mxfp8"), ("mxfp8", "mxfp4"))
+    pairs = (("bf16", "bf16"),) if backend == "torch" else (("mxfp8", "mxfp4"),)
     if (activation, weight) not in pairs:
         raise ValueError(
             f"{backend} requires (activation_dtype, weight_dtype) in {pairs}; "
