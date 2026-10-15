@@ -602,6 +602,10 @@ dispatch_out.topk_ids   # [world_size * max_tokens_per_rank, K]
 dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 ```
 
+For `RANK_MAJOR`, valid `topk_ids` are destination-rank-local expert IDs in
+`[0, num_local_experts)`. Nonlocal and invalid routes use
+`invalid_token_expert_id`.
+
 Latency `DispatchLayout.TOKEN_MAJOR` and `DispatchLayout.RANK_MAJOR_TOPK_EXPANDED`
 expose one row per routed token/top-k lane:
 
