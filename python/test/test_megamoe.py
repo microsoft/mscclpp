@@ -105,3 +105,22 @@ def test_mxfp4_canonical_rounding_and_layout():
         dequantize_mxfp4(values, scales.expand(1, 2))
     with pytest.raises(ValueError, match="divisible by 32"):
         quantize_mxfp4(torch.ones(2, 31))
+
+
+@pytest.mark.parametrize("pattern", ["balanced", "zipf", "zipf_skewed", "hot_experts"])
+def test_benchmark_unbalanced_routing_generation(pattern):
+    torch = pytest.importorskip("torch")
+    from mscclpp.ext.megamoe.benchmark import _build_global_expert_counts, _generate_routing
+
+    config = MegaMoEConfig(
+        rank=0, world_size=4, max_tokens=64, hidden=4096, intermediate=6656, num_experts=128, top_k=8
+    )
+    ids, scores = _generate_routing(config, pattern, 1.2, 1234, torch.device("cpu"))
+    assert ids.shape == (64, 8) and ids.dtype == torch.int32
+    assert scores.shape == (64, 8) and scores.dtype == torch.float32
+    assert bool(((ids >= 0) & (ids < 128)).all())
+    assert torch.allclose(scores.sum(dim=-1), torch.ones(64))
+    if pattern != "balanced":
+        counts = _build_global_expert_counts(config, pattern, 1.2, 1234)
+        assert len(counts) == 128 and sum(counts) == 4 * 64 * 8
+        assert max(counts) > min(counts)

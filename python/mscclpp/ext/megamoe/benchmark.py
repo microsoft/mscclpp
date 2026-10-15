@@ -4,10 +4,196 @@
 """Routed-only native MegaMoE benchmark; launch with torchrun (see README)."""
 
 import argparse
+from dataclasses import replace
 import json
+import math
 import os
 import statistics
 import time
+
+ROUTING_PATTERNS = (
+    "balanced",
+    "zipf",
+    "zipf_skewed",
+    "hot_experts",
+)
+
+
+def _scale_counts(weights, total_routes, max_per_expert):
+    """Scale nonnegative expert weights to integer route counts bounded by max_per_expert."""
+    n = len(weights)
+    if total_routes > n * max_per_expert:
+        raise ValueError("total_routes exceeds capacity n * max_per_expert")
+    total_w = float(sum(weights))
+    if total_w <= 0:
+        base, rem = divmod(total_routes, n)
+        return [base + (1 if i < rem else 0) for i in range(n)]
+    raw = [min(float(max_per_expert), float(w) * total_routes / total_w) for w in weights]
+    counts = [min(max_per_expert, int(math.floor(v))) for v in raw]
+    # Preserve small nonzero tail experts (at least 16 rows when possible) to match real MoE tails.
+    for i, w in enumerate(weights):
+        if w > 0 and counts[i] == 0 and sum(counts) + 16 <= total_routes:
+            counts[i] = min(16, max_per_expert)
+    deficit = total_routes - sum(counts)
+    if deficit > 0:
+        order = sorted(range(n), key=lambda i: (raw[i] - counts[i], weights[i]), reverse=True)
+        while deficit > 0:
+            progressed = False
+            for i in order:
+                if deficit == 0:
+                    break
+                if counts[i] < max_per_expert and (weights[i] > 0 or all(weights[j] == 0 for j in range(n))):
+                    step = min(deficit, max_per_expert - counts[i], 16 if deficit >= 16 else deficit)
+                    counts[i] += step
+                    deficit -= step
+                    progressed = True
+            if not progressed:
+                for i in order:
+                    if deficit == 0:
+                        break
+                    if counts[i] < max_per_expert:
+                        counts[i] += 1
+                        deficit -= 1
+    elif deficit < 0:
+        excess = -deficit
+        order = sorted(range(n), key=lambda i: counts[i], reverse=True)
+        for i in order:
+            if excess == 0:
+                break
+            take = min(excess, counts[i])
+            counts[i] -= take
+            excess -= take
+    return counts
+
+
+def _build_global_expert_counts(config, pattern, zipf_alpha, seed):
+    import random
+
+    world = config.world_size
+    local_e = config.local_experts
+    total_tokens = world * config.max_tokens
+    total_routes = total_tokens * config.top_k
+    # Allow hot experts to exceed single-rank token count (simulating multi-rank aggregation even on EP1).
+    max_per_expert = total_routes
+    rng = random.Random(seed)
+
+    if pattern == "zipf":
+        # Intra-rank Zipfian popularity: each rank has hot, warm, cold/tail, and zero experts.
+        weights = []
+        for r in range(world):
+            rank_w = [
+                0.0 if j >= max(1, int(local_e * 0.85)) else 1.0 / ((j + 1) ** zipf_alpha) for j in range(local_e)
+            ]
+            rng.shuffle(rank_w)
+            weights.extend(rank_w)
+        return _scale_counts(weights, total_routes, max_per_expert)
+
+    if pattern == "zipf_skewed":
+        # Both cross-rank and intra-rank Zipfian skew: rank 0 receives the heaviest load.
+        weights = []
+        for r in range(world):
+            rank_factor = 1.0 / ((r + 1) ** 0.7)
+            rank_w = [
+                0.0 if j >= max(1, int(local_e * 0.8)) else rank_factor / ((j + 1) ** zipf_alpha)
+                for j in range(local_e)
+            ]
+            rng.shuffle(rank_w)
+            weights.extend(rank_w)
+        return _scale_counts(weights, total_routes, max_per_expert)
+
+    if pattern == "hot_experts":
+        # Bimodal: ~2 hot experts per rank absorb ~65% of routes; ~25% experts empty; rest small partial tiles.
+        weights = []
+        for r in range(world):
+            hot_count = max(1, local_e // 16)
+            empty_count = local_e // 4
+            rank_w = []
+            for j in range(local_e):
+                if j < hot_count:
+                    rank_w.append(35.0 * (1.0 + 0.3 * (hot_count - j)))
+                elif j < hot_count + empty_count:
+                    rank_w.append(0.0)
+                else:
+                    rank_w.append(1.0 + (j % 4) * 0.5)
+            rng.shuffle(rank_w)
+            weights.extend(rank_w)
+        return _scale_counts(weights, total_routes, max_per_expert)
+
+    raise ValueError(f"Unsupported routing pattern: {pattern}")
+
+
+def _generate_routing(config, pattern, zipf_alpha, seed, device):
+    import torch
+
+    if pattern == "balanced":
+        torch.manual_seed(seed + config.rank)
+        ids = torch.rand((config.max_tokens, config.num_experts), device=device).topk(config.top_k, dim=-1).indices
+        ids = ids.to(torch.int32)
+        scores = torch.rand((config.max_tokens, config.top_k), device=device, dtype=torch.float32)
+        scores /= scores.sum(dim=-1, keepdim=True)
+        return ids, scores
+
+    counts = _build_global_expert_counts(config, pattern, zipf_alpha, seed)
+    total_tokens = config.world_size * config.max_tokens
+    assert sum(counts) <= total_tokens * config.top_k
+
+    # Fill [top_k, total_tokens] in row-major order so each expert is spread evenly across tokens.
+    grid = torch.full((config.top_k * total_tokens,), -1, dtype=torch.int32)
+    cursor = 0
+    for expert, count in enumerate(counts):
+        if count > 0:
+            grid[cursor : cursor + count] = expert
+            cursor += count
+    all_ids = grid.view(config.top_k, total_tokens).t().contiguous()
+
+    gen = torch.Generator().manual_seed(seed)
+    token_perm = torch.randperm(total_tokens, generator=gen)
+    all_ids = all_ids[token_perm].contiguous()
+
+    start = config.rank * config.max_tokens
+    ids = all_ids[start : start + config.max_tokens].to(device=device, dtype=torch.int32).contiguous()
+    torch.manual_seed(seed + config.rank)
+    scores = torch.rand((config.max_tokens, config.top_k), device=device, dtype=torch.float32)
+    scores = torch.where(ids >= 0, scores, torch.zeros_like(scores))
+    row_sums = scores.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+    scores = torch.where(ids >= 0, scores / row_sums, torch.zeros_like(scores))
+    return ids, scores
+
+
+def _routing_summary(config, ids, tile_n):
+    import torch
+    import torch.distributed as dist
+
+    host_ids = ids.cpu()
+    if config.world_size > 1:
+        gathered = [torch.empty_like(host_ids) for _ in range(config.world_size)]
+        dist.all_gather(gathered, host_ids)
+        all_ids = torch.cat(gathered, dim=0)
+    else:
+        all_ids = host_ids
+    valid = all_ids[all_ids >= 0].long()
+    global_counts = (
+        torch.bincount(valid, minlength=config.num_experts).tolist() if valid.numel() else [0] * config.num_experts
+    )
+    first = config.rank * config.local_experts
+    local_counts = global_counts[first : first + config.local_experts]
+    nonzero = [c for c in local_counts if c > 0]
+    received = sum(local_counts)
+    blocks = sum((c + tile_n - 1) // tile_n for c in local_counts)
+    tail_blocks = sum(1 for c in local_counts if c % tile_n != 0)
+    return {
+        "received_routes": received,
+        "active_local_experts": len(nonzero),
+        "zero_local_experts": config.local_experts - len(nonzero),
+        "max_expert_routes": max(local_counts, default=0),
+        "min_nonzero_expert_routes": min(nonzero, default=0),
+        "mean_expert_routes": received / max(1, config.local_experts),
+        "token_blocks": blocks,
+        "tail_blocks": tail_blocks,
+        "padded_slots": blocks * tile_n,
+        "padding_overhead_pct": ((blocks * tile_n - received) / max(1, received) * 100.0) if received else 0.0,
+        "local_expert_counts": local_counts,
+    }
 
 
 def _weights(config, device):
@@ -35,13 +221,14 @@ def _reference(config, inputs, ids, scores, weights):
 
     def gather(tensor):
         if config.world_size == 1:
-            return tensor
+            return tensor, 0
         host = tensor.cpu()
-        gathered = [torch.empty_like(host) for _ in range(config.world_size)]
-        dist.all_gather(gathered, host)
-        return torch.cat(gathered).to(inputs.device)
+        gathered = [None] * config.world_size
+        dist.all_gather_object(gathered, host)
+        offset = sum(item.shape[0] for item in gathered[: config.rank])
+        return torch.cat(gathered).to(inputs.device), offset
 
-    all_inputs, all_ids, all_scores = gather(inputs), gather(ids), gather(scores)
+    (all_inputs, first_token), (all_ids, _), (all_scores, _) = gather(inputs), gather(ids), gather(scores)
     partial = torch.zeros((all_inputs.shape[0], config.top_k, config.hidden), device=inputs.device, dtype=torch.float32)
     fc1, fc1_scale, fc2, fc2_scale = weights
     for expert in range(config.local_experts):
@@ -62,7 +249,6 @@ def _reference(config, inputs, ids, scores, weights):
     host_partial = partial.cpu()
     if config.world_size > 1:
         dist.all_reduce(host_partial)
-    first_token = config.rank * inputs.shape[0]
     return host_partial[first_token : first_token + inputs.shape[0]].sum(dim=1).to(inputs.device, torch.bfloat16)
 
 
@@ -95,6 +281,60 @@ def main():
         metavar="JSON",
         help="JIT the exact W4A8 policy from JSON (omit JSON to use the packaged profile)",
     )
+    parser.add_argument(
+        "--routing-pattern",
+        choices=ROUTING_PATTERNS,
+        default="balanced",
+        help="token-to-expert routing distribution (balanced, zipf, zipf_skewed, hot_experts)",
+    )
+    parser.add_argument("--zipf-alpha", type=float, default=1.2, help="Zipf exponent for zipf/zipf_skewed patterns")
+    parser.add_argument("--tile-n", type=int, default=None, help="override W4A8KernelConfig.tile_n")
+    parser.add_argument("--tile-k", type=int, default=None, help="override W4A8KernelConfig.tile_k")
+    parser.add_argument("--load-stages", type=int, default=None, help="override W4A8KernelConfig.load_stages")
+    parser.add_argument("--num-warps", type=int, default=None, help="override W4A8KernelConfig.num_warps")
+    parser.add_argument(
+        "--transfer-registers", type=int, default=None, help="override W4A8KernelConfig.transfer_registers"
+    )
+    parser.add_argument("--load-warps", type=int, default=None, help="override W4A8KernelConfig.load_warps")
+    parser.add_argument(
+        "--split-pipelines",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.split_pipelines",
+    )
+    parser.add_argument("--epilogue-tokens", type=int, default=None, help="override W4A8KernelConfig.epilogue_tokens")
+    parser.add_argument("--epilogue-warps", type=int, default=None, help="override W4A8KernelConfig.epilogue_warps")
+    parser.add_argument(
+        "--epilogue-registers", type=int, default=None, help="override W4A8KernelConfig.epilogue_registers"
+    )
+    parser.add_argument("--dispatch-chunk", type=int, default=None, help="override W4A8KernelConfig.dispatch_chunk")
+    parser.add_argument("--dispatch-warps", type=int, default=None, help="override W4A8KernelConfig.dispatch_warps")
+    parser.add_argument("--dispatch-stages", type=int, default=None, help="override W4A8KernelConfig.dispatch_stages")
+    parser.add_argument(
+        "--fixed-token-count",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.fixed_token_count",
+    )
+    parser.add_argument(
+        "--expert-major-tasks",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.expert_major_tasks",
+    )
+    parser.add_argument(
+        "--cache-weights",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.cache_weights",
+    )
+    parser.add_argument(
+        "--adaptive-cache-weights",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.adaptive_cache_weights",
+    )
+    parser.add_argument("--cluster-size", type=int, default=None, help="override W4A8KernelConfig.cluster_size")
     parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
     parser.add_argument("--rtol", type=float, default=0.05)
     parser.add_argument("--atol", type=float, default=0.01)
@@ -139,6 +379,32 @@ def main():
     kernel_config = W4A8KernelConfig()
     if args.w4_profile is not None:
         kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
+    policy_overrides = {
+        name: getattr(args, name)
+        for name in (
+            "tile_n",
+            "tile_k",
+            "load_stages",
+            "num_warps",
+            "transfer_registers",
+            "load_warps",
+            "split_pipelines",
+            "epilogue_tokens",
+            "epilogue_warps",
+            "epilogue_registers",
+            "dispatch_chunk",
+            "dispatch_warps",
+            "dispatch_stages",
+            "fixed_token_count",
+            "expert_major_tasks",
+            "cache_weights",
+            "adaptive_cache_weights",
+            "cluster_size",
+        )
+        if getattr(args, name) is not None
+    }
+    if policy_overrides:
+        kernel_config = replace(kernel_config, **policy_overrides)
     kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
@@ -154,9 +420,8 @@ def main():
     context = MegaMoE(config, communicator, *weights, kernel=kernel)
     initialization_ms = (time.perf_counter() - start) * 1000
     inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
-    ids = torch.rand((args.tokens, args.experts), device=device).topk(args.top_k, dim=-1).indices.to(torch.int32)
-    scores = torch.rand((args.tokens, args.top_k), device=device, dtype=torch.float32)
-    scores /= scores.sum(dim=-1, keepdim=True)
+    ids, scores = _generate_routing(config, args.routing_pattern, args.zipf_alpha, args.seed, device)
+    routing_summary = _routing_summary(config, ids, kernel_config.tile_n)
     if args.input_mode == "direct":
         direct = context.input_view(args.tokens)
         direct.copy_(inputs)
@@ -212,6 +477,7 @@ def main():
             "initialization_ms": initialization_ms,
             "kernel_id": context.kernel_id,
             "kernel_config": context.effective_kernel_config,
+            "routing": routing_summary,
             "samples_us": samples,
             "correctness": correctness,
         },
