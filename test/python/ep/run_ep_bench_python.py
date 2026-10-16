@@ -190,7 +190,7 @@ def parse_args() -> argparse.Namespace:
         "Passing 'rank_major'/'expert_major' forces a specific layout where supported: nccl "
         "(Layout.RANK_MAJOR/EXPERT_MAJOR) and deepep (rank_major=plain, expert_major=do_expand). "
         "mscclpp LL supports both; flashinfer is rank-major only and keeps its default for expert_major. "
-        "'rank_major_topk_expanded' requires --backend mscclpp, BF16, rank_local_reduce, K<=9, no overlap. "
+        "'rank_major_topk_expanded' requires --backend mscclpp, rank_local_reduce, K<=9, no overlap. "
         "It stores unweighted expert rows in registered dispatch/combine aliases [R*C*K,H], "
         "row=(sourceRank*C+sourceToken)*K+slot, with flat int32 IDs and FP32 weights [R*C*K]. "
         "R=ranks, C=allocated tokens/rank, K=top-k, H=hidden; nonlocal/padding metadata uses sentinel "
@@ -217,8 +217,6 @@ def parse_args() -> argparse.Namespace:
     if args.ep_layout == "rank_major_topk_expanded":
         if args.backend != "mscclpp":
             raise SystemExit("--ep-layout rank_major_topk_expanded requires --backend mscclpp (not all)")
-        if args.dispatch_dtype != "bf16":
-            raise SystemExit("--ep-layout rank_major_topk_expanded requires --dispatch-dtype bf16")
         if args.combine_mode != "rank_local_reduce":
             raise SystemExit("--ep-layout rank_major_topk_expanded requires --combine-mode rank_local_reduce")
         if not 1 <= args.num_topk <= 9:

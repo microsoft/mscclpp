@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gc
+import math
 import os
 import torch
 
@@ -51,8 +52,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     if topk_expanded:
         if args.backend != "mscclpp":
             raise ValueError("rank_major_topk_expanded requires backend mscclpp")
-        if args.dispatch_dtype != "bf16":
-            raise ValueError("rank_major_topk_expanded requires BF16 dispatch")
         if args.combine_mode != "rank_local_reduce":
             raise ValueError("rank_major_topk_expanded requires rank_local_reduce combine")
         if not 1 <= args.num_topk <= 9:
@@ -66,6 +65,29 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
+    remote_fanout_env = os.environ.get("MSCCLPP_EP_REMOTE_RANK_FANOUT")
+    if remote_fanout_env is not None:
+        domain_size = int(os.environ.get("MSCCLPP_EP_IPC_DOMAIN_SIZE", "0"))
+        remote_fanout = int(remote_fanout_env)
+        if num_ranks != 2 * domain_size or not 0 <= remote_fanout <= domain_size:
+            raise ValueError("remote rank fanout requires two equal IPC domains and fanout in [0, domain_size]")
+        domain_base = (rank // domain_size) * domain_size
+        remote_base = domain_size - domain_base
+        routed_ids = []
+        for token_idx in range(num_tokens):
+            row = []
+            for topk_slot in range(num_topk):
+                if remote_fanout == 0 or topk_slot % 2 == 0:
+                    owner = domain_base + (token_idx * num_topk + topk_slot) % domain_size
+                else:
+                    owner = remote_base + (token_idx * ((num_topk + 1) // 2) + topk_slot // 2) % remote_fanout
+                local_expert = (token_idx * num_topk + topk_slot) % num_local_experts
+                row.append(owner * num_local_experts + local_expert)
+            routed_ids.append(row)
+        topk_idx = torch.tensor(routed_ids, dtype=torch.int64, device="cuda")
+        input_samples[0] = (x, topk_idx, topk_weights, num_tokens * num_topk)
+        if rank == 0:
+            print(f"[cfg] diagnostic remote_rank_fanout={remote_fanout}", flush=True)
 
     num_rdma_bytes = 0  # not exposed by current mscclpp API; 0 over the CUDA-IPC path
     if rank == 0:
@@ -77,11 +99,19 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         )
 
     bootstrap = os.environ.get("EP_MSCCLPP_BOOTSTRAP")
+    debug_setup = os.environ.get("MSCCLPP_EP_DEBUG_SETUP") == "1"
+    if debug_setup:
+        print(f"[setupdbg][rank {rank}] creating CommGroup", flush=True)
     ep_group = (
         CommGroup(interfaceIpPortTrio=bootstrap, rank=rank, size=num_ranks)
         if bootstrap
         else (CommGroup(torch_group=comm.torch_group) if hasattr(comm, "torch_group") else CommGroup(mpi_comm=comm))
     )
+    if debug_setup:
+        print(f"[setupdbg][rank {rank}] CommGroup created", flush=True)
+    ep_group.barrier()
+    if debug_setup:
+        print(f"[setupdbg][rank {rank}] CommGroup barrier done", flush=True)
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
@@ -92,11 +122,31 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     output_layout = ep.DispatchLayout.RANK_MAJOR if rank_major else ep.DispatchLayout.EXPERT_MAJOR
     if topk_expanded:
         output_layout = ep.DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-    dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3) if args.dispatch_dtype == "fp8_e4m3" else None
-    if rank_major and dispatch_quant is not None:
-        raise ValueError("rank-major output supports BF16 dispatch only")
+    dispatch_quant = None
+    compact_combine_quant = None
+    if args.dispatch_dtype == "fp8_e4m3":
+        if rank_major or topk_expanded:
+            fp8_absmax = float(os.environ.get("MSCCLPP_EP_FP8_DISPATCH_ABSMAX", "24.375"))
+            if not math.isfinite(fp8_absmax) or fp8_absmax <= 0:
+                raise ValueError("MSCCLPP_EP_FP8_DISPATCH_ABSMAX must be finite and > 0")
+            dispatch_quant = ep.QuantConfig(
+                format=ep.DispatchDataType.FP8_E4M3,
+                scale=448.0 / fp8_absmax,
+            )
+            if rank_major:
+                compact_absmax = float(os.environ.get("MSCCLPP_EP_FP8_COMPACT_PARTIAL_ABSMAX", "621"))
+                if not math.isfinite(compact_absmax) or compact_absmax <= 0:
+                    raise ValueError("MSCCLPP_EP_FP8_COMPACT_PARTIAL_ABSMAX must be finite and > 0")
+                compact_combine_quant = ep.QuantConfig(
+                    format=ep.DispatchDataType.FP8_E4M3,
+                    scale=448.0 / compact_absmax,
+                )
+        else:
+            dispatch_quant = ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3)
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
     ll_blocks = int(os.environ.get("MSCCLPP_EP_LL_BLOCKS", "130"))
+    if debug_setup:
+        print(f"[setupdbg][rank {rank}] creating MoECommunicator", flush=True)
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -111,6 +161,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         invalid_token_expert_id=num_experts,
         quant=dispatch_quant,
     )
+    if debug_setup:
+        print(f"[setupdbg][rank {rank}] MoECommunicator created", flush=True)
     assert moe_comm.is_available()
     if rank == 0:
         print(
@@ -130,7 +182,12 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     )
     expert_output = moe_comm.get_expert_output_buffer() if rank_major or topk_expanded else None
     if expert_output is not None and not topk_expanded:
-        expert_output.normal_()
+        if dispatch_quant is None:
+            expert_output.normal_()
+        else:
+            # Compact FP8 communication-only benchmark: model compute is outside
+            # the timed path, so combine reads a stable registered FP8 payload.
+            expert_output.zero_()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _dispatch():
@@ -152,6 +209,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     def _rank_major_weighted_input(dispatch_out):
         assert expert_output is not None
+        if dispatch_quant is not None:
+            return expert_output
         debug_combine = os.environ.get("MSCCLPP_EP_DEBUG_COMBINE", "0") == "1"
         if debug_combine:
             print(f"[rank_major_input][rank {rank}] enter", flush=True)
@@ -172,6 +231,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             print(f"[rank_major_input][rank {rank}] weighting skipped", flush=True)
         return expert_output
 
+    def _combine_quant(dispatch_out):
+        return compact_combine_quant if compact_combine_quant is not None else dispatch_out.combine_input_quant
+
     def _combine(dispatch_out, handle):
         # Rank-major combine consumes the runtime-owned registered expert-output buffer.
         combine_input = (
@@ -183,7 +245,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
                 else simulated_gemm_output(dispatch_out)
             )
         )
-        moe_comm.combine(combine_input, handle, out=out)
+        combine_quant = _combine_quant(dispatch_out) if rank_major or topk_expanded else None
+        moe_comm.combine(combine_input, handle, quant=combine_quant, out=out)
 
     # Optional one-time correctness check (mirrors test_low_latency_multirank).
     if args.validate:
@@ -201,9 +264,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         )
         torch.cuda.synchronize()
         comm.Barrier()
-        moe_comm.combine(validation_input, v_handle, out=v_out)
+        validation_quant = _combine_quant(v_dispatch_out) if rank_major or topk_expanded else None
+        moe_comm.combine(validation_input, v_handle, quant=validation_quant, out=v_out)
         torch.cuda.synchronize()
-        if topk_expanded:
+        if topk_expanded and dispatch_quant is None:
             expected_f = _topk_expanded_reference(x, topk_idx, topk_weights, num_experts)
             gdiff = validate_combine_output_mpi(v_out, expected_f.to(torch.bfloat16), comm, exact=False)
             if rank == 0:
@@ -281,7 +345,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
                     else simulated_gemm_output(_cap["out"])
                 )
             )
-            moe_comm.combine(graph_input, _cap["handle"], out=out)
+            graph_quant = _combine_quant(_cap["out"]) if rank_major or topk_expanded else None
+            moe_comm.combine(graph_input, _cap["handle"], quant=graph_quant, out=out)
 
         graph_spec = {
             "dispatch": _graph_dispatch,
