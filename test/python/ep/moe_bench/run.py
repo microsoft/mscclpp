@@ -93,12 +93,18 @@ def main():
         str(run_dir),
     ]
     root = Path(__file__).resolve().parents[4]
-    revision = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    status = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain"], check=True, capture_output=True, text=True
-    ).stdout
+    deployment = root / "moe_deployment.json"
+    if deployment.is_file():
+        with deployment.open() as stream:
+            source = json.load(stream)["source"]
+    else:
+        revision = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"], check=True, capture_output=True, text=True
+        ).stdout
+        source = {"git_commit": revision, "git_dirty": bool(status), "git_status": status.splitlines()}
     worker_env = os.environ.copy()
     worker_env.setdefault("GLOO_SOCKET_IFNAME", "lo")
     run = {
@@ -120,9 +126,7 @@ def main():
         },
         "config": config,
         "metadata": {
-            "git_commit": revision,
-            "git_dirty": bool(status),
-            "git_status": status.splitlines(),
+            **source,
             "gloo_socket_ifname": worker_env["GLOO_SOCKET_IFNAME"],
         },
     }

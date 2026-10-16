@@ -13,6 +13,60 @@ python3 -m venv .venv
 .venv/bin/python -m pip install '.[cuda13,moe-benchmark]'
 ```
 
+### Copy a build to other nodes (no clone or shared storage required)
+
+On the build node, after installation:
+
+```bash
+.venv/bin/python tools/deploy_moe_bench.py \
+  --nodelist 10.0.4.159,10.0.4.69 --user azhpcuser
+```
+
+This builds MSCCL++ once, downloads dependency wheels for the default
+MSCCL++/PyTorch BF16 backend, and copies the same bundle to every listed node
+using SSH/SCP. Each node creates its own virtual environment and installs from
+the bundled wheels **without accessing a package registry or compiling MSCCL++**.
+The script verifies checksums and imports before reporting success.
+It does not copy your existing virtual environment, SSH keys, or Git checkout.
+
+Requirements:
+
+- SSH key authentication and verified host keys for every node. The script does
+  not bypass SSH host-key checks.
+- Matching Python major/minor version, Python ABI, CPU/GPU architectures and
+  libc version on the build and target nodes; incompatible nodes are rejected.
+- Python virtual-environment support, a compatible NVIDIA driver, `nvidia-smi`,
+  `tar`, and required system libraries (including libnuma) on every node.
+  Host drivers and system packages are not copied or installed.
+- Enough disk space for the bundle, dependency wheels and installed environment.
+  PyTorch/CUDA dependencies require several GB per node.
+
+Installed versions in the build Python environment constrain dependency
+resolution. Build-tool dependencies and any missing runtime dependencies are
+obtained on the build node; targets install only the bundled wheels. CUDA 13 is
+the default; use `--cuda 12` for a compatible CUDA 12 build environment.
+Optional FlashInfer and NCCL-EP dependencies are not included.
+
+Each deployment uses a new versioned directory beneath
+`~/.local/share/mscclpp/moe-bench/` and prints its path. Existing deployments are
+not overwritten. Run from that directory using the same command below.
+The bundle records the source commit and whether the build checkout was dirty;
+benchmark results retain this provenance even without Git on the target.
+Do not change a bundle after building it.
+
+To build without contacting nodes, or reuse an existing bundle:
+
+```bash
+.venv/bin/python tools/deploy_moe_bench.py --build-only
+.venv/bin/python tools/deploy_moe_bench.py \
+  --bundle moe_deploy/<bundle-name>.tar \
+  --nodelist 10.0.4.159,10.0.4.69 --user azhpcuser
+```
+
+**Deployment only prepares the software. It does not launch the benchmark or
+enable distributed multi-node execution**, which is not implemented yet.
+You can run independent single-node benchmarks on the prepared nodes.
+
 ## Run
 
 ### Small BF16 workload: 10 measured iterations
