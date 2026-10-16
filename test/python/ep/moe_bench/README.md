@@ -4,10 +4,43 @@ Single-node dispatch -> SwiGLU expert compute -> weighted combine on 2 or 4 GPUs
 Communication is BF16. Inputs, weights, and routing are synthetic; routing stays
 fixed during each run.
 
+## Install
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install '.[cuda13,moe-benchmark]'
+```
+
 ## Run
 
-From the repository root, using an environment with MSCCL++ and the selected
-backend dependencies installed (see [setup details](../../../../src/ext/ep/README.md)):
+### Small BF16 workload: 10 measured iterations
+
+From the repository root:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced \
+  --backend mscclpp --mode latency --layout expert_major \
+  --compute-backend torch --activation-dtype bf16 --weight-dtype bf16 \
+  --gpus 2 --graph none --warmup 10 --iterations 10
+```
+
+This uses 16 input tokens per GPU, eight experts, and top-k two. It measures a
+synthetic MoE layer, not full-model inference. The 10 warmup iterations are
+excluded from the 10 measured iterations.
+
+The launcher starts one worker per GPU automatically; do not wrap it in
+`torchrun` or `mpirun`. Use idle GPUs. If PyTorch's rendezvous hangs with warnings
+that the machine's hostname cannot be resolved, prefix the command with
+`PET_LOCAL_ADDR=127.0.0.1`. For a Gloo hostname-resolution warning, also set
+`GLOO_SOCKET_IFNAME=lo`. These loopback settings apply to this single-node run.
+
+### Optional Blackwell MX compute
+
+After installing the optional FlashInfer dependencies from the
+[backend setup details](../../../../src/ext/ep/README.md):
 
 ```bash
 .venv/bin/python test/python/ep/moe_bench/run.py \
@@ -17,10 +50,6 @@ backend dependencies installed (see [setup details](../../../../src/ext/ep/READM
   --activation-dtype mxfp8 --weight-dtype mxfp4 \
   --gpus 4 --graph mlp --warmup 200 --iterations 100
 ```
-
-The launcher starts one worker per GPU automatically. Use idle GPUs.
-For the PyTorch BF16 reference, replace the compute options with
-`--compute-backend torch --activation-dtype bf16 --weight-dtype bf16`.
 
 ## Options
 
@@ -60,7 +89,7 @@ MXFP8 activation quantization happens after BF16 dispatch, inside measured compu
 
 Unsupported combinations raise an error. NCCL-EP throughput requires an even
 token count per GPU. FlashInfer compute requires compatible Blackwell hardware;
-dependency requirements are listed in the setup details above.
+dependency requirements are listed in the backend setup details above.
 
 ## Change dimensions and token count
 
