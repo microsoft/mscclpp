@@ -6,7 +6,7 @@ fixed during each run.
 
 ## Install
 
-From the repository root:
+Run this from the repository root directory (the directory containing `pyproject.toml`):
 
 ```bash
 python3 -m venv .venv
@@ -20,22 +20,30 @@ python3 -m venv .venv
 From the repository root:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python test/python/ep/moe_bench/run.py \
+.venv/bin/python test/python/ep/moe_bench/run.py \
   --model small --input decode --routing balanced \
   --backend mscclpp --mode latency --layout expert_major \
   --compute-backend torch --activation-dtype bf16 --weight-dtype bf16 \
-  --gpus 2 --graph none --warmup 10 --iterations 10
+  --graph none --warmup 10 --iterations 10
 ```
 
 This uses 16 input tokens per GPU, eight experts, and top-k two. It measures a
 synthetic MoE layer, not full-model inference. The 10 warmup iterations are
 excluded from the 10 measured iterations.
 
-The launcher starts one worker per GPU automatically; do not wrap it in
-`torchrun` or `mpirun`. Use idle GPUs. If PyTorch's rendezvous hangs with warnings
-that the machine's hostname cannot be resolved, prefix the command with
-`PET_LOCAL_ADDR=127.0.0.1`. For a Gloo hostname-resolution warning, also set
-`GLOO_SOCKET_IFNAME=lo`. These loopback settings apply to this single-node run.
+The launcher uses all GPUs visible on the current node and starts one worker per
+GPU automatically; do not wrap it in `torchrun` or `mpirun`. Exactly 2 or 4 visible
+GPUs are currently supported; other counts raise an error instead of selecting a
+subset. Existing `CUDA_VISIBLE_DEVICES` restrictions are respected. There is no
+GPU-count option: remove `--gpus` and `environment.num_gpus` from older commands
+and YAML files. The detected count is still recorded in the results.
+Multi-node execution is not supported yet.
+
+Use idle GPUs. The launcher automatically uses `127.0.0.1` for PyTorch's local
+worker coordination and defaults `GLOO_SOCKET_IFNAME` to `lo`, so no hostname
+configuration or IP-address option is needed. An explicitly set
+`GLOO_SOCKET_IFNAME` is preserved. These settings affect CPU-side coordination,
+not the selected GPU communication backend.
 
 ### Optional Blackwell MX compute
 
@@ -48,7 +56,7 @@ After installing the optional FlashInfer dependencies from the
   --backend mscclpp --mode latency --layout expert_major \
   --compute-backend cutlass_flashinfer \
   --activation-dtype mxfp8 --weight-dtype mxfp4 \
-  --gpus 4 --graph mlp --warmup 200 --iterations 100
+  --graph mlp --warmup 200 --iterations 100
 ```
 
 ## Options
@@ -67,7 +75,6 @@ Omitted optional flags use the YAML settings. Defaults below are from the suppli
 | `--compute-backend` | `torch`, `cutlass_flashinfer` | `torch` |
 | `--activation-dtype` | `bf16`, `mxfp8` | `bf16` |
 | `--weight-dtype` | `bf16`, `mxfp4` | `bf16` |
-| `--gpus` | `2`, `4` | `4` |
 | `--graph` | `none`, `mlp` (capture local compute, not communication) | `none` |
 | `--warmup` | Integer >= 0 | `10` |
 | `--iterations` | Integer >= 1 | `100` |

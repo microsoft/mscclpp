@@ -36,10 +36,10 @@ else:
 def tiny_config():
     config = load_config(
         Path(__file__).resolve().parents[1] / "configs.yaml",
+        num_gpus=2,
         model="small",
         input_name="decode",
         routing="balanced",
-        environment_overrides={"num_gpus": 2},
         overrides={"warmup": 0, "iterations": 3},
     )
     config["model"]["intermediate_size"] = 32
@@ -193,30 +193,32 @@ def test_input_reproducibility_without_global_rng_mutation():
     [
         ([], {"num_gpus": 2, "communication_backend": "mscclpp", "compute_backend": "torch", "cuda_graph": False}),
         (
-            ["--backend", "nccl", "--gpus", "4", "--graph", "mlp"],
+            ["--backend", "nccl", "--graph", "mlp"],
             {"num_gpus": 4, "communication_backend": "nccl", "compute_backend": "torch", "cuda_graph": "mlp"},
         ),
     ],
 )
-def test_launcher_records_failure_without_summary(tmp_path, options, environment):
+def test_launcher_records_failure_without_summary(tmp_path, monkeypatch, options, environment):
     import yaml
+    from .. import run as launcher
 
     environment = {"mode": "latency", "layout": "expert_major", **environment}
     config = tiny_config()
     document = {
         "models": {"tiny": config["model"]},
         "inputs": {"tiny": config["input"]},
-        "environment": config["environment"],
+        "environment": {key: value for key, value in config["environment"].items() if key != "num_gpus"},
         "routing": {"balanced": config["routing"]},
         "benchmark": config["benchmark"],
     }
     config_path = tmp_path / "configs.yaml"
     config_path.write_text(yaml.safe_dump(document))
     output_dir = tmp_path / "runs"
-    result = subprocess.run(
+    monkeypatch.setattr(
+        sys,
+        "argv",
         [
-            sys.executable,
-            str(Path(__file__).resolve().parents[1] / "run.py"),
+            str(Path(launcher.__file__).resolve()),
             "--config",
             str(config_path),
             "--model",
@@ -229,18 +231,23 @@ def test_launcher_records_failure_without_summary(tmp_path, options, environment
             str(output_dir),
             *options,
         ],
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-        capture_output=True,
-        text=True,
-        timeout=30,
     )
-    assert result.returncode != 0
-    assert "only 0 CUDA GPUs" in result.stderr
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: environment["num_gpus"])
+
+    def fake_run(command, **kwargs):
+        if command[0] == "git":
+            return SimpleNamespace(stdout="revision\n" if command[-1] == "HEAD" else "")
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 1
     files = list(output_dir.glob("*/*"))
     assert len(files) == 1 and files[0].name == "run.json"
     run = json.loads(files[0].read_text())
     assert run["status"] == "failed"
-    assert run["failure"]["type"] == "RuntimeError"
+    assert run["failure"]["type"] == "SystemExit"
     assert run["config"]["benchmark"]["output_dir"] == str(output_dir)
     assert run["config"]["environment"] == environment
     assert run["presets"] == {"model": "tiny", "input": "tiny", "routing": "balanced"}
@@ -252,7 +259,8 @@ def test_cli_environment_defaults():
     from ..run import parse_args
 
     args = parse_args(["--model", "small", "--input", "decode", "--routing", "balanced"])
-    assert args.backend is args.gpus is args.graph is args.mode is args.layout is None
+    assert args.backend is args.graph is args.mode is args.layout is None
+    assert not hasattr(args, "gpus")
 
 
 @pytest.mark.parametrize(
@@ -262,6 +270,8 @@ def test_cli_environment_defaults():
         ("--mode", "auto"),
         ("--layout", "rank_major_topk_expanded"),
         ("--gpus", "8"),
+        ("--gpus", "2"),
+        ("--gpus", "4"),
         ("--gpus", "true"),
         ("--gpus", "2.0"),
         ("--graph", "full"),
@@ -285,16 +295,19 @@ def test_cli_rejects_invalid_environment_options(flag, value):
         (["--backend", "nccl"], {"communication_backend": "nccl"}),
         (["--layout", "rank_major"], {"layout": "rank_major"}),
         (["--mode", "throughput", "--layout", "token_major"], {"mode": "throughput", "layout": "token_major"}),
-        (["--gpus", "2"], {"num_gpus": 2}),
         (["--graph", "none"], {"cuda_graph": False}),
         (["--graph", "mlp"], {"cuda_graph": "mlp"}),
         (
-            ["--backend", "nccl", "--gpus", "4", "--graph", "mlp"],
-            {"communication_backend": "nccl", "num_gpus": 4, "cuda_graph": "mlp"},
+            ["--backend", "nccl", "--graph", "mlp"],
+            {"communication_backend": "nccl", "cuda_graph": "mlp"},
         ),
     ],
 )
-def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch, options, expected):
+@pytest.mark.parametrize("num_gpus", [2, 4])
+@pytest.mark.parametrize("gloo_interface", [None, "eth0"])
+def test_launcher_resolves_environment_and_worker_command(
+    tmp_path, monkeypatch, options, expected, num_gpus, gloo_interface
+):
     import yaml
     from .. import run as launcher
 
@@ -322,17 +335,24 @@ def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch,
         *options,
     ]
     monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: num_gpus)
+    monkeypatch.delenv("GLOO_SOCKET_IFNAME", raising=False)
+    monkeypatch.delenv("PET_LOCAL_ADDR", raising=False)
+    if gloo_interface is not None:
+        monkeypatch.setenv("GLOO_SOCKET_IFNAME", gloo_interface)
+    expected = {**document["environment"], **expected, "num_gpus": num_gpus}
     commands = []
 
     def fake_run(command, **kwargs):
         if command[0] == "git":
             return SimpleNamespace(stdout="revision\n" if command[-1] == "HEAD" else "")
         commands.append(command)
+        assert kwargs["env"]["GLOO_SOCKET_IFNAME"] == (gloo_interface or "lo")
+        assert kwargs["env"]["PATH"] == os.environ["PATH"]
         run_dir = Path(command[-1])
         metadata = json.loads((run_dir / "run.json").read_text())
         assert metadata["status"] == "running"
-        assert metadata["config"]["environment"] == {**document["environment"], **expected}
+        assert metadata["config"]["environment"] == expected
         (run_dir / "summary.csv").write_text("")
         (run_dir / "iterations.csv").write_text("")
         return SimpleNamespace(returncode=0)
@@ -342,7 +362,9 @@ def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch,
     (run_path,) = output_dir.glob("*/run.json")
     metadata = json.loads(run_path.read_text())
     assert metadata["status"] == "completed"
-    assert metadata["config"]["environment"] == {**document["environment"], **expected}
+    assert metadata["metadata"]["gloo_socket_ifname"] == (gloo_interface or "lo")
+    assert os.environ.get("GLOO_SOCKET_IFNAME") == gloo_interface
+    assert metadata["config"]["environment"] == expected
     assert metadata["config"]["model"] == document["models"]["scaled_small"]
     assert metadata["config"]["input"] == document["inputs"]["decode"]
     assert metadata["config"]["routing"] == document["routing"]["balanced"]
@@ -355,13 +377,14 @@ def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch,
     assert metadata["presets"] == {"model": "scaled_small", "input": "decode", "routing": "balanced"}
     assert metadata["invocation"]["argv"] == [sys.executable, *argv]
     assert shlex.split(metadata["invocation"]["command"]) == [sys.executable, *argv]
-    world = expected.get("num_gpus", document["environment"]["num_gpus"])
+    world = num_gpus
     assert commands == [
         [
             sys.executable,
             "-m",
             "torch.distributed.run",
             "--standalone",
+            "--local-addr=127.0.0.1",
             "--nnodes=1",
             f"--nproc-per-node={world}",
             str(Path(launcher.__file__).with_name("worker.py").resolve()),
@@ -370,6 +393,22 @@ def test_launcher_resolves_environment_and_worker_command(tmp_path, monkeypatch,
         ]
     ]
     assert shlex.split(metadata["invocation"]["worker_command"]) == commands[0]
+
+
+@pytest.mark.parametrize("num_gpus", [0, 1, 3, 8])
+def test_launcher_rejects_unsupported_visible_gpu_count(tmp_path, monkeypatch, num_gpus):
+    from .. import run as launcher
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--model", "small", "--input", "decode", "--routing", "balanced", "--output-dir", str(tmp_path)],
+    )
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: num_gpus)
+    monkeypatch.setattr(launcher.subprocess, "run", lambda *args, **kwargs: pytest.fail("Must not launch workers"))
+    with pytest.raises(RuntimeError, match=f"uses all visible GPUs.*found {num_gpus}"):
+        launcher.main()
+    assert not list(tmp_path.iterdir())
 
 
 def assert_idle_gpus():

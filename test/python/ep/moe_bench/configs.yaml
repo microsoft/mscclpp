@@ -51,7 +51,6 @@ inputs:
 environment:
   mode: latency
   layout: expert_major
-  num_gpus: 4
   communication_backend: mscclpp
   compute_backend: torch
   cuda_graph: false

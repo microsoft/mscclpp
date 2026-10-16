@@ -90,6 +90,7 @@ def test_optional_compute_defaults_and_overrides():
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
         resolved = load_config(
             "unused",
+            num_gpus=4,
             model="small",
             input_name="decode",
             routing="balanced",

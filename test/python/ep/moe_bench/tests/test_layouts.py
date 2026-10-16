@@ -43,7 +43,7 @@ def test_old_yaml_gets_defaults_without_mutation():
     document = yaml.safe_load(path.read_text())
     del document["environment"]["mode"], document["environment"]["layout"]
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
-        config = load_config(path, model="small", input_name="decode", routing="balanced")
+        config = load_config(path, num_gpus=4, model="small", input_name="decode", routing="balanced")
     assert config["environment"]["mode"] == "latency"
     assert config["environment"]["layout"] == "expert_major"
     assert "mode" not in document["environment"]

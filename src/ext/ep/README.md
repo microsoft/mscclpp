@@ -45,18 +45,26 @@ Install the matching CUDA extra and benchmark dependencies, for example:
 ```bash
 python -m pip install -e '.[cuda13,moe-benchmark]'
 python test/python/ep/moe_bench/run.py \
-  --model small --input decode --backend mscclpp --gpus 2 --routing balanced \
+  --model small --input decode --backend mscclpp --routing balanced \
   --warmup 10 --iterations 100
 ```
 
-The launcher starts one worker per GPU using `torchrun`; do not wrap it in
-another `torchrun` or `mpirun`. Its default configuration is
+The launcher uses all visible GPUs on the current node and starts one worker per
+GPU using `torchrun`; do not wrap it in another `torchrun` or `mpirun`.
+It requires exactly 2 or 4 visible GPUs and respects `CUDA_VISIBLE_DEVICES`;
+unsupported counts raise an error rather than selecting a subset.
+There is no GPU-count option. Remove `--gpus` and `environment.num_gpus` from
+older commands and YAML files; the detected count is recorded in run results.
+Local worker coordination uses `127.0.0.1` to avoid hostname-resolution failures.
+Gloo defaults to the loopback interface `lo`, unless `GLOO_SOCKET_IFNAME` is
+already set; no IP-address option is required for this single-node benchmark.
+Its default configuration is
 `test/python/ep/moe_bench/configs.yaml`, independently of the working directory.
 Use `--config` to select another YAML file. Named `models`, `inputs`, and `routing`
-presets describe each workload. One `environment` mapping defaults to four GPUs,
+presets describe each workload. One `environment` mapping defaults to
 `communication_backend: mscclpp`, `compute_backend: torch`, and `cuda_graph: false`.
 Independently override these defaults with `--backend {mscclpp,nccl}`,
-`--gpus {2,4}`, and `--graph {none,mlp}`. Omitted flags retain the YAML values;
+and `--graph {none,mlp}`. Omitted flags retain the YAML values;
 `--graph none` explicitly disables graphs even when the YAML default is `mlp`.
 The old `environments` mapping and `--environment` labels are no longer supported.
 The shared
@@ -108,17 +116,17 @@ token-major receive view. This benchmark does not expose the separate latency
 ```bash
 # Native compact token-major throughput:
 .venv/bin/python test/python/ep/moe_bench/run.py \
-  --model small --input decode --routing balanced --gpus 2 \
+  --model small --input decode --routing balanced \
   --backend mscclpp --mode throughput --layout token_major --graph mlp
 
 # Native rank-major latency (also supported with --backend nccl):
 .venv/bin/python test/python/ep/moe_bench/run.py \
-  --model small --input decode --routing balanced --gpus 2 \
+  --model small --input decode --routing balanced \
   --backend mscclpp --mode latency --layout rank_major --graph none
 
 # NCCL-EP native HT flat/token-major:
 .venv/bin/python test/python/ep/moe_bench/run.py \
-  --model small --input decode --routing balanced --gpus 2 \
+  --model small --input decode --routing balanced \
   --backend nccl --mode throughput --layout token_major --graph mlp
 ```
 
@@ -155,7 +163,7 @@ three independent flags (no additional environment/model presets):
 ```bash
 # Native mixed blockscaled MXFP8 activations / MXFP4 weights:
 .venv/bin/python test/python/ep/moe_bench/run.py \
-  --model small --input decode --routing balanced --gpus 2 --backend nccl \
+  --model small --input decode --routing balanced --backend nccl \
   --compute-backend cutlass_flashinfer --activation-dtype mxfp8 --weight-dtype mxfp4 \
   --graph mlp --warmup 3 --iterations 10
 ```
@@ -242,7 +250,7 @@ python -m pip install 'nccl-extensions[cu13]'
 # For a CUDA 12 PyTorch environment: nccl-extensions[cu12]
 python -c 'import nccl.core, nccl.ep'
 python test/python/ep/moe_bench/run.py \
-  --model small --input decode --backend nccl --gpus 2 --routing balanced \
+  --model small --input decode --backend nccl --routing balanced \
   --warmup 10 --iterations 100
 ```
 
@@ -253,12 +261,12 @@ See the [NVIDIA installation instructions](https://github.com/NVIDIA/nccl-extens
 The PyTorch NCCL process-group backend alone does **not** provide `nccl.ep`.
 There is no fallback when the requested runtime is missing or fails.
 
-Use `--backend nccl --gpus 2` (or `--gpus 4`) with `--graph none` for eager
+Use `--backend nccl` with `--graph none` for eager
 execution or `--graph mlp` for the same MLP-only graph mode. For example:
 
 ```bash
 .venv/bin/python test/python/ep/moe_bench/run.py \
-  --model scaled_small --input decode --backend nccl --gpus 4 --graph mlp \
+  --model scaled_small --input decode --backend nccl --graph mlp \
   --routing balanced --warmup 200 --iterations 1000
 ```
 
