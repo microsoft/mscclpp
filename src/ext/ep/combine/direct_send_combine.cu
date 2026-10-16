@@ -144,14 +144,14 @@ __global__ __launch_bounds__(CombineNThreads,
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    static_assert(DispatchType == DispatchDataType::BF16);
     const uint32_t epoch = workload.epoch_;
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
     } else {
-      recvRankMajorRemotePartialsTma<Hidden, CombineMode::DIRECT_SEND>(
+      recvRankMajorRemotePartialsTma<Hidden, CombineMode::DIRECT_SEND, DispatchType>(
           output, expertOutput, topkIndices, topkWeights, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
-          transport, workspaceView, sharedMemory);
+          transport, workspaceView, sharedMemory,
+          DispatchType == DispatchDataType::FP8_E4M3 ? 1.0f / workload.quantScale_ : 1.0f);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);

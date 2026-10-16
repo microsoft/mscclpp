@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from functools import wraps
+import math
+from numbers import Real
 from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
@@ -64,23 +66,45 @@ def validate_quant(
 ) -> DispatchDataType:
     """Validate the mode-specific dispatch quantization contract."""
     data_type = resolve_dispatch_data_type(quant)
-    if mode == MoEMode.LATENCY and quant is not None and quant.block_scales is not None:
-        raise ValueError("latency dispatch quantizes BF16 input; precomputed block_scales are unsupported")
+    block_scales = None if quant is None else quant.block_scales
+    scale = None if quant is None else quant.scale
+    if scale is not None:
+        if isinstance(scale, bool) or not isinstance(scale, Real):
+            raise TypeError("quant.scale must be a real number")
+        if not math.isfinite(float(scale)) or scale <= 0:
+            raise ValueError("quant.scale must be finite and positive")
+    if data_type == DispatchDataType.BF16:
+        if block_scales is not None:
+            raise ValueError("BF16 dispatch does not accept block_scales")
+        if scale is not None:
+            raise ValueError("BF16 dispatch does not accept a scalar scale")
+        return data_type
     if data_type == DispatchDataType.FP8_E4M3:
         if hidden % 128:
             raise ValueError("FP8 dispatch requires hidden_size to be a multiple of 128")
         if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR:
-            raise ValueError("latency RANK_MAJOR supports BF16 dispatch only")
+            if block_scales is not None:
+                raise ValueError("latency RANK_MAJOR static FP8 does not accept block_scales")
+            if scale is None:
+                raise ValueError("latency RANK_MAJOR FP8 requires quant.scale")
+        elif scale is not None:
+            raise ValueError("quant.scale is supported only by latency RANK_MAJOR FP8")
+    if mode == MoEMode.LATENCY and layout != DispatchLayout.RANK_MAJOR and block_scales is not None:
+        raise ValueError("latency EXPERT_MAJOR quantizes BF16 input; precomputed block_scales are unsupported")
     return data_type
 
 
 def resolve_dispatch_format(
     config: MoECommunicatorConfig, quant: Optional[QuantConfig]
-) -> Tuple[DispatchDataType, Optional[torch.Tensor]]:
+) -> Tuple[DispatchDataType, Optional[torch.Tensor], Optional[float]]:
     """Resolve a per-call format override or the communicator's quantization default."""
     quant = config.quant if quant is None else quant
     data_type = validate_quant(quant, config.mode, config.output_layout, config.hidden_size)
-    return data_type, None if quant is None else quant.block_scales
+    return (
+        data_type,
+        None if quant is None else quant.block_scales,
+        None if quant is None or quant.scale is None else float(quant.scale),
+    )
 
 
 def verify_active_capacity(active: Optional[int], capacity: int) -> int:

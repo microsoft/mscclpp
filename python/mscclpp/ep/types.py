@@ -20,16 +20,20 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 class QuantConfig:
     """Payload format and optional quantization scales.
 
-    FP8 E4M3 uses one FP32 scale per 128 hidden elements.
-    For FP8 dispatch, latency quantizes BF16 input
+    FP8 E4M3 normally uses one FP32 scale per 128 hidden elements.
+    For EXPERT_MAJOR FP8 dispatch, latency quantizes BF16 input
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
     input scales with shape ``[num_tokens, hidden // 128]``.
+    Latency RANK_MAJOR instead accepts externally quantized FP8 and uses the
+    scalar multiplier ``scale``: values are stored as E4M3 after multiplication
+    by ``scale`` and dequantized during combine with ``1 / scale``.
     BF16 dispatch does not use scales.
     """
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
+    scale: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class MoECommunicatorConfig:
     quant: Optional[QuantConfig] = None
     num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
+    emit_local_expert_ids: bool = False
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
@@ -74,6 +79,8 @@ class MoECommunicatorConfig:
             raise TypeError("mode must be a MoEMode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
+        if type(self.emit_local_expert_ids) is not bool:
+            raise TypeError("emit_local_expert_ids must be a bool")
         latency = self.mode == MoEMode.LATENCY
         layout = self.output_layout
         if layout is None:
@@ -87,6 +94,8 @@ class MoECommunicatorConfig:
         )
         if layout not in supported:
             raise ValueError("output_layout is unsupported for the selected mode")
+        if self.emit_local_expert_ids and (not latency or layout != DispatchLayout.RANK_MAJOR):
+            raise ValueError("emit_local_expert_ids requires latency RANK_MAJOR dispatch")
         if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
             raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
         if latency:
@@ -112,7 +121,7 @@ class MoECommunicatorConfig:
         if not latency and invalid_id is not None and invalid_id != -1:
             raise ValueError("invalid_token_expert_id is supported only in LATENCY mode; throughput uses -1")
         if invalid_id is None:
-            invalid_id = self.num_experts if latency else -1
+            invalid_id = -1 if self.emit_local_expert_ids or not latency else self.num_experts
         if type(invalid_id) is not int or not -(1 << 31) <= invalid_id < (1 << 31):
             raise ValueError("invalid_token_expert_id must fit in int32")
         if 0 <= invalid_id < self.num_experts:
@@ -184,8 +193,10 @@ class DispatchOutput:
 
     Runtime-owned views retain native storage even after slicing, but their
     contents are reused by later operations. Throughput uses separate dispatch
-    and BF16 combine buffers, including when dispatch emits FP8. Except for
-    latency EXPERT_MAJOR, write expert results into ``combine_input_buffer``.
+    and BF16 combine buffers, including when dispatch emits FP8. Latency
+    RANK_MAJOR static FP8 uses the same scalar convention for ``tokens`` and
+    ``combine_input_buffer``. Except for latency EXPERT_MAJOR, write expert
+    results into ``combine_input_buffer``.
     """
 
     tokens: torch.Tensor

@@ -131,6 +131,10 @@ class MoECommunicator:
     def invalid_token_expert_id(self) -> int:
         return self._config.invalid_token_expert_id
 
+    @property
+    def emit_local_expert_ids(self) -> bool:
+        return self._config.emit_local_expert_ids
+
     def is_available(self) -> bool:
         """Return native support for this runtime's mode and topology."""
         return self._runtime.is_available()
@@ -161,7 +165,7 @@ class MoECommunicator:
         subsequent operations; a view does not reserve a separate output slot.
         """
         active = verify_active_capacity(runtime_max_tokens_per_rank, self.max_tokens_per_rank)
-        data_type, _ = resolve_dispatch_format(self._config, quant)
+        data_type, _, _ = resolve_dispatch_format(self._config, quant)
         with torch.cuda.device(self.device):
             return tensor_from_pointer(
                 self._runtime.dispatch_output_buffer_ptr(),
@@ -277,12 +281,15 @@ class MoECommunicator:
         stream: Optional[torch.cuda.Stream] = None,
         apply_router_weights: Optional[bool] = None,
     ) -> torch.Tensor:
-        """Combine BF16 expert outputs into ``[local_num_tokens, hidden_size]``.
+        """Combine expert outputs into BF16 ``[local_num_tokens, hidden_size]``.
 
         EXPERT_MAJOR and latency RANK_MAJOR DIRECT_SEND apply routing weights
         natively. The latter expects unweighted per-topk rows; other rank/token
         layouts expect already-weighted local expert sums. Non-EXPERT_MAJOR
         inputs must use ``DispatchOutput.combine_input_buffer``.
+        Latency RANK_MAJOR static FP8 expects externally quantized E4M3 expert
+        outputs and dequantizes them with the scalar retained by the dispatch
+        handle.
         For latency DIRECT_SEND, set ``apply_router_weights=False`` for
         preweighted expert outputs. By default it is enabled only for
         DIRECT_SEND; other modes ignore this option.

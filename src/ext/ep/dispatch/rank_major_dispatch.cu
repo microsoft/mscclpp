@@ -34,41 +34,57 @@ MSCCLPP_DEVICE_INLINE Route prepareRoute(WorkspaceView& workspaceView, const int
   return {dstRank, destinationSlot, firstLaneForRank};
 }
 
+// Each destination's leader lane writes its complete masked top-k row, so destinations are handled concurrently.
+template <bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
                                         const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
                                         const Route& route, int tokenIdx, int nTopk, int nLocalExperts,
                                         int maxTokensPerRank, int invalidTokenExpertId) {
-  const int laneId = getLaneId();
-  const int candidateExpert =
-      laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
-  const float candidateWeight =
-      laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
-  unsigned int leaderMask = warpLaneMask(route.dstRank >= 0 && route.isLeader);
-  while (leaderMask != 0) {
-    const int leaderLane = __ffs(leaderMask) - 1;
-    const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
-    const int destinationSlot = __shfl_sync(0xffffffff, route.destinationSlot, leaderLane);
-    if (laneId < nTopk) {
-      auto* destinationTopkIdx = reinterpret_cast<int*>(transport.mappedBuffer(outputTopkIdx, destinationRank));
-      auto* destinationTopkWeights =
-          reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
-      const size_t outputIdx =
-          (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
-      const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
-      destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
+  if (route.dstRank >= 0 && route.isLeader) {
+    const size_t outputIdx = (static_cast<size_t>(transport.rank_) * maxTokensPerRank + route.destinationSlot) * nTopk;
+    auto* destinationTopkIdx = static_cast<int*>(transport.mappedBuffer(outputTopkIdx, route.dstRank)) + outputIdx;
+    auto* destinationTopkWeights =
+        static_cast<float*>(transport.mappedBuffer(outputTopkWeights, route.dstRank)) + outputIdx;
+    const int64_t* tokenTopkIdx = topkIndices + static_cast<size_t>(tokenIdx) * nTopk;
+    const float* tokenTopkWeights =
+        topkWeights == nullptr ? nullptr : topkWeights + static_cast<size_t>(tokenIdx) * nTopk;
+    const int firstDstExpert = route.dstRank * nLocalExperts;
+    auto maskedEntry = [&](int k, int& expert, float& weight) {
+      const int routedExpert = static_cast<int>(tokenTopkIdx[k]);
+      const float routedWeight = tokenTopkWeights == nullptr ? 1.0f : tokenTopkWeights[k];
+      const bool isDstExpert = routedExpert >= firstDstExpert && routedExpert < firstDstExpert + nLocalExperts;
+      if constexpr (EmitLocalExpertIds) {
+        expert = isDstExpert ? routedExpert - firstDstExpert : invalidTokenExpertId;
+      } else {
+        expert = isDstExpert ? routedExpert : invalidTokenExpertId;
+      }
+      weight = isDstExpert ? routedWeight : 0.0f;
+    };
+    if (nTopk % mscclpp::i32x4::Size == 0) {
+      for (int k = 0; k < nTopk; k += mscclpp::i32x4::Size) {
+        mscclpp::i32x4 experts;
+        mscclpp::f32x4 weights;
+#pragma unroll
+        for (int i = 0; i < mscclpp::i32x4::Size; ++i) maskedEntry(k + i, experts[i], weights[i]);
+        *reinterpret_cast<mscclpp::i32x4*>(destinationTopkIdx + k) = experts;
+        *reinterpret_cast<mscclpp::f32x4*>(destinationTopkWeights + k) = weights;
+      }
+    } else {
+      for (int k = 0; k < nTopk; ++k) {
+        maskedEntry(k, destinationTopkIdx[k], destinationTopkWeights[k]);
+      }
     }
-    leaderMask &= leaderMask - 1;
   }
   __syncwarp();
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void issueTokenStore(void* output, const TransportView& transport, int destinationSlot,
                                            int maxTokensPerRank, void* stagedToken, int destinationRank) {
   if (destinationSlot < 0) return;
 
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
+  using ElementType = DispatchElementType<DataType>;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   void* destinationBuffer = transport.mappedBuffer(output, destinationRank);
   auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) +
                          (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * HiddenBytes;
@@ -83,14 +99,14 @@ MSCCLPP_DEVICE_INLINE void completeTokenStore(WorkspaceView& workspaceView, int 
       workspaceView.dispatchRankPayloadCompletions_ + destinationRank, 1, mscclpp::memoryOrderRelease);
 }
 
-template <int Hidden>
-MSCCLPP_DEVICE_INLINE void dispatchSendBf16(void* output, int* outputTopkIdx, float* outputTopkWeights,
-                                            const void* inputTokens, int nExperts, int nRanks,
-                                            const int64_t* __restrict__ topkIndices,
-                                            const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                            int invalidTokenExpertId, int maxTokensPerRank,
-                                            const TransportView& transport, void* workspace, int nPayloadBlocks,
-                                            int* sharedMem) {
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
+MSCCLPP_DEVICE_INLINE void dispatchSendTokens(void* output, int* outputTopkIdx, float* outputTopkWeights,
+                                              const void* inputTokens, int nExperts, int nRanks,
+                                              const int64_t* __restrict__ topkIndices,
+                                              const float* __restrict__ topkWeights, int nTokens, int nTopk,
+                                              int invalidTokenExpertId, int maxTokensPerRank,
+                                              const TransportView& transport, void* workspace, int nPayloadBlocks,
+                                              int* sharedMem) {
   if (blockIdx.x == 0 || static_cast<int>(blockIdx.x) > nPayloadBlocks) return;
 
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -102,10 +118,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(void* output, int* outputTopkIdx, fl
   const int subWarpId = warpId % nWarpsPerGroup;
   if (subWarpId != 0) return;
 
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  constexpr int HiddenVectors = Hidden / mscclpp::bf16x8::Size;
+  using ElementType = DispatchElementType<DataType>;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   const int nLocalExperts = nExperts / nRanks;
-  const size_t sharedTokenStride = dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0);
+  const size_t sharedTokenStride = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
   auto* sharedTokenBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
   auto* sendBulkBarriers =
       reinterpret_cast<mscclpp::BulkBarrier*>(sharedTokenBase + DispatchMaxNWarpGroups * sharedTokenStride);
@@ -119,8 +135,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(void* output, int* outputTopkIdx, fl
   if (firstTokenIdx < nTokens && laneId == 0) bulkBarrier->init();
 
   for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += tokenStride) {
-    const auto* inputData =
-        reinterpret_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
+    const auto* inputData = reinterpret_cast<const uint8_t*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenBytes;
     if (laneId == 0) {
       bulkBarrier->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
       mscclpp::bulkLoad(stagedToken, inputData, static_cast<uint32_t>(HiddenBytes), *bulkBarrier);
@@ -132,10 +147,11 @@ MSCCLPP_DEVICE_INLINE void dispatchSendBf16(void* output, int* outputTopkIdx, fl
     mscclpp::bulkFence();
     const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
     if (dstRank >= 0) {
-      issueTokenStore<Hidden>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken, dstRank);
+      issueTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
+                                        dstRank);
     }
-    sendMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
-                 nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
+    sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
+                                     tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
     completeTokenStore(workspaceView, dstRank);
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
@@ -178,7 +194,7 @@ MSCCLPP_DEVICE_INLINE void dispatchNotify(const TransportView& transport, int nE
   publishDispatchPayloads(transport, rankTokenCounts, nRanks, workspaceView);
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                         const void* inputTokens, const TransportView& transport, int nExperts,
                                         int nRanks, const int64_t* __restrict__ topkIndices,
@@ -187,9 +203,9 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, int* outputTopkIdx, float*
                                         void* workspace, uint32_t epoch, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    dispatchSendBf16<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices,
-                             topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, transport, workspace,
-                             nWorkerBlocks, sharedMem);
+    dispatchSendTokens<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
+        output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
+        nTopk, invalidTokenExpertId, maxTokensPerRank, transport, workspace, nWorkerBlocks, sharedMem);
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
     dispatchNotify(transport, nExperts, nRanks, topkIndices, nTokens, nTopk, recvBuffer, workspace, epoch, sharedMem);
   }
@@ -230,7 +246,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(int* outputTopkIdx, float* outputTopkWei
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
 __global__ __launch_bounds__(DispatchNThreads,
                              1) void dispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
                                                     int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
@@ -238,7 +254,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                     const float* topkWeights, const void* inputTokens,
                                                     Workload workload, void* recvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
-  static_assert(DataType == DispatchDataType::BF16);
+  static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3);
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
   const int nExperts = workload.numExperts_;
@@ -250,9 +266,9 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(context);
   const uint32_t epoch = workload.epoch_;
 
-  dispatchSend<Hidden>(output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices,
-                       topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer,
-                       context->workspace_, epoch, sharedMem);
+  dispatchSend<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
+      output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
+      nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch, sharedMem);
 
   if (static_cast<int>(blockIdx.x) < nRanks) {
     dispatchRecv(outputTopkIdx, outputTopkWeights, outputCount, transport, nExperts, nRanks, nTopk, maxTokensPerRank,
@@ -261,10 +277,11 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
+template <bool EmitLocalExpertIds>
 struct KernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return dispatchKernel<Hidden, DataType, ScaleBlockSize>;
+    return dispatchKernel<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>;
   }
 };
 
@@ -274,9 +291,15 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector>(
-      output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
-      topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  if (workload.emitLocalExpertIds_) {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  } else {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<false>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  }
 }
 
 }  // namespace ep
