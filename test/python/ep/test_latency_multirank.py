@@ -405,9 +405,9 @@ def validate_rank_major_dispatch(
 
         actual_ids = dispatch_out.topk_ids[row_begin:row_end]
         actual_weights = dispatch_out.weights[row_begin:row_end]
-        expected_ids = all_topk_idx[source_rank, source_tokens].masked_fill(
-            ~expected_local_routes[source_tokens], invalid_token_expert_id
-        )
+        expected_ids = (
+            all_topk_idx[source_rank, source_tokens] - local_expert_begin
+        ).masked_fill(~expected_local_routes[source_tokens], invalid_token_expert_id)
         expected_weights = all_topk_weights[source_rank, source_tokens].masked_fill(
             ~expected_local_routes[source_tokens], 0.0
         )

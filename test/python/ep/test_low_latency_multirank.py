@@ -345,7 +345,7 @@ def validate_rank_major_dispatch(
             local_mask = (expected_global_ids >= local_expert_begin) & (expected_global_ids < local_expert_end)
             expected_output_ids = torch.where(
                 local_mask,
-                expected_global_ids,
+                expected_global_ids - local_expert_begin,
                 torch.full_like(expected_global_ids, invalid_token_expert_id),
             )
             expected_weights = torch.where(

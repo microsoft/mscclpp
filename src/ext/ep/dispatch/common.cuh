@@ -70,7 +70,8 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadata(const TransportView& transport,
       const size_t outputIdx =
           (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
       const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
+      destinationTopkIdx[outputIdx] =
+          isLocal ? candidateExpert - destinationRank * nLocalExperts : invalidTokenExpertId;
       destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
     }
     leaderMask &= leaderMask - 1;
@@ -125,7 +126,8 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(
       const size_t outputIdx =
           (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
       const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
+      destinationTopkIdx[outputIdx] =
+          isLocal ? candidateExpert - destinationRank * nLocalExperts : invalidTokenExpertId;
       destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
     }
   }
@@ -184,7 +186,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
     }
     if (laneId < nTopk) {
       const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      slotIds[laneId] = isLocal ? candidateExpert : invalidTokenExpertId;
+      slotIds[laneId] = isLocal ? candidateExpert - destinationRank * nLocalExperts : invalidTokenExpertId;
       slotWeights[laneId] = isLocal ? candidateWeight : 0.0f;
     }
     __syncwarp();
