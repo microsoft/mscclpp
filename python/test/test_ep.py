@@ -5,6 +5,7 @@
 
 from contextlib import contextmanager
 from dataclasses import replace
+import inspect
 import importlib.util
 
 import cupy as cp
@@ -76,6 +77,11 @@ def test_config_required_arguments(name):
         MoECommunicatorConfig(**arguments)
 
 
+def test_local_id_flag_preserves_positional_config_compatibility():
+    parameters = tuple(inspect.signature(MoECommunicatorConfig).parameters)
+    assert parameters[-1] == "emit_local_expert_ids"
+
+
 def test_config_validation_at_construction(ep_group):
     config = MoECommunicatorConfig(
         comm=ep_group,
@@ -141,6 +147,25 @@ def test_config_validation_at_construction(ep_group):
             output_layout=DispatchLayout.RANK_MAJOR,
             invalid_token_expert_id=None,
             quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0),
+        )
+    with pytest.raises(TypeError, match="emit_local_expert_ids must be a bool"):
+        replace(config, emit_local_expert_ids=1)
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
+        replace(config, emit_local_expert_ids=True)
+    local_ids = replace(
+        config,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        invalid_token_expert_id=None,
+        emit_local_expert_ids=True,
+    )
+    assert local_ids.invalid_token_expert_id == -1
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
+        replace(
+            config,
+            mode=MoEMode.THROUGHPUT,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            invalid_token_expert_id=None,
+            emit_local_expert_ids=True,
         )
 
 
@@ -465,6 +490,45 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
     for case in CASES:
         _run_dispatch_combine_case(ep_group, *case, apply_router_weights, hidden_size)
         ep_group.barrier()
+
+
+@pytest.mark.parametrize("emit_local_expert_ids", [False, True])
+def test_latency_rank_major_expert_id_space(ep_group, emit_local_expert_ids):
+    num_tokens, capacity, topk = 2, 3, 2
+    num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        num_experts=num_experts,
+        hidden_size=1024,
+        topk=topk,
+        max_tokens_per_rank=capacity,
+        emit_local_expert_ids=emit_local_expert_ids,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            destination = (ep_group.my_rank + 1) % ep_group.nranks
+            local_ids = torch.arange(num_tokens * topk, device="cuda").view(num_tokens, topk)
+            routes = local_ids + destination * NUM_LOCAL_EXPERTS
+            input = torch.ones((num_tokens, 1024), dtype=torch.bfloat16, device="cuda")
+            result, _ = runtime.dispatch(input, routes, stream=stream)
+        stream.synchronize()
+        ep_group.barrier()
+
+        source = (ep_group.my_rank - 1) % ep_group.nranks
+        assert result.layout.num_tokens_per_rank[source].item() == num_tokens
+        expected = local_ids if emit_local_expert_ids else local_ids + ep_group.my_rank * NUM_LOCAL_EXPERTS
+        actual = result.topk_ids[source, :num_tokens]
+        actual = actual[actual[:, 0].argsort()]
+        torch.testing.assert_close(actual, expected.to(torch.int32), rtol=0, atol=0)
+        expected_invalid = -1 if emit_local_expert_ids else num_experts
+        torch.testing.assert_close(
+            result.topk_ids[source, num_tokens:],
+            torch.full_like(result.topk_ids[source, num_tokens:], expected_invalid),
+            rtol=0,
+            atol=0,
+        )
 
 
 def test_preparation_validation(ep_group):

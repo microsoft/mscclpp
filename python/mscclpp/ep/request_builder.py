@@ -26,7 +26,7 @@ from .utils import (
 
 @dataclass
 class _DispatchRequest:
-    arguments: dict[str, Union[int, float, DispatchDataType, _cpp.PrepareHandle]]
+    arguments: dict[str, Union[bool, int, float, DispatchDataType, _cpp.PrepareHandle]]
     output: DispatchOutput
     num_tokens: int
     active_capacity: int
@@ -164,6 +164,7 @@ class RequestBuilder:
                 num_blocks=config.num_blocks[0],
                 stream_ptr=stream.cuda_stream,
                 quant_scale=1.0 if scale is None else scale,
+                emit_local_expert_ids=config.emit_local_expert_ids,
             ),
             output=output,
             num_tokens=num_tokens,

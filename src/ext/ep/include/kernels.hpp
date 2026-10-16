@@ -49,6 +49,8 @@ struct Workload {
   DispatchDataType dispatchDataType_;
   /// Static FP8 quantization multiplier; one for non-static formats.
   float quantScale_ = 1.0f;
+  /// Whether rank-major dispatch emits destination-rank-local expert IDs.
+  bool emitLocalExpertIds_ = false;
 };
 
 struct KernelConfigCache {

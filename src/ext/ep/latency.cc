@@ -143,6 +143,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const int maxTokensPerRank = request.maxTokensPerRank;
   const int numExperts = context.numExperts_;
   const int invalidTokenExpertId = request.invalidTokenExpertId;
+  const bool emitLocalExpertIds = request.emitLocalExpertIds;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = request.dispatchDataType;
   const float quantScale = request.quantScale;
@@ -156,6 +157,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_THROW("Latency requests require 0 <= numTokens <= maxTokensPerRank <= runtime capacity");
   }
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
+  if (emitLocalExpertIds && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("Local expert IDs are supported only by latency RANK_MAJOR dispatch");
+  }
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   const bool staticFp8RankMajor =
       dispatchLayout == DispatchLayout::RANK_MAJOR && dispatchDataType == DispatchDataType::FP8_E4M3;
@@ -188,7 +192,8 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType,
-                          .quantScale_ = quantScale};
+                          .quantScale_ = quantScale,
+                          .emitLocalExpertIds_ = emitLocalExpertIds};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
@@ -254,7 +259,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType,
-                          .quantScale_ = handle.quantScale_};
+                          .quantScale_ = handle.quantScale_,
+                          .emitLocalExpertIds_ = false};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,

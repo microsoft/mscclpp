@@ -131,6 +131,10 @@ class MoECommunicator:
     def invalid_token_expert_id(self) -> int:
         return self._config.invalid_token_expert_id
 
+    @property
+    def emit_local_expert_ids(self) -> bool:
+        return self._config.emit_local_expert_ids
+
     def is_available(self) -> bool:
         """Return native support for this runtime's mode and topology."""
         return self._runtime.is_available()

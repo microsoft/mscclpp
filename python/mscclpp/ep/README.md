@@ -138,9 +138,11 @@ expert IDs in `[0, num_experts)` or negative values for dropped routes.
 means one per valid route. Routing values are not read or validated on the host.
 
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
-`weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global, with
-`invalid_token_expert_id` (default `num_experts`) marking dropped or non-local
-entries. Throughput IDs are local to the destination rank, with `-1` marking
+`weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global by
+default, with `invalid_token_expert_id` (default `num_experts`) marking dropped
+or non-local entries. Latency RANK_MAJOR can set `emit_local_expert_ids=True`
+to emit valid IDs in `[0, num_local_experts)` instead; its default invalid ID is
+`-1`. Throughput IDs are local to the destination rank, with `-1` marking
 invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes

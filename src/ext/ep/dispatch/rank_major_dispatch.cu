@@ -35,6 +35,7 @@ MSCCLPP_DEVICE_INLINE Route prepareRoute(WorkspaceView& workspaceView, const int
 }
 
 // Each destination's leader lane writes its complete masked top-k row, so destinations are handled concurrently.
+template <bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
                                         const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
                                         const Route& route, int tokenIdx, int nTopk, int nLocalExperts,
@@ -52,7 +53,11 @@ MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* out
       const int routedExpert = static_cast<int>(tokenTopkIdx[k]);
       const float routedWeight = tokenTopkWeights == nullptr ? 1.0f : tokenTopkWeights[k];
       const bool isDstExpert = routedExpert >= firstDstExpert && routedExpert < firstDstExpert + nLocalExperts;
-      expert = isDstExpert ? routedExpert : invalidTokenExpertId;
+      if constexpr (EmitLocalExpertIds) {
+        expert = isDstExpert ? routedExpert - firstDstExpert : invalidTokenExpertId;
+      } else {
+        expert = isDstExpert ? routedExpert : invalidTokenExpertId;
+      }
       weight = isDstExpert ? routedWeight : 0.0f;
     };
     if (nTopk % mscclpp::i32x4::Size == 0) {
@@ -94,7 +99,7 @@ MSCCLPP_DEVICE_INLINE void completeTokenStore(WorkspaceView& workspaceView, int 
       workspaceView.dispatchRankPayloadCompletions_ + destinationRank, 1, mscclpp::memoryOrderRelease);
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void dispatchSendTokens(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                               const void* inputTokens, int nExperts, int nRanks,
                                               const int64_t* __restrict__ topkIndices,
@@ -145,8 +150,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendTokens(void* output, int* outputTopkIdx, 
       issueTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
                                         dstRank);
     }
-    sendMetadata(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route, tokenIdx, nTopk,
-                 nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
+    sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
+                                     tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
     completeTokenStore(workspaceView, dstRank);
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
@@ -189,7 +194,7 @@ MSCCLPP_DEVICE_INLINE void dispatchNotify(const TransportView& transport, int nE
   publishDispatchPayloads(transport, rankTokenCounts, nRanks, workspaceView);
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, int* outputTopkIdx, float* outputTopkWeights,
                                         const void* inputTokens, const TransportView& transport, int nExperts,
                                         int nRanks, const int64_t* __restrict__ topkIndices,
@@ -198,7 +203,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, int* outputTopkIdx, float*
                                         void* workspace, uint32_t epoch, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    dispatchSendTokens<Hidden, DataType, ScaleBlockSize>(
+    dispatchSendTokens<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
         output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
         nTopk, invalidTokenExpertId, maxTokensPerRank, transport, workspace, nWorkerBlocks, sharedMem);
   } else if (static_cast<int>(blockIdx.x) == nWorkerBlocks + 1) {
@@ -241,7 +246,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(int* outputTopkIdx, float* outputTopkWei
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
 __global__ __launch_bounds__(DispatchNThreads,
                              1) void dispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
                                                     int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
@@ -261,7 +266,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(context);
   const uint32_t epoch = workload.epoch_;
 
-  dispatchSend<Hidden, DataType, ScaleBlockSize>(
+  dispatchSend<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
       output, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
       nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch, sharedMem);
 
@@ -272,10 +277,11 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
+template <bool EmitLocalExpertIds>
 struct KernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return dispatchKernel<Hidden, DataType, ScaleBlockSize>;
+    return dispatchKernel<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>;
   }
 };
 
@@ -285,9 +291,15 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector>(
-      output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,
-      topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  if (workload.emitLocalExpertIds_) {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  } else {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<false>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  }
 }
 
 }  // namespace ep

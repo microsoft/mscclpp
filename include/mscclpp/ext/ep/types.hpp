@@ -154,6 +154,11 @@ struct LatencyDispatchRequest {
   /// The input is already quantized as E4M3(real * quantScale). Combine
   /// dequantizes matching expert output with 1 / quantScale.
   float quantScale = 1.0f;
+  /// Emit destination-rank-local expert IDs for latency RANK_MAJOR output.
+  ///
+  /// When false, valid outputTopkIdx entries remain global expert IDs. When
+  /// true, valid entries are in [0, numExperts / numRanks).
+  bool emitLocalExpertIds = false;
 };
 
 /// Arguments for throughput-mode dispatch.
