@@ -161,6 +161,7 @@ def validate_config(config: dict) -> None:
 def load_config(
     path: str | Path,
     *,
+    num_gpus: int,
     model: str,
     input_name: str,
     routing: str,
@@ -168,7 +169,7 @@ def load_config(
     compute_overrides: dict | None = None,
     overrides: dict | None = None,
 ) -> dict:
-    """Resolve named presets and environment defaults with separate overrides."""
+    """Resolve presets using the GPU count detected by the single-node launcher."""
     try:
         with open(path, encoding="utf-8") as stream:
             document = yaml.safe_load(stream)
@@ -183,12 +184,14 @@ def load_config(
             _validate_section(section, preset, f"{category}.{name}")
     if "environment" not in document:
         raise ValueError("configuration: missing field 'environment'")
-    _validate_section("environment", document["environment"], "environment")
+    environment_fields = _FIELDS["environment"] - {"num_gpus"}
+    _fields(document["environment"], environment_fields, "environment", required=False)
+    _validate_section("environment", {**document["environment"], "num_gpus": num_gpus}, "environment")
     benchmark = document.get("benchmark", {})
     _fields(benchmark, _FIELDS["benchmark"], "benchmark", required=False)
     resolved = {
         "benchmark": {**BENCHMARK_DEFAULTS, **benchmark},
-        "environment": {**COMMUNICATION_DEFAULTS, **deepcopy(document["environment"])},
+        "environment": {**COMMUNICATION_DEFAULTS, **deepcopy(document["environment"]), "num_gpus": num_gpus},
     }
     compute = document.get("compute", {})
     _fields(compute, set(COMPUTE_DEFAULTS), "compute", required=False)
@@ -201,7 +204,7 @@ def load_config(
             raise ValueError(f"Unknown {category} preset {name!r}; available presets: {available}")
         resolved[_CATEGORIES[category]] = deepcopy(presets[name])
     if environment_overrides is not None:
-        _fields(environment_overrides, _FIELDS["environment"], "environment_overrides", required=False)
+        _fields(environment_overrides, environment_fields, "environment_overrides", required=False)
         resolved["environment"].update(
             {key: value for key, value in environment_overrides.items() if value is not None}
         )

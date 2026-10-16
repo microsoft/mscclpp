@@ -20,6 +20,7 @@ PRESETS = Path(__file__).resolve().parents[1] / "configs.yaml"
 def _config(**kwargs):
     return load_config(
         PRESETS,
+        num_gpus=kwargs.get("num_gpus", 4),
         model=kwargs.get("model", "small"),
         input_name=kwargs.get("input_name", "decode"),
         environment_overrides=kwargs.get("environment_overrides"),
@@ -83,7 +84,7 @@ def test_mlp_graph_is_explicit_and_opt_in():
 @pytest.mark.parametrize("world", [2, 4])
 @pytest.mark.parametrize("graph", [False, "mlp"])
 def test_environment_combinations(backend, world, graph):
-    config = _config(environment_overrides={"communication_backend": backend, "num_gpus": world, "cuda_graph": graph})
+    config = _config(num_gpus=world, environment_overrides={"communication_backend": backend, "cuda_graph": graph})
     assert config["environment"] == {
         "mode": "latency",
         "layout": "expert_major",
@@ -94,14 +95,14 @@ def test_environment_combinations(backend, world, graph):
     }
 
 
-@pytest.mark.parametrize("key,value", [("communication_backend", "nccl"), ("num_gpus", 2), ("cuda_graph", "mlp")])
+@pytest.mark.parametrize("key,value", [("communication_backend", "nccl"), ("cuda_graph", "mlp")])
 def test_independent_environment_overrides_and_isolation(key, value):
     document = yaml.safe_load(PRESETS.read_text())
     original = deepcopy(document)
     overrides = {key: value}
     with patch("yaml.safe_load", return_value=document):
         config = _config(environment_overrides=overrides)
-    assert config["environment"] == {**original["environment"], key: value}
+    assert config["environment"] == {**original["environment"], "num_gpus": 4, key: value}
     config["environment"]["num_gpus"] = 2
     config["routing"]["kind"] = "uniform"
     assert document == original
@@ -121,6 +122,7 @@ def test_graph_default_can_be_disabled():
         [],
         {"communication_backend": "unknown"},
         {"num_gpus": 8},
+        {"num_gpus": 2},
         {"num_gpus": True},
         {"num_gpus": "4"},
         {"cuda_graph": True},
@@ -142,7 +144,7 @@ def test_malformed_environment(environment):
         _load_document(document)
 
 
-@pytest.mark.parametrize("field", ["num_gpus", "communication_backend", "compute_backend", "cuda_graph"])
+@pytest.mark.parametrize("field", ["communication_backend", "compute_backend", "cuda_graph"])
 def test_missing_environment_fields(field):
     document = yaml.safe_load(PRESETS.read_text())
     value = document["environment"].pop(field)
@@ -158,6 +160,22 @@ def test_missing_environment_and_legacy_schema():
     document["environments"] = {"local": environment}
     with pytest.raises(ValueError, match="unknown fields: environments"):
         _load_document(document)
+
+
+@pytest.mark.parametrize("num_gpus", [2, 4])
+def test_gpu_count_is_resolved_from_detection_not_yaml(num_gpus):
+    config = _config(num_gpus=num_gpus)
+    assert config["environment"]["num_gpus"] == num_gpus
+    document = yaml.safe_load(PRESETS.read_text())
+    document["environment"]["num_gpus"] = num_gpus
+    with pytest.raises(ValueError, match="environment: unknown fields: num_gpus"):
+        _load_document(document, num_gpus=num_gpus)
+
+
+@pytest.mark.parametrize("num_gpus", [0, 1, 3, 8, True, "4"])
+def test_invalid_detected_gpu_count(num_gpus):
+    with pytest.raises(ValueError, match="environment.num_gpus"):
+        _config(num_gpus=num_gpus)
 
 
 @pytest.mark.parametrize("argument", ["model", "input_name", "routing"])

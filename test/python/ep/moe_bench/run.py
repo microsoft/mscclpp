@@ -6,6 +6,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -37,7 +38,6 @@ def parse_args(argv=None):
     parser.add_argument("--compute-backend", choices=("torch", "cutlass_flashinfer"))
     parser.add_argument("--activation-dtype", choices=("bf16", "mxfp8"), help="Internal compute activation format")
     parser.add_argument("--weight-dtype", choices=("bf16", "mxfp4"), help="Internal compute weight format")
-    parser.add_argument("--gpus", type=int, choices=(2, 4), help="Override environment.num_gpus")
     parser.add_argument(
         "--graph", choices=("none", "mlp"), help="Override environment.cuda_graph (none disables graphs)"
     )
@@ -51,8 +51,14 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
+    import torch
+
+    num_gpus = torch.cuda.device_count()
+    if num_gpus not in (2, 4):
+        raise RuntimeError(f"MoE benchmark uses all visible GPUs on this node and supports 2 or 4; found {num_gpus}")
     config = load_config(
         args.config,
+        num_gpus=num_gpus,
         model=args.model,
         input_name=args.input,
         routing=args.routing,
@@ -61,7 +67,6 @@ def main():
             "mode": args.mode,
             "layout": args.layout,
             "compute_backend": args.compute_backend,
-            "num_gpus": args.gpus,
             "cuda_graph": False if args.graph == "none" else args.graph,
         },
         compute_overrides={"activation_dtype": args.activation_dtype, "weight_dtype": args.weight_dtype},
@@ -80,6 +85,7 @@ def main():
         "-m",
         "torch.distributed.run",
         "--standalone",
+        "--local-addr=127.0.0.1",
         "--nnodes=1",
         f"--nproc-per-node={config['environment']['num_gpus']}",
         str(Path(__file__).with_name("worker.py").resolve()),
@@ -93,6 +99,8 @@ def main():
     status = subprocess.run(
         ["git", "-C", str(root), "status", "--porcelain"], check=True, capture_output=True, text=True
     ).stdout
+    worker_env = os.environ.copy()
+    worker_env.setdefault("GLOO_SOCKET_IFNAME", "lo")
     run = {
         "schema_version": 2,
         "run_id": run_id,
@@ -111,26 +119,25 @@ def main():
             "routing": args.routing,
         },
         "config": config,
-        "metadata": {"git_commit": revision, "git_dirty": bool(status), "git_status": status.splitlines()},
+        "metadata": {
+            "git_commit": revision,
+            "git_dirty": bool(status),
+            "git_status": status.splitlines(),
+            "gloo_socket_ifname": worker_env["GLOO_SOCKET_IFNAME"],
+        },
     }
     write_json(run_dir / "run.json", run)
-    print(f"Launching reference MoE benchmark; output: {run_dir}", flush=True)
+    print(f"Launching reference MoE benchmark on all {num_gpus} visible GPUs; output: {run_dir}", flush=True)
     returncode = None
     try:
-        import torch
-
-        available = torch.cuda.device_count()
-        required = config["environment"]["num_gpus"]
-        if available < required:
-            raise RuntimeError(f"Requested {required} GPUs, but only {available} CUDA GPUs are visible")
         if config["environment"]["compute_backend"] == "cutlass_flashinfer":
             if __package__:
                 from .compute_backends.flashinfer import preflight
             else:
                 from compute_backends.flashinfer import preflight
-            for device in range(required):
+            for device in range(num_gpus):
                 preflight(config, device)
-        returncode = subprocess.run(command, check=False).returncode
+        returncode = subprocess.run(command, check=False, env=worker_env).returncode
         if returncode != 0:
             raise SystemExit(returncode if returncode > 0 else 128 - returncode)
         for filename in ("summary.csv", "iterations.csv"):
