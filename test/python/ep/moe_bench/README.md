@@ -1,6 +1,7 @@
 # MoE benchmark
 
-Single-node dispatch -> SwiGLU expert compute -> weighted combine on 2 or 4 GPUs.
+Dispatch -> SwiGLU expert compute -> weighted combine on local GPUs or across
+MNNVL-connected nodes.
 Communication is BF16. Inputs, weights, and routing are synthetic; routing stays
 fixed during each run.
 
@@ -63,9 +64,8 @@ To build without contacting nodes, or reuse an existing bundle:
   --nodelist 10.0.4.159,10.0.4.69 --user azhpcuser
 ```
 
-**Deployment only prepares the software. It does not launch the benchmark or
-enable distributed multi-node execution**, which is not implemented yet.
-You can run independent single-node benchmarks on the prepared nodes.
+**Deployment only prepares the software.** Use `--nodelist` below to launch one
+distributed benchmark across the prepared nodes.
 
 ## Run
 
@@ -91,13 +91,76 @@ GPUs are currently supported; other counts raise an error instead of selecting a
 subset. Existing `CUDA_VISIBLE_DEVICES` restrictions are respected. There is no
 GPU-count option: remove `--gpus` and `environment.num_gpus` from older commands
 and YAML files. The detected count is still recorded in the results.
-Multi-node execution is not supported yet.
+Use `--nodelist` for multiple nodes, as described below.
 
 Use idle GPUs. The launcher automatically uses `127.0.0.1` for PyTorch's local
 worker coordination and defaults `GLOO_SOCKET_IFNAME` to `lo`, so no hostname
 configuration or IP-address option is needed. An explicitly set
 `GLOO_SOCKET_IFNAME` is preserved. These settings affect CPU-side coordination,
 not the selected GPU communication backend.
+
+### One workload across N MNNVL-connected nodes
+
+After deployment has finished on every target, run once from the controller:
+
+```bash
+.venv/bin/python test/python/ep/moe_bench/run.py \
+  --nodelist 10.0.4.159,10.0.4.69 --user azhpcuser \
+  --model small --input decode --routing balanced \
+  --warmup 10 --iterations 10 --check
+```
+
+This starts **one distributed workload**, not independent benchmarks. With four
+visible GPUs per node, the example uses eight GPUs in total. Add more distinct
+IPv4 addresses to the list for more nodes; each must expose the same GPU count.
+All visible GPUs on each target are used, respecting its SSH-session
+`CUDA_VISIBLE_DEVICES`. The controller can also be one of the listed targets.
+SSH is used for every target, including the current machine.
+
+Requirements and limits:
+
+- Every GPU must belong to the same CUDA IPC/MNNVL fabric domain. Ordinary
+  Ethernet/RDMA connectivity is not a fallback for GPU communication.
+- NVIDIA IMEX must be configured for that domain and running on the nodes.
+  Healthy `nvidia-smi` fabric status and a matching clique ID alone do **not**
+  prove that cross-node CUDA Fabric memory imports work.
+- Targets need matching GPU counts, Torch/CUDA/MSCCL++ versions and the same
+  native wheel checksum. SSH keys and verified host keys must already work.
+- `python3`, `ip`, SSH/SCP, and `tar` must be available. The node IP must be
+  assigned to a local interface. Node-to-node TCP must allow the master port
+  (default 29500), Gloo/MSCCL++ bootstrap traffic, and IMEX communication.
+- `--nodelist` currently supports only the MSCCL++ communication backend.
+  Optional compute backends must already be installed on every target.
+- Expert count must be divisible by the **total** GPU count. The eight-expert
+  `small` preset fits two four-GPU nodes; three such nodes need a custom preset
+  with, for example, 24 experts. MSCCL++ throughput supports only 2, 4, 8, or 16
+  total ranks; latency uses the native runtime's topology/capacity limits.
+
+By default each target uses its newest deployment under
+`~/.local/share/mscclpp/moe-bench/`. Use `--remote-dir` to select an exact
+deployment directory, or a different parent directory, at the same path on
+every node. Missing or incomplete deployments are errors, not skipped nodes.
+
+No shared filesystem is required. The controller copies a small snapshot of its
+current benchmark Python code and resolved configuration into a fresh
+`<deployment>/runs/<run-id>/` on each target, using that deployment's native
+library and virtual environment. It neither rebuilds MSCCL++ nor modifies the
+installed benchmark sources. The controller needs Python and PyYAML; Torch runs
+on the targets. Gloo and MSCCL++ bootstrap use the interface assigned to each
+listed IP, rather than loopback.
+
+`--check` compares Torch BF16 output against an independent seeded expert
+reference on every rank before warmup/timing. It is not available for MX
+compute. Use `--timeout` to bound worker execution; a failure or timeout cancels
+the other workers. Rank-zero results are copied back to the controller alongside
+one `node-<rank>.log` per node. Remote run directories remain for diagnostics.
+
+If a cross-node run fails with a missing `/tmp/mscclpp_bootstrap_*.sock`, a Fabric
+import warning, or `CUDA_ERROR_NOT_SUPPORTED`, have the system administrator
+verify cross-node CUDA Fabric imports and the IMEX domain before retrying.
+Check `systemctl status nvidia-imex`, its logs, and
+`/etc/nvidia-imex/nodes_config.cfg` where that service uses the default config.
+The launcher does not install drivers or configure/start system services.
 
 ### Optional Blackwell MX compute
 
@@ -135,6 +198,12 @@ Omitted optional flags use the YAML settings. Defaults below are from the suppli
 | `--seed` | Integer from 0 through 2^63 - 1 | `42` |
 | `--output-dir` | Results directory | `benchmark_results` |
 | `--config` | YAML file path | `configs.yaml` beside `run.py` |
+| `--nodelist` | Comma-separated node IPv4 addresses | Local execution |
+| `--user` | SSH username | Current user |
+| `--remote-dir` | Remote deployment directory or parent | `.local/share/mscclpp/moe-bench` |
+| `--master-port` | TCP port, 1 through 65535 | `29500` |
+| `--timeout` | Distributed worker timeout, seconds > 0 | `600` |
+| `--check` | Validate Torch BF16 output before timing | Disabled |
 | `--help` | Show CLI help | |
 
 Only these compute pairs are supported:
@@ -199,6 +268,9 @@ Timing uses CUDA events, excludes warmup, and includes launch gaps and peer wait
 Compute timing includes required layout conversion, quantization, and local
 reduction. Global total is the maximum rank duration per iteration, not a sum of
 rank times.
+Distributed metadata includes node addresses, deployments, worker commands,
+global ranks, hostnames, local GPU indices, and reference-check status. Measured
+samples include every global rank (80 rows for eight GPUs and 10 iterations).
 
 ## Code layout
 
@@ -208,6 +280,7 @@ rank times.
 - `memory.py`: conservative tensor memory estimates.
 - `layout.py`: native dispatch-layout adaptation for expert compute.
 - `run.py` / `worker.py`: launcher and timed distributed pipeline.
+- `multinode.py`: SSH deployment discovery, distributed launch, cancellation, and result collection.
 - `config.py` / `configs.yaml`, `routing.py`, `results.py`: configuration, fixed routing, and output.
 - `tests/`: CPU tests and opt-in distributed reference tests.
 

@@ -35,9 +35,13 @@ else:
 
 
 def initialize():
-    if int(os.environ["LOCAL_WORLD_SIZE"]) != int(os.environ["WORLD_SIZE"]):
-        raise ValueError("MoE benchmark supports single-node torchrun launches only")
     local_rank = int(os.environ["LOCAL_RANK"])
+    local_world = int(os.environ["LOCAL_WORLD_SIZE"])
+    world = int(os.environ["WORLD_SIZE"])
+    if not 0 <= local_rank < local_world or local_world < 1 or world < local_world or world % local_world:
+        raise ValueError("Invalid torchrun local/global rank configuration")
+    if torch.cuda.device_count() < local_world:
+        raise ValueError("Local worker count exceeds visible GPUs")
     torch.cuda.set_device(local_rank)
     dist.init_process_group("gloo", timeout=timedelta(minutes=5))
     torch.set_num_threads(1)
@@ -207,12 +211,28 @@ def make_timing_events(iterations):
     return events
 
 
-def run(config, run_dir):
+def run(config, run_dir, check=False):
     validate_config(config)
+    if check and config["environment"]["compute_backend"] != "torch":
+        raise ValueError("--check requires the Torch BF16 compute backend")
     rank, world, device = initialize()
     pipeline = None
     try:
         pipeline = Pipeline(config, rank, device)
+        if check:
+            if __package__:
+                from .workload import reference_output
+            else:
+                from workload import reference_output
+            pipeline.step()
+            torch.cuda.synchronize()
+            expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
+            valid = torch.tensor(int(torch.allclose(pipeline.output, expected, atol=0.025, rtol=0.025)))
+            dist.all_reduce(valid, op=dist.ReduceOp.MIN)
+            if not valid.item():
+                raise RuntimeError("Distributed output differs from the independent Torch BF16 reference")
+            if rank == 0:
+                print("Distributed Torch BF16 reference check passed", flush=True)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
         for _ in range(settings["warmup"]):
@@ -242,6 +262,8 @@ def run(config, run_dir):
             devices,
             {
                 "rank": rank,
+                "hostname": platform.node(),
+                "local_rank": device.index,
                 "name": props.name,
                 "total_memory_bytes": props.total_memory,
                 "compute_capability": [props.major, props.minor],
@@ -253,6 +275,7 @@ def run(config, run_dir):
                 "python_version": platform.python_version(),
                 "torch_version": torch.__version__,
                 "cuda_version": torch.version.cuda,
+                "reference_check": "passed" if check else "not_requested",
                 **pipeline.backend.metadata,
                 **pipeline.mlp.metadata,
                 "cuda_graph_scope": "mlp_only" if pipeline.mlp_graph is not None else "none",
@@ -280,10 +303,11 @@ def run(config, run_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     with (args.run_dir / "run.json").open() as stream:
         config = json.load(stream)["config"]
-    run(config, args.run_dir)
+    run(config, args.run_dir, args.check)
 
 
 if __name__ == "__main__":

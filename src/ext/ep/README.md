@@ -58,6 +58,15 @@ older commands and YAML files; the detected count is recorded in run results.
 Local worker coordination uses `127.0.0.1` to avoid hostname-resolution failures.
 Gloo defaults to the loopback interface `lo`, unless `GLOO_SOCKET_IFNAME` is
 already set; no IP-address option is required for this single-node benchmark.
+For one distributed MSCCL++ workload across N deployed MNNVL-connected nodes,
+use `--nodelist <ip1>,<ip2>,... --user <ssh-user>`. Each node uses all its visible
+GPUs, with equal local GPU counts and an expert count divisible by the global
+GPU count. No shared filesystem is required; the controller transfers current
+Python workers/configuration and collects results over SSH/SCP. Every GPU must
+share one CUDA IPC/MNNVL domain with working cross-node CUDA Fabric imports and
+configured NVIDIA IMEX. A matching fabric clique alone is not sufficient.
+See the [multi-node run instructions](../../../test/python/ep/moe_bench/README.md#one-workload-across-n-mnnvl-connected-nodes)
+for deployment selection, diagnostics, timeout, and optional `--check`.
 Its default configuration is
 `test/python/ep/moe_bench/configs.yaml`, independently of the working directory.
 Use `--config` to select another YAML file. Named `models`, `inputs`, and `routing`
@@ -148,7 +157,8 @@ adapter workspaces and the MSCCL++ fixed native throughput pool are included in
 the conservative memory estimate. MSCCL++ throughput is limited to 1024 local
 experts, 65536 worst-case received rows, and a 1 GiB receive payload. This benchmark requires even
 tokens/rank for NCCL-EP throughput to satisfy native S2D transfer alignment.
-All modes require a supported single-node GPU IPC/NVLink topology; installed
+All modes require a supported GPU IPC/NVLink topology; MSCCL++ also permits one
+shared MNNVL domain across nodes. Installed
 runtime API, compiler, hardware and allocation failures are errors, not fallback
 requests. `run.json` records requested configuration, resolved communication
 mode/algorithm, actual layout (including NCCL's `flat` spelling), and graph scope.
@@ -272,8 +282,8 @@ execution or `--graph mlp` for the same MLP-only graph mode. For example:
 
 Both backends use the same input generation, routing, seeded expert matrices,
 preallocated buffers, compute, and phase timing. The NCCL unique ID is exchanged
-over the existing CPU Gloo group; this benchmark needs no MPI. Run on a supported
-single-node NVLink GPU system; multi-node execution is not implemented.
+over the existing CPU Gloo group; this benchmark needs no MPI. NCCL-EP runs on a
+supported single-node NVLink GPU system; `--nodelist` currently requires MSCCL++.
 NCCL initialization and any kernel compilation happen before measurement.
 
 Implementation files under `test/python/ep/moe_bench/`:

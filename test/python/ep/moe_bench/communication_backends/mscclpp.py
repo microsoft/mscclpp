@@ -3,6 +3,8 @@
 
 """MSCCL++ native latency/throughput communication."""
 
+import os
+
 import torch
 import torch.distributed as dist
 
@@ -19,6 +21,14 @@ class MscclppBackend:
         self.adapt_layout = self.layout != "expert_major"
         self.route_id_base = rank * (model["num_experts"] // environment["num_gpus"]) if self.mode == "latency" else 0
         self.group = mscclpp.CommGroup(torch_group=dist.distributed_c10d._get_default_group())
+        if self.group.nranks_per_ipc_domain != environment["num_gpus"]:
+            raise RuntimeError(
+                "MoE benchmark requires all GPUs to share one CUDA IPC/MNNVL domain; "
+                f"domain has {self.group.nranks_per_ipc_domain} of {environment['num_gpus']} ranks"
+            )
+        forced_domain = os.environ.get("MSCCLPP_EP_IPC_DOMAIN_SIZE")
+        if forced_domain is not None and int(forced_domain) != environment["num_gpus"]:
+            raise RuntimeError("Unset MSCCLPP_EP_IPC_DOMAIN_SIZE to use the full shared IPC/MNNVL domain")
         self.comm = ep.MoECommunicator(
             comm=self.group,
             num_experts=model["num_experts"],
@@ -32,8 +42,6 @@ class MscclppBackend:
         )
         if not self.comm.is_available():
             raise RuntimeError(f"MSCCL++ {self.mode} EP is unavailable for this configuration/topology")
-        if self.comm.is_internode():
-            raise RuntimeError("MoE benchmark requires one GPU IPC domain on a single node")
         self.x, self.ids, self.weights = x, ids, weights
         self.recv, self.expert_output, self.output = recv, expert_output, output
         self.handle = None
@@ -42,6 +50,8 @@ class MscclppBackend:
         self.metadata = {
             "communication_backend": "mscclpp",
             "mscclpp_version": mscclpp.__version__,
+            "ipc_domain_ranks": self.group.nranks_per_ipc_domain,
+            "communication_transport": "cuda_ipc_mnnvl" if self.comm.is_internode() else "cuda_ipc",
             "communication_algorithm": self.mode,
             "communication_mode": self.mode,
             "dispatch_layout": self.layout,
