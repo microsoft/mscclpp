@@ -23,14 +23,14 @@ if __package__:
     from ..config import SUPPORTED_LAYOUTS, load_config
     from ..memory import estimate_tensor_bytes
     from ..results import latency_stats, save_results, summarize, write_json
-    from ..workload import make_expert_weights, make_input
+    from ..workload import make_expert_weights, make_input, reference_output
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from compute_backends.torch_reference import ExpertMLP
     from config import SUPPORTED_LAYOUTS, load_config
     from memory import estimate_tensor_bytes
     from results import latency_stats, save_results, summarize, write_json
-    from workload import make_expert_weights, make_input
+    from workload import make_expert_weights, make_input, reference_output
 
 
 def tiny_config():
@@ -484,35 +484,7 @@ def distributed_reference(backend):
                 phases = [events[i].elapsed_time(events[i + 1]) for i in range(3)]
                 assert all(value >= 0 for value in phases)
                 assert sum(phases) == pytest.approx(events[0].elapsed_time(events[-1]), abs=0.002, rel=1e-4)
-                # Compute the selected experts locally without dispatch.
-                routes = torch.zeros(
-                    config["input"]["tokens_per_rank"],
-                    config["model"]["top_k"],
-                    config["model"]["d_model"],
-                    device=device,
-                    dtype=torch.bfloat16,
-                )
-                for expert in range(config["model"]["num_experts"]):
-                    gate, up, down = make_expert_weights(config["model"], expert, config["benchmark"]["seed"], device)
-                    selected = pipeline.ids == expert
-                    token, slot = selected.nonzero(as_tuple=True)
-                    x = pipeline.x[token]
-                    routes[token, slot] = (F.silu(x @ gate) * (x @ up)) @ down
-                expected = torch.zeros_like(pipeline.x, dtype=torch.float32)
-                if backend == "nccl":
-                    # NCCL-EP weights and sums BF16 expert outputs in FP32,
-                    # without MSCCL++'s intermediate BF16 rank partials.
-                    for slot in range(config["model"]["top_k"]):
-                        expected.addcmul_(routes[:, slot].float(), pipeline.weights[:, slot].unsqueeze(-1))
-                else:
-                    for destination in range(world):
-                        partial = torch.zeros_like(expected)
-                        for slot in range(config["model"]["top_k"]):
-                            selected = pipeline.ids[:, slot] // local_experts == destination
-                            weight = pipeline.weights[:, slot].masked_fill(~selected, 0).unsqueeze(-1)
-                            partial.addcmul_(routes[:, slot].float(), weight)
-                        expected.add_(partial.to(torch.bfloat16).float())
-                expected = expected.to(torch.bfloat16)
+                expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
                 valid = torch.tensor(int(torch.allclose(pipeline.output, expected, atol=0.025, rtol=0.025)))
                 dist.all_reduce(valid, op=dist.ReduceOp.MIN)
                 assert valid.item(), f"Distributed expert computation mismatch for {routing}"

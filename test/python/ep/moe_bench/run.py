@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Launch a single-node reference MoE benchmark from named YAML presets."""
+"""Launch a reference MoE benchmark locally or across MNNVL-connected nodes."""
 
 import argparse
 from datetime import datetime, timezone
 import json
 import os
+import getpass
 from pathlib import Path
 import shlex
 import subprocess
@@ -46,15 +47,36 @@ def parse_args(argv=None):
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--output-dir")
-    return parser.parse_args(argv)
+    parser.add_argument("--nodelist", help="Comma-separated IPv4 addresses in one shared MNNVL domain")
+    parser.add_argument("--user", default=getpass.getuser(), help="SSH user for --nodelist")
+    parser.add_argument("--remote-dir", default=".local/share/mscclpp/moe-bench", help="Deployment directory or parent")
+    parser.add_argument("--master-port", type=int, default=29500, help="Cross-node coordination port")
+    parser.add_argument("--timeout", type=int, default=600, help="Distributed job timeout in seconds")
+    parser.add_argument(
+        "--check", action="store_true", help="Check Torch BF16 output against a reference before timing"
+    )
+    args = parser.parse_args(argv)
+    if not 1 <= args.master_port <= 65535 or args.timeout <= 0:
+        parser.error("--master-port must be in [1, 65535] and --timeout must be positive")
+    return args
 
 
 def main():
     args = parse_args()
-    import torch
 
-    num_gpus = torch.cuda.device_count()
-    if num_gpus not in (2, 4):
+    nodes = None
+    if args.nodelist:
+        if __package__:
+            from . import multinode
+        else:
+            import multinode
+        nodes = multinode.discover_nodes(multinode.parse_nodes(args.nodelist), args.user, args.remote_dir)
+        num_gpus = len(nodes) * nodes[0]["num_gpus"]
+    else:
+        import torch
+
+        num_gpus = torch.cuda.device_count()
+    if nodes is None and num_gpus not in (2, 4):
         raise RuntimeError(f"MoE benchmark uses all visible GPUs on this node and supports 2 or 4; found {num_gpus}")
     config = load_config(
         args.config,
@@ -77,6 +99,10 @@ def main():
             "output_dir": args.output_dir,
         },
     )
+    if nodes and config["environment"]["communication_backend"] != "mscclpp":
+        raise ValueError("--nodelist currently requires --backend mscclpp over shared MNNVL")
+    if args.check and config["environment"]["compute_backend"] != "torch":
+        raise ValueError("--check requires the Torch BF16 compute backend")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:8]
     run_dir = Path(config["benchmark"]["output_dir"]).expanduser().resolve() / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -92,6 +118,14 @@ def main():
         "--run-dir",
         str(run_dir),
     ]
+    if nodes:
+        commands = [
+            multinode.worker_command(node, rank, nodes, run_dir.name, args.master_port, args.check)
+            for rank, node in enumerate(nodes)
+        ]
+        command = commands[0]
+    elif args.check:
+        command.append("--check")
     root = Path(__file__).resolve().parents[4]
     deployment = root / "moe_deployment.json"
     if deployment.is_file():
@@ -130,18 +164,30 @@ def main():
             "gloo_socket_ifname": worker_env["GLOO_SOCKET_IFNAME"],
         },
     }
+    if nodes:
+        run["invocation"]["worker_commands"] = [shlex.join(item) for item in commands]
+        run["metadata"]["nodes"] = nodes
+        run["metadata"]["num_nodes"] = len(nodes)
+        run["metadata"]["gloo_socket_ifname"] = [node["interface"] for node in nodes]
     write_json(run_dir / "run.json", run)
-    print(f"Launching reference MoE benchmark on all {num_gpus} visible GPUs; output: {run_dir}", flush=True)
+    print(
+        f"Launching reference MoE benchmark on all {num_gpus} visible GPUs"
+        f" across {len(nodes) if nodes else 1} node(s); output: {run_dir}",
+        flush=True,
+    )
     returncode = None
     try:
-        if config["environment"]["compute_backend"] == "cutlass_flashinfer":
+        if not nodes and config["environment"]["compute_backend"] == "cutlass_flashinfer":
             if __package__:
                 from .compute_backends.flashinfer import preflight
             else:
                 from compute_backends.flashinfer import preflight
             for device in range(num_gpus):
                 preflight(config, device)
-        returncode = subprocess.run(command, check=False, env=worker_env).returncode
+        if nodes:
+            returncode = multinode.launch(nodes, run_dir, commands, args.timeout)
+        else:
+            returncode = subprocess.run(command, check=False, env=worker_env).returncode
         if returncode != 0:
             raise SystemExit(returncode if returncode > 0 else 128 - returncode)
         for filename in ("summary.csv", "iterations.csv"):

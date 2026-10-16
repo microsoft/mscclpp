@@ -231,24 +231,26 @@ def test_unknown_backend_is_not_substituted():
         create_backend(config, 0, *buffers())
 
 
-def test_multinode_launch_rejected_before_cuda(monkeypatch):
+def test_invalid_multinode_launch_rejected_before_cuda(monkeypatch):
     from ..worker import initialize
 
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "2")
-    monkeypatch.setenv("WORLD_SIZE", "4")
+    monkeypatch.setenv("WORLD_SIZE", "3")
+    monkeypatch.setenv("LOCAL_RANK", "0")
     set_device = Mock()
     monkeypatch.setattr(torch.cuda, "set_device", set_device)
-    with pytest.raises(ValueError, match="single-node"):
+    with pytest.raises(ValueError, match="Invalid torchrun"):
         initialize()
     set_device.assert_not_called()
 
 
-def test_mscclpp_adapter_preserves_contract(monkeypatch):
+@pytest.fixture
+def fake_mscclpp(monkeypatch):
     from ..communication_backends import mscclpp as adapter_module
 
     native = ModuleType("mscclpp")
     native.__version__ = "test-version"
-    native.CommGroup = Mock(return_value="torch-group")
+    native.CommGroup = Mock(return_value=SimpleNamespace(nranks_per_ipc_domain=2))
     ep = ModuleType("mscclpp.ep")
     native.ep = ep
     ep.MoEMode = SimpleNamespace(LATENCY="latency")
@@ -270,7 +272,24 @@ def test_mscclpp_adapter_preserves_contract(monkeypatch):
     monkeypatch.setitem(sys.modules, "nccl", None)
     monkeypatch.setattr(adapter_module.dist.distributed_c10d, "_get_default_group", lambda: "gloo")
     monkeypatch.setattr(torch.cuda, "synchronize", Mock())
-    adapter = create_backend(tiny_config(), 0, *tensors)
+    return SimpleNamespace(native=native, ep=ep, tensors=tensors, counts=counts, comm=comm)
+
+
+@pytest.mark.parametrize("world,rank,internode", [(2, 0, False), (8, 5, True)])
+def test_mscclpp_adapter_preserves_contract(fake_mscclpp, world, rank, internode):
+    native, ep, tensors, counts, comm = (
+        fake_mscclpp.native,
+        fake_mscclpp.ep,
+        fake_mscclpp.tensors,
+        fake_mscclpp.counts,
+        fake_mscclpp.comm,
+    )
+    x, ids, weights, recv, expert_output, output = tensors
+    native.CommGroup.return_value.nranks_per_ipc_domain = world
+    comm.is_internode = lambda: internode
+    config = tiny_config()
+    config["environment"]["num_gpus"] = world
+    adapter = create_backend(config, rank, *tensors)
     tokens, actual_counts = adapter.dispatch()
     adapter.combine()
     assert tokens is recv and actual_counts is counts
@@ -278,7 +297,73 @@ def test_mscclpp_adapter_preserves_contract(monkeypatch):
     comm.combine.assert_called_once_with(expert_output, "handle", out=output)
     assert ep.MoECommunicator.call_args.kwargs["combine_mode"] == "rank-local-reduce"
     assert adapter.metadata["mscclpp_version"] == "test-version"
+    assert adapter.metadata["ipc_domain_ranks"] == world
+    assert adapter.metadata["communication_transport"] == ("cuda_ipc_mnnvl" if internode else "cuda_ipc")
+    assert adapter.route_id_base == rank * (8 // world)
+    assert ep.MoECommunicator.call_args.kwargs["num_local_experts"] == 8 // world
     assert "nccl_ep_version" not in adapter.metadata
     adapter.close()
     adapter.close()
     torch.cuda.synchronize.assert_called_once_with(x.device)
+
+
+def test_split_ipc_domain_rejected_before_native_runtime(fake_mscclpp):
+    config = tiny_config()
+    config["environment"]["num_gpus"] = 8
+    with pytest.raises(RuntimeError, match="domain has 2 of 8 ranks"):
+        create_backend(config, 0, *fake_mscclpp.tensors)
+    fake_mscclpp.ep.MoECommunicator.assert_not_called()
+
+
+def test_forced_partial_ipc_domain_rejected(fake_mscclpp, monkeypatch):
+    monkeypatch.setenv("MSCCLPP_EP_IPC_DOMAIN_SIZE", "1")
+    with pytest.raises(RuntimeError, match="Unset MSCCLPP_EP_IPC_DOMAIN_SIZE"):
+        create_backend(tiny_config(), 0, *fake_mscclpp.tensors)
+    fake_mscclpp.ep.MoECommunicator.assert_not_called()
+
+
+def test_multinode_worker_uses_local_device_and_global_rank(monkeypatch):
+    from .. import worker
+
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
+    set_device = Mock()
+    initialize = Mock()
+    monkeypatch.setattr(torch.cuda, "set_device", set_device)
+    monkeypatch.setattr(worker.dist, "init_process_group", initialize)
+    monkeypatch.setattr(worker.dist, "get_rank", lambda: 5)
+    monkeypatch.setattr(worker.dist, "get_world_size", lambda: 8)
+    monkeypatch.setattr(torch, "set_num_threads", Mock())
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_bf16_reduced_precision_reduction", False)
+    assert worker.initialize() == (5, 8, torch.device("cuda", 1))
+    set_device.assert_called_once_with(1)
+    assert initialize.call_args.args == ("gloo",)
+
+
+@pytest.mark.parametrize(
+    "local_rank,local_world,world,visible",
+    [
+        (-1, 4, 8, 4),
+        (4, 4, 8, 4),
+        (0, 0, 8, 4),
+        (0, 4, 0, 4),
+        (0, 4, -8, 4),
+        (0, 4, 2, 4),
+        (0, 4, 6, 4),
+        (0, 4, 8, 2),
+    ],
+)
+def test_invalid_worker_rank_layout_fails_before_cuda(monkeypatch, local_rank, local_world, world, visible):
+    from .. import worker
+
+    monkeypatch.setenv("LOCAL_RANK", str(local_rank))
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", str(local_world))
+    monkeypatch.setenv("WORLD_SIZE", str(world))
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: visible)
+    set_device = Mock()
+    monkeypatch.setattr(torch.cuda, "set_device", set_device)
+    with pytest.raises(ValueError):
+        worker.initialize()
+    set_device.assert_not_called()

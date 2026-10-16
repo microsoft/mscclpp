@@ -172,10 +172,33 @@ def test_gpu_count_is_resolved_from_detection_not_yaml(num_gpus):
         _load_document(document, num_gpus=num_gpus)
 
 
-@pytest.mark.parametrize("num_gpus", [0, 1, 3, 8, True, "4"])
+@pytest.mark.parametrize("num_gpus", [0, -1, True, "4"])
 def test_invalid_detected_gpu_count(num_gpus):
     with pytest.raises(ValueError, match="environment.num_gpus"):
         _config(num_gpus=num_gpus)
+
+
+@pytest.mark.parametrize("num_gpus", [1, 8, 12, 16, 24])
+def test_multinode_latency_world_size(num_gpus):
+    document = yaml.safe_load(PRESETS.read_text())
+    document["models"]["small"]["num_experts"] = 2 * num_gpus
+    config = _load_document(document, num_gpus=num_gpus)
+    assert config["environment"]["num_gpus"] == num_gpus
+
+
+@pytest.mark.parametrize("num_gpus", [2, 4, 8, 12, 16, 24])
+def test_multinode_throughput_world_size(num_gpus):
+    document = yaml.safe_load(PRESETS.read_text())
+    document["models"]["small"]["num_experts"] = 2 * num_gpus
+    kwargs = dict(
+        num_gpus=num_gpus,
+        environment_overrides={"mode": "throughput", "layout": "token_major"},
+    )
+    if num_gpus in (2, 4, 8, 16):
+        assert _load_document(document, **kwargs)["environment"]["num_gpus"] == num_gpus
+    else:
+        with pytest.raises(ValueError, match=r"must be one of \(2, 4, 8, 16\)"):
+            _load_document(document, **kwargs)
 
 
 @pytest.mark.parametrize("argument", ["model", "input_name", "routing"])
@@ -224,7 +247,7 @@ def test_yaml_safety_and_unknown_fields():
         ("input", "tokens_per_rank", "16"),
         ("input", "dtype", "fp16"),
         ("environment", "num_gpus", True),
-        ("environment", "num_gpus", 8),
+        ("environment", "num_gpus", 0),
         ("environment", "communication_backend", "absent"),
         ("environment", "compute_backend", "triton"),
         ("environment", "cuda_graph", True),

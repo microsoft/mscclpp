@@ -71,7 +71,7 @@ def _validate_section(section, value, path):
         _integer(value["tokens_per_rank"], f"{path}.tokens_per_rank")
         _choice(value["dtype"], ("bf16",), f"{path}.dtype")
     elif section == "environment":
-        _choice(value["num_gpus"], (2, 4), f"{path}.num_gpus")
+        _integer(value["num_gpus"], f"{path}.num_gpus")
         _choice(value["communication_backend"], ("mscclpp", "nccl"), f"{path}.communication_backend")
         _choice(value["compute_backend"], ("torch", "cutlass_flashinfer"), f"{path}.compute_backend")
         _choice(value["cuda_graph"], (False, "mlp"), f"{path}.cuda_graph")
@@ -118,6 +118,7 @@ def validate_config(config: dict) -> None:
     if communication == "nccl" and mode == "throughput" and config["input"]["tokens_per_rank"] % 2:
         raise ValueError("NCCL-EP throughput benchmark requires even tokens_per_rank for native S2D transfer alignment")
     if communication == "mscclpp" and mode == "throughput":
+        _choice(environment["num_gpus"], (2, 4, 8, 16), "environment.num_gpus for MSCCL++ throughput")
         if config["model"]["num_experts"] // environment["num_gpus"] > 1024:
             raise ValueError("MSCCL++ throughput supports at most 1024 local experts")
         if environment["num_gpus"] * config["input"]["tokens_per_rank"] > 65536:
@@ -169,7 +170,7 @@ def load_config(
     compute_overrides: dict | None = None,
     overrides: dict | None = None,
 ) -> dict:
-    """Resolve presets using the GPU count detected by the single-node launcher."""
+    """Resolve presets using the total GPU count detected by the launcher."""
     try:
         with open(path, encoding="utf-8") as stream:
             document = yaml.safe_load(stream)
