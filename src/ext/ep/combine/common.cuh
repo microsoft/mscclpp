@@ -74,20 +74,12 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
   const int threadId = static_cast<int>(threadIdx.x);
   if (threadId < nRanks) {
     if (!transport.isSelf(threadId)) {
-      transport.baseMemoryChannels_[threadId].signal();
-      transport.baseMemoryChannels_[threadId].wait(-1);
+      transport.baseMemoryChannels_[threadId].relaxedSignal();
+      transport.baseMemoryChannels_[threadId].relaxedWait(-1);
     }
     mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadId, epoch,
-                                                         mscclpp::memoryOrderRelease);
-  }
-}
-
-MSCCLPP_DEVICE_INLINE void invalidateRankMajorCombineReady(int nRanks, uint32_t epoch, WorkspaceView& workspaceView) {
-  if (blockIdx.x == 0 && threadIdx.x < nRanks) {
-    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyEpochs_ + threadIdx.x, ~epoch,
                                                          mscclpp::memoryOrderRelaxed);
   }
-  workspaceView.combineSyncer_->sync(gridDim.x, -1);
 }
 
 template <int Hidden, CombineMode Mode, DispatchDataType DispatchType>
@@ -148,7 +140,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
       while (__any_sync(0xffffffff, pending)) {
         const bool ready = pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
                                           workspaceView.combineRankReadyEpochs_ + destinationRank,
-                                          mscclpp::memoryOrderAcquire) == epoch;
+                                          mscclpp::memoryOrderRelaxed) == epoch;
         if (pending && ready) {
           const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
               transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));

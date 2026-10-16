@@ -145,7 +145,6 @@ __global__ __launch_bounds__(CombineNThreads,
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     const uint32_t epoch = workload.epoch_;
-    invalidateRankMajorCombineReady(nRanks, epoch, workspaceView);
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
     } else {
