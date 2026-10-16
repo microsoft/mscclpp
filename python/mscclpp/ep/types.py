@@ -20,11 +20,14 @@ from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 class QuantConfig:
     """Payload format and optional quantization scales.
 
-    FP8 E4M3 uses one FP32 scale per 128 hidden elements.
+    FP8 E4M3 uses one FP32 scale per 128 hidden elements. MXFP8 E4M3 uses
+    one uint8 E8M0 scale per 32 hidden elements.
     For FP8 dispatch, latency quantizes BF16 input
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
-    input scales with shape ``[num_tokens, hidden // 128]``.
+    input scales with shape ``[num_tokens, hidden // 128]``. Latency rank-major
+    MXFP8 quantizes BF16 input and returns contiguous scales with shape
+    ``[rank, row, hidden // 32]``.
     BF16 dispatch does not use scales.
     """
 

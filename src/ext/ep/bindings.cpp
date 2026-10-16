@@ -39,7 +39,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", CombineMode::DIRECT_SEND);
   nb::enum_<DispatchDataType>(m, "DispatchDataType")
       .value("BF16", DispatchDataType::BF16)
-      .value("FP8_E4M3", DispatchDataType::FP8_E4M3);
+      .value("FP8_E4M3", DispatchDataType::FP8_E4M3)
+      .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3);
 
   nb::class_<PrepareHandle>(m, "PrepareHandle").def(nb::init<>());
   nb::class_<DispatchHandle>(m, "DispatchHandle").def(nb::init<>());

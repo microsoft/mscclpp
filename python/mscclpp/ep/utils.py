@@ -71,6 +71,13 @@ def validate_quant(
             raise ValueError("FP8 dispatch requires hidden_size to be a multiple of 128")
         if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR:
             raise ValueError("latency RANK_MAJOR supports BF16 dispatch only")
+    if data_type == DispatchDataType.MXFP8_E4M3:
+        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
+            raise ValueError("MXFP8 dispatch requires latency RANK_MAJOR")
+        if hidden % 32:
+            raise ValueError("MXFP8 dispatch requires hidden_size to be a multiple of 32")
+        if quant is not None and quant.block_scales is not None:
+            raise ValueError("latency MXFP8 dispatch quantizes BF16 input; precomputed block_scales are unsupported")
     return data_type
 
 
@@ -183,6 +190,7 @@ def tensor_from_pointer(
     storage_types = {
         torch.bfloat16: "<i2",
         torch.float8_e4m3fn: "|u1",
+        torch.uint8: "|u1",
         torch.int32: "<i4",
         torch.int64: "<i8",
         torch.float32: "<f4",
