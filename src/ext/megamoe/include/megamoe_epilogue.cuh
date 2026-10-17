@@ -315,7 +315,7 @@ MSCCLPP_DEVICE_INLINE void storeCombined(__bfloat16* destination, const mscclpp:
 // Sums the routed partial rows of every token in FP32 slot order and rounds once to BF16. A warp task covers Items
 // consecutive warp-wide vectors of one token row; each lane issues all Slots * Items 16-byte loads before accumulating.
 // Narrower batches require topK <= Slots, so their sums never stay live across loads.
-template <int Hidden, int Slots, class KernelParams>
+template <int Hidden, int Slots, bool ProcessMultipleSlotBatches = false, class KernelParams>
 MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, __bfloat16* output) {
   constexpr int WarpSize = 32;
   constexpr int Elements = mscclpp::bf16x8::Size;
@@ -353,11 +353,13 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 #pragma unroll
       for (int element = 0; element < Elements; ++element) sums[item].data[element] = 0.0f;
     }
-    for (int base = 0; base < (Slots == CombineSlots ? topK : 1); base += Slots) {
+    for (int base = 0; base < (ProcessMultipleSlotBatches ? topK : 1); base += Slots) {
       bool routed[Slots];
 #pragma unroll
       for (int slot = 0; slot < Slots; ++slot)
-        routed[slot] = base == 0 ? taskIds[slot] >= 0 : base + slot < topK && routeIds[token * topK + base + slot] >= 0;
+        routed[slot] = !ProcessMultipleSlotBatches || base == 0
+                           ? taskIds[slot] >= 0
+                           : base + slot < topK && routeIds[token * topK + base + slot] >= 0;
       // L2-only loads: peers write the partial rows during this kernel. Unrouted slots read as +0, which is the same
       // as skipping them: the sums start at +0, and round-to-nearest addition yields -0 only from two -0 operands.
       const uint4* source = partial + size_t(token * topK + base) * Vectors + first;
@@ -390,6 +392,17 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 }
 
 template <int Hidden, class KernelParams>
+MSCCLPP_DEVICE_INLINE bool hasCombineWork(const KernelParams& params, int tokens) {
+  constexpr int WarpSize = 32;
+  constexpr int Vectors = Hidden / mscclpp::bf16x8::Size;
+  const int topK = params.config.topK;
+  const int slots = topK == 1 ? 1 : (topK == 2 ? 2 : (topK <= 4 ? 4 : CombineSlots));
+  const int items = CombineLoads / slots < CombineItems ? CombineLoads / slots : CombineItems;
+  const int tokenTasks = (Vectors + items * WarpSize - 1) / (items * WarpSize);
+  return blockIdx.x * (KernelParams::ThreadCount / WarpSize) < tokens * tokenTasks;
+}
+
+template <int Hidden, class KernelParams>
 MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
   const int topK = params.config.topK;
   if (topK == 1)
@@ -398,8 +411,10 @@ MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens
     combineSlots<Hidden, 2>(params, tokens, output);
   else if (topK <= 4)
     combineSlots<Hidden, 4>(params, tokens, output);
-  else
+  else if (topK <= CombineSlots)
     combineSlots<Hidden, CombineSlots>(params, tokens, output);
+  else
+    combineSlots<Hidden, CombineSlots, true>(params, tokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

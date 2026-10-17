@@ -142,12 +142,16 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (p.config.worldSize == 1 && p.config.topK == 1) return;
   traceKernel(KernelTracePhase::OutputJoin, true);
   syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    return;
+  }
   if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
   if (threadIdx.x < p.config.worldSize) {
     // Only CTA0 consumes the peer notification; followers observe the same epoch.
     if (blockIdx.x == 0)
       signalAndWait(p, threadIdx.x);
-    else
+    else if (threadIdx.x != p.config.rank)
       waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
                                          p.workspace.control->epoch);
   }

@@ -29,6 +29,7 @@ from mscclpp.ext.megamoe import jit
         {"epilogue_registers": 201},
         {"dispatch_chunk": 768},
         {"dispatch_warps": 1},
+        {"dispatch_warps": 3},
         {"dispatch_stages": 3},
         {"fixed_token_count": 1},
         {"expert_major_tasks": 1},

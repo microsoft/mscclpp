@@ -125,46 +125,34 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
   }
 }
 
-template <class P>
-__global__ void quantizeInputKernel(P p, int tokens, const __bfloat16* source) {
+__global__ void quantizeInputKernel(const __bfloat16* input, uint8_t* quantizedInput, uint8_t* quantizedInputScale,
+                                    int tokens, int hidden) {
   constexpr int ValuesPerThread = 8;
   constexpr int ThreadsPerBlockScale = 4;
   constexpr int BlockScalesPerCta = 128 / ThreadsPerBlockScale;
   int group = threadIdx.x / ThreadsPerBlockScale;
   int lane = threadIdx.x % ThreadsPerBlockScale;
   int block = blockIdx.x * BlockScalesPerCta + group;
-  int blocks = p.config.hidden / 32;
-  bool active = block < blocks;
+  int blocks = hidden / 32;
+  if (block >= blocks) return;
+  const size_t scaleStride = w4SourceScaleStride(hidden);
   for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
-    if (active) {
-      auto staged = at<__bfloat16>(p.local, p.symmetric.input) + size_t(token) * p.config.hidden + block * 32;
-      auto input = source ? source + size_t(token) * p.config.hidden + block * 32 : staged;
-      auto values = input + lane * ValuesPerThread;
-      int4 packed = *reinterpret_cast<const int4*>(values);
-      mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
-      mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
+    auto values = input + size_t(token) * hidden + block * 32 + lane * ValuesPerThread;
+    int4 packed = *reinterpret_cast<const int4*>(values);
+    mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
+    mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
 
-      float maximum = 0.0f;
+    float maximum = 0.0f;
 #pragma unroll
-      for (int i = 0; i < ValuesPerThread; ++i) maximum = fmaxf(maximum, fabsf(decoded[i]));
-      unsigned int activeMask = __activemask();
+    for (int i = 0; i < ValuesPerThread; ++i) maximum = fmaxf(maximum, fabsf(decoded[i]));
 #pragma unroll
-      for (int offset = ThreadsPerBlockScale / 2; offset > 0; offset /= 2)
-        maximum = fmaxf(maximum, __shfl_xor_sync(activeMask, maximum, offset, ThreadsPerBlockScale));
-      uint8_t scale = quantizeE8M0Scale(maximum);
-      float inverse = inverseE8M0Scale(scale);
-      mscclpp::f32x8 normalized;
-#pragma unroll
-      for (int i = 0; i < ValuesPerThread; ++i) normalized[i] = decoded[i] * inverse;
-      mscclpp::f8_e4m3x8 quantized = mscclpp::to<mscclpp::f8_e4m3x8>(normalized);
-      auto output = at<uint8_t>(p.local, p.symmetric.quantizedInput) + size_t(token) * p.config.hidden + block * 32 +
-                    lane * ValuesPerThread;
-      *reinterpret_cast<uint2*>(output) = quantized.storage;
-      if (lane == 0)
-        at<uint8_t>(p.local,
-                    p.symmetric.quantizedInputScale)[size_t(token) * w4SourceScaleStride(p.config.hidden) + block] =
-            scale;
-    }
+    for (int offset = ThreadsPerBlockScale / 2; offset > 0; offset /= 2)
+      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, ThreadsPerBlockScale));
+    uint8_t scale = quantizeE8M0Scale(maximum);
+    auto quantized = quantizeE4M3(decoded, inverseE8M0Scale(scale));
+    auto output = quantizedInput + size_t(token) * hidden + block * 32 + lane * ValuesPerThread;
+    *reinterpret_cast<uint2*>(output) = quantized.storage;
+    if (lane == 0) quantizedInputScale[size_t(token) * scaleStride + block] = scale;
   }
 }
 
@@ -282,9 +270,9 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   layout.epoch = detail::appendRegion(layout.bytes, sizeof(uint64_t));
   layout.peerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.expectedPeerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
-  layout.tokenCount = detail::appendRegion(layout.bytes, sizeof(int));
+  layout.tokenCount = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(mscclpp::LL8Packet));
   layout.routingHeaders = detail::appendRegion(
-      layout.bytes, size_t(c.worldSize) * detail::routeChunks(c.maxTokens * c.topK) * sizeof(mscclpp::LLPacket));
+      layout.bytes, size_t(c.worldSize) * detail::routeChunks(c.maxTokens * c.topK) * sizeof(mscclpp::LL8Packet));
   layout.routingPackets =
       detail::appendRegion(layout.bytes, size_t(c.worldSize) * c.maxTokens * c.topK * sizeof(mscclpp::LL8Packet));
   layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
@@ -385,7 +373,11 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
   if (tokens) {
     dim3 threads(128);
     dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
-    detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(params, tokens, static_cast<const __bfloat16*>(input));
+    const auto* source =
+        input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
+    detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
+        source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
+        detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden);
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
   std::array<cudaLaunchAttribute, 2> launchAttributes{};

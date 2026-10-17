@@ -52,9 +52,10 @@ __device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp
 #endif
 }
 
-template <int DispatchBytes, int DispatchStages, class P, class Storage>
+template <int DispatchBytes, int DispatchStages, class P, class Storage, class NextLoad>
 __device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
-                                               uint8_t* destination, int bytes, uint32_t& phase) {
+                                               uint8_t* destination, int bytes, uint32_t& phase, bool issueNext,
+                                               NextLoad&& loadNext) {
 #if MSCCLPP_BULK_AVAILABLE
   int lane = threadIdx.x % warpSize;
   int stage = chunk % DispatchStages;
@@ -74,8 +75,70 @@ __device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int
   }
   asm volatile("fence.proxy.async.global;" ::: "memory");
   __syncwarp();
-  if (lane == 0) bulkStoreWait();
+  if (lane == 0) {
+    if (issueNext) {
+      bulkStoreWaitSource();
+      bulkFence();
+      loadNext();
+    }
+    bulkStoreWait();
+  }
 #endif
+}
+
+// A warp's window of up to 32 consecutive local experts. Lane i describes expert firstExpert + i. A group is
+// DispatchWarps consecutive rows of a tile, and only groups with live rows are counted.
+struct ExpertWindow {
+  int firstExpert;       // first local expert of the window
+  int endGroup;          // first group after the window
+  int expertFirstGroup;  // first group of this lane's expert
+  int expertFirstTile;   // first tile of this lane's expert
+};
+
+// Load the window of experts starting at firstExpert, whose groups start at firstGroup. All lanes of the warp must call
+// this.
+template <int TileN, int DispatchWarps>
+MSCCLPP_DEVICE_INLINE ExpertWindow loadExpertWindow(const Workspace& w, int nLocalExperts, int firstExpert,
+                                                    int firstGroup, int lane) {
+  constexpr int nDispatchGroupsPerTile = (TileN + DispatchWarps - 1) / DispatchWarps;
+  const int expert = firstExpert + lane;
+  const int nExpertRows = expert < nLocalExperts ? w.cursors[expert] : 0;
+  const int nFullTiles = nExpertRows / TileN;
+  const int nTailRows = nExpertRows - nFullTiles * TileN;
+  const int nExpertGroups = nFullTiles * nDispatchGroupsPerTile + (nTailRows + DispatchWarps - 1) / DispatchWarps;
+  int scan = nExpertGroups;
+#pragma unroll
+  for (int distance = 1; distance < warpSize; distance *= 2) {
+    int other = __shfl_up_sync(0xffffffff, scan, distance);
+    if (lane >= distance) scan += other;
+  }
+  ExpertWindow window;
+  window.firstExpert = firstExpert;
+  window.endGroup = firstGroup + __shfl_sync(0xffffffff, scan, warpSize - 1);
+  window.expertFirstGroup = firstGroup + scan - nExpertGroups;
+  window.expertFirstTile = expert < nLocalExperts ? w.starts[expert] / TileN : 0;
+  return window;
+}
+
+// Map a live group to its tile and its group within the tile. Groups must arrive in increasing order, so the window
+// only moves forward. Returns false past the last live group. All lanes of the warp must call this.
+template <int TileN, int DispatchWarps>
+MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts, ExpertWindow& window,
+                                          int dispatchGroupIdx, int lane, int& tile, int& groupIdxInTile) {
+  constexpr int nDispatchGroupsPerTile = (TileN + DispatchWarps - 1) / DispatchWarps;
+  while (dispatchGroupIdx >= window.endGroup) {
+    const int nextExpert = window.firstExpert + warpSize;
+    if (nextExpert >= nLocalExperts) return false;
+    window = loadExpertWindow<TileN, DispatchWarps>(w, nLocalExperts, nextExpert, window.endGroup, lane);
+  }
+  // The group belongs to the last expert whose first group does not follow it, which skips experts without rows.
+  const unsigned int startedExperts = __ballot_sync(
+      0xffffffff, window.firstExpert + lane < nLocalExperts && dispatchGroupIdx >= window.expertFirstGroup);
+  const int expertLane = 31 - __clz(startedExperts);
+  const int expertGroup = dispatchGroupIdx - __shfl_sync(0xffffffff, window.expertFirstGroup, expertLane);
+  tile = __shfl_sync(0xffffffff, window.expertFirstTile, expertLane) + expertGroup / nDispatchGroupsPerTile;
+  groupIdxInTile = expertGroup % nDispatchGroupsPerTile;
+  return true;
 }
 
 template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
@@ -104,21 +167,29 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   constexpr int hidden = Hidden;
   constexpr int chunks = (Hidden + DispatchBytes - 1) / DispatchBytes;
   constexpr int TileN = P::Tiles::N;
-  constexpr int GroupsPerBlock = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
+  constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
+  static_assert((nDispatchGroupsPerTile & (nDispatchGroupsPerTile - 1)) == 0,
+                "XOR group swizzling needs a power-of-two group count");
   // This parity hands off the shared counter, independently of each TMA stage's parity.
   uint32_t publicationPhase = 0;
-  int groups = w.control->tokenBlocks * GroupsPerBlock;
-  for (int group = blockIdx.x; group < groups; group += gridDim.x) {
-    int block = group / GroupsPerBlock;
-    int groupInBlock = (group % GroupsPerBlock) ^ (block & (GroupsPerBlock - 1));
-    int firstRowIndexInGroup = groupInBlock * Types::DispatchWarps;
-    int rows = w.blocks[block].rows;
+  const int nLocalExperts = p.config.numExperts / p.config.worldSize;
+  ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps>(w, nLocalExperts, 0, 0, lane);
+  for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
+    int tile;
+    int groupIdxInTile;
+    if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
+                                                     groupIdxInTile))
+      break;
+    int rows = w.blocks[tile].rows;
+    // Only full tiles are swizzled, so a tail tile's live groups stay first.
+    if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
+    int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
     // A group covers one row per dispatch warp. Skip groups fully past the live rows; padded tail warps in a
     // partially live group still arrive with hasRow=false so the shared publication counter remains convergent.
     if (firstRowIndexInGroup >= rows) continue;
-    int rowInBlock = firstRowIndexInGroup + localWarp;
-    int row = block * TileN + rowInBlock;
-    bool hasRow = rowInBlock < rows;
+    int rowInTile = firstRowIndexInGroup + localWarp;
+    int row = tile * TileN + rowInTile;
+    bool hasRow = rowInTile < rows;
     Route route{};
     if (hasRow) route = w.routes[row];
     hasRow = hasRow && route.rank >= 0;
@@ -152,16 +223,13 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
       int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
       if (hasRow)
         storeW4A8Chunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
-                                                      loadPhases[stage]);
+                                                      loadPhases[stage], chunk + DispatchStages < chunks,
+                                                      [&] { load(chunk + DispatchStages); });
       if (lane == 0) {
-        auto* counter = w4InputChunkCounter<Types>(w, hidden, block, chunk);
+        auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
         if (hasRow && chunk == chunks - 1) w.routes[row].weight = routeWeight;
         publicationPhase ^= 1u;
         publishW4A8Chunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
-        if (hasRow && chunk + DispatchStages < chunks) {
-          bulkFence();
-          load(chunk + DispatchStages);
-        }
       }
       __syncwarp();
     };

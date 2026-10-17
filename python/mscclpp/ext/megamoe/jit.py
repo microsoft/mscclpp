@@ -68,7 +68,7 @@ class W4A8KernelConfig:
             ("epilogue_tokens", (16, 32)),
             ("epilogue_warps", (4, 8)),
             ("dispatch_chunk", (512, 1024, 2048, 3072, 4096)),
-            ("dispatch_warps", (2, 3, 4)),
+            ("dispatch_warps", (2, 4, 8)),
             ("dispatch_stages", (1, 2)),
         )
         for name, values in allowed:

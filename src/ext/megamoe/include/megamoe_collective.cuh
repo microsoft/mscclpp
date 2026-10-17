@@ -62,7 +62,7 @@ struct W4A8CollectiveTypesT {
   static_assert(EpilogueRegisters >= 128 && EpilogueRegisters <= 224 && EpilogueRegisters % 8 == 0);
   static_assert(TransferRegisters >= 32 && TransferRegisters <= 128 && TransferRegisters % 32 == 0);
   static_assert(DispatchChunk % TileK_ == 0);
-  static_assert(DispatchWarps >= 2 && DispatchWarps <= 4);
+  static_assert(DispatchWarps == 2 || DispatchWarps == 4 || DispatchWarps == 8);
   static_assert(DispatchStages == 1 || DispatchStages == 2);
   static_assert(WarpSchedule::DispatchEnd <= WarpSchedule::NumWarps);
 };

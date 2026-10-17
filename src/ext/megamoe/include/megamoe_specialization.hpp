@@ -102,7 +102,7 @@ static_assert(W4EpilogueRegisters >= 128 && W4EpilogueRegisters <= 224 && W4Epil
 static_assert(W4DispatchChunk == 512 || W4DispatchChunk == 1024 || W4DispatchChunk == 2048 || W4DispatchChunk == 3072 ||
               W4DispatchChunk == 4096);
 static_assert(W4DispatchChunk % W4TileK == 0);
-static_assert(W4DispatchWarps >= 2 && W4DispatchWarps <= 4);
+static_assert(W4DispatchWarps == 2 || W4DispatchWarps == 4 || W4DispatchWarps == 8);
 static_assert(W4DispatchStages == 1 || W4DispatchStages == 2);
 static_assert(W4EpilogueWarps + 4 + W4DispatchWarps <= W4NumWarps);
 static_assert(MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 0 || MSCCLPP_MEGAMOE_W4_FIXED_TOKEN_COUNT == 1);
