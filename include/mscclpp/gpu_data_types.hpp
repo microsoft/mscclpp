@@ -686,6 +686,21 @@ MSCCLPP_DEVICE_INLINE To to(const From& v) {
   }
 }
 
+/// Convert two packed BF16 values to two FP32 values.
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, bf16x2>(const bf16x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  f32x2 result;
+  result.storage = __bfloat1622float2(v.storage);
+  return result;
+#else
+  f32x2 result;
+  result.data[0] = float(v.data[0]);
+  result.data[1] = float(v.data[1]);
+  return result;
+#endif
+}
+
 #if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 min(const __fp8_e4m3& a, const __fp8_e4m3& b) {
