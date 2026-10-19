@@ -27,6 +27,11 @@ pr:
       - docs/**
       - '**/*.md'
 
+variables:
+  - group: mscclpp
+  - name: Codeql.Enabled
+    value: false
+
 jobs:
 - job: UnitTestA100
   timeoutInMinutes: 120
