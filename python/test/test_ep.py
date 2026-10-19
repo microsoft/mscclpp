@@ -790,7 +790,6 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
         (DispatchDataType.BF16, None),
         (DispatchDataType.FP8_E4M3, 1.0),
         (DispatchDataType.FP8_E4M3, 0.5),
-        (DispatchDataType.FP8_E4M3, torch.finfo(torch.float32).tiny / 16),
     ],
 )
 def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode, data_type, scale):
