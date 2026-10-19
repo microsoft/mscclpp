@@ -28,6 +28,9 @@ class QuantConfig:
     Latency RANK_MAJOR instead accepts externally quantized FP8 and uses the
     scalar multiplier ``scale``: values are stored as E4M3 after multiplication
     by ``scale`` and dequantized during combine with ``1 / scale``.
+    MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
+    RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
+    ``[rank, row, hidden // 32]``.
     BF16 dispatch does not use scales.
     """
 

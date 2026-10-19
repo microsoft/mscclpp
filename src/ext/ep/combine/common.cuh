@@ -248,6 +248,7 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
+      case DispatchDataType::MXFP8_E4M3:
         return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
@@ -270,6 +271,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   } else {
     switch (workload.dispatchDataType_) {
@@ -283,6 +286,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");

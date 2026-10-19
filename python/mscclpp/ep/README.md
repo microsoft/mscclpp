@@ -146,7 +146,8 @@ to emit valid IDs in `[0, num_local_experts)` instead; its default invalid ID is
 invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
-the required `combine_input_buffer`, whose dtype matches the dispatch payload.
+the required `combine_input_buffer`, whose dtype is E4M3 for static FP8 and BF16
+for BF16 and MXFP8.
 With `CombineMode.DIRECT_SEND`, that buffer and expert outputs have shape
 `[R, A, K, H]`: write unweighted per-topk results for entries whose returned
 `topk_ids` identify a local expert. Combine applies the original routing weights
@@ -188,8 +189,12 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   `QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=scales)`, where
   `scales` is contiguous CUDA FP32 `[num_input_tokens, H//128]`. Output scales
   have shape `tokens.shape[:-1] + (H//128,)` and are contiguous.
-* Combine always returns BF16. Throughput and latency EXPERT_MAJOR combine
-  continue to consume BF16 expert output.
+* Latency RANK_MAJOR additionally supports
+  `QuantConfig(format=DispatchDataType.MXFP8_E4M3)`. It takes BF16 input,
+  returns E4M3 payload plus contiguous uint8 E8M0 scales with shape
+  `[R, A, H//32]`, and requires `H` to be divisible by 32.
+* Combine always returns BF16. It consumes E4M3 expert output only for latency
+  RANK_MAJOR static FP8; all other formats consume BF16 expert output.
 
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.

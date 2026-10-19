@@ -148,6 +148,21 @@ def test_config_validation_at_construction(ep_group):
             invalid_token_expert_id=None,
             quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0),
         )
+    mxfp8 = replace(
+        config,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        quant=QuantConfig(format=DispatchDataType.MXFP8_E4M3),
+    )
+    assert mxfp8.quant.format == DispatchDataType.MXFP8_E4M3
+    with pytest.raises(ValueError, match="does not accept a scalar scale"):
+        replace(mxfp8, quant=QuantConfig(format=DispatchDataType.MXFP8_E4M3, scale=1.0))
+    with pytest.raises(ValueError, match="precomputed block_scales are unsupported"):
+        replace(
+            mxfp8,
+            quant=QuantConfig(format=DispatchDataType.MXFP8_E4M3, block_scales=torch.empty(1)),
+        )
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
+        replace(config, quant=QuantConfig(format=DispatchDataType.MXFP8_E4M3))
     with pytest.raises(TypeError, match="emit_local_expert_ids must be a bool"):
         replace(config, emit_local_expert_ids=1)
     with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
@@ -226,6 +241,8 @@ CASES = [
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.RANK_LOCAL_REDUCE, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.DIRECT_SEND, False),
+    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.RANK_LOCAL_REDUCE, False),
+    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.DIRECT_SEND, False),
 ]
 
 
@@ -258,6 +275,8 @@ def _run_dispatch_combine_case(
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
     fp8 = data_type == DispatchDataType.FP8_E4M3
+    mxfp8 = data_type == DispatchDataType.MXFP8_E4M3
+    quantized = fp8 or mxfp8
     with initialized_runtime(
         ep_group,
         mode=mode,
@@ -314,11 +333,20 @@ def _run_dispatch_combine_case(
                 runtime_max_tokens_per_rank=active_capacity,
             )
             assert result.tokens.data_ptr() == runtime.get_dispatch_output_buffer().data_ptr()
-            assert result.tokens.dtype == (torch.float8_e4m3fn if fp8 else torch.bfloat16)
+            assert result.tokens.dtype == (torch.float8_e4m3fn if quantized else torch.bfloat16)
+            if quantized:
+                assert result.quant is not None
+                assert result.quant.format == data_type
+            else:
+                assert result.quant is None
             if static_scale is not None:
                 assert result.quant.scale == static_scale
                 assert result.quant.block_scales is None
                 assert result.combine_input_buffer.dtype == torch.float8_e4m3fn
+            elif mxfp8:
+                assert result.quant.scale is None
+                assert result.quant.block_scales is not None
+                assert result.combine_input_buffer.dtype == torch.bfloat16
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
             counts = (
@@ -366,6 +394,15 @@ def _run_dispatch_combine_case(
                     tokens = tokens * result.quant.block_scales.repeat_interleave(128, dim=-1)
                 else:
                     tokens = tokens / static_scale
+            elif mxfp8:
+                assert result.quant.block_scales.data_ptr() == runtime._runtime.output_scales_buffer_ptr()
+                assert result.quant.block_scales.dtype == torch.uint8
+                assert result.quant.block_scales.shape == (*result.tokens.shape[:-1], hidden_size // 32)
+                scales = torch.ldexp(
+                    torch.ones_like(result.quant.block_scales, dtype=torch.float32),
+                    result.quant.block_scales.to(torch.int32) - 127,
+                )
+                tokens = tokens * scales.repeat_interleave(32, dim=-1)
             if valid_rows is not None:
                 tokens = torch.where(valid_rows[..., None], tokens, 0)
 
@@ -411,7 +448,7 @@ def _run_dispatch_combine_case(
                     static_scale,
                 )
             stream.synchronize()
-            torch.testing.assert_close(combined.float(), expected, rtol=0, atol=1 if fp8 else 0)
+            torch.testing.assert_close(combined.float(), expected, rtol=0, atol=1 if quantized else 0)
             torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / NUM_TOPK), rtol=0, atol=0)
             if mode == MoEMode.THROUGHPUT:
                 torch.testing.assert_close(result.tokens.view(torch.uint8), dispatched_bytes, rtol=0, atol=0)

@@ -386,7 +386,9 @@ MSCCLPP_DEVICE_INLINE f32x2 operator+(const f32x2& a, const f32x2& b) {
 #endif
 }
 
-/// Performs two element-wise FP32 multiplications.
+/// Element-wise f32x2 product, rounded to nearest even in each lane.
+/// NVIDIA Blackwell (SM 10.0+) issues one packed multiply; other targets multiply the lanes separately with
+/// identical results.
 MSCCLPP_DEVICE_INLINE f32x2 operator*(const f32x2& a, const f32x2& b) {
 #if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ >= 1000)
   return __fmul2_rn(a.storage, b.storage);

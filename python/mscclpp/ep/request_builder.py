@@ -96,7 +96,8 @@ class RequestBuilder:
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
         data_type, _, scale = resolve_dispatch_format(config, quant)
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
-        input_dtype = payload_dtype(data_type) if rank_major else torch.bfloat16
+        static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3
+        input_dtype = torch.float8_e4m3fn if static_fp8 else torch.bfloat16
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
         output_shape = dispatch_shape(config, self._runtime.num_ranks, active)
         tokens = self._dispatch_buffer(
@@ -113,8 +114,9 @@ class RequestBuilder:
         src_info = layout_range = recv_ids = recv_weights = scales = combine_input = None
         if rank_major:
             recv_ids, recv_weights = self._routing_views(output_shape)
+            combine_dtype = torch.float8_e4m3fn if static_fp8 else torch.bfloat16
             combine_input = self._view(
-                self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), payload_dtype(data_type)
+                self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), combine_dtype
             )
         else:
             src_info = torch.empty(output_shape[:-1], dtype=torch.int32, device=config.device)
@@ -128,10 +130,16 @@ class RequestBuilder:
                 dtype=torch.float32,
                 device=config.device,
             ).transpose(1, 2)
+        elif data_type == DispatchDataType.MXFP8_E4M3:
+            scales = self._view(
+                self._runtime.output_scales_buffer_ptr(),
+                output_shape[:-1] + (config.hidden_size // 32,),
+                torch.uint8,
+            )
         output_quant = (
-            QuantConfig(format=data_type, block_scales=scales, scale=scale)
-            if data_type == DispatchDataType.FP8_E4M3
-            else None
+            None
+            if data_type == DispatchDataType.BF16
+            else QuantConfig(format=data_type, block_scales=scales, scale=scale)
         )
         output = DispatchOutput(
             tokens=tokens,

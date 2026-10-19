@@ -73,14 +73,27 @@ class MoERuntime {
   int numRanksPerIpcDomain() const { return numRanksPerIpcDomain_; }
 
   /// Return the runtime-owned dispatched top-k ID buffer.
+  /// Latency rank-major IDs are global expert IDs; throughput IDs are local
+  /// expert indices on the receiving rank.
   void* outputTopkIdsBuffer() const;
   /// Return the runtime-owned dispatched top-k weight buffer.
   void* outputTopkWeightsBuffer() const;
-  /// Return the runtime-owned throughput dispatch scale buffer.
+  /// Return the runtime-owned dispatch scale buffer.
+  ///
+  /// In latency mode this is supported for RANK_MAJOR MXFP8_E4M3 only.
+  /// MXFP8_E4M3 scales are contiguous uint8_t [numRanks, maxTokensPerRank,
+  /// hidden / 32], with E8M0 byte s representing 2^(s - 127).
+  /// Throughput FP8_E4M3 instead uses float [row, hidden / 128] scales.
   void* outputScalesBuffer() const;
   /// Return the runtime-owned dispatch output buffer.
+  ///
+  /// RANK_MAJOR is contiguous [numRanks, maxTokensPerRank, hidden], using
+  /// BF16 or E4M3 elements according to the dispatch request. The active
+  /// maxTokensPerRank, not the runtime capacity, determines the rank stride.
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
+  ///
+  /// BF16 and MXFP8_E4M3 dispatches use BF16 expert output; FP8_E4M3 uses E4M3.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///
@@ -126,6 +139,8 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
+  /// @warning Latency epoch advancement is host-side. Replaying a graph with
+  /// a single dispatch/combine pair is not supported.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a

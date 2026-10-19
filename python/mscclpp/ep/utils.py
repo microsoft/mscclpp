@@ -89,8 +89,17 @@ def validate_quant(
                 raise ValueError("latency RANK_MAJOR FP8 requires quant.scale")
         elif scale is not None:
             raise ValueError("quant.scale is supported only by latency RANK_MAJOR FP8")
-    if mode == MoEMode.LATENCY and layout != DispatchLayout.RANK_MAJOR and block_scales is not None:
-        raise ValueError("latency EXPERT_MAJOR quantizes BF16 input; precomputed block_scales are unsupported")
+        if mode == MoEMode.LATENCY and layout != DispatchLayout.RANK_MAJOR and block_scales is not None:
+            raise ValueError("latency EXPERT_MAJOR quantizes BF16 input; precomputed block_scales are unsupported")
+    elif data_type == DispatchDataType.MXFP8_E4M3:
+        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
+            raise ValueError("MXFP8 dispatch requires latency RANK_MAJOR")
+        if hidden % 32:
+            raise ValueError("MXFP8 dispatch requires hidden_size to be a multiple of 32")
+        if block_scales is not None:
+            raise ValueError("latency MXFP8 dispatch quantizes BF16 input; precomputed block_scales are unsupported")
+        if scale is not None:
+            raise ValueError("MXFP8 dispatch does not accept a scalar scale")
     return data_type
 
 
@@ -207,6 +216,7 @@ def tensor_from_pointer(
     storage_types = {
         torch.bfloat16: "<i2",
         torch.float8_e4m3fn: "|u1",
+        torch.uint8: "|u1",
         torch.int32: "<i4",
         torch.int64: "<i8",
         torch.float32: "<f4",
