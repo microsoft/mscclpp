@@ -69,12 +69,31 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToFp8E4M3(const mscclpp::
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaledValues);
 }
 
-MSCCLPP_DEVICE_INLINE float dequantizeFp8E4M3(Fp8E4M3 value, float dequantScale) {
-  mscclpp::f8_e4m3x2 packed;
-  packed.data[0] = value;
-  packed.data[1] = value;
-  const float converted = mscclpp::to<mscclpp::f32x2>(packed).data[0];
-  return converted == 0.0f ? converted : converted * dequantScale;
+MSCCLPP_DEVICE_INLINE void dequantizeAndAccumulateFp8E4M3(const mscclpp::f8_e4m3x8& packed, float dequantScale,
+                                                          float sourceWeight, mscclpp::f32x2* accumulated) {
+  const mscclpp::f32x8 converted = mscclpp::to<mscclpp::f32x8>(packed);
+  const auto* convertedPairs = reinterpret_cast<const mscclpp::f32x2*>(&converted);
+  if (!isfinite(dequantScale)) {
+    const mscclpp::f32x2 weights = make_float2(sourceWeight, sourceWeight);
+#pragma unroll
+    for (int pair = 0; pair < mscclpp::f32x8::Size / mscclpp::f32x2::Size; ++pair) {
+      mscclpp::f32x2 dequantized;
+#pragma unroll
+      for (int element = 0; element < mscclpp::f32x2::Size; ++element) {
+        const float value = convertedPairs[pair].data[element];
+        dequantized.data[element] = value == 0.0f ? value : value * dequantScale;
+      }
+      accumulated[pair] = mscclpp::fma(dequantized, weights, accumulated[pair]);
+    }
+    return;
+  }
+
+  const float accumulationScale = dequantScale * sourceWeight;
+  const mscclpp::f32x2 scales = make_float2(accumulationScale, accumulationScale);
+#pragma unroll
+  for (int pair = 0; pair < mscclpp::f32x8::Size / mscclpp::f32x2::Size; ++pair) {
+    accumulated[pair] = mscclpp::fma(convertedPairs[pair], scales, accumulated[pair]);
+  }
 }
 
 }  // namespace ep

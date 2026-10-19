@@ -99,7 +99,6 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr int OutputInt4 = static_cast<size_t>(Hidden) * sizeof(Bf16) / sizeof(int4);
-  constexpr int Bf16PerInt4 = sizeof(int4) / sizeof(Bf16);
   constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
   constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * HiddenBytes;
   const int threadId = static_cast<int>(threadIdx.x);
@@ -184,24 +183,24 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
           outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(reduced[pairIdx]));
         }
       } else {
-        float reduced[Bf16PerInt4] = {};
+        mscclpp::f32x2 reduced[Bf16PairsPerInt4];
+#pragma unroll
+        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
+          reduced[pairIdx].storage = make_float2(0.0f, 0.0f);
+        }
 #pragma unroll
         for (int stage = 0; stage < MaxNumTopk; ++stage) {
           if (validRows[stage] == 0) continue;
           const auto* row = sharedRows + static_cast<size_t>(stage) * HiddenBytes;
-          const auto* values = reinterpret_cast<const Fp8E4M3*>(row) + hiddenIdx * Bf16PerInt4;
+          const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(row)[hiddenIdx];
           const float sourceWeight =
               IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
           if (sourceWeight == 0.0f) continue;
-#pragma unroll
-          for (int element = 0; element < Bf16PerInt4; ++element) {
-            reduced[element] = fmaf(dequantizeFp8E4M3(values[element], dequantScale), sourceWeight, reduced[element]);
-          }
+          dequantizeAndAccumulateFp8E4M3(values, dequantScale, sourceWeight, reduced);
         }
 #pragma unroll
         for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          outputValues[pairIdx] =
-              mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(float2{reduced[pairIdx * 2], reduced[pairIdx * 2 + 1]}));
+          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(reduced[pairIdx]);
         }
       }
       auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * OutputInt4;
