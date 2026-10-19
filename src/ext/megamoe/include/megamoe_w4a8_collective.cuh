@@ -42,6 +42,8 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 template <class Base, int TileN, int TileK, int LoadStages, bool SplitPipelines, int ClusterSize>
 struct W4A8Mainloop {
   static_assert(ClusterSize == 1 || ClusterSize == 2);
+  static constexpr int TileN64 = TileN > 64 ? 64 : TileN;
+  static constexpr int TileN32 = TileN > 32 ? 32 : TileN;
   using ClusterShape = cute::Shape<cute::Int<ClusterSize>, cute::_1, cute::_1>;
   using CacheHint = cute::conditional_t<ClusterSize == 1, cute::TMA::CacheHintSm90, cute::TMA::CacheHintSm100>;
   using ElementA = typename Base::ElementA;
@@ -57,13 +59,29 @@ struct W4A8Mainloop {
   using MainloopPipeline = typename Base::MainloopPipeline;
   using MainloopPipelineState = typename MainloopPipeline::PipelineState;
   using KernelTile = cute::Shape<cute::Int<128 * ClusterSize>, cute::Int<TileN>, cute::Int<TileK>>;
+  using KernelTile64 = cute::Shape<cute::Int<128 * ClusterSize>, cute::Int<TileN64>, cute::Int<TileK>>;
+  using KernelTile32 = cute::Shape<cute::Int<128 * ClusterSize>, cute::Int<TileN32>, cute::Int<TileK>>;
   using MmaOp = cute::conditional_t<
       ClusterSize == 1,
       cute::SM100_MMA_MXF8F6F4_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 128, TileN,
                                   cute::UMMA::Major::K, cute::UMMA::Major::K>,
       cute::SM100_MMA_MXF8F6F4_2x1SM_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 256,
                                         TileN, cute::UMMA::Major::K, cute::UMMA::Major::K>>;
+  using MmaOp64 = cute::conditional_t<
+      ClusterSize == 1,
+      cute::SM100_MMA_MXF8F6F4_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 128,
+                                  TileN64, cute::UMMA::Major::K, cute::UMMA::Major::K>,
+      cute::SM100_MMA_MXF8F6F4_2x1SM_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 256,
+                                        TileN64, cute::UMMA::Major::K, cute::UMMA::Major::K>>;
+  using MmaOp32 = cute::conditional_t<
+      ClusterSize == 1,
+      cute::SM100_MMA_MXF8F6F4_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 128,
+                                  TileN32, cute::UMMA::Major::K, cute::UMMA::Major::K>,
+      cute::SM100_MMA_MXF8F6F4_2x1SM_SS<typename Base::ElementAMma, typename Base::ElementBMma, float, ElementSF, 256,
+                                        TileN32, cute::UMMA::Major::K, cute::UMMA::Major::K>>;
   using TiledMma = decltype(cute::make_tiled_mma(MmaOp{}));
+  using TiledMma64 = decltype(cute::make_tiled_mma(MmaOp64{}));
+  using TiledMma32 = decltype(cute::make_tiled_mma(MmaOp32{}));
   using ScaleMma = typename Base::TiledMMA_SF;
   using SmemLayoutA = typename Base::SmemLayoutA;
   using SmemLayoutSFA = typename Base::SmemLayoutSFA;
@@ -73,12 +91,32 @@ struct W4A8Mainloop {
       cute::append(cute::partition_shape_B(TiledMma{}, cute::make_shape(cute::Int<TileN>{}, cute::Int<TileK>{})),
                    cute::Int<LoadStages>{}),
       cute::Step<cute::_1, cute::_2, cute::_3>{}));
+  using SmemLayoutB64 = decltype(cute::UMMA::tile_to_mma_shape(
+      typename Base::SmemLayoutAtomB{},
+      cute::append(cute::partition_shape_B(TiledMma64{}, cute::make_shape(cute::Int<TileN64>{}, cute::Int<TileK>{})),
+                   cute::Int<LoadStages>{}),
+      cute::Step<cute::_1, cute::_2, cute::_3>{}));
+  using SmemLayoutB32 = decltype(cute::UMMA::tile_to_mma_shape(
+      typename Base::SmemLayoutAtomB{},
+      cute::append(cute::partition_shape_B(TiledMma32{}, cute::make_shape(cute::Int<TileN32>{}, cute::Int<TileK>{})),
+                   cute::Int<LoadStages>{}),
+      cute::Step<cute::_1, cute::_2, cute::_3>{}));
   using ClusterLayout = typename Base::Params::ClusterLayout_VMNK;
   using TmaB = decltype(cute::make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
       typename Base::GmemTiledCopyB{},
       cute::make_tensor(cute::recast_ptr<typename Base::TmaInternalElementB>(nullptr),
                         cute::repeat_like(typename Base::StrideB{}, int32_t(0)), typename Base::StrideB{}),
       SmemLayoutB{}(cute::_, cute::_, cute::_, cute::_0{}), KernelTile{}, TiledMma{}, ClusterLayout{}));
+  using TmaB64 = decltype(cute::make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
+      typename Base::GmemTiledCopyB{},
+      cute::make_tensor(cute::recast_ptr<typename Base::TmaInternalElementB>(nullptr),
+                        cute::repeat_like(typename Base::StrideB{}, int32_t(0)), typename Base::StrideB{}),
+      SmemLayoutB64{}(cute::_, cute::_, cute::_, cute::_0{}), KernelTile64{}, TiledMma64{}, ClusterLayout{}));
+  using TmaB32 = decltype(cute::make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
+      typename Base::GmemTiledCopyB{},
+      cute::make_tensor(cute::recast_ptr<typename Base::TmaInternalElementB>(nullptr),
+                        cute::repeat_like(typename Base::StrideB{}, int32_t(0)), typename Base::StrideB{}),
+      SmemLayoutB32{}(cute::_, cute::_, cute::_, cute::_0{}), KernelTile32{}, TiledMma32{}, ClusterLayout{}));
 
   struct TensorStorage : cute::aligned_struct<128, cute::_0> {
     cute::ArrayEngine<typename Base::SmemAllocTypeA, cute::cosize_v<SmemLayoutA>> smem_A;
@@ -89,6 +127,8 @@ struct W4A8Mainloop {
   struct Params {
     typename Base::Params::TMA_A tma_load_a;
     TmaB tma_load_b;
+    cute::TmaDescriptor tma_desc_b_64;
+    cute::TmaDescriptor tma_desc_b_32;
     typename Base::Params::TMA_SFA tma_load_sfa;
     typename Base::Params::TMA_SFB tma_load_sfb;
     LayoutSFA layout_SFA;
@@ -105,6 +145,14 @@ struct W4A8Mainloop {
        cute::cosize(cute::take<0, 3>(SmemLayoutSFA{})) * cute::sizeof_bits_v<ElementSF>) /
       8;
   static constexpr uint32_t ActivationTransactionBytes = TmaTransactionBytes - WeightTransactionBytes;
+  static constexpr uint32_t ActivationTransactionBytes64 =
+      ActivationTransactionBytes -
+      ClusterSize * (cute::cosize(cute::take<0, 3>(SmemLayoutB{})) - cute::cosize(cute::take<0, 3>(SmemLayoutB64{}))) *
+          cute::sizeof_bits_v<ElementB> / 8;
+  static constexpr uint32_t ActivationTransactionBytes32 =
+      ActivationTransactionBytes -
+      ClusterSize * (cute::cosize(cute::take<0, 3>(SmemLayoutB{})) - cute::cosize(cute::take<0, 3>(SmemLayoutB32{}))) *
+          cute::sizeof_bits_v<ElementB> / 8;
 
   const Params& params;
   int cta;
@@ -125,7 +173,18 @@ struct W4A8Mainloop {
     auto cluster = tiled_divide(make_layout(ClusterShape{}), make_tile(typename TiledMma::AtomThrID{}));
     auto tmaB = make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
         typename Base::GmemTiledCopyB{}, tensor, SmemLayoutB{}(_, _, _, _0{}), KernelTile{}, TiledMma{}, cluster);
-    return {base.tma_load_a, tmaB, base.tma_load_sfa, base.tma_load_sfb, args.layout_SFA, args.layout_SFB};
+    auto tmaB64 = make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
+        typename Base::GmemTiledCopyB{}, tensor, SmemLayoutB64{}(_, _, _, _0{}), KernelTile64{}, TiledMma64{}, cluster);
+    auto tmaB32 = make_tma_atom_B_sm100<typename Base::TmaInternalElementB>(
+        typename Base::GmemTiledCopyB{}, tensor, SmemLayoutB32{}(_, _, _, _0{}), KernelTile32{}, TiledMma32{}, cluster);
+    return {base.tma_load_a,
+            tmaB,
+            *tmaB64.get_tma_descriptor(),
+            *tmaB32.get_tma_descriptor(),
+            base.tma_load_sfa,
+            base.tma_load_sfb,
+            args.layout_SFA,
+            args.layout_SFB};
   }
   template <class EpilogueTile, bool Overlap = false>
   __device__ static auto init_tmem_tensors(EpilogueTile) {
@@ -148,6 +207,14 @@ struct W4A8Mainloop {
   __device__ auto load_init(const ProblemShape& shape, TensorStorage& s) const {
     using namespace cute;
     using X = Underscore;
+    if (elect_one_sync()) {
+      cute::prefetch_tma_descriptor(params.tma_load_a.get_tma_descriptor());
+      cute::prefetch_tma_descriptor(params.tma_load_b.get_tma_descriptor());
+      if constexpr (TileN > 64) cute::prefetch_tma_descriptor(&params.tma_desc_b_64);
+      if constexpr (TileN > 32) cute::prefetch_tma_descriptor(&params.tma_desc_b_32);
+      cute::prefetch_tma_descriptor(params.tma_load_sfa.get_tma_descriptor());
+      cute::prefetch_tma_descriptor(params.tma_load_sfb.get_tma_descriptor());
+    }
     auto [m, n, k, l] = shape;
     auto a = params.tma_load_a.get_tma_tensor(make_shape(m, k, l));
     auto b = params.tma_load_b.get_tma_tensor(make_shape(n, k, l));
@@ -233,6 +300,17 @@ struct W4A8Mainloop {
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
     const auto weightHint = cacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
+    const cute::TmaDescriptor* bDesc = params.tma_load_b.get_tma_descriptor();
+    uint32_t actTxBytes = ActivationTransactionBytes;
+    if (TileN > 32 && validRows <= 32) {
+      bDesc = &params.tma_desc_b_32;
+      actTxBytes = ActivationTransactionBytes32;
+    } else if (TileN > 64 && validRows <= 64) {
+      bDesc = &params.tma_desc_b_64;
+      actTxBytes = ActivationTransactionBytes64;
+    }
+    const uint32_t txBytes =
+        Operands == 1 ? WeightTransactionBytes : (Operands == 2 ? actTxBytes : WeightTransactionBytes + actTxBytes);
     uint64_t waitNs = 0, issueNs = 0;
     const int iterations = kTiles;
     for (; kTiles > 0; --kTiles, ++iterator) {
@@ -243,6 +321,7 @@ struct W4A8Mainloop {
       int stage = state.index();
       start = traceKernelClock();
       if (elect_one_sync()) {
+        if (cta == 0) cutlass::arch::ClusterTransactionBarrier::arrive_and_expect_tx(barrier, txBytes);
         if constexpr (Operands != 2) {
           copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
                inputs.tAsA(_, stage));
@@ -250,7 +329,7 @@ struct W4A8Mainloop {
                inputs.tAsSFA(_, stage));
         }
         if constexpr (Operands != 1) {
-          copy(params.tma_load_b.with(*barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
+          copy(params.tma_load_b.with(bDesc, *barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
                inputs.tBsB(_, stage));
           copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
                inputs.tBsSFB(_, stage));

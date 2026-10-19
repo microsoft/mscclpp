@@ -48,7 +48,7 @@ def test_w4a8_kernel_config_rejects_invalid(fields):
 
 
 def test_default_and_tuned_policies_validate():
-    assert jit.W4A8KernelConfig().tile_n == 64
+    assert jit.W4A8KernelConfig().tile_n == 128
     assert jit.W4A8KernelConfig().cluster_size == 2
     tuned = jit.W4A8KernelConfig(
         tile_n=128,
@@ -106,7 +106,7 @@ def compiler_fixture(tmp_path, monkeypatch):
 
 
 def _tuned(**overrides):
-    values = {"load_stages": 8}
+    values = {"load_stages": 7}
     values.update(overrides)
     return jit.W4A8KernelConfig(**values)
 
@@ -115,6 +115,7 @@ def test_compile_is_cached_and_uses_every_policy_flag(compiler_fixture):
     cache, commands, _ = compiler_fixture
     config = _tuned(
         tile_n=128,
+        load_stages=8,
         transfer_registers=64,
         epilogue_warps=8,
         epilogue_registers=208,
@@ -262,7 +263,7 @@ def test_changed_headers_or_config_get_new_cache_key(compiler_fixture):
     header = cutlass / "include/cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp"
     header.write_text("changed header")
     second = jit.compile_kernel(_tuned(), cache_dir=cache)
-    third = jit.compile_kernel(_tuned(tile_n=128), cache_dir=cache)
+    third = jit.compile_kernel(_tuned(tile_n=64), cache_dir=cache)
     assert len({first.key, second.key, third.key}) == 3
     assert len(commands) == 12
 

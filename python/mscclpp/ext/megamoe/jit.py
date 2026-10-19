@@ -38,9 +38,9 @@ class W4A8KernelConfig:
     tile is 128 elements per CTA (128 or 256 per cluster); ``tile_n`` is unchanged.
     """
 
-    tile_n: int = 64
+    tile_n: int = 128
     tile_k: int = 128
-    load_stages: int = 9
+    load_stages: int = 8
     num_warps: int = 16
     transfer_registers: int = 128
     load_warps: int = 2
@@ -48,7 +48,7 @@ class W4A8KernelConfig:
     epilogue_tokens: int = 32
     epilogue_warps: int = 4
     epilogue_registers: int = 224
-    dispatch_chunk: int = 3072
+    dispatch_chunk: int = 4096
     dispatch_warps: int = 4
     dispatch_stages: int = 1
     fixed_token_count: bool = False

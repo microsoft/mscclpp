@@ -97,7 +97,8 @@ bool validW4Metadata(const MegaMoeJitApiV1& api) {
          (!api.splitPipelines || api.loadWarps == 2) && (api.epilogueTokens == 16 || api.epilogueTokens == 32) &&
          api.tileN % api.epilogueTokens == 0 && (api.epilogueWarps == 4 || api.epilogueWarps == 8) &&
          api.epilogueRegisters >= 128 && api.epilogueRegisters <= 224 && api.epilogueRegisters % 8 == 0 &&
-         dispatchChunk && api.dispatchChunk % api.tileK == 0 && api.dispatchWarps >= 2 && api.dispatchWarps <= 4 &&
+         dispatchChunk && api.dispatchChunk % api.tileK == 0 &&
+         (api.dispatchWarps == 2 || api.dispatchWarps == 4 || api.dispatchWarps == 8) &&
          (api.dispatchStages == 1 || api.dispatchStages == 2) &&
          api.epilogueWarps + 4 + api.dispatchWarps <= api.numWarps && lowRegisterThreads >= 0 &&
          registerUse <= threads * 128;

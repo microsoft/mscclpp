@@ -63,27 +63,31 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
   int outFeature = warpInGroup * 16 + (lane & 15);
   int baseToken = readerGroup * ReadTokens + (isUp ? HalfTokens : 0);
   float gate[HalfTokens], up[HalfTokens];
-#pragma unroll
-  for (int i = 0; i < HalfTokens; ++i) {
-    float mySend = isUp ? values(i) : values(i + HalfTokens);
-    float other = __shfl_xor_sync(0xffffffff, mySend, 16);
-    gate[i] = isUp ? other : values(i);
-    up[i] = isUp ? values(i + HalfTokens) : other;
-  }
-  if (float clamp = params.config.gateUpClamp; clamp >= 0) {
+  if (readerGroup * ReadTokens < validRows) {
 #pragma unroll
     for (int i = 0; i < HalfTokens; ++i) {
-      gate[i] = fminf(gate[i], clamp);
-      up[i] = fmaxf(-clamp, fminf(up[i], clamp));
+      float mySend = isUp ? values(i) : values(i + HalfTokens);
+      float other = __shfl_xor_sync(0xffffffff, mySend, 16);
+      gate[i] = isUp ? other : values(i);
+      up[i] = isUp ? values(i + HalfTokens) : other;
+    }
+    if (float clamp = params.config.gateUpClamp; clamp >= 0) {
+#pragma unroll
+      for (int i = 0; i < HalfTokens; ++i) {
+        gate[i] = fminf(gate[i], clamp);
+        up[i] = fmaxf(-clamp, fminf(up[i], clamp));
+      }
     }
   }
   if (tokenOffset > 0)
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+  if (baseToken < validRows) {
 #pragma unroll
-  for (int i = 0; i < HalfTokens; i += 2) {
-    float2 pair = swigluPair(make_float2(gate[i], gate[i + 1]), make_float2(up[i], up[i + 1]));
-    s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i, outFeature)] = pair.x;
-    s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i + 1, outFeature)] = pair.y;
+    for (int i = 0; i < HalfTokens; i += 2) {
+      float2 pair = swigluPair(make_float2(gate[i], gate[i + 1]), make_float2(up[i], up[i + 1]));
+      s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i, outFeature)] = pair.x;
+      s.epilogue.scratch[fc1ScratchIndex<CtaFc1M>(baseToken + i + 1, outFeature)] = pair.y;
+    }
   }
   cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
 
@@ -245,7 +249,7 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
           local_tile(identity, make_shape(Int<CtaTileM>{}, Int<ReadTokens>{}), make_coord(0, readerGroup));
       auto coordinates = threadCopy.partition_D(readIdentity);
       auto values = make_tensor<float>(shape(coordinates));
-      copy(copyOp, source, values);
+      if (readerGroup * ReadTokens < validRows) copy(copyOp, source, values);
       cutlass::arch::fence_view_async_tmem_load();
       if (lastChunk) pipeline.consumer_release(state);
       traceKernel(KernelTracePhase::ActivationQuantize, true, tokenOffset);
@@ -256,10 +260,12 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
     }
     // FC2 reads both 16-lane halves of the warp's TMEM lane quarter as stmatrix fragments.
     uint32_t accumulator[2][ReadTokens / 2];
-    uint32_t address = raw_pointer_cast(matrix.data()) + tokenOffset + readerGroup * ReadTokens;
+    if (readerGroup * ReadTokens < validRows) {
+      uint32_t address = raw_pointer_cast(matrix.data()) + tokenOffset + readerGroup * ReadTokens;
 #pragma unroll
-    for (int half = 0; half < 2; ++half)
-      loadFc2Accumulators<ReadTokens / 8>(address + uint32_t((warp % 4 * 32 + half * 16) << 16), accumulator[half]);
+      for (int half = 0; half < 2; ++half)
+        loadFc2Accumulators<ReadTokens / 8>(address + uint32_t((warp % 4 * 32 + half * 16) << 16), accumulator[half]);
+    }
     cutlass::arch::fence_view_async_tmem_load();
     if (lastChunk) pipeline.consumer_release(state);
     bulkStoreWaitSource();

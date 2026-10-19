@@ -25,7 +25,6 @@ __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
 
 template <class P>
 __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate) {
-  constexpr int KernelTileN = P::Tiles::N;
   int fc1Tiles = fc1TaskTiles<P>(intermediate);
   int fc2Tiles = fc2TaskTiles<P>(hidden);
   int fc1Tasks = p.workspace.control->tokenBlocks * fc1Tiles;
@@ -34,17 +33,13 @@ __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate) {
   int tiles = fc1 ? fc1Tiles : fc2Tiles;
   int block, m;
   (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
-  if constexpr (W4ExpertMajorTasks) {
-    int expert = p.workspace.blocks[block].expert;
-    int first = p.workspace.starts[expert] / KernelTileN;
-    auto divisor = p.workspace.expertBlockDivisors[expert];
-    if (block - first < divisor.divisor) {
-      int offset;
-      divisor(m, offset, local - first * tiles);
-      block = first + offset;
-    }
+  TokenBlock tokens = p.workspace.blocks[block];
+  if (tokens.groupShift > 0) {
+    int inGroup = int(tokens.groupOffset) * tiles + m;
+    block += (inGroup & ((1 << tokens.groupShift) - 1)) - int(tokens.groupOffset);
+    m = inGroup >> tokens.groupShift;
   }
-  return Task{fc1, block, m, p.workspace.blocks[block]};
+  return Task{fc1, block, m, tokens};
 }
 
 template <class P>

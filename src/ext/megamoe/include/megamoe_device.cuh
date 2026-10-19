@@ -61,10 +61,14 @@ struct alignas(16) Route {
   float weight;
 };
 
-struct TokenBlock {
-  int expert;
-  int rows;
+struct alignas(8) TokenBlock {
+  int16_t expert;
+  int16_t rows;
+  int16_t groupOffset;
+  int16_t groupShift;
 };
+
+static_assert(sizeof(TokenBlock) == sizeof(uint2));
 
 struct Task {
   bool fc1;
@@ -83,7 +87,6 @@ struct Workspace {
   int* inputChunkReady;
   Route* routes;
   TokenBlock* blocks;
-  cutlass::FastDivmod* expertBlockDivisors;
   uint8_t* quantizedInput;
   uint8_t* inputScale;
   uint8_t* quantizedHidden;

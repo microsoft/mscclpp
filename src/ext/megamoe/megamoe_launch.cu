@@ -61,8 +61,6 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
         at<int>(base, appendRegion(bytes, rows / W4TileN * (inputChunks - 1) * W4ReadyCounterStride * sizeof(int)));
   w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
   w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / W4TileN * sizeof(TokenBlock)));
-  if constexpr (W4ExpertMajorTasks)
-    w.expertBlockDivisors = at<cutlass::FastDivmod>(base, appendRegion(bytes, experts * sizeof(cutlass::FastDivmod)));
   w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * c.hidden));
   w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.hidden)));
   w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, activationRows * c.intermediate));

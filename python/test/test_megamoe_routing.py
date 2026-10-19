@@ -385,7 +385,7 @@ def test_native_routing_reservation_boundary_graph_reuse(
     policy = W4A8KernelConfig(
         cluster_size=cluster_size,
         num_warps=num_warps,
-        load_stages=5 if cluster_size == 1 else 9,
+        load_stages=5 if cluster_size == 1 else 8,
         fixed_token_count=fixed_token_count,
         expert_major_tasks=True,
         adaptive_cache_weights=True,
@@ -534,7 +534,7 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
     config = runtime.config(128, local_experts=2, top_k=2, hidden=8192, intermediate=4096)
     kernel = None
     if use_jit:
-        policy = W4A8KernelConfig(split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
+        policy = W4A8KernelConfig(tile_n=64, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
         kernel = runtime.collective(lambda: compile_kernel(policy))
     weights = _host_weights(config)
     with _native_case(runtime) as case:
@@ -590,22 +590,22 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
 @pytest.mark.parametrize(
     "hidden,capacity,intermediate,clamp,local_experts,top_k,remaining_sms,expected_tile_n,expected_load_stages",
     [
-        (9216, 32, 4096, -1.0, 16, 8, 8, 64, 9),
-        (9216, 64, 4096, -1.0, 16, 8, 8, 64, 9),
-        (9216, 128, 4096, -1.0, 16, 8, 8, 64, 9),
-        (9216, 64, 4608, -7.0, 16, 8, 8, 64, 9),
-        (9216, 64, 4096, -1.0, 16, 8, 2, 64, 9),
-        (9216, 65, 4096, -1.0, 16, 8, 8, 64, 9),
-        (9216, 64, 4096, 0.125, 16, 8, 8, 64, 9),
-        (9216, 64, 4096, -1.0, 8, 8, 8, 64, 9),
-        (9216, 64, 4096, -1.0, 16, 7, 8, 64, 9),
-        (8192, 16, 4096, -1.0, 16, 8, 8, 64, 9),
-        (8192, 32, 4096, -1.0, 16, 8, 8, 64, 9),
-        (8192, 64, 4096, -1.0, 16, 8, 8, 64, 9),
-        (8192, 128, 4096, -1.0, 16, 8, 8, 64, 9),
-        (8192, 128, 4096, -1.0, 4, 3, 8, 64, 9),
-        (4096, 128, 6656, -1.0, 32, 8, 8, 64, 9),
-        (4096, 190, 6656, -1.0, 32, 8, 8, 64, 9),
+        (9216, 32, 4096, -1.0, 16, 8, 8, 128, 8),
+        (9216, 64, 4096, -1.0, 16, 8, 8, 128, 8),
+        (9216, 128, 4096, -1.0, 16, 8, 8, 128, 8),
+        (9216, 64, 4608, -7.0, 16, 8, 8, 128, 8),
+        (9216, 64, 4096, -1.0, 16, 8, 2, 128, 8),
+        (9216, 65, 4096, -1.0, 16, 8, 8, 128, 8),
+        (9216, 64, 4096, 0.125, 16, 8, 8, 128, 8),
+        (9216, 64, 4096, -1.0, 8, 8, 8, 128, 8),
+        (9216, 64, 4096, -1.0, 16, 7, 8, 128, 8),
+        (8192, 16, 4096, -1.0, 16, 8, 8, 128, 8),
+        (8192, 32, 4096, -1.0, 16, 8, 8, 128, 8),
+        (8192, 64, 4096, -1.0, 16, 8, 8, 128, 8),
+        (8192, 128, 4096, -1.0, 16, 8, 8, 128, 8),
+        (8192, 128, 4096, -1.0, 4, 3, 8, 128, 8),
+        (4096, 128, 6656, -1.0, 32, 8, 8, 128, 8),
+        (4096, 190, 6656, -1.0, 32, 8, 8, 128, 8),
     ],
     ids=[
         "specialized-capacity-32",
@@ -716,7 +716,9 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
     config = runtime.config(129, local_experts=2, top_k=2, hidden=4096, intermediate=6656)
     sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
     config = replace(config, sm_margin=max(0, sms - remaining_sms))
-    policy = W4A8KernelConfig(fixed_token_count=True, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
+    policy = W4A8KernelConfig(
+        tile_n=64, fixed_token_count=True, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2
+    )
     module = runtime.collective(lambda: compile_kernel(policy))
     weights = _host_weights(config)
     with _native_case(runtime) as case:

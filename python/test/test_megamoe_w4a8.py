@@ -34,7 +34,9 @@ def _config(tokens=128, world_size=4, **overrides):
 @pytest.mark.parametrize("world_size", [4, 32])
 @pytest.mark.parametrize("tokens", [16, 32, 64])
 def test_packaged_w4a8_default_policy_exact_matches(world_size, tokens):
-    assert resolve_w4a8_kernel_config(_config(tokens, world_size)) == W4A8KernelConfig()
+    assert resolve_w4a8_kernel_config(_config(tokens, world_size)) == W4A8KernelConfig(
+        tile_n=64, load_stages=9, dispatch_chunk=3072
+    )
 
 
 @pytest.mark.parametrize("world_size", [4, 32])
@@ -53,6 +55,8 @@ def test_packaged_w4a8_t128_policy_exact_matches(world_size):
 def test_packaged_h4096_i6656_t128_policy_exact_matches():
     policy = resolve_w4a8_kernel_config(_config(128, hidden=4096, intermediate=6656, num_experts=128))
     assert policy == W4A8KernelConfig(
+        tile_n=64,
+        load_stages=9,
         transfer_registers=128,
         epilogue_warps=8,
         epilogue_registers=176,

@@ -278,35 +278,14 @@ __device__ void processReceivedRouteChunks(const P& p, int nTokens, uint64_t epo
   }
 }
 
-// Match FastDivmod's ceil(2^p / divisor) without a device-side 64-bit division. One double-precision
-// reciprocal refinement puts the estimate within one integer; the integer product checks make it exact.
-MSCCLPP_DEVICE_INLINE cutlass::FastDivmod makeExpertBlockDivisor(int divisor) {
-  assert(divisor > 0);
-  cutlass::FastDivmod result;
-  result.divisor = divisor;
-  if (divisor > 1) {
-    unsigned p = 31 + cutlass::find_log2(unsigned(divisor));
-    uint64_t numerator = uint64_t(1) << p;
-    double reciprocal = double(__frcp_rn(float(divisor)));
-    double residual = __fma_rn(-double(divisor), reciprocal, 1.0);
-    reciprocal = __fma_rn(reciprocal, residual, reciprocal);
-    uint64_t multiplier = __double2uint_ru(double(numerator) * reciprocal);
-    if (multiplier * unsigned(divisor) < numerator)
-      ++multiplier;
-    else if ((multiplier - 1) * unsigned(divisor) >= numerator)
-      --multiplier;
-    result.multiplier = uint32_t(multiplier);
-    result.shift_right = p - 32;
-  }
-  return result;
-}
-
 // Warp 0 of every CTA computes the expert prefixes; token-block construction is distributed across CTAs.
 // A CTA's per-expert route offsets, when given, become absolute route positions. The caller publishes plan completion.
 template <class P>
 __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) {
   constexpr int WarpSize = 32;
   constexpr int RoutingTileN = P::Tiles::N;
+  constexpr int MaxGroupBlocks = 512 / RoutingTileN > 1 ? 512 / RoutingTileN : 1;
+  constexpr int MaxGroupShift = MaxGroupBlocks == 16 ? 4 : (MaxGroupBlocks == 8 ? 3 : (MaxGroupBlocks == 4 ? 2 : 0));
   const auto& w = p.workspace;
   int lane = threadIdx.x % WarpSize;
   int nLocalExperts = p.config.numExperts / p.config.worldSize;
@@ -315,6 +294,7 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
     int expert = base + lane;
     int nExpertRows = expert < nLocalExperts ? w.counts[expert] : 0;
     int nExpertBlocks = (nExpertRows + RoutingTileN - 1) / RoutingTileN;
+    int nFullBlocks = nExpertRows / RoutingTileN;
     int scan = nExpertBlocks;
 #pragma unroll
     for (int distance = 1; distance < WarpSize; distance *= 2) {
@@ -322,17 +302,27 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
       if (lane >= distance) scan += other;
     }
     int firstBlock = nPrecedingBlocks + scan - nExpertBlocks;
+    int warpBlocks = __shfl_sync(0xffffffff, scan, WarpSize - 1);
+    int warpExperts = min(WarpSize, nLocalExperts - base);
     if (expert < nLocalExperts && blockIdx.x == 0) {
       w.starts[expert] = firstBlock * RoutingTileN;
       // Downstream cache policies read each expert's total routed rows.
       w.cursors[expert] = nExpertRows;
-      if constexpr (W4ExpertMajorTasks)
-        w.expertBlockDivisors[expert] = makeExpertBlockDivisor(max(1, nExpertRows / RoutingTileN));
     }
     if (expert < nLocalExperts && routeOffsets) routeOffsets[expert] += firstBlock * RoutingTileN;
-    for (int block = blockIdx.x; block < nExpertBlocks; block += gridDim.x)
-      w.blocks[firstBlock + block] = TokenBlock{expert, min(int(RoutingTileN), nExpertRows - block * RoutingTileN)};
-    nPrecedingBlocks += __shfl_sync(0xffffffff, scan, WarpSize - 1);
+    for (int block = blockIdx.x; block < nExpertBlocks; block += gridDim.x) {
+      int groupShift = 0;
+      int groupOffset = 0;
+      if (warpBlocks < 2 * warpExperts) {
+        int xorBits = nFullBlocks ^ block;
+        groupShift = block < nFullBlocks ? (xorBits >= MaxGroupBlocks ? MaxGroupShift : (31 - __clz(xorBits))) : 0;
+        groupOffset = block & ((1 << groupShift) - 1);
+      }
+      w.blocks[firstBlock + block] =
+          TokenBlock{int16_t(expert), int16_t(min(int(RoutingTileN), nExpertRows - block * RoutingTileN)),
+                     int16_t(groupOffset), int16_t(groupShift)};
+    }
+    nPrecedingBlocks += warpBlocks;
   }
   __syncwarp();
   return nPrecedingBlocks;
