@@ -127,6 +127,12 @@ class RequestBuilder:
                 dtype=torch.float32,
                 device=config.device,
             ).transpose(1, 2)
+        elif data_type == DispatchDataType.MXFP8_E4M3:
+            scales = self._view(
+                self._runtime.output_scales_buffer_ptr(),
+                output_shape[:-1] + (config.hidden_size // 32,),
+                torch.uint8,
+            )
         output = DispatchOutput(
             tokens=tokens,
             quant=None if scales is None else QuantConfig(format=data_type, block_scales=scales),

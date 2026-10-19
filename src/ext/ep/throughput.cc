@@ -189,7 +189,8 @@ DispatchHandle MoERuntime::launchThroughputDispatch(const ThroughputDispatchRequ
   context.validatePrepareRequest(prepareRequest);
   EP_HOST_ASSERT(request.input != nullptr || request.numTokens == 0);
   EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(request.input) % alignof(int4) == 0);
-  EP_HOST_ASSERT(isSupportedDispatchDataType(request.dispatchDataType));
+  EP_HOST_ASSERT(request.dispatchDataType == DispatchDataType::BF16 ||
+                 request.dispatchDataType == DispatchDataType::FP8_E4M3);
 
   const int elementBytes = dispatchElementBytes(request.dispatchDataType);
   const int hiddenBytes = context.hidden_ * elementBytes;

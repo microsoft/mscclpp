@@ -49,7 +49,16 @@ enum class DispatchDataType {
   /// Unquantized BF16 payload.
   BF16,
   /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
-  FP8_E4M3
+  FP8_E4M3,
+  /// MXFP8 E4M3 payload with one uint8_t E8M0 scale per 32 hidden elements.
+  ///
+  /// Supported for RANK_MAJOR in LATENCY mode only. Dispatch takes BF16 input
+  /// and quantizes each token once before sending it to its destination ranks.
+  /// Input values must be finite and hidden must be divisible by 32.
+  /// Scales are powers of two rounded up to cover each block's maximum absolute
+  /// value with E4M3's finite range, with scale bytes clamped to [1, 254].
+  /// An all-zero block uses scale byte 127.
+  MXFP8_E4M3
 };
 
 /// Arguments for throughput-mode routing preparation.
@@ -112,6 +121,10 @@ struct LatencyDispatchRequest {
   /// Dispatch output buffer.
   void* output;
   /// Optional dispatch scale output.
+  ///
+  /// FP8_E4M3 uses float scales in expert-major [expert, hidden / 128, row] order.
+  /// MXFP8_E4M3 must use MoERuntime::outputScalesBuffer(), viewed as contiguous
+  /// uint8_t [numRanks, maxTokensPerRank, hidden / 32].
   void* outputScales;
   /// Optional source-token metadata output.
   int* outputSrcInfo;
@@ -123,7 +136,7 @@ struct LatencyDispatchRequest {
   int64_t* outputLayoutRange;
   /// Per-expert or per-rank output counts.
   int* outputCount;
-  /// Input token payload.
+  /// BF16 input token payload, 16-byte aligned, including when dispatch quantizes the output.
   const void* input;
   /// Input top-k expert IDs.
   const int64_t* topkIdx;
@@ -143,7 +156,7 @@ struct LatencyDispatchRequest {
   /// This is an output sentinel; input topkIdx entries must still be valid
   /// global expert IDs or negative values for dropped routes.
   int invalidTokenExpertId = -1;
-  /// Requested dispatch payload format.
+  /// Requested dispatch payload format. Must match across participating ranks.
   DispatchDataType dispatchDataType;
   /// Dispatch grid block count. Zero uses the default number of blocks.
   int numBlocks = 0;
@@ -160,8 +173,10 @@ struct LatencyDispatchRequest {
 /// stay alive until the matching combine has been enqueued.
 struct ThroughputDispatchRequest {
   /// Input token payload, 16-byte aligned.
+  ///
+  /// BF16 takes BF16 input. FP8_E4M3 takes prequantized E4M3 input.
   const void* input;
-  /// Optional input scale factors.
+  /// Optional input float scale factors for prequantized FP8_E4M3.
   const float* inputScales;
   /// Input top-k expert IDs.
   /// IDs outside [0, numExperts) are ignored.
@@ -174,7 +189,8 @@ struct ThroughputDispatchRequest {
   /// Active per-rank token capacity, positive and no greater than the runtime capacity.
   /// Must be identical across all ranks participating in preparation and dispatch.
   int maxTokensPerRank;
-  /// Requested dispatch payload format.
+  /// Requested dispatch payload format: BF16 or FP8_E4M3.
+  /// Must match across participating ranks. Throughput does not quantize input.
   DispatchDataType dispatchDataType;
   /// Dispatch grid block count.
   int numBlocks;
@@ -226,7 +242,8 @@ class DispatchHandle {
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
-  /// Local BF16 results produced by expert computation.
+  /// Local BF16 results produced by expert computation, regardless of the
+  /// dispatch payload format.
   ///
   /// Rank-major input must be the runtime-owned combineInputBuffer(), with
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
