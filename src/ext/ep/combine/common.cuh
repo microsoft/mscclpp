@@ -224,7 +224,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                   workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
         output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
         context, numBlocks, stream);
@@ -241,6 +242,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   } else {
     switch (workload.dispatchDataType_) {
@@ -254,6 +257,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
@@ -290,14 +295,16 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
     if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                     workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     }
   } else {
     if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
       EP_HOST_ASSERT(srcInfo != nullptr);
       EP_HOST_ASSERT(layoutRange != nullptr);
     } else {
-      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                     workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     }
   }
 

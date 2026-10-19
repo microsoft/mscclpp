@@ -155,6 +155,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   }
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
+  if (dispatchDataType == DispatchDataType::MXFP8_E4M3 && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("MXFP8 dispatch requires RANK_MAJOR layout");
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
                                         context.numRanks_, numExperts, numTopk, context.outputLayout_,
@@ -165,6 +168,10 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
+      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
   }
 
   const Workload workload{.epoch_ = context.epoch_,

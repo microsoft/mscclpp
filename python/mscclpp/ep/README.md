@@ -176,8 +176,11 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   `QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=scales)`, where
   `scales` is contiguous CUDA FP32 `[num_input_tokens, H//128]`. Output scales
   have shape `tokens.shape[:-1] + (H//128,)` and are contiguous.
-* Latency RANK_MAJOR is BF16-only. **Combine always consumes BF16**, including
-  after FP8 dispatch.
+* Latency RANK_MAJOR additionally supports
+  `QuantConfig(format=DispatchDataType.MXFP8_E4M3)`. It takes BF16 input,
+  returns E4M3 payload plus contiguous uint8 E8M0 scales with shape
+  `[R, A, H//32]`, and requires `H` to be divisible by 32.
+* **Combine always consumes BF16**, including after FP8 or MXFP8 dispatch.
 
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
