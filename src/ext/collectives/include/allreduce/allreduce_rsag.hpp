@@ -12,7 +12,7 @@ namespace collective {
 class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceRsAg(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:

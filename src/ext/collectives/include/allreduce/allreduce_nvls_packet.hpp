@@ -14,7 +14,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
       : scratchBuffer_((void*)scratchBuffer),
         scratchBufferSize_(scratchBufferSize),
         flagBuffer_(flagBuffer),
-        flagBufferSize_(flagBufferSize) {};
+        flagBufferSize_(flagBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
