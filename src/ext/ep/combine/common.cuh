@@ -196,7 +196,8 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
           const float sourceWeight =
               IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
           if (sourceWeight == 0.0f) continue;
-          dequantizeAndAccumulateFp8E4M3(values, dequantScale, sourceWeight, reduced);
+          const float accumulationScale = IsDirectSend ? dequantScale * sourceWeight : dequantScale;
+          dequantizeAndAccumulateFp8E4M3(values, accumulationScale, reduced);
         }
 #pragma unroll
         for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
