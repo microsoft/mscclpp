@@ -211,6 +211,8 @@ class LowLatencyBackend:
                 raise ValueError("RANK_MAJOR output requires RANK_LOCAL_REDUCE combine")
             if self.enable_overlap:
                 raise NotImplementedError("RANK_MAJOR output does not support overlapping calls yet")
+            if type(self.topk) is not int or not 1 <= self.topk <= 9:
+                raise ValueError("RANK_MAJOR output requires topk between 1 and 9")
         if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
             if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
                 raise ValueError("RANK_MAJOR_TOPK_EXPANDED output requires RANK_LOCAL_REDUCE combine")
@@ -230,16 +232,14 @@ class LowLatencyBackend:
         )
 
         self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
-        if self.output_layout == DispatchLayout.RANK_MAJOR and self.dispatch_data_type != DispatchDataType.BF16:
-            raise NotImplementedError("RANK_MAJOR output currently supports BF16 dispatch only")
         if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
-            if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+            if self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
                 if config.quant is None or config.quant.scale is None:
-                    raise ValueError("RANK_MAJOR_TOPK_EXPANDED FP8 dispatch requires quant.scale")
+                    raise ValueError("rank-major FP8 dispatch requires quant.scale")
                 self.dispatch_scale = _validate_static_scale(config.quant.scale, "quant.scale")
             else:
                 if config.quant is not None and config.quant.scale is not None:
-                    raise ValueError("quant.scale is supported only by RANK_MAJOR_TOPK_EXPANDED FP8 dispatch")
+                    raise ValueError("quant.scale is supported only by rank-major FP8 dispatch")
                 self.dispatch_scale = 1.0
         else:
             if config.quant is not None and config.quant.scale is not None:
@@ -399,7 +399,7 @@ class LowLatencyBackend:
         )
         if self.dispatch_data_type == DispatchDataType.BF16:
             output_quant = None
-        elif self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+        elif self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED):
             output_quant = QuantConfig(format=self.dispatch_data_type, scale=self.dispatch_scale)
         else:
             output_quant = QuantConfig(
@@ -423,11 +423,17 @@ class LowLatencyBackend:
             topk_ids=recv_topk_ids,
             weights=recv_weights,
             combine_input_buffer=(
-                self.expert_output_buffer if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED else None
+                self.expert_output_buffer
+                if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+                or (
+                    self.output_layout == DispatchLayout.RANK_MAJOR
+                    and self.dispatch_data_type == DispatchDataType.FP8_E4M3
+                )
+                else None
             ),
             combine_input_quant=(
                 QuantConfig(format=self.dispatch_data_type, scale=self.dispatch_scale)
-                if self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+                if self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
                 and self.dispatch_data_type == DispatchDataType.FP8_E4M3
                 else None
             ),
@@ -622,10 +628,12 @@ class LowLatencyBackend:
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
         if input.device.type != "cuda" or input.dtype != torch.bfloat16:
             if (
-                self.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+                self.output_layout in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
                 and self.dispatch_data_type == DispatchDataType.FP8_E4M3
             ):
-                raise ValueError("static FP8 expanded dispatch requires BF16 input; prequantized input is unsupported")
+                raise ValueError(
+                    "static FP8 rank-major dispatch requires BF16 input; prequantized input is unsupported"
+                )
             raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
@@ -760,7 +768,7 @@ class LowLatencyBackend:
         expected_dtype = (
             torch.float8_e4m3fn
             if self.dispatch_data_type == DispatchDataType.FP8_E4M3
-            and handle.output_info.layout.kind == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+            and handle.output_info.layout.kind in (DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
             else torch.bfloat16
         )
         if expert_output.dtype != expected_dtype:

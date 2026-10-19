@@ -103,6 +103,35 @@ void checkLayout(int ranks, int capacity, int topk, int hidden) {
     }
   }
 
+  const size_t fp8CompactTokenBytes = static_cast<size_t>(ranks) * capacity * hidden * sizeof(Fp8E4M3);
+  const size_t fp8CompactRecv =
+      alignBytes(std::max({dispatchBytes, tokenOffset + fp8CompactTokenBytes, fp8CompactTokenBytes}));
+  const size_t fp8CompactSlotStride =
+      alignBytes(static_cast<size_t>(hidden) * sizeof(Fp8E4M3) + topk * (sizeof(int) + sizeof(float)));
+  const size_t fp8CompactStagingBytes = alignBytes(static_cast<size_t>(GpuNetIoStagingSlots) * fp8CompactSlotStride);
+  const size_t fp8CompactTotal =
+      2 * fp8CompactRecv + fp8CompactStagingBytes + 2 * flagsBytes + alignBytes(fp8CompactTokenBytes);
+  const Layout fp8Compact(reinterpret_cast<void*>(base), capacity, hidden, ranks, experts, topk, true, false,
+                          DispatchDataType::FP8_E4M3);
+  require(fp8Compact.dispatchDataType_ == DispatchDataType::FP8_E4M3, "compact FP8 payload type was not retained");
+  require(fp8Compact.recvBufferBytes_ == fp8CompactRecv, "compact FP8 receive allocation differs");
+  require(fp8Compact.totalBytes_ == fp8CompactTotal, "compact FP8 total allocation differs");
+  require(fp8Compact.gpuNetIoSlotStride_ == fp8CompactSlotStride, "compact FP8 staging stride differs");
+  require(offset(fp8Compact.rankMajorTokenBuffer_) == tokenOffset, "compact FP8 public tokens moved");
+  require(fp8Compact.rankMajorExpertOutputBuffer_ == fp8Compact.combineRecvBuffer_,
+          "compact FP8 expert output must use the combine region");
+  require(fp8Compact.rankMajorExpertOutputBuffer_ != fp8Compact.rankMajorTokenBuffer_,
+          "compact FP8 expert output aliases dispatch tokens");
+  require(offset(fp8Compact.gpuNetIoFlagsBuffer_) == 2 * fp8CompactRecv + fp8CompactStagingBytes,
+          "compact FP8 dispatch flags inherited BF16 sizing");
+  require(
+      offset(fp8Compact.gpuNetIoCombineLandingBuffer_) == 2 * fp8CompactRecv + fp8CompactStagingBytes + 2 * flagsBytes,
+      "compact FP8 combine landing base differs");
+  require(symmetricBufferSize(capacity, hidden, ranks, experts, topk, true, false, DispatchDataType::FP8_E4M3) ==
+              fp8CompactTotal,
+          "compact FP8 size helper differs");
+  requireNoExpandedPointers(fp8Compact);
+
   const Layout expanded(reinterpret_cast<void*>(base), capacity, hidden, ranks, experts, topk, true, true);
   const Layout expandedSizing(nullptr, capacity, hidden, ranks, experts, topk, true, true);
   const size_t expandedTokenBytes = tokenBytes * topk;

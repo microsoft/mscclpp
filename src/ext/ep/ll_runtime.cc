@@ -47,7 +47,7 @@ MoELowLatencyRuntime::MoELowLatencyRuntime(mscclpp::Communicator& communicator, 
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= 32);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
                  outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
-  EP_HOST_ASSERT(outputLayout != DispatchLayout::RANK_MAJOR_TOPK_EXPANDED || (numTopk <= 9 && hidden > 0));
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || (numTopk <= 9 && hidden > 0));
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
   EP_HOST_ASSERT(numRanks_ % numNvlRanks_ == 0);
@@ -276,6 +276,9 @@ void MoELowLatencyRuntime::dispatch(void* output, void* outputScales, int* outpu
     EP_HOST_ASSERT(output == allocationLayout.rankMajorTokenBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+  }
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(outputScales == nullptr);
   }
 
   ++epoch_;

@@ -524,7 +524,7 @@ Flattening the first two dimensions is a view. Source rank `r` owns rows
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
 For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
-matching format and scale tensor.
+matching format and scale metadata.
 
 `output_buffer` is required for LL because the MLP runner often owns or reuses
 workspace memory. `MoECommunicator` writes dispatch output into the provided
@@ -568,7 +568,11 @@ dispatch_out.weights    # [world_size * max_tokens_per_rank, K]
 Tokens, top-k IDs, and weights are sent directly into runtime-owned registered
 final receive buffers and exposed as zero-copy Torch tensors.
 Unused rows in every source-rank block use `invalid_token_expert_id` and zero
-weights. BF16 is currently the only supported rank-major dispatch format.
+weights. Rank-major dispatch supports BF16 and FP8 E4M3. FP8 requires a static
+scalar multiplier configured as
+`QuantConfig(format=DispatchDataType.FP8_E4M3, scale=<float>)`; dispatch returns
+the same scalar metadata, while combine may provide the scalar used by its FP8
+expert output.
 
 The MoE runner must write its rank-major output into the runtime-owned
 registered buffer:

@@ -232,8 +232,8 @@ struct Layout {
     const size_t dispatchBufferBytes =
         dispatchMetadataBytes + static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchPayloadStride;
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-    const size_t expandedElementBytes = dispatchDataType == DispatchDataType::FP8_E4M3 ? sizeof(Fp8E4M3) : sizeof(Bf16);
-    const size_t rankMajorElementBytes = topkExpanded ? expandedElementBytes : sizeof(Bf16);
+    const size_t rankMajorElementBytes =
+        dispatchDataType == DispatchDataType::FP8_E4M3 ? sizeof(Fp8E4M3) : sizeof(Bf16);
     const size_t rankMajorTokenBytes = static_cast<size_t>(numRanks) * maxTokensPerRank * hidden *
                                        rankMajorElementBytes * (topkExpanded ? numTopk : 1);
     const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorTokenBytes;

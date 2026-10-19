@@ -291,6 +291,45 @@ class TopkExpandedPythonApiTests(unittest.TestCase):
             [dict(quant=self.api.QuantConfig(format=fp8, scale=scale)) for scale in invalid],
         )
 
+    def test_compact_static_fp8_scalar_metadata_and_validation(self):
+        fp8 = self.api.DispatchDataType.FP8_E4M3
+        moe = self.make(
+            output_layout=self.layout.RANK_MAJOR,
+            quant=self.api.QuantConfig(format=fp8, scale=2.0),
+        )
+        native = moe._backend._runtime.cpp_runtime
+        output, handle = moe.dispatch(self.x, self.ids)
+        expert = moe.get_expert_output_buffer()
+
+        self.assertEqual((output.tokens.shape, output.tokens.dtype), ((8, 128), "float8_e4m3fn"))
+        self.assertEqual((expert.shape, expert.dtype), ((8, 128), "float8_e4m3fn"))
+        self.assertNotEqual(output.tokens.data_ptr(), expert.data_ptr())
+        self.assertIs(output.combine_input_buffer, expert)
+        self.assertEqual((output.quant.format, output.quant.scale, output.quant.block_scales), (fp8, 2.0, None))
+        self.assertEqual(
+            (
+                output.combine_input_quant.format,
+                output.combine_input_quant.scale,
+                output.combine_input_quant.block_scales,
+            ),
+            (fp8, 2.0, None),
+        )
+        self.assertEqual(native.ll_dispatch.call_args.args[18], 2.0)
+
+        combined = moe.combine(expert, handle, quant=self.api.QuantConfig(format=fp8, scale=0.25))
+        self.assertEqual((combined.shape, combined.dtype), ((2, 128), "bfloat16"))
+        self.assertEqual(native.ll_combine.call_args.args[13], 0.25)
+
+        self.factory.reset_mock()
+        self.reject(
+            self.make,
+            self.factory,
+            [
+                dict(output_layout=self.layout.RANK_MAJOR, quant=self.api.QuantConfig(format=fp8)),
+                dict(output_layout=self.layout.RANK_MAJOR, topk=10),
+            ],
+        )
+
     def test_static_fp8_combine_metadata_validation(self):
         fp8 = self.api.DispatchDataType.FP8_E4M3
         moe = self.make(quant=self.api.QuantConfig(format=fp8, scale=1.0))

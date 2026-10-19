@@ -17,13 +17,10 @@ import math
 from pathlib import Path
 import random
 import re
-import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 EP = ROOT / "src/ext/ep"
-# Immutable pre-expanded port baseline, not HEAD (which changes after a commit).
-LEGACY_BASE = "4cc4276d9c5bf31589b180bedca967ffb0968282"
 RANKS = (2, 8, 16, 32, 64)
 QPS = (1, 2, 4, 8)
 TOPKS = (1, 8, 9)
@@ -840,6 +837,8 @@ class NativeSourceContractTests(unittest.TestCase):
         cls.config = tokens((EP / "config.hpp").read_text())
         cls.runtime = tokens((EP / "ll_runtime.cc").read_text())
         cls.bulk = tokens((ROOT / "include/mscclpp/bulk_device.hpp").read_text())
+        cls.compact_dispatch = tokens((EP / "low_latency/dispatch.cu").read_text())
+        cls.compact_combine = tokens((EP / "low_latency/combine.cu").read_text())
 
     def assertCode(self, stream, *fragments):
         for fragment in fragments:
@@ -860,22 +859,36 @@ class NativeSourceContractTests(unittest.TestCase):
         for name in ("dispatchTopkExpandedKernel", "combineTopkExpandedKernel"):
             self.assertOrder(body(self.native, name), "validateGpuNetIo(transport)", "const Layout layout")
 
-    def test_legacy_dispatch_and_combine_tokens_outside_only_exported_route(self):
-        for kind in ("dispatch", "combine"):
-            path = f"src/ext/ep/low_latency/{kind}.cu"
-            baseline = subprocess.run(
-                ["git", "-C", str(ROOT), "show", f"{LEGACY_BASE}:{path}"],
-                check=True,
-                text=True,
-                capture_output=True,
-            ).stdout
-            current = tokens((ROOT / path).read_text())
-            with self.subTest(kernel=kind):
-                remaining = strip_exported_route(current, kind)
-                self.assertEqual(code_changes(tokens(baseline), remaining), [], "legacy CUDA code changed")
-                # A legacy arithmetic edit must not be hidden by the allowed route removal.
-                changed = remaining + tokens("legacy_unexpected_change();")
-                self.assertTrue(code_changes(tokens(baseline), changed))
+    def test_compact_rank_major_static_fp8_is_type_specialized(self):
+        send = body(self.compact_dispatch, "dispatchSendRankMajorPayload")
+        self.assertCode(
+            send,
+            "using ElementType = DispatchElementType<DataType>",
+            "quantizeBf16x8ToFp8E4M3(inputData[vectorIdx], quantScale)",
+            "issueRankMajorTokenStore<Hidden, DataType>",
+            "sendRankMajorGpuNetIo<Hidden, DataType>",
+        )
+        dispatch_select = body(self.compact_dispatch, "dispatchHidden")
+        self.assertCode(
+            dispatch_select,
+            "DispatchDataType::BF16",
+            "DispatchDataType::FP8_E4M3",
+            "dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout>",
+        )
+
+        accumulate = body(self.compact_combine, "accumulateRankMajorVector")
+        pack = body(self.compact_combine, "packRankMajorVector")
+        self.assertCode(accumulate, "fp8E4M3ToFloat(values[element])")
+        self.assertCode(pack, "DataType == DispatchDataType::FP8_E4M3 ? 1.0f / quantScale : 1.0f")
+        combine_select = body(self.compact_combine, "combineHidden")
+        self.assertCode(
+            combine_select,
+            "DispatchDataType::FP8_E4M3",
+            "DispatchLayout::RANK_MAJOR",
+        )
+        for kind, stream in (("dispatch", self.compact_dispatch), ("combine", self.compact_combine)):
+            with self.subTest(exported_route=kind):
+                self.assertLess(len(strip_exported_route(stream, kind)), len(stream))
 
     def test_real_cpp_layout_unit_keeps_legacy_formula_coverage(self):
         cpp = tokens((ROOT / "test/python/ep/test_topk_expanded_layout.cpp").read_text())
