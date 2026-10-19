@@ -51,11 +51,7 @@ class PackTests(unittest.TestCase):
         size = (1 << (8 * ctypes.sizeof(ctypes.c_size_t) - 1)) + 7
         self.assertEqual(
             self.utils.pack(-3, True, False, ctypes.c_size_t(size), b"\x00\xff"),
-            struct.pack("i", -3)
-            + struct.pack("i", 1)
-            + struct.pack("i", 0)
-            + struct.pack("N", size)
-            + b"\x00\xff",
+            struct.pack("i", -3) + struct.pack("i", 1) + struct.pack("i", 0) + struct.pack("N", size) + b"\x00\xff",
         )
 
     def test_numpy_and_torch_pointers(self):

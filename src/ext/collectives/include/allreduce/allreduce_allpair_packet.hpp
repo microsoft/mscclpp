@@ -14,7 +14,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
       : scratchBuffer_((void*)scratchBuffer),
         scratchBufferSize_(scratchBufferSize),
         flagBuffer_(flagBuffer),
-        flagBufferSize_(flagBufferSize){};
+        flagBufferSize_(flagBufferSize) {};
   std::shared_ptr<Algorithm> build() override;
 
  private:

@@ -12,7 +12,7 @@ namespace collective {
 class AllreduceNvlsWarpPipeline : public AlgorithmBuilder {
  public:
   AllreduceNvlsWarpPipeline(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+      : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
   std::shared_ptr<Algorithm> build() override;
 
  private:

@@ -25,9 +25,7 @@ class CudaKernelTests(unittest.TestCase):
         self.launch = Mock(__name__="hipModuleLaunchKernel" if self.is_hip else "cuLaunchKernel", return_value=(0,))
         self.unload = Mock(__name__=f"{prefix}ModuleUnload", return_value=(0,))
         self.initialize = Mock(__name__="cudaFree", return_value=(0,))
-        driver = SimpleNamespace(
-            **{func.__name__: func for func in (self.load, self.lookup, self.launch, self.unload)}
-        )
+        driver = SimpleNamespace(**{func.__name__: func for func in (self.load, self.lookup, self.launch, self.unload)})
         native = ModuleType("mscclpp._mscclpp")
         native.CppDataType = object
         native.is_hip = self.is_hip
@@ -71,9 +69,7 @@ class CudaKernelTests(unittest.TestCase):
                 with self.subTest(stream=stream, params=params):
 
                     def launch(*args):
-                        self.assertEqual(
-                            args[:-1], (self.function, 3, 1, 1, 64, 1, 1, 128, expected_stream, 0)
-                        )
+                        self.assertEqual(args[:-1], (self.function, 3, 1, 1, 64, 1, 1, 128, expected_stream, 0))
                         config = (ctypes.c_void_p * 5).from_address(args[-1])
                         self.assertEqual(config[0], 1)
                         self.assertEqual(config[2], 2)
