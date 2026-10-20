@@ -177,11 +177,15 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   precomputed input scales. Returned FP32 scales have logical shape
   `[L, R*A, H//128]`, transposed from physical `[L, H//128, R*A]`; they are not
   contiguous in logical order.
-* Latency RANK_MAJOR static FP8 accepts an already quantized contiguous
+* Latency RANK_MAJOR static FP8 uses a finite positive scalar `S` and has two
+  explicit input modes. The backward-compatible default accepts contiguous
   `torch.float8_e4m3fn` input with
-  `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S)`, where `S` is a
-  finite positive scalar. The caller produces `q = E4M3(real * S)`;
-  dispatch transports `q` byte-for-byte and has no block-scale sideband.
+  `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S)` and transports it
+  byte-for-byte. To fuse quantization into dispatch, pass BF16 input with
+  `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S,
+  input_mode=StaticFp8InputMode.QUANTIZE_BF16)`. The fused path computes
+  `q = E4M3(real * S)` once per token before sending the same FP8 row to each
+  destination. Neither mode has a block-scale sideband.
   Expert output written to `combine_input_buffer` uses the same format and
   scalar. Combine computes `FP32(q) * (1 / S)`, applies FP32 route weights only
   for `DIRECT_SEND`, accumulates in FP32, and writes BF16.
@@ -198,7 +202,8 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
 
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
-There are no implicit casts or contiguous copies to accept incompatible input.
+There are no implicit casts or contiguous copies to accept incompatible input;
+static FP8 performs BF16 conversion only when its explicit fused mode is selected.
 Payload pointers must be 16-byte aligned. `output_buffer` must match the active
 dispatch shape, while `combine(out=...)` must be `[num_input_tokens, H]`; both
 require the exact dtype, device, and contiguous layout. Only latency
@@ -289,10 +294,11 @@ Runtime views are reused by later operations, not independent results.
 ## MSCCL++ EP benchmark
 
 `python -m mscclpp_benchmark.ep.run_ep_bench_python` measures paired dispatch
-and combine through the Python API. It supports latency RANK_MAJOR FP8 with the
-same fixed scalar contract as the runtime: the harness creates
-`q = E4M3(real * S)`, dispatches `q`, writes static-scale FP8 identity-expert
-output into the runtime combine buffer, and verifies BF16 token output.
+and combine through the Python API. For latency RANK_MAJOR static FP8,
+`--static-fp8-input` selects `prequantized`, `fused`, or `separate`. The first
+measures dispatch of precomputed E4M3, the second measures BF16 quantization
+inside the dispatch kernel, and the third includes a separate PyTorch
+quantization pipeline before the prequantized dispatch baseline.
 
 For 32 ranks across eight four-GPU hosts, the following configuration has 32
 experts per rank:
@@ -304,11 +310,14 @@ export EP_KERNEL_TIMER=events
 mpirun -np 32 python -m mscclpp_benchmark.ep.run_ep_bench_python \
     --backend mscclpp --mode latency --ep-layout rank_major \
     --combine-mode direct_send --dispatch-dtype fp8_e4m3 \
-    --static-fp8-scale 1.0 --num-tokens 4 --hidden 4096 \
+    --static-fp8-scale 1.0 --static-fp8-input fused \
+    --num-tokens 4 --hidden 4096 \
     --num-experts 1024 --num-topk 7 --cuda-graph \
     --iters-per-graph 50 --validate
 ```
 
-Input generation, fixed-scale quantization, routing generation, and synthetic
-identity-expert staging happen outside the timed loop. CUDA-event results cover
-communication dispatch plus combine; combine always writes BF16.
+Input generation, routing generation, and synthetic identity-expert staging
+happen outside the timed loop. Fixed-scale quantization is outside the timed
+loop for `prequantized`, inside the dispatch kernel for `fused`, and immediately
+before dispatch for `separate`. CUDA-event results cover dispatch plus combine;
+combine always writes BF16.

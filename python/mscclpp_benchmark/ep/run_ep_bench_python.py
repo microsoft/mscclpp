@@ -79,6 +79,13 @@ def parse_args() -> argparse.Namespace:
         help="finite positive scalar S for latency rank-major FP8, where q=E4M3(real*S)",
     )
     p.add_argument(
+        "--static-fp8-input",
+        choices=("prequantized", "fused", "separate"),
+        default="prequantized",
+        help="static-FP8 input path: prequantized E4M3, fused BF16 quantization in dispatch, "
+        "or a separately timed PyTorch quantization pipeline followed by prequantized dispatch",
+    )
+    p.add_argument(
         "--combine-mode",
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
@@ -135,6 +142,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("MSCCL++ throughput mode currently supports BF16 dispatch only")
     if args.dispatch_dtype == "fp8_e4m3" and args.ep_layout != "rank_major":
         raise SystemExit("fixed-scale FP8 requires --ep-layout rank_major")
+    if args.static_fp8_input != "prequantized" and args.dispatch_dtype != "fp8_e4m3":
+        raise SystemExit("--static-fp8-input fused/separate requires --dispatch-dtype fp8_e4m3")
     return args
 
 
@@ -556,6 +565,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         combine_fn = ops["combine"]
         teardown = ops["teardown"]
         backend_barrier = ops.get("barrier")
+        parse_kernels = ops.get("parse_kernels", _PARSE_KINETO[name])
         if ops.get("paired_profile"):
             os.environ["EP_KINETO_SEPARATE"] = "0"
             if user_separate == "1" and rank == 0:
@@ -590,7 +600,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 combine_fn,
                 nccl_barrier=nccl_barrier,
                 bench_barrier=backend_barrier,
-                parse_kernels=_PARSE_KINETO[name],
+                parse_kernels=parse_kernels,
                 graph_group_size=effective_group_size,
                 graph=graph,
             )
@@ -603,6 +613,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
             graph = None
             spec = None
             backend_barrier = None
+            parse_kernels = None
             ops.clear()
             teardown()
             teardown = None

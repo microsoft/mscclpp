@@ -174,14 +174,15 @@ MSCCLPP_DEVICE_INLINE void dispatchSendTokens(void* output, int* outputTopkIdx, 
   }
 }
 
-template <int Hidden, bool EmitLocalExpertIds>
-MSCCLPP_DEVICE_INLINE void dispatchSendMxfp8(void* output, void* outputScales, int* outputTopkIdx,
-                                             float* outputTopkWeights, const void* inputTokens, int nExperts,
-                                             int nRanks, const int64_t* __restrict__ topkIndices,
-                                             const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                             int invalidTokenExpertId, int maxTokensPerRank,
-                                             const TransportView& transport, void* workspace, int nPayloadBlocks,
-                                             int* sharedMem) {
+template <int Hidden, DispatchDataType DataType, bool EmitLocalExpertIds>
+MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScales, int* outputTopkIdx,
+                                                 float* outputTopkWeights, const void* inputTokens, int nExperts,
+                                                 int nRanks, const int64_t* __restrict__ topkIndices,
+                                                 const float* __restrict__ topkWeights, int nTokens, int nTopk,
+                                                 int invalidTokenExpertId, int maxTokensPerRank, float quantScale,
+                                                 const TransportView& transport, void* workspace, int nPayloadBlocks,
+                                                 int* sharedMem) {
+  static_assert(DataType == DispatchDataType::FP8_E4M3 || DataType == DispatchDataType::MXFP8_E4M3);
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const int laneId = getLaneId();
   const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
@@ -198,11 +199,12 @@ MSCCLPP_DEVICE_INLINE void dispatchSendMxfp8(void* output, void* outputScales, i
   const int quantizeThreadId = groupThreadId - WARP_SIZE;
   const int quantizeThreadCount = groupThreadCount - WARP_SIZE;
   const int nLocalExperts = nExperts / nRanks;
-  const size_t sharedTokenStride = dispatchPayloadStride<DispatchDataType::MXFP8_E4M3>(Hidden, nTopk, 32);
+  constexpr int ScaleBlockSize = DataType == DispatchDataType::MXFP8_E4M3 ? 32 : 128;
+  const size_t sharedTokenStride = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
   auto* stagedToken = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks) +
                       static_cast<size_t>(warpGroupId) * sharedTokenStride;
   auto* stagedData = reinterpret_cast<mscclpp::f8_e4m3x8*>(stagedToken);
-  auto* stagedScales = stagedToken + Hidden;
+  [[maybe_unused]] auto* stagedScales = stagedToken + Hidden;
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   const int tokenStride = nPayloadBlocks * nWarpGroups;
   const int firstTokenIdx = (static_cast<int>(blockIdx.x) - 1) * nWarpGroups + warpGroupId;
@@ -213,21 +215,31 @@ MSCCLPP_DEVICE_INLINE void dispatchSendMxfp8(void* output, void* outputScales, i
     if (subWarpId == 0) {
       route = prepareRoute(workspaceView, topkIndices, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
     } else {
-      const auto* inputData =
-          static_cast<const mscclpp::bf16x8*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
-      mscclpp::bf16x8 values[MaxVectorsPerThread];
+      static_assert(sizeof(mscclpp::bf16x8) == sizeof(uint4));
+      const auto* inputData = static_cast<const uint4*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
+      if constexpr (DataType == DispatchDataType::FP8_E4M3) {
 #pragma unroll
-      for (int i = 0; i < MaxVectorsPerThread; ++i) {
-        const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-        if (inputIdx < HiddenVectors) values[i] = inputData[inputIdx];
-      }
+        for (int i = 0; i < MaxVectorsPerThread; ++i) {
+          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+          if (inputIdx < HiddenVectors) {
+            stagedData[inputIdx] = quantizeBf16x8ToStaticFp8(mscclpp::bf16x8(inputData[inputIdx]), quantScale);
+          }
+        }
+      } else {
+        mscclpp::bf16x8 values[MaxVectorsPerThread];
 #pragma unroll
-      for (int i = 0; i < MaxVectorsPerThread; ++i) {
-        const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-        if (inputIdx < HiddenVectors) {
-          uint8_t scale;
-          stagedData[inputIdx] = quantizeBf16x8ToMxfp8(values[i], scale, laneId);
-          if (laneId % 4 == 0) stagedScales[inputIdx / 4] = scale;
+        for (int i = 0; i < MaxVectorsPerThread; ++i) {
+          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+          if (inputIdx < HiddenVectors) values[i] = mscclpp::bf16x8(inputData[inputIdx]);
+        }
+#pragma unroll
+        for (int i = 0; i < MaxVectorsPerThread; ++i) {
+          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+          if (inputIdx < HiddenVectors) {
+            uint8_t scale;
+            stagedData[inputIdx] = quantizeBf16x8ToMxfp8(values[i], scale, laneId);
+            if (laneId % 4 == 0) stagedScales[inputIdx / 4] = scale;
+          }
         }
       }
     }
@@ -237,8 +249,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendMxfp8(void* output, void* outputScales, i
     if (subWarpId == 0) {
       const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
       if (dstRank >= 0) {
-        issueTokenStore<Hidden, DispatchDataType::MXFP8_E4M3>(output, transport, route.destinationSlot,
-                                                              maxTokensPerRank, stagedToken, dstRank, outputScales);
+        issueTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
+                                          dstRank, outputScales);
       }
       sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
                                        tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
@@ -285,20 +297,21 @@ MSCCLPP_DEVICE_INLINE void dispatchNotify(const TransportView& transport, int nE
   publishDispatchPayloads(transport, rankTokenCounts, nRanks, workspaceView);
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds, bool QuantizeStaticFp8>
 MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, void* outputScales, int* outputTopkIdx, float* outputTopkWeights,
                                         const void* inputTokens, const TransportView& transport, int nExperts,
                                         int nRanks, const int64_t* __restrict__ topkIndices,
                                         const float* __restrict__ topkWeights, int nTokens, int nTopk,
                                         int invalidTokenExpertId, int maxTokensPerRank, void* recvBuffer,
-                                        void* workspace, uint32_t epoch, int* sharedMem) {
+                                        void* workspace, uint32_t epoch, float quantScale, int* sharedMem) {
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
-    if constexpr (DataType == DispatchDataType::MXFP8_E4M3) {
-      dispatchSendMxfp8<Hidden, EmitLocalExpertIds>(output, outputScales, outputTopkIdx, outputTopkWeights, inputTokens,
-                                                    nExperts, nRanks, topkIndices, topkWeights, nTokens, nTopk,
-                                                    invalidTokenExpertId, maxTokensPerRank, transport, workspace,
-                                                    nWorkerBlocks, sharedMem);
+    if constexpr (DataType == DispatchDataType::MXFP8_E4M3 ||
+                  (DataType == DispatchDataType::FP8_E4M3 && QuantizeStaticFp8)) {
+      dispatchSendQuantized<Hidden, DataType, EmitLocalExpertIds>(
+          output, outputScales, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices,
+          topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, quantScale, transport, workspace,
+          nWorkerBlocks, sharedMem);
     } else {
       dispatchSendTokens<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
           output, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices, topkWeights, nTokens,
@@ -344,7 +357,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(int* outputTopkIdx, float* outputTopkWei
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds, bool QuantizeStaticFp8>
 __global__ __launch_bounds__(DispatchNThreads,
                              1) void dispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
                                                     int* outputTopkIdx, float* outputTopkWeights, int64_t* outputLayout,
@@ -365,10 +378,10 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(context);
   const uint32_t epoch = workload.epoch_;
 
-  dispatchSend<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>(
+  dispatchSend<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds, QuantizeStaticFp8>(
       output, outputScales, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices,
       topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch,
-      sharedMem);
+      workload.quantScale_, sharedMem);
 
   if (static_cast<int>(blockIdx.x) < nRanks) {
     dispatchRecv(outputTopkIdx, outputTopkWeights, outputCount, transport, nExperts, nRanks, nTopk, maxTokensPerRank,
@@ -377,11 +390,12 @@ __global__ __launch_bounds__(DispatchNThreads,
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
-template <bool EmitLocalExpertIds>
+template <bool EmitLocalExpertIds, bool QuantizeStaticFp8>
 struct KernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return dispatchKernel<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds>;
+    constexpr bool Quantize = DataType == DispatchDataType::FP8_E4M3 && QuantizeStaticFp8;
+    return dispatchKernel<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds, Quantize>;
   }
 };
 
@@ -391,12 +405,21 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  if (workload.emitLocalExpertIds_) {
-    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true>>(
+  const bool quantizeStaticFp8 = workload.staticFp8InputMode_ == StaticFp8InputMode::QUANTIZE_BF16;
+  if (workload.emitLocalExpertIds_ && quantizeStaticFp8) {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true, true>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  } else if (workload.emitLocalExpertIds_) {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true, false>>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  } else if (quantizeStaticFp8) {
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<false, true>>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
         topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
   } else {
-    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<false>>(
+    dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<false, false>>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
         topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
   }

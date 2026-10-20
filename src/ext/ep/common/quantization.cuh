@@ -104,6 +104,19 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToMxfp8(const mscclpp::bf
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaled);
 }
 
+MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToStaticFp8(const mscclpp::bf16x8& source, float quantScale) {
+  const mscclpp::f32x8 values = mscclpp::to<mscclpp::f32x8>(source);
+  const mscclpp::f32x2 scales = make_float2(quantScale, quantScale);
+  const auto* pairs = reinterpret_cast<const mscclpp::f32x2*>(&values);
+  mscclpp::f32x8 scaled;
+  auto* scaledPairs = reinterpret_cast<mscclpp::f32x2*>(&scaled);
+#pragma unroll
+  for (int pair = 0; pair < mscclpp::f32x8::Size / mscclpp::f32x2::Size; ++pair) {
+    scaledPairs[pair] = pairs[pair] * scales;
+  }
+  return mscclpp::to<mscclpp::f8_e4m3x8>(scaled);
+}
+
 MSCCLPP_DEVICE_INLINE void dequantizeAndAccumulateFp8E4M3(const mscclpp::f8_e4m3x8& packed, float accumulationScale,
                                                           mscclpp::f32x2* accumulated) {
   const mscclpp::f32x8 converted = mscclpp::to<mscclpp::f32x8>(packed);

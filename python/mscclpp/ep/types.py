@@ -13,7 +13,7 @@ import torch
 from mscclpp import CommGroup
 
 from . import _cpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
 
 
 @dataclass
@@ -25,9 +25,10 @@ class QuantConfig:
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
     input scales with shape ``[num_tokens, hidden // 128]``.
-    Latency RANK_MAJOR instead accepts externally quantized FP8 and uses the
-    scalar multiplier ``scale``: values are stored as E4M3 after multiplication
-    by ``scale`` and dequantized during combine with ``1 / scale``.
+    Latency RANK_MAJOR uses the scalar multiplier ``scale``: values are stored
+    as E4M3 after multiplication by ``scale`` and dequantized during combine
+    with ``1 / scale``. ``input_mode`` selects externally quantized E4M3 input
+    or fused BF16 quantization inside dispatch.
     MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
     RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
     ``[rank, row, hidden // 32]``.
@@ -37,6 +38,7 @@ class QuantConfig:
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
     scale: Optional[float] = None
+    input_mode: StaticFp8InputMode = StaticFp8InputMode.PREQUANTIZED_E4M3
 
 
 @dataclass(frozen=True)

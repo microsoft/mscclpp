@@ -51,6 +51,8 @@ struct Workload {
   float quantScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
+  /// Input representation for latency rank-major static FP8.
+  StaticFp8InputMode staticFp8InputMode_ = StaticFp8InputMode::PREQUANTIZED_E4M3;
 };
 
 struct KernelConfigCache {

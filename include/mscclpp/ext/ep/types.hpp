@@ -64,6 +64,14 @@ enum class DispatchDataType {
   MXFP8_E4M3
 };
 
+/// Input representation for latency rank-major static FP8 dispatch.
+enum class StaticFp8InputMode {
+  /// Input is already quantized as E4M3(real * quantScale).
+  PREQUANTIZED_E4M3,
+  /// Input is BF16 and is quantized once inside dispatch before transport.
+  QUANTIZE_BF16
+};
+
 /// Arguments for throughput-mode routing preparation.
 ///
 /// Preparation computes local routing counts and exchanges them with peers;
@@ -142,7 +150,7 @@ struct LatencyDispatchRequest {
   /// Input token payload, 16-byte aligned.
   ///
   /// BF16, MXFP8_E4M3, and expert-major FP8_E4M3 take BF16 input. Rank-major
-  /// FP8_E4M3 takes prequantized E4M3 input.
+  /// FP8_E4M3 uses staticFp8InputMode to select prequantized E4M3 or BF16 input.
   const void* input;
   /// Input top-k expert IDs.
   const int64_t* topkIdx;
@@ -170,14 +178,19 @@ struct LatencyDispatchRequest {
   cudaStream_t stream;
   /// Static FP8 quantization multiplier for latency RANK_MAJOR.
   ///
-  /// The input is already quantized as E4M3(real * quantScale). Combine
-  /// dequantizes matching expert output with 1 / quantScale.
+  /// Dispatch produces E4M3(real * quantScale). Combine dequantizes matching
+  /// expert output with 1 / quantScale.
   float quantScale = 1.0f;
   /// Emit destination-rank-local expert IDs for latency RANK_MAJOR output.
   ///
   /// When false, valid outputTopkIdx entries remain global expert IDs. When
   /// true, valid entries are in [0, numExperts / numRanks).
   bool emitLocalExpertIds = false;
+  /// Input representation for latency RANK_MAJOR FP8_E4M3.
+  ///
+  /// Both modes produce the same static-scale E4M3 wire payload. This option
+  /// must remain PREQUANTIZED_E4M3 for every other mode, layout, and format.
+  StaticFp8InputMode staticFp8InputMode = StaticFp8InputMode::PREQUANTIZED_E4M3;
 };
 
 /// Arguments for throughput-mode dispatch.

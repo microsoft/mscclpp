@@ -13,6 +13,7 @@ from mscclpp_benchmark.correctness import (
     _encode_correctness_input,
     _stats_values,
 )
+from mscclpp_benchmark.ep.ep_bench_mscclpp import parse_kineto_kernels
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore
 
 
@@ -42,6 +43,17 @@ def test_bfloat16_raw_storage_round_trip():
     assert encoded.dtype == cp.uint16
     cp.testing.assert_array_equal(_decode_bfloat16_array(encoded), values)
     cp.testing.assert_array_equal(_stats_values(case, encoded), values)
+
+
+def test_separate_fp8_quantization_is_included_in_dispatch_timing():
+    events = [
+        SimpleNamespace(key="dispatchKernel<int>", count=4, self_device_time_total=32.0),
+        SimpleNamespace(key="combineKernel<int>", count=4, self_device_time_total=28.0),
+        SimpleNamespace(key="aten::mul", count=4, self_device_time_total=12.0),
+        SimpleNamespace(key="aten::copy_", count=4, self_device_time_total=8.0),
+    ]
+
+    assert parse_kineto_kernels(events, include_separate_quantization=True) == (13.0, 7.0)
 
 
 def test_selects_dtype_specific_configs_with_duplicate_sizes():

@@ -165,7 +165,7 @@ class MoECommunicator:
         subsequent operations; a view does not reserve a separate output slot.
         """
         active = verify_active_capacity(runtime_max_tokens_per_rank, self.max_tokens_per_rank)
-        data_type, _, _ = resolve_dispatch_format(self._config, quant)
+        data_type, _, _, _ = resolve_dispatch_format(self._config, quant)
         with torch.cuda.device(self.device):
             return tensor_from_pointer(
                 self._runtime.dispatch_output_buffer_ptr(),

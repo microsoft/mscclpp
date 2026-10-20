@@ -11,7 +11,7 @@ from typing import Optional, Tuple, Union
 import torch
 
 from . import _cpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
 from .types import DispatchHandle, DispatchLayoutInfo, DispatchOutput, MoECommunicatorConfig, PrepareHandle, QuantConfig
 from .utils import (
     check_tensor,
@@ -26,7 +26,7 @@ from .utils import (
 
 @dataclass
 class _DispatchRequest:
-    arguments: dict[str, Union[bool, int, float, DispatchDataType, _cpp.PrepareHandle]]
+    arguments: dict[str, Union[bool, int, float, DispatchDataType, StaticFp8InputMode, _cpp.PrepareHandle]]
     output: DispatchOutput
     num_tokens: int
     active_capacity: int
@@ -94,10 +94,11 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, _, scale = resolve_dispatch_format(config, quant)
+        data_type, _, scale, static_fp8_input_mode = resolve_dispatch_format(config, quant)
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3
-        input_dtype = torch.float8_e4m3fn if static_fp8 else torch.bfloat16
+        prequantized_static_fp8 = static_fp8 and static_fp8_input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3
+        input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
         output_shape = dispatch_shape(config, self._runtime.num_ranks, active)
         tokens = self._dispatch_buffer(
@@ -173,6 +174,7 @@ class RequestBuilder:
                 stream_ptr=stream.cuda_stream,
                 quant_scale=1.0 if scale is None else scale,
                 emit_local_expert_ids=config.emit_local_expert_ids,
+                static_fp8_input_mode=static_fp8_input_mode,
             ),
             output=output,
             num_tokens=num_tokens,
@@ -205,7 +207,7 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, input_scales, _ = resolve_dispatch_format(config, quant)
+        data_type, input_scales, _, _ = resolve_dispatch_format(config, quant)
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, payload_dtype(data_type), active)
         if data_type == DispatchDataType.FP8_E4M3:
             if input_scales is None:

@@ -41,6 +41,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("BF16", DispatchDataType::BF16)
       .value("FP8_E4M3", DispatchDataType::FP8_E4M3)
       .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3);
+  nb::enum_<StaticFp8InputMode>(m, "StaticFp8InputMode")
+      .value("PREQUANTIZED_E4M3", StaticFp8InputMode::PREQUANTIZED_E4M3)
+      .value("QUANTIZE_BF16", StaticFp8InputMode::QUANTIZE_BF16);
 
   nb::class_<PrepareHandle>(m, "PrepareHandle").def(nb::init<>());
   nb::class_<DispatchHandle>(m, "DispatchHandle").def(nb::init<>());
@@ -88,7 +91,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputTopkIdxPtr,
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
              int maxTokensPerRank, int invalidTokenExpertId, DispatchDataType dataType, int numBlocks,
-             uintptr_t streamPtr, float quantScale, bool emitLocalExpertIds) {
+             uintptr_t streamPtr, float quantScale, bool emitLocalExpertIds, StaticFp8InputMode staticFp8InputMode) {
             return self.dispatch(DispatchRequest{LatencyDispatchRequest{
                 .output = pointer(outputPtr),
                 .outputScales = pointer(outputScalesPtr),
@@ -108,6 +111,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .stream = stream(streamPtr),
                 .quantScale = quantScale,
                 .emitLocalExpertIds = emitLocalExpertIds,
+                .staticFp8InputMode = staticFp8InputMode,
             }});
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
@@ -115,7 +119,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
           nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"),
           nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::arg("quant_scale") = 1.0f,
-          nb::arg("emit_local_expert_ids") = false, nb::keep_alive<0, 1>())
+          nb::arg("emit_local_expert_ids") = false,
+          nb::arg("static_fp8_input_mode") = StaticFp8InputMode::PREQUANTIZED_E4M3, nb::keep_alive<0, 1>())
       .def(
           "dispatch_throughput",
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t inputScalesPtr, uintptr_t topkIdxPtr,

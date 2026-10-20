@@ -26,6 +26,7 @@ from mscclpp.ep import (
     MoECommunicatorConfig,
     MoEMode,
     QuantConfig,
+    StaticFp8InputMode,
 )
 
 NUM_TOPK = 8
@@ -107,6 +108,27 @@ def test_config_validation_at_construction(ep_group):
         quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5),
     )
     assert static_fp8.quant.scale == 0.5
+    fused_static_fp8 = replace(
+        static_fp8,
+        quant=QuantConfig(
+            format=DispatchDataType.FP8_E4M3,
+            scale=0.5,
+            input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+        ),
+    )
+    assert fused_static_fp8.quant.input_mode == StaticFp8InputMode.QUANTIZE_BF16
+    with pytest.raises(TypeError, match="StaticFp8InputMode"):
+        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, input_mode=1))
+    with pytest.raises(ValueError, match="only by latency RANK_MAJOR static FP8"):
+        replace(config, quant=QuantConfig(input_mode=StaticFp8InputMode.QUANTIZE_BF16))
+    with pytest.raises(ValueError, match="only by latency RANK_MAJOR static FP8"):
+        replace(
+            config,
+            quant=QuantConfig(
+                format=DispatchDataType.FP8_E4M3,
+                input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+            ),
+        )
     with pytest.raises(ValueError, match="requires quant.scale"):
         replace(
             config,
@@ -270,7 +292,15 @@ def _static_fp8_combine_reference(input, routes, weights, world_size, combine_mo
 
 
 def _run_dispatch_combine_case(
-    ep_group, mode, layout, data_type, combine_mode, prepared, apply_router_weights, hidden_size
+    ep_group,
+    mode,
+    layout,
+    data_type,
+    combine_mode,
+    prepared,
+    apply_router_weights,
+    hidden_size,
+    static_fp8_input_mode=StaticFp8InputMode.PREQUANTIZED_E4M3,
 ):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -315,12 +345,12 @@ def _run_dispatch_combine_case(
             ).float() * NUM_TOPK
             input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
             static_scale = 0.5 if fp8 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR else None
-            quant = QuantConfig(format=data_type, scale=static_scale)
+            quant = QuantConfig(format=data_type, scale=static_scale, input_mode=static_fp8_input_mode)
             dispatch_input = input
             if fp8 and mode == MoEMode.THROUGHPUT:
                 dispatch_input = torch.ones_like(input, dtype=torch.float8_e4m3fn)
                 quant.block_scales = values[:, None].expand(-1, hidden_size // 128).contiguous()
-            elif static_scale is not None:
+            elif static_scale is not None and static_fp8_input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3:
                 dispatch_input = (input.float() * static_scale).to(torch.float8_e4m3fn)
 
             result, handle = runtime.dispatch(
@@ -527,6 +557,74 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
     for case in CASES:
         _run_dispatch_combine_case(ep_group, *case, apply_router_weights, hidden_size)
         ep_group.barrier()
+        mode, layout, data_type, _, _ = case
+        if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR and data_type == DispatchDataType.FP8_E4M3:
+            _run_dispatch_combine_case(
+                ep_group,
+                *case,
+                apply_router_weights,
+                hidden_size,
+                static_fp8_input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+            )
+            ep_group.barrier()
+
+
+def test_fused_static_fp8_matches_prequantized_payload(ep_group):
+    num_tokens, capacity, hidden_size = 4, 4, 1024
+    num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
+    scale = 0.5
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=num_experts,
+        hidden_size=hidden_size,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            routes = torch.tensor(
+                [token_routes(ep_group.my_rank, ep_group.nranks, token, num_tokens) for token in range(num_tokens)],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            values = (
+                (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
+            ).float() * NUM_TOPK
+            input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
+            prequantized = (input.float() * scale).to(torch.float8_e4m3fn)
+
+            def dispatch_and_snapshot(payload, input_mode):
+                result, handle = runtime.dispatch(
+                    payload,
+                    routes,
+                    weights,
+                    QuantConfig(format=DispatchDataType.FP8_E4M3, scale=scale, input_mode=input_mode),
+                    stream=stream,
+                )
+                counts = result.layout.num_tokens_per_rank.clone()
+                result.combine_input_buffer.zero_()
+                combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
+                stream.synchronize()
+                torch.testing.assert_close(combined, torch.zeros_like(combined), rtol=0, atol=0)
+                rows = []
+                for source in range(ep_group.nranks):
+                    count = counts[source].item()
+                    source_rows = result.tokens[source, :count].view(torch.uint8).reshape(count, hidden_size)
+                    rows.append(source_rows[source_rows[:, 0].argsort()].clone())
+                return counts.cpu(), rows
+
+            prequantized_counts, prequantized_rows = dispatch_and_snapshot(
+                prequantized, StaticFp8InputMode.PREQUANTIZED_E4M3
+            )
+            fused_counts, fused_rows = dispatch_and_snapshot(input, StaticFp8InputMode.QUANTIZE_BF16)
+
+        torch.testing.assert_close(fused_counts, prequantized_counts, rtol=0, atol=0)
+        for fused, expected in zip(fused_rows, prequantized_rows):
+            torch.testing.assert_close(fused, expected, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])

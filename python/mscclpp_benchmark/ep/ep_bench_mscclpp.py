@@ -12,11 +12,30 @@ from .ep_bench_common import (
 )
 
 
-def parse_kineto_kernels(key_averages):
-    return (
-        sum_matching_kernel_us(key_averages, ("dispatch", "synchronizepeers")),
-        sum_matching_kernel_us(key_averages, ("combine",)),
+def _sum_separate_quantization_us(key_averages):
+    operator_names = {"aten::mul", "aten::copy_"}
+    operator_us = sum(
+        float(event.self_device_time_total) / int(event.count)
+        for event in key_averages
+        if event.key in operator_names and int(event.count) > 0
     )
+    if operator_us:
+        return operator_us
+
+    # CUDA graph replay omits the eager ATen scopes but retains the child kernel names.
+    kernel_markers = ("MulFunctor<float>", "ConvertToFloat8E4M3fnOp<float>")
+    return sum(
+        float(event.self_device_time_total) / int(event.count)
+        for event in key_averages
+        if any(marker in event.key for marker in kernel_markers) and int(event.count) > 0
+    )
+
+
+def parse_kineto_kernels(key_averages, include_separate_quantization=False):
+    dispatch_us = sum_matching_kernel_us(key_averages, ("dispatch", "synchronizepeers"))
+    if include_separate_quantization:
+        dispatch_us += _sum_separate_quantization_us(key_averages)
+    return dispatch_us, sum_matching_kernel_us(key_averages, ("combine",))
 
 
 def _stage_expert_output(dispatch_out, config):
@@ -96,20 +115,36 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     )
     fp8 = args.dispatch_dtype == "fp8_e4m3"
     static_fp8 = fp8 and latency and layout == ep.DispatchLayout.RANK_MAJOR
+    fused_static_fp8 = static_fp8 and args.static_fp8_input == "fused"
+    separate_static_fp8 = static_fp8 and args.static_fp8_input == "separate"
     quant = None
     if fp8:
         quant = ep.QuantConfig(
             format=ep.DispatchDataType.FP8_E4M3,
             scale=args.static_fp8_scale if static_fp8 else None,
+            input_mode=(
+                ep.StaticFp8InputMode.QUANTIZE_BF16 if fused_static_fp8 else ep.StaticFp8InputMode.PREQUANTIZED_E4M3
+            ),
         )
     dispatch_input = x
     input_real = x
+    separate_quant_workspace = None
+    separate_quant_scale = None
     if static_fp8:
         fp8_max = torch.finfo(torch.float8_e4m3fn).max
         if x.float().abs().max().item() * args.static_fp8_scale > fp8_max:
             raise ValueError("--static-fp8-scale overflows the generated activations")
-        dispatch_input = (x.float() * args.static_fp8_scale).to(torch.float8_e4m3fn)
-        input_real = dispatch_input.float() * (1.0 / args.static_fp8_scale)
+        quantized_reference = (x.float() * args.static_fp8_scale).to(torch.float8_e4m3fn)
+        input_real = quantized_reference.float() * (1.0 / args.static_fp8_scale)
+        if not fused_static_fp8:
+            dispatch_input = quantized_reference.clone()
+        if separate_static_fp8:
+            separate_quant_workspace = torch.empty_like(x, dtype=torch.float32)
+            separate_quant_scale = torch.tensor([args.static_fp8_scale], dtype=torch.float32, device=x.device)
+            torch.mul(x, separate_quant_scale, out=separate_quant_workspace)
+            dispatch_input.copy_(separate_quant_workspace)
+            if not torch.equal(dispatch_input.view(torch.uint8), quantized_reference.view(torch.uint8)):
+                raise AssertionError("separate static-FP8 quantization does not match the FP32 reference")
     group = CommGroup(mpi_comm=comm)
     config = ep.MoECommunicatorConfig(
         comm=group,
@@ -139,6 +174,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     out = torch.empty_like(x)
 
     def dispatch_fn():
+        if separate_static_fp8:
+            torch.mul(x, separate_quant_scale, out=separate_quant_workspace)
+            dispatch_input.copy_(separate_quant_workspace)
         return moe.dispatch(
             dispatch_input,
             topk_idx,
@@ -186,14 +224,18 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"num_ranks={num_ranks} tokens/rank={args.num_tokens} hidden={args.hidden} "
             f"num_experts={args.num_experts} experts/rank={config.num_local_experts} top_k={args.num_topk} "
             f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} "
-            f"static_fp8_scale={args.static_fp8_scale if static_fp8 else 'n/a'} combine_output=bf16",
+            f"static_fp8_scale={args.static_fp8_scale if static_fp8 else 'n/a'} "
+            f"static_fp8_input={args.static_fp8_input if static_fp8 else 'n/a'} combine_output=bf16",
             flush=True,
         )
 
     def teardown():
         nonlocal moe, preparation, output_buffer, expert_output, out, group, dispatch_input, input_real
+        nonlocal separate_quant_workspace, separate_quant_scale
         captured.clear()
-        preparation = output_buffer = expert_output = out = dispatch_input = input_real = moe = group = None
+        preparation = output_buffer = expert_output = out = dispatch_input = input_real = None
+        separate_quant_workspace = separate_quant_scale = None
+        moe = group = None
 
     return {
         "dispatch": dispatch_fn,
@@ -202,4 +244,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "barrier": None,
         "graph": graph_spec,
         "paired_profile": True,
+        "parse_kernels": (
+            lambda key_averages: parse_kineto_kernels(key_averages, include_separate_quantization=separate_static_fp8)
+        ),
     }

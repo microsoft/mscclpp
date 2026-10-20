@@ -12,7 +12,7 @@ from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 
-from ._cpp import DispatchDataType, DispatchLayout, MoEMode
+from ._cpp import DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
 from .types import MoECommunicatorConfig, QuantConfig
 
 
@@ -68,6 +68,14 @@ def validate_quant(
     data_type = resolve_dispatch_data_type(quant)
     block_scales = None if quant is None else quant.block_scales
     scale = None if quant is None else quant.scale
+    input_mode = StaticFp8InputMode.PREQUANTIZED_E4M3 if quant is None else quant.input_mode
+    if not isinstance(input_mode, StaticFp8InputMode):
+        raise TypeError("quant.input_mode must be a StaticFp8InputMode")
+    static_fp8 = (
+        data_type == DispatchDataType.FP8_E4M3 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR
+    )
+    if input_mode != StaticFp8InputMode.PREQUANTIZED_E4M3 and not static_fp8:
+        raise ValueError("quant.input_mode is supported only by latency RANK_MAJOR static FP8")
     if scale is not None:
         if isinstance(scale, bool) or not isinstance(scale, Real):
             raise TypeError("quant.scale must be a real number")
@@ -105,7 +113,7 @@ def validate_quant(
 
 def resolve_dispatch_format(
     config: MoECommunicatorConfig, quant: Optional[QuantConfig]
-) -> Tuple[DispatchDataType, Optional[torch.Tensor], Optional[float]]:
+) -> Tuple[DispatchDataType, Optional[torch.Tensor], Optional[float], StaticFp8InputMode]:
     """Resolve a per-call format override or the communicator's quantization default."""
     quant = config.quant if quant is None else quant
     data_type = validate_quant(quant, config.mode, config.output_layout, config.hidden_size)
@@ -113,6 +121,7 @@ def resolve_dispatch_format(
         data_type,
         None if quant is None else quant.block_scales,
         None if quant is None or quant.scale is None else float(quant.scale),
+        StaticFp8InputMode.PREQUANTIZED_E4M3 if quant is None else quant.input_mode,
     )
 
 
