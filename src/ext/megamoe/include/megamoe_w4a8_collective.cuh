@@ -37,11 +37,12 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-// Reuse CUTLASS A/SF layouts with an explicit token-tile pipeline. N32 needs
-// quarter-tile SFB selection, which the stock collective does not implement.
+// Reuse CUTLASS A/SF layouts with an N128 token-tile pipeline and smaller
+// runtime activation loads and MMA row counts.
 template <class Base, int TileN, int TileK, int LoadStages, bool SplitPipelines, int ClusterSize>
 struct W4A8Mainloop {
   static_assert(ClusterSize == 1 || ClusterSize == 2);
+  static_assert(TileN == 128);
   static constexpr int TileN64 = TileN > 64 ? 64 : TileN;
   static constexpr int TileN32 = TileN > 32 ? 32 : TileN;
   using ClusterShape = cute::Shape<cute::Int<ClusterSize>, cute::_1, cute::_1>;

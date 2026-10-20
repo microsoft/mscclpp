@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Routed-only native MegaMoE benchmark; launch with torchrun (see README)."""
+"""Routed-only N128 native MegaMoE benchmark; launch with torchrun (see README)."""
 
 import argparse
 from dataclasses import replace
@@ -288,7 +288,6 @@ def main():
         help="token-to-expert routing distribution (balanced, zipf, zipf_skewed, hot_experts)",
     )
     parser.add_argument("--zipf-alpha", type=float, default=1.2, help="Zipf exponent for zipf/zipf_skewed patterns")
-    parser.add_argument("--tile-n", type=int, default=None, help="override W4A8KernelConfig.tile_n")
     parser.add_argument("--tile-k", type=int, default=None, help="override W4A8KernelConfig.tile_k")
     parser.add_argument("--load-stages", type=int, default=None, help="override W4A8KernelConfig.load_stages")
     parser.add_argument("--num-warps", type=int, default=None, help="override W4A8KernelConfig.num_warps")
@@ -382,7 +381,6 @@ def main():
     policy_overrides = {
         name: getattr(args, name)
         for name in (
-            "tile_n",
             "tile_k",
             "load_stages",
             "num_warps",

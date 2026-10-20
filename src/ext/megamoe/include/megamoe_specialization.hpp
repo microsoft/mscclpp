@@ -88,7 +88,7 @@ constexpr bool W4AdaptiveCacheWeights = MSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHT
 constexpr int W4TokenStride = W4TileN < 64 ? 64 : W4TileN;
 
 static_assert(W4ClusterSize == 1 || W4ClusterSize == 2);
-static_assert(W4TileN == 32 || W4TileN == 64 || W4TileN == 128);
+static_assert(W4TileN == 128, "MegaMoE uses a fixed N128 upper bound with runtime row sizing");
 static_assert(W4TileK == 128 || W4TileK == 256 || W4TileK == 512);
 static_assert(W4LoadStages >= 2 && W4LoadStages <= 10);
 static_assert(W4NumWarps == 12 || W4NumWarps == 16);

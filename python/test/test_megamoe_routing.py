@@ -442,11 +442,10 @@ def test_native_routing_scratch_overflow_graph_reuse(routing_runtime, fixed_toke
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
-    # The smallest tensor storage caches about 5.3K local routes per CTA. Balanced 1024-token samples (and, on
-    # multiple ranks, 512-token hot samples) overflow one CTA, which then rescans its routes; eight CTAs keep every
-    # sample cached.
-    policy = W4A8KernelConfig(cluster_size=1, tile_n=32, load_stages=2, fixed_token_count=fixed_token_count)
-    config = runtime.config(1024, local_experts=8, top_k=8)
+    # Balanced 2048-token samples exceed one CTA's N128 two-stage route cache, as do 1024-token hot samples on
+    # multiple ranks. Eight CTAs keep every sample cached, including received routes on the hot expert's rank.
+    policy = W4A8KernelConfig(cluster_size=1, load_stages=2, fixed_token_count=fixed_token_count)
+    config = runtime.config(2048, local_experts=8, top_k=8)
     sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
     configs = [replace(config, sm_margin=sms - 1), config]
     module = runtime.collective(lambda: compile_kernel(policy))
@@ -460,7 +459,7 @@ def test_native_routing_scratch_overflow_graph_reuse(routing_runtime, fixed_toke
         runtime.collective(check_ctas)
         buffers = [_buffers(runtime, context) for context in contexts]
         graphs = {}
-        for tokens in (512, 1024):
+        for tokens in (1024, 2048):
             sample = _sample(config, tokens, "masked")
             for index, (context, storage) in enumerate(zip(contexts, buffers)):
                 with torch.cuda.stream(case.stream):
@@ -473,7 +472,7 @@ def test_native_routing_scratch_overflow_graph_reuse(routing_runtime, fixed_toke
                     _launch(context, storage, tokens, case.stream)
                 graphs[index, tokens] = graph
         references = {}
-        for tokens, patterns in ((1024, ("balanced", "mixed")), (512, ("hot_first", "random")), (1024, ("balanced",))):
+        for tokens, patterns in ((2048, ("balanced", "mixed")), (1024, ("hot_first", "random")), (2048, ("balanced",))):
             for pattern in patterns:
                 sample = _sample(config, tokens, pattern)
                 if (tokens, pattern) not in references:
@@ -534,7 +533,7 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
     config = runtime.config(128, local_experts=2, top_k=2, hidden=8192, intermediate=4096)
     kernel = None
     if use_jit:
-        policy = W4A8KernelConfig(tile_n=64, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
+        policy = W4A8KernelConfig(load_stages=5, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
         kernel = runtime.collective(lambda: compile_kernel(policy))
     weights = _host_weights(config)
     with _native_case(runtime) as case:
@@ -717,7 +716,7 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
     sms = torch.cuda.get_device_properties(runtime.device).multi_processor_count
     config = replace(config, sm_margin=max(0, sms - remaining_sms))
     policy = W4A8KernelConfig(
-        tile_n=64, fixed_token_count=True, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2
+        load_stages=5, fixed_token_count=True, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2
     )
     module = runtime.collective(lambda: compile_kernel(policy))
     weights = _host_weights(config)
@@ -781,32 +780,32 @@ def test_native_w4a8_decode_fixed_rows_masked_graph_reuse(routing_runtime, remai
 @pytest.mark.parametrize("clamp", [-1.0, 0.125])
 @pytest.mark.parametrize("cluster_size", [1, 2], ids=["cta1", "cta2"])
 @pytest.mark.parametrize(
-    "hidden,intermediate,tile_n,expert_major_tasks,cache_weights,adaptive_cache_weights",
+    "hidden,intermediate,expert_major_tasks,cache_weights,adaptive_cache_weights",
     [
-        (4096, 6656, 128, False, False, False),
-        (4096, 6656, 128, True, False, False),
-        (4096, 6656, 128, False, True, False),
-        (4096, 6656, 128, True, True, False),
-        (8192, 4096, 64, True, True, False),
-        (9216, 4096, 32, True, True, False),
-        (9216, 4608, 128, True, True, False),
-        (4096, 6656, 128, False, False, True),
-        (4096, 6656, 128, True, False, True),
-        (8192, 4096, 64, True, False, True),
-        (9216, 4096, 32, True, False, True),
+        (4096, 6656, False, False, False),
+        (4096, 6656, True, False, False),
+        (4096, 6656, False, True, False),
+        (4096, 6656, True, True, False),
+        (8192, 4096, True, True, False),
+        (9216, 4096, True, True, False),
+        (9216, 4608, True, True, False),
+        (4096, 6656, False, False, True),
+        (4096, 6656, True, False, True),
+        (8192, 4096, True, False, True),
+        (9216, 4096, True, False, True),
     ],
     ids=[
         "h4096-i6656-default",
         "h4096-i6656-order",
         "h4096-i6656-cache",
         "h4096-i6656-both",
-        "h8192-i4096-n64",
-        "h9216-i4096-n32",
+        "h8192-i4096-n128",
+        "h9216-i4096-n128",
         "h9216-i4608-n128",
         "h4096-i6656-adaptive",
         "h4096-i6656-order-adaptive",
-        "h8192-i4096-n64-adaptive",
-        "h9216-i4096-n32-adaptive",
+        "h8192-i4096-n128-adaptive",
+        "h9216-i4096-n128-adaptive",
     ],
 )
 def test_native_w4a8_expert_task_order_graph_reuse(
@@ -815,7 +814,6 @@ def test_native_w4a8_expert_task_order_graph_reuse(
     cluster_size,
     hidden,
     intermediate,
-    tile_n,
     expert_major_tasks,
     cache_weights,
     adaptive_cache_weights,
@@ -823,13 +821,12 @@ def test_native_w4a8_expert_task_order_graph_reuse(
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
-    capacity = tile_n + 1
+    capacity = 129
     config = runtime.config(capacity, local_experts=3, top_k=2, clamp=clamp, hidden=hidden, intermediate=intermediate)
     policy = W4A8KernelConfig(
-        tile_n=tile_n,
         load_stages=5 if cluster_size == 1 else 7,
         transfer_registers=64,
-        epilogue_warps=8 if tile_n == 128 else 4,
+        epilogue_warps=8,
         epilogue_registers=208,
         dispatch_chunk=4096,
         expert_major_tasks=expert_major_tasks,
@@ -862,7 +859,7 @@ def test_native_w4a8_expert_task_order_graph_reuse(
         with torch.cuda.graph(graph, stream=case.stream):
             _launch(context, storage, capacity, case.stream)
         peer = (runtime.rank + 1) % runtime.world
-        for active in (tile_n // 2, tile_n // 2 + 1, capacity, 0, tile_n // 2):
+        for active in (policy.tile_n // 2, policy.tile_n // 2 + 1, capacity, 0, policy.tile_n // 2):
             sample = _sample(config, capacity, "hot_first", valid_tokens=active)
             sample[1][:active].fill_(peer * config.local_experts)
             # Duplicated slots reach the next rank with exactly N or N+2 expert rows.
@@ -880,7 +877,7 @@ def test_native_w4a8_expert_task_order_graph_reuse(
                 local_ids = (torch.arange(capacity) % 2 * 2).to(torch.int32)
                 sample[1].copy_((peer * config.local_experts + local_ids[:, None]).expand_as(sample[1]))
                 counts = torch.bincount(local_ids, minlength=config.local_experts) * config.top_k
-                assert counts.tolist() == [tile_n + 2, 0, tile_n]
+                assert counts.tolist() == [policy.tile_n + 2, 0, policy.tile_n]
             expected = _routing_reference(config, sample, weights)
             with torch.cuda.stream(case.stream):
                 _stage(storage, sample)
@@ -981,23 +978,22 @@ def test_native_w4a8_cluster_occupancy_and_fixed_graph_replay(
 @_JIT_ONLY
 @pytest.mark.parametrize("adaptive_cache_weights", [False, True], ids=["static-cache", "adaptive-cache"])
 @pytest.mark.parametrize(
-    "tile_n,tile_k,load_stages,load_warps,epilogue_tokens",
-    [(32, 128, 5, 1, 16), (64, 256, 3, 2, 32), (32, 512, 2, 1, 16)],
-    ids=["n32-k128-loader1", "n64-k256-loader2", "n32-k512-loader1"],
+    "tile_k,load_stages,load_warps,epilogue_tokens",
+    [(128, 5, 1, 16), (256, 3, 2, 32), (512, 2, 1, 16)],
+    ids=["n128-k128-loader1", "n128-k256-loader2", "n128-k512-loader1"],
 )
 def test_native_w4a8_cluster_variants_match(
-    routing_runtime, tile_n, tile_k, load_stages, load_warps, epilogue_tokens, adaptive_cache_weights
+    routing_runtime, tile_k, load_stages, load_warps, epilogue_tokens, adaptive_cache_weights
 ):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
-    config = runtime.config(tile_n + 1, local_experts=2, top_k=2)
+    config = runtime.config(129, local_experts=2, top_k=2)
     modules = [
         runtime.collective(
             lambda cluster_size=cluster_size: compile_kernel(
                 W4A8KernelConfig(
                     cluster_size=cluster_size,
-                    tile_n=tile_n,
                     tile_k=tile_k,
                     load_stages=load_stages,
                     load_warps=load_warps,
@@ -1034,25 +1030,19 @@ def test_native_w4a8_cluster_variants_match(
 
 
 @_JIT_ONLY
-@pytest.mark.parametrize(
-    "capacity,hidden,intermediate,local_experts",
-    [(128, 8192, 4096, 16), (128, 4096, 6656, 32), (190, 4096, 6656, 32)],
-    ids=["h8192-i4096", "h4096-i6656", "h4096-i6656-case-g"],
-)
-def test_native_w4a8_jit_profile_ep4_graph_correctness(
-    configuration_runtime, capacity, hidden, intermediate, local_experts
-):
+@pytest.mark.parametrize("capacity", [32, 64, 128, 256, 512, 1024])
+def test_native_w4a8_jit_profile_ep32_graph_correctness(configuration_runtime, capacity):
     from mscclpp.ext.megamoe import compile_kernel, resolve_w4a8_kernel_config
 
     runtime, torch = configuration_runtime, configuration_runtime.torch
-    if runtime.world != 4:
-        pytest.skip("W4A8 JIT graph correctness requires EP4")
+    if runtime.world != 32:
+        pytest.skip("packaged W4A8 JIT graph correctness requires EP32")
     config = runtime.config(
         capacity,
-        local_experts=local_experts,
+        local_experts=32,
         top_k=8,
-        hidden=hidden,
-        intermediate=intermediate,
+        hidden=4096,
+        intermediate=6656,
     )
     policy = resolve_w4a8_kernel_config(config)
     module = runtime.collective(lambda: compile_kernel(policy))

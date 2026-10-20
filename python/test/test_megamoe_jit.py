@@ -5,6 +5,8 @@
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -14,6 +16,8 @@ from mscclpp.ext.megamoe import jit
 @pytest.mark.parametrize(
     "fields",
     [
+        {"tile_n": 32},
+        {"tile_n": 64},
         {"tile_n": 96},
         {"tile_k": 64},
         {"load_stages": 1},
@@ -24,7 +28,7 @@ from mscclpp.ext.megamoe import jit
         {"split_pipelines": 1},
         {"load_warps": 1, "split_pipelines": True},
         {"epilogue_tokens": 64},
-        {"tile_n": 32, "epilogue_tokens": 16, "epilogue_warps": 8},
+        {"num_warps": 12, "epilogue_warps": 8},
         {"epilogue_warps": 8, "epilogue_registers": 224, "transfer_registers": 128},
         {"epilogue_registers": 201},
         {"dispatch_chunk": 768},
@@ -59,6 +63,17 @@ def test_default_and_tuned_policies_validate():
         dispatch_chunk=4096,
     )
     assert tuned.epilogue_warps == 8 and tuned.dispatch_chunk == 4096
+
+
+def test_benchmark_rejects_removed_tile_n_option():
+    result = subprocess.run(
+        [sys.executable, "-m", "mscclpp.ext.megamoe.benchmark", "--tile-n", "128"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "unrecognized arguments: --tile-n 128" in result.stderr
 
 
 def test_builtin_requires_neither_compiler_nor_gpu(monkeypatch):
@@ -263,7 +278,7 @@ def test_changed_headers_or_config_get_new_cache_key(compiler_fixture):
     header = cutlass / "include/cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp"
     header.write_text("changed header")
     second = jit.compile_kernel(_tuned(), cache_dir=cache)
-    third = jit.compile_kernel(_tuned(tile_n=64), cache_dir=cache)
+    third = jit.compile_kernel(_tuned(load_stages=6), cache_dir=cache)
     assert len({first.key, second.key, third.key}) == 3
     assert len(commands) == 12
 

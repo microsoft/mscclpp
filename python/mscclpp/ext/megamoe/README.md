@@ -82,6 +82,12 @@ kernel = compile_kernel(policy)
 moe = MegaMoE(config, communicator, fc1, fc1_scale, fc2, fc2_scale, kernel=kernel)
 ```
 
+The compile-time token tile is fixed at N128. `tile_n` remains configuration
+metadata but accepts only `128`; N32/N64 policies are no longer selectable.
+Dynamic N is internal to the N128 kernel: activation TMA descriptors select
+N32/N64 loads for smaller blocks, and MMA rows round up to a multiple of 16.
+Other policy knobs, including load stages, remain configurable.
+
 Set `MSCCLPP_MEGAMOE_CUTLASS_ROOT` to the compatible CUTLASS checkout.
 `MSCCLPP_MEGAMOE_CACHE_DIR` optionally changes the content-addressed cache.
 `fixed_token_count=True` is intended for captured decode where every rank uses
@@ -112,6 +118,24 @@ Packaged exact-match policies can be loaded with
 `resolve_w4a8_kernel_config`. Resident-grid results can be loaded with
 `resolve_resident_tuning`.
 
+JIT profile JSON is grouped by GPU model, for example `"GB300": {"entries": [...],
+"provenance": {...}}`. Resolution automatically uses the current CUDA device name
+and never falls back to another GPU's profiles. Offline callers can select a
+section explicitly with `resolve_w4a8_kernel_config(config, device_name="GB300")`.
+Profiles keep `"version": 1`; GPU-model sections are required instead of the
+old flat structure.
+
+The packaged GB300 EP32 profiles cover H4096/I6656, 32 local experts per GPU,
+1024 global experts, top-8, and 32/64/128/256/512/1024 input tokens per rank.
+These are the only six packaged JIT profiles; legacy entries have been removed.
+All use N128 with `sm_margin=0`. Other knobs are tuned on balanced routing
+separately for each token bucket, then frozen across balanced, Zipf,
+rank-skewed Zipf, and hot-expert routing, without per-distribution retuning.
+Load stages and other knobs may differ between token buckets.
+Select the profiles with `--w4-profile --sm-margin 0` in the benchmark. They
+do not change the builtin policy. Historical resident-grid tuning metadata is
+separate from the selectable JIT policies.
+
 ## Benchmark
 
 Launch the routed benchmark with `torchrun`:
@@ -123,9 +147,8 @@ torchrun --nproc-per-node=4 -m mscclpp.ext.megamoe.benchmark \
 ```
 
 Use `--w4-profile` to select an exact packaged or external W4A8 policy, or
-override individual `W4A8KernelConfig` fields (such as `--tile-n 128
---load-stages 8 --epilogue-warps 8 --epilogue-registers 208
+override configurable `W4A8KernelConfig` fields (such as
+`--load-stages 7 --epilogue-warps 8 --epilogue-registers 208
 --transfer-registers 64 --dispatch-chunk 4096 --adaptive-cache-weights`). Use
 `--routing-pattern` (`balanced`, `zipf`, `zipf_skewed`, or `hot_experts`) to
 benchmark unbalanced expert routing distributions.
-

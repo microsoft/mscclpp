@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Exact-match loading of external MegaMoE W4A8 JIT policies."""
+"""GPU-specific exact-match loading of MegaMoE W4A8 JIT policies."""
 
 from copy import deepcopy
 from dataclasses import asdict, fields
@@ -26,7 +26,7 @@ _CONFIG_FIELDS = tuple(field.name for field in fields(W4A8KernelConfig))
 
 
 class W4A8KernelProfileMismatchError(ValueError):
-    """No external W4A8 policy exactly covers the requested context."""
+    """No W4A8 policy exactly covers the requested GPU and workload."""
 
 
 def _fields(value, allowed, required, label):
@@ -51,13 +51,8 @@ def _validate_match(value):
     return dict(value)
 
 
-def _validate_profile(value):
-    top_fields = ("_license", "version", "kind", "entries", "provenance")
-    _fields(value, top_fields, top_fields[1:], "W4A8 kernel profile")
-    if type(value["version"]) is not int or value["version"] != PROFILE_VERSION:
-        raise ValueError("unsupported W4A8 kernel profile version")
-    if value["kind"] != PROFILE_KIND:
-        raise ValueError("unsupported W4A8 kernel profile kind")
+def _validate_gpu_profile(value):
+    _fields(value, ("entries", "provenance"), ("entries", "provenance"), "W4A8 GPU profile")
     if not isinstance(value["entries"], list) or not value["entries"]:
         raise ValueError("W4A8 kernel profile requires entries")
 
@@ -89,22 +84,52 @@ def _validate_profile(value):
     ):
         raise ValueError("W4A8 kernel profile provenance values must be nonempty strings")
     return {
-        "version": PROFILE_VERSION,
-        "kind": PROFILE_KIND,
         "entries": entries,
         "provenance": dict(value["provenance"]),
     }
 
 
+def _gpu_key(device_name):
+    if not isinstance(device_name, str) or not device_name.strip():
+        raise ValueError("GPU device name must be a nonempty string")
+    return device_name.strip().removeprefix("NVIDIA ")
+
+
+def _current_gpu_name():
+    import torch
+
+    return torch.cuda.get_device_name()
+
+
+def _validate_profile(value):
+    if not isinstance(value, dict):
+        raise ValueError("W4A8 kernel profile must be an object")
+    metadata = ("_license", "version", "kind")
+    gpu_keys = tuple(key for key in value if key not in metadata)
+    _fields(value, metadata + gpu_keys, ("version", "kind"), "W4A8 kernel profile")
+    if type(value["version"]) is not int or value["version"] != PROFILE_VERSION:
+        raise ValueError("unsupported W4A8 kernel profile version")
+    if value["kind"] != PROFILE_KIND:
+        raise ValueError("unsupported W4A8 kernel profile kind")
+    if not gpu_keys:
+        raise ValueError("W4A8 kernel profile requires GPU sections")
+    profiles = {}
+    for gpu in gpu_keys:
+        if gpu != _gpu_key(gpu):
+            raise ValueError(f"GPU profile key must be canonical, for example 'GB300': {gpu!r}")
+        profiles[gpu] = _validate_gpu_profile(value[gpu])
+    return {"version": PROFILE_VERSION, "kind": PROFILE_KIND, **profiles}
+
+
 def load_w4a8_kernel_profiles(profile_path=None):
-    """Load and strictly validate a versioned external W4A8 policy profile."""
+    """Load and validate W4A8 policies grouped by GPU model."""
     path = DEFAULT_PROFILE_PATH if profile_path is None else Path(profile_path)
     with path.open(encoding="utf-8") as source:
         return deepcopy(_validate_profile(json.load(source)))
 
 
-def resolve_w4a8_kernel_config(config, *, profile_path=None):
-    """Resolve one exact W4A8 policy for ``config`` or raise without fallback."""
+def resolve_w4a8_kernel_config(config, *, profile_path=None, device_name=None):
+    """Resolve an exact policy for the current GPU, or an explicit offline device name."""
     from .api import MegaMoEConfig
 
     if not isinstance(config, MegaMoEConfig):
@@ -119,8 +144,11 @@ def resolve_w4a8_kernel_config(config, *, profile_path=None):
         "gate_up_clamp": "negative" if config.gate_up_clamp < 0 else "nonnegative",
     }
     profile = load_w4a8_kernel_profiles(profile_path)
-    matches = [entry for entry in profile["entries"] if entry["match"] == actual]
+    gpu = _gpu_key(_current_gpu_name() if device_name is None else device_name)
+    if gpu not in profile or not isinstance(profile[gpu], dict):
+        raise W4A8KernelProfileMismatchError(f"no W4A8 kernel profile for GPU {gpu!r}")
+    matches = [entry for entry in profile[gpu]["entries"] if entry["match"] == actual]
     if len(matches) != 1:
         requested = ", ".join(f"{name}={actual[name]!r}" for name in _MATCH_FIELDS)
-        raise W4A8KernelProfileMismatchError(f"no exact W4A8 kernel profile entry for {requested}")
+        raise W4A8KernelProfileMismatchError(f"no exact W4A8 kernel profile entry for GPU {gpu!r}: {requested}")
     return W4A8KernelConfig(**matches[0]["config"])

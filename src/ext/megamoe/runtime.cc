@@ -80,7 +80,7 @@ MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
 }
 
 bool validW4Metadata(const MegaMoeJitApiV1& api) {
-  const bool tileN = api.tileN == 32 || api.tileN == 64 || api.tileN == 128;
+  const bool tileN = api.tileN == 128;
   const bool tileK = api.tileK == 128 || api.tileK == 256 || api.tileK == 512;
   const bool transfer = api.transferRegisters == 32 || api.transferRegisters == 64 || api.transferRegisters == 96 ||
                         api.transferRegisters == 128;

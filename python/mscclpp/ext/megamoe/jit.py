@@ -27,6 +27,8 @@ _BUILD_FORMAT_VERSION = 3
 class W4A8KernelConfig:
     """Compile-time W4A8 policy for one external native JIT module.
 
+    ``tile_n`` is fixed at 128. Activation loads and MMA rows shrink at runtime
+    for partial tiles; N32/N64 are not separate selectable JIT policies.
     ``fixed_token_count=True`` opts captured decode into equal input row counts
     on all ranks. Masked routes may still differ. False supports ragged prefill.
     ``expert_major_tasks`` orders output tiles across each expert's token blocks.
@@ -60,7 +62,7 @@ class W4A8KernelConfig:
     def __post_init__(self):
         allowed = (
             ("cluster_size", (1, 2)),
-            ("tile_n", (32, 64, 128)),
+            ("tile_n", (128,)),
             ("tile_k", (128, 256, 512)),
             ("num_warps", (12, 16)),
             ("transfer_registers", (32, 64, 96, 128)),
