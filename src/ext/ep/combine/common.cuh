@@ -197,8 +197,8 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  static_assert(Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 || Hidden == 7168 ||
-                Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
+  static_assert(Hidden == 1024 || Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 ||
+                Hidden == 7168 || Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
   const int nExperts = workload.numExperts_;
   const int nRanks = context.numRanks_;
   const int nLocalExperts = nExperts / nRanks;
@@ -224,7 +224,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                   workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
         output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
         context, numBlocks, stream);
@@ -241,6 +242,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   } else {
     switch (workload.dispatchDataType_) {
@@ -254,6 +257,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                                  DispatchLayout::EXPERT_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
   }
   EP_HOST_ASSERT(false && "unsupported dispatch data type");
@@ -290,18 +295,28 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
     if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                     workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     }
   } else {
     if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
       EP_HOST_ASSERT(srcInfo != nullptr);
       EP_HOST_ASSERT(layoutRange != nullptr);
     } else {
-      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
+      EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                     workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
     }
   }
 
   switch (workload.hidden_) {
+    case 1024:
+      return combineHidden<Mode, 1024, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 2048:
+      return combineHidden<Mode, 2048, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
     case 4096:
       return combineHidden<Mode, 4096, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,

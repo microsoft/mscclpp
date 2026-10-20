@@ -155,6 +155,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   }
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
+  if (dispatchDataType == DispatchDataType::MXFP8_E4M3 && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("MXFP8 dispatch requires RANK_MAJOR layout");
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
                                         context.numRanks_, numExperts, numTopk, context.outputLayout_,
@@ -165,6 +168,10 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
+      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
   }
 
   const Workload workload{.epoch_ = context.epoch_,
@@ -216,7 +223,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   void* output = request.output;
   const void* input = request.input;
   const int64_t* topkIdx = metadata->topkIdx_;
-  const float* topkWeights = metadata->topkWeights_;
+  const float* topkWeights = request.applyRouterWeights ? metadata->topkWeights_ : nullptr;
   const int* srcInfo = metadata->srcInfo_;
   const int64_t* layoutRange = metadata->layoutRange_;
   const int numTokens = handle.numTokens_;
@@ -249,9 +256,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(input == allocationLayout.combineBuffer_);
-  }
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(input == combineBuffer);
 
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     if (mode == CombineMode::DIRECT_SEND) {

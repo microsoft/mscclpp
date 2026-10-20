@@ -19,3 +19,8 @@ target_sources(unit_tests PRIVATE
     gpu_ipc_mem_tests.cc
     bulk_tests.cu
 )
+
+if(TARGET mscclpp_ep)
+    target_sources(unit_tests PRIVATE ep_quantization_tests.cu)
+    target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
+endif()
