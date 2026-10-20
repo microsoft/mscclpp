@@ -107,7 +107,7 @@ def test_mxfp4_canonical_rounding_and_layout():
         quantize_mxfp4(torch.ones(2, 31))
 
 
-@pytest.mark.parametrize("pattern", ["balanced", "zipf", "zipf_skewed", "hot_experts"])
+@pytest.mark.parametrize("pattern", ["balanced", "zipf", "zipf_skewed", "hot_experts", "lognormal"])
 def test_benchmark_unbalanced_routing_generation(pattern):
     torch = pytest.importorskip("torch")
     from mscclpp.ext.megamoe.benchmark import _build_global_expert_counts, _generate_routing

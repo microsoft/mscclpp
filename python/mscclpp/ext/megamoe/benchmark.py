@@ -16,6 +16,7 @@ ROUTING_PATTERNS = (
     "zipf",
     "zipf_skewed",
     "hot_experts",
+    "lognormal",
 )
 
 
@@ -66,7 +67,7 @@ def _scale_counts(weights, total_routes, max_per_expert):
     return counts
 
 
-def _build_global_expert_counts(config, pattern, zipf_alpha, seed):
+def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_sigma=0.85):
     import random
 
     world = config.world_size
@@ -119,10 +120,17 @@ def _build_global_expert_counts(config, pattern, zipf_alpha, seed):
             weights.extend(rank_w)
         return _scale_counts(weights, total_routes, max_per_expert)
 
+    if pattern == "lognormal":
+        # Global i.i.d. LogNormal(0, sigma) expert popularity across all ranks (sigma=0.85 matches c1024-decode-p50).
+        if not math.isfinite(lognormal_sigma) or lognormal_sigma < 0:
+            raise ValueError("lognormal_sigma must be a finite nonnegative number")
+        weights = [math.exp(rng.gauss(0.0, lognormal_sigma)) for _ in range(world * local_e)]
+        return _scale_counts(weights, total_routes, max_per_expert)
+
     raise ValueError(f"Unsupported routing pattern: {pattern}")
 
 
-def _generate_routing(config, pattern, zipf_alpha, seed, device):
+def _generate_routing(config, pattern, zipf_alpha, seed, device, *, lognormal_sigma=0.85):
     import torch
 
     if pattern == "balanced":
@@ -133,7 +141,7 @@ def _generate_routing(config, pattern, zipf_alpha, seed, device):
         scores /= scores.sum(dim=-1, keepdim=True)
         return ids, scores
 
-    counts = _build_global_expert_counts(config, pattern, zipf_alpha, seed)
+    counts = _build_global_expert_counts(config, pattern, zipf_alpha, seed, lognormal_sigma=lognormal_sigma)
     total_tokens = config.world_size * config.max_tokens
     assert sum(counts) <= total_tokens * config.top_k
 
@@ -285,9 +293,15 @@ def main():
         "--routing-pattern",
         choices=ROUTING_PATTERNS,
         default="balanced",
-        help="token-to-expert routing distribution (balanced, zipf, zipf_skewed, hot_experts)",
+        help="token-to-expert routing distribution (balanced, zipf, zipf_skewed, hot_experts, lognormal)",
     )
     parser.add_argument("--zipf-alpha", type=float, default=1.2, help="Zipf exponent for zipf/zipf_skewed patterns")
+    parser.add_argument(
+        "--lognormal-sigma",
+        type=float,
+        default=0.85,
+        help="log-normal sigma for lognormal routing pattern (default: 0.85, matching c1024-decode-all-ranks-p50)",
+    )
     parser.add_argument("--tile-k", type=int, default=None, help="override W4A8KernelConfig.tile_k")
     parser.add_argument("--load-stages", type=int, default=None, help="override W4A8KernelConfig.load_stages")
     parser.add_argument("--num-warps", type=int, default=None, help="override W4A8KernelConfig.num_warps")
@@ -347,6 +361,8 @@ def main():
         parser.error("W4A8 H/I must be 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
+    if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:
+        parser.error("--lognormal-sigma must be nonnegative and finite")
 
     import torch
     import torch.distributed as dist
@@ -418,7 +434,9 @@ def main():
     context = MegaMoE(config, communicator, *weights, kernel=kernel)
     initialization_ms = (time.perf_counter() - start) * 1000
     inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
-    ids, scores = _generate_routing(config, args.routing_pattern, args.zipf_alpha, args.seed, device)
+    ids, scores = _generate_routing(
+        config, args.routing_pattern, args.zipf_alpha, args.seed, device, lognormal_sigma=args.lognormal_sigma
+    )
     routing_summary = _routing_summary(config, ids, kernel_config.tile_n)
     if args.input_mode == "direct":
         direct = context.input_view(args.tokens)

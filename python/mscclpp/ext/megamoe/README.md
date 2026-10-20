@@ -150,5 +150,6 @@ Use `--w4-profile` to select an exact packaged or external W4A8 policy, or
 override configurable `W4A8KernelConfig` fields (such as
 `--load-stages 7 --epilogue-warps 8 --epilogue-registers 208
 --transfer-registers 64 --dispatch-chunk 4096 --adaptive-cache-weights`). Use
-`--routing-pattern` (`balanced`, `zipf`, `zipf_skewed`, or `hot_experts`) to
-benchmark unbalanced expert routing distributions.
+`--routing-pattern` (`balanced`, `zipf`, `zipf_skewed`, `hot_experts`, or
+`lognormal` with `--lognormal-sigma`) to benchmark unbalanced expert routing
+distributions.
