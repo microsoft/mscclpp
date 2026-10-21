@@ -263,7 +263,7 @@ def test_launch_snapshots_workers_and_collects_only_rank_zero_results(monkeypatc
     ]
     for process in processes:
         process.stdin.close.assert_called_once()
-        process.wait.assert_called_once_with(timeout=20)
+        process.wait.assert_called_once_with(timeout=30)
 
 
 @pytest.mark.parametrize("failure", ["worker", "timeout", "spawn", "collect"])
@@ -346,6 +346,102 @@ def test_supervisor_eof_terminates_its_process_group(tmp_path):
                 os.killpg(worker_pid, signal.SIGKILL)
             process.kill()
             process.wait()
+        process.stdout.close()
+        process.stderr.close()
+
+
+@pytest.mark.parametrize(
+    "exit_mode,runner",
+    [("eof", "synthetic"), ("signal", "synthetic"), ("launcher_exit", "synthetic"), ("eof", "torchrun")],
+)
+def test_supervisor_reaps_isolated_descendants(tmp_path, exit_mode, runner):
+    pid_file = tmp_path / "isolated.pids"
+    worker = """
+import os,pathlib,signal,subprocess,sys,time
+signal.signal(signal.SIGTERM,signal.SIG_IGN)
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True)
+pathlib.Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}')
+while True:
+    time.sleep(1)
+"""
+    launcher = """
+import pathlib,signal,subprocess,sys,time
+worker=subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]],start_new_session=True)
+def stop(signum,frame):
+    worker.terminate()
+    try:
+        worker.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        worker.kill()
+        worker.wait()
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM,stop)
+while not pathlib.Path(sys.argv[1]).exists():
+    time.sleep(0.02)
+if sys.argv[3]=='launcher_exit':
+    raise SystemExit(7)
+while True:
+    time.sleep(1)
+"""
+    command = [sys.executable, "-c", launcher, str(pid_file), worker, exit_mode]
+    if runner == "torchrun":
+        worker_file = tmp_path / "isolated_worker.py"
+        worker_file.write_text(worker)
+        command = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            "--local-addr=127.0.0.1",
+            "--nnodes=1",
+            "--nproc-per-node=1",
+            str(worker_file),
+            str(pid_file),
+        ]
+    process = subprocess.Popen(
+        [sys.executable, "-c", multinode.SUPERVISOR, json.dumps(command)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    pids = []
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and process.poll() is None:
+            if pid_file.exists() and len(contents := pid_file.read_text().split()) == 2:
+                pids = list(map(int, contents))
+                break
+            time.sleep(0.02)
+        if not pids:
+            process.stdin.close()
+            process.wait(timeout=25)
+            pytest.fail(f"Worker did not become ready:\n{process.stderr.read().decode()}")
+        if exit_mode == "eof":
+            process.stdin.close()
+        elif exit_mode == "signal":
+            process.terminate()
+        assert process.wait(timeout=25) != 0
+        errors = process.stderr.read()
+        assert b"Worker cleanup timed out" not in errors
+        if runner == "synthetic":
+            assert errors == b""
+        for pid in pids:
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+    finally:
+        if not process.stdin.closed:
+            process.stdin.close()
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if process.poll() is None:
+            try:
+                process.wait(timeout=25)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
         process.stdout.close()
         process.stderr.close()
 
