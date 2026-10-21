@@ -217,25 +217,19 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
     } else {
       static_assert(sizeof(mscclpp::bf16x8) == sizeof(uint4));
       const auto* inputData = static_cast<const uint4*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
-      if constexpr (DataType == DispatchDataType::FP8_E4M3) {
+      mscclpp::bf16x8 values[MaxVectorsPerThread];
 #pragma unroll
-        for (int i = 0; i < MaxVectorsPerThread; ++i) {
-          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-          if (inputIdx < HiddenVectors) {
-            stagedData[inputIdx] = quantizeBf16x8ToStaticFp8(mscclpp::bf16x8(inputData[inputIdx]), quantScale);
-          }
-        }
-      } else {
-        mscclpp::bf16x8 values[MaxVectorsPerThread];
+      for (int i = 0; i < MaxVectorsPerThread; ++i) {
+        const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+        if (inputIdx < HiddenVectors) values[i] = mscclpp::bf16x8(inputData[inputIdx]);
+      }
 #pragma unroll
-        for (int i = 0; i < MaxVectorsPerThread; ++i) {
-          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-          if (inputIdx < HiddenVectors) values[i] = mscclpp::bf16x8(inputData[inputIdx]);
-        }
-#pragma unroll
-        for (int i = 0; i < MaxVectorsPerThread; ++i) {
-          const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-          if (inputIdx < HiddenVectors) {
+      for (int i = 0; i < MaxVectorsPerThread; ++i) {
+        const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+        if (inputIdx < HiddenVectors) {
+          if constexpr (DataType == DispatchDataType::FP8_E4M3) {
+            stagedData[inputIdx] = quantizeBf16x8ToStaticFp8(values[i], quantScale);
+          } else {
             uint8_t scale;
             stagedData[inputIdx] = quantizeBf16x8ToMxfp8(values[i], scale, laneId);
             if (laneId % 4 == 0) stagedScales[inputIdx / 4] = scale;

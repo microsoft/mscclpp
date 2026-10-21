@@ -98,7 +98,7 @@ MSCCLPP_DEVICE_INLINE mscclpp::f8_e4m3x8 quantizeBf16x8ToMxfp8(const mscclpp::bf
   mscclpp::f32x8 scaled;
   auto* scaledPairs = reinterpret_cast<mscclpp::f32x2*>(&scaled);
 #pragma unroll
-  for (int pair = 0; pair < mscclpp::f32x8::Size / 2; ++pair) {
+  for (int pair = 0; pair < mscclpp::f32x8::Size / mscclpp::f32x2::Size; ++pair) {
     scaledPairs[pair] = pairs[pair] * inverses;
   }
   return mscclpp::to<mscclpp::f8_e4m3x8>(scaled);
