@@ -151,7 +151,7 @@ __global__ __launch_bounds__(CombineNThreads,
       recvRankMajorRemotePartialsTma<Hidden, CombineMode::DIRECT_SEND, DispatchType>(
           output, expertOutput, topkIndices, topkWeights, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
           transport, workspaceView, sharedMemory,
-          DispatchType == DispatchDataType::FP8_E4M3 ? 1.0f / workload.quantScale_ : 1.0f);
+          DispatchType == DispatchDataType::FP8_E4M3 ? 1.0f / workload.combineScale_ : 1.0f);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);

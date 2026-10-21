@@ -94,7 +94,9 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, _, scale, static_fp8_input_mode = resolve_dispatch_format(config, quant)
+        data_type, _, scale, static_fp8_input_mode, combine_data_type, combine_scale = resolve_dispatch_format(
+            config, quant
+        )
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3
         prequantized_static_fp8 = static_fp8 and static_fp8_input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3
@@ -115,7 +117,7 @@ class RequestBuilder:
         src_info = layout_range = recv_ids = recv_weights = scales = combine_input = None
         if rank_major:
             recv_ids, recv_weights = self._routing_views(output_shape)
-            combine_dtype = torch.float8_e4m3fn if static_fp8 else torch.bfloat16
+            combine_dtype = payload_dtype(combine_data_type)
             combine_input = self._view(
                 self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), combine_dtype
             )
@@ -139,8 +141,14 @@ class RequestBuilder:
             )
         output_quant = (
             None
-            if data_type == DispatchDataType.BF16
-            else QuantConfig(format=data_type, block_scales=scales, scale=scale)
+            if data_type == DispatchDataType.BF16 and combine_data_type == DispatchDataType.BF16
+            else QuantConfig(
+                format=data_type,
+                block_scales=scales,
+                scale=scale,
+                combine_format=combine_data_type,
+                combine_scale=combine_scale,
+            )
         )
         output = DispatchOutput(
             tokens=tokens,
@@ -175,6 +183,8 @@ class RequestBuilder:
                 quant_scale=1.0 if scale is None else scale,
                 emit_local_expert_ids=config.emit_local_expert_ids,
                 static_fp8_input_mode=static_fp8_input_mode,
+                combine_data_type=combine_data_type,
+                combine_scale=1.0 if combine_scale is None else combine_scale,
             ),
             output=output,
             num_tokens=num_tokens,
@@ -207,7 +217,7 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, input_scales, _, _ = resolve_dispatch_format(config, quant)
+        data_type, input_scales, _, _, _, _ = resolve_dispatch_format(config, quant)
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, payload_dtype(data_type), active)
         if data_type == DispatchDataType.FP8_E4M3:
             if input_scales is None:
@@ -347,7 +357,7 @@ class RequestBuilder:
         expert_dtype = torch.bfloat16
         if self._config.mode == MoEMode.LATENCY and self._config.output_layout == DispatchLayout.RANK_MAJOR:
             quant = handle.output_info.quant
-            if quant is not None and quant.format == DispatchDataType.FP8_E4M3:
+            if quant is not None and quant.combine_format == DispatchDataType.FP8_E4M3:
                 expert_dtype = torch.float8_e4m3fn
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), expert_dtype)
         if (

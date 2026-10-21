@@ -47,8 +47,12 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
-  /// Static FP8 quantization multiplier; one for non-static formats.
-  float quantScale_ = 1.0f;
+  /// Rank-major combine input format.
+  DispatchDataType combineDataType_ = DispatchDataType::BF16;
+  /// Static FP8 dispatch multiplier; one for non-static formats.
+  float dispatchScale_ = 1.0f;
+  /// Static FP8 combine multiplier; one for BF16 combine.
+  float combineScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
   /// Input representation for latency rank-major static FP8.

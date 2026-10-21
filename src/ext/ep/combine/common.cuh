@@ -246,9 +246,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-    switch (workload.dispatchDataType_) {
+    switch (workload.combineDataType_) {
       case DispatchDataType::BF16:
-      case DispatchDataType::MXFP8_E4M3:
         return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
@@ -256,6 +255,8 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
         return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3, 0, DispatchLayout::RANK_MAJOR,
                                  KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
                                                  workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        break;
     }
     EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
   }
@@ -322,6 +323,8 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
+  EP_HOST_ASSERT(workload.outputLayout_ != DispatchLayout::RANK_MAJOR ||
+                 isSupportedCombineDataType(workload.combineDataType_));
   if constexpr (Mode == CombineMode::DIRECT_SEND) {
     if (workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR) {
       EP_HOST_ASSERT(srcInfo != nullptr);

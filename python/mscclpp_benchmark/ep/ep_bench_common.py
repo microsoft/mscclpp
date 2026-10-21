@@ -129,7 +129,7 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
 # ----------------------------------------------------------------------------
 def simulated_gemm_output(dispatch_out):
     """Simulate an identity expert and return its real-valued output."""
-    if dispatch_out.quant is None:
+    if dispatch_out.quant is None or dispatch_out.tokens.dtype == torch.bfloat16:
         return dispatch_out.tokens
     tokens = dispatch_out.tokens
     if dispatch_out.quant.block_scales is not None:

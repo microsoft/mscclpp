@@ -25,10 +25,12 @@ class QuantConfig:
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
     input scales with shape ``[num_tokens, hidden // 128]``.
-    Latency RANK_MAJOR uses the scalar multiplier ``scale``: values are stored
-    as E4M3 after multiplication by ``scale`` and dequantized during combine
-    with ``1 / scale``. ``input_mode`` selects externally quantized E4M3 input
-    or fused BF16 quantization inside dispatch.
+    Latency RANK_MAJOR dispatch uses the scalar multiplier ``scale``: values are
+    stored as E4M3 after multiplication by ``scale``. ``input_mode`` selects
+    externally quantized E4M3 input or fused BF16 quantization inside dispatch.
+    Rank-major combine input defaults to BF16. Set ``combine_format`` to
+    ``FP8_E4M3`` and provide an independent ``combine_scale`` to consume expert
+    output stored as E4M3(real * combine_scale).
     MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
     RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
     ``[rank, row, hidden // 32]``.
@@ -39,6 +41,8 @@ class QuantConfig:
     block_scales: Optional[torch.Tensor] = None
     scale: Optional[float] = None
     input_mode: StaticFp8InputMode = StaticFp8InputMode.PREQUANTIZED_E4M3
+    combine_format: DispatchDataType = DispatchDataType.BF16
+    combine_scale: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -199,9 +203,8 @@ class DispatchOutput:
     Runtime-owned views retain native storage even after slicing, but their
     contents are reused by later operations. Throughput uses separate dispatch
     and BF16 combine buffers, including when dispatch emits FP8. Latency
-    RANK_MAJOR static FP8 uses the same scalar convention for ``tokens`` and
-    ``combine_input_buffer``. Except for latency EXPERT_MAJOR, write expert
-    results into ``combine_input_buffer``.
+    RANK_MAJOR independently configures dispatch and combine formats. Except for
+    latency EXPERT_MAJOR, write expert results into ``combine_input_buffer``.
     """
 
     tokens: torch.Tensor

@@ -93,7 +93,8 @@ class MoERuntime {
   void* dispatchOutputBuffer() const;
   /// Return the runtime-owned combine input buffer.
   ///
-  /// BF16 and MXFP8_E4M3 dispatches use BF16 expert output; FP8_E4M3 uses E4M3.
+  /// Latency RANK_MAJOR uses the combine format from LatencyDispatchRequest::quant,
+  /// which defaults to BF16 and may be FP8_E4M3. Other layouts and throughput use BF16.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///

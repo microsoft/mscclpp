@@ -62,9 +62,9 @@ def _stage_expert_output(dispatch_out, config):
             expert_output = torch.addcmul(expert_output, tokens, weight[..., None])
     combine_input = dispatch_out.combine_input_buffer
     if combine_input.dtype == torch.float8_e4m3fn:
-        scale = dispatch_out.quant.scale
+        scale = dispatch_out.quant.combine_scale
         if scale is None:
-            raise RuntimeError("rank-major FP8 expert output requires a static scale")
+            raise RuntimeError("rank-major FP8 expert output requires a combine scale")
         expert_output = (expert_output * scale).to(combine_input.dtype)
     else:
         expert_output = expert_output.to(torch.bfloat16)
@@ -77,10 +77,21 @@ def _expected_output(input_real, topk_idx, topk_weights, config, num_ranks):
 
     expected = torch.zeros_like(input_real, dtype=torch.float32)
     x_float = input_real.float()
+    combine_scale = (
+        config.quant.combine_scale
+        if config.quant is not None and config.quant.combine_format == ep.DispatchDataType.FP8_E4M3
+        else None
+    )
+
+    def stage(values):
+        if combine_scale is not None:
+            return (values * combine_scale).to(torch.float8_e4m3fn).float() * (1.0 / combine_scale)
+        return values.to(torch.bfloat16).float()
+
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
         for lane in range(config.topk):
             weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0)
-            expected = torch.addcmul(expected, x_float, weight[:, None])
+            expected = torch.addcmul(expected, stage(x_float), weight[:, None])
     else:
         for destination in range(num_ranks):
             partial = torch.zeros_like(expected)
@@ -88,11 +99,7 @@ def _expected_output(input_real, topk_idx, topk_weights, config, num_ranks):
                 selected = (topk_idx[:, lane] >= 0) & (topk_idx[:, lane] // config.num_local_experts == destination)
                 weight = topk_weights[:, lane].masked_fill(~selected, 0)
                 partial = torch.addcmul(partial, x_float, weight[:, None])
-            if config.quant is not None and config.quant.scale is not None:
-                partial = (partial * config.quant.scale).to(torch.float8_e4m3fn).float() * (1.0 / config.quant.scale)
-            else:
-                partial = partial.to(torch.bfloat16).float()
-            expected += partial
+            expected += stage(partial)
     return expected.to(torch.bfloat16)
 
 
@@ -117,14 +124,17 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     static_fp8 = fp8 and latency and layout == ep.DispatchLayout.RANK_MAJOR
     fused_static_fp8 = static_fp8 and args.static_fp8_input == "fused"
     separate_static_fp8 = static_fp8 and args.static_fp8_input == "separate"
+    combine_fp8 = args.combine_dtype == "fp8_e4m3"
     quant = None
-    if fp8:
+    if fp8 or combine_fp8:
         quant = ep.QuantConfig(
-            format=ep.DispatchDataType.FP8_E4M3,
+            format=ep.DispatchDataType.FP8_E4M3 if fp8 else ep.DispatchDataType.BF16,
             scale=args.static_fp8_scale if static_fp8 else None,
             input_mode=(
                 ep.StaticFp8InputMode.QUANTIZE_BF16 if fused_static_fp8 else ep.StaticFp8InputMode.PREQUANTIZED_E4M3
             ),
+            combine_format=ep.DispatchDataType.FP8_E4M3 if combine_fp8 else ep.DispatchDataType.BF16,
+            combine_scale=args.combine_fp8_scale if combine_fp8 else None,
         )
     dispatch_input = x
     input_real = x
@@ -225,7 +235,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"num_experts={args.num_experts} experts/rank={config.num_local_experts} top_k={args.num_topk} "
             f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} "
             f"static_fp8_scale={args.static_fp8_scale if static_fp8 else 'n/a'} "
-            f"static_fp8_input={args.static_fp8_input if static_fp8 else 'n/a'} combine_output=bf16",
+            f"static_fp8_input={args.static_fp8_input if static_fp8 else 'n/a'} "
+            f"combine_dtype={args.combine_dtype} "
+            f"combine_fp8_scale={args.combine_fp8_scale if combine_fp8 else 'n/a'} combine_output=bf16",
             flush=True,
         )
 

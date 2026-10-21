@@ -57,6 +57,10 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDa
          dataType == DispatchDataType::MXFP8_E4M3;
 }
 
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedCombineDataType(DispatchDataType dataType) {
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+}
+
 // Latency rank-deduplicated dispatch payload layout:
 //
 //   [data: DataType[hidden]]

@@ -238,9 +238,10 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const void* input, cons
   }
 }
 
-__global__ void stageStaticFp8RankMajorExpertOutput(Fp8E4M3* output, const Fp8E4M3* input, const int* topkIdx,
+__global__ void stageStaticFp8RankMajorExpertOutput(void* output, const Fp8E4M3* input, const int* topkIdx,
                                                     const float* topkWeights, int rank, int rows, int hidden,
-                                                    bool directSend, int numExperts) {
+                                                    bool directSend, int numExperts, float dispatchScale,
+                                                    bool fp8Output, float combineScale) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? static_cast<size_t>(NumTopk) : size_t{1});
@@ -263,11 +264,17 @@ __global__ void stageStaticFp8RankMajorExpertOutput(Fp8E4M3* output, const Fp8E4
         }
       }
     }
-    mscclpp::f32x2 weighted;
-    weighted.data[0] =
-        localWeight == 0.0f ? 0.0f : fp8ToFloat(input[static_cast<size_t>(row) * hidden + hiddenIndex]) * localWeight;
-    weighted.data[1] = weighted.data[0];
-    output[index] = mscclpp::to<mscclpp::f8_e4m3x2>(weighted).data[0];
+    const float weighted = localWeight == 0.0f ? 0.0f
+                                               : fp8ToFloat(input[static_cast<size_t>(row) * hidden + hiddenIndex]) *
+                                                     (localWeight / dispatchScale);
+    if (fp8Output) {
+      mscclpp::f32x2 scaled;
+      scaled.data[0] = weighted * combineScale;
+      scaled.data[1] = scaled.data[0];
+      static_cast<Fp8E4M3*>(output)[index] = mscclpp::to<mscclpp::f8_e4m3x2>(scaled).data[0];
+    } else {
+      static_cast<Bf16*>(output)[index] = static_cast<Bf16>(weighted);
+    }
   }
 }
 
@@ -469,13 +476,15 @@ void runCorrectnessCase(
     mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMode combineMode, mscclpp::ep::DispatchDataType dataType,
     int hidden = CorrectnessHidden,
     const std::array<int, NumRanks>& numTokensPerRank = uniformTokens(CorrectnessTokens),
-    mscclpp::ep::StaticFp8InputMode staticFp8InputMode = mscclpp::ep::StaticFp8InputMode::PREQUANTIZED_E4M3) {
+    mscclpp::ep::StaticFp8InputMode staticFp8InputMode = mscclpp::ep::StaticFp8InputMode::PREQUANTIZED_E4M3,
+    mscclpp::ep::DispatchDataType combineDataType = mscclpp::ep::DispatchDataType::BF16, float combineScale = 1.0f) {
   const int numTokens = numTokensPerRank[rank];
   // Every rank must use the same active capacity, so take it from the shared token counts.
   const int maxTokensPerRank = *std::max_element(numTokensPerRank.begin(), numTokensPerRank.end());
   const std::string label = caseName(layout, combineMode, dataType) + "/hidden=" + std::to_string(hidden) +
                             "/dispatch_blocks=" + std::to_string(dispatchBlocks) +
-                            "/tokens=" + std::to_string(numTokens);
+                            "/tokens=" + std::to_string(numTokens) +
+                            (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3 ? "/combine=fp8" : "");
   auto runtime = createRuntime(communicator, maxTokensPerRank, hidden, layout, combineMode);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
@@ -484,6 +493,7 @@ void runCorrectnessCase(
   const bool fp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
   const bool staticFp8 = !expertMajor && fp8;
   const bool mxfp8 = dataType == mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+  const bool fp8Combine = !expertMajor && combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
   ASSERT_FALSE(expertMajor && mxfp8);
   const int valueModulo = mxfp8 || staticFp8 ? Mxfp8ValueModulo : 0;
 
@@ -507,26 +517,34 @@ void runCorrectnessCase(
                                           : (mxfp8 ? runtime->outputScalesBuffer() : nullptr);
   auto* outputTopkIdx = expertMajor ? nullptr : static_cast<int*>(runtime->outputTopkIdsBuffer());
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
-  const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
-      .output = dispatchOutput,
-      .outputScales = outputScales,
-      .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
-      .outputTopkIdx = outputTopkIdx,
-      .outputTopkWeights = outputTopkWeights,
-      .outputLayoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
-      .outputCount = buffers.outputCount.data(),
-      .input = dispatchInput,
-      .topkIdx = buffers.topkIdx.data(),
-      .topkWeights = buffers.topkWeights.data(),
-      .numTokens = numTokens,
-      .maxTokensPerRank = maxTokensPerRank,
-      .invalidTokenExpertId = NumExperts,
-      .dispatchDataType = dataType,
-      .numBlocks = dispatchBlocks,
-      .stream = stream,
-      .quantScale = staticFp8 ? StaticFp8Scale : 1.0f,
-      .staticFp8InputMode = staticFp8InputMode,
-  }});
+  const auto handle = runtime
+                          ->dispatch(
+                              mscclpp::ep::DispatchRequest{
+                                  mscclpp::ep::LatencyDispatchRequest{
+                                      .output = dispatchOutput,
+                                      .outputScales = outputScales,
+                                      .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
+                                      .outputTopkIdx = outputTopkIdx,
+                                      .outputTopkWeights = outputTopkWeights,
+                                      .outputLayoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
+                                      .outputCount = buffers.outputCount.data(),
+                                      .input = dispatchInput,
+                                      .topkIdx = buffers.topkIdx.data(),
+                                      .topkWeights = buffers.topkWeights.data(),
+                                      .numTokens = numTokens,
+                                      .maxTokensPerRank = maxTokensPerRank,
+                                      .invalidTokenExpertId = NumExperts,
+                                      .quant =
+                                          {
+                                              .dispatchDataType = dataType,
+                                              .dispatchScale = staticFp8 ? StaticFp8Scale : 1.0f,
+                                              .inputMode = staticFp8InputMode,
+                                              .combineDataType = combineDataType,
+                                              .combineScale = fp8Combine ? combineScale : 1.0f,
+                                          },
+                                      .numBlocks = dispatchBlocks,
+                                      .stream = stream,
+                                  }});
 
   const void* expertOutput = dispatchOutput;
   if (fp8 && expertMajor) {
@@ -539,13 +557,13 @@ void runCorrectnessCase(
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = buffers.expertOutput.data();
   } else if (staticFp8) {
-    auto* combineInput = static_cast<Fp8E4M3*>(runtime->combineInputBuffer());
+    void* combineInput = runtime->combineInputBuffer();
     const bool directSend = combineMode == mscclpp::ep::CombineMode::DIRECT_SEND;
     const int rows = NumRanks * maxTokensPerRank;
     const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? NumTopk : 1);
     stageStaticFp8RankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
         combineInput, static_cast<const Fp8E4M3*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows, hidden,
-        directSend, NumExperts);
+        directSend, NumExperts, StaticFp8Scale, fp8Combine, combineScale);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = combineInput;
   } else if (!expertMajor) {
@@ -794,7 +812,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
         .numTokens = PerfTokens,
         .maxTokensPerRank = PerfTokens,
         .invalidTokenExpertId = NumExperts,
-        .dispatchDataType = dataType,
+        .quant = {.dispatchDataType = dataType},
         .numBlocks = dispatchBlocks,
         .stream = stream,
     }});
@@ -1028,7 +1046,7 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
     request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
     request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
     request.maxTokensPerRank = 1;
-    request.dispatchDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
     runtime->dispatch(mscclpp::ep::DispatchRequest{request});
   }));
   ASSERT_TRUE(rejectsEpRequest([&] {
@@ -1037,8 +1055,17 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
     request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
     request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
     request.maxTokensPerRank = 1;
-    request.dispatchDataType = mscclpp::ep::DispatchDataType::BF16;
-    request.staticFp8InputMode = mscclpp::ep::StaticFp8InputMode::QUANTIZE_BF16;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::BF16;
+    request.quant.inputMode = mscclpp::ep::StaticFp8InputMode::QUANTIZE_BF16;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.combineDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
     runtime->dispatch(mscclpp::ep::DispatchRequest{request});
   }));
   ASSERT_TRUE(rejectsEpRequest([&] {
@@ -1107,6 +1134,9 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
       runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                          mscclpp::ep::DispatchDataType::FP8_E4M3, CorrectnessHidden, uniformTokens(CorrectnessTokens),
                          inputMode);
+      runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3, CorrectnessHidden, uniformTokens(CorrectnessTokens),
+                         inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3, 0.25f);
     }
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::MXFP8_E4M3);

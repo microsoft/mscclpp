@@ -145,9 +145,11 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const int invalidTokenExpertId = request.invalidTokenExpertId;
   const bool emitLocalExpertIds = request.emitLocalExpertIds;
   const DispatchLayout dispatchLayout = context.outputLayout_;
-  const DispatchDataType dispatchDataType = request.dispatchDataType;
-  const float quantScale = request.quantScale;
-  const StaticFp8InputMode staticFp8InputMode = request.staticFp8InputMode;
+  const DispatchDataType dispatchDataType = request.quant.dispatchDataType;
+  const float dispatchScale = request.quant.dispatchScale;
+  const StaticFp8InputMode staticFp8InputMode = request.quant.inputMode;
+  const DispatchDataType combineDataType = request.quant.combineDataType;
+  const float combineScale = request.quant.combineScale;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
@@ -169,20 +171,33 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_THROW("Unsupported static FP8 input mode");
   }
   if (staticFp8RankMajor) {
-    if (!std::isfinite(quantScale) || quantScale <= 0.0f) {
+    if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
       EP_THROW("Latency RANK_MAJOR FP8 requires a finite positive quantization scale");
     }
     EP_HOST_ASSERT(outputScales == nullptr);
     if (staticFp8InputMode == StaticFp8InputMode::QUANTIZE_BF16) {
       EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
     }
-  } else if (quantScale != 1.0f) {
+  } else if (dispatchScale != 1.0f) {
     EP_THROW("A scalar quantization scale is supported only by latency RANK_MAJOR FP8");
   } else if (staticFp8InputMode != StaticFp8InputMode::PREQUANTIZED_E4M3) {
     EP_THROW("Static FP8 input mode is supported only by latency RANK_MAJOR FP8");
   }
   if (dispatchDataType == DispatchDataType::MXFP8_E4M3 && dispatchLayout != DispatchLayout::RANK_MAJOR) {
     EP_THROW("MXFP8 dispatch requires RANK_MAJOR layout");
+  }
+  if (!isSupportedCombineDataType(combineDataType)) {
+    EP_THROW("Combine input supports only BF16 or FP8_E4M3");
+  }
+  if (dispatchLayout != DispatchLayout::RANK_MAJOR && combineDataType != DispatchDataType::BF16) {
+    EP_THROW("FP8 combine input is supported only by latency RANK_MAJOR");
+  }
+  if (combineDataType == DispatchDataType::FP8_E4M3) {
+    if (!std::isfinite(combineScale) || combineScale <= 0.0f) {
+      EP_THROW("Latency RANK_MAJOR FP8 combine requires a finite positive quantization scale");
+    }
+  } else if (combineScale != 1.0f) {
+    EP_THROW("A scalar combine scale is supported only by latency RANK_MAJOR FP8 combine");
   }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
@@ -209,7 +224,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType,
-                          .quantScale_ = quantScale,
+                          .combineDataType_ = combineDataType,
+                          .dispatchScale_ = dispatchScale,
+                          .combineScale_ = combineScale,
                           .emitLocalExpertIds_ = emitLocalExpertIds,
                           .staticFp8InputMode_ = staticFp8InputMode};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
@@ -262,6 +279,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const int numExperts = context.numExperts_;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
+  const DispatchDataType combineDataType = handle.combineDataType_;
   const CombineMode mode = context.combineMode_;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
@@ -277,7 +295,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
                           .dispatchDataType_ = dispatchDataType,
-                          .quantScale_ = handle.quantScale_,
+                          .combineDataType_ = combineDataType,
+                          .combineScale_ = handle.combineScale_,
                           .emitLocalExpertIds_ = false,
                           .staticFp8InputMode_ = StaticFp8InputMode::PREQUANTIZED_E4M3};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);

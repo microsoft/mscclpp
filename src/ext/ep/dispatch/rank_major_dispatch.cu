@@ -402,7 +402,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   dispatchSend<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds, QuantizeStaticFp8>(
       output, outputScales, outputTopkIdx, outputTopkWeights, inputTokens, transport, nExperts, nRanks, topkIndices,
       topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, recvBuffer, context->workspace_, epoch,
-      workload.quantScale_, sharedMem);
+      workload.dispatchScale_, sharedMem);
 
   if (static_cast<int>(blockIdx.x) < nRanks) {
     dispatchRecv(outputTopkIdx, outputTopkWeights, outputCount, transport, nExperts, nRanks, nTopk, maxTokensPerRank,

@@ -64,13 +64,34 @@ enum class DispatchDataType {
   MXFP8_E4M3
 };
 
-/// Input representation for latency rank-major static FP8 dispatch.
-enum class StaticFp8InputMode {
-  /// Input is already quantized as E4M3(real * quantScale).
-  PREQUANTIZED_E4M3,
-  /// Input is BF16 and is quantized once inside dispatch before transport.
-  QUANTIZE_BF16
+/// Quantization configuration for latency dispatch and rank-major combine.
+struct QuantConfig {
+  /// Input representation for latency rank-major static FP8 dispatch.
+  enum class InputMode {
+    /// Input is already quantized as E4M3(real * dispatchScale).
+    PREQUANTIZED_E4M3,
+    /// Input is BF16 and is quantized once inside dispatch before transport.
+    QUANTIZE_BF16
+  };
+
+  /// Dispatch payload format.
+  DispatchDataType dispatchDataType = DispatchDataType::BF16;
+  /// Static FP8 dispatch multiplier. Dispatch stores E4M3(real * dispatchScale).
+  /// Must be finite and positive for latency RANK_MAJOR FP8_E4M3, and one otherwise.
+  float dispatchScale = 1.0f;
+  /// Input representation for latency rank-major static FP8 dispatch. Must remain
+  /// PREQUANTIZED_E4M3 for every other layout and format.
+  InputMode inputMode = InputMode::PREQUANTIZED_E4M3;
+  /// Rank-major combine input format. BF16 is the default; FP8_E4M3 is supported
+  /// only by latency RANK_MAJOR.
+  DispatchDataType combineDataType = DispatchDataType::BF16;
+  /// Static FP8 combine multiplier. Combine reads E4M3(real * combineScale).
+  /// Must be finite and positive for FP8_E4M3 combine, and one for BF16 combine.
+  float combineScale = 1.0f;
 };
+
+/// Backward-compatible name for the static FP8 dispatch input mode.
+using StaticFp8InputMode = QuantConfig::InputMode;
 
 /// Arguments for throughput-mode routing preparation.
 ///
@@ -150,7 +171,7 @@ struct LatencyDispatchRequest {
   /// Input token payload, 16-byte aligned.
   ///
   /// BF16, MXFP8_E4M3, and expert-major FP8_E4M3 take BF16 input. Rank-major
-  /// FP8_E4M3 uses staticFp8InputMode to select prequantized E4M3 or BF16 input.
+  /// FP8_E4M3 uses quant.inputMode to select prequantized E4M3 or BF16 input.
   const void* input;
   /// Input top-k expert IDs.
   const int64_t* topkIdx;
@@ -170,27 +191,20 @@ struct LatencyDispatchRequest {
   /// This is an output sentinel; input topkIdx entries must still be valid
   /// global expert IDs or negative values for dropped routes.
   int invalidTokenExpertId = -1;
-  /// Requested dispatch payload format. Must match across participating ranks.
-  DispatchDataType dispatchDataType;
+  /// Dispatch and rank-major combine quantization settings.
+  ///
+  /// Dispatch and combine formats and scales are independent. FP8 combine is
+  /// supported only by latency RANK_MAJOR; all other combines use BF16 input.
+  QuantConfig quant;
   /// Dispatch grid block count. Zero uses the default number of blocks.
   int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
-  /// Static FP8 quantization multiplier for latency RANK_MAJOR.
-  ///
-  /// Dispatch produces E4M3(real * quantScale). Combine dequantizes matching
-  /// expert output with 1 / quantScale.
-  float quantScale = 1.0f;
   /// Emit destination-rank-local expert IDs for latency RANK_MAJOR output.
   ///
   /// When false, valid outputTopkIdx entries remain global expert IDs. When
   /// true, valid entries are in [0, numExperts / numRanks).
   bool emitLocalExpertIds = false;
-  /// Input representation for latency RANK_MAJOR FP8_E4M3.
-  ///
-  /// Both modes produce the same static-scale E4M3 wire payload. This option
-  /// must remain PREQUANTIZED_E4M3 for every other mode, layout, and format.
-  StaticFp8InputMode staticFp8InputMode = StaticFp8InputMode::PREQUANTIZED_E4M3;
 };
 
 /// Arguments for throughput-mode dispatch.
@@ -275,8 +289,8 @@ struct LatencyCombineRequest {
   ///
   /// Rank-major input must be the runtime-owned combineInputBuffer(), with
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
-  /// before hidden for DIRECT_SEND. BF16 and MXFP8_E4M3 dispatches take BF16
-  /// expert output; FP8_E4M3 takes E4M3 expert output.
+  /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
+  /// request's quant.combineDataType: BF16 by default, or explicitly FP8_E4M3.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;
