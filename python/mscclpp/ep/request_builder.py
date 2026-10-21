@@ -106,7 +106,7 @@ class RequestBuilder:
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
         data_type, _, scale, input_mode, combine_data_type = resolve_dispatch_format(config, quant)
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
-        static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3
+        static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3_STATIC
         prequantized_static_fp8 = static_fp8 and input_mode == QuantConfig.InputMode.PREQUANTIZED
         input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
@@ -365,7 +365,7 @@ class RequestBuilder:
         expert_dtype = torch.bfloat16
         if self._config.mode == MoEMode.LATENCY and self._config.output_layout == DispatchLayout.RANK_MAJOR:
             quant = handle.output_info.quant
-            if quant is not None and quant.combine_format == DispatchDataType.FP8_E4M3:
+            if quant is not None and quant.combine_format == DispatchDataType.FP8_E4M3_STATIC:
                 expert_dtype = torch.float8_e4m3fn
         self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), expert_dtype)
         if (

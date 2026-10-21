@@ -74,15 +74,17 @@ def validate_quant(
         raise TypeError("quant.input_mode must be a QuantConfig.InputMode")
     if not isinstance(combine_type, DispatchDataType):
         raise TypeError("quant.combine_format must be a DispatchDataType")
-    if combine_type not in (DispatchDataType.BF16, DispatchDataType.FP8_E4M3):
-        raise ValueError("quant.combine_format supports only BF16 or FP8_E4M3")
+    if combine_type not in (DispatchDataType.BF16, DispatchDataType.FP8_E4M3_STATIC):
+        raise ValueError("quant.combine_format supports only BF16 or FP8_E4M3_STATIC")
     static_fp8 = (
-        data_type == DispatchDataType.FP8_E4M3 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR
+        data_type == DispatchDataType.FP8_E4M3_STATIC
+        and mode == MoEMode.LATENCY
+        and layout == DispatchLayout.RANK_MAJOR
     )
     if input_mode != QuantConfig.InputMode.PREQUANTIZED and not static_fp8:
         raise ValueError("quant.input_mode is supported only by latency RANK_MAJOR static FP8")
-    if combine_type == DispatchDataType.FP8_E4M3 and not static_fp8:
-        raise ValueError("FP8 combine input requires latency RANK_MAJOR static FP8 dispatch")
+    if combine_type == DispatchDataType.FP8_E4M3_STATIC and not static_fp8:
+        raise ValueError("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch")
     if scale is not None:
         if isinstance(scale, bool) or not isinstance(scale, Real):
             raise TypeError("quant.scale must be a real number")
@@ -98,14 +100,18 @@ def validate_quant(
         if hidden % 128:
             raise ValueError("FP8 dispatch requires hidden_size to be a multiple of 128")
         if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR:
-            if block_scales is not None:
-                raise ValueError("latency RANK_MAJOR static FP8 does not accept block_scales")
-            if scale is None:
-                raise ValueError("latency RANK_MAJOR FP8 requires quant.scale")
-        elif scale is not None:
-            raise ValueError("quant.scale is supported only by latency RANK_MAJOR FP8")
+            raise ValueError("latency RANK_MAJOR block-scaled FP8 is unsupported; use FP8_E4M3_STATIC")
+        if scale is not None:
+            raise ValueError("quant.scale is supported only by FP8_E4M3_STATIC")
         if mode == MoEMode.LATENCY and layout != DispatchLayout.RANK_MAJOR and block_scales is not None:
             raise ValueError("latency EXPERT_MAJOR quantizes BF16 input; precomputed block_scales are unsupported")
+    elif data_type == DispatchDataType.FP8_E4M3_STATIC:
+        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
+            raise ValueError("FP8_E4M3_STATIC dispatch requires latency RANK_MAJOR")
+        if block_scales is not None:
+            raise ValueError("FP8_E4M3_STATIC dispatch does not accept block_scales")
+        if scale is None:
+            raise ValueError("FP8_E4M3_STATIC dispatch requires quant.scale")
     elif data_type == DispatchDataType.MXFP8_E4M3:
         if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
             raise ValueError("MXFP8 dispatch requires latency RANK_MAJOR")

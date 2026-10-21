@@ -104,53 +104,62 @@ def test_config_validation_at_construction(ep_group):
     static_fp8 = replace(
         config,
         output_layout=DispatchLayout.RANK_MAJOR,
-        quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5),
+        quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=0.5),
     )
     assert static_fp8.quant.scale == 0.5
     assert static_fp8.quant.combine_format == DispatchDataType.BF16
     fp8_combine = replace(
         static_fp8,
         quant=QuantConfig(
-            format=DispatchDataType.FP8_E4M3,
+            format=DispatchDataType.FP8_E4M3_STATIC,
             scale=0.5,
-            combine_format=DispatchDataType.FP8_E4M3,
+            combine_format=DispatchDataType.FP8_E4M3_STATIC,
         ),
     )
-    assert fp8_combine.quant.combine_format == DispatchDataType.FP8_E4M3
+    assert fp8_combine.quant.combine_format == DispatchDataType.FP8_E4M3_STATIC
     fused_static_fp8 = replace(
         static_fp8,
         quant=QuantConfig(
-            format=DispatchDataType.FP8_E4M3,
+            format=DispatchDataType.FP8_E4M3_STATIC,
             scale=0.5,
             input_mode=QuantConfig.InputMode.QUANTIZE,
         ),
     )
     assert fused_static_fp8.quant.input_mode == QuantConfig.InputMode.QUANTIZE
     with pytest.raises(TypeError, match="QuantConfig.InputMode"):
-        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, input_mode=1))
+        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=0.5, input_mode=1))
     with pytest.raises(TypeError, match="combine_format"):
-        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, combine_format=1))
-    with pytest.raises(ValueError, match="supports only BF16 or FP8_E4M3"):
+        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=0.5, combine_format=1))
+    with pytest.raises(ValueError, match="supports only BF16 or FP8_E4M3_STATIC"):
         replace(
             static_fp8,
             quant=QuantConfig(
-                format=DispatchDataType.FP8_E4M3,
+                format=DispatchDataType.FP8_E4M3_STATIC,
                 scale=0.5,
                 combine_format=DispatchDataType.MXFP8_E4M3,
             ),
         )
-    with pytest.raises(ValueError, match="requires latency RANK_MAJOR static FP8 dispatch"):
+    with pytest.raises(ValueError, match="requires matching static FP8 dispatch"):
         replace(
             config,
             output_layout=DispatchLayout.RANK_MAJOR,
-            quant=QuantConfig(combine_format=DispatchDataType.FP8_E4M3),
+            quant=QuantConfig(combine_format=DispatchDataType.FP8_E4M3_STATIC),
         )
-    with pytest.raises(ValueError, match="requires latency RANK_MAJOR static FP8 dispatch"):
+    with pytest.raises(ValueError, match="requires matching static FP8 dispatch"):
         replace(
             config,
             output_layout=DispatchLayout.RANK_MAJOR,
             quant=QuantConfig(
                 format=DispatchDataType.MXFP8_E4M3,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+            ),
+        )
+    with pytest.raises(ValueError, match="supports only BF16 or FP8_E4M3_STATIC"):
+        replace(
+            static_fp8,
+            quant=QuantConfig(
+                format=DispatchDataType.FP8_E4M3_STATIC,
+                scale=0.5,
                 combine_format=DispatchDataType.FP8_E4M3,
             ),
         )
@@ -160,11 +169,17 @@ def test_config_validation_at_construction(ep_group):
         replace(
             config,
             quant=QuantConfig(
-                format=DispatchDataType.FP8_E4M3,
+                format=DispatchDataType.FP8_E4M3_STATIC,
                 input_mode=QuantConfig.InputMode.QUANTIZE,
             ),
         )
     with pytest.raises(ValueError, match="requires quant.scale"):
+        replace(
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC),
+        )
+    with pytest.raises(ValueError, match="block-scaled FP8 is unsupported"):
         replace(
             config,
             output_layout=DispatchLayout.RANK_MAJOR,
@@ -175,35 +190,35 @@ def test_config_validation_at_construction(ep_group):
             replace(
                 config,
                 output_layout=DispatchLayout.RANK_MAJOR,
-                quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=scale),
+                quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=scale),
             )
     with pytest.raises(TypeError, match="real number"):
         replace(
             config,
             output_layout=DispatchLayout.RANK_MAJOR,
-            quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale="1.0"),
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale="1.0"),
         )
     with pytest.raises(ValueError, match="does not accept block_scales"):
         replace(
             config,
             output_layout=DispatchLayout.RANK_MAJOR,
             quant=QuantConfig(
-                format=DispatchDataType.FP8_E4M3,
+                format=DispatchDataType.FP8_E4M3_STATIC,
                 block_scales=torch.empty(1),
                 scale=1.0,
             ),
         )
     with pytest.raises(ValueError, match="BF16 dispatch does not accept a scalar scale"):
         replace(config, quant=QuantConfig(format=DispatchDataType.BF16, scale=1.0))
-    with pytest.raises(ValueError, match="only by latency RANK_MAJOR FP8"):
+    with pytest.raises(ValueError, match="only by FP8_E4M3_STATIC"):
         replace(config, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0))
-    with pytest.raises(ValueError, match="only by latency RANK_MAJOR FP8"):
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
         replace(
             config,
             mode=MoEMode.THROUGHPUT,
             output_layout=DispatchLayout.RANK_MAJOR,
             invalid_token_expert_id=None,
-            quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=1.0),
+            quant=QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=1.0),
         )
     mxfp8 = replace(
         config,
@@ -296,8 +311,14 @@ CASES = [
     (MoEMode.LATENCY, DispatchLayout.EXPERT_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.DIRECT_SEND, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.RANK_LOCAL_REDUCE, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND, False),
-    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.RANK_LOCAL_REDUCE, False),
-    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.DIRECT_SEND, False),
+    (
+        MoEMode.LATENCY,
+        DispatchLayout.RANK_MAJOR,
+        DispatchDataType.FP8_E4M3_STATIC,
+        CombineMode.RANK_LOCAL_REDUCE,
+        False,
+    ),
+    (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3_STATIC, CombineMode.DIRECT_SEND, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.RANK_LOCAL_REDUCE, False),
     (MoEMode.LATENCY, DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.DIRECT_SEND, False),
 ]
@@ -346,7 +367,8 @@ def _run_dispatch_combine_case(
 ):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
-    fp8 = data_type == DispatchDataType.FP8_E4M3
+    fp8 = data_type in (DispatchDataType.FP8_E4M3, DispatchDataType.FP8_E4M3_STATIC)
+    static_fp8 = data_type == DispatchDataType.FP8_E4M3_STATIC
     mxfp8 = data_type == DispatchDataType.MXFP8_E4M3
     quantized = fp8 or mxfp8
     with initialized_runtime(
@@ -386,7 +408,7 @@ def _run_dispatch_combine_case(
                 (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
             ).float() * NUM_TOPK
             input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
-            static_scale = 0.5 if fp8 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR else None
+            static_scale = 0.5 if static_fp8 else None
             quant = QuantConfig(
                 format=data_type,
                 scale=static_scale,
@@ -425,7 +447,7 @@ def _run_dispatch_combine_case(
                 assert result.quant.block_scales is not None
             if layout == DispatchLayout.RANK_MAJOR:
                 expected_combine_dtype = (
-                    torch.float8_e4m3fn if combine_format == DispatchDataType.FP8_E4M3 else torch.bfloat16
+                    torch.float8_e4m3fn if combine_format == DispatchDataType.FP8_E4M3_STATIC else torch.bfloat16
                 )
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
                 if result.quant is not None:
@@ -500,7 +522,7 @@ def _run_dispatch_combine_case(
                     expert_output = expert_output * result.weights[..., None]
                 expert_output = (
                     (expert_output * static_scale).to(torch.float8_e4m3fn)
-                    if combine_format == DispatchDataType.FP8_E4M3
+                    if combine_format == DispatchDataType.FP8_E4M3_STATIC
                     else expert_output.to(torch.bfloat16)
                 )
             else:
@@ -510,7 +532,7 @@ def _run_dispatch_combine_case(
                 expert_output = tokens * local_weights.sum(dim=-1, keepdim=True)
                 expert_output = (
                     (expert_output * static_scale).to(torch.float8_e4m3fn)
-                    if combine_format == DispatchDataType.FP8_E4M3
+                    if combine_format == DispatchDataType.FP8_E4M3_STATIC
                     else expert_output.to(torch.bfloat16)
                 )
             if result.combine_input_buffer is not None:
@@ -529,14 +551,14 @@ def _run_dispatch_combine_case(
                     combine_mode,
                     apply_router_weights,
                     static_scale,
-                    combine_format == DispatchDataType.FP8_E4M3,
+                    combine_format == DispatchDataType.FP8_E4M3_STATIC,
                 )
             stream.synchronize()
             torch.testing.assert_close(
                 combined.float(),
                 expected,
                 rtol=0,
-                atol=1 if quantized or combine_format == DispatchDataType.FP8_E4M3 else 0,
+                atol=1 if quantized or combine_format == DispatchDataType.FP8_E4M3_STATIC else 0,
             )
             torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / NUM_TOPK), rtol=0, atol=0)
             if mode == MoEMode.THROUGHPUT:
@@ -617,7 +639,7 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
         _run_dispatch_combine_case(ep_group, *case, apply_router_weights, hidden_size)
         ep_group.barrier()
         mode, layout, data_type, _, _ = case
-        if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR and data_type == DispatchDataType.FP8_E4M3:
+        if data_type == DispatchDataType.FP8_E4M3_STATIC:
             _run_dispatch_combine_case(
                 ep_group,
                 *case,
@@ -632,7 +654,7 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 apply_router_weights,
                 hidden_size,
                 input_mode=QuantConfig.InputMode.QUANTIZE,
-                combine_format=DispatchDataType.FP8_E4M3,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
             )
             ep_group.barrier()
 
@@ -670,7 +692,7 @@ def test_fused_static_fp8_matches_prequantized_payload(ep_group):
                     payload,
                     routes,
                     weights,
-                    QuantConfig(format=DispatchDataType.FP8_E4M3, scale=scale, input_mode=input_mode),
+                    QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=scale, input_mode=input_mode),
                     stream=stream,
                 )
                 counts = result.layout.num_tokens_per_rank.clone()
@@ -954,17 +976,17 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
     "data_type,scale",
     [
         (DispatchDataType.BF16, None),
-        (DispatchDataType.FP8_E4M3, 1.0),
-        (DispatchDataType.FP8_E4M3, 0.5),
+        (DispatchDataType.FP8_E4M3_STATIC, 1.0),
+        (DispatchDataType.FP8_E4M3_STATIC, 0.5),
     ],
 )
 def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode, data_type, scale):
     num_tokens, capacity, active_capacity = 2, 4, 3
-    fp8 = data_type == DispatchDataType.FP8_E4M3
+    fp8 = data_type == DispatchDataType.FP8_E4M3_STATIC
     quant = QuantConfig(
         format=data_type,
         scale=scale,
-        combine_format=DispatchDataType.FP8_E4M3 if fp8 else DispatchDataType.BF16,
+        combine_format=DispatchDataType.FP8_E4M3_STATIC if fp8 else DispatchDataType.BF16,
     )
     with initialized_runtime(
         ep_group,

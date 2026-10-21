@@ -164,31 +164,37 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   }
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
   const bool staticFp8RankMajor =
-      dispatchLayout == DispatchLayout::RANK_MAJOR && dispatchDataType == DispatchDataType::FP8_E4M3;
+      dispatchLayout == DispatchLayout::RANK_MAJOR && dispatchDataType == DispatchDataType::FP8_E4M3_STATIC;
   if (inputMode != QuantConfig::InputMode::PREQUANTIZED && inputMode != QuantConfig::InputMode::QUANTIZE) {
     EP_THROW("Unsupported static FP8 input mode");
   }
   if (staticFp8RankMajor) {
     if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
-      EP_THROW("Latency RANK_MAJOR FP8 requires a finite positive quantization scale");
+      EP_THROW("Latency RANK_MAJOR static FP8 requires a finite positive quantization scale");
     }
     EP_HOST_ASSERT(outputScales == nullptr);
     if (inputMode == QuantConfig::InputMode::QUANTIZE) {
       EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
     }
   } else if (dispatchScale != 1.0f) {
-    EP_THROW("A scalar quantization scale is supported only by latency RANK_MAJOR FP8");
+    EP_THROW("A scalar quantization scale is supported only by FP8_E4M3_STATIC");
   } else if (inputMode != QuantConfig::InputMode::PREQUANTIZED) {
-    EP_THROW("Static FP8 input mode is supported only by latency RANK_MAJOR FP8");
+    EP_THROW("Static FP8 input mode is supported only by FP8_E4M3_STATIC");
+  }
+  if (dispatchDataType == DispatchDataType::FP8_E4M3 && dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_THROW("Latency RANK_MAJOR block-scaled FP8 is unsupported; use FP8_E4M3_STATIC");
+  }
+  if (dispatchDataType == DispatchDataType::FP8_E4M3_STATIC && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("FP8_E4M3_STATIC dispatch requires latency RANK_MAJOR");
   }
   if (dispatchDataType == DispatchDataType::MXFP8_E4M3 && dispatchLayout != DispatchLayout::RANK_MAJOR) {
     EP_THROW("MXFP8 dispatch requires RANK_MAJOR layout");
   }
   if (!isSupportedCombineDataType(combineDataType)) {
-    EP_THROW("Combine input supports only BF16 or FP8_E4M3");
+    EP_THROW("Combine input supports only BF16 or FP8_E4M3_STATIC");
   }
-  if (combineDataType == DispatchDataType::FP8_E4M3 && !staticFp8RankMajor) {
-    EP_THROW("FP8 combine input requires latency RANK_MAJOR static FP8 dispatch");
+  if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !staticFp8RankMajor) {
+    EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
   }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,

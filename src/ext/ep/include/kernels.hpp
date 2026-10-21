@@ -49,7 +49,7 @@ struct Workload {
   DispatchDataType dispatchDataType_;
   /// Rank-major combine input format.
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
-  /// Static FP8 dispatch multiplier; one for non-static formats.
+  /// FP8_E4M3_STATIC dispatch multiplier; one for other formats.
   float dispatchScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;

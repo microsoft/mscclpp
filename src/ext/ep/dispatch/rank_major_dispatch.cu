@@ -182,7 +182,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
                                                  int invalidTokenExpertId, int maxTokensPerRank, float quantScale,
                                                  const TransportView& transport, void* workspace, int nPayloadBlocks,
                                                  int* sharedMem) {
-  static_assert(DataType == DispatchDataType::FP8_E4M3 || DataType == DispatchDataType::MXFP8_E4M3);
+  static_assert(DataType == DispatchDataType::FP8_E4M3_STATIC || DataType == DispatchDataType::MXFP8_E4M3);
   const int warpId = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const int laneId = getLaneId();
   const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nPayloadBlocks);
@@ -199,7 +199,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
   const int quantizeThreadId = groupThreadId - WARP_SIZE;
   const int quantizeThreadCount = groupThreadCount - WARP_SIZE;
   const int nLocalExperts = nExperts / nRanks;
-  constexpr int ScaleBlockSize = DataType == DispatchDataType::MXFP8_E4M3 ? 32 : 128;
+  constexpr int ScaleBlockSize = DataType == DispatchDataType::MXFP8_E4M3 ? 32 : 0;
   const size_t sharedTokenStride = dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize);
   auto* stagedToken = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks) +
                       static_cast<size_t>(warpGroupId) * sharedTokenStride;
@@ -226,7 +226,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
     for (int i = 0; i < MaxVectorsPerThread; ++i) {
       const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
       if (inputIdx < HiddenVectors) {
-        if constexpr (DataType == DispatchDataType::FP8_E4M3) {
+        if constexpr (DataType == DispatchDataType::FP8_E4M3_STATIC) {
           quantized[i] = quantizeBf16x8ToStaticFp8(values[i], quantScale);
         } else {
           quantized[i] = quantizeBf16x8ToMxfp8(values[i], scales[i], laneId);
@@ -328,7 +328,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(void* output, void* outputScales, int* o
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - DispatchControlBlocks;
   if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     if constexpr (DataType == DispatchDataType::MXFP8_E4M3 ||
-                  (DataType == DispatchDataType::FP8_E4M3 && QuantizeStaticFp8)) {
+                  (DataType == DispatchDataType::FP8_E4M3_STATIC && QuantizeStaticFp8)) {
       dispatchSendQuantized<Hidden, DataType, EmitLocalExpertIds>(
           output, outputScales, outputTopkIdx, outputTopkWeights, inputTokens, nExperts, nRanks, topkIndices,
           topkWeights, nTokens, nTopk, invalidTokenExpertId, maxTokensPerRank, quantScale, transport, workspace,
@@ -386,7 +386,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                     const float* topkWeights, const void* inputTokens,
                                                     Workload workload, void* recvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
-  static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3 ||
+  static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3_STATIC ||
                 DataType == DispatchDataType::MXFP8_E4M3);
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
@@ -415,7 +415,7 @@ template <bool EmitLocalExpertIds, bool QuantizeStaticFp8>
 struct KernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    constexpr bool Quantize = DataType == DispatchDataType::FP8_E4M3 && QuantizeStaticFp8;
+    constexpr bool Quantize = DataType == DispatchDataType::FP8_E4M3_STATIC && QuantizeStaticFp8;
     return dispatchKernel<Hidden, DataType, ScaleBlockSize, EmitLocalExpertIds, Quantize>;
   }
 };

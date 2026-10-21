@@ -93,7 +93,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major combine requires SM90 or newer");
 #endif
-  static_assert(DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3);
+  static_assert(DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC);
   static_assert(Hidden % (sizeof(int4) / sizeof(Bf16)) == 0);
   using ElementType = DispatchElementType<DispatchType>;
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
@@ -252,11 +252,12 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
-        return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3, 0, DispatchLayout::RANK_MAJOR,
-                                 KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
-                                                 workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
         break;
+      case DispatchDataType::FP8_E4M3_STATIC:
+        return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, DispatchLayout::RANK_MAJOR,
+                                 KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
+                                                 workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
     }
     EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
   }
@@ -273,6 +274,7 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
+      case DispatchDataType::FP8_E4M3_STATIC:
         break;
     }
   } else {
@@ -288,6 +290,7 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
             output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
             dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
+      case DispatchDataType::FP8_E4M3_STATIC:
         break;
     }
   }

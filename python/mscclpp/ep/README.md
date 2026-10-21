@@ -147,7 +147,7 @@ invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
 the required `combine_input_buffer`. Its dtype is BF16 by default and can be
-configured as E4M3 independently of the dispatch payload format.
+configured as E4M3 with `FP8_E4M3_STATIC` dispatch.
 With `CombineMode.DIRECT_SEND`, that buffer and expert outputs have shape
 `[R, A, K, H]`: write unweighted per-topk results for entries whose returned
 `topk_ids` identify a local expert. Combine applies the original routing weights
@@ -178,17 +178,17 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   `[L, R*A, H//128]`, transposed from physical `[L, H//128, R*A]`; they are not
   contiguous in logical order.
 * Latency RANK_MAJOR static FP8 uses a finite positive scalar `S` and has two
-  explicit input modes. The backward-compatible default accepts contiguous
-  `torch.float8_e4m3fn` input with
-  `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S)` and transports it
+  explicit input modes. The default accepts contiguous `torch.float8_e4m3fn`
+  input with
+  `QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=S)` and transports it
   byte-for-byte. To fuse quantization into dispatch, pass BF16 input with
-  `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S,
+  `QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=S,
   input_mode=QuantConfig.InputMode.QUANTIZE)`. The fused path computes
   `q = E4M3(real * S)` once per token before sending the same FP8 row to each
   destination. Neither mode has a block-scale sideband.
 * Latency RANK_MAJOR combine input is BF16 by default. This means MM2 has
   already produced/dequantized BF16 output. Static-FP8 dispatch may instead set
-  `combine_format=DispatchDataType.FP8_E4M3`; MM2 writes
+  `combine_format=DispatchDataType.FP8_E4M3_STATIC`; MM2 writes
   `q = E4M3(real * S)` to `combine_input_buffer`, and combine computes
   `FP32(q) * (1 / S)` with the existing dispatch scale. Combine never
   quantizes; it applies FP32 route weights only for `DIRECT_SEND`, accumulates
@@ -295,37 +295,3 @@ Runtime views are reused by later operations, not independent results.
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
-
-## MSCCL++ EP benchmark
-
-`python -m mscclpp_benchmark.ep.run_ep_bench_python` measures paired dispatch
-and combine through the Python API. For latency RANK_MAJOR static FP8,
-`--static-fp8-input` selects `prequantized`, `fused`, or `separate`. The first
-measures dispatch of precomputed E4M3, the second measures BF16 quantization
-inside the dispatch kernel, and the third includes a separate PyTorch
-quantization pipeline before the prequantized dispatch baseline.
-Combine input defaults to BF16. Use `--combine-dtype fp8_e4m3` with static-FP8
-dispatch to benchmark E4M3 MM2 output dequantized using `--static-fp8-scale`.
-
-For 32 ranks across eight four-GPU hosts, the following configuration has 32
-experts per rank:
-
-```bash
-export MASTER_ADDR=<rank-0-reachable-address>
-export EP_KERNEL_TIMER=events
-
-mpirun -np 32 python -m mscclpp_benchmark.ep.run_ep_bench_python \
-    --backend mscclpp --mode latency --ep-layout rank_major \
-    --combine-mode direct_send --dispatch-dtype fp8_e4m3 \
-    --static-fp8-scale 1.0 --static-fp8-input fused \
-    --combine-dtype fp8_e4m3 \
-    --num-tokens 4 --hidden 4096 \
-    --num-experts 1024 --num-topk 7 --cuda-graph \
-    --iters-per-graph 50 --validate
-```
-
-Input generation, routing generation, and synthetic identity-expert staging
-happen outside the timed loop. Fixed-scale quantization is outside the timed
-loop for `prequantized`, inside the dispatch kernel for `fused`, and immediately
-before dispatch for `separate`. CUDA-event results cover dispatch plus combine;
-combine always writes BF16.

@@ -125,32 +125,45 @@ std::string checkMxfp8Quantization(const std::vector<uint16_t>& input) {
   return mismatches == 0 ? std::string() : std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
 }
 
-std::string checkStaticFp8Quantization(const std::vector<uint16_t>& input, float scale) {
+std::string checkStaticFp8Quantization() {
+  std::vector<uint16_t> input;
+  input.reserve(static_cast<size_t>(Bf16MaxFiniteMagnitude + 1) * 2);
+  for (uint32_t magnitude = 0; magnitude <= Bf16MaxFiniteMagnitude; ++magnitude) {
+    input.push_back(static_cast<uint16_t>(magnitude));
+    input.push_back(static_cast<uint16_t>(magnitude | Bf16SignBit));
+  }
+
   const int numVectors = static_cast<int>(input.size() / mscclpp::bf16x8::Size);
   mscclpp::GpuBuffer<uint16_t> deviceInput(input.size());
   mscclpp::GpuBuffer<uint8_t> deviceOutput(input.size());
   MSCCLPP_CUDATHROW(
       cudaMemcpy(deviceInput.data(), input.data(), input.size() * sizeof(uint16_t), cudaMemcpyHostToDevice));
   constexpr int Threads = 256;
-  quantizeStaticFp8Vectors<<<(numVectors + Threads - 1) / Threads, Threads>>>(
-      reinterpret_cast<const mscclpp::bf16x8*>(deviceInput.data()),
-      reinterpret_cast<mscclpp::f8_e4m3x8*>(deviceOutput.data()), numVectors, scale);
-  MSCCLPP_CUDATHROW(cudaGetLastError());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
   std::vector<uint8_t> output(input.size());
-  MSCCLPP_CUDATHROW(cudaMemcpy(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost));
-  size_t mismatches = 0;
-  std::ostringstream firstMismatch;
-  for (size_t element = 0; element < input.size(); ++element) {
-    const float scaled = static_cast<float>(bf16ToDouble(input[element])) * scale;
-    const uint8_t expected = referenceFp8E4M3(scaled);
-    if (output[element] != expected && mismatches++ == 0) {
-      firstMismatch << "element " << element << " (bf16 0x" << std::hex << input[element] << ", scale " << std::dec
-                    << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x" << int{output[element]};
+  for (const float scale : {0.125f, 0.75f, 1.0f}) {
+    quantizeStaticFp8Vectors<<<(numVectors + Threads - 1) / Threads, Threads>>>(
+        reinterpret_cast<const mscclpp::bf16x8*>(deviceInput.data()),
+        reinterpret_cast<mscclpp::f8_e4m3x8*>(deviceOutput.data()), numVectors, scale);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    MSCCLPP_CUDATHROW(cudaMemcpy(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost));
+
+    size_t mismatches = 0;
+    std::ostringstream firstMismatch;
+    for (size_t element = 0; element < input.size(); ++element) {
+      const float scaled = static_cast<float>(bf16ToDouble(input[element])) * scale;
+      const uint8_t expected = referenceFp8E4M3(scaled);
+      if (output[element] != expected && mismatches++ == 0) {
+        firstMismatch << "element " << element << " (bf16 0x" << std::hex << input[element] << ", scale " << std::dec
+                      << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x"
+                      << int{output[element]};
+      }
+    }
+    if (mismatches != 0) {
+      return std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
     }
   }
-  return mismatches == 0 ? std::string() : std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
+  return {};
 }
 
 // One block per finite nonzero BF16 magnitude, which is the block maximum. A coprime stride scrambles the order so
@@ -212,16 +225,6 @@ std::vector<uint16_t> zeroBlocks() {
   return input;
 }
 
-std::vector<uint16_t> everyFiniteBf16Value() {
-  std::vector<uint16_t> input;
-  input.reserve(static_cast<size_t>(Bf16MaxFiniteMagnitude + 1) * 2);
-  for (uint32_t magnitude = 0; magnitude <= Bf16MaxFiniteMagnitude; ++magnitude) {
-    input.push_back(static_cast<uint16_t>(magnitude));
-    input.push_back(static_cast<uint16_t>(magnitude | Bf16SignBit));
-  }
-  return input;
-}
-
 void requireSm90() {
   int device;
   int major;
@@ -252,9 +255,6 @@ TEST(EpQuantizationTest, Mxfp8ZeroBlocks) {
 
 TEST(EpQuantizationTest, StaticFp8EveryFiniteBf16Value) {
   requireSm90();
-  const auto input = everyFiniteBf16Value();
-  for (const float scale : {0.125f, 0.75f, 1.0f}) {
-    const std::string error = checkStaticFp8Quantization(input, scale);
-    if (!error.empty()) FAIL() << "scale " << scale << ": " << error;
-  }
+  const std::string error = checkStaticFp8Quantization();
+  if (!error.empty()) FAIL() << error;
 }

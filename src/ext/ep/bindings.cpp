@@ -40,7 +40,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   nb::enum_<DispatchDataType>(m, "DispatchDataType")
       .value("BF16", DispatchDataType::BF16)
       .value("FP8_E4M3", DispatchDataType::FP8_E4M3)
-      .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3);
+      .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3)
+      .value("FP8_E4M3_STATIC", DispatchDataType::FP8_E4M3_STATIC);
   auto quantConfig = nb::class_<QuantConfig>(m, "QuantConfig");
   nb::enum_<QuantConfig::InputMode>(quantConfig, "InputMode")
       .value("PREQUANTIZED", QuantConfig::InputMode::PREQUANTIZED)

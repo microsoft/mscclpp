@@ -94,8 +94,8 @@ class MoERuntime {
   /// Return the runtime-owned combine input buffer.
   ///
   /// Latency RANK_MAJOR uses the combine format from LatencyDispatchRequest::quant,
-  /// which defaults to BF16 and may be FP8_E4M3 for static FP8 dispatch. Other
-  /// layouts and throughput use BF16.
+  /// which defaults to BF16 and may be FP8_E4M3_STATIC with matching static FP8
+  /// dispatch. Other layouts and throughput use BF16.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///

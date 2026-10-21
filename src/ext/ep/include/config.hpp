@@ -54,11 +54,11 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNumScales(DispatchDataType disp
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
   return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3 ||
-         dataType == DispatchDataType::MXFP8_E4M3;
+         dataType == DispatchDataType::MXFP8_E4M3 || dataType == DispatchDataType::FP8_E4M3_STATIC;
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedCombineDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3_STATIC;
 }
 
 // Latency rank-deduplicated dispatch payload layout:

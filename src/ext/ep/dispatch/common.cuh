@@ -74,7 +74,9 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
-        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3, 128, Layout, KernelSelector>(
+        break;
+      case DispatchDataType::FP8_E4M3_STATIC:
+        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, Layout, KernelSelector>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
@@ -94,6 +96,7 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
+      case DispatchDataType::FP8_E4M3_STATIC:
         break;
     }
     EP_HOST_ASSERT(false && "unsupported dispatch data type");
@@ -141,7 +144,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
   if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 || outputScales != nullptr);
-  } else if (workload.dispatchDataType_ == DispatchDataType::FP8_E4M3) {
+  } else if (workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC) {
     EP_HOST_ASSERT(outputScales == nullptr);
   } else if (workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3) {
     EP_HOST_ASSERT(outputScales != nullptr);
@@ -155,7 +158,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   }
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
-                   workload.dispatchDataType_ == DispatchDataType::FP8_E4M3 ||
+                   workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC ||
                    workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
   }
   EP_HOST_ASSERT(workload.numTokens_ == 0 || input != nullptr);

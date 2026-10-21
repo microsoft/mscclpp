@@ -326,7 +326,10 @@ std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMod
       combineMode == mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE ? "rank-local-reduce" : "direct-send";
   const char* dataTypeName = dataType == mscclpp::ep::DispatchDataType::BF16
                                  ? "bf16"
-                                 : (dataType == mscclpp::ep::DispatchDataType::FP8_E4M3 ? "fp8-e4m3" : "mxfp8-e4m3");
+                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3
+                                 ? "fp8-e4m3"
+                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC ? "fp8-e4m3-static"
+                                                                                        : "mxfp8-e4m3";
   return std::string(layoutName) + "/" + combineName + "/" + dataTypeName;
 }
 
@@ -484,16 +487,19 @@ void runCorrectnessCase(
   const std::string label = caseName(layout, combineMode, dataType) + "/hidden=" + std::to_string(hidden) +
                             "/dispatch_blocks=" + std::to_string(dispatchBlocks) +
                             "/tokens=" + std::to_string(numTokens) +
-                            (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3 ? "/combine=fp8" : "");
+                            (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC
+                                 ? "/combine=fp8-static"
+                                 : "");
   auto runtime = createRuntime(communicator, maxTokensPerRank, hidden, layout, combineMode);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
 
   const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
-  const bool fp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
-  const bool staticFp8 = !expertMajor && fp8;
+  const bool blockFp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
+  const bool staticFp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+  const bool fp8 = blockFp8 || staticFp8;
   const bool mxfp8 = dataType == mscclpp::ep::DispatchDataType::MXFP8_E4M3;
-  const bool fp8Combine = !expertMajor && combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
+  const bool fp8Combine = combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
   ASSERT_FALSE(expertMajor && mxfp8);
   const int valueModulo = mxfp8 || staticFp8 ? Mxfp8ValueModulo : 0;
 
@@ -513,8 +519,8 @@ void runCorrectnessCase(
   }
 
   void* dispatchOutput = runtime->dispatchOutputBuffer();
-  void* outputScales = expertMajor && fp8 ? static_cast<void*>(buffers.outputScales.data())
-                                          : (mxfp8 ? runtime->outputScalesBuffer() : nullptr);
+  void* outputScales = expertMajor && blockFp8 ? static_cast<void*>(buffers.outputScales.data())
+                                               : (mxfp8 ? runtime->outputScalesBuffer() : nullptr);
   auto* outputTopkIdx = expertMajor ? nullptr : static_cast<int*>(runtime->outputTopkIdsBuffer());
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
   const auto handle = runtime
@@ -546,7 +552,7 @@ void runCorrectnessCase(
                                   }});
 
   const void* expertOutput = dispatchOutput;
-  if (fp8 && expertMajor) {
+  if (blockFp8 && expertMajor) {
     const int rows = NumRanks * maxTokensPerRank;
     const int numLocalExperts = NumExperts / NumRanks;
     const size_t elements = static_cast<size_t>(numLocalExperts) * rows * hidden;
@@ -1073,7 +1079,16 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
     request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
     request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
     request.maxTokensPerRank = 1;
-    request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3;
+    request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::FP8_E4M3;
     runtime->dispatch(mscclpp::ep::DispatchRequest{request});
   }));
   ASSERT_TRUE(rejectsEpRequest([&] {
@@ -1140,11 +1155,12 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
     for (const auto inputMode :
          {mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED, mscclpp::ep::QuantConfig::InputMode::QUANTIZE}) {
       runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
-                         mscclpp::ep::DispatchDataType::FP8_E4M3, CorrectnessHidden, uniformTokens(CorrectnessTokens),
-                         inputMode);
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
+                         uniformTokens(CorrectnessTokens), inputMode);
       runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
-                         mscclpp::ep::DispatchDataType::FP8_E4M3, CorrectnessHidden, uniformTokens(CorrectnessTokens),
-                         inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3);
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
+                         uniformTokens(CorrectnessTokens), inputMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC);
     }
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::MXFP8_E4M3);
@@ -1155,8 +1171,9 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
                          mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                          mscclpp::ep::DispatchDataType::MXFP8_E4M3, MultiGroupHidden, numTokensPerRank);
       runCorrectnessCase(*communicator, gEnv->rank, MultiGroupDispatchBlocks, 0,
-                         mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode, mscclpp::ep::DispatchDataType::FP8_E4M3,
-                         MultiGroupHidden, numTokensPerRank, mscclpp::ep::QuantConfig::InputMode::QUANTIZE);
+                         mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, MultiGroupHidden, numTokensPerRank,
+                         mscclpp::ep::QuantConfig::InputMode::QUANTIZE);
     }
   }
 }
