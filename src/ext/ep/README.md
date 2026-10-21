@@ -36,6 +36,67 @@ helpers. There is no separate backend or strategy object.
 | Python frontend | `mscclpp.ep.MoECommunicator` selects latency or throughput algorithms with `MoEMode` |
 | ROCm | Not supported |
 
+## MoE benchmark
+
+The [benchmark](../../../test/python/ep/moe_bench/README.md) measures sending
+tokens to experts, running expert computation, and combining the results.
+It uses synthetic inputs and weights, not a trained model.
+
+From the repository root, in a CUDA 13 environment:
+
+```bash
+python3 -m pip install '.[cuda13,moe-benchmark]'
+python3 test/python/ep/moe_bench/run.py \
+  --model small --input decode --routing balanced \
+  --warmup 10 --iterations 10 --check
+```
+
+This example uses MSCCL++ communication and PyTorch BF16 computation.
+It runs 16 input tokens per GPU, with eight experts and two experts per token.
+The launcher runs on one node by default and uses all visible GPUs.
+Use idle GPUs; backend topology and GPU-count limits still apply.
+It starts workers itself; do not wrap it in `torchrun` or `mpirun`.
+`--check` compares the output with a reference before timing; warmup is excluded.
+
+Each run saves settings/status in `run.json`, summary measurements in
+`summary.csv`, and per-GPU samples in `iterations.csv`, under
+`benchmark_results/<run-id>/`. Timings include communication and computation,
+including launch gaps and waits for other GPUs. The global total uses the
+slowest GPU duration per iteration.
+
+See the [benchmark guide](../../../test/python/ep/moe_bench/README.md) for
+configuration, other backends, and multi-node runs. Multi-node runs require
+MSCCL++ and a shared MNNVL GPU fabric with working NVIDIA IMEX.
+
+### Optional backend setup
+
+These packages are not needed for the default example:
+
+- **NCCL-EP:** install `nccl-extensions[cu13]` (or `[cu12]` for CUDA 12).
+  See [NVIDIA's installation instructions](https://github.com/NVIDIA/nccl-extensions#installation).
+- **FlashInfer MX compute:** requires CUDA 13 PyTorch, Blackwell SM100/SM103,
+  MXFP8 activations, and MXFP4 weights. The benchmark requires these versions:
+
+  ```bash
+  python3 -m pip install 'flashinfer-python==0.7.1' 'nvidia-cutlass-dsl==4.8.0'
+  ```
+
+### Benchmark tests
+
+With `pytest` installed, run CPU tests from the repository root:
+
+```bash
+python3 -m pytest test/python/ep/moe_bench/tests -q
+```
+
+GPU tests are opt-in. On two idle GPUs, run the MSCCL++ reference checks with:
+
+```bash
+GLOO_SOCKET_IFNAME=lo python3 -m torch.distributed.run \
+  --standalone --local-addr=127.0.0.1 --nnodes=1 --nproc-per-node=2 \
+  test/python/ep/moe_bench/tests/test_moe_bench.py mscclpp
+```
+
 ## Runtime architecture
 
 ### Latency algorithms

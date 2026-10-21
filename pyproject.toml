@@ -43,6 +43,10 @@ benchmark = [
     "netifaces",
     "matplotlib",
 ]
+moe-benchmark = [
+    "torch",
+    "PyYAML>=6",
+]
 test = [
     "pytest",
     "mpi4py",
