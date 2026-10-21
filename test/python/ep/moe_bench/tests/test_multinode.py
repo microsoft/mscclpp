@@ -236,6 +236,22 @@ def test_launch_snapshots_workers_and_collects_only_rank_zero_results(monkeypatc
         multinode.worker_command(node, rank, discovered, run_dir.name, 29500, True)
         for rank, node in enumerate(discovered)
     ]
+    downloaded = {
+        "run.json": '{"status":"running","downloaded":true}',
+        "summary.csv": "summary\n",
+        "iterations.csv": "iterations\n",
+    }
+
+    def transfer(command, **kwargs):
+        if ":" in command[-2]:
+            filename = command[-2].rsplit("/", 1)[-1]
+            destination = run_dir / filename
+            before = destination.read_bytes() if destination.exists() else None
+            Path(command[-1]).write_text(downloaded[filename])
+            assert (destination.read_bytes() if destination.exists() else None) == before
+        return SimpleNamespace(returncode=0)
+
+    run.side_effect = transfer
     assert multinode.launch(discovered, run_dir, commands, 60) == 0
     with tarfile.open(run_dir / "workers.tar.gz") as archive:
         assert set(archive.getnames()) == {
@@ -261,6 +277,13 @@ def test_launch_snapshots_workers_and_collects_only_rank_zero_results(monkeypatc
         f"{discovered[0]['target']}:{discovered[0]['root']}/runs/test_run/{filename}"
         for filename in ("run.json", "summary.csv", "iterations.csv")
     ]
+    for command in transfers[3:]:
+        destination = Path(command[-1])
+        filename = command[-2].rsplit("/", 1)[-1]
+        assert destination.parent == run_dir
+        assert destination != run_dir / filename
+        assert not destination.exists()
+        assert (run_dir / filename).read_text() == downloaded[filename]
     for process in processes:
         process.stdin.close.assert_called_once()
         process.wait.assert_called_once_with(timeout=30)
@@ -309,6 +332,83 @@ def test_transfer_failure_starts_no_workers(monkeypatch, tmp_path):
     with pytest.raises(subprocess.CalledProcessError):
         multinode.launch(nodes(1), run_dir, [["worker"]], 1)
     popen.assert_not_called()
+
+
+@pytest.mark.parametrize("filename", ["run.json", "summary.csv", "iterations.csv"])
+@pytest.mark.parametrize("failure", ["exit", "timeout"])
+def test_partial_download_preserves_existing_result(monkeypatch, tmp_path, filename, failure):
+    run_dir, _, transfer, _ = mock_launch(monkeypatch, tmp_path, [Process()])
+    original = '{"status":"running"}'
+    destination = run_dir / filename
+    destination.write_text(original)
+    downloads = []
+    error = subprocess.CalledProcessError(1, ["scp"]) if failure == "exit" else subprocess.TimeoutExpired(["scp"], 120)
+
+    def scp(command, **kwargs):
+        if ":" in command[-2]:
+            path = Path(command[-1])
+            downloads.append(path)
+            if command[-2].endswith("/" + filename):
+                path.write_text('{"status":')
+                raise error
+            path.write_text('{"status":"running"}')
+        return SimpleNamespace(returncode=0)
+
+    transfer.side_effect = scp
+    with pytest.raises(type(error)) as raised:
+        multinode.launch(nodes(1), run_dir, [["worker"]], 60)
+    assert raised.value is error
+    assert destination.read_text() == original
+    assert all(not path.exists() for path in downloads)
+
+
+@pytest.mark.parametrize("failure", ["exit", "timeout"])
+def test_controller_records_partial_download_failure(monkeypatch, tmp_path, failure):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--model",
+            "small",
+            "--input",
+            "decode",
+            "--routing",
+            "balanced",
+            "--nodelist",
+            "192.0.2.1",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    monkeypatch.setattr(multinode, "discover_nodes", lambda *args: nodes(1))
+    monkeypatch.setattr(multinode, "ssh", Mock())
+    monkeypatch.setattr(multinode.subprocess, "Popen", Mock(return_value=Process()))
+    error = subprocess.CalledProcessError(1, ["scp"]) if failure == "exit" else subprocess.TimeoutExpired(["scp"], 120)
+    downloads = []
+
+    def transfer(command, **kwargs):
+        if command[0] == "git":
+            return SimpleNamespace(stdout="revision\n" if command[-1] == "HEAD" else "")
+        if ":" in command[-2]:
+            path = Path(command[-1])
+            downloads.append(path)
+            path.write_text('{"status":')
+            raise error
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(multinode.subprocess, "run", transfer)
+    with pytest.raises(type(error)) as raised:
+        launcher.main()
+    assert raised.value is error
+    (record_path,) = tmp_path.glob("*/run.json")
+    record = json.loads(record_path.read_text())
+    assert record["status"] == "failed"
+    assert record["failure"] == {"type": type(error).__name__, "message": str(error)}
+    assert record["config"]["environment"]["num_gpus"] == 4
+    assert record["metadata"]["nodes"] == nodes(1)
+    assert record["finished_at"]
+    assert len(downloads) == 1 and not downloads[0].exists()
 
 
 def test_supervisor_eof_terminates_its_process_group(tmp_path):
