@@ -62,9 +62,9 @@ def _stage_expert_output(dispatch_out, config):
             expert_output = torch.addcmul(expert_output, tokens, weight[..., None])
     combine_input = dispatch_out.combine_input_buffer
     if combine_input.dtype == torch.float8_e4m3fn:
-        scale = dispatch_out.quant.combine_scale
+        scale = dispatch_out.quant.scale
         if scale is None:
-            raise RuntimeError("rank-major FP8 expert output requires a combine scale")
+            raise RuntimeError("rank-major FP8 expert output requires the static-FP8 dispatch scale")
         expert_output = (expert_output * scale).to(combine_input.dtype)
     else:
         expert_output = expert_output.to(torch.bfloat16)
@@ -77,15 +77,15 @@ def _expected_output(input_real, topk_idx, topk_weights, config, num_ranks):
 
     expected = torch.zeros_like(input_real, dtype=torch.float32)
     x_float = input_real.float()
-    combine_scale = (
-        config.quant.combine_scale
+    fp8_scale = (
+        config.quant.scale
         if config.quant is not None and config.quant.combine_format == ep.DispatchDataType.FP8_E4M3
         else None
     )
 
     def stage(values):
-        if combine_scale is not None:
-            return (values * combine_scale).to(torch.float8_e4m3fn).float() * (1.0 / combine_scale)
+        if fp8_scale is not None:
+            return (values * fp8_scale).to(torch.float8_e4m3fn).float() * (1.0 / fp8_scale)
         return values.to(torch.bfloat16).float()
 
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
@@ -131,10 +131,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             format=ep.DispatchDataType.FP8_E4M3 if fp8 else ep.DispatchDataType.BF16,
             scale=args.static_fp8_scale if static_fp8 else None,
             input_mode=(
-                ep.StaticFp8InputMode.QUANTIZE_BF16 if fused_static_fp8 else ep.StaticFp8InputMode.PREQUANTIZED_E4M3
+                ep.QuantConfig.InputMode.QUANTIZE
+                if fused_static_fp8
+                else ep.QuantConfig.InputMode.PREQUANTIZED
             ),
             combine_format=ep.DispatchDataType.FP8_E4M3 if combine_fp8 else ep.DispatchDataType.BF16,
-            combine_scale=args.combine_fp8_scale if combine_fp8 else None,
         )
     dispatch_input = x
     input_real = x
@@ -236,8 +237,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} "
             f"static_fp8_scale={args.static_fp8_scale if static_fp8 else 'n/a'} "
             f"static_fp8_input={args.static_fp8_input if static_fp8 else 'n/a'} "
-            f"combine_dtype={args.combine_dtype} "
-            f"combine_fp8_scale={args.combine_fp8_scale if combine_fp8 else 'n/a'} combine_output=bf16",
+            f"combine_dtype={args.combine_dtype} combine_output=bf16",
             flush=True,
         )
 

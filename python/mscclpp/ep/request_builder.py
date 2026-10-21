@@ -11,7 +11,7 @@ from typing import Optional, Tuple, Union
 import torch
 
 from . import _cpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 from .types import DispatchHandle, DispatchLayoutInfo, DispatchOutput, MoECommunicatorConfig, PrepareHandle, QuantConfig
 from .utils import (
     check_tensor,
@@ -26,7 +26,17 @@ from .utils import (
 
 @dataclass
 class _DispatchRequest:
-    arguments: dict[str, Union[bool, int, float, DispatchDataType, StaticFp8InputMode, _cpp.PrepareHandle]]
+    arguments: dict[
+        str,
+        Union[
+            bool,
+            int,
+            float,
+            DispatchDataType,
+            _cpp.NativeQuantConfig,
+            _cpp.PrepareHandle,
+        ],
+    ]
     output: DispatchOutput
     num_tokens: int
     active_capacity: int
@@ -94,12 +104,10 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, _, scale, static_fp8_input_mode, combine_data_type, combine_scale = resolve_dispatch_format(
-            config, quant
-        )
+        data_type, _, scale, input_mode, combine_data_type = resolve_dispatch_format(config, quant)
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3
-        prequantized_static_fp8 = static_fp8 and static_fp8_input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3
+        prequantized_static_fp8 = static_fp8 and input_mode == QuantConfig.InputMode.PREQUANTIZED
         input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
         output_shape = dispatch_shape(config, self._runtime.num_ranks, active)
@@ -147,7 +155,6 @@ class RequestBuilder:
                 block_scales=scales,
                 scale=scale,
                 combine_format=combine_data_type,
-                combine_scale=combine_scale,
             )
         )
         output = DispatchOutput(
@@ -162,6 +169,11 @@ class RequestBuilder:
             weights=recv_weights,
             combine_input_buffer=combine_input,
         )
+        native_quant = _cpp.NativeQuantConfig()
+        native_quant.dispatch_data_type = data_type
+        native_quant.dispatch_scale = 1.0 if scale is None else scale
+        native_quant.input_mode = input_mode
+        native_quant.combine_data_type = combine_data_type
         return _DispatchRequest(
             arguments=dict(
                 input_ptr=ptr(input),
@@ -177,14 +189,10 @@ class RequestBuilder:
                 num_tokens=num_tokens,
                 max_tokens_per_rank=active,
                 invalid_token_expert_id=config.invalid_token_expert_id,
-                dispatch_data_type=data_type,
+                quant=native_quant,
                 num_blocks=config.num_blocks[0],
                 stream_ptr=stream.cuda_stream,
-                quant_scale=1.0 if scale is None else scale,
                 emit_local_expert_ids=config.emit_local_expert_ids,
-                static_fp8_input_mode=static_fp8_input_mode,
-                combine_data_type=combine_data_type,
-                combine_scale=1.0 if combine_scale is None else combine_scale,
             ),
             output=output,
             num_tokens=num_tokens,
@@ -217,7 +225,7 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, input_scales, _, _, _, _ = resolve_dispatch_format(config, quant)
+        data_type, input_scales, _, _, _ = resolve_dispatch_format(config, quant)
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, payload_dtype(data_type), active)
         if data_type == DispatchDataType.FP8_E4M3:
             if input_scales is None:

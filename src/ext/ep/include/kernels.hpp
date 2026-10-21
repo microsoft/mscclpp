@@ -51,12 +51,10 @@ struct Workload {
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
   /// Static FP8 dispatch multiplier; one for non-static formats.
   float dispatchScale_ = 1.0f;
-  /// Static FP8 combine multiplier; one for BF16 combine.
-  float combineScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
   /// Input representation for latency rank-major static FP8.
-  StaticFp8InputMode staticFp8InputMode_ = StaticFp8InputMode::PREQUANTIZED_E4M3;
+  QuantConfig::InputMode inputMode_ = QuantConfig::InputMode::PREQUANTIZED;
 };
 
 struct KernelConfigCache {

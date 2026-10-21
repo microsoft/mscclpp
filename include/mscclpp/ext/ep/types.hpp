@@ -69,9 +69,9 @@ struct QuantConfig {
   /// Input representation for latency rank-major static FP8 dispatch.
   enum class InputMode {
     /// Input is already quantized as E4M3(real * dispatchScale).
-    PREQUANTIZED_E4M3,
+    PREQUANTIZED,
     /// Input is BF16 and is quantized once inside dispatch before transport.
-    QUANTIZE_BF16
+    QUANTIZE
   };
 
   /// Dispatch payload format.
@@ -80,18 +80,12 @@ struct QuantConfig {
   /// Must be finite and positive for latency RANK_MAJOR FP8_E4M3, and one otherwise.
   float dispatchScale = 1.0f;
   /// Input representation for latency rank-major static FP8 dispatch. Must remain
-  /// PREQUANTIZED_E4M3 for every other layout and format.
-  InputMode inputMode = InputMode::PREQUANTIZED_E4M3;
+  /// PREQUANTIZED for every other layout and format.
+  InputMode inputMode = InputMode::PREQUANTIZED;
   /// Rank-major combine input format. BF16 is the default; FP8_E4M3 is supported
-  /// only by latency RANK_MAJOR.
+  /// only by latency RANK_MAJOR static FP8 and uses dispatchScale for dequantization.
   DispatchDataType combineDataType = DispatchDataType::BF16;
-  /// Static FP8 combine multiplier. Combine reads E4M3(real * combineScale).
-  /// Must be finite and positive for FP8_E4M3 combine, and one for BF16 combine.
-  float combineScale = 1.0f;
 };
-
-/// Backward-compatible name for the static FP8 dispatch input mode.
-using StaticFp8InputMode = QuantConfig::InputMode;
 
 /// Arguments for throughput-mode routing preparation.
 ///
@@ -191,10 +185,10 @@ struct LatencyDispatchRequest {
   /// This is an output sentinel; input topkIdx entries must still be valid
   /// global expert IDs or negative values for dropped routes.
   int invalidTokenExpertId = -1;
-  /// Dispatch and rank-major combine quantization settings.
+  /// Dispatch quantization and rank-major combine datatype settings.
   ///
-  /// Dispatch and combine formats and scales are independent. FP8 combine is
-  /// supported only by latency RANK_MAJOR; all other combines use BF16 input.
+  /// FP8 combine is supported only by latency RANK_MAJOR static FP8 and reuses
+  /// the dispatch scale for dequantization; all other rank-major combines use BF16.
   QuantConfig quant;
   /// Dispatch grid block count. Zero uses the default number of blocks.
   int numBlocks = 0;
@@ -290,7 +284,8 @@ struct LatencyCombineRequest {
   /// Rank-major input must be the runtime-owned combineInputBuffer(), with
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
   /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
-  /// request's quant.combineDataType: BF16 by default, or explicitly FP8_E4M3.
+  /// request's quant.combineDataType: BF16 by default, or FP8_E4M3 for static
+  /// FP8 dispatch. FP8 input is dequantized with the dispatch scale.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

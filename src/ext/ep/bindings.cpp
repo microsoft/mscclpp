@@ -41,9 +41,15 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("BF16", DispatchDataType::BF16)
       .value("FP8_E4M3", DispatchDataType::FP8_E4M3)
       .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3);
-  nb::enum_<StaticFp8InputMode>(m, "StaticFp8InputMode")
-      .value("PREQUANTIZED_E4M3", StaticFp8InputMode::PREQUANTIZED_E4M3)
-      .value("QUANTIZE_BF16", StaticFp8InputMode::QUANTIZE_BF16);
+  auto quantConfig = nb::class_<QuantConfig>(m, "QuantConfig");
+  nb::enum_<QuantConfig::InputMode>(quantConfig, "InputMode")
+      .value("PREQUANTIZED", QuantConfig::InputMode::PREQUANTIZED)
+      .value("QUANTIZE", QuantConfig::InputMode::QUANTIZE);
+  quantConfig.def(nb::init<>())
+      .def_rw("dispatch_data_type", &QuantConfig::dispatchDataType)
+      .def_rw("dispatch_scale", &QuantConfig::dispatchScale)
+      .def_rw("input_mode", &QuantConfig::inputMode)
+      .def_rw("combine_data_type", &QuantConfig::combineDataType);
 
   nb::class_<PrepareHandle>(m, "PrepareHandle").def(nb::init<>());
   nb::class_<DispatchHandle>(m, "DispatchHandle").def(nb::init<>());
@@ -90,9 +96,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr, uintptr_t outputPtr,
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputTopkIdxPtr,
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
-             int maxTokensPerRank, int invalidTokenExpertId, DispatchDataType dataType, int numBlocks,
-             uintptr_t streamPtr, float dispatchScale, bool emitLocalExpertIds, StaticFp8InputMode staticFp8InputMode,
-             DispatchDataType combineDataType, float combineScale) {
+             int maxTokensPerRank, int invalidTokenExpertId, QuantConfig quant, int numBlocks, uintptr_t streamPtr,
+             bool emitLocalExpertIds) {
             return self.dispatch(DispatchRequest{LatencyDispatchRequest{
                 .output = pointer(outputPtr),
                 .outputScales = pointer(outputScalesPtr),
@@ -107,14 +112,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .numTokens = numTokens,
                 .maxTokensPerRank = maxTokensPerRank,
                 .invalidTokenExpertId = invalidTokenExpertId,
-                .quant =
-                    {
-                        .dispatchDataType = dataType,
-                        .dispatchScale = dispatchScale,
-                        .inputMode = staticFp8InputMode,
-                        .combineDataType = combineDataType,
-                        .combineScale = combineScale,
-                    },
+                .quant = quant,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
                 .emitLocalExpertIds = emitLocalExpertIds,
@@ -123,11 +121,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
-          nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"),
-          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::arg("quant_scale") = 1.0f,
-          nb::arg("emit_local_expert_ids") = false,
-          nb::arg("static_fp8_input_mode") = StaticFp8InputMode::PREQUANTIZED_E4M3,
-          nb::arg("combine_data_type") = DispatchDataType::BF16, nb::arg("combine_scale") = 1.0f,
+          nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"), nb::arg("quant"),
+          nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::arg("emit_local_expert_ids") = false,
           nb::keep_alive<0, 1>())
       .def(
           "dispatch_throughput",

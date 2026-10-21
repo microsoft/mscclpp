@@ -92,12 +92,6 @@ def parse_args() -> argparse.Namespace:
         help="MSCCL++ rank-major combine input format",
     )
     p.add_argument(
-        "--combine-fp8-scale",
-        type=float,
-        default=1.0,
-        help="finite positive scalar C for FP8 combine input, where q=E4M3(real*C)",
-    )
-    p.add_argument(
         "--combine-mode",
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
@@ -146,8 +140,6 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--iters-per-graph must be positive")
     if not math.isfinite(args.static_fp8_scale) or args.static_fp8_scale <= 0:
         raise SystemExit("--static-fp8-scale must be finite and positive")
-    if not math.isfinite(args.combine_fp8_scale) or args.combine_fp8_scale <= 0:
-        raise SystemExit("--combine-fp8-scale must be finite and positive")
     if not args.cuda_graph:
         # Grouping only applies to graph capture; treat as 1 for eager runs so the
         # non-1 default does not error a plain (non-graph) benchmark.
@@ -158,8 +150,10 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("fixed-scale FP8 requires --ep-layout rank_major")
     if args.static_fp8_input != "prequantized" and args.dispatch_dtype != "fp8_e4m3":
         raise SystemExit("--static-fp8-input fused/separate requires --dispatch-dtype fp8_e4m3")
-    if args.combine_dtype == "fp8_e4m3" and (args.mode != "latency" or args.ep_layout != "rank_major"):
-        raise SystemExit("--combine-dtype fp8_e4m3 requires latency --ep-layout rank_major")
+    if args.combine_dtype == "fp8_e4m3" and (
+        args.mode != "latency" or args.ep_layout != "rank_major" or args.dispatch_dtype != "fp8_e4m3"
+    ):
+        raise SystemExit("--combine-dtype fp8_e4m3 requires latency rank-major static-FP8 dispatch")
     return args
 
 

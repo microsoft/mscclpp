@@ -62,7 +62,7 @@ struct DispatchHandle::Impl {
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.quant.dispatchDataType),
         combineDataType_(request.quant.combineDataType),
-        combineScale_(request.quant.combineScale),
+        dispatchScale_(request.quant.dispatchScale),
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
@@ -80,7 +80,7 @@ struct DispatchHandle::Impl {
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
-  float combineScale_ = 1.0f;
+  float dispatchScale_ = 1.0f;
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
   std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };

@@ -183,15 +183,16 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S)` and transports it
   byte-for-byte. To fuse quantization into dispatch, pass BF16 input with
   `QuantConfig(format=DispatchDataType.FP8_E4M3, scale=S,
-  input_mode=StaticFp8InputMode.QUANTIZE_BF16)`. The fused path computes
+  input_mode=QuantConfig.InputMode.QUANTIZE)`. The fused path computes
   `q = E4M3(real * S)` once per token before sending the same FP8 row to each
   destination. Neither mode has a block-scale sideband.
-* Latency RANK_MAJOR combine input is BF16 by default, independently of the
-  dispatch format. To use E4M3 expert output, set
-  `combine_format=DispatchDataType.FP8_E4M3` and a finite positive
-  `combine_scale=C` in `QuantConfig`. Write `q = E4M3(real * C)` to
-  `combine_input_buffer`; combine computes `FP32(q) * (1 / C)`, applies FP32
-  route weights only for `DIRECT_SEND`, accumulates in FP32, and writes BF16.
+* Latency RANK_MAJOR combine input is BF16 by default. This means MM2 has
+  already produced/dequantized BF16 output. Static-FP8 dispatch may instead set
+  `combine_format=DispatchDataType.FP8_E4M3`; MM2 writes
+  `q = E4M3(real * S)` to `combine_input_buffer`, and combine computes
+  `FP32(q) * (1 / S)` with the existing dispatch scale. Combine never
+  quantizes; it applies FP32 route weights only for `DIRECT_SEND`, accumulates
+  in FP32, and writes BF16.
 * Throughput FP8 requires `torch.float8_e4m3fn` input and
   `QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=scales)`, where
   `scales` is contiguous CUDA FP32 `[num_input_tokens, H//128]`. Output scales
@@ -201,7 +202,8 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   returns E4M3 payload plus contiguous uint8 E8M0 scales with shape
   `[R, A, H//32]`, and requires `H` to be divisible by 32.
 * Combine always returns BF16. E4M3 expert input is supported only for latency
-  RANK_MAJOR and must be explicitly configured; every other combine consumes BF16.
+  RANK_MAJOR static-FP8 dispatch and must be explicitly configured. MXFP8
+  dispatch and every other combine consume BF16 expert output.
 
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
@@ -302,8 +304,8 @@ and combine through the Python API. For latency RANK_MAJOR static FP8,
 measures dispatch of precomputed E4M3, the second measures BF16 quantization
 inside the dispatch kernel, and the third includes a separate PyTorch
 quantization pipeline before the prequantized dispatch baseline.
-Combine input defaults to BF16. Use `--combine-dtype fp8_e4m3
---combine-fp8-scale C` to benchmark the optional static-scale E4M3 combine path.
+Combine input defaults to BF16. Use `--combine-dtype fp8_e4m3` with static-FP8
+dispatch to benchmark E4M3 MM2 output dequantized using `--static-fp8-scale`.
 
 For 32 ranks across eight four-GPU hosts, the following configuration has 32
 experts per rank:
@@ -316,7 +318,7 @@ mpirun -np 32 python -m mscclpp_benchmark.ep.run_ep_bench_python \
     --backend mscclpp --mode latency --ep-layout rank_major \
     --combine-mode direct_send --dispatch-dtype fp8_e4m3 \
     --static-fp8-scale 1.0 --static-fp8-input fused \
-    --combine-dtype fp8_e4m3 --combine-fp8-scale 1.0 \
+    --combine-dtype fp8_e4m3 \
     --num-tokens 4 --hidden 4096 \
     --num-experts 1024 --num-topk 7 --cuda-graph \
     --iters-per-graph 50 --validate

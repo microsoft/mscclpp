@@ -26,7 +26,6 @@ from mscclpp.ep import (
     MoECommunicatorConfig,
     MoEMode,
     QuantConfig,
-    StaticFp8InputMode,
 )
 
 NUM_TOPK = 8
@@ -109,34 +108,25 @@ def test_config_validation_at_construction(ep_group):
     )
     assert static_fp8.quant.scale == 0.5
     assert static_fp8.quant.combine_format == DispatchDataType.BF16
-    assert static_fp8.quant.combine_scale is None
     fp8_combine = replace(
         static_fp8,
         quant=QuantConfig(
             format=DispatchDataType.FP8_E4M3,
             scale=0.5,
             combine_format=DispatchDataType.FP8_E4M3,
-            combine_scale=0.25,
         ),
     )
     assert fp8_combine.quant.combine_format == DispatchDataType.FP8_E4M3
-    assert fp8_combine.quant.combine_scale == 0.25
-    bf16_dispatch_fp8_combine = replace(
-        config,
-        output_layout=DispatchLayout.RANK_MAJOR,
-        quant=QuantConfig(combine_format=DispatchDataType.FP8_E4M3, combine_scale=0.25),
-    )
-    assert bf16_dispatch_fp8_combine.quant.format is None
     fused_static_fp8 = replace(
         static_fp8,
         quant=QuantConfig(
             format=DispatchDataType.FP8_E4M3,
             scale=0.5,
-            input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+            input_mode=QuantConfig.InputMode.QUANTIZE,
         ),
     )
-    assert fused_static_fp8.quant.input_mode == StaticFp8InputMode.QUANTIZE_BF16
-    with pytest.raises(TypeError, match="StaticFp8InputMode"):
+    assert fused_static_fp8.quant.input_mode == QuantConfig.InputMode.QUANTIZE
+    with pytest.raises(TypeError, match="QuantConfig.InputMode"):
         replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, input_mode=1))
     with pytest.raises(TypeError, match="combine_format"):
         replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, combine_format=1))
@@ -149,47 +139,29 @@ def test_config_validation_at_construction(ep_group):
                 combine_format=DispatchDataType.MXFP8_E4M3,
             ),
         )
-    with pytest.raises(ValueError, match="requires quant.combine_scale"):
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR static FP8 dispatch"):
         replace(
-            static_fp8,
-            quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, combine_format=DispatchDataType.FP8_E4M3),
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            quant=QuantConfig(combine_format=DispatchDataType.FP8_E4M3),
         )
-    for combine_scale in (0.0, -1.0, float("inf"), float("nan")):
-        with pytest.raises(ValueError, match="combine_scale must be finite and positive"):
-            replace(
-                static_fp8,
-                quant=QuantConfig(
-                    format=DispatchDataType.FP8_E4M3,
-                    scale=0.5,
-                    combine_format=DispatchDataType.FP8_E4M3,
-                    combine_scale=combine_scale,
-                ),
-            )
-    with pytest.raises(TypeError, match="combine_scale must be a real number"):
+    with pytest.raises(ValueError, match="requires latency RANK_MAJOR static FP8 dispatch"):
         replace(
-            static_fp8,
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
             quant=QuantConfig(
-                format=DispatchDataType.FP8_E4M3,
-                scale=0.5,
+                format=DispatchDataType.MXFP8_E4M3,
                 combine_format=DispatchDataType.FP8_E4M3,
-                combine_scale="0.25",
             ),
         )
-    with pytest.raises(ValueError, match="combine_scale requires FP8_E4M3"):
-        replace(static_fp8, quant=QuantConfig(format=DispatchDataType.FP8_E4M3, scale=0.5, combine_scale=0.25))
-    with pytest.raises(ValueError, match="requires latency RANK_MAJOR"):
-        replace(
-            config,
-            quant=QuantConfig(combine_format=DispatchDataType.FP8_E4M3, combine_scale=0.25),
-        )
     with pytest.raises(ValueError, match="only by latency RANK_MAJOR static FP8"):
-        replace(config, quant=QuantConfig(input_mode=StaticFp8InputMode.QUANTIZE_BF16))
+        replace(config, quant=QuantConfig(input_mode=QuantConfig.InputMode.QUANTIZE))
     with pytest.raises(ValueError, match="only by latency RANK_MAJOR static FP8"):
         replace(
             config,
             quant=QuantConfig(
                 format=DispatchDataType.FP8_E4M3,
-                input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
             ),
         )
     with pytest.raises(ValueError, match="requires quant.scale"):
@@ -332,7 +304,7 @@ CASES = [
 
 
 def _rank_major_quantized_reference(
-    input, routes, weights, world_size, combine_mode, apply_router_weights, dispatch_scale, combine_scale
+    input, routes, weights, world_size, combine_mode, apply_router_weights, dispatch_scale, combine_fp8
 ):
     valid_routes = routes >= 0
     real_input = input.float()
@@ -340,8 +312,8 @@ def _rank_major_quantized_reference(
         real_input = (real_input * dispatch_scale).to(torch.float8_e4m3fn).float() / dispatch_scale
 
     def stage(values):
-        if combine_scale is not None:
-            return (values * combine_scale).to(torch.float8_e4m3fn).float() / combine_scale
+        if combine_fp8:
+            return (values * dispatch_scale).to(torch.float8_e4m3fn).float() / dispatch_scale
         return values.to(torch.bfloat16).float()
 
     if combine_mode == CombineMode.DIRECT_SEND:
@@ -369,9 +341,8 @@ def _run_dispatch_combine_case(
     prepared,
     apply_router_weights,
     hidden_size,
-    static_fp8_input_mode=StaticFp8InputMode.PREQUANTIZED_E4M3,
+    input_mode=QuantConfig.InputMode.PREQUANTIZED,
     combine_format=DispatchDataType.BF16,
-    combine_scale=None,
 ):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -419,15 +390,14 @@ def _run_dispatch_combine_case(
             quant = QuantConfig(
                 format=data_type,
                 scale=static_scale,
-                input_mode=static_fp8_input_mode,
+                input_mode=input_mode,
                 combine_format=combine_format,
-                combine_scale=combine_scale,
             )
             dispatch_input = input
             if fp8 and mode == MoEMode.THROUGHPUT:
                 dispatch_input = torch.ones_like(input, dtype=torch.float8_e4m3fn)
                 quant.block_scales = values[:, None].expand(-1, hidden_size // 128).contiguous()
-            elif static_scale is not None and static_fp8_input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3:
+            elif static_scale is not None and input_mode == QuantConfig.InputMode.PREQUANTIZED:
                 dispatch_input = (input.float() * static_scale).to(torch.float8_e4m3fn)
 
             result, handle = runtime.dispatch(
@@ -449,7 +419,7 @@ def _run_dispatch_combine_case(
             if static_scale is not None:
                 assert result.quant.scale == static_scale
                 assert result.quant.block_scales is None
-                assert result.quant.input_mode == StaticFp8InputMode.PREQUANTIZED_E4M3
+                assert result.quant.input_mode == QuantConfig.InputMode.PREQUANTIZED
             elif mxfp8:
                 assert result.quant.scale is None
                 assert result.quant.block_scales is not None
@@ -460,7 +430,6 @@ def _run_dispatch_combine_case(
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
                 if result.quant is not None:
                     assert result.quant.combine_format == combine_format
-                    assert result.quant.combine_scale == combine_scale
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
             counts = (
@@ -530,7 +499,7 @@ def _run_dispatch_combine_case(
                 if apply_router_weights is False:
                     expert_output = expert_output * result.weights[..., None]
                 expert_output = (
-                    (expert_output * combine_scale).to(torch.float8_e4m3fn)
+                    (expert_output * static_scale).to(torch.float8_e4m3fn)
                     if combine_format == DispatchDataType.FP8_E4M3
                     else expert_output.to(torch.bfloat16)
                 )
@@ -540,7 +509,7 @@ def _run_dispatch_combine_case(
                 )
                 expert_output = tokens * local_weights.sum(dim=-1, keepdim=True)
                 expert_output = (
-                    (expert_output * combine_scale).to(torch.float8_e4m3fn)
+                    (expert_output * static_scale).to(torch.float8_e4m3fn)
                     if combine_format == DispatchDataType.FP8_E4M3
                     else expert_output.to(torch.bfloat16)
                 )
@@ -551,7 +520,7 @@ def _run_dispatch_combine_case(
             combined = runtime.combine(expert_output, handle, stream=stream, apply_router_weights=apply_router_weights)
             expected_weights = torch.where(routes >= 0, weights, 0)
             expected = input.float() * expected_weights.sum(dim=-1, keepdim=True)
-            if static_scale is not None or combine_scale is not None:
+            if static_scale is not None:
                 expected = _rank_major_quantized_reference(
                     input,
                     routes,
@@ -560,7 +529,7 @@ def _run_dispatch_combine_case(
                     combine_mode,
                     apply_router_weights,
                     static_scale,
-                    combine_scale,
+                    combine_format == DispatchDataType.FP8_E4M3,
                 )
             stream.synchronize()
             torch.testing.assert_close(
@@ -654,7 +623,7 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 *case,
                 apply_router_weights,
                 hidden_size,
-                static_fp8_input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
             )
             ep_group.barrier()
             _run_dispatch_combine_case(
@@ -662,9 +631,8 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 *case,
                 apply_router_weights,
                 hidden_size,
-                static_fp8_input_mode=StaticFp8InputMode.QUANTIZE_BF16,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
                 combine_format=DispatchDataType.FP8_E4M3,
-                combine_scale=0.25,
             )
             ep_group.barrier()
 
@@ -718,9 +686,9 @@ def test_fused_static_fp8_matches_prequantized_payload(ep_group):
                 return counts.cpu(), rows
 
             prequantized_counts, prequantized_rows = dispatch_and_snapshot(
-                prequantized, StaticFp8InputMode.PREQUANTIZED_E4M3
+                prequantized, QuantConfig.InputMode.PREQUANTIZED
             )
-            fused_counts, fused_rows = dispatch_and_snapshot(input, StaticFp8InputMode.QUANTIZE_BF16)
+            fused_counts, fused_rows = dispatch_and_snapshot(input, QuantConfig.InputMode.QUANTIZE)
 
         torch.testing.assert_close(fused_counts, prequantized_counts, rtol=0, atol=0)
         for fused, expected in zip(fused_rows, prequantized_rows):
@@ -997,7 +965,6 @@ def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode,
         format=data_type,
         scale=scale,
         combine_format=DispatchDataType.FP8_E4M3 if fp8 else DispatchDataType.BF16,
-        combine_scale=scale if fp8 else None,
     )
     with initialized_runtime(
         ep_group,

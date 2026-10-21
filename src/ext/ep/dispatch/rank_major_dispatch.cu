@@ -426,7 +426,7 @@ void rankMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int
                        float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                        const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                        const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  const bool quantizeStaticFp8 = workload.staticFp8InputMode_ == StaticFp8InputMode::QUANTIZE_BF16;
+  const bool quantizeStaticFp8 = workload.inputMode_ == QuantConfig::InputMode::QUANTIZE;
   if (workload.emitLocalExpertIds_ && quantizeStaticFp8) {
     dispatchAlgorithm<DispatchLayout::RANK_MAJOR, KernelSelector<true, true>>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,

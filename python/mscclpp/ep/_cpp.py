@@ -18,7 +18,7 @@ except ModuleNotFoundError as exc:
 CombineMode = _cpp.CombineMode
 DispatchDataType = _cpp.DispatchDataType
 DispatchLayout = _cpp.DispatchLayout
-StaticFp8InputMode = _cpp.StaticFp8InputMode
+NativeQuantConfig = _cpp.QuantConfig
 MoEMode = _cpp.MoEMode
 MoERuntime = _cpp.MoERuntime
 PrepareHandle = _cpp.PrepareHandle

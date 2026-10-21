@@ -10,7 +10,7 @@ except ModuleNotFoundError as exc:
         raise
     raise ImportError("mscclpp.ep requires PyTorch; install the optional 'mscclpp[ep]' dependencies.") from exc
 
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 from .communicator import MoECommunicator
 from .types import (
     DispatchHandle,
@@ -35,5 +35,4 @@ __all__ = [
     "MoEMode",
     "PrepareHandle",
     "QuantConfig",
-    "StaticFp8InputMode",
 ]

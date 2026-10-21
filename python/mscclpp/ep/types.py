@@ -13,7 +13,7 @@ import torch
 from mscclpp import CommGroup
 
 from . import _cpp
-from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, NativeQuantConfig
 
 
 @dataclass
@@ -29,20 +29,21 @@ class QuantConfig:
     stored as E4M3 after multiplication by ``scale``. ``input_mode`` selects
     externally quantized E4M3 input or fused BF16 quantization inside dispatch.
     Rank-major combine input defaults to BF16. Set ``combine_format`` to
-    ``FP8_E4M3`` and provide an independent ``combine_scale`` to consume expert
-    output stored as E4M3(real * combine_scale).
+    ``FP8_E4M3`` for static-FP8 dispatch to consume MM2 output stored as
+    E4M3(real * scale); combine dequantizes it with the existing dispatch scale.
     MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
     RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
     ``[rank, row, hidden // 32]``.
     BF16 dispatch does not use scales.
     """
 
+    InputMode = NativeQuantConfig.InputMode
+
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
     scale: Optional[float] = None
-    input_mode: StaticFp8InputMode = StaticFp8InputMode.PREQUANTIZED_E4M3
+    input_mode: NativeQuantConfig.InputMode = NativeQuantConfig.InputMode.PREQUANTIZED
     combine_format: DispatchDataType = DispatchDataType.BF16
-    combine_scale: Optional[float] = None
 
 
 @dataclass(frozen=True)

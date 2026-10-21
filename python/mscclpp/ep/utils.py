@@ -12,7 +12,7 @@ from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 
-from ._cpp import DispatchDataType, DispatchLayout, MoEMode, StaticFp8InputMode
+from ._cpp import DispatchDataType, DispatchLayout, MoEMode, NativeQuantConfig
 from .types import MoECommunicatorConfig, QuantConfig
 
 
@@ -68,11 +68,10 @@ def validate_quant(
     data_type = resolve_dispatch_data_type(quant)
     block_scales = None if quant is None else quant.block_scales
     scale = None if quant is None else quant.scale
-    input_mode = StaticFp8InputMode.PREQUANTIZED_E4M3 if quant is None else quant.input_mode
+    input_mode = QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode
     combine_type = DispatchDataType.BF16 if quant is None else quant.combine_format
-    combine_scale = None if quant is None else quant.combine_scale
-    if not isinstance(input_mode, StaticFp8InputMode):
-        raise TypeError("quant.input_mode must be a StaticFp8InputMode")
+    if not isinstance(input_mode, QuantConfig.InputMode):
+        raise TypeError("quant.input_mode must be a QuantConfig.InputMode")
     if not isinstance(combine_type, DispatchDataType):
         raise TypeError("quant.combine_format must be a DispatchDataType")
     if combine_type not in (DispatchDataType.BF16, DispatchDataType.FP8_E4M3):
@@ -80,25 +79,15 @@ def validate_quant(
     static_fp8 = (
         data_type == DispatchDataType.FP8_E4M3 and mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR
     )
-    if input_mode != StaticFp8InputMode.PREQUANTIZED_E4M3 and not static_fp8:
+    if input_mode != QuantConfig.InputMode.PREQUANTIZED and not static_fp8:
         raise ValueError("quant.input_mode is supported only by latency RANK_MAJOR static FP8")
+    if combine_type == DispatchDataType.FP8_E4M3 and not static_fp8:
+        raise ValueError("FP8 combine input requires latency RANK_MAJOR static FP8 dispatch")
     if scale is not None:
         if isinstance(scale, bool) or not isinstance(scale, Real):
             raise TypeError("quant.scale must be a real number")
         if not math.isfinite(float(scale)) or scale <= 0:
             raise ValueError("quant.scale must be finite and positive")
-    if combine_scale is not None:
-        if isinstance(combine_scale, bool) or not isinstance(combine_scale, Real):
-            raise TypeError("quant.combine_scale must be a real number")
-        if not math.isfinite(float(combine_scale)) or combine_scale <= 0:
-            raise ValueError("quant.combine_scale must be finite and positive")
-    if combine_type == DispatchDataType.FP8_E4M3:
-        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
-            raise ValueError("FP8 combine input requires latency RANK_MAJOR")
-        if combine_scale is None:
-            raise ValueError("FP8 combine input requires quant.combine_scale")
-    elif combine_scale is not None:
-        raise ValueError("quant.combine_scale requires FP8_E4M3 combine input")
     if data_type == DispatchDataType.BF16:
         if block_scales is not None:
             raise ValueError("BF16 dispatch does not accept block_scales")
@@ -133,9 +122,8 @@ def resolve_dispatch_format(config: MoECommunicatorConfig, quant: Optional[Quant
     DispatchDataType,
     Optional[torch.Tensor],
     Optional[float],
-    StaticFp8InputMode,
+    NativeQuantConfig.InputMode,
     DispatchDataType,
-    Optional[float],
 ]:
     """Resolve a per-call format override or the communicator's quantization default."""
     quant = config.quant if quant is None else quant
@@ -144,9 +132,8 @@ def resolve_dispatch_format(config: MoECommunicatorConfig, quant: Optional[Quant
         data_type,
         None if quant is None else quant.block_scales,
         None if quant is None or quant.scale is None else float(quant.scale),
-        StaticFp8InputMode.PREQUANTIZED_E4M3 if quant is None else quant.input_mode,
+        QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode,
         DispatchDataType.BF16 if quant is None else quant.combine_format,
-        None if quant is None or quant.combine_scale is None else float(quant.combine_scale),
     )
 
 
