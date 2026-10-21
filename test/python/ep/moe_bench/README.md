@@ -171,6 +171,8 @@ into a separate run directory; it does not rebuild the native library.
 Failures cancel the other workers, including orphaned descendants; cleanup
 errors appear in node logs. Results and one `node-<rank>.log` per node are saved
 on the controller. Remote run directories remain for troubleshooting.
+Result downloads replace local files only after transfer succeeds, so an
+interrupted download does not overwrite the controller's existing run record.
 
 For CUDA Fabric import errors or `CUDA_ERROR_NOT_SUPPORTED`, ask your
 administrator to check IMEX and cross-node memory imports. Matching fabric IDs

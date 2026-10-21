@@ -11,6 +11,7 @@ import re
 import shlex
 import subprocess
 import tarfile
+import tempfile
 import time
 
 SSH_OPTIONS = [
@@ -279,10 +280,16 @@ def launch(nodes, run_dir, commands, timeout):
     first = nodes[0]
     directory = str(Path(first["root"]) / "runs" / run_dir.name)
     for filename in ("run.json", "summary.csv", "iterations.csv"):
-        subprocess.run(
-            ["scp", *SSH_OPTIONS, f"{first['target']}:{directory}/{filename}", str(run_dir / filename)],
-            check=True,
-            timeout=120,
-        )
+        with tempfile.NamedTemporaryFile(dir=run_dir, prefix=f".{filename}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+        try:
+            subprocess.run(
+                ["scp", *SSH_OPTIONS, f"{first['target']}:{directory}/{filename}", str(temporary)],
+                check=True,
+                timeout=120,
+            )
+            temporary.replace(run_dir / filename)
+        finally:
+            temporary.unlink(missing_ok=True)
     print(f"Collected distributed results: {run_dir}", flush=True)
     return 0
