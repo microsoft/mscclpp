@@ -208,31 +208,49 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   const int tokenStride = nPayloadBlocks * nWarpGroups;
   const int firstTokenIdx = (static_cast<int>(blockIdx.x) - 1) * nWarpGroups + warpGroupId;
+  if (firstTokenIdx >= nTokens) return;
+
+  Route route{-1, -1, false};
+  mscclpp::f8_e4m3x8 quantized[MaxVectorsPerThread];
+  [[maybe_unused]] uint8_t scales[MaxVectorsPerThread];
+  auto quantizeToken = [&](int tokenIdx) {
+    static_assert(sizeof(mscclpp::bf16x8) == sizeof(uint4));
+    const auto* inputData = static_cast<const uint4*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
+    mscclpp::bf16x8 values[MaxVectorsPerThread];
+#pragma unroll
+    for (int i = 0; i < MaxVectorsPerThread; ++i) {
+      const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+      if (inputIdx < HiddenVectors) values[i] = mscclpp::bf16x8(inputData[inputIdx]);
+    }
+#pragma unroll
+    for (int i = 0; i < MaxVectorsPerThread; ++i) {
+      const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
+      if (inputIdx < HiddenVectors) {
+        if constexpr (DataType == DispatchDataType::FP8_E4M3) {
+          quantized[i] = quantizeBf16x8ToStaticFp8(values[i], quantScale);
+        } else {
+          quantized[i] = quantizeBf16x8ToMxfp8(values[i], scales[i], laneId);
+        }
+      }
+    }
+  };
+
+  // Prologue: Warp 0 reserves destination slots while the other warps quantize the first token into registers.
+  if (subWarpId == 0) {
+    route = prepareRoute(workspaceView, topkIndices, firstTokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
+  } else {
+    quantizeToken(firstTokenIdx);
+  }
 
   for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += tokenStride) {
-    Route route{-1, -1, false};
-    // Warp 0 reserves destination slots while the other warps quantize, so the two latencies overlap.
-    if (subWarpId == 0) {
-      route = prepareRoute(workspaceView, topkIndices, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
-    } else {
-      static_assert(sizeof(mscclpp::bf16x8) == sizeof(uint4));
-      const auto* inputData = static_cast<const uint4*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenVectors;
-      mscclpp::bf16x8 values[MaxVectorsPerThread];
-#pragma unroll
-      for (int i = 0; i < MaxVectorsPerThread; ++i) {
-        const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
-        if (inputIdx < HiddenVectors) values[i] = mscclpp::bf16x8(inputData[inputIdx]);
-      }
+    if (subWarpId != 0) {
 #pragma unroll
       for (int i = 0; i < MaxVectorsPerThread; ++i) {
         const int inputIdx = quantizeThreadId + i * quantizeThreadCount;
         if (inputIdx < HiddenVectors) {
-          if constexpr (DataType == DispatchDataType::FP8_E4M3) {
-            stagedData[inputIdx] = quantizeBf16x8ToStaticFp8(values[i], quantScale);
-          } else {
-            uint8_t scale;
-            stagedData[inputIdx] = quantizeBf16x8ToMxfp8(values[i], scale, laneId);
-            if (laneId % 4 == 0) stagedScales[inputIdx / 4] = scale;
+          stagedData[inputIdx] = quantized[i];
+          if constexpr (DataType == DispatchDataType::MXFP8_E4M3) {
+            if (laneId % 4 == 0) stagedScales[inputIdx / 4] = scales[i];
           }
         }
       }
@@ -240,6 +258,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
     mscclpp::bulkFence();
     syncNamedBarrier(groupBarrierId, groupThreadCount);
 
+    const int nextTokenIdx = tokenIdx + tokenStride;
+    // Overlap TMA send/wait of tokenIdx on warp 0 with HBM load and quantization of nextTokenIdx on warps 1..7.
     if (subWarpId == 0) {
       const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
       if (dstRank >= 0) {
@@ -248,9 +268,16 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
       }
       sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
                                        tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
+      if (nextTokenIdx < nTokens) {
+        route = prepareRoute(workspaceView, topkIndices, nextTokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
+      }
       completeTokenStore(workspaceView, dstRank);
+    } else if (nextTokenIdx < nTokens) {
+      quantizeToken(nextTokenIdx);
     }
-    syncNamedBarrier(groupBarrierId, groupThreadCount);
+    if (nextTokenIdx < nTokens) {
+      syncNamedBarrier(groupBarrierId, groupThreadCount);
+    }
   }
 }
 
