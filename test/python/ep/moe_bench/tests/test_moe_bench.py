@@ -303,7 +303,7 @@ def test_cli_rejects_invalid_environment_options(flag, value):
         ),
     ],
 )
-@pytest.mark.parametrize("num_gpus", [2, 4])
+@pytest.mark.parametrize("num_gpus", [1, 2, 3, 4, 8])
 @pytest.mark.parametrize("gloo_interface", [None, "eth0"])
 def test_launcher_resolves_environment_and_worker_command(
     tmp_path, monkeypatch, options, expected, num_gpus, gloo_interface
@@ -313,6 +313,7 @@ def test_launcher_resolves_environment_and_worker_command(
 
     document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
     document["environment"]["cuda_graph"] = "mlp"
+    document["models"]["scaled_small"]["num_experts"] = 2 * num_gpus
     config_path = tmp_path / "configs.yaml"
     config_path.write_text(yaml.safe_dump(document))
     output_dir = tmp_path / "runs"
@@ -358,6 +359,16 @@ def test_launcher_resolves_environment_and_worker_command(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    if (
+        expected["communication_backend"] == "mscclpp"
+        and expected["mode"] == "throughput"
+        and num_gpus not in (2, 4, 8, 16)
+    ):
+        with pytest.raises(ValueError, match="environment.num_gpus for MSCCL\\+\\+ throughput"):
+            launcher.main()
+        assert not commands
+        assert not output_dir.exists()
+        return
     launcher.main()
     (run_path,) = output_dir.glob("*/run.json")
     metadata = json.loads(run_path.read_text())
@@ -395,8 +406,7 @@ def test_launcher_resolves_environment_and_worker_command(
     assert shlex.split(metadata["invocation"]["worker_command"]) == commands[0]
 
 
-@pytest.mark.parametrize("num_gpus", [0, 1, 3, 8])
-def test_launcher_rejects_unsupported_visible_gpu_count(tmp_path, monkeypatch, num_gpus):
+def test_launcher_rejects_no_visible_gpus(tmp_path, monkeypatch):
     from .. import run as launcher
 
     monkeypatch.setattr(
@@ -404,9 +414,9 @@ def test_launcher_rejects_unsupported_visible_gpu_count(tmp_path, monkeypatch, n
         "argv",
         ["run.py", "--model", "small", "--input", "decode", "--routing", "balanced", "--output-dir", str(tmp_path)],
     )
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: num_gpus)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
     monkeypatch.setattr(launcher.subprocess, "run", lambda *args, **kwargs: pytest.fail("Must not launch workers"))
-    with pytest.raises(RuntimeError, match=f"uses all visible GPUs.*found {num_gpus}"):
+    with pytest.raises(RuntimeError, match="at least one visible GPU.*found none"):
         launcher.main()
     assert not list(tmp_path.iterdir())
 

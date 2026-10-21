@@ -76,8 +76,8 @@ def main():
         import torch
 
         num_gpus = torch.cuda.device_count()
-    if nodes is None and num_gpus not in (2, 4):
-        raise RuntimeError(f"MoE benchmark uses all visible GPUs on this node and supports 2 or 4; found {num_gpus}")
+    if num_gpus < 1:
+        raise RuntimeError("MoE benchmark requires at least one visible GPU on each node; found none")
     config = load_config(
         args.config,
         num_gpus=num_gpus,

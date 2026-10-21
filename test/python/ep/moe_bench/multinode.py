@@ -65,10 +65,21 @@ print(json.dumps(dict(hostname=socket.gethostname(),interface=interface,
 """
 
 SUPERVISOR = """
-import json,os,select,signal,subprocess,sys
+import ctypes,json,os,pathlib,select,signal,subprocess,sys,time
+# torchrun workers start separate sessions. Adopt them if their launcher exits
+# before it can clean up, rather than leaving them owned by init.
+libc=ctypes.CDLL(None,use_errno=True)
+if libc.prctl(36,1,0,0,0)!=0:
+    raise OSError(ctypes.get_errno(),'Cannot enable child subreaper')
+stopping=False
+def stop(signum,frame):
+    global stopping
+    stopping=True
+signal.signal(signal.SIGTERM,stop)
+signal.signal(signal.SIGINT,stop)
 process=subprocess.Popen(json.loads(sys.argv[1]),stdin=subprocess.DEVNULL,start_new_session=True)
 try:
-    while process.poll() is None:
+    while not stopping and process.poll() is None:
         if select.select([sys.stdin],[],[],0.2)[0] and not sys.stdin.buffer.read(1):
             break
 finally:
@@ -84,7 +95,26 @@ finally:
         os.killpg(process.pid,signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait()
+    # Killing an adopted parent may expose more descendants on the next pass.
+    # Only inspect our own children, never unrelated processes on shared nodes.
+    children_file=pathlib.Path(f'/proc/self/task/{os.getpid()}/children')
+    deadline=time.monotonic()+5
+    while True:
+        process.poll()
+        children=[int(pid) for pid in children_file.read_text().split()]
+        if not children:
+            break
+        for pid in children:
+            try:
+                os.kill(pid,signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            if pid!=process.pid:
+                os.waitpid(pid,os.WNOHANG)
+        if time.monotonic()>=deadline:
+            raise RuntimeError(f'Worker cleanup timed out; surviving child PIDs: {children}')
+        time.sleep(0.02)
+    process.wait(timeout=0)
 sys.exit(process.returncode)
 """
 
@@ -236,7 +266,7 @@ def launch(nodes, run_dir, commands, timeout):
             process.stdin.close()
         for process in processes:
             try:
-                process.wait(timeout=20)
+                process.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 process.terminate()
                 try:
