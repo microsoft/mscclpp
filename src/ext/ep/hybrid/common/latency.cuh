@@ -179,6 +179,10 @@ struct WorkspaceView {
   int* dispatchNumRecvTasks_;
   uint32_t* combineRankReadyEpochs_;
   uint32_t* combineReadyEpoch_;
+  // Device-side rank-major round generation. Kernels derive their epoch from it so CUDA graph replays, which reuse
+  // the captured Workload, still see a fresh epoch every dispatch/combine round.
+  uint32_t* rankMajorGeneration_;
+  uint32_t* combineFinishedBlocks_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
   // GPUNetIO cross-domain: cumulative per-source arrival baseline (dispatch recv
@@ -213,6 +217,8 @@ struct WorkspaceView {
     combineRankReadyEpochs_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
     combineReadyEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
+    rankMajorGeneration_ = reinterpret_cast<uint32_t*>(cursor++);
+    combineFinishedBlocks_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
     rankMajorSendIndices_ = cursor;
@@ -231,10 +237,39 @@ struct WorkspaceView {
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
            sizeof(uint32_t) +                                                            // combineReadyEpoch_
+           sizeof(uint32_t) +                                                            // rankMajorGeneration_
+           sizeof(uint32_t) +                                                            // combineFinishedBlocks_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
+
+// Epochs stay in [1, RankMajorEpochPeriod] so 0 never matches a live epoch and epoch * 2 + 1 cannot wrap.
+constexpr uint32_t RankMajorEpochPeriod = 1u << 30;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+// Epoch of the current rank-major dispatch/combine round. Stable until the round's combine kernel finishes.
+MSCCLPP_DEVICE_INLINE uint32_t rankMajorRoundEpoch(const WorkspaceView& workspace) {
+  return mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.rankMajorGeneration_,
+                                                             mscclpp::memoryOrderRelaxed) +
+         1;
+}
+
+// Called by every thread of every combine block once it is done with the round. The last block to finish advances
+// the generation; every block has read its epoch before arriving, and the next round launches after this kernel.
+MSCCLPP_DEVICE_INLINE void finishRankMajorRound(const WorkspaceView& workspace) {
+  __syncthreads();
+  if (threadIdx.x != 0) return;
+  const uint32_t finished = mscclpp::atomicFetchAdd<uint32_t, mscclpp::scopeDevice>(workspace.combineFinishedBlocks_,
+                                                                                    1u, mscclpp::memoryOrderAcqRel);
+  if (finished + 1 != gridDim.x) return;
+  *workspace.combineFinishedBlocks_ = 0;
+  const uint32_t generation = *workspace.rankMajorGeneration_ + 1;
+  mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.rankMajorGeneration_,
+                                                       generation == RankMajorEpochPeriod ? 0u : generation,
+                                                       mscclpp::memoryOrderRelease);
+}
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 struct KernelConfigCache {
   int deviceId_ = -1;

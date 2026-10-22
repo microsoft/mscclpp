@@ -7,6 +7,36 @@
 
 namespace mscclpp {
 
+namespace {
+
+template <typename T, typename Impl, typename Func>
+std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Func func) {
+  // Weak placeholder to avoid a reference cycle; updated with the real recvItem after the future is created.
+  auto thisRecvItem = std::make_shared<std::weak_ptr<BaseRecvItem>>();
+  auto future = std::async(std::launch::deferred,
+                           [impl, remoteRank, tag, thisRecvItem, lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
+                            func = std::move(func)]() mutable {
+                             auto cleanup = [impl, remoteRank, tag, thisRecvItem]() {
+                               impl->clearLastRecvItemIfMatches(remoteRank, tag, thisRecvItem->lock());
+                             };
+
+                             if (lastRecvItem) {
+                               // Recursive call to the previous receive items
+                               lastRecvItem->wait();
+                             }
+                             auto result = func();
+                             cleanup();
+                             return result;
+                           });
+  auto sharedFuture = std::shared_future<T>(std::move(future));
+  auto recvItem = std::make_shared<RecvItem<T>>(sharedFuture);
+  *thisRecvItem = recvItem;
+  impl->setLastRecvItem(remoteRank, tag, recvItem);
+  return sharedFuture;
+}
+
+}  // namespace
+
 Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context)
     : bootstrap_(bootstrap) {
   if (!context) {
@@ -17,19 +47,48 @@ Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<C
 }
 
 void Communicator::Impl::setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item) {
-  lastRecvItems_[{remoteRank, tag}] = item;
+  std::shared_ptr<BaseRecvItem> previous;
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto& slot = lastRecvItems_[{remoteRank, tag}];
+  previous = std::move(slot);
+  slot = std::move(item);
 }
 
 std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank, int tag) {
+  std::shared_ptr<BaseRecvItem> released;
+  std::lock_guard<std::mutex> lock(mutex_);
   auto it = lastRecvItems_.find({remoteRank, tag});
   if (it == lastRecvItems_.end()) {
     return nullptr;
   }
   if (it->second->isReady()) {
+    released = std::move(it->second);
     lastRecvItems_.erase(it);
     return nullptr;
   }
   return it->second;
+}
+
+void Communicator::Impl::clearLastRecvItemIfMatches(int remoteRank, int tag,
+                                                    const std::shared_ptr<BaseRecvItem>& expectedItem) {
+  // Release the erased item after unlocking so its future is never destroyed under the lock.
+  std::shared_ptr<BaseRecvItem> released;
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = lastRecvItems_.find({remoteRank, tag});
+  if (it != lastRecvItems_.end() && it->second == expectedItem) {
+    released = std::move(it->second);
+    lastRecvItems_.erase(it);
+  }
+}
+
+void Communicator::Impl::setConnectionInfo(const BaseConnection* connection, int remoteRank, int tag) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  connectionInfos_[connection] = {remoteRank, tag};
+}
+
+ConnectionInfo Communicator::Impl::connectionInfo(const BaseConnection* connection) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return connectionInfos_.at(connection);
 }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
@@ -83,19 +142,11 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
     locRecvMemList.push_back(std::move(locRecvMem));
     return future;
   }
-  auto future = std::async(std::launch::deferred,
-                           [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag)]() {
-                             if (lastRecvItem) {
-                               // Recursive call to the previous receive items
-                               lastRecvItem->wait();
-                             }
-                             std::vector<char> data;
-                             bootstrap()->recv(data, remoteRank, tag);
-                             return RegisteredMemory::deserialize(data);
-                           });
-  auto shared_future = std::shared_future<RegisteredMemory>(std::move(future));
-  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<RegisteredMemory>>(shared_future));
-  return shared_future;
+  return makeOrderedRecvFuture<RegisteredMemory>(pimpl_.get(), remoteRank, tag, [this, remoteRank, tag]() {
+    std::vector<char> data;
+    bootstrap()->recv(data, remoteRank, tag);
+    return RegisteredMemory::deserialize(data);
+  });
 }
 
 MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpoint& localEndpoint, int remoteRank,
@@ -106,28 +157,21 @@ MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpo
     auto connection = context()->connect(localEndpoint, remoteEndpoint);
     std::promise<Connection> promise;
     promise.set_value(connection);
-    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
+    pimpl_->setConnectionInfo(connection.impl_.get(), remoteRank, tag);
     return std::shared_future<Connection>(promise.get_future());
   }
 
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
-  auto future = std::async(std::launch::deferred, [this, remoteRank, tag, localEndpoint,
-                                                   lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag)]() mutable {
-    if (lastRecvItem) {
-      // Recursive call to the previous receive items
-      lastRecvItem->wait();
-    }
-    std::vector<char> data;
-    bootstrap()->recv(data, remoteRank, tag);
-    auto remoteEndpoint = Endpoint::deserialize(data);
-    auto connection = context()->connect(localEndpoint, remoteEndpoint);
-    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
-    return connection;
-  });
-  auto shared_future = std::shared_future<Connection>(std::move(future));
-  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Connection>>(shared_future));
-  return shared_future;
+  return makeOrderedRecvFuture<Connection>(pimpl_.get(), remoteRank, tag,
+                                           [this, remoteRank, tag, localEndpoint]() mutable {
+                                             std::vector<char> data;
+                                             bootstrap()->recv(data, remoteRank, tag);
+                                             auto remoteEndpoint = Endpoint::deserialize(data);
+                                             auto connection = context()->connect(localEndpoint, remoteEndpoint);
+                                             pimpl_->setConnectionInfo(connection.impl_.get(), remoteRank, tag);
+                                             return connection;
+                                           });
 }
 
 MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const EndpointConfig& localConfig, int remoteRank,
@@ -141,29 +185,20 @@ MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const
   SemaphoreStub localStub(connection);
   bootstrap()->send(localStub.serialize(), remoteRank, tag);
 
-  auto future =
-      std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
-                                         localStub = localStub]() mutable {
-        if (lastRecvItem) {
-          // Recursive call to the previous receive items
-          lastRecvItem->wait();
-        }
-        std::vector<char> data;
-        bootstrap()->recv(data, remoteRank, tag);
-        auto remoteStub = SemaphoreStub::deserialize(data);
-        return Semaphore(localStub, remoteStub);
-      });
-  auto shared_future = std::shared_future<Semaphore>(std::move(future));
-  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Semaphore>>(shared_future));
-  return shared_future;
+  return makeOrderedRecvFuture<Semaphore>(pimpl_.get(), remoteRank, tag, [this, remoteRank, tag, localStub]() mutable {
+    std::vector<char> data;
+    bootstrap()->recv(data, remoteRank, tag);
+    auto remoteStub = SemaphoreStub::deserialize(data);
+    return Semaphore(localStub, remoteStub);
+  });
 }
 
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(connection.impl_.get()).remoteRank;
+  return pimpl_->connectionInfo(connection.impl_.get()).remoteRank;
 }
 
 MSCCLPP_API_CPP int Communicator::tagOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(connection.impl_.get()).tag;
+  return pimpl_->connectionInfo(connection.impl_.get()).tag;
 }
 
 }  // namespace mscclpp

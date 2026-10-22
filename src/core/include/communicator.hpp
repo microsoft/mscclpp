@@ -7,6 +7,7 @@
 #include <list>
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -59,10 +60,13 @@ struct ConnectionInfo {
 struct Communicator::Impl {
   std::shared_ptr<Bootstrap> bootstrap_;
   std::shared_ptr<Context> context_;
+  // Guards connectionInfos_ and lastRecvItems_. Deferred receive futures update both maps from whichever
+  // thread waits on them, so they may race with calls on the communicator's owning thread.
+  std::mutex mutex_;
   std::unordered_map<const BaseConnection*, ConnectionInfo> connectionInfos_;
 
   // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
-  // If the RecvItem gets ready, it will be removed at the next call to getLastRecvItem.
+  // The RecvItem is removed when it finishes or when getLastRecvItem observes that it is ready.
   std::unordered_map<std::pair<int, int>, std::shared_ptr<BaseRecvItem>, PairHash> lastRecvItems_;
 
   // RegisteredMemory items sent to the local rank of each tag. Sending memory to the local rank is
@@ -78,6 +82,12 @@ struct Communicator::Impl {
   // Return the last RecvItem that is not ready.
   // If the item is ready, it will be removed from the map and nullptr will be returned.
   std::shared_ptr<BaseRecvItem> getLastRecvItem(int remoteRank, int tag);
+
+  // Clear the last RecvItem only if it still matches the expected item.
+  void clearLastRecvItemIfMatches(int remoteRank, int tag, const std::shared_ptr<BaseRecvItem>& expectedItem);
+
+  void setConnectionInfo(const BaseConnection* connection, int remoteRank, int tag);
+  ConnectionInfo connectionInfo(const BaseConnection* connection);
 
   struct Connector;
 };

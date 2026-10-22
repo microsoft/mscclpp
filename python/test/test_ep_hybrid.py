@@ -145,8 +145,9 @@ def _check_dispatch_metadata(ep_group, layout, result, num_tokens):
     assert result.layout.num_tokens_per_rank.cpu().tolist() == expected_counts
 
 
+@pytest.mark.parametrize("hidden", [HIDDEN, 2048])
 @pytest.mark.parametrize("layout", [DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED])
-def test_latency_hybrid_dispatch_combine(ep_group, layout):
+def test_latency_hybrid_dispatch_combine(ep_group, layout, hidden):
     num_tokens, capacity = 5, 8
     expanded = layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
     with initialized_runtime(
@@ -155,7 +156,7 @@ def test_latency_hybrid_dispatch_combine(ep_group, layout):
         output_layout=layout,
         combine_mode=CombineMode.RANK_LOCAL_REDUCE,
         num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
-        hidden_size=HIDDEN,
+        hidden_size=hidden,
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
     ) as runtime:
@@ -167,14 +168,14 @@ def test_latency_hybrid_dispatch_combine(ep_group, layout):
                 device="cuda",
             )
             weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
-            input = token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, HIDDEN)
+            input = token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, hidden)
             input = input.to(torch.bfloat16).contiguous()
             if expanded:
                 with pytest.raises(ValueError, match="runtime_max_tokens_per_rank"):
                     runtime.dispatch(input, routes, weights, runtime_max_tokens_per_rank=capacity - 1)
 
             result, handle = runtime.dispatch(input, routes, weights, stream=stream)
-            shape = (ep_group.nranks, capacity) + ((NUM_TOPK,) if expanded else ()) + (HIDDEN,)
+            shape = (ep_group.nranks, capacity) + ((NUM_TOPK,) if expanded else ()) + (hidden,)
             assert tuple(result.tokens.shape) == shape
             assert tuple(result.combine_input_buffer.shape) == shape
             assert tuple(result.topk_ids.shape) == shape[:-1] + (() if expanded else (NUM_TOPK,))
@@ -238,3 +239,109 @@ def test_latency_hybrid_multi_iteration_graph_replay(ep_group, layout):
                 ep_group.barrier()
                 expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
                 torch.testing.assert_close(output.float(), expected, rtol=0, atol=0)
+
+
+def _alternate_routes(rank, num_tokens):
+    """Only token 0 is routed, to this rank's first expert: every peer receives zero rows."""
+    routes = [[-1] * NUM_TOPK for _ in range(num_tokens)]
+    routes[0][0] = rank * NUM_LOCAL_EXPERTS
+    return routes
+
+
+@pytest.mark.parametrize("layout", [DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED])
+def test_latency_hybrid_single_round_graph_changing_routes(ep_group, layout):
+    """A graph holding one dispatch/combine round must not reuse the previous replay's metadata."""
+    hybrid_rank_major = _gpunetio_requested() and ep_group.nranks_per_ipc_domain < ep_group.nranks
+    if layout == DispatchLayout.RANK_MAJOR and not hybrid_rank_major:
+        pytest.skip("Single-domain RANK_MAJOR uses the IPC path, whose graphs need two captured rounds")
+    num_tokens, capacity = 5, 8
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=layout,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            full = torch.tensor(
+                [token_routes(ep_group.my_rank, ep_group.nranks, t, num_tokens) for t in range(num_tokens)],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            sparse = torch.tensor(_alternate_routes(ep_group.my_rank, num_tokens), dtype=torch.int64, device="cuda")
+            routes = full.clone()
+            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            input = torch.empty((num_tokens, HIDDEN), dtype=torch.bfloat16, device="cuda")
+            out = torch.empty_like(input)
+
+            def operation():
+                result, handle = runtime.dispatch(input, routes, weights)
+                result.combine_input_buffer.copy_(_expert_output(layout, result, capacity))
+                return runtime.combine(result.combine_input_buffer, handle, out=out)
+
+            input.copy_(token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, HIDDEN))
+            operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            for step, scale in enumerate((2.0, 0.5, 4.0, 1.0, 3.0, 0.25)):
+                routes.copy_(sparse if step % 2 == 0 else full)
+                input.copy_(token_values(ep_group.my_rank, num_tokens, scale)[:, None].expand(-1, HIDDEN))
+                graph.replay()
+                stream.synchronize()
+                ep_group.barrier()
+                expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
+                torch.testing.assert_close(output.float(), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("fast_path", [True, False])
+def test_topk_expanded_preweighted_zero_weight_routes(ep_group, fast_path, monkeypatch):
+    """With apply_router_weights=False, zero-weight routes must contribute the caller's zero rows."""
+    for name in ("MSCCLPP_EP_EXPANDED_IPC_FASTPATH", "MSCCLPP_EP_EXPANDED_GPUNETIO_FASTPATH"):
+        monkeypatch.setenv(name, "1" if fast_path else "0")
+    num_tokens, capacity = 5, 8
+    layout = DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=layout,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            routes = torch.tensor(
+                [token_routes(ep_group.my_rank, ep_group.nranks, t, num_tokens) for t in range(num_tokens)],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            input = token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, HIDDEN)
+            input = input.to(torch.bfloat16).contiguous()
+            zeroed = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            zeroed[:, ::2] = 0.0
+            for weights in (torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda"), zeroed):
+                result, handle = runtime.dispatch(input, routes, weights, stream=stream)
+                num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
+                local = ((result.topk_ids >= 0) & (result.topk_ids < num_experts))[..., None]
+                preweighted = torch.where(local, result.tokens.float() * result.weights[..., None], 0)
+                result.combine_input_buffer.copy_(preweighted.to(torch.bfloat16))
+                combined = runtime.combine(
+                    result.combine_input_buffer, handle, stream=stream, apply_router_weights=False
+                )
+                expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
+                stream.synchronize()
+                torch.testing.assert_close(combined.float(), expected, rtol=0, atol=0)
+                ep_group.barrier()

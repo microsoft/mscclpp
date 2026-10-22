@@ -1234,9 +1234,9 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
 
   if (useRankMajorTma) {
     const WorkspaceView workspace(context.workspace_, nRanks, nExperts);
-    const int invalidReadyByte = static_cast<int>((workload.epoch_ & 0xffu) ^ 0xffu);
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(workspace.combineRankReadyEpochs_, invalidReadyByte,
-                                      static_cast<size_t>(nRanks) * sizeof(uint32_t), stream));
+    // Kernels take their epoch from the device generation, which is never 0, so zero is always stale.
+    MSCCLPP_CUDATHROW(
+        cudaMemsetAsync(workspace.combineRankReadyEpochs_, 0, static_cast<size_t>(nRanks) * sizeof(uint32_t), stream));
   }
 
   combineFunc<<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
@@ -1341,6 +1341,10 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   }
 
   switch (workload.hidden_) {
+    case 2048:
+      return combineHidden<Mode, 2048, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
     case 4096:
       return combineHidden<Mode, 4096, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,

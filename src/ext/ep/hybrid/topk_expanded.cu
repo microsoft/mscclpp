@@ -525,10 +525,10 @@ __device__ void pushExpandedCombine(const void* input, const LatencyStorageLayou
     const int stripe = threadIdx.x;
     const int queue = markerQp(transport, owner, stripe);
     const auto* ids = static_cast<const int*>(layout.rankMajorTopkIdsBuffer_) + owner * rows;
-    const auto* wgts = static_cast<const float*>(layout.rankMajorTopkWeightsBuffer_) + owner * rows;
     int sinceFlush = 0;
     for (size_t row = rows * stripe / gin->numHcas; row < rows * (stripe + 1) / gin->numHcas; ++row) {
-      if (!validExpert(ids[row], work.numExperts_) || wgts[row] == 0.0f) continue;
+      // Send zero-weight routes too; see pushCombine in topk_expanded_gpunetio.cuh.
+      if (!validExpert(ids[row], work.numExperts_)) continue;
       const auto* src = static_cast<const uint8_t*>(input) + (owner * rows + row) * bytes;
       auto* dst = static_cast<uint8_t*>(layout.gpuNetIoCombineLandingBuffer_) +
                   (static_cast<size_t>(transport.rank_) * rows + row) * bytes;

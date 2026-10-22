@@ -243,14 +243,15 @@ __device__ void pushCombine(const void* input, const LatencyStorageLayout& layou
   const size_t rows = static_cast<size_t>(work.maxTokensPerRank_) * work.numTopk_;
   constexpr size_t bytes = Hidden * sizeof(Bf16);
   const auto* ids = static_cast<const int*>(layout.rankMajorTopkIdsBuffer_) + owner * rows;
-  const auto* wgts = static_cast<const float*>(layout.rankMajorTopkWeightsBuffer_) + owner * rows;
   for (int stripe = warp; stripe < gin->numHcas; stripe += CombineNThreads / WARP_SIZE) {
     const int queue = markerQp(transport, owner, stripe);
     const size_t begin = rows * stripe / gin->numHcas, end = rows * (stripe + 1) / gin->numHcas;
     int outstanding = 0;
     for (size_t tile = begin; tile < end; tile += WARP_SIZE) {
       const size_t row = tile + lane;
-      const bool live = row < end && validExpert(ids[row], work.numExperts_) && wgts[row] != 0.0f;
+      // Send every valid route, including zero-weight ones: when the caller pre-applies router weights the
+      // receiver gathers all valid routes, so a skipped row would leave a stale landing row behind.
+      const bool live = row < end && validExpert(ids[row], work.numExperts_);
       const uint64_t src = transport.symmetricOffset(const_cast<void*>(input)) + (owner * rows + row) * bytes;
       const uint64_t dst = transport.symmetricOffset(layout.gpuNetIoCombineLandingBuffer_) +
                            (static_cast<size_t>(transport.rank_) * rows + row) * bytes;
