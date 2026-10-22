@@ -324,12 +324,10 @@ std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMod
   const char* layoutName = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR ? "expert-major" : "rank-major";
   const char* combineName =
       combineMode == mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE ? "rank-local-reduce" : "direct-send";
-  const char* dataTypeName = dataType == mscclpp::ep::DispatchDataType::BF16
-                                 ? "bf16"
-                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3
-                                 ? "fp8-e4m3"
+  const char* dataTypeName = dataType == mscclpp::ep::DispatchDataType::BF16              ? "bf16"
+                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3        ? "fp8-e4m3"
                              : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC ? "fp8-e4m3-static"
-                                                                                        : "mxfp8-e4m3";
+                                                                                          : "mxfp8-e4m3";
   return std::string(layoutName) + "/" + combineName + "/" + dataTypeName;
 }
 
@@ -484,12 +482,10 @@ void runCorrectnessCase(
   const int numTokens = numTokensPerRank[rank];
   // Every rank must use the same active capacity, so take it from the shared token counts.
   const int maxTokensPerRank = *std::max_element(numTokensPerRank.begin(), numTokensPerRank.end());
-  const std::string label = caseName(layout, combineMode, dataType) + "/hidden=" + std::to_string(hidden) +
-                            "/dispatch_blocks=" + std::to_string(dispatchBlocks) +
-                            "/tokens=" + std::to_string(numTokens) +
-                            (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC
-                                 ? "/combine=fp8-static"
-                                 : "");
+  const std::string label =
+      caseName(layout, combineMode, dataType) + "/hidden=" + std::to_string(hidden) +
+      "/dispatch_blocks=" + std::to_string(dispatchBlocks) + "/tokens=" + std::to_string(numTokens) +
+      (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC ? "/combine=fp8-static" : "");
   auto runtime = createRuntime(communicator, maxTokensPerRank, hidden, layout, combineMode);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
@@ -1159,8 +1155,7 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
                          uniformTokens(CorrectnessTokens), inputMode);
       runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                          mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
-                         uniformTokens(CorrectnessTokens), inputMode,
-                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC);
+                         uniformTokens(CorrectnessTokens), inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC);
     }
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::MXFP8_E4M3);

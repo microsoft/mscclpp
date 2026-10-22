@@ -155,8 +155,7 @@ std::string checkStaticFp8Quantization() {
       const uint8_t expected = referenceFp8E4M3(scaled);
       if (output[element] != expected && mismatches++ == 0) {
         firstMismatch << "element " << element << " (bf16 0x" << std::hex << input[element] << ", scale " << std::dec
-                      << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x"
-                      << int{output[element]};
+                      << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x" << int{output[element]};
       }
     }
     if (mismatches != 0) {
