@@ -19,6 +19,38 @@ FetchContent_Declare(gpunetio
 FetchContent_MakeAvailable(gpunetio)
 set(GPUNETIO_VENDOR_HOME ${gpunetio_SOURCE_DIR})
 
+# Backport from upstream v5.0.0-rc1 (b2b7a291ec70): in v4.0.1, doca_gpu_verbs_create_qp_hl returns directly when
+# doca_gpu_verbs_export_qp fails, leaking the CQ/UAR/QP it already created and leaving the output handle null.
+# Compile a copy of the file that takes the existing cleanup path instead. The fetched tree is left unmodified, so
+# this also applies when FETCHCONTENT_SOURCE_DIR_GPUNETIO points at an external checkout.
+set(GPUNETIO_HIGH_LEVEL_UPSTREAM ${GPUNETIO_VENDOR_HOME}/src/doca_gpunetio_high_level.cpp)
+set(GPUNETIO_HIGH_LEVEL_PATCHED ${CMAKE_CURRENT_BINARY_DIR}/patched/doca_gpunetio_high_level.cpp)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GPUNETIO_HIGH_LEVEL_UPSTREAM})
+file(READ ${GPUNETIO_HIGH_LEVEL_UPSTREAM} GPUNETIO_HIGH_LEVEL_CONTENT)
+set(GPUNETIO_EXPORT_QP_LEAK [=[
+                                      enable_data_direct, &qp_->qp_gverbs);
+    if (status != DOCA_SUCCESS) {
+        DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
+        return status;
+    }]=])
+set(GPUNETIO_EXPORT_QP_FIX [=[
+                                      enable_data_direct, &qp_->qp_gverbs);
+    if (status != DOCA_SUCCESS) {
+        DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
+        goto exit_error;
+    }]=])
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_EXPORT_QP_LEAK}" GPUNETIO_LEAK_FIRST)
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_EXPORT_QP_LEAK}" GPUNETIO_LEAK_LAST REVERSE)
+if(GPUNETIO_LEAK_FIRST EQUAL -1 OR NOT GPUNETIO_LEAK_FIRST EQUAL GPUNETIO_LEAK_LAST)
+    message(FATAL_ERROR "GPUNetIO: doca_gpu_verbs_create_qp_hl export-failure backport does not apply to "
+                        "${GPUNETIO_HIGH_LEVEL_UPSTREAM}; re-evaluate it when changing the pinned revision")
+endif()
+string(REPLACE "${GPUNETIO_EXPORT_QP_LEAK}" "${GPUNETIO_EXPORT_QP_FIX}" GPUNETIO_HIGH_LEVEL_CONTENT
+               "${GPUNETIO_HIGH_LEVEL_CONTENT}")
+file(WRITE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp "${GPUNETIO_HIGH_LEVEL_CONTENT}")
+file(COPY_FILE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp ${GPUNETIO_HIGH_LEVEL_PATCHED} ONLY_IF_DIFFERENT)
+file(REMOVE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp)
+
 message(STATUS "GPUNetIO: direct GPU doorbells and GPU-resident CQs required; CPU-assisted fallback disabled")
 
 add_library(mscclpp_gpunetio_headers INTERFACE)
@@ -37,7 +69,7 @@ set(GPUNETIO_SOURCES
     ${GPUNETIO_VENDOR_HOME}/src/doca_verbs_uar.cpp
     ${GPUNETIO_VENDOR_HOME}/src/doca_gpunetio.cpp
     ${GPUNETIO_VENDOR_HOME}/src/doca_gpunetio_log.cpp
-    ${GPUNETIO_VENDOR_HOME}/src/doca_gpunetio_high_level.cpp
+    ${GPUNETIO_HIGH_LEVEL_PATCHED}
     ${GPUNETIO_VENDOR_HOME}/src/doca_verbs_mlx5dv_wrapper.cpp
     ${GPUNETIO_VENDOR_HOME}/src/doca_verbs_ibv_wrapper.cpp
     ${GPUNETIO_VENDOR_HOME}/src/doca_gpunetio_gdrcopy.cpp

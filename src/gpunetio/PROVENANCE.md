@@ -29,8 +29,9 @@ Each service uses one explicitly selected local HCA. It defaults to one QP per
 remote rank; the explicit four-argument constructor supports 1-64 QPs per peer.
 
 Upstream dependency: GPUNetIO **v4.0.1**, commit
-`bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`. The fetched sources are unmodified;
-MSCCL++ does not carry patches to NVIDIA's implementation. Its source list and
+`bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`. The fetched tree is left unmodified.
+MSCCL++ carries one narrow backport (see [QP Export Failure Backport](#qp-export-failure-backport));
+otherwise NVIDIA's implementation is compiled as fetched. Its source list and
 host API differ from the old snapshot, so dependency updates require new build
 and hardware validation. No installed DOCA SDK is required; upstream can load
 DOCA SDK libraries when available according to its own runtime policy.
@@ -301,7 +302,7 @@ result scratch per peer/QP. Device-context operations accept a final optional
 `qpIndex=0`; flushing one queue does not drain the others. The benchmark now
 constructs real PortChannels with separate registrations and semaphores on each
 QP; its kernel does not bypass PortChannel. No multi-HCA or EP scheduling policy
-is introduced, and the upstream dependency remains unmodified.
+is introduced, and no further upstream changes are made.
 
 `gpunetio_channel_multi_qp_test` runs the real device implementation with stubbed
 DOCA calls on CPU at QP counts 1, 2, 4, 8, and 64. It checks per-peer addressing,
@@ -358,8 +359,8 @@ GDRCopy still uses `calloc(alignment, size)` and keeps the original memory-type
 bookkeeping; upstream's CPU doorbell service also shares a plain `bool running`
 between its worker and shutdown thread. The EP branch corrected these paths.
 Upstream `main` at `586453728bcab2d4c50574924dc6cf43543c9ed4` does not contain
-those corrections either. This integration deliberately does not patch the
-upstream sources or maintain a local fork.
+those corrections either. This integration does not patch those paths or
+maintain a local fork.
 
 The service explicitly excludes these affected paths while retaining the
 unmodified pin. In v4.0.1, explicit GPU_SM_DB fails UAR export rather than entering
@@ -373,6 +374,24 @@ without a corrected upstream revision and renewed validation. Successful builds
 and CPU policy tests do not qualify hardware compatibility or wire correctness;
 real two-rank GDAKI and existing proxy runtime tests remain required for this
 restricted configuration.
+
+### QP Export Failure Backport
+
+In v4.0.1 (and every v4.x revision), `doca_gpu_verbs_create_qp_hl` returns
+directly when `doca_gpu_verbs_export_qp` fails. That bypasses its own
+`exit_error` cleanup after the CQ, UAR, QP and their UMEMs were created, and leaves
+the output handle null, so `GpuNetIoService` cannot release them. Upstream fixed
+this in v5.0.0-rc1 (`b2b7a291ec70`) by jumping to `exit_error`.
+
+`src/gpunetio/CMakeLists.txt` backports that one-line change: at configure time
+it writes a copy of `src/doca_gpunetio_high_level.cpp` to
+`<build>/src/gpunetio/patched/` with only that return replaced, and compiles the copy
+instead of the fetched file. The fetched tree (or a `FETCHCONTENT_SOURCE_DIR_GPUNETIO`
+checkout) is not modified. Configuration fails if the expected code is not found
+exactly once, so changing the pin forces the backport to be re-evaluated; drop it
+when moving to a revision that contains the upstream fix. The
+`doca_gpu_verbs_create_qp_group_hl` paths with the same pattern are not used by
+MSCCL++ and are not patched.
 
 ## Review Regression Coverage
 
