@@ -186,7 +186,7 @@ struct GpuNetIoService::Impl {
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_sl(ah, 0));
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_sgid_index(ah, gidIndex));
     MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_hop_limit(ah, 255));
-    if (remote.linkLayer == IBV_LINK_LAYER_INFINIBAND && !remote.grhRequired) {
+    if (remote.linkLayer == IBV_LINK_LAYER_INFINIBAND && !localPortInfo.grhRequired && !remote.grhRequired) {
       MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_addr_type(ah, DOCA_VERBS_ADDR_TYPE_IB_NO_GRH));
     } else if (remote.linkLayer == IBV_LINK_LAYER_INFINIBAND) {
       MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_set_addr_type(ah, DOCA_VERBS_ADDR_TYPE_IB_GRH));
