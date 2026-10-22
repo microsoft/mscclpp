@@ -85,22 +85,23 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
     traceKernel(phase, true, i);
     auto loadTiles = [&](int first, int count) {
       auto iterator = cute::make_coord_iterator(first, kTiles);
+      constexpr ActivationDtype ActDtype = P::Activation;
       auto result = [&](auto& firstMainloop, auto& secondMainloop) {
         if constexpr (Types::LoadWarps == 2) {
           if (warp == Schedule::LoadWarp)
-            return task.fc1 ? firstMainloop.template load<1>(producerPipeline, state, load1, coord, iterator, count,
-                                                             task.tokens.rows, cacheWeights)
-                            : secondMainloop.template load<1>(producerPipeline, state, load2, coord, iterator, count,
-                                                              task.tokens.rows, cacheWeights);
-          return task.fc1 ? firstMainloop.template load<2>(producerPipeline, state, load1, coord, iterator, count,
-                                                           task.tokens.rows, cacheWeights)
-                          : secondMainloop.template load<2>(producerPipeline, state, load2, coord, iterator, count,
-                                                            task.tokens.rows, cacheWeights);
+            return task.fc1 ? firstMainloop.template load<1, ActDtype>(producerPipeline, state, load1, coord, iterator,
+                                                                       count, task.tokens.rows, cacheWeights)
+                            : secondMainloop.template load<1, ActDtype>(producerPipeline, state, load2, coord, iterator,
+                                                                        count, task.tokens.rows, cacheWeights);
+          return task.fc1 ? firstMainloop.template load<2, ActDtype>(producerPipeline, state, load1, coord, iterator,
+                                                                     count, task.tokens.rows, cacheWeights)
+                          : secondMainloop.template load<2, ActDtype>(producerPipeline, state, load2, coord, iterator,
+                                                                      count, task.tokens.rows, cacheWeights);
         } else {
-          return task.fc1 ? firstMainloop.load(loadPipeline, state, load1, coord, iterator, count, task.tokens.rows,
-                                               cacheWeights)
-                          : secondMainloop.load(loadPipeline, state, load2, coord, iterator, count, task.tokens.rows,
-                                                cacheWeights);
+          return task.fc1 ? firstMainloop.template load<0, ActDtype>(loadPipeline, state, load1, coord, iterator, count,
+                                                                     task.tokens.rows, cacheWeights)
+                          : secondMainloop.template load<0, ActDtype>(loadPipeline, state, load2, coord, iterator,
+                                                                      count, task.tokens.rows, cacheWeights);
         }
       }(fc1, fc2);
       state = get<0>(result);

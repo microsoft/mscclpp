@@ -14,6 +14,11 @@
 
 namespace mscclpp::megamoe {
 
+enum class ActivationDtype : int32_t {
+  Mxfp8 = 0,
+  Fp8Static = 1,
+};
+
 struct NativeConfig {
   int rank = 0;
   int worldSize = 1;
@@ -25,6 +30,8 @@ struct NativeConfig {
   int smMargin = 0;
   // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
   float gateUpClamp = -1.0f;
+  ActivationDtype activationDtype = ActivationDtype::Mxfp8;
+  float activationScale = 1.0f;
 };
 
 struct SymmetricLayout {

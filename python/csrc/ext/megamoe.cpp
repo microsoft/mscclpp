@@ -56,6 +56,9 @@ void register_megamoe(nb::module_& m) {
 #ifdef MSCCLPP_BUILD_EXT_MEGAMOE
   using namespace mscclpp::megamoe;
   m.def("megamoe_available", []() { return true; });
+  nb::enum_<ActivationDtype>(m, "CppMegaMoeActivationDtype")
+      .value("Mxfp8", ActivationDtype::Mxfp8)
+      .value("Fp8Static", ActivationDtype::Fp8Static);
   nb::class_<NativeConfig>(m, "CppMegaMoeConfig")
       .def(nb::init<>())
       .def_rw("rank", &NativeConfig::rank)
@@ -66,7 +69,9 @@ void register_megamoe(nb::module_& m) {
       .def_rw("num_experts", &NativeConfig::numExperts)
       .def_rw("top_k", &NativeConfig::topK)
       .def_rw("sm_margin", &NativeConfig::smMargin)
-      .def_rw("gate_up_clamp", &NativeConfig::gateUpClamp);
+      .def_rw("gate_up_clamp", &NativeConfig::gateUpClamp)
+      .def_rw("activation_dtype", &NativeConfig::activationDtype)
+      .def_rw("activation_scale", &NativeConfig::activationScale);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(
           "create",

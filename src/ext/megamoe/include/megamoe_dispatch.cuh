@@ -66,12 +66,14 @@ __device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int
     bulkFence();
   }
   __syncwarp();
-  int k = 4 * lane;
-  if (k < bytes / 32) {
-    size_t offset =
-        p.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * 32, 0));
-    *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
-        *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
+  if constexpr (P::Activation == ActivationDtype::Mxfp8) {
+    int k = 4 * lane;
+    if (k < bytes / 32) {
+      size_t offset =
+          p.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * 32, 0));
+      *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
+          *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
+    }
   }
   asm volatile("fence.proxy.async.global;" ::: "memory");
   __syncwarp();
@@ -204,11 +206,16 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     auto load = [&](int chunk) {
       int stage = chunk % DispatchStages;
       int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
-      int scaleBytes = (bytes / 32 + 15) / 16 * 16;
-      barriers[stage].arriveAndExpect(bytes + scaleBytes);
-      bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
-      bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
-               barriers[stage]);
+      if constexpr (P::Activation == ActivationDtype::Fp8Static) {
+        barriers[stage].arriveAndExpect(bytes);
+        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+      } else {
+        int scaleBytes = (bytes / 32 + 15) / 16 * 16;
+        barriers[stage].arriveAndExpect(bytes + scaleBytes);
+        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+        bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
+                 barriers[stage]);
+      }
     };
     float routeWeight = 0.0f;
     if (lane == 0 && hasRow) {

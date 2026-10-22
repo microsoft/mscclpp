@@ -71,8 +71,10 @@ void checkJit(int status, const char* error, const char* operation) {
 }
 
 MegaMoeJitConfigV1 jitConfig(const NativeConfig& c) {
-  return MegaMoeJitConfigV1{c.rank,       c.worldSize, c.maxTokens, c.hidden,     c.intermediate,
-                            c.numExperts, c.topK,      c.smMargin,  c.gateUpClamp};
+  return MegaMoeJitConfigV1{
+      c.rank,           c.worldSize, c.maxTokens, c.hidden,      c.intermediate,
+      c.numExperts,     c.topK,      c.smMargin,  c.gateUpClamp, static_cast<int32_t>(c.activationDtype),
+      c.activationScale};
 }
 
 MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
@@ -207,7 +209,8 @@ struct RankInfo {
 
 RankInfo rankInfo(const NativeConfig& c, int device) {
   RankInfo info{};
-  info.config = {c.worldSize, c.maxTokens, c.hidden, c.intermediate, c.numExperts, c.topK, c.smMargin, 1};
+  info.config = {c.worldSize,  c.maxTokens, c.hidden,   c.intermediate,
+                 c.numExperts, c.topK,      c.smMargin, int(c.activationDtype)};
   info.gateUpClamp = c.gateUpClamp;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)

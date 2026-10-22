@@ -108,3 +108,44 @@ def dequantize_mxfp4(weights, scales, *, dtype=None):
     factors = torch.where(scales == 255, float("nan"), factors)
     blocks = values.reshape(*values.shape[:-1], -1, 32)
     return (blocks * factors.unsqueeze(-1)).reshape(values.shape).to(dtype or torch.bfloat16)
+
+
+def _validate_static_scale(scale, device=None):
+    import math
+    import torch
+
+    if isinstance(scale, torch.Tensor):
+        if scale.dtype != torch.float32 or scale.numel() != 1:
+            raise ValueError("static FP8 scale tensor must be a 1-element float32 tensor")
+        if device is not None and scale.device != device:
+            raise ValueError(f"static FP8 scale tensor must be on {device}")
+        return scale
+    if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not math.isfinite(scale) or scale <= 0:
+        raise ValueError("static FP8 scale must be a finite positive float or 1-element float32 tensor")
+    return float(scale)
+
+
+def quantize_fp8_static(values, scale):
+    """Quantize finite floating-point tensors into E4M3 using a per-tensor static scale."""
+    import torch
+
+    if not isinstance(values, torch.Tensor) or not values.is_floating_point():
+        raise TypeError("values must be a floating-point torch.Tensor")
+    if not bool(torch.isfinite(values).all()):
+        raise ValueError("FP8 values must be finite")
+    scale_val = _validate_static_scale(scale, values.device if isinstance(scale, torch.Tensor) else None)
+    dtype = torch.float8_e4m3fn
+    fmax = torch.finfo(dtype).max
+    inv_scale = 1.0 / scale_val
+    quantized = (values.float() * inv_scale).clamp(-fmax, fmax)
+    return quantized.to(dtype).contiguous()
+
+
+def dequantize_fp8_static(values, scale, *, dtype=None):
+    """Decode E4M3 tensors with a per-tensor static scale."""
+    import torch
+
+    if not isinstance(values, torch.Tensor) or values.dtype != torch.float8_e4m3fn:
+        raise TypeError("values must have dtype float8_e4m3fn")
+    scale_val = _validate_static_scale(scale, values.device if isinstance(scale, torch.Tensor) else None)
+    return (values.float() * scale_val).to(dtype or torch.bfloat16)

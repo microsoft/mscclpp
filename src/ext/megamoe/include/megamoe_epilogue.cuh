@@ -71,6 +71,14 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
       gate[i] = isUp ? other : values(i);
       up[i] = isUp ? values(i + HalfTokens) : other;
     }
+    if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+      const float actScale = params.config.activationScale;
+#pragma unroll
+      for (int i = 0; i < HalfTokens; ++i) {
+        gate[i] *= actScale;
+        up[i] *= actScale;
+      }
+    }
     if (float clamp = params.config.gateUpClamp; clamp >= 0) {
 #pragma unroll
       for (int i = 0; i < HalfTokens; ++i) {
@@ -101,27 +109,39 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
       reinterpret_cast<mscclpp::f32x4*>(&activated)[i] = *reinterpret_cast<const mscclpp::f32x4*>(
           s.epilogue.scratch + fc1ScratchIndex<CtaFc1M>(token, feature + 4 * i));
     }
-    Activations magnitude;
+    if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+      const float actScale = params.config.activationScale;
+      const float invActScale = actScale != 0.0f ? (1.0f / actScale) : 0.0f;
+      auto quantized = quantizeE4M3(activated, invActScale);
+      if (token < validRows) {
+        int row = w4StorageRow<Tiles>(task.block * KernelTileN + tokenOffset + token);
+        int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
+        *reinterpret_cast<decltype(quantized)*>(params.workspace.quantizedHidden + size_t(row) * intermediate +
+                                                column) = quantized;
+      }
+    } else {
+      Activations magnitude;
 #pragma unroll
-    for (int i = 0; i < Features; ++i) magnitude[i] = fabsf(activated[i]);
+      for (int i = 0; i < Features; ++i) magnitude[i] = fabsf(activated[i]);
 #pragma unroll
-    for (int width = Features / 2; width > 0; width /= 2) {
+      for (int width = Features / 2; width > 0; width /= 2) {
 #pragma unroll
-      for (int i = 0; i < width; ++i) magnitude[i] = fmaxf(magnitude[i], magnitude[i + width]);
-    }
-    float maximum = magnitude[0];
+        for (int i = 0; i < width; ++i) magnitude[i] = fmaxf(magnitude[i], magnitude[i + width]);
+      }
+      float maximum = magnitude[0];
 #pragma unroll
-    for (int offset = ThreadsPerScale / 2; offset > 0; offset /= 2)
-      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset));
-    uint8_t scale = quantizeE8M0Scale(maximum);
-    auto quantized = quantizeE4M3(activated, inverseE8M0Scale(scale));
-    if (token < validRows) {
-      int row = w4StorageRow<Tiles>(task.block * KernelTileN + tokenOffset + token);
-      int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
-      if (threadIdx.x % ThreadsPerScale == 0)
-        params.workspace.hiddenScale[params.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
-      *reinterpret_cast<decltype(quantized)*>(params.workspace.quantizedHidden + size_t(row) * intermediate + column) =
-          quantized;
+      for (int offset = ThreadsPerScale / 2; offset > 0; offset /= 2)
+        maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset));
+      uint8_t scale = quantizeE8M0Scale(maximum);
+      auto quantized = quantizeE4M3(activated, inverseE8M0Scale(scale));
+      if (token < validRows) {
+        int row = w4StorageRow<Tiles>(task.block * KernelTileN + tokenOffset + token);
+        int column = task.m * Tiles::Fc1M + (blockIdx.x % Tiles::ClusterSize) * CtaFc1M + feature;
+        if (threadIdx.x % ThreadsPerScale == 0)
+          params.workspace.hiddenScale[params.fc2.layout_SFB(make_coord(row, column, 0))] = scale;
+        *reinterpret_cast<decltype(quantized)*>(params.workspace.quantizedHidden + size_t(row) * intermediate +
+                                                column) = quantized;
+      }
     }
   }
   // FC2 loads hidden through TMA; order every generic store of this task before its completion release.
@@ -147,8 +167,24 @@ MSCCLPP_DEVICE_INLINE void loadFc2Accumulators(uint32_t address, uint32_t (&data
   }
 }
 
-// Scales a warp's 32 FC2 features x ReadTokens tokens by route weights in pairs and writes token-major BF16 rows
-// with transposing stmatrix. Padded tokens are never stored, so they are not masked.
+// Transposes four lanes' token-pair FP8 values (lanes l, l+4, l+8, l+12) into two 4-feature uint32_t stores.
+MSCCLPP_DEVICE_INLINE void storeTransposedFp8Quad(uint8_t* destination, int rowStride, int colBase, int lane,
+                                                  uint16_t fp8Pair) {
+  uint32_t pair16 = (uint32_t(fp8Pair & 0xffu) | (uint32_t(fp8Pair & 0xff00u) << 8)) << ((lane & 4) ? 8 : 0);
+  pair16 |= __shfl_xor_sync(0xffffffff, pair16, 4);
+  uint32_t quad0 = uint32_t(pair16 & 0xffffu) << ((lane & 8) ? 16 : 0);
+  uint32_t quad1 = uint32_t(pair16 >> 16) << ((lane & 8) ? 16 : 0);
+  quad0 |= __shfl_xor_sync(0xffffffff, quad0, 8);
+  quad1 |= __shfl_xor_sync(0xffffffff, quad1, 8);
+  if ((lane & 12) == 0) {
+    int col = colBase + ((lane >> 4) * 4);
+    *reinterpret_cast<uint32_t*>(destination + col) = quad0;
+    *reinterpret_cast<uint32_t*>(destination + rowStride + col) = quad1;
+  }
+}
+
+// Scales a warp's 32 FC2 features x ReadTokens tokens by route weights in pairs and writes token-major BF16/FP8 rows.
+// Padded tokens are never stored, so they are not masked.
 template <int ReadTokens, class KernelParams, class Storage>
 MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& task, Storage& s,
                                         const uint32_t (&accumulator)[2][ReadTokens / 2], int tokenOffset,
@@ -158,6 +194,23 @@ MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& 
   int lane = threadIdx.x % 32;
   int firstToken = readerGroup * ReadTokens;
   const Route* routes = params.workspace.routes + task.block * KernelTileN + tokenOffset + firstToken;
+  if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+    const int warpFeatureBase = (threadIdx.x / 32 % 4) * 32;
+#pragma unroll
+    for (int group = 0; group < ReadTokens / 8; ++group) {
+      int token = group * 8 + lane % 4 * 2;
+      float2 weights = make_float2(routes[token].weight, routes[token + 1].weight);
+      uint8_t* tokenRows = s.epilogue.packedFp8 + (firstToken + token) * PackedFp8RowStride;
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        const uint32_t* pair = accumulator[i / 2] + group * 4 + i % 2 * 2;
+        mscclpp::f32x2 scaled = __fmul2_rn(make_float2(__uint_as_float(pair[0]), __uint_as_float(pair[1])), weights);
+        uint16_t fp8Pair = mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(scaled));
+        storeTransposedFp8Quad(tokenRows, PackedFp8RowStride, warpFeatureBase + i * 8, lane, fp8Pair);
+      }
+    }
+    return;
+  }
   // Matrix m of each x4 store holds the warp's features [8m, 8m + 8); lane 8m + j addresses token row j.
   auto* rows = s.epilogue.packed + (firstToken + lane % 8) * PackedRowStride + threadIdx.x / 32 % 4 * 32 + lane / 8 * 8;
 #pragma unroll
@@ -192,6 +245,13 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
   int token = warp + lane * EpilogueWarps;
   if (lane < WarpTokens && token < validRows) {
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
+    if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+      auto* output = peerAt<uint8_t>(params, route.rank, params.symmetric.partialOutput);
+      size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+      bulkStore(output + offset, s.epilogue.packedFp8 + token * PackedFp8RowStride, CtaTileM * sizeof(uint8_t));
+      bulkStoreCommit();
+      return;
+    }
     __bfloat16* output;
     size_t offset;
     if (params.config.worldSize == 1 && params.config.topK == 1) {
@@ -332,6 +392,9 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
   static_assert(Hidden % Elements == 0 && CombineLoads % Slots == 0 && Slots <= CombineSlots);
   const int topK = params.config.topK;
   auto partial = reinterpret_cast<const uint4*>(at<__bfloat16>(params.local, params.symmetric.partialOutput));
+  auto partialFp8 = reinterpret_cast<const uint2*>(at<uint8_t>(params.local, params.symmetric.partialOutput));
+  constexpr bool StaticScale = KernelParams::Activation == ActivationDtype::Fp8Static;
+  const float actScale = StaticScale ? params.config.activationScale : 1.0f;
   auto routeIds = at<int>(params.local, params.symmetric.topkIds);
   bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
   int lane = threadIdx.x % WarpSize;
@@ -366,31 +429,60 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
         routed[slot] = !ProcessMultipleSlotBatches || base == 0
                            ? taskIds[slot] >= 0
                            : base + slot < topK && routeIds[token * topK + base + slot] >= 0;
-      // L2-only loads: peers write the partial rows during this kernel. Unrouted slots read as +0, which is the same
-      // as skipping them: the sums start at +0, and round-to-nearest addition yields -0 only from two -0 operands.
-      const uint4* source = partial + size_t(token * topK + base) * Vectors + first;
-      mscclpp::bf16x8 values[Slots][Items];
-#pragma unroll
-      for (int slot = 0; slot < Slots; ++slot) {
-#pragma unroll
-        for (int item = 0; item < Items; ++item) {
-          values[slot][item].storage = make_uint4(0, 0, 0, 0);
-          if (routed[slot] && (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors))
-            values[slot][item].storage = __ldcg(source + slot * Vectors + item * WarpSize);
-        }
-      }
-#pragma unroll
-      for (int item = 0; item < Items; ++item) {
+      if constexpr (StaticScale) {
+        const uint2* sourceFp8 = partialFp8 + size_t(token * topK + base) * Vectors + first;
+        uint2 rawValues[Slots][Items];
 #pragma unroll
         for (int slot = 0; slot < Slots; ++slot) {
-          auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot][item]);
 #pragma unroll
-          for (int element = 0; element < Elements; ++element) sums[item].data[element] += partialValues.data[element];
+          for (int item = 0; item < Items; ++item) {
+            rawValues[slot][item] = make_uint2(0, 0);
+            if (routed[slot] && (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors))
+              rawValues[slot][item] = __ldcg(sourceFp8 + slot * Vectors + item * WarpSize);
+          }
+        }
+#pragma unroll
+        for (int item = 0; item < Items; ++item) {
+#pragma unroll
+          for (int slot = 0; slot < Slots; ++slot) {
+            auto partialValues = dequantizeE4M3x8(rawValues[slot][item]);
+#pragma unroll
+            for (int element = 0; element < Elements; ++element)
+              sums[item].data[element] += partialValues.data[element];
+          }
+        }
+      } else {
+        // L2-only loads: peers write the partial rows during this kernel. Unrouted slots read as +0, which is the same
+        // as skipping them: the sums start at +0, and round-to-nearest addition yields -0 only from two -0 operands.
+        const uint4* source = partial + size_t(token * topK + base) * Vectors + first;
+        mscclpp::bf16x8 values[Slots][Items];
+#pragma unroll
+        for (int slot = 0; slot < Slots; ++slot) {
+#pragma unroll
+          for (int item = 0; item < Items; ++item) {
+            values[slot][item].storage = make_uint4(0, 0, 0, 0);
+            if (routed[slot] && (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors))
+              values[slot][item].storage = __ldcg(source + slot * Vectors + item * WarpSize);
+          }
+        }
+#pragma unroll
+        for (int item = 0; item < Items; ++item) {
+#pragma unroll
+          for (int slot = 0; slot < Slots; ++slot) {
+            auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot][item]);
+#pragma unroll
+            for (int element = 0; element < Elements; ++element)
+              sums[item].data[element] += partialValues.data[element];
+          }
         }
       }
     }
 #pragma unroll
     for (int item = 0; item < Items; ++item) {
+      if constexpr (StaticScale) {
+#pragma unroll
+        for (int element = 0; element < Elements; ++element) sums[item].data[element] *= actScale;
+      }
       if (Vectors % TaskVectors == 0 || first + item * WarpSize < Vectors)
         storeCombined(output + (size_t(token) * Vectors + first + item * WarpSize) * Elements, sums[item], aligned);
     }

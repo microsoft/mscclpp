@@ -154,6 +154,23 @@ __global__ void quantizeInputKernel(const __bfloat16* input, uint8_t* quantizedI
   }
 }
 
+__global__ void quantizeInputStaticKernel(const __bfloat16* input, uint8_t* quantizedInput, float staticScale,
+                                          int tokens, int hidden) {
+  constexpr int ValuesPerThread = 8;
+  int col = (blockIdx.x * blockDim.x + threadIdx.x) * ValuesPerThread;
+  if (col >= hidden) return;
+  float invScale = staticScale != 0.0f ? (1.0f / staticScale) : 0.0f;
+  for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
+    auto values = input + size_t(token) * hidden + col;
+    int4 packed = *reinterpret_cast<const int4*>(values);
+    mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
+    mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
+    auto quantized = quantizeE4M3(decoded, invScale);
+    auto output = quantizedInput + size_t(token) * hidden + col;
+    *reinterpret_cast<uint2*>(output) = quantized.storage;
+  }
+}
+
 template <class Types>
 W4ScaleLayout<Types> makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
   using namespace cute;
@@ -247,6 +264,11 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE requires evenly partitioned experts and 1 <= topK <= min(32, experts)");
   if (c.smMargin < 0 || !std::isfinite(c.gateUpClamp))
     throw std::invalid_argument("MegaMoE smMargin must be nonnegative and gateUpClamp must be finite");
+  if (c.activationDtype != ActivationDtype::Mxfp8 && c.activationDtype != ActivationDtype::Fp8Static)
+    throw std::invalid_argument("MegaMoE activationDtype must be Mxfp8 or Fp8Static");
+  if (c.activationDtype == ActivationDtype::Fp8Static &&
+      (!std::isfinite(c.activationScale) || c.activationScale <= 0.0f))
+    throw std::invalid_argument("MegaMoE static FP8 activationScale must be a finite positive float");
   if (c.worldSize == 1 && c.numExperts == 1 && c.topK == 1)
     throw std::invalid_argument("MegaMoE W4A8 supports routed experts only");
   if (size_t(c.worldSize) * c.maxTokens * c.topK > size_t(std::numeric_limits<int>::max()))
@@ -263,8 +285,9 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   layout.input = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden * sizeof(__bfloat16));
   layout.topkIds = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(int));
   layout.topkWeights = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(float));
-  layout.partialOutput =
-      detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * c.hidden * sizeof(__bfloat16));
+  const size_t partialElemBytes =
+      c.activationDtype == ActivationDtype::Fp8Static ? sizeof(uint8_t) : sizeof(__bfloat16);
+  layout.partialOutput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * c.hidden * partialElemBytes);
   layout.epoch = detail::appendRegion(layout.bytes, sizeof(uint64_t));
   layout.peerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
   layout.expectedPeerSignals = detail::appendRegion(layout.bytes, size_t(c.worldSize) * sizeof(uint64_t));
@@ -373,9 +396,15 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
     const auto* source =
         input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
-    detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
-        source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
-        detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden);
+    if (params.config.activationDtype == ActivationDtype::Fp8Static) {
+      detail::quantizeInputStaticKernel<<<blocks, threads, 0, stream>>>(
+          source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput), params.config.activationScale,
+          tokens, params.config.hidden);
+    } else {
+      detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
+          source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
+          detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden);
+    }
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
   std::array<cudaLaunchAttribute, 2> launchAttributes{};

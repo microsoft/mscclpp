@@ -11,6 +11,7 @@
 #include <cutlass/gemm/collective/collective_builder.hpp>
 #include <cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp>
 
+#include "megamoe_kernel.hpp"
 #include "megamoe_specialization.hpp"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {

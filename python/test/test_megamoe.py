@@ -8,8 +8,10 @@ import pytest
 from mscclpp.ext.megamoe import (
     MegaMoEConfig,
     W4A8KernelConfig,
+    dequantize_fp8_static,
     dequantize_mxfp4,
     dequantize_mxfp8,
+    quantize_fp8_static,
     quantize_mxfp4,
     quantize_mxfp8,
 )
@@ -54,11 +56,31 @@ def test_config_preserves_positional_gate_clamp():
         {"gate_up_clamp": float("inf")},
         {"max_tokens": 2**30},
         {"hidden": 2**31},
+        {"activation_dtype": "bf16"},
+        {"activation_scale": 0.0},
+        {"activation_scale": -1.0},
+        {"activation_scale": float("nan")},
     ],
 )
 def test_config_rejects_invalid(override):
     with pytest.raises(ValueError):
         _config(**override)
+
+
+def test_static_fp8_config_and_roundtrip():
+    torch = pytest.importorskip("torch")
+    cfg = _config(activation_scale=0.125)
+    assert cfg.is_static_fp8
+    assert cfg.activation_dtype == "fp8_static"
+    assert cfg.activation_scale == 0.125
+    cfg_default_scales = _config(activation_dtype="fp8_static")
+    assert cfg_default_scales.is_static_fp8
+    assert cfg_default_scales.activation_scale == 1.0
+    source = torch.linspace(-2.0, 2.0, 64, dtype=torch.float32).reshape(2, 32)
+    q = quantize_fp8_static(source, 0.05)
+    assert q.dtype == torch.float8_e4m3fn and q.shape == (2, 32)
+    restored = dequantize_fp8_static(q, 0.05, dtype=torch.float32)
+    torch.testing.assert_close(restored, source, atol=0.1, rtol=0.1)
 
 
 def test_mxfp8_activation_roundtrip():

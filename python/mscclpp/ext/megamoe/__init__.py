@@ -5,7 +5,14 @@
 
 from .api import MegaMoE, MegaMoEConfig, is_available
 from .jit import CompiledKernel, W4A8KernelConfig, compile_kernel, load_cached_kernel
-from .quantization import dequantize_mxfp4, dequantize_mxfp8, quantize_mxfp4, quantize_mxfp8
+from .quantization import (
+    dequantize_fp8_static,
+    dequantize_mxfp4,
+    dequantize_mxfp8,
+    quantize_fp8_static,
+    quantize_mxfp4,
+    quantize_mxfp8,
+)
 from .resident_tuning import ResidentTuning, ResidentTuningMismatchError, resolve_resident_tuning
 from .w4a8 import (
     W4A8KernelProfileMismatchError,
@@ -21,6 +28,8 @@ __all__ = [
     "dequantize_mxfp8",
     "quantize_mxfp4",
     "dequantize_mxfp4",
+    "quantize_fp8_static",
+    "dequantize_fp8_static",
     "W4A8KernelConfig",
     "CompiledKernel",
     "compile_kernel",

@@ -39,6 +39,19 @@ __device__ __forceinline__ auto quantizeE4M3(const Values& values, float inverse
   return quantized;
 }
 
+__device__ __forceinline__ mscclpp::f32x8 dequantizeE4M3x8(uint2 raw) {
+  mscclpp::f32x8 out;
+  *reinterpret_cast<float2*>(&out.data[0]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.x & 0xffffu)));
+  *reinterpret_cast<float2*>(&out.data[2]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.x >> 16)));
+  *reinterpret_cast<float2*>(&out.data[4]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.y & 0xffffu)));
+  *reinterpret_cast<float2*>(&out.data[6]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.y >> 16)));
+  return out;
+}
+
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #endif  // MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_

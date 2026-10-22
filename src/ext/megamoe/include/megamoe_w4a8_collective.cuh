@@ -154,6 +154,8 @@ struct W4A8Mainloop {
       ActivationTransactionBytes -
       ClusterSize * (cute::cosize(cute::take<0, 3>(SmemLayoutB{})) - cute::cosize(cute::take<0, 3>(SmemLayoutB32{}))) *
           cute::sizeof_bits_v<ElementB> / 8;
+  static constexpr uint32_t SfbTransactionBytes =
+      ClusterSize * cute::cosize(cute::take<0, 3>(SmemLayoutSFB{})) * cute::sizeof_bits_v<ElementSF> / 8;
 
   const Params& params;
   int cta;
@@ -287,7 +289,8 @@ struct W4A8Mainloop {
                       cb.get_slice(0).partition_D(tb));
   }
 
-  template <int Operands = 0, class Inputs, class Coord, class Iterator>
+  template <int Operands = 0, ActivationDtype ActDtype = ActivationDtype::Mxfp8, class Inputs, class Coord,
+            class Iterator>
   __device__ auto load(MainloopPipeline pipe, MainloopPipelineState state, const Inputs& inputs, Coord coord,
                        Iterator iterator, int kTiles, int validRows, bool cacheWeights) const {
     using namespace cute;
@@ -310,6 +313,7 @@ struct W4A8Mainloop {
       bDesc = &params.tma_desc_b_64;
       actTxBytes = ActivationTransactionBytes64;
     }
+    if constexpr (ActDtype == ActivationDtype::Fp8Static) actTxBytes -= SfbTransactionBytes;
     const uint32_t txBytes =
         Operands == 1 ? WeightTransactionBytes : (Operands == 2 ? actTxBytes : WeightTransactionBytes + actTxBytes);
     uint64_t waitNs = 0, issueNs = 0;
@@ -332,8 +336,9 @@ struct W4A8Mainloop {
         if constexpr (Operands != 1) {
           copy(params.tma_load_b.with(bDesc, *barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
                inputs.tBsB(_, stage));
-          copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
-               inputs.tBsSFB(_, stage));
+          if constexpr (ActDtype == ActivationDtype::Mxfp8)
+            copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
+                 inputs.tBsSFB(_, stage));
         }
       }
       issueNs += traceKernelClock() - start;
@@ -344,7 +349,8 @@ struct W4A8Mainloop {
     return make_tuple(state, iterator);
   }
   __device__ void load_tail(MainloopPipeline pipe, MainloopPipelineState state) const { pipe.producer_tail(state); }
-  template <class Pipelines, class States, class Accumulators, class Inputs, class Coord>
+  template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class Pipelines, class States, class Accumulators,
+            class Inputs, class Coord>
   __device__ auto mma(Pipelines pipes, States states, Accumulators accumulators, const Inputs& inputs, Coord coord,
                       int kTiles, int validRows) const {
     using namespace cute;
@@ -383,7 +389,7 @@ struct W4A8Mainloop {
       start = traceKernelClock();
       if (issuer) {
         copy(copyA, sourceA(_, _, _, _, stage), targetA);
-        copy(copyB, sourceB(_, _, _, _, stage), targetB);
+        if constexpr (ActDtype == ActivationDtype::Mxfp8) copy(copyB, sourceB(_, _, _, _, stage), targetB);
 // Pipeline waits/releases remain warp-wide.
 #pragma unroll
         for (int k = 0; k < size<2>(a); ++k) {

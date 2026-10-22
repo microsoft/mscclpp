@@ -57,8 +57,10 @@ int jitCall(char* error, size_t capacity, Function&& function) noexcept {
 
 NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
   if (!c) throw std::invalid_argument("Invalid MegaMoE JIT configuration");
-  return NativeConfig{c->rank,       c->worldSize, c->maxTokens, c->hidden,     c->intermediate,
-                      c->numExperts, c->topK,      c->smMargin,  c->gateUpClamp};
+  return NativeConfig{
+      c->rank,           c->worldSize, c->maxTokens, c->hidden,      c->intermediate,
+      c->numExperts,     c->topK,      c->smMargin,  c->gateUpClamp, static_cast<ActivationDtype>(c->activationDtype),
+      c->activationScale};
 }
 
 PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {

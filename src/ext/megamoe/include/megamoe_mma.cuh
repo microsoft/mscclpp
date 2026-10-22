@@ -25,6 +25,9 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
     typename Load::PipelineState loadState;
     auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
     auto mmaInputs = fc1.mma_init(tmemStorage, s.tensors);
+    if constexpr (P::Activation == ActivationDtype::Fp8Static) {
+      if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
+    }
     for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
       Task task = taskAt(p, i, hidden, intermediate);
       auto coord = taskCoord(p, task, cta);
@@ -32,9 +35,9 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
       auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
       auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
       traceKernel(phase, true, i);
-      loadState =
-          fc1.mma(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
-                  make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord, kTiles, task.tokens.rows);
+      loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
+                                                  make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord,
+                                                  kTiles, task.tokens.rows);
       traceKernel(phase, false, i);
       accumulatePipeline.producer_commit(accumulateState);
       ++accumulateState;

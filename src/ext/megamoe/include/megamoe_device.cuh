@@ -118,13 +118,14 @@ __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidd
                              : w.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
 }
 
-template <class Types, bool Borrowed = false>
+template <class Types, bool Borrowed = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
 struct KernelParameters {
   template <class T>
   using Resource = std::conditional_t<Borrowed, const T&, T>;
   using Collective = Types;
   using Tiles = typename Types::Tiles;
   static constexpr int ThreadCount = Types::NumWarps * 32;
+  static constexpr ActivationDtype Activation = ActDtype;
   NativeConfig config;
   Resource<SymmetricLayout> symmetric;
   Resource<Workspace> workspace;
@@ -138,9 +139,9 @@ struct KernelParameters {
 
 using W4A8Parameters = KernelParameters<W4A8CollectiveTypes>;
 
-template <class P>
+template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
 __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
-  using View = KernelParameters<typename P::Collective, true>;
+  using View = KernelParameters<typename P::Collective, true, ActDtype>;
   return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
@@ -162,12 +163,14 @@ struct EmptyStorage {};
 
 // FC2 BF16 rows are padded by 16 bytes so transposing stmatrix row writes are bank-conflict free.
 constexpr int PackedRowStride = 128 + 8;
+constexpr int PackedFp8RowStride = 128 + 16;
 
 template <int Tokens>
 struct alignas(128) EpilogueStorage {
   union {
     float scratch[64 * Tokens];
     __bfloat16 packed[Tokens * PackedRowStride];
+    uint8_t packedFp8[Tokens * PackedFp8RowStride];
   };
 };
 

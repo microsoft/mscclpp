@@ -32,6 +32,8 @@ class MegaMoEConfig:
     top_k: int
     sm_margin: int = 0
     gate_up_clamp: float = -1.0
+    activation_dtype: str = "mxfp8"
+    activation_scale: float | None = None
 
     def __post_init__(self):
         for name in (
@@ -65,6 +67,29 @@ class MegaMoEConfig:
             raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
+        if not isinstance(self.activation_dtype, str) or self.activation_dtype not in (
+            "mxfp8",
+            "fp8_static",
+        ):
+            raise ValueError("activation_dtype must be 'mxfp8' or 'fp8_static'")
+        if self.activation_scale is not None:
+            if (
+                isinstance(self.activation_scale, bool)
+                or not isinstance(self.activation_scale, (int, float))
+                or not math.isfinite(self.activation_scale)
+                or self.activation_scale <= 0
+            ):
+                raise ValueError("activation_scale must be a finite positive float")
+            object.__setattr__(self, "activation_scale", float(self.activation_scale))
+            if self.activation_dtype == "mxfp8":
+                object.__setattr__(self, "activation_dtype", "fp8_static")
+        elif self.activation_dtype == "fp8_static":
+            object.__setattr__(self, "activation_scale", 1.0)
+
+    @property
+    def is_static_fp8(self) -> bool:
+        """Whether activations and combine use FP8 E4M3 with per-tensor static scales."""
+        return self.activation_dtype == "fp8_static"
 
     @property
     def local_experts(self) -> int:
@@ -164,8 +189,24 @@ class MegaMoE:
             kernel = compile_kernel(kernel)
         self._kernel = kernel
         native_config = _mscclpp.CppMegaMoeConfig()
-        for name, value in vars(config).items():
-            setattr(native_config, name, value)
+        for name in (
+            "rank",
+            "world_size",
+            "max_tokens",
+            "hidden",
+            "intermediate",
+            "num_experts",
+            "top_k",
+            "sm_margin",
+            "gate_up_clamp",
+        ):
+            setattr(native_config, name, getattr(config, name))
+        native_config.activation_dtype = (
+            _mscclpp.CppMegaMoeActivationDtype.Fp8Static
+            if config.is_static_fp8
+            else _mscclpp.CppMegaMoeActivationDtype.Mxfp8
+        )
+        native_config.activation_scale = float(config.activation_scale or 1.0)
         self._native = _mscclpp.CppMegaMoeContext.create(
             communicator,
             native_config,

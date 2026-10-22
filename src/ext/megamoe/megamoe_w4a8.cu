@@ -29,7 +29,7 @@ struct FinalOutputParameterView : P {
   __bfloat16* finalOutput;
 };
 
-template <int Hidden, int Intermediate, bool FixedTokenCount = false>
+template <int Hidden, int Intermediate, bool FixedTokenCount = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
                                                             const int32_t* ids, const float* scores) {
@@ -45,7 +45,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
-  auto view = w4a8ParameterView(parameters, configuration);
+  auto view = w4a8ParameterView<ActDtype>(parameters, configuration);
   auto p = FinalOutputParameterView<decltype(view)>{view, output};
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
@@ -101,7 +101,15 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
                       lane, cta, cluster, tasks);
     } else {
-      if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
+      if (warp == Schedule::MmaWarp) {
+        allocator.allocate(W4TmemColumns, &s.tmem);
+        if constexpr (ActDtype == ActivationDtype::Fp8Static) {
+          constexpr int SfbWordsPerStage = sizeof(s.tensors.smem_SFB) / (Types::Load::Stages * sizeof(uint32_t));
+          auto* sfbStage0 = reinterpret_cast<uint32_t*>(s.tensors.smem_SFB.begin());
+          for (int i = lane; i < SfbWordsPerStage; i += warpSize) sfbStage0[i] = 0x7f7f7f7fU;
+          cutlass::arch::fence_view_async_shared();
+        }
+      }
       cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * warpSize, 2);
       if (threadIdx.x == 0) {
 #pragma unroll
@@ -139,7 +147,9 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   }
   // EP1/topK=1 FC2 has already drained its direct TMA stores. No peer can still contribute and there is no
   // partial-output consumer, so kernel completion provides the only remaining ordering.
-  if (p.config.worldSize == 1 && p.config.topK == 1) return;
+  if constexpr (ActDtype == ActivationDtype::Mxfp8) {
+    if (p.config.worldSize == 1 && p.config.topK == 1) return;
+  }
   traceKernel(KernelTracePhase::OutputJoin, true);
   syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
@@ -166,20 +176,29 @@ struct W4A8KernelRegistration {
   bool (*matches)(const NativeConfig&);
   W4A8KernelEntry entry;
   W4A8KernelEntry captureEntry;
+  W4A8KernelEntry staticFp8Entry;
+  W4A8KernelEntry staticFp8CaptureEntry;
 };
 
 template <int Hidden, int Intermediate>
 constexpr W4A8KernelRegistration registerW4A8Kernel() {
   static_assert(Hidden >= 4096);
   return {[](const NativeConfig& config) { return config.hidden == Hidden && config.intermediate == Intermediate; },
-          megaMoeW4A8<Hidden, Intermediate>, megaMoeW4A8<Hidden, Intermediate, W4FixedTokenCount>};
+          megaMoeW4A8<Hidden, Intermediate, false, ActivationDtype::Mxfp8>,
+          megaMoeW4A8<Hidden, Intermediate, W4FixedTokenCount, ActivationDtype::Mxfp8>,
+          megaMoeW4A8<Hidden, Intermediate, false, ActivationDtype::Fp8Static>,
+          megaMoeW4A8<Hidden, Intermediate, W4FixedTokenCount, ActivationDtype::Fp8Static>};
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing) {
-  static constexpr std::array kernels{registerW4A8Kernel<4096, 6656>(), registerW4A8Kernel<8192, 4096>(),
-                                      registerW4A8Kernel<9216, 4096>(), registerW4A8Kernel<9216, 4608>()};
+  static constexpr std::array kernels{registerW4A8Kernel<4096, 5120>(), registerW4A8Kernel<4096, 6656>(),
+                                      registerW4A8Kernel<8192, 4096>(), registerW4A8Kernel<9216, 4096>(),
+                                      registerW4A8Kernel<9216, 4608>()};
+  const bool staticFp8 = config.activationDtype == ActivationDtype::Fp8Static;
   for (const auto& kernel : kernels) {
-    if (kernel.matches(config)) return capturing ? kernel.captureEntry : kernel.entry;
+    if (kernel.matches(config))
+      return staticFp8 ? (capturing ? kernel.staticFp8CaptureEntry : kernel.staticFp8Entry)
+                       : (capturing ? kernel.captureEntry : kernel.entry);
   }
   throw std::invalid_argument("MegaMoE W4A8 H/I has no compiled specialization");
 }

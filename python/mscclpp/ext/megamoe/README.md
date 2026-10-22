@@ -152,4 +152,7 @@ override configurable `W4A8KernelConfig` fields (such as
 --transfer-registers 64 --dispatch-chunk 4096 --adaptive-cache-weights`). Use
 `--routing-pattern` (`balanced`, `zipf`, `zipf_skewed`, `hot_experts`, or
 `lognormal` with `--lognormal-sigma`) to benchmark unbalanced expert routing
-distributions.
+distributions. Use `--activation-dtype fp8_static` with optional
+`--activation-scale` to run with per-tensor static-scaled FP8 E4M3 activations
+and FP8 combine.
+

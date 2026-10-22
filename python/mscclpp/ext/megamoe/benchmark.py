@@ -225,7 +225,13 @@ def _reference(config, inputs, ids, scores, weights):
     import torch
     import torch.distributed as dist
     import torch.nn.functional as functional
-    from .quantization import dequantize_mxfp4, dequantize_mxfp8, quantize_mxfp8
+    from .quantization import (
+        dequantize_fp8_static,
+        dequantize_mxfp4,
+        dequantize_mxfp8,
+        quantize_fp8_static,
+        quantize_mxfp8,
+    )
 
     def gather(tensor):
         if config.world_size == 1:
@@ -245,19 +251,31 @@ def _reference(config, inputs, ids, scores, weights):
             continue
         first = dequantize_mxfp4(fc1[expert], fc1_scale[expert], dtype=torch.float32)
         second = dequantize_mxfp4(fc2[expert], fc2_scale[expert], dtype=torch.float32)
-        expert_input = dequantize_mxfp8(*quantize_mxfp8(all_inputs[token].float()), dtype=torch.float32)
-        gate, up = (expert_input @ first.T).chunk(2, dim=-1)
+        if config.is_static_fp8:
+            expert_input = quantize_fp8_static(all_inputs[token].float(), config.activation_scale).float()
+            gate, up = ((expert_input @ first.T) * config.activation_scale).chunk(2, dim=-1)
+        else:
+            expert_input = dequantize_mxfp8(*quantize_mxfp8(all_inputs[token].float()), dtype=torch.float32)
+            gate, up = (expert_input @ first.T).chunk(2, dim=-1)
         if config.gate_up_clamp >= 0:
             gate = gate.clamp(max=config.gate_up_clamp)
             up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
         hidden = functional.silu(gate) * up
-        hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
-        result = (hidden @ second.T) * all_scores[token, slot, None]
-        partial[token, slot] = result.to(torch.bfloat16).float()
+        if config.is_static_fp8:
+            hidden = quantize_fp8_static(hidden, config.activation_scale).float()
+            result = (hidden @ second.T) * all_scores[token, slot, None]
+            partial[token, slot] = quantize_fp8_static(result, 1.0).float()
+        else:
+            hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
+            result = (hidden @ second.T) * all_scores[token, slot, None]
+            partial[token, slot] = result.to(torch.bfloat16).float()
     host_partial = partial.cpu()
     if config.world_size > 1:
         dist.all_reduce(host_partial)
-    return host_partial[first_token : first_token + inputs.shape[0]].sum(dim=1).to(inputs.device, torch.bfloat16)
+    local_sum = host_partial[first_token : first_token + inputs.shape[0]].sum(dim=1)
+    if config.is_static_fp8:
+        local_sum = local_sum * config.activation_scale
+    return local_sum.to(inputs.device, torch.bfloat16)
 
 
 def main():
@@ -302,6 +320,13 @@ def main():
         default=0.85,
         help="log-normal sigma for lognormal routing pattern (default: 0.85, matching c1024-decode-all-ranks-p50)",
     )
+    parser.add_argument(
+        "--activation-dtype",
+        choices=("mxfp8", "fp8_static"),
+        default="mxfp8",
+        help="activation and combine quantization mode (mxfp8 block-scaled or fp8_static per-tensor scaled)",
+    )
+    parser.add_argument("--activation-scale", type=float, default=None, help="static FP8 activation scale")
     parser.add_argument("--tile-k", type=int, default=None, help="override W4A8KernelConfig.tile_k")
     parser.add_argument("--load-stages", type=int, default=None, help="override W4A8KernelConfig.load_stages")
     parser.add_argument("--num-warps", type=int, default=None, help="override W4A8KernelConfig.num_warps")
@@ -349,16 +374,22 @@ def main():
     )
     parser.add_argument("--cluster-size", type=int, default=None, help="override W4A8KernelConfig.cluster_size")
     parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
-    parser.add_argument("--rtol", type=float, default=0.05)
-    parser.add_argument("--atol", type=float, default=0.01)
+    parser.add_argument("--rtol", type=float, default=None)
+    parser.add_argument("--atol", type=float, default=None)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--bootstrap-port", type=int, default=None, help="MSCCL++ port (default MASTER_PORT+1)")
     parser.add_argument("--json-output", default=None, help="optional output path")
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
-    if (args.hidden, args.intermediate) not in ((4096, 6656), (8192, 4096), (9216, 4096), (9216, 4608)):
-        parser.error("W4A8 H/I must be 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
+    if (args.hidden, args.intermediate) not in (
+        (4096, 5120),
+        (4096, 6656),
+        (8192, 4096),
+        (9216, 4096),
+        (9216, 4608),
+    ):
+        parser.error("W4A8 H/I must be 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:
@@ -390,6 +421,8 @@ def main():
         top_k=args.top_k,
         sm_margin=args.sm_margin,
         gate_up_clamp=args.gate_up_clamp,
+        activation_dtype=args.activation_dtype,
+        activation_scale=args.activation_scale,
     )
     kernel_config = W4A8KernelConfig()
     if args.w4_profile is not None:
@@ -452,12 +485,18 @@ def main():
     for _ in range(args.warmup):
         launch()
     stream.synchronize()
+    rtol = args.rtol if args.rtol is not None else (0.125 if config.is_static_fp8 else 0.05)
+    atol = (
+        args.atol
+        if args.atol is not None
+        else (max(0.02, 2.5 * config.activation_scale) if config.is_static_fp8 else 0.01)
+    )
     correctness = None
     if args.check:
         reference = _reference(config, inputs, ids, scores, weights)
         error = (output.float() - reference.float()).abs()
         correctness = {"max_abs_error": error.max().item(), "mean_abs_error": error.mean().item()}
-        torch.testing.assert_close(output, reference, rtol=args.rtol, atol=args.atol)
+        torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
     del weights
     graph = None
     if args.graph:
@@ -469,7 +508,7 @@ def main():
         graph.replay()
         torch.cuda.synchronize(device)
         if args.check:
-            torch.testing.assert_close(output, reference, rtol=args.rtol, atol=args.atol)
+            torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
     samples = []
     repetitions = args.graph_batch if graph else 1
     begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
