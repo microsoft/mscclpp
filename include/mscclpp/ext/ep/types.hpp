@@ -39,8 +39,8 @@ enum class CombineMode {
   /// Reduce all contributions on the source rank.
   ///
   /// Expert-major sends every expert row. Rank-major consumes one unweighted
-  /// BF16 route row per top-k lane, applies its routing weight, and performs
-  /// the top-k reduction in combine.
+  /// route row per top-k lane, applies its routing weight, and performs the
+  /// top-k reduction in combine.
   DIRECT_SEND
 };
 
@@ -58,7 +58,36 @@ enum class DispatchDataType {
   /// Scales are powers of two rounded up to cover each block's maximum absolute
   /// value with E4M3's finite range, with scale bytes clamped to [1, 254].
   /// An all-zero block uses scale byte 127.
-  MXFP8_E4M3
+  MXFP8_E4M3,
+  /// FP8 E4M3 payload with one caller-provided scalar scale.
+  ///
+  /// Supported for RANK_MAJOR in LATENCY mode only. Unlike FP8_E4M3, this
+  /// format has no per-block scale sideband.
+  FP8_E4M3_STATIC
+};
+
+/// Quantization configuration for latency dispatch and rank-major combine.
+struct QuantConfig {
+  /// Input representation for latency rank-major static FP8 dispatch.
+  enum class InputMode {
+    /// Input is already quantized as E4M3(real * dispatchScale).
+    PREQUANTIZED,
+    /// Input is BF16 and is quantized once inside dispatch before transport.
+    QUANTIZE
+  };
+
+  /// Dispatch payload format.
+  DispatchDataType dispatchDataType = DispatchDataType::BF16;
+  /// Static FP8 dispatch multiplier. Dispatch stores E4M3(real * dispatchScale).
+  /// Must be finite and positive for FP8_E4M3_STATIC, and one otherwise.
+  float dispatchScale = 1.0f;
+  /// Input representation for latency rank-major static FP8 dispatch. Must remain
+  /// PREQUANTIZED for every other layout and format.
+  InputMode inputMode = InputMode::PREQUANTIZED;
+  /// Rank-major combine input format. BF16 is the default; FP8_E4M3_STATIC is
+  /// supported only with static FP8 dispatch and uses dispatchScale for
+  /// dequantization.
+  DispatchDataType combineDataType = DispatchDataType::BF16;
 };
 
 /// Arguments for throughput-mode routing preparation.
@@ -136,7 +165,11 @@ struct LatencyDispatchRequest {
   int64_t* outputLayoutRange;
   /// Per-expert or per-rank output counts.
   int* outputCount;
-  /// BF16 input token payload, 16-byte aligned, including when dispatch quantizes the output.
+  /// Input token payload, 16-byte aligned.
+  ///
+  /// BF16, MXFP8_E4M3, and expert-major FP8_E4M3 take BF16 input.
+  /// FP8_E4M3_STATIC uses quant.inputMode to select prequantized E4M3 or BF16
+  /// input.
   const void* input;
   /// Input top-k expert IDs.
   const int64_t* topkIdx;
@@ -156,12 +189,21 @@ struct LatencyDispatchRequest {
   /// This is an output sentinel; input topkIdx entries must still be valid
   /// global expert IDs or negative values for dropped routes.
   int invalidTokenExpertId = -1;
-  /// Requested dispatch payload format. Must match across participating ranks.
-  DispatchDataType dispatchDataType;
+  /// Dispatch quantization and rank-major combine datatype settings.
+  ///
+  /// FP8_E4M3_STATIC combine is supported only with matching static FP8 dispatch
+  /// and reuses the dispatch scale for dequantization; all other rank-major
+  /// combines use BF16.
+  QuantConfig quant;
   /// Dispatch grid block count. Zero uses the default number of blocks.
   int numBlocks = 0;
   /// CUDA stream used for the operation.
   cudaStream_t stream;
+  /// Emit destination-rank-local expert IDs for latency RANK_MAJOR output.
+  ///
+  /// When false, valid outputTopkIdx entries remain global expert IDs. When
+  /// true, valid entries are in [0, numExperts / numRanks).
+  bool emitLocalExpertIds = false;
 };
 
 /// Arguments for throughput-mode dispatch.
@@ -242,12 +284,14 @@ class DispatchHandle {
 struct LatencyCombineRequest {
   /// Combined token output.
   void* output;
-  /// Local BF16 results produced by expert computation, regardless of the
-  /// dispatch payload format.
+  /// Local results produced by expert computation.
   ///
   /// Rank-major input must be the runtime-owned combineInputBuffer(), with
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
-  /// before hidden for DIRECT_SEND.
+  /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
+  /// request's quant.combineDataType: BF16 by default, or FP8_E4M3_STATIC with
+  /// matching static FP8 dispatch. Static FP8 input is dequantized with the
+  /// dispatch scale.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

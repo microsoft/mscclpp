@@ -33,6 +33,14 @@ __global__ void quantizeMxfp8Blocks(const mscclpp::bf16x8* input, mscclpp::f8_e4
   if (vectorIdx % VectorsPerBlock == 0) scales[vectorIdx / VectorsPerBlock] = scale;
 }
 
+__global__ void quantizeStaticFp8Vectors(const mscclpp::bf16x8* input, mscclpp::f8_e4m3x8* output, int numVectors,
+                                         float scale) {
+  const int vectorIdx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (vectorIdx < numVectors) {
+    output[vectorIdx] = mscclpp::ep::quantizeBf16x8ToStaticFp8(input[vectorIdx], scale);
+  }
+}
+
 double bf16ToDouble(uint16_t bits) {
   const uint32_t floatBits = static_cast<uint32_t>(bits) << 16;
   float value;
@@ -115,6 +123,46 @@ std::string checkMxfp8Quantization(const std::vector<uint16_t>& input) {
     }
   }
   return mismatches == 0 ? std::string() : std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
+}
+
+std::string checkStaticFp8Quantization() {
+  std::vector<uint16_t> input;
+  input.reserve(static_cast<size_t>(Bf16MaxFiniteMagnitude + 1) * 2);
+  for (uint32_t magnitude = 0; magnitude <= Bf16MaxFiniteMagnitude; ++magnitude) {
+    input.push_back(static_cast<uint16_t>(magnitude));
+    input.push_back(static_cast<uint16_t>(magnitude | Bf16SignBit));
+  }
+
+  const int numVectors = static_cast<int>(input.size() / mscclpp::bf16x8::Size);
+  mscclpp::GpuBuffer<uint16_t> deviceInput(input.size());
+  mscclpp::GpuBuffer<uint8_t> deviceOutput(input.size());
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(deviceInput.data(), input.data(), input.size() * sizeof(uint16_t), cudaMemcpyHostToDevice));
+  constexpr int Threads = 256;
+  std::vector<uint8_t> output(input.size());
+  for (const float scale : {0.125f, 0.75f, 1.0f}) {
+    quantizeStaticFp8Vectors<<<(numVectors + Threads - 1) / Threads, Threads>>>(
+        reinterpret_cast<const mscclpp::bf16x8*>(deviceInput.data()),
+        reinterpret_cast<mscclpp::f8_e4m3x8*>(deviceOutput.data()), numVectors, scale);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    MSCCLPP_CUDATHROW(cudaMemcpy(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost));
+
+    size_t mismatches = 0;
+    std::ostringstream firstMismatch;
+    for (size_t element = 0; element < input.size(); ++element) {
+      const float scaled = static_cast<float>(bf16ToDouble(input[element])) * scale;
+      const uint8_t expected = referenceFp8E4M3(scaled);
+      if (output[element] != expected && mismatches++ == 0) {
+        firstMismatch << "element " << element << " (bf16 0x" << std::hex << input[element] << ", scale " << std::dec
+                      << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x" << int{output[element]};
+      }
+    }
+    if (mismatches != 0) {
+      return std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
+    }
+  }
+  return {};
 }
 
 // One block per finite nonzero BF16 magnitude, which is the block maximum. A coprime stride scrambles the order so
@@ -201,5 +249,11 @@ TEST(EpQuantizationTest, Mxfp8UnitScaleRounding) {
 TEST(EpQuantizationTest, Mxfp8ZeroBlocks) {
   requireSm90();
   const std::string error = checkMxfp8Quantization(zeroBlocks());
+  if (!error.empty()) FAIL() << error;
+}
+
+TEST(EpQuantizationTest, StaticFp8EveryFiniteBf16Value) {
+  requireSm90();
+  const std::string error = checkStaticFp8Quantization();
   if (!error.empty()) FAIL() << error;
 }
