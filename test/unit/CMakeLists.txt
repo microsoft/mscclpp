@@ -20,11 +20,6 @@ target_sources(unit_tests PRIVATE
     bulk_tests.cu
 )
 
-if(TARGET mscclpp_ep)
-    target_sources(unit_tests PRIVATE ep_quantization_tests.cu)
-    target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
-endif()
-
 add_executable(gpunetio_topology_test gpunetio_topology_test.cc)
 target_include_directories(gpunetio_topology_test PRIVATE ${PROJECT_SOURCE_DIR}/src/gpunetio/host)
 target_compile_features(gpunetio_topology_test PRIVATE cxx_std_17)
@@ -103,4 +98,9 @@ if(MSCCLPP_USE_GPUNETIO)
     add_library(gpunetio_header_static_compile OBJECT compile_tests.cu)
     target_compile_definitions(gpunetio_header_static_compile PRIVATE TEST_GPUNETIO_HEADER)
     target_link_libraries(gpunetio_header_static_compile PRIVATE mscclpp_static)
+endif()
+
+if(TARGET mscclpp_ep)
+    target_sources(unit_tests PRIVATE ep_quantization_tests.cu)
+    target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
 endif()

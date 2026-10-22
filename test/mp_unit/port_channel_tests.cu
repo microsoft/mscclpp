@@ -1552,6 +1552,7 @@ __global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::PortChannelDeviceHandle*
 PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
+  if (gEnv->rank >= numRanksToUse) return;
   const int worldSize = communicator->bootstrap()->getNranks();
   const int rank = communicator->bootstrap()->getRank();
   if (worldSize != 2) {
@@ -1630,6 +1631,7 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
 TEST(PortChannelOneToOneTest, GpuNetIoLLPingPong) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
+  if (gEnv->rank >= numRanksToUse) return;
   if (communicator->bootstrap()->getNranks() != 2) {
     SKIP_TEST() << "GpuNetIo LL ping-pong requires exactly 2 ranks";
     return;
@@ -1645,6 +1647,7 @@ TEST(PortChannelOneToOneTest, GpuNetIoLLPingPong) {
 PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
+  if (gEnv->rank >= numRanksToUse) return;
   if (communicator->bootstrap()->getNranks() != 2) {
     SKIP_TEST() << "GpuNetIo LL ping-pong perf requires exactly 2 ranks";
     return;
@@ -1660,6 +1663,7 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
 TEST(PortChannelOneToOneTest, GpuNetIoP2P) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
+  if (gEnv->rank >= numRanksToUse) return;
   const int worldSize = communicator->bootstrap()->getNranks();
   const int rank = communicator->bootstrap()->getRank();
   if (worldSize != 2) {
@@ -1821,6 +1825,7 @@ TEST(PortChannelSparseTest, GpuNetIoSparseConnections) {
 TEST(PortChannelOneToOneTest, GpuNetIoBoundChannels) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   REQUIRE_IBVERBS;
+  if (gEnv->rank >= numRanksToUse) return;
   if (communicator->bootstrap()->getNranks() != 2) {
     SKIP_TEST() << "GPUNetIO bound channels require exactly two ranks";
     return;
@@ -1869,6 +1874,8 @@ TEST(PortChannelOneToOneTest, GpuNetIoBoundChannels) {
   uint64_t counter = 1;
   MSCCLPP_CUDATHROW(cudaMemcpy(&counter, second.semaphore_.inboundToken, sizeof(counter), cudaMemcpyDeviceToHost));
   EXPECT_EQ(counter, 0);
+  // Keep the peer from writing through the second channel until both ranks checked it is untouched.
+  communicator->bootstrap()->barrier();
   kernelGpuNetIoBoundChannel<<<1, 1>>>(second, 33);
   kernelGpuNetIoBoundChannel<<<1, 1>>>(first, 32);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
