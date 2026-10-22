@@ -55,6 +55,10 @@ class GpuNetIoService {
   /// `PortChannelBackend::GpuNetIo`.
   GpuNetIoDeviceContext* deviceContext() const;
 
+  /// Register an extra local GPU buffer on every HCA (cached by pointer and size) and return a device array of
+  /// per-HCA local keys in host byte order, indexed like GpuNetIoDeviceContext::lkeys.
+  const uint32_t* registerLocalBuffer(const void* ptr, size_t bytes);
+
  private:
   struct Impl;
   std::unique_ptr<Impl> pimpl_;

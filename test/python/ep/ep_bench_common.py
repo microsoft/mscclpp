@@ -187,16 +187,210 @@ def sum_matching_kernel_us(key_averages, substrs):
 # Routing inputs — shared by both backends so the comparison is apples-to-apples.
 # BF16 tokens + top-k routing setup.
 # ----------------------------------------------------------------------------
-def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
+def _apply_mscclpp_cross_rack_topk_half(topk_idx, scores, num_experts, num_ranks, rank, local_world_size):
+    if topk_idx.size(1) != 8:
+        raise ValueError("cross-rack top-k half routing requires --num-topk 8")
+    if num_ranks != 8 or local_world_size != 4:
+        raise ValueError("cross-rack top-k half routing requires 8 ranks with 4 local ranks per node")
+    if num_experts % num_ranks != 0:
+        raise ValueError("num_experts must be divisible by num_ranks")
+
+    num_tokens, num_topk = topk_idx.shape
+    half_topk = num_topk // 2
+    num_local_experts = num_experts // num_ranks
+    remote_rank_base = 0 if rank >= local_world_size else local_world_size
+    remote_expert_begin = remote_rank_base * num_local_experts
+    remote_expert_count = local_world_size * num_local_experts
+
+    # First half: choose the top four experts from the remote node only. This keeps
+    # four cross-rack top-k selections while preserving the natural random spread
+    # across remote ranks instead of forcing every token to all four remote ranks.
+    remote_scores = scores[:, remote_expert_begin : remote_expert_begin + remote_expert_count]
+    remote_topk = torch.topk(remote_scores, half_topk, dim=-1, largest=True, sorted=True)[1].to(torch.int64)
+    topk_idx[:, :half_topk] = remote_expert_begin + remote_topk
+    topk_idx[:, half_topk:] = -1
+
+
+def _apply_mscclpp_same_rack_topk(topk_idx, scores, num_experts, num_ranks, rank, local_world_size):
+    if num_ranks != 8 or local_world_size != 4:
+        raise ValueError("same-rack top-k routing requires 8 ranks with 4 local ranks per node")
+    if num_experts % num_ranks != 0:
+        raise ValueError("num_experts must be divisible by num_ranks")
+
+    num_topk = topk_idx.size(1)
+    num_local_experts = num_experts // num_ranks
+    local_rank_base = (rank // local_world_size) * local_world_size
+    local_expert_begin = local_rank_base * num_local_experts
+    local_expert_count = local_world_size * num_local_experts
+
+    # Route every top-k selection to experts on the local node/rack only. This
+    # removes cross-rack GPUNetIO payloads while preserving top-k=8 work per token.
+    local_scores = scores[:, local_expert_begin : local_expert_begin + local_expert_count]
+    local_topk = torch.topk(local_scores, num_topk, dim=-1, largest=True, sorted=True)[1].to(torch.int64)
+    topk_idx[:, :] = local_expert_begin + local_topk
+
+
+def _apply_mscclpp_cross_rack_token_half_all_remote(topk_idx, num_experts, num_ranks, rank, local_world_size):
+    if topk_idx.size(0) != 128 or topk_idx.size(1) != 8:
+        raise ValueError("cross-rack token-half all-remote routing requires -t 128 -k 8")
+    if num_ranks != 8 or local_world_size != 4:
+        raise ValueError("cross-rack token-half all-remote routing requires 8 ranks with 4 local ranks per node")
+    if num_experts % num_ranks != 0:
+        raise ValueError("num_experts must be divisible by num_ranks")
+
+    num_tokens, num_topk = topk_idx.shape
+    half_tokens = num_tokens // 2
+    half_topk = num_topk // 2
+    num_local_experts = num_experts // num_ranks
+    remote_rank_base = 0 if rank >= local_world_size else local_world_size
+    token_offsets = torch.arange(half_tokens, device=topk_idx.device, dtype=torch.int64).view(-1, 1)
+    remote_cols = torch.arange(half_topk, device=topk_idx.device, dtype=torch.int64).view(1, -1)
+    remote_ranks = remote_rank_base + remote_cols
+
+    # First 64 tokens: route one valid top-k entry to each of the four remote ranks,
+    # forcing payload transfer to every GPU on the other rack. Remaining top-k lanes
+    # and all later tokens are invalid, so no same-rack/local dispatch is launched.
+    topk_idx[:, :] = -1
+    topk_idx[:half_tokens, :half_topk] = (
+        remote_ranks * num_local_experts + ((token_offsets + remote_cols) % num_local_experts)
+    )
+
+
+def _apply_mscclpp_rack0_gpu0_one_to_rack1(topk_idx, num_experts, num_ranks, rank, local_world_size):
+    if num_ranks != 8 or local_world_size != 4:
+        raise ValueError("rack0/GPU0 one-to-rack1 routing requires 8 ranks with 4 local ranks per node")
+    if num_experts % num_ranks != 0:
+        raise ValueError("num_experts must be divisible by num_ranks")
+
+    # Only rack0/GPU0 (global rank 0) sends. Rank 0 keeps the normal random
+    # top-k routing over all experts/ranks. Other ranks publish invalid top-k
+    # entries, so they do not send payload data in dispatch.
+    if rank != 0:
+        topk_idx[:, :] = -1
+
+
+def _apply_mscclpp_rack0_gpu0_rack1_only(topk_idx, num_experts, num_ranks, rank, local_world_size):
+    _apply_mscclpp_rack0_gpu0_one_to_rack1(topk_idx, num_experts, num_ranks, rank, local_world_size)
+    # Rank 0 keeps only its random top-k entries whose expert lives on rack1
+    # (ranks 4..7); entries targeting rack0 (ranks 0..3, incl. self) become
+    # invalid so dispatch carries pure cross-rack traffic.
+    # MSCCLPP_EP_ROUTE_RANK0_DST_RANKS (default "4,5,6,7") narrows the allowed
+    # rack1 destinations further, e.g. "4,5".
+    if rank == 0:
+        num_local_experts = num_experts // num_ranks
+        dst_rank = topk_idx // num_local_experts
+        allowed = [
+            int(r) for r in os.environ.get("MSCCLPP_EP_ROUTE_RANK0_DST_RANKS", "4,5,6,7").split(",") if r.strip()
+        ]
+        if any(r < local_world_size or r >= num_ranks for r in allowed):
+            raise ValueError(f"rank0 dst ranks must be on rack1 [{local_world_size}, {num_ranks}): {allowed}")
+        keep = torch.zeros_like(topk_idx, dtype=torch.bool)
+        for r in allowed:
+            keep |= dst_rank == r
+        topk_idx.masked_fill_((topk_idx >= 0) & ~keep, -1)
+
+
+def _apply_mscclpp_rank0_all_to_rack1(topk_idx, num_experts, num_ranks, rank, local_world_size):
+    if num_ranks != 8 or local_world_size != 4:
+        raise ValueError("rank0 all-to-rack1 routing requires 8 ranks with 4 local ranks per node")
+    if topk_idx.size(1) < local_world_size:
+        raise ValueError("rank0 all-to-rack1 routing requires --num-topk >= 4")
+    # Only rank 0 sends: each of its first MSCCLPP_EP_ROUTE_RANK0_ACTIVE_TOKENS tokens (default all) goes to
+    # every rank on rack1 (one top-k lane per rank 4..7), so each destination receives the same contiguous
+    # rows. Everything else is invalid, so the only payload traffic is rank 0 -> ranks 4..7.
+    num_tokens, num_topk = topk_idx.shape
+    num_local_experts = num_experts // num_ranks
+    active = int(os.environ.get("MSCCLPP_EP_ROUTE_RANK0_ACTIVE_TOKENS", str(num_tokens)))
+    active = max(0, min(active, num_tokens))
+    topk_idx[:, :] = -1
+    if rank == 0 and active > 0:
+        tokens = torch.arange(active, device=topk_idx.device, dtype=torch.int64).view(-1, 1)
+        lanes = torch.arange(local_world_size, device=topk_idx.device, dtype=torch.int64).view(1, -1)
+        topk_idx[:active, :local_world_size] = (local_world_size + lanes) * num_local_experts + (
+            (tokens + lanes) % num_local_experts
+        )
+
+
+def make_inputs(
+    num_tokens,
+    hidden,
+    num_topk,
+    num_experts,
+    rank,
+    seed,
+    *,
+    route_mode=None,
+    num_ranks=None,
+    local_world_size=None,
+):
     torch.manual_seed(seed + rank)
     rank_offset = 128
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
     x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1].to(torch.int64)
+    if route_mode == "mscclpp_cross_rack_topk_half":
+        _apply_mscclpp_cross_rack_topk_half(
+            topk_idx,
+            scores,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode == "mscclpp_same_rack_topk":
+        _apply_mscclpp_same_rack_topk(
+            topk_idx,
+            scores,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode == "mscclpp_cross_rack_token_half_all_remote":
+        _apply_mscclpp_cross_rack_token_half_all_remote(
+            topk_idx,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode == "mscclpp_rack0_gpu0_one_to_rack1":
+        _apply_mscclpp_rack0_gpu0_one_to_rack1(
+            topk_idx,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode == "mscclpp_rank0_all_to_rack1":
+        _apply_mscclpp_rank0_all_to_rack1(
+            topk_idx,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode == "mscclpp_rack0_gpu0_rack1_only":
+        _apply_mscclpp_rack0_gpu0_rack1_only(
+            topk_idx,
+            num_experts,
+            num_ranks if num_ranks is not None else 0,
+            rank,
+            local_world_size if local_world_size is not None else 0,
+        )
+    elif route_mode is not None:
+        raise ValueError(f"unsupported route_mode: {route_mode}")
     topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    if route_mode in (
+        "mscclpp_cross_rack_topk_half",
+        "mscclpp_cross_rack_token_half_all_remote",
+        "mscclpp_rack0_gpu0_one_to_rack1",
+        "mscclpp_rack0_gpu0_rack1_only",
+    ):
+        topk_weights.masked_fill_(topk_idx < 0, 0.0)
     # ep_bench byte accounting: num_valid_selections = count(topk_idx >= 0); every
-    # selection is valid here (a full LL load), so this equals num_tokens * top_k.
+    # selection is valid in default mode (a full LL load), so this equals num_tokens * top_k.
     num_valid_selections = int((topk_idx >= 0).sum().item())
     return x, topk_idx, topk_weights, num_valid_selections
 

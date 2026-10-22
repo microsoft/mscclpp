@@ -972,7 +972,10 @@ doca_error_t doca_verbs_qp::rtr2rts(struct doca_verbs_qp_attr &verbs_qp_attr, in
   if (attr_mask & DOCA_VERBS_QP_ATTR_MAX_QP_RD_ATOMIC)
     DEVX_SET(qpc, qpc, log_sra_max, doca_internal_utils_log2(verbs_qp_attr.max_rd_atomic));
 
-  DEVX_SET(qpc, qpc, log_ack_req_freq, 0x0);  // 8
+  {
+    const char* ackFreq = getenv("MSCCLPP_GPUNETIO_LOG_ACK_REQ_FREQ");
+    DEVX_SET(qpc, qpc, log_ack_req_freq, ackFreq ? atoi(ackFreq) : 0);
+  }
 
   int mlx5_opt_param_mask{0};
   convert_doca_verbs_qp_attr_mask_to_legal_mlx5_qp_opt_param_mask(attr_mask, mlx5_opt_param_mask,
@@ -987,6 +990,20 @@ doca_error_t doca_verbs_qp::rtr2rts(struct doca_verbs_qp_attr &verbs_qp_attr, in
   }
 
   m_current_state = DOCA_VERBS_QP_STATE_RTS;
+
+  if (getenv("MSCCLPP_GPUNETIO_DUMP_QPC")) {
+    query_qp_in qin{0};
+    query_qp_out qout{0};
+    DEVX_SET(query_qp_in, qin, opcode, MLX5_CMD_OP_QUERY_QP);
+    DEVX_SET(query_qp_in, qin, qpn, m_qp_num);
+    if (doca_verbs_wrapper_mlx5dv_devx_obj_query(m_qp_obj, qin, sizeof(qin), qout, sizeof(qout)) == DOCA_SUCCESS) {
+      char buf[2048];
+      int n = snprintf(buf, sizeof(buf), "[qpc] qpn=0x%x out=", m_qp_num);
+      const unsigned char *b = (const unsigned char *)qout;
+      for (size_t i = 0; i < sizeof(qout) && n < (int)sizeof(buf) - 4; i++) n += snprintf(buf + n, sizeof(buf) - n, "%02x", b[i]);
+      fprintf(stderr, "%s\n", buf);
+    }
+  }
 
   DOCA_LOG(LOG_INFO, "DOCA IB Verbs QP %p: has been successfully moved to RTS state", this);
 

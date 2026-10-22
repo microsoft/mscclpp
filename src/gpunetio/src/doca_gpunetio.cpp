@@ -736,6 +736,7 @@ doca_error_t doca_gpu_verbs_export_qp(struct doca_gpu *gpu_dev, struct doca_verb
   qp_cpu_->cq_sq.cqe_mask = (qp_cpu_->cq_sq.cqe_num - 1);
   qp_cpu_->cq_sq.cqe_ci = 0;
   qp_cpu_->cq_sq.cqe_rsvd = 0;
+  qp_cpu_->cq_sq.cqe_slot = 0;
   qp_cpu_->cq_sq.mem_type = DOCA_GPUNETIO_VERBS_MEM_TYPE_GPU;
 
   qp_gverbs->gpu_dev = gpu_dev;
@@ -1124,7 +1125,9 @@ doca_error_t doca_gpu_verbs_reset_tracking_and_memory(struct doca_gpu_verbs_qp *
   qp_gverbs->qp_cpu->sq_lock = 0;
 
   qp_gverbs->qp_cpu->cq_sq.cqe_ci = 0;
-  qp_gverbs->qp_cpu->cq_sq.cqe_rsvd = qp_gpu_h.sq_rsvd_index;
+  qp_gverbs->qp_cpu->cq_sq.cqe_rsvd = qp_gpu_h.cq_sq.cqe_rsvd + qp_gpu_h.cq_sq.cqe_slot;
+  qp_gverbs->qp_cpu->cq_sq.cqe_slot = 0;
+  qp_gverbs->qp_cpu->cq_sq.multi_bb = 0;
 
   qp_gverbs->sq_wqe_pi_last = 0;
 

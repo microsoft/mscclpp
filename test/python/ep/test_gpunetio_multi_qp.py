@@ -25,6 +25,315 @@ IMPL = "include/mscclpp/internal/port_channel_gpunetio_device_impl.hpp"
 
 
 class MultiQpTests(unittest.TestCase):
+    def test_actual_deduplicated_destination_packing(self):
+        native = HOST_PREAMBLE + r"""
+    #include <thread>
+    #include <mutex>
+    #include <condition_variable>
+    #define EP_DEVICE_ASSERT(test) require(test,#test)
+    using Bf16=uint16_t;
+    constexpr int WARP_SIZE=32;
+    struct alignas(16) uint4{uint32_t values[4];};
+    class WarpBarrier{
+     std::mutex mutex;std::condition_variable changed;int arrived=0,generation=0;
+    public:
+     void wait(){std::unique_lock<std::mutex> lock(mutex);int current=generation;
+      if(++arrived==32){arrived=0;++generation;changed.notify_all();}
+      else changed.wait(lock,[&]{return generation!=current;});
+     }
+    } barrier;
+    thread_local int lane;
+    int sharedValues[32];
+    int get_lane_id(){return lane;}
+    int __ffs(unsigned mask){return __builtin_ffs(mask);}
+    void __syncwarp(){barrier.wait();}
+    void __threadfence_system(){}
+    unsigned __match_any_sync(unsigned,int value){sharedValues[lane]=value;barrier.wait();unsigned mask=0;
+     for(int index=0;index<32;++index)if(sharedValues[index]==value)mask|=1u<<index;barrier.wait();return mask;}
+    unsigned __ballot_sync(unsigned,bool value){sharedValues[lane]=value;barrier.wait();unsigned mask=0;
+     for(int index=0;index<32;++index)if(sharedValues[index])mask|=1u<<index;barrier.wait();return mask;}
+    int __shfl_sync(unsigned,int value,int source){sharedValues[lane]=value;barrier.wait();int result=sharedValues[source];barrier.wait();return result;}
+    int atomicAdd(int* pointer,int value){return __atomic_fetch_add(pointer,value,__ATOMIC_RELAXED);}
+    void atomicOr(unsigned long long* pointer,unsigned long long value){__atomic_fetch_or(pointer,value,__ATOMIC_RELAXED);}
+    struct WorkspaceView{int*dispatchRankPayloadSlots_;int*rankMajorSendIndices_;};
+    struct Gin{int numQpsPerPeer=4;template<class...Args>void putBatched3(Args...){throw std::runtime_error("packing posted RDMA");}};
+    struct TransportView{
+     int rank_=0;Gin*gpuNetIo_;size_t gpuNetIoSlotStride_;void*gpuNetIoStagingBuffer_;bool gpuNetIoBatchedDispatch_=true;
+     bool isNvlinkPeer(int peer)const{return peer==0||peer==1;}
+     uint64_t symmetricOffset(const void* pointer)const{return reinterpret_cast<uintptr_t>(pointer);}
+    };
+    """
+        native += structure(source("src/ext/ep/include/config.hpp"), "RankMajorBatchView")
+        native += structure(source(DISPATCH), "RankMajorRoute")
+        native += function(source("src/ext/ep/common/device_helpers.cuh"), "isFirstLaneForRank")
+        routing = source(DISPATCH)
+        route_begin = routing.index("RankMajorRoute prepareRankMajorRoute(")
+        native += routing[route_begin : routing.index("{", route_begin)]
+        native += block(routing, r"RankMajorRoute\s+prepareRankMajorRoute\s*\(")
+        native += "template<int Hidden>\n" + function(source(DISPATCH), "sendRankMajorGpuNetIo")
+        native += r"""
+    int main(){
+     constexpr int ranks=4,capacity=4,hidden=7168,localExperts=4,sentinel=1000;
+     constexpr size_t hiddenBytes=hidden*2;
+     const int pattern[8]={8,9,10,12,13,4,-1,3};
+     for(int topk:{1,8,32}){
+      std::vector<uint4> storage(ranks*capacity*(hiddenBytes+topk*8)/16);
+      std::vector<uint4> token(hiddenBytes/16);
+      std::vector<int64_t> ids(2*topk);std::vector<float> weights(2*topk);
+      int counts[ranks];std::vector<int> slots(2*topk);
+      WorkspaceView workspace{counts,slots.data()};Gin gin;
+      TransportView transport{0,&gin,((hiddenBytes+topk*8+127)/128)*128,storage.data(),true};
+      RankMajorBatchView batch(storage.data(),ranks,capacity,hidden,topk);
+      for(int invocation=0;invocation<6;++invocation){
+       std::fill_n(counts,ranks,0);std::fill(slots.begin(),slots.end(),-99);
+       memset(storage.data(),0xa5,batch.numBytes_);uint64_t used[ranks]={};
+       for(int tokenIndex=0;tokenIndex<2;++tokenIndex){
+        for(int route=0;route<topk;++route){ids[tokenIndex*topk+route]=invocation%3==0?-1:pattern[(route+tokenIndex)%8];weights[tokenIndex*topk+route]=(route+tokenIndex+1)*0.25f;}
+        for(size_t index=0;index<token.size();++index)for(int part=0;part<4;++part)token[index].values[part]=invocation*1000+tokenIndex*100+part;
+        std::vector<std::thread> lanes;
+        for(int thread=0;thread<32;++thread)lanes.emplace_back([&,thread]{
+         lane=thread;long long timing[4]={};
+         const auto route=prepareRankMajorRoute(workspace,ids.data(),tokenIndex,topk,localExperts,capacity,lane);
+         sendRankMajorGpuNetIo<hidden>(transport,storage.data(),batch.ids_,batch.weights_,route,ids.data(),
+                       invocation%2?weights.data():nullptr,token.data(),tokenIndex,topk,localExperts,
+                       capacity,ranks,sentinel,0,used,timing);
+        });
+        for(auto& thread:lanes)thread.join();
+        for(int peer=0;peer<ranks;++peer){
+         int first=-1;
+         for(int route=0;route<topk;++route)if(ids[tokenIndex*topk+route]>=0&&ids[tokenIndex*topk+route]/localExperts==peer){
+          int slot=slots[tokenIndex*topk+route];if(first<0)first=slot;require(slot==first,"duplicate expert got different slot");
+         }
+         if(first<0||transport.isNvlinkPeer(peer))continue;
+         const size_t row=peer*capacity+first;
+         require(memcmp(batch.tokens_+row*hiddenBytes,token.data(),hiddenBytes)==0,"token pack mismatch");
+         for(int route=0;route<topk;++route){
+          const int expert=ids[tokenIndex*topk+route];const bool local=expert>=0&&expert/localExperts==peer;
+          require(batch.ids_[row*topk+route]==(local?expert:sentinel),"expert metadata mismatch");
+          float expected=local?(invocation%2?weights[tokenIndex*topk+route]:1.0f):0.0f;
+          require(batch.weights_[row*topk+route]==expected,"weight metadata mismatch");
+         }
+        }
+       }
+       for(int peer=0;peer<ranks;++peer){int expected=0;
+        for(int tokenIndex=0;tokenIndex<2;++tokenIndex){bool selected=false;for(int route=0;route<topk;++route){auto expert=ids[tokenIndex*topk+route];selected|=expert>=0&&expert/localExperts==peer;}expected+=selected;}
+        require(counts[peer]==expected,"deduplicated count mismatch");
+        if(transport.isNvlinkPeer(peer))for(size_t index=peer*capacity*hiddenBytes;index<(peer+1)*capacity*hiddenBytes;++index)
+         require(batch.tokens_[index]==0xa5,"mapped peer staging touched");
+       }
+      }
+     }
+    }
+    """
+        self.run_native(native)
+
+    def test_actual_destination_bulk_publication(self):
+        native = HOST_PREAMBLE + "\nusing Bf16=uint16_t;\n#define EP_DEVICE_ASSERT(test) require(test,#test)\n"
+        native += structure(source("src/ext/ep/include/config.hpp"), "RankMajorBatchView")
+        native += r"""
+struct Dimension{unsigned x;} blockIdx{},threadIdx{};
+namespace mscclpp{
+constexpr int scopeDevice=0,memoryOrderAcquire=1;
+template<class Value,int Scope>Value atomicLoad(Value* address,int){return *address;}
+}
+struct Transfer{int peer,queue;uint64_t dst[3],src[3],bytes[3];};
+struct Gin{
+ int numHcas,numQpsPerPeer;std::vector<Transfer> transfers;
+ void putBatched3(int peer,int queue,uint64_t dst0,uint64_t src0,uint64_t bytes0,
+                  uint64_t dst1,uint64_t src1,uint64_t bytes1,uint64_t dst2,uint64_t src2,uint64_t bytes2,uint64_t*){
+  transfers.push_back({peer,queue,{dst0,dst1,dst2},{src0,src1,src2},{bytes0,bytes1,bytes2}});
+ }
+};
+struct WorkspaceView{int*dispatchRankPayloadSlots_;};
+struct TransportView{
+ int rank_;Gin*gpuNetIo_;void*gpuNetIoStagingBuffer_;bool mapped;bool gpuNetIoBatchAllQps_;
+ bool isNvlinkPeer(int peer)const{return peer==rank_||(mapped&&peer==1);}
+ uint64_t symmetricOffset(const void* pointer)const{return reinterpret_cast<uintptr_t>(pointer)-0x10000000ULL;}
+};
+"""
+        native += "template<int Hidden>\n" + function(source(DISPATCH), "sendRankMajorGpuNetIoBatches")
+        native += r"""
+int main(){
+ constexpr uint64_t hiddenBytes=7168*2,base=0x10000000ULL,staging=0x40000000ULL;
+ for(int ranks:{2,8,64})for(int capacity:{1,128,257})for(int topk:{1,8,32})
+ for(int hcas:{1,2,4,64})for(int queues:{hcas,std::min(hcas*2,64),64})
+ for(bool allQps:{false,true})for(bool mapped:{false,true}){
+  const int stripes=allQps?queues:hcas;
+  Gin gin{hcas,queues,{}};TransportView transport{0,&gin,reinterpret_cast<void*>(staging),mapped,allQps};
+  std::vector<int> counts(ranks);WorkspaceView workspace{counts.data()};
+  RankMajorBatchView batch(transport.gpuNetIoStagingBuffer_,ranks,capacity,7168,topk);
+  const size_t stride=((hiddenBytes+topk*8+127)/128)*128;
+  require(batch.numBytes_<=32768*stride,"staging region overflow");
+  for(int invocation=0;invocation<3;++invocation){
+   gin.transfers.clear();
+   for(int peer=0;peer<ranks;++peer)counts[peer]=invocation==0?0:invocation==1?1:capacity-(peer%2);
+   for(blockIdx.x=0;blockIdx.x<unsigned(ranks+1);++blockIdx.x)
+    for(threadIdx.x=0;threadIdx.x<unsigned(queues+1);++threadIdx.x)
+     sendRankMajorGpuNetIoBatches<7168>(transport,reinterpret_cast<void*>(base),reinterpret_cast<int*>(base+0x01000000),
+                                     reinterpret_cast<float*>(base+0x02000000),ranks,capacity,topk,workspace);
+   std::vector<int> coverage(ranks*capacity,0);
+   for(const auto& transfer:gin.transfers){
+    require(!transport.isNvlinkPeer(transfer.peer)&&transfer.queue<stripes,"mapped peer or QP mapping");
+    require(transfer.bytes[0]>0&&transfer.bytes[0]<=DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE,"chunk size");
+    const uint64_t row=transfer.dst[0]/hiddenBytes,count=transfer.bytes[0]/hiddenBytes;
+    require(row+count<=unsigned(counts[transfer.peer]),"destination extent");
+        require(row>=unsigned(counts[transfer.peer]*transfer.queue/stripes)&&
+            row+count<=unsigned(counts[transfer.peer]*(transfer.queue+1)/stripes),"per-QP row partition");
+    require(transfer.src[0]==staging-base+(transfer.peer*capacity+row)*hiddenBytes,"packed source address");
+    require(transfer.dst[1]==0x01000000+row*topk*4&&transfer.dst[2]==0x02000000+row*topk*4,"remote metadata addresses");
+    require(transfer.src[1]==transport.symmetricOffset(batch.ids_)+(transfer.peer*capacity+row)*topk*4,"IDs source");
+    require(transfer.src[2]==transport.symmetricOffset(batch.weights_)+(transfer.peer*capacity+row)*topk*4,"weights source");
+    require(transfer.bytes[1]==count*topk*4&&transfer.bytes[2]==count*topk*4,"metadata size");
+    for(uint64_t index=row;index<row+count;++index)++coverage[transfer.peer*capacity+index];
+   }
+    size_t expectedSubmissions=0;
+    for(int peer=0;peer<ranks;++peer)if(!transport.isNvlinkPeer(peer))for(int stripe=0;stripe<stripes;++stripe){
+     const int rows=counts[peer]*(stripe+1)/stripes-counts[peer]*stripe/stripes;
+     const uint64_t limit=DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE/hiddenBytes;
+     expectedSubmissions+=(rows+limit-1)/limit;
+    }
+    require(gin.transfers.size()==expectedSubmissions,"unexpected bulk submission count");
+    for(int peer=0;peer<ranks;++peer)for(int row=0;row<capacity;++row)
+    require(coverage[peer*capacity+row]==int(!transport.isNvlinkPeer(peer)&&row<counts[peer]),"missing/duplicate row");
+  }
+ }
+}
+"""
+        for limit in (1 << 30, 7168 * 2 * 7):
+            self.run_native(f"#define DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE {limit}ULL\n" + native)
+        dispatch = function(source(DISPATCH), "dispatchBody")
+        self.ordered(
+            dispatch,
+            "workspaceView.combineSyncer_->sync(gridDim.x)",
+            "sendRankMajorGpuNetIoBatches<Hidden>",
+            "workspaceView.combineSyncer_->sync(gridDim.x)",
+            "gin->atomicAdd(",
+            "gin->flush(",
+        )
+        self.assertIn("!transport.gpuNetIoBatchedDispatch_ && ++tokensSinceFlush", source(DISPATCH))
+
+    def test_buffered_timing_replays_and_bounds(self):
+        native = HOST_PREAMBLE + "\n#include <memory>\n"
+        native += r"""
+#define __CUDACC__
+#define __CUDA_ARCH__ 1000
+#define MSCCLPP_EP_GPUNETIO_TIMING
+#define __host__
+#define __device__
+#define __forceinline__ inline
+struct Dimension { unsigned int x; } blockIdx{}, threadIdx{};
+unsigned long long atomicAdd(unsigned long long* address, unsigned long long value) {
+  const auto previous = *address; *address += value; return previous;
+}
+"""
+        native += '#include "' + str(ROOT / "src/ext/ep/include/buffered_timing.hpp") + '"\n'
+        native += r"""
+int main() {
+  using namespace mscclpp::ep;
+  constexpr unsigned capacity = 2;
+  const size_t count = TimingOperations * TimingMaxBlocks * capacity;
+  std::vector<TimingRecord> records(count + 2);
+  records.front().invocation = records.back().invocation = 0x12345678;
+  auto storage = std::make_unique<BufferedTiming>();
+  storage->records = records.data() + 1; storage->capacityPerBlock = capacity;
+  for (int operation : {0, 1}) for (unsigned block : {0u, unsigned(TimingMaxBlocks - 1)}) {
+    blockIdx.x = block;
+    for (unsigned thread : {0u, unsigned(TimingMaxThreads - 1)}) {
+      threadIdx.x = thread;
+      for (unsigned invocation = 1; invocation <= 200; ++invocation) {
+        TimingWriter writer(storage.get(), operation, 2);
+        require(writer.invocation == invocation, "captured host epoch must not freeze invocation");
+        writer.record(TimingKind::DispatchQueue, 100, 150, 3, 7, invocation);
+      }
+    }
+    const auto& state = storage->blocks[operation * TimingMaxBlocks + block];
+    require(state.attempted == 400, "overflow accounting");
+    const auto& first = storage->records[timingRecordIndex(operation, block, 0, capacity)];
+    const auto& last = storage->records[timingRecordIndex(operation, block, 1, capacity)];
+    require(first.invocation == 1 && last.invocation == 2, "overflow overwrote retained samples");
+    require(first.epoch == 2 && first.beginNs == 100 && first.endNs == 150 && first.peer == 3 && first.queue == 7,
+            "record labels/timestamps");
+  }
+  blockIdx.x = TimingMaxBlocks; TimingWriter outside(storage.get(), 0, 2);
+  outside.record(TimingKind::DispatchBlock, 0, 0); require(!outside.buffer, "block bounds");
+  blockIdx.x = 0; threadIdx.x = TimingMaxThreads; TimingWriter threadOutside(storage.get(), 0, 2);
+  threadOutside.record(TimingKind::DispatchBlock, 0, 0); require(!threadOutside.buffer, "thread bounds");
+  TimingWriter disabled(nullptr, 0, 2); disabled.record(TimingKind::DispatchBlock, 0, 0);
+  require(records.front().invocation == 0x12345678 && records.back().invocation == 0x12345678, "guard clobber");
+}
+"""
+        self.run_native(native)
+
+    def test_buffered_timing_host_export_and_scope(self):
+        context = source("src/ext/ep/latency.cc")
+        native = HOST_PREAMBLE + "\n#include <atomic>\n#include <fstream>\n#include <memory>\n#include <unistd.h>\n"
+        native += '#include "' + str(ROOT / "src/ext/ep/include/buffered_timing.hpp") + '"\n'
+        native += r"""
+#define MSCCLPP_EP_GPUNETIO_TIMING
+#define EP_HOST_ASSERT(test) require(test, #test)
+constexpr int cudaMemcpyHostToDevice=1, cudaMemcpyDeviceToHost=2;
+namespace mscclpp {
+template<class Value> void gpuMemcpy(Value* destination, const Value* input, size_t count, int) {
+  memcpy(destination, input, count * sizeof(Value));
+}
+namespace detail {
+template<class Value> std::shared_ptr<Value> gpuCallocShared(size_t count) {
+  return std::shared_ptr<Value>(new Value[count](), std::default_delete<Value[]>());
+}
+}}
+using namespace mscclpp::ep;
+enum class DispatchLayout { RANK_MAJOR, EXPERT_MAJOR };
+struct LatencyContext {
+  DispatchLayout outputLayout_=DispatchLayout::RANK_MAJOR;
+  int rank_=1,numRanks_=2,hidden_=7168,numTopk_=8,maxTokensPerRank_=128;
+  bool useGpuNetIo_=true;
+  std::string timingPath_;
+  std::shared_ptr<BufferedTiming> timingDevice_;
+  std::shared_ptr<TimingRecord> timingRecords_;
+  struct { BufferedTiming* timing_=nullptr; } deviceContext_;
+  void initializeTiming(); void dumpTiming();
+};
+"""
+        native += function(context, "LatencyContext::initializeTiming") + function(
+            context, "LatencyContext::dumpTiming"
+        )
+        native += r"""
+int main() {
+  unsetenv("MSCCLPP_EP_TIMING_FILE");
+  LatencyContext disabled; disabled.initializeTiming(); disabled.dumpTiming();
+  require(!disabled.timingDevice_, "disabled allocation");
+  const std::string prefix="/tmp/ep-timing-export-" + std::to_string(getpid());
+  setenv("MSCCLPP_EP_TIMING_FILE",prefix.c_str(),1);
+  for (const char* capacity : {"0", "4097", "2junk", "-1"}) {
+    setenv("MSCCLPP_EP_TIMING_RECORDS_PER_BLOCK",capacity,1);
+    bool rejected=false;
+    try { LatencyContext invalid; invalid.initializeTiming(); } catch (const std::exception&) { rejected=true; }
+    require(rejected, "invalid capacity accepted");
+  }
+  setenv("MSCCLPP_EP_TIMING_RECORDS_PER_BLOCK","2",1);
+  LatencyContext enabled; enabled.initializeTiming();
+  require(enabled.deviceContext_.timing_==enabled.timingDevice_.get(), "device pointer publication");
+  enabled.timingDevice_->blocks[0].attempted=3;
+  enabled.timingRecords_.get()[0]={1,10,20,{},2,TimingKind::DispatchBlock,0,-1,-1};
+  enabled.timingRecords_.get()[1]={2,30,40,{},2,TimingKind::DispatchBlock,0,-1,-1};
+  enabled.dumpTiming();
+  std::ifstream output(enabled.timingPath_);
+  std::string contents((std::istreambuf_iterator<char>(output)), {});
+  require(contents.find("dropped=1")!=std::string::npos, "missing overflow metadata");
+  require(contents.find("1,0,0,2,2,0,0,-1,-1,30,40")!=std::string::npos, "missing replay/epoch CSV record");
+  output.close(); std::remove(enabled.timingPath_.c_str());
+}
+"""
+        self.run_native(native)
+        for path in (DISPATCH, COMBINE):
+            self.assertNotIn("[GINTIME-", source(path))
+            self.assertNotIn("clock64()", source(path))
+        self.ordered(
+            context[context.index("LatencyContext::~LatencyContext") :], "cudaDeviceSynchronize()", "dumpTiming()"
+        )
+        initialize = function(context, "LatencyContext::initialize")
+        self.ordered(initialize, "initializeTiming()", "gpuMemcpy<DeviceContext>")
+
     def test_cmake_gpunetio_prerequisites(self):
         cmake = source("CMakeLists.txt")
         guard = cmake[cmake.index("if(MSCCLPP_USE_GPUNETIO AND") : cmake.index("# Code coverage setup")]
@@ -157,13 +466,15 @@ int main(){
         end = initialize.index("EP_HOST_ASSERT(available_);", begin)
         agreement = initialize[begin:end]
         native = HOST_PREAMBLE + '\n#define EP_HOST_ASSERT(test) if(!(test)) throw std::runtime_error("mismatch")\n'
+        native += "enum class DispatchLayout{RANK_MAJOR,EXPERT_MAJOR};constexpr int GpuNetIoStagingSlots=32768;"
         native += "struct Bootstrap{int mismatch=0;template<class Config>void allGather(Config* values,int){"
-        native += "values[1]=values[0];if(mismatch==1)values[1].bytes++;if(mismatch==2)values[1].ipcDomainSize++;if(mismatch==3)values[1].useGpuNetIo^=1;}};"
+        native += "values[1]=values[0];if(mismatch==1)values[1].bytes++;if(mismatch==2)values[1].ipcDomainSize++;if(mismatch==3)values[1].useGpuNetIo^=1;if(mismatch==4)values[1].batchedDispatch^=1;if(mismatch==5)values[1].batchAllQps^=1;}};"
         native += "struct Communicator{Bootstrap state;Bootstrap* bootstrap(){return &state;}};"
-        native += "void check(Communicator* communicator_,bool useGpuNetIo_){int rank_=0,numRanks_=2,numRanksPerIpcDomain_=1;uint64_t symmetricBufferBytes_=4096;"
+        native += "void check(Communicator* communicator_,bool useGpuNetIo_,int maxTokensPerRank_=128,DispatchLayout outputLayout_=DispatchLayout::RANK_MAJOR){int rank_=0,numRanks_=2,numRanksPerIpcDomain_=1;uint64_t symmetricBufferBytes_=4096;"
         native += agreement + "}"
-        native += "int main(){for(bool network:{false,true})for(int mismatch=0;mismatch<4;++mismatch){Communicator comm;comm.state.mismatch=mismatch;bool rejected=false;"
-        native += 'try{check(&comm,network);}catch(const std::runtime_error&){rejected=true;}require(rejected==(mismatch!=0),"collective storage agreement");}}'
+        native += 'int main(){unsetenv("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH");unsetenv("MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS");for(bool network:{false,true})for(int mismatch=0;mismatch<6;++mismatch){Communicator comm;comm.state.mismatch=mismatch;bool rejected=false;'
+        native += 'try{check(&comm,network);}catch(const std::runtime_error&){rejected=true;}require(rejected==(mismatch!=0),"collective storage agreement");}'
+        native += 'for(const char* mode:{"0","1","bad"})for(const char* allQps:{"0","1","bad"})for(bool network:{false,true})for(int capacity:{128,16384,16385})for(auto layout:{DispatchLayout::RANK_MAJOR,DispatchLayout::EXPERT_MAJOR}){setenv("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH",mode,1);setenv("MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS",allQps,1);Communicator comm;bool rejected=false;try{check(&comm,network,capacity,layout);}catch(const std::runtime_error&){rejected=true;}bool valid=(std::string(mode)=="0"||(std::string(mode)=="1"&&network&&capacity<=16384&&layout==DispatchLayout::RANK_MAJOR))&&(std::string(allQps)=="0"||(std::string(allQps)=="1"&&std::string(mode)=="1"));require(rejected!=valid,"batch eligibility");}}'
         self.run_native(native)
         self.ordered(initialize, "allGather(storageConfigs.data()", "config.bytes ==", "gpuCallocPhysical(")
 
@@ -305,6 +616,90 @@ int main() {
                     self.assertEqual([row for begin, end in intervals for row in range(begin, end)], list(range(rows)))
                     self.assertEqual(len(intervals), hcas)
 
+    def test_captured_combine_reset_rejects_stale_readiness(self):
+        combine = source(COMBINE)
+        launch = function(combine, "combineHiddenMode")
+        reset = "if (useRankMajorTma) " + block(launch, r"if\s*\(useRankMajorTma\)")
+        self.ordered(launch, "configureKernel(", reset, "combineFunc<<<")
+        self.assertIn("Layout == DispatchLayout::RANK_MAJOR && workload.numTopk_ <= RankMajorTmaMaxNTopk", launch)
+        receive = function(combine, "recvRankMajorRemotePartialsTma")
+        begin = receive.index("const bool ready = pending &&")
+        predicate = receive[begin : receive.index(";", begin) + 1]
+        workspace = source("src/ext/ep/common/latency.cuh")
+        native = (
+            HOST_PREAMBLE
+            + "\n#include <functional>\n#define CUDA_CHECK(call) call\n#define EP_DEVICE_ASSERT(test) require(test, #test)\n"
+        )
+        native += structure(workspace, "RecvTask") + structure(workspace, "WorkspaceView")
+        native += r"""
+    namespace mscclpp {
+    constexpr int scopeDevice=0,memoryOrderAcquire=1,memoryOrderRelease=2;
+    template<class Value,int Scope>Value atomicLoad(Value* pointer,int order){require(order==memoryOrderAcquire,"readiness acquire");return *pointer;}
+    template<class Value,int Scope>void atomicStore(Value* pointer,Value value,int order){require(order==memoryOrderRelease,"readiness release");*pointer=value;}
+    struct GpuNetIoDeviceContext{int numHcas=2,numQpsPerPeer=4;};
+    }
+    struct Dim{int x;}blockIdx{0},threadIdx{0};
+    constexpr int GpuNetIoMaxQpsPerPeer=64;
+    struct Channel{void relaxedWait(int)const{}};
+    struct TransportView{
+     int rank_=0;bool network=true;mscclpp::GpuNetIoDeviceContext*gpuNetIo_;
+     uint64_t*gpuNetIoCombineFlagsBuffer_;Channel baseMemoryChannels_[64];
+     bool isSelf(int peer)const{return peer==rank_;}
+     bool isNvlinkPeer(int peer)const{return !network||isSelf(peer);}
+    };
+    struct Workload{uint32_t epoch_;};struct DeviceContext{void*workspace_;};
+    using cudaStream_t=int;
+    void* expectedPointer;size_t expectedBytes;std::vector<std::function<void()>> graph;
+    void cudaMemsetAsync(void* pointer,int value,size_t bytes,cudaStream_t stream){
+     require(pointer==expectedPointer&&bytes==expectedBytes&&stream==17,"readiness-only reset on launch stream");
+     graph.emplace_back([=]{memset(pointer,value,bytes);});
+    }
+    void captureReset(const DeviceContext& context,const Workload& workload,int nRanks,int nExperts,bool useRankMajorTma){
+     cudaStream_t stream=17;
+    """
+        native += reset + "}\n"
+        native += function(combine, "rankMajorSlotForDestination")
+        native += function(combine, "rankMajorCombineStripeQp")
+        native += function(combine, "publishRankMajorCombinePushReady")
+        native += "bool workerReady(WorkspaceView& workspaceView,int destinationRank,uint32_t epoch){bool pending=true;"
+        native += predicate + "return ready;}\n"
+        native += r"""
+    int main(){
+     for(int ranks:{2,8,64})for(bool network:{false,true})
+     for(uint32_t epoch:{0u,2u,255u,0xaaaaaaaaU,0xffffffffU}){
+      const size_t bytes=WorkspaceView::numBytes(ranks,ranks,ranks,1);
+      std::vector<uint64_t> storage((bytes+7)/8,0x12345678abcdef01ULL);
+      WorkspaceView state(storage.data(),ranks,ranks);
+      std::vector<uint64_t> flags(ranks*64,0);
+      std::vector<int64_t> ids(ranks);std::vector<int> landing(ranks,-1);
+      for(int peer=0;peer<ranks;++peer){ids[peer]=peer;state.rankMajorSendIndices_[peer]=0;state.combineArrivedBaseline_[peer]=0;state.combineRankReadyEpochs_[peer]=epoch;}
+      mscclpp::GpuNetIoDeviceContext gin;
+      TransportView transport{0,network,&gin,flags.data(),{}};
+      expectedPointer=state.combineRankReadyEpochs_;expectedBytes=ranks*sizeof(uint32_t);graph.clear();
+      captureReset({storage.data()},{epoch},ranks,ranks,false);require(graph.empty(),"non-TMA path changed");
+      captureReset({storage.data()},{epoch},ranks,ranks,true);require(graph.size()==1,"one captured reset");
+      require(workerReady(state,1,epoch),"pre-reset stale-readiness witness");
+      for(int invocation=1;invocation<=200;++invocation){
+       const auto before=storage;graph[0]();
+       const auto* afterBytes=reinterpret_cast<const unsigned char*>(storage.data());
+       const auto* beforeBytes=reinterpret_cast<const unsigned char*>(before.data());
+       size_t begin=reinterpret_cast<const unsigned char*>(expectedPointer)-afterBytes;
+       for(size_t offset=0;offset<bytes;++offset)if(offset<begin||offset>=begin+expectedBytes)require(afterBytes[offset]==beforeBytes[offset],"reset clobbered unrelated workspace");
+       for(int peer=0;peer<ranks;++peer)require(!workerReady(state,peer,epoch),"old graph readiness accepted");
+       for(int peer=ranks-1;peer>=0;--peer){
+        if(network&&peer!=0){uint64_t target=state.combineArrivedBaseline_[peer]+1;require(flags[peer*64]<target,"current signal unexpectedly present");flags[peer*64]=flags[peer*64+1]=target;}
+        landing[peer]=invocation*100+peer;
+        threadIdx.x=peer;
+        publishRankMajorCombinePushReady(ids.data(),ranks,1,1,ranks,epoch,transport,state);
+        require(workerReady(state,peer,epoch)&&landing[peer]==invocation*100+peer,"fresh publication not visible");
+        if(peer>0)require(!workerReady(state,peer-1,epoch),"another peer published early");
+       }
+      }
+     }
+    }
+    """
+        self.run_native(native)
+
     def run_native(self, native):
         compiler = shutil.which("g++")
         if compiler is None:
@@ -395,7 +790,7 @@ using Bf16 = uint16_t;
 constexpr int GpuNetIoMaxQpsPerPeer = 64;
 struct Dim { unsigned int x = 0; } blockIdx, threadIdx;
 namespace mscclpp {
-constexpr int scopeDevice = 0, memoryOrderRelaxed = 0;
+constexpr int scopeDevice = 0, memoryOrderRelaxed = 0, memoryOrderRelease = 1;
 template<class Value, int Scope> void atomicStore(Value* target, Value value, int) { *target = value; }
 }
 struct Transfer { int owner; uint64_t destination, source, bytes, flag, value; int queue; };
@@ -512,7 +907,78 @@ int main() {
 """
         self.run_native(native)
 
+    def test_graph_correctness_completion_and_validator_contracts(self):
+        import inspect
+
+        path = "test/python/ep/test_latency_multirank.py"
+        tree = ast.parse(source(path), filename=path)
+        definitions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        self.assertEqual(
+            sum(
+                isinstance(node, ast.FunctionDef) and node.name == "validate_rank_major_dispatch" for node in tree.body
+            ),
+            1,
+            "exactly one compact dispatch validator is required; reconcile local helper edits",
+        )
+        validator_calls = [
+            node
+            for node in ast.walk(definitions["main"])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id.startswith("validate_")
+        ]
+        self.assertTrue(validator_calls)
+        namespace = {}
+        for call in validator_calls:
+            self.assertIn(call.func.id, definitions, f"undefined correctness validator: {call.func.id}")
+            exec(compile(ast.Module(body=[definitions[call.func.id]], type_ignores=[]), path, "exec"), namespace)
+            inspect.signature(namespace[call.func.id]).bind(
+                *[None for argument in call.args], **{keyword.arg: None for keyword in call.keywords}
+            )
+
+        main = definitions["main"]
+        graph_index = next(
+            index
+            for index, node in enumerate(main.body)
+            if isinstance(node, ast.If) and ast.unparse(node.test) == "args.cuda_graph"
+        )
+        pass_calls = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "PASS"
+        ]
+        self.assertEqual(len(pass_calls), 1)
+        self.assertGreater(pass_calls[0].lineno, main.body[graph_index].end_lineno)
+        completion = ast.parse("def finish():\n    pass\n").body[0]
+        completion.body = main.body[graph_index : graph_index + 3]
+        events = []
+
+        def graph_check():
+            events.append("graph")
+            if fail:
+                raise RuntimeError("simulated graph failure")
+
+        namespace.update(_run_cuda_graph_correctness=graph_check)
+        exec(
+            compile(ast.fix_missing_locations(ast.Module(body=[completion], type_ignores=[])), path, "exec"), namespace
+        )
+        for enabled, fail, rank in ((True, False, 0), (True, True, 0), (False, False, 0), (True, False, 1)):
+            events.clear()
+            namespace.update(args=SimpleNamespace(cuda_graph=enabled, bench=False), rank=rank)
+            with patch("builtins.print", side_effect=lambda message, **kwargs: events.append(message)):
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, "simulated graph failure"):
+                        namespace["finish"]()
+                else:
+                    namespace["finish"]()
+            self.assertEqual(events, (["graph"] if enabled else []) + (["PASS"] if rank == 0 and not fail else []))
+
     def test_graph_correctness_stress_controls(self):
+        import weakref
+
         path = "test/python/ep/test_latency_multirank.py"
         tree = ast.parse(source(path), filename=path)
         definitions = [
@@ -520,9 +986,25 @@ int main() {
             for name in ("parse_args", "_graph_capture", "_run_cuda_graph_correctness")
         ]
         events = []
+        event_refs = []
+
+        class Event:
+            def __init__(self, **kwargs):
+                event_refs.append(weakref.ref(self))
+
+            def record(self):
+                pass
+
+        def replay_with_live_events():
+            self.assertEqual(len(event_refs), 3)
+            self.assertTrue(
+                all(reference() is not None for reference in event_refs), "captured events freed before replay"
+            )
+            events.append("replay")
+
         cuda = SimpleNamespace(
-            CUDAGraph=lambda: SimpleNamespace(replay=lambda: events.append("replay")),
-            Event=lambda **kwargs: SimpleNamespace(record=lambda: None),
+            CUDAGraph=lambda: SimpleNamespace(replay=replay_with_live_events),
+            Event=Event,
             synchronize=lambda: events.append("sync"),
             graph=lambda graph: nullcontext(),
         )
@@ -554,10 +1036,14 @@ int main() {
         exec(compile(ast.Module(body=definitions, type_ignores=[]), path, "exec"), namespace)
         for options, pairs, replays in (([], 1, 1), (["--graph-pairs", "9", "--graph-replays", "50"], 9, 50)):
             events.clear()
+            event_refs.clear()
             with patch("sys.argv", [path, *options]):
                 namespace["args"] = namespace["parse_args"]()
-            with patch("builtins.print"):
+            with patch("builtins.print") as printed:
                 namespace["_run_cuda_graph_correctness"]()
+            messages = [call.args[0] for call in printed.call_args_list]
+            self.assertLess(messages.index("[graph r0] capture.begin"), messages.index("[graph r0] capture.end"))
+            self.assertTrue(all(call.kwargs.get("flush") for call in printed.call_args_list))
             self.assertEqual(
                 [event for event in events if event in ("dispatch", "stage", "combine")],
                 ["dispatch", "stage", "combine"] * pairs,
@@ -568,6 +1054,123 @@ int main() {
                 with self.assertRaises(SystemExit) as caught:
                     namespace["parse_args"]()
             self.assertEqual(caught.exception.code, 2)
+
+        varying_options = [
+            "--cuda-graph",
+            "--output-layout",
+            "rank_major",
+            "--graph-vary-inputs",
+            "--graph-replays",
+            "4",
+        ]
+        for extra in (["--num-topk", "9"], ["--output-layout", "expert_major"], ["--dispatch-dtype", "fp8_e4m3"]):
+            with patch("sys.argv", [path, *varying_options, *extra]), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    namespace["parse_args"]()
+        with patch("sys.argv", [path, *varying_options]):
+            namespace["args"] = namespace["parse_args"]()
+
+        class Tensor:
+            def __init__(self, value):
+                self.value = value
+
+            def clone(self):
+                return Tensor(self.value)
+
+            def copy_(self, other):
+                if isinstance(other, Tensor):
+                    events.append("restore")
+                self.value = other.value if isinstance(other, Tensor) else other
+
+            def __mul__(self, other):
+                return self.value * other
+
+            def __add__(self, other):
+                return self.value + other
+
+            def __floordiv__(self, other):
+                return self.value // other
+
+            def __ge__(self, other):
+                return self.value >= other
+
+            def __lt__(self, other):
+                return self.value < other
+
+        def reference(inputs, ids, weights, *unused):
+            return inputs.value, ids.value, None if weights is None else weights.value
+
+        replay_values = []
+
+        def capture(buffer, output, pairs, expert_delay_cycles):
+            self.assertEqual(expert_delay_cycles, 2000000)
+
+            def replay():
+                replay_with_live_events()
+                if launch_failure:
+                    raise RuntimeError("original graph launch error")
+                current = reference(namespace["x"], namespace["topk_idx"], namespace["topk_weights"])
+                output.copy_(replay_values[-1] if stale and replay_values else current)
+                replay_values.append(current)
+
+            return SimpleNamespace(replay=replay), None, output, Event(), Event(), Event()
+
+        def validate(actual, expected, **kwargs):
+            self.assertEqual(actual.value, expected)
+            events.append("validate")
+            return 0, 0
+
+        namespace.update(
+            rank=1,
+            num_ranks=2,
+            num_experts=8,
+            num_local_experts=4,
+            torch=SimpleNamespace(
+                cuda=cuda, empty_like=lambda value: Tensor(0), where=lambda condition, yes, no: yes if condition else no
+            ),
+            expected_rank_local_reduce_output=reference,
+            validate_combine_output=validate,
+            _graph_capture=capture,
+        )
+        for weighted, stale, launch_failure in (
+            (True, False, False),
+            (False, False, False),
+            (True, True, False),
+            (True, False, True),
+        ):
+            replay_values.clear()
+            events.clear()
+            event_refs.clear()
+            namespace.update(x=Tensor(3), topk_idx=Tensor(5), topk_weights=Tensor(0.25) if weighted else None)
+            original = reference(namespace["x"], namespace["topk_idx"], namespace["topk_weights"])
+            with patch(
+                "builtins.print",
+                side_effect=lambda message, **kwargs: (
+                    events.append("failure_report") if " failed: " in message else None
+                ),
+            ) as printed:
+                if launch_failure:
+                    with self.assertRaisesRegex(RuntimeError, "original graph launch error"):
+                        namespace["_run_cuda_graph_correctness"]()
+                elif stale:
+                    with self.assertRaises(AssertionError):
+                        namespace["_run_cuda_graph_correctness"]()
+                else:
+                    namespace["_run_cuda_graph_correctness"]()
+                    self.assertEqual(events.count("validate"), 4)
+                    self.assertEqual(len(set(replay_values)), 4)
+                    self.assertTrue(all(value[1] // 4 == 1 for value in replay_values))
+                    messages = [call.args[0] for call in printed.call_args_list]
+                    self.assertEqual(sum("validate.begin" in message for message in messages), 2 if stale else 4)
+                    self.assertEqual(sum("validate.end" in message for message in messages), 1 if stale else 4)
+            if stale or launch_failure:
+                self.assertLess(events.index("failure_report"), events.index("restore"))
+            if launch_failure:
+                self.assertIn(
+                    "[graph r1] replay=0 failed: RuntimeError: original graph launch error",
+                    [call.args[0] for call in printed.call_args_list],
+                )
+            self.assertEqual(reference(namespace["x"], namespace["topk_idx"], namespace["topk_weights"]), original)
 
     def ordered(self, text, *fragments):
         text = code(text)

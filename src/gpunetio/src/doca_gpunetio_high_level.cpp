@@ -203,8 +203,14 @@ static doca_error_t create_cq(struct doca_gpu *gpu_dev, struct ibv_pd *ibpd, enu
     goto destroy_resources;
   }
 
-  status = doca_gpu_mem_alloc(gpu_dev, external_umem_size, priv_get_page_size(), DOCA_GPU_MEM_TYPE_GPU,
-                              (void **)gpu_umem_dev_ptr, NULL);
+  // MSCCLPP_GPUNETIO_CQ_HOST=1 (experiment): CQ ring in pinned host memory mapped to the GPU.
+  void *cqCpuPtr;
+  bool cqHost;
+  cqCpuPtr = nullptr;
+  cqHost = getenv("MSCCLPP_GPUNETIO_CQ_HOST") && atoi(getenv("MSCCLPP_GPUNETIO_CQ_HOST")) != 0;
+  status = doca_gpu_mem_alloc(gpu_dev, external_umem_size, priv_get_page_size(),
+                              cqHost ? DOCA_GPU_MEM_TYPE_CPU_GPU : DOCA_GPU_MEM_TYPE_GPU, (void **)gpu_umem_dev_ptr,
+                              cqHost ? &cqCpuPtr : NULL);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "Failed to alloc gpu memory for external umem cq");
     goto destroy_resources;
@@ -232,6 +238,11 @@ static doca_error_t create_cq(struct doca_gpu *gpu_dev, struct ibv_pd *ibpd, enu
   free(cq_ring_haddr);
   cq_ring_haddr = nullptr;
 
+  if (cqHost) {
+    fprintf(stderr, "[cqhost] CQ umem host cpu=%p gpu=%p size=%u\n", cqCpuPtr, *gpu_umem_dev_ptr, external_umem_size);
+    status = create_gpu_umem(gpu_dev, ibpd, DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_PEERMEM, external_umem_size, cqCpuPtr,
+                             gpu_umem);
+  } else
   status = create_gpu_umem(gpu_dev, ibpd, mreg_type, external_umem_size, *gpu_umem_dev_ptr, gpu_umem);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "create_gpu_umem failed with %d", status);
@@ -400,14 +411,26 @@ static doca_error_t create_qp(struct doca_gpu *gpu_dev, struct ibv_pd *ibpd, enu
 
   external_umem_size = calc_qp_external_umem_size(sq_nwqe);
 
-  status = doca_gpu_mem_alloc(gpu_dev, external_umem_size, priv_get_page_size(), DOCA_GPU_MEM_TYPE_GPU,
-                              gpu_umem_dev_ptr, NULL);
-  if (status != DOCA_SUCCESS) {
-    DOCA_LOG(LOG_ERR, "Failed to alloc gpu memory for external umem qp");
-    goto destroy_resources;
+  {
+    // MSCCLPP_GPUNETIO_SQ_HOST=1 (experiment): SQ ring in pinned host memory mapped to the GPU.
+    const char* sqHostEnv = getenv("MSCCLPP_GPUNETIO_SQ_HOST");
+    const bool sqHost = sqHostEnv && atoi(sqHostEnv) != 0;
+    void* sqCpuPtr = nullptr;
+    status = doca_gpu_mem_alloc(gpu_dev, external_umem_size, priv_get_page_size(),
+                                sqHost ? DOCA_GPU_MEM_TYPE_CPU_GPU : DOCA_GPU_MEM_TYPE_GPU, gpu_umem_dev_ptr,
+                                sqHost ? &sqCpuPtr : NULL);
+    if (status != DOCA_SUCCESS) {
+      DOCA_LOG(LOG_ERR, "Failed to alloc gpu memory for external umem qp");
+      goto destroy_resources;
+    }
+    if (sqHost) {
+      fprintf(stderr, "[sqhost] SQ umem host cpu=%p gpu=%p size=%u\n", sqCpuPtr, *gpu_umem_dev_ptr, external_umem_size);
+      status = create_gpu_umem(gpu_dev, ibpd, DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_PEERMEM, external_umem_size,
+                               sqCpuPtr, gpu_umem);
+    } else {
+      status = create_gpu_umem(gpu_dev, ibpd, mreg_type, external_umem_size, *gpu_umem_dev_ptr, gpu_umem);
+    }
   }
-
-  status = create_gpu_umem(gpu_dev, ibpd, mreg_type, external_umem_size, *gpu_umem_dev_ptr, gpu_umem);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "create_gpu_umem failed with %d", status);
     goto destroy_resources;
@@ -427,11 +450,25 @@ static doca_error_t create_qp(struct doca_gpu *gpu_dev, struct ibv_pd *ibpd, enu
       goto destroy_resources;
     }
   } else {
-    status = doca_gpu_mem_alloc(gpu_dev, dbr_umem_align_sz, priv_get_page_size(), DOCA_GPU_MEM_TYPE_GPU,
-                                gpu_umem_dbr_dev_ptr, NULL);
+    // MSCCLPP_GPUNETIO_DBR_HOST=1 (experiment): SQ doorbell record in pinned host memory mapped to the GPU.
+    const char* dbrHostEnv = getenv("MSCCLPP_GPUNETIO_DBR_HOST");
+    const bool dbrHost = dbrHostEnv && atoi(dbrHostEnv) != 0;
+    void* dbrCpuPtr = nullptr;
+    status = doca_gpu_mem_alloc(gpu_dev, dbr_umem_align_sz, priv_get_page_size(),
+                                dbrHost ? DOCA_GPU_MEM_TYPE_CPU_GPU : DOCA_GPU_MEM_TYPE_GPU, gpu_umem_dbr_dev_ptr,
+                                dbrHost ? &dbrCpuPtr : NULL);
     if (status != DOCA_SUCCESS) {
       DOCA_LOG(LOG_ERR, "Failed to alloc gpu memory for external umem qp");
       goto destroy_resources;
+    }
+    if (dbrHost) {
+      status = create_gpu_umem(gpu_dev, ibpd, DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_CUDA_PEERMEM, dbr_umem_align_sz,
+                               dbrCpuPtr, gpu_umem_dbr);
+      if (status != DOCA_SUCCESS) {
+        DOCA_LOG(LOG_ERR, "create_gpu_umem failed with %d", status);
+        goto destroy_resources;
+      }
+      goto dbr_umem_done;
     }
   }
 
@@ -447,6 +484,7 @@ static doca_error_t create_qp(struct doca_gpu *gpu_dev, struct ibv_pd *ibpd, enu
     goto destroy_resources;
   }
 
+dbr_umem_done:
   status = doca_verbs_qp_init_attr_set_external_dbr_umem(verbs_qp_init_attr, *gpu_umem_dbr, 0);
   if (status != DOCA_SUCCESS) {
     DOCA_LOG(LOG_ERR, "Failed to set doca verbs qp external dbr umem");

@@ -1,9 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <unistd.h>
+
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <mscclpp/concurrency_device.hpp>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
@@ -1506,13 +1515,60 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoLLPingPongPerf) {
 }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* context, int rank, int peer,
+__global__ void kernelGpuNetIoMultiQpBandwidth(mscclpp::GpuNetIoDeviceContext* context, bool sends, int peer,
                                                uint64_t bytesPerQp, int puts, int numQps) {
   const int queue = threadIdx.x;
-  if (queue >= numQps || rank != 0) return;
+  if (queue >= numQps || !sends) return;
   const uint64_t offset = static_cast<uint64_t>(queue) * bytesPerQp;
   for (int iteration = 0; iteration < puts; ++iteration) context->put(peer, offset, offset, bytesPerQp, queue);
   context->flush(peer, queue);
+}
+
+__device__ __forceinline__ unsigned long long gpuNetIoGlobalTimerNs() {
+  unsigned long long value;
+  asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(value)::"memory");
+  return value;
+}
+
+// One warp per (QP, poster); lane 0 of poster p posts puts p, p + posters, ... on its QP. Round r stores
+// begin/post-end/end at times[(r * numQps + qp) * 3]; the next round starts gapNs after the last QP's flush.
+__global__ void kernelGpuNetIoMultiQpRounds(mscclpp::GpuNetIoDeviceContext* context, int peer, uint64_t bytesPerQp,
+                                            int puts, int rounds, unsigned long long gapNs, int posters,
+                                            unsigned long long* times) {
+  const int warp = threadIdx.x / 32, numQps = blockDim.x / 32 / posters;
+  const int queue = warp / posters, poster = warp % posters;
+  const bool leader = threadIdx.x % 32 == 0;
+  const uint64_t offset = static_cast<uint64_t>(queue) * bytesPerQp;
+  for (int round = 0; round < rounds; ++round) {
+    unsigned long long* slot = times + (static_cast<size_t>(round) * numQps + queue) * 3;
+    if (leader && poster == 0) {
+      slot[0] = gpuNetIoGlobalTimerNs();
+      slot[1] = 0;
+    }
+    __syncthreads();
+    if (leader) {
+      for (int iteration = poster; iteration < puts; iteration += posters) {
+        context->put(peer, offset, offset, bytesPerQp, queue);
+      }
+      atomicMax(&slot[1], gpuNetIoGlobalTimerNs());
+    }
+    __syncthreads();
+    if (leader && poster == 0) {
+      context->flush(peer, queue);
+      slot[2] = gpuNetIoGlobalTimerNs();
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      unsigned long long release = 0;
+      for (int index = 0; index < numQps; ++index) {
+        release = max(release, times[(static_cast<size_t>(round) * numQps + index) * 3 + 2]);
+      }
+      release += gapNs;
+      while (gpuNetIoGlobalTimerNs() < release) {
+      }
+    }
+    __syncthreads();
+  }
 }
 #endif
 
@@ -1549,22 +1605,157 @@ PERF_TEST(PortChannelOneToOneTest, GpuNetIoMultiQpBandwidth) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
   const int peer = 1 - rank;
-  constexpr int puts = 256;
-  for (uint64_t bytesPerQp :
-       {256ULL, 16ULL * 1024, 256ULL * 1024, 1024ULL * 1024, 4ULL * 1024 * 1024, 8ULL * 1024 * 1024}) {
-    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, 10, numQps);
+  // Opt-in knobs; defaults keep the original one-way rank 0 -> rank 1 sweep.
+  const char* twoWay = std::getenv("MSCCLPP_GPUNETIO_BW_BIDIRECTIONAL");
+  const bool bidirectional = twoWay != nullptr && std::string(twoWay) == "1";
+  if (twoWay != nullptr && std::string(twoWay) != "0" && !bidirectional) {
+    FAIL() << "MSCCLPP_GPUNETIO_BW_BIDIRECTIONAL must be 0 or 1";
+  }
+  int puts = 256;
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_PUTS")) puts = std::atoi(value);
+  if (puts < 1 || puts > (1 << 20)) {
+    FAIL() << "MSCCLPP_GPUNETIO_BW_PUTS must be in [1, 1048576]";
+  }
+  std::vector<uint64_t> sizes = {256ULL,         16ULL * 1024,       256ULL * 1024,
+                                 1024ULL * 1024, 4ULL * 1024 * 1024, 8ULL * 1024 * 1024};
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_SIZES")) {
+    sizes.clear();
+    std::stringstream list(value);
+    for (std::string item; std::getline(list, item, ',');) {
+      char* end = nullptr;
+      const unsigned long long size = std::strtoull(item.c_str(), &end, 10);
+      if (item.empty() || *end != '\0' || size == 0 || size > maxBytesPerQp) {
+        FAIL() << "MSCCLPP_GPUNETIO_BW_SIZES must list byte counts in [1, " << maxBytesPerQp << "]";
+      }
+      sizes.push_back(size);
+    }
+    if (sizes.empty()) FAIL() << "MSCCLPP_GPUNETIO_BW_SIZES is empty";
+  }
+  // Independent jobs share no barrier; a common CLOCK_REALTIME start makes their timed sections overlap.
+  long long startNs = 0, intervalMs = 10000;
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_START_NS")) startNs = std::atoll(value);
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_START_INTERVAL_MS")) intervalMs = std::atoll(value);
+  if (startNs < 0 || intervalMs < 1) {
+    FAIL() << "MSCCLPP_GPUNETIO_BW_START_NS must be >= 0 and MSCCLPP_GPUNETIO_BW_START_INTERVAL_MS >= 1";
+  }
+  auto realtimeNs = []() {
+    return static_cast<long long>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+  };
+  // Repeated-burst mode: ROUNDS > 0 replaces the warm-up/timed pair with device-timed rounds per gap.
+  int rounds = 0;
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_ROUNDS")) rounds = std::atoi(value);
+  if (rounds < 0 || rounds > 10000) {
+    FAIL() << "MSCCLPP_GPUNETIO_BW_ROUNDS must be in [0, 10000]";
+  }
+  std::vector<unsigned long long> gapsUs = {0};
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_GAPS_US")) {
+    gapsUs.clear();
+    std::stringstream list(value);
+    for (std::string item; std::getline(list, item, ',');) {
+      char* end = nullptr;
+      const unsigned long long gap = std::strtoull(item.c_str(), &end, 10);
+      if (item.empty() || *end != '\0' || gap > 10000000ULL) {
+        FAIL() << "MSCCLPP_GPUNETIO_BW_GAPS_US must list microseconds in [0, 10000000]";
+      }
+      gapsUs.push_back(gap);
+    }
+    if (gapsUs.empty()) FAIL() << "MSCCLPP_GPUNETIO_BW_GAPS_US is empty";
+  }
+  int posters = 1;
+  if (const char* value = std::getenv("MSCCLPP_GPUNETIO_BW_POSTERS")) posters = std::atoi(value);
+  if (posters < 1 || (rounds > 0 && numQps * posters > 32)) {
+    FAIL() << "MSCCLPP_GPUNETIO_BW_POSTERS must be >= 1 with QPs x posters <= 32";
+  }
+  char host[256] = {};
+  gethostname(host, sizeof(host) - 1);
+  const bool sends = bidirectional || rank == 0;
+  if (rounds > 0) {
+    const size_t slots = static_cast<size_t>(rounds) * numQps * 3;
+    auto deviceTimes = mscclpp::GpuBuffer<unsigned long long>(slots).memory();
+    std::vector<unsigned long long> times(slots);
+    int launch = 0;
+    for (const uint64_t bytesPerQp : sizes) {
+      for (const unsigned long long gapUs : gapsUs) {
+        communicator->bootstrap()->barrier();
+        if (sends) {
+          kernelGpuNetIoMultiQpRounds<<<1, numQps * posters * 32>>>(
+              service->deviceContext(), peer, bytesPerQp, puts, rounds, gapUs * 1000ULL, posters, deviceTimes.get());
+          MSCCLPP_CUDATHROW(cudaGetLastError());
+          MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+          MSCCLPP_CUDATHROW(
+              cudaMemcpy(times.data(), deviceTimes.get(), slots * sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+          const unsigned long long roundBytes = static_cast<unsigned long long>(bytesPerQp) * puts * numQps;
+          unsigned long long previousEnd = 0;
+          for (int round = 0; round < rounds; ++round) {
+            unsigned long long begin = ~0ULL, postEnd = 0, firstEnd = ~0ULL, end = 0;
+            for (int queue = 0; queue < numQps; ++queue) {
+              const size_t slot = (static_cast<size_t>(round) * numQps + queue) * 3;
+              begin = std::min(begin, times[slot]);
+              postEnd = std::max(postEnd, times[slot + 1]);
+              firstEnd = std::min(firstEnd, times[slot + 2]);
+              end = std::max(end, times[slot + 2]);
+            }
+            std::fprintf(stderr,
+                         "[GPUNETIO_BW_ROUND] host=%s rank=%d gpu=%d hca=%s bytes_per_qp=%llu qps=%d puts=%d "
+                         "posters=%d bytes=%llu gap_us=%llu launch=%d round=%d begin_ns=%llu elapsed_ns=%llu "
+                         "post_ns=%llu tail_ns=%llu idle_ns=%lld qp_end_spread_ns=%llu\n",
+                         host, rank, cudaDevice, ibDevice.c_str(), static_cast<unsigned long long>(bytesPerQp), numQps,
+                         puts, posters, roundBytes, gapUs, launch, round, begin, end - begin, postEnd - begin,
+                         end - postEnd,
+                         round == 0 ? -1LL : static_cast<long long>(begin) - static_cast<long long>(previousEnd),
+                         end - firstEnd);
+            previousEnd = end;
+          }
+          std::fflush(stderr);
+        }
+        ++launch;
+        communicator->bootstrap()->barrier();
+      }
+    }
+    return;
+  }
+  for (size_t sizeIndex = 0; sizeIndex < sizes.size(); ++sizeIndex) {
+    const uint64_t bytesPerQp = sizes[sizeIndex];
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), sends, peer, bytesPerQp, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
+    bool late = false;
+    if (startNs > 0) {
+      const long long target = startNs + static_cast<long long>(sizeIndex) * intervalMs * 1000000LL;
+      late = realtimeNs() > target;
+      std::this_thread::sleep_until(std::chrono::system_clock::time_point(
+          std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(target))));
+    }
+    const long long beginNs = realtimeNs();
     mscclpp::Timer timer;
-    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), rank, peer, bytesPerQp, puts, numQps);
+    kernelGpuNetIoMultiQpBandwidth<<<1, numQps>>>(service->deviceContext(), sends, peer, bytesPerQp, puts, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-    const double elapsedUs = timer.elapsed();
-    communicator->bootstrap()->barrier();
+    const long long endNs = realtimeNs();
+    std::fprintf(stderr,
+                 "[GPUNETIO_BW] host=%s rank=%d gpu=%d hca=%s sends=%d bytes_per_qp=%llu qps=%d puts=%d bytes=%llu "
+                 "begin_ns=%lld end_ns=%lld late=%d\n",
+                 host, rank, cudaDevice, ibDevice.c_str(), sends ? 1 : 0, static_cast<unsigned long long>(bytesPerQp),
+                 numQps, puts, sends ? static_cast<unsigned long long>(bytesPerQp) * puts * numQps : 0ULL, beginNs,
+                 endNs, late ? 1 : 0);
+    std::fflush(stderr);
+    std::vector<double> elapsedUs(worldSize);
+    elapsedUs[rank] = timer.elapsed();
+    communicator->bootstrap()->allGather(elapsedUs.data(), sizeof(double));
     if (rank == 0) {
       const std::string label = std::to_string(bytesPerQp) + " B (" + std::to_string(numQps) + " QPs)";
       const double totalBytes = static_cast<double>(bytesPerQp) * puts * numQps;
-      ::mscclpp::test::reportPerfResult(label + " aggregate", totalBytes / elapsedUs * 1e-3, "GB/s");
-      ::mscclpp::test::reportPerfResult(label + " per-put", elapsedUs / puts, "us");
+      if (bidirectional) {
+        // Each rank times only its own sends; the sum is the per-HCA bidirectional aggregate.
+        const double forward = totalBytes / elapsedUs[0] * 1e-3, reverse = totalBytes / elapsedUs[1] * 1e-3;
+        ::mscclpp::test::reportPerfResult(label + " rank0->rank1", forward, "GB/s");
+        ::mscclpp::test::reportPerfResult(label + " rank1->rank0", reverse, "GB/s");
+        ::mscclpp::test::reportPerfResult(label + " bidirectional sum", forward + reverse, "GB/s");
+      } else {
+        ::mscclpp::test::reportPerfResult(label + " aggregate", totalBytes / elapsedUs[0] * 1e-3, "GB/s");
+        ::mscclpp::test::reportPerfResult(label + " per-put", elapsedUs[0] / puts, "us");
+      }
     }
   }
 #else

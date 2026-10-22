@@ -209,6 +209,82 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="mscclpp: run a one-time combine correctness check before timing.",
     )
+    p.add_argument(
+        "--mscclpp-cross-rack-topk-half",
+        action="store_true",
+        help=(
+            "mscclpp-only diagnostic routing for 8-rank/4-GPU-per-node cross-rack runs: "
+            "for top-k=8, route four selections per token to the other node and mark four "
+            "invalid, eliminating same-node peer and local-self dispatch traffic."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-same-rack-topk",
+        action="store_true",
+        help=(
+            "mscclpp-only diagnostic routing for 8-rank/4-GPU-per-node runs: route every "
+            "top-k selection to experts on the local node/rack, eliminating cross-rack dispatch traffic."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-cross-rack-token-half-all-remote",
+        action="store_true",
+        help=(
+            "mscclpp-only diagnostic routing for 8-rank/4-GPU-per-node cross-rack runs: "
+            "for -t 128 -k 8, route the first 64 tokens to all four ranks on the other rack "
+            "and mark the remaining 64 tokens invalid."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-rack0-gpu0-one-to-rack1",
+        action="store_true",
+        help=(
+            "mscclpp-only diagnostic routing for 8-rank/4-GPU-per-node cross-rack runs: "
+            "only rank 0 (rack0/GPU0) sends tokens, keeping random top-k experts across all ranks; "
+            "all top-k entries on every other rank are invalid."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-rack0-gpu0-rack1-only",
+        action="store_true",
+        help=(
+            "like --mscclpp-rack0-gpu0-one-to-rack1, but rank 0 also invalidates its top-k entries "
+            "whose expert is on rack0 (ranks 0..3, incl. itself), so it sends only cross-rack "
+            "traffic to ranks 4..7."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-rank0-all-to-rack1",
+        action="store_true",
+        help=(
+            "mscclpp-only diagnostic routing for 8-rank/4-GPU-per-node cross-rack runs: only rank 0 sends, "
+            "and every token goes to all four rack1 ranks (4..7), so each destination gets the same rows "
+            "(1 GPU -> 4 GPUs). --mscclpp-rank0-active-tokens limits how many tokens are routed."
+        ),
+    )
+    p.add_argument(
+        "--mscclpp-rank0-active-tokens",
+        type=int,
+        default=None,
+        help="with --mscclpp-rank0-all-to-rack1: route only the first N tokens (0 = empty dispatch).",
+    )
+    p.add_argument(
+        "--mscclpp-rank0-dst-ranks",
+        default=None,
+        help=(
+            "with --mscclpp-rack0-gpu0-rack1-only: comma-separated rack1 destination ranks rank 0 "
+            "may send to (default 4,5,6,7); top-k entries to other ranks become invalid."
+        ),
+    )
+    p.add_argument(
+        "--print-topk-rank-slots",
+        action="store_true",
+        help=(
+            "print top-k routing balance before benchmarking: raw valid top-k lane counts and "
+            "deduplicated token->destination-rank slot counts. Can also be enabled with "
+            "EP_PRINT_TOPK_RANK_SLOTS=1."
+        ),
+    )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
         raise SystemExit("--num-tokens and --num-experts must be positive")
@@ -233,7 +309,138 @@ def parse_args() -> argparse.Namespace:
         )
     if args.dispatch_dtype == "fp8_e4m3" and args.mode != "latency":
         raise SystemExit("MSCCL++ throughput mode currently supports BF16 dispatch only")
+    route_flags = [
+        args.mscclpp_cross_rack_topk_half,
+        args.mscclpp_same_rack_topk,
+        args.mscclpp_cross_rack_token_half_all_remote,
+        args.mscclpp_rack0_gpu0_one_to_rack1,
+        args.mscclpp_rack0_gpu0_rack1_only,
+        args.mscclpp_rank0_all_to_rack1,
+    ]
+    if sum(bool(flag) for flag in route_flags) > 1:
+        raise SystemExit("choose only one mscclpp route diagnostic option")
+    if any(route_flags) and args.backend != "mscclpp":
+        raise SystemExit("mscclpp route diagnostics require --backend mscclpp")
+    if args.mscclpp_cross_rack_topk_half and args.num_topk != 8:
+        raise SystemExit("--mscclpp-cross-rack-topk-half requires --num-topk 8")
+    if args.mscclpp_cross_rack_token_half_all_remote and (args.num_tokens != 128 or args.num_topk != 8):
+        raise SystemExit("--mscclpp-cross-rack-token-half-all-remote requires -t 128 -k 8")
+    if args.mscclpp_rack0_gpu0_one_to_rack1 and args.num_topk < 4:
+        raise SystemExit("--mscclpp-rack0-gpu0-one-to-rack1 requires --num-topk >= 4")
+    if args.mscclpp_rank0_dst_ranks is not None:
+        if not args.mscclpp_rack0_gpu0_rack1_only:
+            raise SystemExit("--mscclpp-rank0-dst-ranks requires --mscclpp-rack0-gpu0-rack1-only")
+        os.environ["MSCCLPP_EP_ROUTE_RANK0_DST_RANKS"] = args.mscclpp_rank0_dst_ranks
+    if args.mscclpp_rank0_active_tokens is not None:
+        if not args.mscclpp_rank0_all_to_rack1:
+            raise SystemExit("--mscclpp-rank0-active-tokens requires --mscclpp-rank0-all-to-rack1")
+        os.environ["MSCCLPP_EP_ROUTE_RANK0_ACTIVE_TOKENS"] = str(args.mscclpp_rank0_active_tokens)
+    if args.mscclpp_rank0_all_to_rack1 and args.num_topk < 4:
+        raise SystemExit("--mscclpp-rank0-all-to-rack1 requires --num-topk >= 4")
+    if args.mscclpp_rack0_gpu0_rack1_only and args.num_topk < 4:
+        raise SystemExit("--mscclpp-rack0-gpu0-rack1-only requires --num-topk >= 4")
     return args
+
+
+def _topk_remote_ranks(src_rank: int, num_ranks: int, local_world_size: int) -> list[int]:
+    if local_world_size > 0 and num_ranks % local_world_size == 0:
+        src_node = src_rank // local_world_size
+        return [rank for rank in range(num_ranks) if rank // local_world_size != src_node]
+    return [rank for rank in range(num_ranks) if rank != src_rank]
+
+
+def _print_topk_rank_slot_diagnostics(args, comm, rank, num_ranks, topk_idx, local_world_size: int) -> None:
+    if not (args.print_topk_rank_slots or os.environ.get("EP_PRINT_TOPK_RANK_SLOTS", "0") == "1"):
+        return
+    if args.num_experts % num_ranks != 0:
+        raise ValueError("num_experts must be divisible by num_ranks")
+
+    experts_per_rank = args.num_experts // num_ranks
+    topk_cpu = topk_idx.detach().cpu()
+    valid = topk_cpu >= 0
+    dst_rank = torch.full_like(topk_cpu, -1)
+    dst_rank[valid] = torch.div(topk_cpu[valid], experts_per_rank, rounding_mode="floor")
+
+    slot_counts = []
+    lane_counts = []
+    for dst in range(num_ranks):
+        hits = dst_rank == dst
+        slot_counts.append(int(hits.any(dim=1).sum().item()))
+        lane_counts.append(int(hits.sum().item()))
+
+    remote_ranks = _topk_remote_ranks(rank, num_ranks, local_world_size)
+    remote_slots = sum(slot_counts[dst] for dst in remote_ranks)
+    num_tokens = int(topk_cpu.size(0))
+    summary = {
+        "rank": rank,
+        "num_tokens": num_tokens,
+        "num_topk": int(topk_cpu.size(1)),
+        "valid_lanes": int(valid.sum().item()),
+        "remote_ranks": remote_ranks,
+        "remote_slots": remote_slots,
+        "remote_slots_per_token": float(remote_slots) / float(num_tokens) if num_tokens else 0.0,
+        "slot_counts": slot_counts,
+        "lane_counts": lane_counts,
+    }
+
+    if os.environ.get("EP_PRINT_TOPK_VALUES", "0") == "1":
+        rows = int(os.environ.get("EP_PRINT_TOPK_ROWS", str(num_tokens)) or "0")
+        if rows < 0:
+            rows = num_tokens
+        summary["topk_idx_rows"] = topk_cpu[:rows].tolist()
+        summary["topk_dst_rank_rows"] = dst_rank[:rows].tolist()
+
+    summaries = comm.gather(summary, root=0)
+    if rank != 0:
+        return
+
+    summaries = sorted(summaries, key=lambda item: item["rank"])
+    if local_world_size > 0 and num_ranks >= 2 * local_world_size:
+        focus_ranks = list(range(local_world_size, 2 * local_world_size))
+    else:
+        focus_ranks = list(range(num_ranks))
+
+    focus_label = ",".join(str(dst) for dst in focus_ranks)
+    print(
+        "\n--- Top-k routing / rank-major slot diagnostic ---\n"
+        f"experts_per_rank={experts_per_rank}, focus_ranks={focus_label}\n"
+        "slots = deduplicated token->destination-rank payload rows; "
+        "lanes = raw valid top-k entries before per-token destination-rank dedup.",
+        flush=True,
+    )
+    print(
+        "src_rank | remote_ranks | remote_slots | remote_slots/token | "
+        f"focus_slots[{focus_label}] | focus_lanes[{focus_label}] | valid_lanes",
+        flush=True,
+    )
+    for item in summaries:
+        focus_slots = ",".join(str(item["slot_counts"][dst]) for dst in focus_ranks)
+        focus_lanes = ",".join(str(item["lane_counts"][dst]) for dst in focus_ranks)
+        remote_label = ",".join(str(dst) for dst in item["remote_ranks"])
+        print(
+            f"{item['rank']:>8} | {remote_label:<12} | {item['remote_slots']:>12} | "
+            f"{item['remote_slots_per_token']:>18.3f} | {focus_slots:<18} | "
+            f"{focus_lanes:<18} | {item['valid_lanes']}",
+            flush=True,
+        )
+
+    if local_world_size > 0 and num_ranks >= 2 * local_world_size:
+        print(f"\n[topk-slots] source ranks 0..{local_world_size - 1} -> destination ranks {focus_label}")
+        print("src\\dst | " + " | ".join(f"{dst:>5}" for dst in focus_ranks) + " | total | avg/token", flush=True)
+        for item in summaries[:local_world_size]:
+            total = sum(item["slot_counts"][dst] for dst in focus_ranks)
+            avg = float(total) / float(item["num_tokens"]) if item["num_tokens"] else 0.0
+            counts = " | ".join(f"{item['slot_counts'][dst]:>5}" for dst in focus_ranks)
+            print(f"{item['rank']:>7} | {counts} | {total:>5} | {avg:>9.3f}", flush=True)
+
+    for item in summaries:
+        if "topk_idx_rows" not in item:
+            continue
+        print(f"\n[topk-values][rank {item['rank']}] topk_idx rows: {item['topk_idx_rows']}", flush=True)
+        print(
+            f"[topk-values][rank {item['rank']}] destination-rank rows: {item['topk_dst_rank_rows']}",
+            flush=True,
+        )
 
 
 # ============================================================================
@@ -253,6 +460,8 @@ def torch_profiler_kernel_us(
     barrier=None,
     mid_barrier=None,
     parse_kernels=None,
+    group_size=1,
+    rank=0,
 ):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
     over the paired dispatch->combine loop, with a per-iteration L2 flush and a
@@ -368,7 +577,49 @@ def torch_profiler_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
+    _dump_kineto_per_kernel(prof, group_size, rank)
     return parse_kernels(ka)
+
+
+def _dump_kineto_per_kernel(prof, group_size, rank):
+    """EP_KINETO_DUMP_DIR=<dir>: write every profiled dispatch/combine kernel
+    (active step only) to <dir>/kineto_kernels_rank<r>.csv, ordered by GPU start
+    time and indexed by (replay, pos) where pos is the iteration inside one
+    graph replay of ``group_size`` dispatch->combine pairs."""
+    out_dir = os.environ.get("EP_KINETO_DUMP_DIR")
+    if not out_dir:
+        return
+    try:
+        evs = prof.profiler.kineto_results.events()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[kineto-dump] rank={rank} no kineto_results: {exc}", flush=True)
+        return
+    rows = {"dispatch": [], "combine": []}
+    for e in evs:
+        if str(e.device_type()) != "DeviceType.CUDA":
+            continue
+        base = e.name().split("<", 1)[0].lower()
+        for ph in ("dispatch", "combine"):
+            if ph in base:
+                rows[ph].append((e.start_ns(), e.duration_ns(), e.name()))
+                break
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"kineto_kernels_rank{rank}.csv")
+    g = max(1, group_size)
+    with open(path, "w") as f:
+        f.write("rank,phase,idx,replay,pos,start_ns,dur_us,gap_from_prev_same_phase_end_us,name\n")
+        for ph, lst in rows.items():
+            lst.sort()
+            prev_end = None
+            for i, (st, du, nm) in enumerate(lst):
+                gap = "" if prev_end is None else f"{(st - prev_end) / 1e3:.3f}"
+                prev_end = st + du
+                f.write(f"{rank},{ph},{i},{i // g},{i % g},{st},{du / 1e3:.3f},{gap},\"{nm[:80]}\"\n")
+    print(
+        f"[kineto-dump] rank={rank} dispatch_kernels={len(rows['dispatch'])} "
+        f"combine_kernels={len(rows['combine'])} group={g} -> {path}",
+        flush=True,
+    )
 
 
 # ============================================================================
@@ -521,6 +772,8 @@ def run_backend(
             barrier=(bench_barrier or nccl_barrier),
             mid_barrier=nccl_barrier,
             parse_kernels=parse_kernels,
+            group_size=graph_group_size,
+            rank=rank,
         )
         inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
@@ -665,6 +918,62 @@ def main() -> None:
 
         faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     assert args.num_experts % num_ranks == 0, "num_experts must be divisible by num_ranks"
+    local_world_size = int(os.environ.get("MSCCLPP_EP_LOCAL_WORLD_SIZE", "0") or "0")
+    route_mode = None
+    if args.mscclpp_cross_rack_topk_half:
+        route_mode = "mscclpp_cross_rack_topk_half"
+    elif args.mscclpp_same_rack_topk:
+        route_mode = "mscclpp_same_rack_topk"
+    elif args.mscclpp_cross_rack_token_half_all_remote:
+        route_mode = "mscclpp_cross_rack_token_half_all_remote"
+    elif args.mscclpp_rack0_gpu0_one_to_rack1:
+        route_mode = "mscclpp_rack0_gpu0_one_to_rack1"
+    elif args.mscclpp_rack0_gpu0_rack1_only:
+        route_mode = "mscclpp_rack0_gpu0_rack1_only"
+    elif args.mscclpp_rank0_all_to_rack1:
+        route_mode = "mscclpp_rank0_all_to_rack1"
+    if route_mode is not None:
+        if num_ranks != 8 or local_world_size != 4:
+            raise ValueError("mscclpp route diagnostics require 8 ranks and MSCCLPP_EP_LOCAL_WORLD_SIZE=4")
+        if rank == 0:
+            if route_mode == "mscclpp_cross_rack_topk_half":
+                print(
+                    "[cfg] route_mode=mscclpp_cross_rack_topk_half remote_topk=4 invalid_topk=4 "
+                    "remote experts selected from random scores; same-node peer/local-self dispatch disabled",
+                    flush=True,
+                )
+            elif route_mode == "mscclpp_same_rack_topk":
+                print(
+                    "[cfg] route_mode=mscclpp_same_rack_topk local_topk=all "
+                    "local-rack experts selected from random scores; cross-rack dispatch disabled",
+                    flush=True,
+                )
+            elif route_mode == "mscclpp_rack0_gpu0_one_to_rack1":
+                print(
+                    "[cfg] route_mode=mscclpp_rack0_gpu0_one_to_rack1 src_rank=0 "
+                    "random_topk_all_ranks; all other ranks invalid",
+                    flush=True,
+                )
+            elif route_mode == "mscclpp_rank0_all_to_rack1":
+                print(
+                    "[cfg] route_mode=mscclpp_rank0_all_to_rack1 src_rank=0 dst_ranks=4,5,6,7 "
+                    f"active_tokens={os.environ.get('MSCCLPP_EP_ROUTE_RANK0_ACTIVE_TOKENS', args.num_tokens)}; "
+                    "all other ranks invalid",
+                    flush=True,
+                )
+            elif route_mode == "mscclpp_rack0_gpu0_rack1_only":
+                print(
+                    "[cfg] route_mode=mscclpp_rack0_gpu0_rack1_only src_rank=0 "
+                    "random_topk with rack0 (ranks 0-3) entries invalid; all other ranks invalid; "
+                    f"dst_ranks={os.environ.get('MSCCLPP_EP_ROUTE_RANK0_DST_RANKS', '4,5,6,7')}",
+                    flush=True,
+                )
+            else:
+                print(
+                    "[cfg] route_mode=mscclpp_cross_rack_token_half_all_remote remote_tokens=64 "
+                    "remote_ranks=all4 invalid_tokens=64; same-rack/local dispatch disabled",
+                    flush=True,
+                )
     # Single routing input reused for every captured iteration. --iters-per-graph
     # replays the SAME paired dispatch->combine N times inside one graph to amortize
     # launch overhead; it does not need N distinct routings.
@@ -675,7 +984,12 @@ def main() -> None:
         args.num_experts,
         rank,
         args.seed,
+        route_mode=route_mode,
+        num_ranks=num_ranks,
+        local_world_size=local_world_size,
     )
+    _print_topk_rank_slot_diagnostics(args, comm, rank, num_ranks, inputs[1], local_world_size)
+    comm.Barrier()
 
     # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
     # (cuda-graph capture toggles it for some backends only -- see the loop).
@@ -719,6 +1033,8 @@ def main() -> None:
         try:
             ops = _SETUP[name](args, comm, rank, num_ranks, inputs)
         except Exception as exc:
+            if args.backend != "all":
+                raise
             if rank == 0:
                 print(f"\n[skip] backend '{name}' setup failed: {type(exc).__name__}: {exc}", flush=True)
             comm.Barrier()

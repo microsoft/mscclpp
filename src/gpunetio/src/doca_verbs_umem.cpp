@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause
@@ -81,6 +83,16 @@ void doca_verbs_umem::create() {
 
     umem_in.access = m_access_flags;
     umem_in.pgsz_bitmap = sysconf(_SC_PAGESIZE);
+    // MSCCLPP_GPUNETIO_UMEM_PGSZ=<bitmap> (experiment): override the allowed umem page sizes.
+    if (const char* pg = getenv("MSCCLPP_GPUNETIO_UMEM_PGSZ")) {
+      if (*pg) umem_in.pgsz_bitmap = strtoull(pg, nullptr, 0);
+      static bool logged = false;
+      if (!logged) {
+        logged = true;
+        fprintf(stderr, "[umem] dmabuf umem pgsz_bitmap=0x%llx size=%zu\n", (unsigned long long)umem_in.pgsz_bitmap,
+                (size_t)m_size);
+      }
+    }
     umem_in.comp_mask = MLX5DV_UMEM_MASK_DMABUF;
     umem_in.dmabuf_fd = m_dmabuf_fd;
     /* umem_in.addr is interpreted as the starting offset of the dmabuf */

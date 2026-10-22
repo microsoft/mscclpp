@@ -20,6 +20,12 @@ namespace mscclpp {
 /// EP: a MemoryId selects a peer's registered symmetric buffer, and offsets are
 /// identical on every rank. `qps` is indexed by peer*numQpsPerPeer+qpIndex;
 /// Logical QP q uses HCA q%numHcas and that HCA's local and remote memory keys.
+/// Completed regular-doorbell publication frontier for one GPU-shared QP.
+struct alignas(128) GpuNetIoSubmitState {
+  /// Exclusive WQE end index published after the complete doorbell protocol.
+  uint64_t published = 0;
+};
+
 struct GpuNetIoDeviceContext {
   /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
   /// Kept as void* here so this public header does not pull in the DOCA device
@@ -45,6 +51,8 @@ struct GpuNetIoDeviceContext {
   uintptr_t atomicResultBase = 0;
   /// Per-HCA local registration keys for atomicResultBase, in host byte order.
   const uint32_t* atomicResultLkeys = nullptr;
+  /// Optional peer-major QP publication state; null disables payload submission coalescing.
+  GpuNetIoSubmitState* submitStates = nullptr;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
@@ -55,6 +63,12 @@ struct GpuNetIoDeviceContext {
   /// (visible only after the payload settles).
   MSCCLPP_DEVICE_INLINE void putWithSignal(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                            uint64_t signalOffset, uint64_t signalValue, int qpIndex = 0);
+
+  /// Send-queue reservation index of QP (peer, qpIndex): every WQE posted so far is below it.
+  MSCCLPP_DEVICE_INLINE uint64_t reservedTicket(int peer, int qpIndex = 0);
+
+  /// Wait until every WQE below `ticket` (from reservedTicket) on QP (peer, qpIndex) has completed.
+  MSCCLPP_DEVICE_INLINE void waitTicket(int peer, uint64_t ticket, int qpIndex = 0);
 
   /// Kernel-initiated remote 64-bit atomic add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex = 0);
@@ -73,9 +87,31 @@ struct GpuNetIoDeviceContext {
 
   /// Post three signaled RDMA writes on one QP with one reservation and submit.
   /// Each size must not exceed the NIC maximum transfer size.
+  /// Optional five timestamps (globaltimer ns) are written only in EP timing builds:
+  /// before/after reservation, after preparation, after ready publication, after submit.
+  /// Optional ten-slot submit trace: eight stage timestamps, observed handler, publication flag.
+  /// Optional eight-slot count record, without submit timestamps: handler, publication, lock, bypass,
+  /// requested WQEs, published frontier advance, extra WQEs beyond this call, coalesced-path flag.
   MSCCLPP_DEVICE_INLINE void putBatched3(int peer, int qpIndex, uint64_t dst0, uint64_t src0, uint64_t size0,
                                          uint64_t dst1, uint64_t src1, uint64_t size1, uint64_t dst2, uint64_t src2,
-                                         uint64_t size2);
+                                         uint64_t size2, uint64_t* timing = nullptr, uint64_t* submitTiming = nullptr,
+                                         uint64_t* submitCounts = nullptr);
+
+  /// Zero-copy chunk post: `rows` (<= 8) consecutive remote rows of rowBytes at dstOffset gathered from arbitrary
+  /// local addresses (registered with per-HCA srcLkeys, host byte order) as 2-SGE writes, then two
+  /// symmetric-buffer metadata writes, with one submit.
+  MSCCLPP_DEVICE_INLINE void putGatherRows(int peer, int qpIndex, uint64_t dstOffset, const uint64_t* srcAddrs, int rows,
+                                           int sgePerWqe, uint32_t rowBytes, const uint32_t* srcLkeys, uint64_t dst1, uint64_t src1,
+                                           uint64_t size1, uint64_t dst2, uint64_t src2, uint64_t size2,
+                                           uint64_t* timing = nullptr, uint64_t* submitTiming = nullptr,
+                                           uint64_t* submitCounts = nullptr);
+
+  /// Single-poster variants: the caller must be the only thread posting to (peer, qpIndex) until a later
+  /// block/grid-level synchronization. They skip the shared-QP lock/atomics and ring one doorbell.
+  MSCCLPP_DEVICE_INLINE void putExclusive(int peer, int qpIndex, uint64_t dstOffset, uint64_t srcOffset, uint64_t size);
+  MSCCLPP_DEVICE_INLINE void putBatched3Exclusive(int peer, int qpIndex, uint64_t dst0, uint64_t src0, uint64_t size0,
+                                                  uint64_t dst1, uint64_t src1, uint64_t size1, uint64_t dst2,
+                                                  uint64_t src2, uint64_t size2, uint64_t* timing = nullptr);
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
@@ -125,7 +161,27 @@ MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t, int) {
   return -1;
 }
 MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putBatched3(int, int, uint64_t, uint64_t, uint64_t, uint64_t,
-                                                              uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) {
+                                                              uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                              uint64_t*, uint64_t*, uint64_t*) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putGatherRows(int, int, uint64_t, const uint64_t*, int, int, uint32_t,
+                                                                const uint32_t*, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                                uint64_t, uint64_t, uint64_t*, uint64_t*, uint64_t*) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putExclusive(int, int, uint64_t, uint64_t, uint64_t) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __trap();
+#endif
+}
+MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putBatched3Exclusive(int, int, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                                       uint64_t, uint64_t, uint64_t, uint64_t,
+                                                                       uint64_t, uint64_t*) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   __trap();
 #endif

@@ -163,7 +163,8 @@ struct doca_gpu_dev_verbs_cq {
   uint8_t reserved1[3];                      /**< Reserved */
   uint64_t cqe_rsvd;                         /**< All previous CQEs are polled */
   enum doca_gpu_dev_verbs_mem_type mem_type; /**< Memory type of the completion queue */
-  uint8_t reserved2[12];                     /**< Reserved */
+  uint32_t multi_bb; /**< Extra WQEBBs posted by multi-WQEBB WQEs since reset (WQEs = WQEBBs - multi_bb) */
+  uint64_t cqe_slot; /**< CQEs consumed (cqe_ci is the WQEBB frontier: every WQEBB below it completed) */
 } __attribute__((__aligned__(8))) __attribute__((__packed__));
 
 /**

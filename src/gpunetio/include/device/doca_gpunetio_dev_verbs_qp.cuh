@@ -41,6 +41,10 @@
 
 #include "doca_gpunetio_dev_verbs_cq.cuh"
 
+struct doca_gpu_dev_verbs_no_submit_trace {
+  __device__ __forceinline__ void operator()(unsigned int, uint64_t = 0) const {}
+};
+
 /* *********** WQE UTILS *********** */
 __device__ static __forceinline__ void doca_gpu_dev_verbs_store_wqe_seg(uint64_t *ptr, uint64_t *val) {
   asm volatile("st.weak.cs.v2.b64 [%0], {%1, %2};" : : "l"(ptr), "l"(val[0]), "l"(val[1]));
@@ -402,14 +406,37 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_ring_proxy(struct doca
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
-    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ,
+    class SubmitTrace = doca_gpu_dev_verbs_no_submit_trace>
 __device__ static inline void doca_gpu_dev_verbs_submit_db_no_dbr(
-    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index,
-    uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
+    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT,
+    SubmitTrace trace = {}) {
   if (!(code_opt & DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_DB_RINGING)) {
+    trace(0);
     uint64_t old_prod_index =
         doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode, true>(&qp->sq_wqe_pi, prod_index);
-    if (old_prod_index < prod_index) doca_gpu_dev_verbs_ring_db<sync_scope>(qp, prod_index, code_opt);
+    trace(2);
+    if (old_prod_index < prod_index) {
+      trace(9, 1);
+      trace(11, prod_index - old_prod_index);
+      doca_gpu_dev_verbs_ring_db<sync_scope>(qp, prod_index, code_opt);
+      trace(3);
+    }
+    trace(7);
+  }
+}
+
+template <enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode>
+__device__ static __forceinline__ void doca_gpu_dev_verbs_lock_sq_submit(int *lock) {
+  if (resource_sharing_mode == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU) {
+    cuda::atomic_ref<int, cuda::thread_scope_device> lock_aref(*lock);
+    do {
+      while (lock_aref.load(cuda::memory_order_relaxed) != 0) {
+      }
+    } while (atomicCAS(lock, 0, 1) != 0);
+    doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+  } else {
+    doca_gpu_dev_verbs_lock<resource_sharing_mode>(lock);
   }
 }
 
@@ -422,31 +449,87 @@ __device__ static inline void doca_gpu_dev_verbs_submit_db_no_dbr(
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
-    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ,
+    class SubmitTrace = doca_gpu_dev_verbs_no_submit_trace>
 __device__ static __forceinline__ void doca_gpu_dev_verbs_submit_db(
-    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index,
-    uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
+    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT,
+    SubmitTrace trace = {}) {
   if (!(code_opt & DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_DB_RINGING)) {
-    doca_gpu_dev_verbs_lock<resource_sharing_mode>(&qp->sq_lock);
+    trace(0);
+    doca_gpu_dev_verbs_lock_sq_submit<resource_sharing_mode>(&qp->sq_lock);
+    trace(1);
+    trace(10, 1);
 
     uint64_t old_prod_index =
         doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode, true>(&qp->sq_wqe_pi, prod_index);
+    trace(2);
     if (old_prod_index < prod_index) {
+      trace(9, 1);
+      trace(11, prod_index - old_prod_index);
       // Early rining of the DB to push WQEs to the NIC ASAP.
       doca_gpu_dev_verbs_ring_db<sync_scope>(qp, prod_index, code_opt);
+      trace(3);
 
       // In case the recovery path is triggered, the later DB ringing will cover for
       // correctness.
       doca_priv_gpu_dev_verbs_update_dbr<qp_type>(qp, prod_index);
+      trace(4);
 
       // Use at least either GPU or Sys synchronization scope for the second DB ringing.
       constexpr enum doca_gpu_dev_verbs_sync_scope second_db_sync_scope =
           (sync_scope <= DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU) ? sync_scope : DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU;
       doca_gpu_dev_verbs_ring_db<second_db_sync_scope>(qp, prod_index, code_opt);
+      trace(5);
     }
 
+    trace(6);
     doca_gpu_dev_verbs_unlock<resource_sharing_mode>(&qp->sq_lock);
+    trace(7);
   }
+}
+
+template <class SubmitTrace = doca_gpu_dev_verbs_no_submit_trace>
+__device__ static __forceinline__ void doca_gpu_dev_verbs_submit_coalesced_db(
+    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index, uint64_t *published,
+    uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT, SubmitTrace trace = {}) {
+  if (code_opt & DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_DB_RINGING) return;
+  cuda::atomic_ref<uint64_t, cuda::thread_scope_device> published_aref(*published);
+  cuda::atomic_ref<int, cuda::thread_scope_device> lock_aref(qp->sq_lock);
+  trace(0);
+  while (true) {
+    if (published_aref.load(cuda::memory_order_acquire) >= prod_index) {
+      trace(13, 1);
+      trace(1);
+      trace(7);
+      return;
+    }
+    if (lock_aref.load(cuda::memory_order_relaxed) == 0 && atomicCAS(&qp->sq_lock, 0, 1) == 0) break;
+  }
+  doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+  trace(1);
+  trace(10, 1);
+  cuda::atomic_ref<uint64_t, cuda::thread_scope_device> ready_aref(qp->sq_ready_index);
+  const uint64_t ready = ready_aref.load(cuda::memory_order_acquire);
+  DOCA_GPUNETIO_VERBS_ASSERT(ready >= prod_index);
+  const uint64_t previous =
+      doca_gpu_dev_verbs_atomic_max<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, true>(&qp->sq_wqe_pi,
+                                                                                                   ready);
+  trace(2);
+  if (previous < ready) {
+    trace(9, 1);
+    trace(11, ready - previous);
+    trace(12, ready - (previous > prod_index ? previous : prod_index));
+    doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(qp, ready, code_opt);
+    trace(3);
+    doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(qp, ready);
+    trace(4);
+    doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(qp, ready, code_opt);
+    trace(5);
+  }
+  published_aref.store(previous > ready ? previous : ready, cuda::memory_order_release);
+  trace(6);
+  doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_lock);
+  trace(7);
 }
 
 /**
@@ -528,40 +611,48 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_submit_bf_warp(
  */
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-    enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>
+    enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
+    class SubmitTrace = doca_gpu_dev_verbs_no_submit_trace>
 __device__ static __forceinline__ void doca_gpu_dev_verbs_submit_proxy(
-    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index,
-    uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
+    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT,
+    SubmitTrace trace = {}) {
+  trace(0);
   doca_gpu_dev_verbs_fence_release<sync_scope>();
+  trace(2);
   doca_gpu_dev_verbs_ring_proxy<resource_sharing_mode>(qp, prod_index);
+  trace(3);
+  trace(9, 1);
   if (code_opt & DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_CPU_PROXY_UPDATE_PI) {
     doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode, true>(&qp->sq_wqe_pi, prod_index);
   }
+  trace(7);
 }
 
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_sync_scope sync_scope = DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
     enum doca_gpu_dev_verbs_nic_handler nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO,
-    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ,
+    class SubmitTrace = doca_gpu_dev_verbs_no_submit_trace>
 __device__ static __forceinline__ void doca_gpu_dev_verbs_submit(
-    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index,
-    uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT) {
+    struct doca_gpu_dev_verbs_qp *qp, uint64_t prod_index, uint32_t code_opt = DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT,
+    SubmitTrace trace = {}) {
   const enum doca_gpu_dev_verbs_nic_handler qp_nic_handler =
       (enum doca_gpu_dev_verbs_nic_handler)__ldg((int *)&qp->nic_handler);
+  trace(8, qp_nic_handler);
   if (nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO) {
     if (qp_nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB)
-      doca_gpu_dev_verbs_submit_db<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt);
+      doca_gpu_dev_verbs_submit_db<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt, trace);
     else if (qp_nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_NO_DBR)
-      doca_gpu_dev_verbs_submit_db_no_dbr<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt);
+      doca_gpu_dev_verbs_submit_db_no_dbr<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt, trace);
     else
-      doca_gpu_dev_verbs_submit_proxy<resource_sharing_mode, sync_scope>(qp, prod_index, code_opt);
+      doca_gpu_dev_verbs_submit_proxy<resource_sharing_mode, sync_scope>(qp, prod_index, code_opt, trace);
   } else if (nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB) {
-    doca_gpu_dev_verbs_submit_db<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt);
+    doca_gpu_dev_verbs_submit_db<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt, trace);
   } else if (qp_nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_NO_DBR) {
-    doca_gpu_dev_verbs_submit_db_no_dbr<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt);
+    doca_gpu_dev_verbs_submit_db_no_dbr<resource_sharing_mode, sync_scope, qp_type>(qp, prod_index, code_opt, trace);
   } else {
-    doca_gpu_dev_verbs_submit_proxy<resource_sharing_mode, sync_scope>(qp, prod_index, code_opt);
+    doca_gpu_dev_verbs_submit_proxy<resource_sharing_mode, sync_scope>(qp, prod_index, code_opt, trace);
   }
 }
 

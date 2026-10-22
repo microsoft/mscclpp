@@ -42,8 +42,16 @@ def _simulated_latency_expert_output(dispatch_out, ep):
 # Backend: mscclpp EP (MoECommunicator).
 # ============================================================================
 def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
+    debug_init = os.environ.get("MSCCLPP_EP_DEBUG_INIT", "0") == "1"
+
+    def progress(stage):
+        if debug_init:
+            print(f"[PYINIT] rank={rank} stage={stage} ranks={num_ranks}", flush=True)
+
+    progress("ep.import.begin")
     import mscclpp.ep as ep
 
+    progress("ep.import.done")
     input_samples = inputs if isinstance(inputs, list) else [inputs]
     x, topk_idx, topk_weights, _ = input_samples[0]
     num_tokens, hidden = args.num_tokens, args.hidden
@@ -61,7 +69,9 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             flush=True,
         )
 
+    progress("comm_group.begin")
     ep_group = _make_comm_group(comm)
+    progress("comm_group.done")
     combine_mode = {
         "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
         "direct_send": ep.CombineMode.DIRECT_SEND,
@@ -83,6 +93,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     if (rank_major or rank_major_topk_expanded) and dispatch_quant is not None:
         raise ValueError(f"{requested_layout} output supports BF16 dispatch only")
     dispatch_dtype = torch.float8_e4m3fn if dispatch_quant is not None else torch.bfloat16
+    progress("moe.construct.begin")
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -97,7 +108,17 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
         invalid_token_expert_id=num_experts,
         quant=dispatch_quant,
     )
+    progress("moe.construct.done")
+    progress("moe.available.begin")
     assert moe_comm.is_available()
+    progress("moe.available.done")
+    progress("moe.initialize.begin")
+    try:
+        moe_comm.initialize()
+    except Exception as error:
+        print(f"[EPINIT_ERROR] rank={rank} {type(error).__name__}: {error}", flush=True)
+        raise
+    progress("moe.initialize.done")
     if rank == 0:
         print(
             f"[cfg] mscclpp MoECommunicator is_internode={moe_comm.is_internode()} "
@@ -116,6 +137,7 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
     )
     expert_output_initialized = False
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+    progress("outputs.allocated")
 
     def _dispatch():
         # Full (send+recv) LL dispatch inline on the stream; returns (dispatch_out, handle).
@@ -140,6 +162,48 @@ def _setup_mscclpp_latency(args, comm, rank, num_ranks, inputs):
             if debug_combine:
                 print(f"[rank_major_input][rank {rank}] buffer ready", flush=True)
         moe_comm.combine(combine_input, handle, out=out)
+
+    # Optional exact rank-major combine check (EP_CHECK_COMBINE=N runs N eager dispatch+combine pairs). The expert
+    # output is the dispatched token itself, so each (token, destination rank) row is x and the rank-local-reduce
+    # combine must return bf16(x * number of distinct destination ranks) bit-exactly.
+    combine_check_iters = int(os.environ.get("EP_CHECK_COMBINE", "0"))
+    if combine_check_iters > 0 and rank_major and combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE:
+        from mpi4py import MPI as _MPI
+
+        valid = (topk_idx >= 0) & (topk_idx < num_experts)
+        ranks = torch.where(valid, topk_idx // num_local_experts, torch.full_like(topk_idx, -1))
+        distinct = torch.zeros(num_tokens, dtype=torch.float32, device=x.device)
+        for j in range(num_topk):
+            first = ranks[:, j] >= 0
+            for p in range(j):
+                first &= ranks[:, p] != ranks[:, j]
+            distinct += first.float()
+        x_saved = x.clone()
+        bad_tokens = 0
+        for it in range(combine_check_iters):
+            # Fresh inputs every iteration so a read of a previous iteration's landing rows is detected.
+            x.copy_(torch.randn_like(x_saved, dtype=torch.float32).to(x.dtype))
+            expected = (x.float() * distinct.view(-1, 1)).to(torch.bfloat16)
+            c_out, c_handle = _dispatch()
+            c_in = c_out.combine_input_buffer
+            if c_in.data_ptr() != c_out.tokens.data_ptr():
+                c_in.copy_(c_out.tokens.view_as(c_in))
+            got = torch.full_like(out, float("nan"))
+            moe_comm.combine(c_in, c_handle, out=got)
+            torch.cuda.synchronize()
+            mismatch = (got != expected).any(dim=1)
+            n_bad = int(mismatch.sum().item())
+            if n_bad and bad_tokens < 5:
+                t = int(torch.nonzero(mismatch)[0].item())
+                print(f"[check-combine] it={it} rank={rank} bad_tokens={n_bad} first={t} "
+                      f"got={got[t, :4].tolist()} exp={expected[t, :4].tolist()} ranks={ranks[t].tolist()}", flush=True)
+            bad_tokens += n_bad
+        x.copy_(x_saved)
+        total_bad = comm.allreduce(bad_tokens, op=_MPI.SUM)
+        if rank == 0:
+            print(f"[check-combine] rank-major combine exact check iters={combine_check_iters} bad_tokens={total_bad}",
+                  flush=True)
+        expert_output_initialized = False
 
     # Optional one-time correctness check (mirrors test_latency_multirank).
     if args.validate:

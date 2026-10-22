@@ -38,6 +38,7 @@
 #define DOCA_GPUNETIO_DEV_VERBS_CQ_H
 
 #include <errno.h>
+#include <stddef.h>
 
 #include "doca_gpunetio_dev_verbs_common.cuh"
 
@@ -96,7 +97,7 @@ __device__ static __forceinline__ void doca_gpu_dev_verbs_cq_print_cqe_err(struc
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
-__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_one_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_one_cq_at_legacy(struct doca_gpu_dev_verbs_cq *cq,
                                                                              uint64_t cons_index) {
   uint8_t *cqe = (uint8_t *)__ldg((uintptr_t *)&cq->cqe_daddr);
   const uint32_t cqe_num = __ldg(&cq->cqe_num);
@@ -148,16 +149,16 @@ __device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_one_cq_at(str
  *
  * @param qp - Queue Pair (QP)
  * @param cons_index - Index of the Completion Queue (CQ) to be polled
- * @return On success, doca_gpu_dev_verbs_poll_one_cq_at() returns 0. If the completion is
+ * @return On success, doca_gpu_dev_verbs_poll_one_cq_at_legacy() returns 0. If the completion is
  * not available, returns EBUSY. If it is a completion with error, returns a
  * negative value.
  */
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
-__device__ static __forceinline__ int doca_gpu_dev_verbs_poll_one_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+__device__ static __forceinline__ int doca_gpu_dev_verbs_poll_one_cq_at_legacy(struct doca_gpu_dev_verbs_cq *cq,
                                                                         uint64_t cons_index) {
-  int status = doca_priv_gpu_dev_verbs_poll_one_cq_at<resource_sharing_mode, qp_type>(cq, cons_index);
+  int status = doca_priv_gpu_dev_verbs_poll_one_cq_at_legacy<resource_sharing_mode, qp_type>(cq, cons_index);
   if (status == 0) {
     doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
     doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&cq->cqe_ci, cons_index + 1);
@@ -175,7 +176,7 @@ __device__ static __forceinline__ int doca_gpu_dev_verbs_poll_one_cq_at(struct d
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
-__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_cq_at_legacy(struct doca_gpu_dev_verbs_cq *cq,
                                                                          uint64_t cons_index) {
   struct doca_gpunetio_ib_mlx5_cqe64 *cqe = (struct doca_gpunetio_ib_mlx5_cqe64 *)__ldg((uintptr_t *)&cq->cqe_daddr);
   const uint32_t cqe_num = __ldg(&cq->cqe_num);
@@ -227,15 +228,263 @@ __device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_cq_at(struct 
  *
  * @param qp - Queue Pair (QP)
  * @param cons_index - Index of the Completion Queue (CQ) to be polled
- * @return On success, doca_gpu_dev_verbs_poll_cq_at() returns 0. If it is a completion with
+ * @return On success, doca_gpu_dev_verbs_poll_cq_at_legacy() returns 0. If it is a completion with
  * error, returns a negative value.
  */
+// WQEBB-frontier completion tracking. cons_index is a WQEBB index (the ticket returned by reservation).
+// CQEs are consumed in order; each CQE's wqe_counter gives the start WQEBB of the completed WQE and the WQE's
+// DS count (read from its control segment in the SQ ring) gives its size, so multi-WQEBB WQEs are supported.
+// cq->cqe_ci holds the frontier (all WQEBBs below it completed); cq->cqe_slot counts consumed CQEs.
+struct doca_priv_gpu_dev_verbs_cq_walk {
+  struct doca_gpu_dev_verbs_cq *cq;
+  uint8_t *cqe_base;
+  uint32_t cqe_num;
+  uint64_t cqe_rsvd;
+  uint16_t wqe_mask;
+  uintptr_t wqe_base;
+  uint64_t frontier;  // every WQEBB below it is complete
+  uint64_t slot;      // CQEs consumed (relative to cqe_rsvd); the CQE at slot belongs to the WQE starting at frontier
+  uint64_t published_slot;
+};
+
+__device__ static __forceinline__ void doca_priv_gpu_dev_verbs_cq_walk_init(struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                           struct doca_gpu_dev_verbs_cq *cq) {
+  w.cq = cq;
+  w.cqe_base = (uint8_t *)__ldg((uintptr_t *)&cq->cqe_daddr);
+  w.cqe_num = __ldg(&cq->cqe_num);
+  w.cqe_rsvd = __ldg(&cq->cqe_rsvd);
+  struct doca_gpu_dev_verbs_qp *qp =
+      (struct doca_gpu_dev_verbs_qp *)((uint8_t *)cq - offsetof(struct doca_gpu_dev_verbs_qp, cq_sq));
+  w.wqe_mask = __ldg(&qp->sq_wqe_mask);
+  w.wqe_base = __ldg((uintptr_t *)&qp->sq_wqe_daddr);
+}
+
+// Byte-swapped dword holding wqe_counter (bits 31..16) and op_own (bits 7..0) of CQE slot (relative to cqe_rsvd).
+__device__ static __forceinline__ uint32_t doca_priv_gpu_dev_verbs_cq_word(const struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                         uint64_t slot) {
+  const uint64_t slot_in_cq = slot + w.cqe_rsvd;
+  return doca_gpu_dev_verbs_bswap32(doca_gpu_dev_verbs_load_relaxed_sys_global(
+      (uint32_t *)&((struct doca_gpunetio_ib_mlx5_cqe64 *)(w.cqe_base + (slot_in_cq & (w.cqe_num - 1)) *
+                                                                            DOCA_GPUNETIO_VERBS_CQE_SIZE))
+          ->wqe_counter));
+}
+
+__device__ static __forceinline__ bool doca_priv_gpu_dev_verbs_cq_word_arrived(const struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                              uint64_t slot, uint32_t word) {
+  return !((word & DOCA_GPUNETIO_IB_MLX5_CQE_OWNER_MASK) ^ !!((slot + w.cqe_rsvd) & w.cqe_num));
+}
+
+__device__ static __forceinline__ bool doca_priv_gpu_dev_verbs_cq_word_error(uint32_t word) {
+  return ((word & 0xff) >> DOCA_GPUNETIO_VERBS_MLX5_CQE_OPCODE_SHIFT) == DOCA_GPUNETIO_IB_MLX5_CQE_REQ_ERR;
+}
+
+__device__ static __forceinline__ uint64_t doca_priv_gpu_dev_verbs_cq_word_start(const struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                                uint32_t word) {
+  return w.frontier + (int64_t)(int16_t)(uint16_t)((word >> 16) - (uint16_t)w.frontier);
+}
+
+template <enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode>
+__device__ static __forceinline__ void doca_priv_gpu_dev_verbs_cq_walk_publish(
+    struct doca_priv_gpu_dev_verbs_cq_walk &w) {
+  if (w.slot == w.published_slot) return;
+  doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&w.cq->cqe_slot, w.slot);
+  doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&w.cq->cqe_ci, w.frontier);
+  w.published_slot = w.slot;
+}
+
+// Speculative O(1) check: every WQE has >= 1 WQEBB, so the CQE at slot + (cons_index - frontier) belongs to a WQE
+// starting at or after cons_index; if it has arrived, cons_index is complete (CQEs arrive in order). Without
+// multi-WQEBB WQEs this is exactly the legacy one-CQE-per-WQEBB slot.
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_cq_try_spec(struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                         uint64_t cons_index) {
+  if (cons_index - w.frontier >= w.cqe_num) return EBUSY;
+  const uint64_t spec = w.slot + (cons_index - w.frontier);
+  const uint32_t word = doca_priv_gpu_dev_verbs_cq_word(w, spec);
+  if (!doca_priv_gpu_dev_verbs_cq_word_arrived(w, spec, word)) return EBUSY;
+  if (doca_priv_gpu_dev_verbs_cq_word_error(word)) return -EIO;
+  const uint64_t start = doca_priv_gpu_dev_verbs_cq_word_start(w, word);
+  if (start < cons_index) return EBUSY;
+  w.frontier = start;
+  w.slot = spec;
+  return 0;
+}
+
+// In-order walk from w.slot. Returns 0 once cons_index < frontier, EBUSY when the head CQE has not arrived.
+// Only local state is updated; callers publish.
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_cq_walk_step(struct doca_priv_gpu_dev_verbs_cq_walk &w,
+                                                                          uint64_t cons_index) {
+  constexpr int kBatch = 8;
+  for (;;) {
+    if (!doca_priv_gpu_dev_verbs_cq_word_arrived(w, w.slot, doca_priv_gpu_dev_verbs_cq_word(w, w.slot))) return EBUSY;
+    uint32_t words[kBatch];
+#pragma unroll
+    for (int i = 0; i < kBatch; ++i) words[i] = doca_priv_gpu_dev_verbs_cq_word(w, w.slot + i);
+    int arrived = 0;
+#pragma unroll
+    for (int i = 0; i < kBatch; ++i) {
+      if (arrived != i || !doca_priv_gpu_dev_verbs_cq_word_arrived(w, w.slot + i, words[i])) continue;
+      if (doca_priv_gpu_dev_verbs_cq_word_error(words[i])) {
+#if DOCA_GPUNETIO_VERBS_ENABLE_DEBUG == 1
+        doca_gpu_dev_verbs_cq_print_cqe_err((struct doca_gpunetio_ib_mlx5_cqe64 *)(w.cqe_base +
+                                                                                   ((w.slot + i + w.cqe_rsvd) &
+                                                                                    (w.cqe_num - 1)) *
+                                                                                       DOCA_GPUNETIO_VERBS_CQE_SIZE));
+#endif
+        return -EIO;
+      }
+      arrived = i + 1;
+    }
+    if (arrived == 0) return EBUSY;  // head re-read raced; retry later
+    uint32_t last = words[0];
+#pragma unroll
+    for (int i = 1; i < kBatch; ++i)
+      if (i < arrived) last = words[i];
+    const uint64_t start = doca_priv_gpu_dev_verbs_cq_word_start(w, last);
+    // Every WQE is signaled, so all WQEBBs before the last completed WQE are complete too.
+    if (cons_index < start) {
+      w.slot += arrived - 1;
+      w.frontier = start;
+      return 0;
+    }
+    const uint64_t ctrl =
+        *(volatile uint64_t *)(w.wqe_base + ((uintptr_t)(start & w.wqe_mask) << DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT));
+    const uint32_t opmod_idx = doca_gpu_dev_verbs_bswap32((uint32_t)ctrl);
+    const uint32_t qpn_ds = doca_gpu_dev_verbs_bswap32((uint32_t)(ctrl >> 32));
+    // A recycled ring slot means this completion was already published (reuse waits on it).
+    const uint64_t size = (((opmod_idx >> DOCA_GPUNETIO_VERBS_WQE_IDX_SHIFT) & 0xffff) == (start & 0xffff))
+                              ? (((qpn_ds & 0x3f) + 3) >> 2)
+                              : 1;
+    w.slot += arrived;
+    w.frontier = start + size;
+    if (cons_index < w.frontier) return 0;
+  }
+}
+
+// WQEBB-frontier completion tracking. cons_index is a WQEBB index (the ticket returned by reservation).
+// CQEs are consumed in order; each CQE's wqe_counter gives the start WQEBB of the completed WQE and the WQE's
+// DS count (read from its control segment in the SQ ring) gives its size, so multi-WQEBB WQEs are supported.
+// cq->cqe_ci holds the frontier (all WQEBBs below it completed); cq->cqe_slot counts consumed CQEs.
+// Shared fields live in the QP's cache lines, so they are written only when a wait succeeds.
+template <enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+          bool blocking = false>
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_cq_advance(struct doca_gpu_dev_verbs_cq *cq,
+                                                                         uint64_t cons_index) {
+  struct doca_priv_gpu_dev_verbs_cq_walk w;
+  w.frontier = doca_gpu_dev_verbs_load_relaxed<resource_sharing_mode>(&cq->cqe_ci);
+  if (cons_index < w.frontier) return 0;
+  doca_priv_gpu_dev_verbs_cq_walk_init(w, cq);
+  w.slot = doca_gpu_dev_verbs_load_relaxed<resource_sharing_mode>(&cq->cqe_slot);
+  w.published_slot = w.slot;
+  uint32_t multi = 0;
+  for (uint32_t spin = 0;; ++spin) {
+    const int spec = doca_priv_gpu_dev_verbs_cq_try_spec(w, cons_index);
+    if (spec == 0) break;
+    if (spec < 0) return spec;
+    // Without multi-WQEBB WQEs the speculative slot is exact, so a miss means not complete (legacy cost).
+    if ((spin & 255) == 0) multi = *(volatile uint32_t *)&cq->multi_bb;
+    if (multi) {
+      const int status = doca_priv_gpu_dev_verbs_cq_walk_step(w, cons_index);
+      if (status == 0) break;
+      if (status < 0) return status;
+    }
+    if (!blocking) return EBUSY;
+  }
+  doca_priv_gpu_dev_verbs_cq_walk_publish<resource_sharing_mode>(w);
+  return 0;
+}
+
+template <
+    enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_one_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+                                                                             uint64_t cons_index) {
+  return doca_priv_gpu_dev_verbs_cq_advance<resource_sharing_mode>(cq, cons_index);
+}
+
+template <
+    enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+__device__ static __forceinline__ int doca_gpu_dev_verbs_poll_one_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+                                                                        uint64_t cons_index) {
+  int status = doca_priv_gpu_dev_verbs_cq_advance<resource_sharing_mode>(cq, cons_index);
+  if (status == 0) doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+  return status;
+}
+
+template <
+    enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+__device__ static __forceinline__ int doca_priv_gpu_dev_verbs_poll_cq_at(struct doca_gpu_dev_verbs_cq *cq,
+                                                                         uint64_t cons_index) {
+  int status;
+  status = doca_priv_gpu_dev_verbs_cq_advance<resource_sharing_mode, true>(cq, cons_index);
+  return status;
+}
+
 template <
     enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
     enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
 __device__ static __forceinline__ int doca_gpu_dev_verbs_poll_cq_at(struct doca_gpu_dev_verbs_cq *cq,
                                                                     uint64_t cons_index) {
   int status = doca_priv_gpu_dev_verbs_poll_cq_at<resource_sharing_mode, qp_type>(cq, cons_index);
+  if (status == 0) doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+  return status;
+}
+
+// Wait until every WQE reserved below end_index (the current sq_rsvd_index) completed. Requires that all those
+// WQEs were posted and that no other thread posts concurrently, so the WQE count is end_index - multi_bb and
+// the last CQE slot is known: spin on that single CQE (legacy cost) instead of walking the CQ.
+template <enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>
+__device__ static __forceinline__ int doca_gpu_dev_verbs_poll_cq_drain(struct doca_gpu_dev_verbs_cq *cq,
+                                                                       uint64_t end_index) {
+  struct doca_priv_gpu_dev_verbs_cq_walk w;
+  w.frontier = doca_gpu_dev_verbs_load_relaxed<resource_sharing_mode>(&cq->cqe_ci);
+  if (end_index <= w.frontier) return 0;
+  doca_priv_gpu_dev_verbs_cq_walk_init(w, cq);
+  const uint64_t last = end_index - *(volatile uint32_t *)&cq->multi_bb - 1;
+  for (uint32_t spin = 1;; ++spin) {
+    const uint32_t word = doca_priv_gpu_dev_verbs_cq_word(w, last);
+    if (doca_priv_gpu_dev_verbs_cq_word_arrived(w, last, word)) {
+      if (doca_priv_gpu_dev_verbs_cq_word_error(word)) return -EIO;
+      const uint64_t start = doca_priv_gpu_dev_verbs_cq_word_start(w, word);
+      // Valid only if this CQE completes the WQE ending at end_index (in-order completion covers the rest). No WQE
+      // extends past end_index, so a WQE starting at end_index - 1 qualifies without reading its size.
+      bool exact = start + 1 == end_index;
+      if (!exact && start < end_index) {
+        const uint64_t ctrl =
+            *(volatile uint64_t *)(w.wqe_base + ((uintptr_t)(start & w.wqe_mask) << DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT));
+        const uint32_t opmod_idx = doca_gpu_dev_verbs_bswap32((uint32_t)ctrl);
+        const uint32_t qpn_ds = doca_gpu_dev_verbs_bswap32((uint32_t)(ctrl >> 32));
+        exact = ((opmod_idx >> DOCA_GPUNETIO_VERBS_WQE_IDX_SHIFT) & 0xffff) == (start & 0xffff) &&
+                start + (((qpn_ds & 0x3f) + 3) >> 2) == end_index;
+      }
+      if (exact) {
+        w.published_slot = w.slot = last + 1;
+        doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&cq->cqe_slot, last + 1);
+        doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&cq->cqe_ci, end_index);
+        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+        return 0;
+      }
+      return doca_gpu_dev_verbs_poll_cq_at<resource_sharing_mode>(cq, end_index - 1);
+    }
+    // Concurrent posting can make the count stale; the general path guarantees progress.
+    if ((spin & 1023) == 0) {
+      const int status = doca_priv_gpu_dev_verbs_cq_advance<resource_sharing_mode>(cq, end_index - 1);
+      if (status != EBUSY) {
+        if (status == 0) doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+        return status;
+      }
+    }
+  }
+  return 0;
+}
+
+template <
+    enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+    enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
+__device__ static __forceinline__ int doca_gpu_dev_verbs_poll_cq_at_legacy(struct doca_gpu_dev_verbs_cq *cq,
+                                                                    uint64_t cons_index) {
+  int status = doca_priv_gpu_dev_verbs_poll_cq_at_legacy<resource_sharing_mode, qp_type>(cq, cons_index);
   if (status == 0) {
     doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
     doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&cq->cqe_ci, cons_index + 1);

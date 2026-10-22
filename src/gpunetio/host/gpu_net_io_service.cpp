@@ -29,6 +29,7 @@ extern "C" {
 #include "host/doca_gpunetio.h"
 #include "host/doca_gpunetio_high_level.h"
 #include "host/doca_verbs.h"
+#include "common/doca_gpunetio_verbs_dev.h"  // doca_gpu_dev_verbs_qp (nic_handler override)
 }
 
 namespace mscclpp {
@@ -70,12 +71,12 @@ struct QpExchangeInfo {
 struct MemExchangeInfo {
   uint64_t base;  // symmetric-buffer base address on that rank
   uint32_t rkey;  // remote key for that rank's registered MR
-  uint32_t pad;
 };
 
 struct ConfigExchangeInfo {
   uint32_t numHcas;
   uint32_t numQpsPerPeer;
+  uint32_t coalesceSubmissions = 0;
 };
 
 struct TopologyExchangeInfo {
@@ -193,6 +194,7 @@ struct GpuNetIoService::Impl {
     std::unique_ptr<IbCtx> ibCtx;
     std::unique_ptr<const IbMr> mr;
     std::unique_ptr<const IbMr> atomicResultMr;
+    std::vector<std::unique_ptr<const IbMr>> extraMrs;
   };
   std::vector<HcaContext> hcas;
 
@@ -213,13 +215,22 @@ struct GpuNetIoService::Impl {
   GpuNetIoDeviceContext* ctxGpu = nullptr;
   uint64_t* atomicResultsGpu = nullptr;
   uint32_t* atomicResultLkeysGpu = nullptr;
+  GpuNetIoSubmitState* submitStatesGpu = nullptr;
+  struct ExtraRegistration {
+    const void* ptr;
+    size_t bytes;
+    uint32_t* lkeysGpu;
+  };
+  std::vector<ExtraRegistration> extraRegistrations;
 
   ~Impl() {
     CudaDeviceGuard deviceGuard(cudaDeviceId);
     if (cpuProxyService) (void)doca_gpu_verbs_destroy_service(cpuProxyService);
     if (ctxGpu) (void)cudaFree(ctxGpu);
+    if (submitStatesGpu) (void)cudaFree(submitStatesGpu);
     if (rkeysGpu) (void)cudaFree(rkeysGpu);
     if (lkeysGpu) (void)cudaFree(lkeysGpu);
+    for (auto& extra : extraRegistrations) (void)cudaFree(extra.lkeysGpu);
     if (peerBaseGpu) (void)cudaFree(peerBaseGpu);
     if (qpFlatGpu) (void)doca_gpu_verbs_qp_flat_list_destroy_hl(qpFlatGpu);
     for (auto* q : qpHl) {
@@ -382,15 +393,23 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   const int nHcas = static_cast<int>(s.ibDeviceNames.size());
   const char* qpsEnv = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER");
   int requestedQps = qpsEnv == nullptr ? nHcas : std::atoi(qpsEnv);
+  int coalesceSubmissions = 0;
+  if (const char* requested = std::getenv("MSCCLPP_EP_GPUNETIO_COALESCE_SUBMIT")) {
+    const std::string value(requested);
+    coalesceSubmissions = value == "0" ? 0 : value == "1" ? 1 : -1;
+  }
   std::vector<ConfigExchangeInfo> configAll(s.worldSize);
-  configAll[s.rank] = {static_cast<uint32_t>(nHcas), static_cast<uint32_t>(requestedQps)};
+  configAll[s.rank] = {static_cast<uint32_t>(nHcas), static_cast<uint32_t>(requestedQps),
+                       static_cast<uint32_t>(coalesceSubmissions)};
   s.bootstrap->allGather(configAll.data(), static_cast<int>(sizeof(ConfigExchangeInfo)));
   for (const auto& config : configAll) {
     if (config.numHcas != static_cast<uint32_t>(nHcas) || config.numQpsPerPeer != static_cast<uint32_t>(requestedQps) ||
         config.numHcas < 1 || config.numQpsPerPeer > 64 || config.numQpsPerPeer < config.numHcas ||
-        config.numQpsPerPeer % config.numHcas != 0) {
+        config.numQpsPerPeer % config.numHcas != 0 || config.coalesceSubmissions > 1 ||
+        config.coalesceSubmissions != static_cast<uint32_t>(coalesceSubmissions)) {
       throw Error(
-          "GPUNetIO ranks must agree on HCA and QP counts; QPs must be in [1, 64] and a positive multiple of HCA count",
+          "GPUNetIO ranks must agree on HCA/QP counts and coalescing (0/1); QPs must be in [1, 64] and a positive "
+          "multiple of HCA count",
           ErrorCode::InvalidUsage);
     }
   }
@@ -440,7 +459,17 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   initAttr.gpu_dev = s.gpuDev;
   initAttr.sq_nwqe = 1024;
   initAttr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO;
+  // MSCCLPP_GPUNETIO_NIC_HANDLER=bf maps a BlueFlame UAR so device code may write whole WQEs to the doorbell
+  // register. The device-side handler stays GPU_SM_DB, so regular doorbells keep working on the same QP.
+  const char* nicHandlerEnv = std::getenv("MSCCLPP_GPUNETIO_NIC_HANDLER");
+  const bool blueFlameUar = nicHandlerEnv != nullptr && std::string(nicHandlerEnv) == "bf";
+  if (blueFlameUar) initAttr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF;
   initAttr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
+  // MSCCLPP_GPUNETIO_NO_DBR (experiment): 1 = QPs in NO_DBR_EXT HW mode, device keeps the GPU_SM_DB path (DBR write
+  // ignored by HW); 2 = NO_DBR_EXT with DOCA's native GPU_SM_NO_DBR device path.
+  const char* noDbrEnv = std::getenv("MSCCLPP_GPUNETIO_NO_DBR");
+  const int noDbr = noDbrEnv ? std::atoi(noDbrEnv) : 0;
+  if (noDbr) initAttr.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_NO_DBR_HW;
   for (int r = 0; r < s.worldSize; ++r) {
     if (r == s.rank) continue;
     for (int qpIndex = 0; qpIndex < nQp; ++qpIndex) {
@@ -492,6 +521,28 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
     }
   }
 
+  if (noDbr) {
+    int nNoDbr = 0;
+    for (auto* q : s.qpHl) {
+      if (q && q->qp_gverbs && q->qp_gverbs->qp_cpu) {
+        if (q->qp_gverbs->qp_cpu->nic_handler == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_NO_DBR) ++nNoDbr;
+        if (noDbr == 1) q->qp_gverbs->qp_cpu->nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+      }
+    }
+    if (s.rank == 0)
+      std::fprintf(stderr, "[GPUNETIO] noDbr=%d: %d QPs created NO_DBR_EXT, device handler %s\n", noDbr, nNoDbr,
+                   noDbr == 1 ? "GPU_SM_DB" : "GPU_SM_NO_DBR");
+  }
+
+  if (blueFlameUar) {
+    for (auto* q : s.qpHl) {
+      if (q && q->qp_gverbs && q->qp_gverbs->qp_cpu) {
+        q->qp_gverbs->qp_cpu->nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+      }
+    }
+    if (s.rank == 0) std::fprintf(stderr, "[GPUNETIO] nicHandler=bf (BlueFlame UAR, device handler GPU_SM_DB)\n");
+  }
+
   // 5. Flatten the per-peer device QPs into a GPU array.
   MSCCLPP_DOCA_THROW(
       doca_gpu_verbs_qp_flat_list_create_hl(s.qpHl.data(), static_cast<uint32_t>(s.qpHl.size()), &s.qpFlatGpu));
@@ -519,6 +570,14 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   }
 
   // 7. Publish device-side arrays + context.
+  if (coalesceSubmissions == 1) {
+    const size_t submitBytes = static_cast<size_t>(s.worldSize) * nQp * sizeof(GpuNetIoSubmitState);
+    MSCCLPP_CUDA_THROW(cudaMalloc(&s.submitStatesGpu, submitBytes));
+    MSCCLPP_CUDA_THROW(cudaMemset(s.submitStatesGpu, 0, submitBytes));
+    std::fprintf(stderr, "[EPGPUNETIO_SUBMIT] rank=%d coalesce=1 scope=putBatched3 eligible_handler=GPU_SM_DB\n",
+                 s.rank);
+    std::fflush(stderr);
+  }
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.rkeysGpu, sizeof(uint32_t) * rkeysHost.size()));
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.lkeysGpu, sizeof(uint32_t) * lkeysHost.size()));
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.peerBaseGpu, sizeof(uintptr_t) * s.worldSize));
@@ -541,10 +600,30 @@ void GpuNetIoService::setup(void* symmetricBuffer, size_t bytes) {
   ctxHost.lkeys = s.lkeysGpu;
   ctxHost.atomicResultBase = reinterpret_cast<uintptr_t>(s.atomicResultsGpu);
   ctxHost.atomicResultLkeys = s.atomicResultLkeysGpu;
+  ctxHost.submitStates = s.submitStatesGpu;
   MSCCLPP_CUDA_THROW(cudaMalloc(&s.ctxGpu, sizeof(GpuNetIoDeviceContext)));
   MSCCLPP_CUDA_THROW(cudaMemcpy(s.ctxGpu, &ctxHost, sizeof(GpuNetIoDeviceContext), cudaMemcpyHostToDevice));
 }
 
 GpuNetIoDeviceContext* GpuNetIoService::deviceContext() const { return pimpl_->ctxGpu; }
+
+const uint32_t* GpuNetIoService::registerLocalBuffer(const void* ptr, size_t bytes) {
+  auto& s = *pimpl_;
+  for (const auto& extra : s.extraRegistrations)
+    if (extra.ptr == ptr && extra.bytes >= bytes) return extra.lkeysGpu;
+  CudaDeviceGuard deviceGuard(s.cudaDeviceId);
+  std::vector<uint32_t> lkeys(s.hcas.size());
+  for (size_t hca = 0; hca < s.hcas.size(); ++hca) {
+    s.hcas[hca].extraMrs.push_back(s.hcas[hca].ibCtx->registerMr(const_cast<void*>(ptr), bytes));
+    lkeys[hca] = s.hcas[hca].extraMrs.back()->getLkey();
+  }
+  uint32_t* lkeysGpu = nullptr;
+  MSCCLPP_CUDA_THROW(cudaMalloc(&lkeysGpu, sizeof(uint32_t) * lkeys.size()));
+  MSCCLPP_CUDA_THROW(cudaMemcpy(lkeysGpu, lkeys.data(), sizeof(uint32_t) * lkeys.size(), cudaMemcpyHostToDevice));
+  s.extraRegistrations.push_back({ptr, bytes, lkeysGpu});
+  std::fprintf(stderr, "[EPGPUNETIO] rank=%d registered extra buffer %p bytes=%zu lkey0=0x%x\n", s.rank, ptr, bytes,
+               lkeys.empty() ? 0u : lkeys[0]);
+  return lkeysGpu;
+}
 
 }  // namespace mscclpp

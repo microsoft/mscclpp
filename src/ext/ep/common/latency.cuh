@@ -9,6 +9,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
+#include "buffered_timing.hpp"
 #include "config.hpp"
 #include "device_helpers.cuh"
 #include "kernels.hpp"
@@ -20,6 +21,8 @@ constexpr int DispatchNWarps = 16;
 constexpr int DispatchMinNWarpsPerGroup = 8;
 constexpr int DispatchMaxNWarpGroups = DispatchNWarps / DispatchMinNWarpsPerGroup;
 constexpr int DispatchNThreads = DispatchNWarps * WARP_SIZE;
+static_assert(TimingMaxBlocks >= MaxDispatchBlocks);
+static_assert(TimingMaxThreads >= DispatchNThreads);
 constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;
 constexpr int DispatchWarpGroupBarrierBase = 1;
 constexpr int DispatchSchedulerPrefixBarrier = DispatchWarpGroupBarrierBase + DispatchMaxNWarpGroups;
@@ -47,8 +50,32 @@ struct TransportView {
   void* gpuNetIoCombineFlagsBuffer_;
   void* gpuNetIoCombineLandingBuffer_;
   size_t gpuNetIoSlotStride_;
+  bool gpuNetIoBatchedDispatch_;
+  bool gpuNetIoBatchAllQps_;
+  bool gpuNetIoDedicatedPoster_;
+  bool gpuNetIoDeferFlush_;
+  uint64_t* gpuNetIoDispatchTickets_;
+  int gpuNetIoPipelineChunkRows_;
+  int gpuNetIoParallelStage_;
+  int gpuNetIoRowFence_;
+  int* gpuNetIoChunkReady_;
+  int* gpuNetIoTailRows_;
+  int gpuNetIoTmaStage_;
+  int gpuNetIoZeroCopy_;
+  uintptr_t gpuNetIoZcBase_;
+  const uint32_t* gpuNetIoZcLkeys_;
+  int* gpuNetIoZcRowSrc_;
+  GpuNetIoDispatchPeerState* gpuNetIoDispatchPeers_;
+  int gpuNetIoCombineChunkRows_;
+  uint64_t* gpuNetIoCombineChunkBase_;
+  bool gpuNetIoCombineNoBarrier_;
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING) && defined(__CUDACC__)
+  TimingWriter timing_;
+#endif
 
-  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context,
+                                                    [[maybe_unused]] int timingOperation = 0,
+                                                    [[maybe_unused]] uint32_t timingEpoch = 0)
       : symmetricBufferBase_(context->localBufferBase_),
         peerMappedBufferBases_(context->peerBufferBases_),
         baseMemoryChannels_(context->channels_),
@@ -59,7 +86,32 @@ struct TransportView {
         gpuNetIoFlagsBuffer_(context->gpuNetIoFlagsBuffer_),
         gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
         gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_),
-        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_) {}
+        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_),
+        gpuNetIoBatchedDispatch_(context->gpuNetIoBatchedDispatch_),
+        gpuNetIoBatchAllQps_(context->gpuNetIoBatchAllQps_),
+        gpuNetIoDedicatedPoster_(context->gpuNetIoDedicatedPoster_),
+        gpuNetIoDeferFlush_(context->gpuNetIoDeferFlush_),
+        gpuNetIoDispatchTickets_(context->gpuNetIoDispatchTickets_),
+        gpuNetIoPipelineChunkRows_(context->gpuNetIoPipelineChunkRows_),
+        gpuNetIoParallelStage_(context->gpuNetIoParallelStage_),
+        gpuNetIoRowFence_(context->gpuNetIoRowFence_),
+        gpuNetIoChunkReady_(context->gpuNetIoChunkReady_),
+        gpuNetIoTailRows_(context->gpuNetIoTailRows_),
+        gpuNetIoTmaStage_(context->gpuNetIoTmaStage_),
+        gpuNetIoZeroCopy_(context->gpuNetIoZeroCopy_),
+        gpuNetIoZcBase_(context->gpuNetIoZcBase_),
+        gpuNetIoZcLkeys_(context->gpuNetIoZcLkeys_),
+        gpuNetIoZcRowSrc_(context->gpuNetIoZcRowSrc_),
+        gpuNetIoDispatchPeers_(context->gpuNetIoDispatchPeers_),
+        gpuNetIoCombineChunkRows_(context->gpuNetIoCombineChunkRows_),
+        gpuNetIoCombineChunkBase_(context->gpuNetIoCombineChunkBase_),
+        gpuNetIoCombineNoBarrier_(context->gpuNetIoCombineNoBarrier_)
+#if defined(MSCCLPP_EP_GPUNETIO_TIMING) && defined(__CUDACC__)
+        ,
+        timing_(context->timing_, timingOperation, timingEpoch)
+#endif
+  {
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 

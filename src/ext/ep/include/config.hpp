@@ -22,6 +22,12 @@ inline constexpr int GpuNetIoStagingSlots = 32768;
 inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
 inline constexpr int GpuNetIoFlushInterval = 128;
 
+struct alignas(BufferAlignmentBytes) GpuNetIoDispatchPeerState {
+  int expectedRowsPlusOne;
+  int postedRows;
+  int markersPosted;
+};
+
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
   return (a + b - 1) / b;
@@ -167,6 +173,23 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkExpandedTokenOffset(int numRanks,
                                                                    int numTopk) {
   return rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
 }
+
+struct RankMajorBatchView {
+  uint8_t* tokens_;
+  int* ids_;
+  float* weights_;
+  size_t numBytes_;
+
+  MSCCLPP_HOST_DEVICE_INLINE RankMajorBatchView(void* base, int numRanks, int capacity, int hidden, int topk) {
+    const size_t rows = static_cast<size_t>(numRanks) * capacity;
+    const size_t tokenBytes = rows * hidden * sizeof(Bf16);
+    const size_t idBytes = rows * topk * sizeof(int);
+    tokens_ = reinterpret_cast<uint8_t*>(base);
+    ids_ = reinterpret_cast<int*>(tokens_ + tokenBytes);
+    weights_ = reinterpret_cast<float*>(tokens_ + tokenBytes + idBytes);
+    numBytes_ = tokenBytes + idBytes + rows * topk * sizeof(float);
+  }
+};
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
