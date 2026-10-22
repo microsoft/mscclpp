@@ -592,6 +592,7 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore& semaph
     MSCCLPP_CUDA_THROW(cudaMalloc(&state->table, descriptors.size() * sizeof(GpuNetIoMemoryDeviceHandle)));
     MSCCLPP_CUDA_THROW(cudaMemcpy(state->table, descriptors.data(),
                                   descriptors.size() * sizeof(GpuNetIoMemoryDeviceHandle), cudaMemcpyHostToDevice));
+    MSCCLPP_CUDA_THROW(cudaStreamSynchronize(nullptr));
   }
   gpuNetIoHandle_ = BasePortChannelDeviceHandle(service.ctxGpu, connection.peer, connection.qpIndex, service.rank,
                                                 binding.remoteSignal, binding.inboundCounter, binding.expectedCounter,
