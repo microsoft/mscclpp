@@ -14,6 +14,12 @@ struct EpGpuNetIoDeviceContext;
 
 namespace ep {
 
+struct GpuNetIoDispatchPeerState;
+
+constexpr int GpuNetIoRowFenceSystem = 0;
+constexpr int GpuNetIoRowFenceGpu = 1;
+constexpr int GpuNetIoRowFenceGpuPoster = 2;
+
 /// Persistent device resources shared by every dispatch and combine algorithm.
 struct DeviceContext {
   /// Local base used to translate local buffer addresses into peer mappings.
@@ -63,6 +69,45 @@ struct DeviceContext {
   bool expandedGpuNetIoFastPath_ = false;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
+  /// Pack compact dispatch tokens by remote rank before bulk publication.
+  bool gpuNetIoBatchedDispatch_ = false;
+  /// Stripe batched dispatch across every peer QP instead of one QP per HCA.
+  bool gpuNetIoBatchAllQps_ = false;
+  /// Rows per pipelined destination chunk; zero retains whole-destination batching.
+  int gpuNetIoPipelineChunkRows_ = 0;
+  /// Maximum helper warps per remote destination row; zero keeps leader-serial staging.
+  int gpuNetIoParallelStage_ = 0;
+  /// Batched staged-row fence: GpuNetIoRowFenceSystem, GpuNetIoRowFenceGpu or GpuNetIoRowFenceGpuPoster.
+  int gpuNetIoRowFence_ = 0;
+  /// Local completed-row counters, reset on the dispatch stream before every invocation.
+  int* gpuNetIoChunkReady_ = nullptr;
+  /// Early tail post (MSCCLPP_EP_GPUNETIO_EARLY_TAIL=1): [rank] rows+1 words published by the control CTA once row
+  /// counts are known; located right before gpuNetIoChunkReady_ and reset by the same memset.
+  int* gpuNetIoTailRows_ = nullptr;
+  /// Stage token rows with TMA bulk shared->global stores (MSCCLPP_EP_GPUNETIO_TMA_STAGE=1; 2 = debug: skip the
+  /// payload copy).
+  int gpuNetIoTmaStage_ = 0;
+  /// Local completed-producer count, reset before each compact GPUNetIO dispatch.
+  int* gpuNetIoDispatchDone_ = nullptr;
+  /// Select dedicated receive CTAs and destination-local network completion.
+  bool gpuNetIoAsyncDispatch_ = false;
+  /// Rank-major dispatch does not wait for its send completions at the end of the kernel; it records
+  /// the per-(peer, QP) send tickets instead, and the next dispatch waits for them before rewriting
+  /// any registered send source (default on with batched dispatch; MSCCLPP_EP_GPUNETIO_DEFER_FLUSH=0 disables).
+  bool gpuNetIoDeferFlush_ = false;
+  /// [peer * GpuNetIoMaxQpsPerPeer + qp] send tickets of the previous dispatch (deferred flush only).
+  uint64_t* gpuNetIoDispatchTickets_ = nullptr;
+  /// Rank-major GPUNetIO combine pipeline (MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS): rows per combine chunk, striped
+  /// round-robin over every peer QP; each chunk carries its own completion signal so the receiver reduces a token as
+  /// soon as the chunk holding its row lands. Zero keeps one whole-peer put per HCA stripe.
+  int gpuNetIoCombineChunkRows_ = 0;
+  /// [peer * GpuNetIoMaxQpsPerPeer + qp] cumulative combine chunks already consumed (pipelined combine only).
+  uint64_t* gpuNetIoCombineChunkBase_ = nullptr;
+  /// Skip the grid barrier between the combine ready publisher and the TMA workers
+  /// (MSCCLPP_EP_GPUNETIO_COMBINE_NO_BARRIER=1); implied by the combine pipeline.
+  bool gpuNetIoCombineNoBarrier_ = false;
+  /// Local destination counts and post-completion state, reset before graph replay.
+  GpuNetIoDispatchPeerState* gpuNetIoDispatchPeers_ = nullptr;
 };
 
 }  // namespace ep

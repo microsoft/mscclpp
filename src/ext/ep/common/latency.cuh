@@ -47,6 +47,20 @@ struct TransportView {
   void* gpuNetIoCombineFlagsBuffer_;
   void* gpuNetIoCombineLandingBuffer_;
   size_t gpuNetIoSlotStride_;
+  bool gpuNetIoBatchedDispatch_;
+  bool gpuNetIoBatchAllQps_;
+  bool gpuNetIoDeferFlush_;
+  uint64_t* gpuNetIoDispatchTickets_;
+  int gpuNetIoPipelineChunkRows_;
+  int gpuNetIoParallelStage_;
+  int gpuNetIoRowFence_;
+  int* gpuNetIoChunkReady_;
+  int* gpuNetIoTailRows_;
+  int gpuNetIoTmaStage_;
+  GpuNetIoDispatchPeerState* gpuNetIoDispatchPeers_;
+  int gpuNetIoCombineChunkRows_;
+  uint64_t* gpuNetIoCombineChunkBase_;
+  bool gpuNetIoCombineNoBarrier_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
@@ -59,7 +73,21 @@ struct TransportView {
         gpuNetIoFlagsBuffer_(context->gpuNetIoFlagsBuffer_),
         gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
         gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_),
-        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_) {}
+        gpuNetIoSlotStride_(context->gpuNetIoSlotStride_),
+        gpuNetIoBatchedDispatch_(context->gpuNetIoBatchedDispatch_),
+        gpuNetIoBatchAllQps_(context->gpuNetIoBatchAllQps_),
+        gpuNetIoDeferFlush_(context->gpuNetIoDeferFlush_),
+        gpuNetIoDispatchTickets_(context->gpuNetIoDispatchTickets_),
+        gpuNetIoPipelineChunkRows_(context->gpuNetIoPipelineChunkRows_),
+        gpuNetIoParallelStage_(context->gpuNetIoParallelStage_),
+        gpuNetIoRowFence_(context->gpuNetIoRowFence_),
+        gpuNetIoChunkReady_(context->gpuNetIoChunkReady_),
+        gpuNetIoTailRows_(context->gpuNetIoTailRows_),
+        gpuNetIoTmaStage_(context->gpuNetIoTmaStage_),
+        gpuNetIoDispatchPeers_(context->gpuNetIoDispatchPeers_),
+        gpuNetIoCombineChunkRows_(context->gpuNetIoCombineChunkRows_),
+        gpuNetIoCombineChunkBase_(context->gpuNetIoCombineChunkBase_),
+        gpuNetIoCombineNoBarrier_(context->gpuNetIoCombineNoBarrier_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 

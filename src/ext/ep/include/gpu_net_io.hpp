@@ -53,6 +53,34 @@ struct EpGpuNetIoDeviceContext {
     return handle.gpuNetIo_->tryFlush(peer, spins, handle.gpuNetIoQpIndex_);
   }
 
+  /// Send-queue reservation index of (peer, queue): every WQE posted so far lies below it.
+  MSCCLPP_DEVICE_INLINE uint64_t reservedTicket(int peer, int queue = 0) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const auto handle = channel(peer, queue);
+    auto* qp = detail::gpuNetIoQp(*handle.gpuNetIo_, peer, handle.gpuNetIoQpIndex_);
+    return doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&qp->sq_rsvd_index);
+#else
+    BasePortChannelDeviceHandle::requireGpuNetIo(false);
+    return 0;
+#endif
+  }
+
+  /// Wait until every WQE below `ticket` (from reservedTicket) on (peer, queue) has completed.
+  MSCCLPP_DEVICE_INLINE void waitTicket(int peer, uint64_t ticket, int queue = 0) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    if (ticket == 0) return;
+    const auto handle = channel(peer, queue);
+    auto* qp = detail::gpuNetIoQp(*handle.gpuNetIo_, peer, handle.gpuNetIoQpIndex_);
+    int status;
+    do {
+      status = doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, ticket - 1);
+    } while (status == EBUSY);
+    BasePortChannelDeviceHandle::requireGpuNetIo(status == 0);
+#else
+    BasePortChannelDeviceHandle::requireGpuNetIo(false);
+#endif
+  }
+
   MSCCLPP_DEVICE_INLINE void putBatched3(int peer, int queue, uint64_t dst0, uint64_t src0, uint64_t size0,
                                          uint64_t dst1, uint64_t src1, uint64_t size1, uint64_t dst2, uint64_t src2,
                                          uint64_t size2) {

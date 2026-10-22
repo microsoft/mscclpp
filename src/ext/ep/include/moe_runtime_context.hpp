@@ -54,6 +54,7 @@ struct LatencyContext {
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 0;
+  bool initializeStarted_ = false;
   void* symmetricBuffer_ = nullptr;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};
@@ -64,6 +65,11 @@ struct LatencyContext {
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
   std::shared_ptr<EpGpuNetIoService> gpuNetIoService_;
+  std::shared_ptr<int> chunkReady_;
+  std::shared_ptr<uint64_t> dispatchTickets_;
+  std::shared_ptr<uint64_t> combineChunkBase_;
+  std::shared_ptr<int> dispatchDone_;
+  std::shared_ptr<GpuNetIoDispatchPeerState> dispatchPeers_;
 };
 
 struct ThroughputContext {
