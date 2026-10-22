@@ -33,31 +33,13 @@ __all__ = [
 
 
 def get_device_arch() -> str:
+    from mscclpp import gpu
+
+    (props,) = gpu.get_device_properties(gpu.current_device())
     if is_hip:
-        from hip import hip
-
-        error, device = hip.hipGetDevice()
-        if error != hip.hipError_t.hipSuccess:
-            raise RuntimeError(f"hipGetDevice failed with error {int(error)}")
-
-        error, props = hip.hipGetDeviceProperties(device)
-        if error != hip.hipError_t.hipSuccess:
-            raise RuntimeError(f"hipGetDeviceProperties failed with error {int(error)}")
-
         arch = props.gcnArchName
         return arch.decode("utf-8") if isinstance(arch, bytes) else arch
-    else:
-        from cuda.bindings import runtime
-
-        error, device = runtime.cudaGetDevice()
-        if error != runtime.cudaError_t.cudaSuccess:
-            raise RuntimeError(f"cudaGetDevice failed with error {int(error)}")
-
-        error, props = runtime.cudaGetDeviceProperties(device)
-        if error != runtime.cudaError_t.cudaSuccess:
-            raise RuntimeError(f"cudaGetDeviceProperties failed with error {int(error)}")
-
-        return f"sm_{props.major}{props.minor}"
+    return f"sm_{props.major}{props.minor}"
 
 
 class Kernel:

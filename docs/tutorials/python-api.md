@@ -7,6 +7,12 @@ Internal backend checks use `mscclpp._mscclpp.is_hip`, a boolean set when the na
 extension is built: `True` for HIP/ROCm and `False` for CUDA. Reading this flag does
 not initialize a GPU or require a visible device.
 
+Shared CUDA/HIP runtime helpers are available in `mscclpp.gpu`, including device
+queries, synchronization, streams, events, and graph capture. They use the backend
+selected by the native build and initialize the Python runtime on first use.
+`mscclpp.utils.get_device_arch()` uses these helpers to query the current device.
+The previous `mscclpp_benchmark.gpu` import path remains available for compatibility.
+
 ## Setup Channel with Python API
 
 We will setup a mesh topology with eight GPUs. Each GPU will be connected to its neighbors. The following code shows how to initialize communication with MSCCL++ Python API.
@@ -20,7 +26,7 @@ from mscclpp import (
     CommGroup,
     GpuBuffer,
 )
-from mscclpp_benchmark.gpu import device_synchronize, set_device
+from mscclpp.gpu import device_synchronize, set_device
 
 
 def create_connection(group: CommGroup, transport: str):
