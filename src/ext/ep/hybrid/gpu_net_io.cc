@@ -125,6 +125,9 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   int queues = 0;
   try {
     MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), state.device));
+    for (char& digit : pciBusId) {
+      if (digit >= 'A' && digit <= 'F') digit = static_cast<char>(digit - 'A' + 'a');
+    }
     numaNode = readNumber("/sys/bus/pci/devices/" + std::string(pciBusId) + "/numa_node", -1);
     devices = selectDevices(state.devices, pciBusId, numaNode);
     queues = static_cast<int>(devices.size());
