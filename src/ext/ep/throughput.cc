@@ -145,7 +145,8 @@ Workload ThroughputRuntimeContext::makeWorkload(int numTokens, int maxTokensPerR
           .invalidTokenExpertId_ = -1,
           .maxTokensPerRank_ = maxTokensPerRank,
           .outputLayout_ = outputLayout_,
-          .dispatchDataType_ = dataType};
+          .dispatchDataType_ = dataType,
+          .emitLocalExpertIds_ = false};
 }
 
 void ThroughputRuntimeContext::validatePrepareRequest(const PrepareRequest& request) const {

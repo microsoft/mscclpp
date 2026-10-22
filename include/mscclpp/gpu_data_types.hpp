@@ -400,6 +400,18 @@ MSCCLPP_DEVICE_INLINE f32x2 operator*(const f32x2& a, const f32x2& b) {
 #endif
 }
 
+/// Performs two element-wise FP32 fused multiply-add operations.
+MSCCLPP_DEVICE_INLINE f32x2 fma(const f32x2& a, const f32x2& b, const f32x2& c) {
+#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ >= 1000)
+  return __ffma2_rn(a.storage, b.storage, c.storage);
+#else
+  f32x2 result;
+  result.data[0] = fmaf(a.data[0], b.data[0], c.data[0]);
+  result.data[1] = fmaf(a.data[1], b.data[1], c.data[1]);
+  return result;
+#endif
+}
+
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE f16x2 operator+(const f16x2& a, const f16x2& b) {
   __half2 result;

@@ -91,7 +91,11 @@ class MoERuntime {
   /// BF16 or E4M3 elements according to the dispatch request. The active
   /// maxTokensPerRank, not the runtime capacity, determines the rank stride.
   void* dispatchOutputBuffer() const;
-  /// Return the runtime-owned BF16 combine input buffer.
+  /// Return the runtime-owned combine input buffer.
+  ///
+  /// Latency RANK_MAJOR uses the combine format from LatencyDispatchRequest::quant,
+  /// which defaults to BF16 and may be FP8_E4M3_STATIC with matching static FP8
+  /// dispatch. Other layouts and throughput use BF16.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///
