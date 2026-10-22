@@ -46,7 +46,10 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   // between domains is served by GPUNetIO instead of multi-node NVLink.
   if (const char* forced = std::getenv("MSCCLPP_EP_IPC_DOMAIN_SIZE")) {
     const int size = std::atoi(forced);
-    if (size >= 1 && size <= numRanks_ && numRanks_ % size == 0) numRanksPerIpcDomain_ = size;
+    if (size < 1 || size > numRanksPerIpcDomain_ || numRanksPerIpcDomain_ % size != 0) {
+      EP_THROW("MSCCLPP_EP_IPC_DOMAIN_SIZE must be a positive divisor of the detected IPC domain size");
+    }
+    numRanksPerIpcDomain_ = size;
   }
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
