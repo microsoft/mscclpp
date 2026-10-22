@@ -3,6 +3,8 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdio>
+
 __global__ void kernel() {}
 
 int main() {
@@ -11,5 +13,10 @@ int main() {
   if (err != cudaSuccess || cnt == 0) {
     return 1;
   }
+  cudaDeviceProp properties;
+  if (cudaGetDeviceProperties(&properties, 0) != cudaSuccess) {
+    return 1;
+  }
+  std::printf("%d\n", properties.major * 10 + properties.minor);
   return 0;
 }

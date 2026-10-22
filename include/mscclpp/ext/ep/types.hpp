@@ -1,0 +1,336 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+#ifndef MSCCLPP_EXT_EP_TYPES_HPP_
+#define MSCCLPP_EXT_EP_TYPES_HPP_
+
+#include <cstdint>
+#include <memory>
+#include <mscclpp/gpu.hpp>
+#include <utility>
+#include <variant>
+
+namespace mscclpp {
+namespace ep {
+
+class MoERuntime;
+
+/// Expert-parallel runtime mode.
+enum class MoEMode {
+  /// Algorithms optimized for minimum standalone latency.
+  LATENCY,
+  /// Resource-bounded algorithms optimized for end-to-end throughput.
+  THROUGHPUT
+};
+
+/// Logical dispatch output layout.
+enum class DispatchLayout {
+  /// Rows grouped by local expert.
+  EXPERT_MAJOR,
+  /// Compact token-major valid rows within throughput's fixed-capacity storage.
+  TOKEN_MAJOR,
+  /// Fixed-stride rows grouped by source rank.
+  RANK_MAJOR
+};
+
+/// Combine algorithm.
+enum class CombineMode {
+  /// Reduce local expert rows before sending one partial per rank and token.
+  RANK_LOCAL_REDUCE,
+  /// Reduce all contributions on the source rank.
+  ///
+  /// Expert-major sends every expert row. Rank-major consumes one unweighted
+  /// route row per top-k lane, applies its routing weight, and performs the
+  /// top-k reduction in combine.
+  DIRECT_SEND
+};
+
+/// Dispatch payload data format.
+enum class DispatchDataType {
+  /// Unquantized BF16 payload.
+  BF16,
+  /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
+  FP8_E4M3,
+  /// MXFP8 E4M3 payload with one uint8_t E8M0 scale per 32 hidden elements.
+  ///
+  /// Supported for RANK_MAJOR in LATENCY mode only. Dispatch takes BF16 input
+  /// and quantizes each token once before sending it to its destination ranks.
+  /// Input values must be finite and hidden must be divisible by 32.
+  /// Scales are powers of two rounded up to cover each block's maximum absolute
+  /// value with E4M3's finite range, with scale bytes clamped to [1, 254].
+  /// An all-zero block uses scale byte 127.
+  MXFP8_E4M3,
+  /// FP8 E4M3 payload with one caller-provided scalar scale.
+  ///
+  /// Supported for RANK_MAJOR in LATENCY mode only. Unlike FP8_E4M3, this
+  /// format has no per-block scale sideband.
+  FP8_E4M3_STATIC
+};
+
+/// Quantization configuration for latency dispatch and rank-major combine.
+struct QuantConfig {
+  /// Input representation for latency rank-major static FP8 dispatch.
+  enum class InputMode {
+    /// Input is already quantized as E4M3(real * dispatchScale).
+    PREQUANTIZED,
+    /// Input is BF16 and is quantized once inside dispatch before transport.
+    QUANTIZE
+  };
+
+  /// Dispatch payload format.
+  DispatchDataType dispatchDataType = DispatchDataType::BF16;
+  /// Static FP8 dispatch multiplier. Dispatch stores E4M3(real * dispatchScale).
+  /// Must be finite and positive for FP8_E4M3_STATIC, and one otherwise.
+  float dispatchScale = 1.0f;
+  /// Input representation for latency rank-major static FP8 dispatch. Must remain
+  /// PREQUANTIZED for every other layout and format.
+  InputMode inputMode = InputMode::PREQUANTIZED;
+  /// Rank-major combine input format. BF16 is the default; FP8_E4M3_STATIC is
+  /// supported only with static FP8 dispatch and uses dispatchScale for
+  /// dequantization.
+  DispatchDataType combineDataType = DispatchDataType::BF16;
+};
+
+/// Arguments for throughput-mode routing preparation.
+///
+/// Preparation computes local routing counts and exchanges them with peers;
+/// it does not read or transfer token payloads.
+struct PrepareRequest {
+  /// Device-resident input top-k expert IDs.
+  /// IDs outside [0, numExperts) are ignored.
+  ///
+  /// Keep this buffer alive for the GPU work using it. Its contents must remain
+  /// unchanged between preparation and dispatch, unless a graph replay also
+  /// recomputes preparation.
+  const int64_t* topkIdx;
+  /// Number of local input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in preparation and dispatch.
+  int maxTokensPerRank;
+  /// Requested grid block count for subsequent dispatches.
+  int numBlocks;
+  /// CUDA stream on which preparation is enqueued asynchronously.
+  cudaStream_t stream;
+  /// Optional device output counts produced by preparation.
+  ///
+  /// TOKEN_MAJOR writes one count per local expert. RANK_MAJOR writes one
+  /// count per source rank. Keep this buffer alive until preparation completes
+  /// on the supplied stream. Reusing the returned handle does not rewrite it.
+  int* outputCount = nullptr;
+};
+
+/// Opaque routing metadata returned by MoERuntime::prepare().
+///
+/// A handle borrows runtime-owned routing buffers without extending the
+/// runtime's lifetime. It can be reused for unchanged routing until another
+/// preparation, including an automatically prepared dispatch, starts on the
+/// same runtime. The routing buffers remain private to the runtime. Dispatch
+/// must consume the handle on the same CUDA stream used for preparation;
+/// the handle itself does not synchronize GPU work.
+class PrepareHandle {
+ public:
+  /// Construct an empty handle, which requests automatic preparation in dispatch.
+  PrepareHandle() = default;
+
+ private:
+  friend class MoERuntime;
+
+  struct Impl;
+  explicit PrepareHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+
+  std::shared_ptr<const Impl> impl_;
+};
+
+/// Arguments for latency-mode dispatch.
+///
+/// The caller must keep all buffers referenced by this struct (inputs and
+/// outputs) valid until the corresponding combine operation has finished.
+struct LatencyDispatchRequest {
+  /// Dispatch output buffer.
+  void* output;
+  /// Optional dispatch scale output.
+  ///
+  /// FP8_E4M3 uses float scales in expert-major [expert, hidden / 128, row] order.
+  /// MXFP8_E4M3 must use MoERuntime::outputScalesBuffer(), viewed as contiguous
+  /// uint8_t [numRanks, maxTokensPerRank, hidden / 32].
+  void* outputScales;
+  /// Optional source-token metadata output.
+  int* outputSrcInfo;
+  /// Optional dispatched top-k expert IDs.
+  int* outputTopkIdx;
+  /// Optional dispatched top-k weights.
+  float* outputTopkWeights;
+  /// Optional packed layout metadata.
+  int64_t* outputLayoutRange;
+  /// Per-expert or per-rank output counts.
+  int* outputCount;
+  /// Input token payload, 16-byte aligned.
+  ///
+  /// BF16, MXFP8_E4M3, and expert-major FP8_E4M3 take BF16 input.
+  /// FP8_E4M3_STATIC uses quant.inputMode to select prequantized E4M3 or BF16
+  /// input.
+  const void* input;
+  /// Input top-k expert IDs.
+  const int64_t* topkIdx;
+  /// Optional input top-k weights.
+  const float* topkWeights;
+  /// Number of input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in dispatch.
+  int maxTokensPerRank;
+  /// Sentinel written to rank-major padding and non-local expert entries.
+  /// Defaults to -1.
+  /// Here numExperts is the runtime's configured global expert count.
+  /// Must be outside [0, numExperts): use a negative int (e.g., -1) or an
+  /// int >= numExperts (e.g., numExperts). All ranks must use the same sentinel.
+  /// This is an output sentinel; input topkIdx entries must still be valid
+  /// global expert IDs or negative values for dropped routes.
+  int invalidTokenExpertId = -1;
+  /// Dispatch quantization and rank-major combine datatype settings.
+  ///
+  /// FP8_E4M3_STATIC combine is supported only with matching static FP8 dispatch
+  /// and reuses the dispatch scale for dequantization; all other rank-major
+  /// combines use BF16.
+  QuantConfig quant;
+  /// Dispatch grid block count. Zero uses the default number of blocks.
+  int numBlocks = 0;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+  /// Emit destination-rank-local expert IDs for latency RANK_MAJOR output.
+  ///
+  /// When false, valid outputTopkIdx entries remain global expert IDs. When
+  /// true, valid entries are in [0, numExperts / numRanks).
+  bool emitLocalExpertIds = false;
+};
+
+/// Arguments for throughput-mode dispatch.
+///
+/// The dispatched payload is written to MoERuntime::dispatchOutputBuffer().
+/// Dispatch metadata is written to the runtime-owned metadata buffers. The
+/// caller must keep input buffers valid until the GPU work using them,
+/// including graph replays, has completed. The returned DispatchHandle must
+/// stay alive until the matching combine has been enqueued.
+struct ThroughputDispatchRequest {
+  /// Input token payload, 16-byte aligned.
+  ///
+  /// BF16 takes BF16 input. FP8_E4M3 takes prequantized E4M3 input.
+  const void* input;
+  /// Optional input float scale factors for prequantized FP8_E4M3.
+  const float* inputScales;
+  /// Input top-k expert IDs.
+  /// IDs outside [0, numExperts) are ignored.
+  const int64_t* topkIdx;
+  /// Optional input top-k weights.
+  const float* topkWeights;
+  /// Number of input tokens, in [0, maxTokensPerRank].
+  /// May differ across participating ranks.
+  int numTokens;
+  /// Active per-rank token capacity, positive and no greater than the runtime capacity.
+  /// Must be identical across all ranks participating in preparation and dispatch.
+  int maxTokensPerRank;
+  /// Requested dispatch payload format: BF16 or FP8_E4M3.
+  /// Must match across participating ranks. Throughput does not quantize input.
+  DispatchDataType dispatchDataType;
+  /// Dispatch grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+  /// Routing metadata returned by MoERuntime::prepare().
+  ///
+  /// An empty handle requests automatic preparation. For a non-empty handle,
+  /// topkIdx, numTokens, maxTokensPerRank, numBlocks, and stream must match the preparation.
+  /// Request explicit preparation when output counts are required.
+  /// All ranks must agree on whether to reuse preparation or compute it automatically.
+  /// This dispatch must use the same CUDA stream as preparation.
+  /// Routing IDs must remain unchanged; their device contents are not validated
+  /// on the host. A graph may either reuse this preparation or capture automatic
+  /// preparation with dispatch.
+  PrepareHandle prepareHandle;
+};
+
+/// Mode-specific dispatch request.
+struct DispatchRequest {
+  /// Construct a latency dispatch request.
+  explicit DispatchRequest(LatencyDispatchRequest request) : value_(std::move(request)) {}
+  /// Construct a throughput dispatch request.
+  explicit DispatchRequest(ThroughputDispatchRequest request) : value_(std::move(request)) {}
+
+ private:
+  friend class MoERuntime;
+  std::variant<LatencyDispatchRequest, ThroughputDispatchRequest> value_;
+};
+
+/// Opaque metadata returned by a successful dispatch.
+///
+/// A handle borrows the dispatch's routing buffers and runtime resources.
+class DispatchHandle {
+ public:
+  /// Construct an empty handle. Passing it to combine raises EPException.
+  DispatchHandle() = default;
+
+ private:
+  friend class MoERuntime;
+
+  struct Impl;
+  explicit DispatchHandle(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+
+  std::shared_ptr<const Impl> impl_;
+};
+
+/// Arguments for latency-mode combine.
+struct LatencyCombineRequest {
+  /// Combined token output.
+  void* output;
+  /// Local results produced by expert computation.
+  ///
+  /// Rank-major input must be the runtime-owned combineInputBuffer(), with
+  /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
+  /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
+  /// request's quant.combineDataType: BF16 by default, or FP8_E4M3_STATIC with
+  /// matching static FP8 dispatch. Static FP8 input is dequantized with the
+  /// dispatch scale.
+  const void* input;
+  /// Handle returned by the matching dispatch.
+  DispatchHandle handle;
+  /// Combine grid block count. Zero uses the default number of blocks.
+  int numBlocks = 0;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+  /// Apply routing weights in DIRECT_SEND combine; false accepts preweighted
+  /// expert outputs. Ignored by RANK_LOCAL_REDUCE.
+  bool applyRouterWeights = true;
+};
+
+/// Arguments for throughput-mode combine.
+struct ThroughputCombineRequest {
+  /// Combined token output, 16-byte aligned.
+  void* output;
+  /// Local expert output must be written to MoERuntime::combineInputBuffer()
+  /// in the dispatch output layout before combine is enqueued.
+  /// Handle returned by the matching dispatch.
+  DispatchHandle handle;
+  /// Combine grid block count.
+  int numBlocks;
+  /// CUDA stream used for the operation.
+  cudaStream_t stream;
+};
+
+/// Mode-specific combine request.
+struct CombineRequest {
+  /// Construct a latency combine request.
+  explicit CombineRequest(LatencyCombineRequest request) : value_(std::move(request)) {}
+  /// Construct a throughput combine request.
+  explicit CombineRequest(ThroughputCombineRequest request) : value_(std::move(request)) {}
+
+ private:
+  friend class MoERuntime;
+  std::variant<LatencyCombineRequest, ThroughputCombineRequest> value_;
+};
+
+}  // namespace ep
+}  // namespace mscclpp
+
+#endif  // MSCCLPP_EXT_EP_TYPES_HPP_

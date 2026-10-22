@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 set(NVIDIA_FOUND "FALSE")
+set(NVIDIA_GPU_ARCH "")
 
 find_package(CUDAToolkit)
 
@@ -26,10 +27,18 @@ enable_language(CUDA)
 
 set(CHECK_SRC "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_nvidia_gpu.cu")
 
-try_run(RUN_RESULT COMPILE_SUCCESS SOURCES ${CHECK_SRC})
+try_run(RUN_RESULT COMPILE_SUCCESS
+        SOURCES ${CHECK_SRC}
+        RUN_OUTPUT_VARIABLE NVIDIA_GPU_ARCH_OUTPUT)
 
 if(COMPILE_SUCCESS AND RUN_RESULT EQUAL 0)
-    set(NVIDIA_FOUND "TRUE")
+    string(STRIP "${NVIDIA_GPU_ARCH_OUTPUT}" NVIDIA_GPU_ARCH_OUTPUT)
+    if(NVIDIA_GPU_ARCH_OUTPUT MATCHES "^[0-9]+$")
+        set(NVIDIA_FOUND "TRUE")
+        set(NVIDIA_GPU_ARCH "${NVIDIA_GPU_ARCH_OUTPUT}")
+    else()
+        unset(CMAKE_CUDA_ARCHITECTURES)
+    endif()
 else()
     unset(CMAKE_CUDA_ARCHITECTURES)
 endif()

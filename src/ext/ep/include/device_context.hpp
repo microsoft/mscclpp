@@ -1,0 +1,59 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+#ifndef MSCCLPP_EP_DEVICE_CONTEXT_HPP_
+#define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
+
+#include <mscclpp/memory_channel_device.hpp>
+
+namespace mscclpp {
+namespace ep {
+
+/// Persistent device resources shared by every dispatch and combine algorithm.
+struct DeviceContext {
+  /// Local base used to translate local buffer addresses into peer mappings.
+  void* localBufferBase_;
+  /// Peer mappings of the same symmetric allocation.
+  void* const* peerBufferBases_;
+  /// Peer synchronization channels.
+  mscclpp::BaseMemoryChannelDeviceHandle* channels_;
+  /// Optional algorithm workspace.
+  void* workspace_;
+  /// Maximum dynamic shared memory available to one block.
+  int maxSharedMemoryPerBlock_;
+  /// Number of SMs on the device.
+  int numSms_;
+  /// CUDA device ID.
+  int deviceId_;
+  /// Local rank.
+  int rank_;
+  /// Number of ranks.
+  int numRanks_;
+  /// Persistent device copy used by kernel launches. Host launch code only.
+  DeviceContext* devicePtr_ = nullptr;
+};
+
+struct TransportView {
+  void* symmetricBufferBase_;
+  void* const* peerMappedBufferBases_;
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
+  int rank_;
+
+  MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
+      : symmetricBufferBase_(context->localBufferBase_),
+        peerMappedBufferBases_(context->peerBufferBases_),
+        baseMemoryChannels_(context->channels_),
+        rank_(context->rank_) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
+    if (isSelf(peerRank)) return localBuffer;
+    const auto offset = reinterpret_cast<uint8_t*>(localBuffer) - reinterpret_cast<uint8_t*>(symmetricBufferBase_);
+    return reinterpret_cast<uint8_t*>(peerMappedBufferBases_[peerRank]) + offset;
+  }
+};
+
+}  // namespace ep
+}  // namespace mscclpp
+
+#endif  // MSCCLPP_EP_DEVICE_CONTEXT_HPP_
