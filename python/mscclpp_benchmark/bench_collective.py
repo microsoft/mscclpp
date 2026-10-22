@@ -22,24 +22,7 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
-from mscclpp_benchmark.gpu import (
-    capture_graph,
-    create_stream,
-    device_name,
-    device_synchronize,
-    event_create,
-    event_destroy,
-    event_elapsed_time,
-    event_record,
-    event_synchronize,
-    get_device_count,
-    init_runtime,
-    runtime_name,
-    set_device,
-    stream_destroy,
-    stream_synchronize,
-    version,
-)
+from mscclpp_benchmark import gpu
 from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
@@ -129,7 +112,7 @@ class BenchmarkCase:
 
 
 def _device_name() -> str:
-    return device_name()
+    return gpu.device_name()
 
 
 def _detect_hardware_profile(scale: int) -> HardwareProfile:
@@ -596,12 +579,12 @@ def _measure_case(
     _fill_case_for_benchmark(case, comm.rank)
     if comm.run(case, config) != 0:
         raise RuntimeError("algorithm returned non-zero status")
-    device_synchronize()
+    gpu.device_synchronize()
     comm.comm_group.barrier()
 
     with ExitStack() as resources:
-        stream = create_stream(non_blocking=True)
-        resources.callback(stream_destroy, stream)
+        stream = gpu.create_stream(non_blocking=True)
+        resources.callback(gpu.stream_destroy, stream)
         stream_ptr = int(stream)
 
         def capture_ops() -> None:
@@ -610,25 +593,25 @@ def _measure_case(
                 if ret != 0:
                     raise RuntimeError("algorithm returned non-zero status during graph capture")
 
-        graph = capture_graph(stream_ptr, capture_ops)
+        graph = gpu.capture_graph(stream_ptr, capture_ops)
         resources.callback(graph.close)
 
         for _ in range(n_warmup):
             graph.launch(stream_ptr)
-        stream_synchronize(stream)
+        gpu.stream_synchronize(stream)
         comm.comm_group.barrier()
 
-        start = event_create()[0]
-        resources.callback(event_destroy, start)
-        end = event_create()[0]
-        resources.callback(event_destroy, end)
-        event_record(start, stream_ptr)
+        start = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, start)
+        end = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, end)
+        gpu.event_record(start, stream_ptr)
         for _ in range(n_graph_launches):
             graph.launch(stream_ptr)
-        event_record(end, stream_ptr)
-        event_synchronize(end)
+        gpu.event_record(end, stream_ptr)
+        gpu.event_synchronize(end)
 
-        elapsed_us = event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
+        elapsed_us = gpu.event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
         return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
 
 
@@ -737,14 +720,14 @@ def _validate_args(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     args = _build_parser().parse_args(argv)
     _validate_args(args)
-    init_runtime()
+    gpu.init_runtime()
 
     local_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     try:
-        visible_devices = get_device_count()[0]
+        visible_devices = gpu.get_device_count()[0]
         if visible_devices <= 0:
             raise RuntimeError("MSCCL++ benchmark requires at least one visible GPU")
-        set_device(local_comm.Get_rank() % visible_devices)
+        gpu.set_device(local_comm.Get_rank() % visible_devices)
     finally:
         local_comm.Free()
 
@@ -874,7 +857,7 @@ def main(argv: list[str] | None = None) -> None:
             )
             if comm.rank == 0:
                 print(".", end="", flush=True)
-            if runtime_name() == "hip" and version()[:2] == (7, 2):
+            if gpu.runtime_name() == "hip" and gpu.version()[:2] == (7, 2):
                 # TODO: remove this after ROCm 7.2 HIP IPC export issue is fixed.
                 del case
                 comm.comm_group.barrier()
@@ -908,7 +891,7 @@ def main(argv: list[str] | None = None) -> None:
             )
     finally:
         comm_group.barrier()
-        device_synchronize()
+        gpu.device_synchronize()
         comm.close()
 
 
