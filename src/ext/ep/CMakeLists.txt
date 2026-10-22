@@ -49,6 +49,11 @@ set(MSCCLPP_EP_SOURCES
     dispatch/rank_major_dispatch.cu
     dispatch/throughput_dispatch.cu
     dispatch/throughput_prepare.cu
+    hybrid/combine/rank_local_reduce_combine.cu
+    hybrid/dispatch/rank_major_dispatch.cu
+    hybrid/gpu_net_io.cc
+    hybrid/latency.cc
+    hybrid/topk_expanded.cu
     latency.cc
     moe_runtime.cc
     throughput.cc
@@ -66,6 +71,23 @@ target_include_directories(mscclpp_ep PRIVATE
 target_link_libraries(mscclpp_ep PUBLIC mscclpp)
 target_link_libraries(mscclpp_ep PRIVATE ${GPU_LIBRARIES} Threads::Threads)
 target_compile_definitions(mscclpp_ep PRIVATE MSCCLPP_USE_CUDA)
+
+# GPU-initiated networking (GPUNetIO) backend for the hybrid cross-IPC-domain latency path.
+if(MSCCLPP_USE_GPUNETIO)
+    target_include_directories(mscclpp_ep PRIVATE ${PROJECT_SOURCE_DIR}/src/gpunetio/host)
+endif()
+
+option(MSCCLPP_EP_GPUNETIO_DIAG "Enable bounded GPUNetIO rank-major count diagnostics" OFF)
+if(MSCCLPP_EP_GPUNETIO_DIAG)
+    set_property(SOURCE hybrid/dispatch/rank_major_dispatch.cu APPEND PROPERTY
+        COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_DIAG)
+endif()
+
+option(MSCCLPP_EP_GPUNETIO_TIMING "Enable device printf timing for GPUNetIO rank-major kernels" OFF)
+if(MSCCLPP_EP_GPUNETIO_TIMING)
+    set_property(SOURCE hybrid/dispatch/rank_major_dispatch.cu hybrid/combine/rank_local_reduce_combine.cu
+        APPEND PROPERTY COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_TIMING)
+endif()
 
 set_target_properties(mscclpp_ep PROPERTIES
     CUDA_ARCHITECTURES "${_mscclpp_ep_gpu_archs}"

@@ -5,6 +5,7 @@
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 
 #include "exception.hpp"
+#include "hybrid/include/runtime.hpp"
 #include "moe_runtime_context.hpp"
 
 namespace mscclpp {
@@ -26,6 +27,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
                                                                 maxTokensPerRank, hidden, numExperts, numTopk,
                                                                 outputLayout, combineMode);
       available_ = latencyContext_->available_;
+      numRanksPerIpcDomain_ = latencyContext_->numRanksPerIpcDomain_;
       break;
     case MoEMode::THROUGHPUT:
       throughputContext_ =
@@ -68,8 +70,12 @@ void* MoERuntime::outputTopkIdsBuffer() const {
   }
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                 context.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  if (context.hybrid_ != nullptr) {
+    return context.hybrid_->layout(context.symmetricBuffer_.get()).rankMajorTopkIdsBuffer_;
+  }
   return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                               context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                               context.combineMode_)
@@ -84,8 +90,12 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
   }
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                 context.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  if (context.hybrid_ != nullptr) {
+    return context.hybrid_->layout(context.symmetricBuffer_.get()).rankMajorTopkWeightsBuffer_;
+  }
   return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                               context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                               context.combineMode_)
@@ -100,8 +110,12 @@ void* MoERuntime::outputScalesBuffer() const {
   }
   requireMode(MoEMode::LATENCY);
   const auto& context = *latencyContext_;
-  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                 context.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  if (context.hybrid_ != nullptr) {
+    return nullptr;
+  }
   return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                               context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                               context.combineMode_)
@@ -113,6 +127,9 @@ void* MoERuntime::dispatchOutputBuffer() const {
     case MoEMode::LATENCY: {
       const auto& context = *latencyContext_;
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+      if (context.hybrid_ != nullptr) {
+        return context.hybrid_->layout(context.symmetricBuffer_.get()).dispatchOutputBuffer_;
+      }
       return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                                   context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                                   context.combineMode_)
@@ -132,8 +149,12 @@ void* MoERuntime::combineInputBuffer() const {
   switch (mode_) {
     case MoEMode::LATENCY: {
       const auto& context = *latencyContext_;
-      EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+      EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR ||
+                     context.outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+      if (context.hybrid_ != nullptr) {
+        return context.hybrid_->layout(context.symmetricBuffer_.get()).combineRecvBuffer_;
+      }
       return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
                                   context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
                                   context.combineMode_)

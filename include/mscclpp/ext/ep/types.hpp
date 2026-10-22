@@ -29,7 +29,12 @@ enum class DispatchLayout {
   /// Compact token-major valid rows within throughput's fixed-capacity storage.
   TOKEN_MAJOR,
   /// Fixed-stride rows grouped by source rank.
-  RANK_MAJOR
+  RANK_MAJOR,
+  /// Fixed [source rank, token, top-k slot, hidden] rows, one per routed expert.
+  ///
+  /// Latency mode with RANK_LOCAL_REDUCE and BF16 only. Combine applies the
+  /// routing weights while reducing the top-k rows of each token.
+  RANK_MAJOR_TOPK_EXPANDED
 };
 
 /// Combine algorithm.

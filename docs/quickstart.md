@@ -97,6 +97,7 @@ There are a few optional CMake options you can set:
 - `-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON`: If the build environment doesn't have GPUs and only has CUDA installed, you can set these options to bypass GPU checks and use CUDA APIs. This is useful for building on CI systems or environments without GPUs.
 - `-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON`: If the build environment doesn't have GPUs and only has ROCm installed, you can set these options to bypass GPU checks and use ROCm APIs.
 - `-DMSCCLPP_USE_IB=OFF`: Don't build InfiniBand support.
+- `-DMSCCLPP_USE_GPUNETIO=ON`: Enable the optional GPUNetIO/GDAKI PortChannel backend (CUDA and IB required). CMake FetchContent downloads the SHA-pinned dependency only when enabled; see [backend setup and offline usage](../src/gpunetio/PROVENANCE.md). Existing CPU-proxy channels remain the default.
 - `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF`: Don't build the Python module.
 - `-DMSCCLPP_BUILD_TESTS=OFF`: Don't build the tests.
 - `-DMSCCLPP_BUILD_APPS_NCCL=OFF`: Don't build the NCCL API.

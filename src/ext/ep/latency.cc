@@ -4,11 +4,13 @@
 #include <cuda.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 
 #include "exception.hpp"
+#include "hybrid/include/runtime.hpp"
 #include "kernels.hpp"
 #include "moe_runtime_context.hpp"
 
@@ -21,6 +23,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
+      numRanksPerNode_(std::min(numRanks, communicator.bootstrap()->getNranksPerNode())),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
@@ -30,26 +33,48 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
-  if (!isSupportedHidden(hidden)) {
-    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
-  }
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
-  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
+                 outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE || combineMode == CombineMode::DIRECT_SEND);
+  if (outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && combineMode != CombineMode::RANK_LOCAL_REDUCE) {
+    EP_THROW("RANK_MAJOR_TOPK_EXPANDED requires CombineMode::RANK_LOCAL_REDUCE");
+  }
+  // Optionally shrink the CUDA IPC domain (for example to one node) so that traffic
+  // between domains is served by GPUNetIO instead of multi-node NVLink.
+  if (const char* forced = std::getenv("MSCCLPP_EP_IPC_DOMAIN_SIZE")) {
+    const int size = std::atoi(forced);
+    if (size >= 1 && size <= numRanks_ && numRanks_ % size == 0) numRanksPerIpcDomain_ = size;
+  }
+  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
+  const bool useGpuNetIo = hybrid::gpuNetIoRequested(numRanks_, numRanksPerIpcDomain_, outputLayout, combineMode);
+  if (hybrid::requiresHybrid(outputLayout, useGpuNetIo)) {
+    hybrid_ = std::make_unique<hybrid::LatencyRuntime>(rank_, numRanks_, numRanksPerIpcDomain_, numRanksPerNode_,
+                                                       maxTokensPerRank, hidden, numExperts, numTopk, outputLayout,
+                                                       combineMode, useGpuNetIo);
+    symmetricBufferBytes_ = static_cast<int64_t>(hybrid_->symmetricBufferBytes());
+    workspaceBytes_ = hybrid_->workspaceBytes();
+    available_ = isSupportedRanks(numRanks_) && (numRanksPerIpcDomain_ >= numRanks_ || useGpuNetIo);
+    return;
+  }
+  if (!isSupportedHidden(hidden)) {
+    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
+  }
   symmetricBufferBytes_ = static_cast<int64_t>(
       latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode));
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
-  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   CudaDeviceGuard deviceGuard(deviceId_);
+  // The hybrid runtime's GPUNetIO service references the symmetric buffer; release it first.
+  hybrid_.reset();
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
@@ -123,6 +148,10 @@ void LatencyRuntimeContext::initialize() {
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
+  if (hybrid_ != nullptr) {
+    hybrid_->initialize(communicator_, symmetricBuffer_.get(), peerMappedBufferBases_, peerMappedBufferBasesGpu_,
+                        baseMemoryChannelHandles_.get(), workspace_, maxSharedMemoryPerBlock, numSms, deviceId_);
+  }
 }
 
 DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
@@ -197,6 +226,37 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
   }
 
+  const Workload workload{.epoch_ = context.epoch_,
+                          .numTokens_ = numTokens,
+                          .hidden_ = hidden,
+                          .numTopk_ = numTopk,
+                          .numExperts_ = numExperts,
+                          .invalidTokenExpertId_ = invalidTokenExpertId,
+                          .maxTokensPerRank_ = maxTokensPerRank,
+                          .outputLayout_ = dispatchLayout,
+                          .dispatchDataType_ = dispatchDataType,
+                          .combineDataType_ = combineDataType,
+                          .dispatchScale_ = dispatchScale,
+                          .emitLocalExpertIds_ = emitLocalExpertIds,
+                          .inputMode_ = inputMode};
+  if (context.hybrid_ != nullptr) {
+    if (dispatchDataType != DispatchDataType::BF16 || combineDataType != DispatchDataType::BF16) {
+      EP_THROW("GPUNetIO and RANK_MAJOR_TOPK_EXPANDED latency dispatch support BF16 only");
+    }
+    if (emitLocalExpertIds) {
+      EP_THROW("Local expert IDs are unsupported by GPUNetIO and RANK_MAJOR_TOPK_EXPANDED latency dispatch");
+    }
+    const auto hybridLayout = context.hybrid_->layout(context.symmetricBuffer_.get());
+    EP_HOST_ASSERT(hybridLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
+    EP_HOST_ASSERT(output == hybridLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == hybridLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == hybridLayout.rankMajorTopkWeightsBuffer_);
+    DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
+    context.hybrid_->dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                              workload, hybridLayout.dispatchRecvBuffer_, numBlocks, stream);
+    return handle;
+  }
+
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
                                         context.numRanks_, numExperts, numTopk, context.outputLayout_,
                                         context.combineMode_);
@@ -212,19 +272,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     }
   }
 
-  const Workload workload{.epoch_ = context.epoch_,
-                          .numTokens_ = numTokens,
-                          .hidden_ = hidden,
-                          .numTopk_ = numTopk,
-                          .numExperts_ = numExperts,
-                          .invalidTokenExpertId_ = invalidTokenExpertId,
-                          .maxTokensPerRank_ = maxTokensPerRank,
-                          .outputLayout_ = dispatchLayout,
-                          .dispatchDataType_ = dispatchDataType,
-                          .combineDataType_ = combineDataType,
-                          .dispatchScale_ = dispatchScale,
-                          .emitLocalExpertIds_ = emitLocalExpertIds,
-                          .inputMode_ = inputMode};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
@@ -297,6 +344,15 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .emitLocalExpertIds_ = false,
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
+
+  if (context.hybrid_ != nullptr) {
+    const auto hybridLayout = context.hybrid_->layout(context.symmetricBuffer_.get());
+    EP_HOST_ASSERT(input == hybridLayout.combineRecvBuffer_);
+    context.hybrid_->combine(output, input, topkIdx, topkWeights, workload, hybridLayout.combineRecvBuffer_,
+                             hybridLayout.dispatchRecvBuffer_, numBlocks, stream);
+    ++context.epoch_;
+    return;
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
                                         context.numRanks_, numExperts, numTopk, context.outputLayout_,
