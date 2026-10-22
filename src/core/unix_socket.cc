@@ -142,7 +142,7 @@ void UnixSocketServer::start() {
 void UnixSocketServer::stop() {
   *abortFlag_ = 1;
   if (mainThread_.joinable()) {
-    INFO(MSCCLPP_INIT, "Stopping unix socket server");
+    // The logger may already be destroyed when the singleton stops at process exit.
     mainThread_.join();
   }
   ::close(listenUnixSockFd_);
@@ -251,6 +251,8 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
 }
 
 UnixSocketServer::UnixSocketServer() : abortFlagStorage_(new uint32_t(0)), abortFlag_(abortFlagStorage_.get()) {}
+
+UnixSocketServer::~UnixSocketServer() { stop(); }
 
 std::string UnixSocketServer::getSocketPath() const { return listenUnixSockPath_; }
 

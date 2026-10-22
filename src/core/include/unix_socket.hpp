@@ -18,6 +18,7 @@ class UnixSocketServer {
  public:
   static UnixSocketServer& instance();
   static std::string generateSocketPath(int socketId);
+  ~UnixSocketServer();
 
   void start();
   void stop();
