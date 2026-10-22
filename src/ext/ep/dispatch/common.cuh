@@ -813,7 +813,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
                                void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  static_assert(Hidden == 1024 || Hidden == 1536 || Hidden == 2048 || Hidden == 4096 || Hidden == 4352 ||
+  static_assert(Hidden == 256 || Hidden == 512 || Hidden == 768 || Hidden == 1024 || Hidden == 1280 || Hidden == 1536 ||
+                Hidden == 1792 || Hidden == 2048 || Hidden == 2560 || Hidden == 4096 || Hidden == 4352 ||
                 Hidden == 5120 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 8704 ||
                 Hidden == 9216);
   using OutputType = DispatchElementType<DataType>;
@@ -919,16 +920,40 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(context.devicePtr_ != nullptr);
 
   switch (workload.hidden_) {
+    case 256:
+      return dispatchHidden<256, Layout, KernelSelector>(output, outputScales, outputSrcInfo, outputTopkIdx,
+                                                         outputTopkWeights, outputLayout, outputCount, input, topkIdx,
+                                                         topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    case 512:
+      return dispatchHidden<512, Layout, KernelSelector>(output, outputScales, outputSrcInfo, outputTopkIdx,
+                                                         outputTopkWeights, outputLayout, outputCount, input, topkIdx,
+                                                         topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    case 768:
+      return dispatchHidden<768, Layout, KernelSelector>(output, outputScales, outputSrcInfo, outputTopkIdx,
+                                                         outputTopkWeights, outputLayout, outputCount, input, topkIdx,
+                                                         topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1024:
       return dispatchHidden<1024, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    case 1280:
+      return dispatchHidden<1280, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1536:
       return dispatchHidden<1536, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    case 1792:
+      return dispatchHidden<1792, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 2048:
       return dispatchHidden<2048, Layout, KernelSelector>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    case 2560:
+      return dispatchHidden<2560, Layout, KernelSelector>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4096:

@@ -665,7 +665,8 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  static_assert(Hidden == 1024 || Hidden == 1536 || Hidden == 2048 || Hidden == 4096 || Hidden == 4352 ||
+  static_assert(Hidden == 256 || Hidden == 512 || Hidden == 768 || Hidden == 1024 || Hidden == 1280 || Hidden == 1536 ||
+                Hidden == 1792 || Hidden == 2048 || Hidden == 2560 || Hidden == 4096 || Hidden == 4352 ||
                 Hidden == 5120 || Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 8704 ||
                 Hidden == 9216);
   const int nExperts = workload.numExperts_;
@@ -772,16 +773,40 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   }
 
   switch (workload.hidden_) {
+    case 256:
+      return combineHidden<Mode, 256, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
+    case 512:
+      return combineHidden<Mode, 512, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
+    case 768:
+      return combineHidden<Mode, 768, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
     case 1024:
       return combineHidden<Mode, 1024, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 1280:
+      return combineHidden<Mode, 1280, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
     case 1536:
       return combineHidden<Mode, 1536, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
+    case 1792:
+      return combineHidden<Mode, 1792, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
     case 2048:
       return combineHidden<Mode, 2048, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 2560:
+      return combineHidden<Mode, 2560, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
     case 4096:
