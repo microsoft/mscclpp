@@ -62,8 +62,10 @@ class CudaBufferTests(unittest.TestCase):
             return (0,)
 
         self.runtime = SimpleNamespace()
+        self.pointer_device = 2
         for name, callback in (
             ("GetDevice", lambda: (0, self.device)),
+            ("PointerGetAttributes", lambda ptr: (0, SimpleNamespace(device=self.pointer_device))),
             ("SetDevice", set_device),
             ("DeviceSynchronize", lambda: (0,)),
             ("Memcpy", memcpy),
@@ -148,6 +150,101 @@ class CudaBufferTests(unittest.TestCase):
         gc.collect()
         self.assertIsNone(owner())
         self.assertEqual(self.allocate.call_count, 1)
+
+    def test_from_ptr_preserves_memory_without_allocating_or_copying(self):
+        host = np.arange(8, dtype=np.uint32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.assertEqual(buffer.data.ptr, host.ctypes.data)
+        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((8,), np.dtype(np.uint32), (4,)))
+        self.assertEqual((buffer.size, buffer.nbytes, buffer.allocation_size), (8, host.nbytes, host.nbytes))
+        self.allocate.assert_not_called()
+        for func in vars(self.runtime).values():
+            if isinstance(func, Mock):
+                func.assert_not_called()
+        np.testing.assert_array_equal(buffer.to_numpy(), host)
+        view = buffer[2:6][1:3]
+        self.assertEqual(view.ptr, host.ctypes.data + 3 * host.itemsize)
+        view.fill(19)
+        np.testing.assert_array_equal(host, [0, 1, 2, 19, 19, 5, 6, 7])
+        buffer.fill(0)
+        np.testing.assert_array_equal(host, np.zeros(8, dtype=np.uint32))
+        self.allocate.assert_not_called()
+
+    def test_from_ptr_slices_retain_external_owner(self):
+        host = np.arange(8, dtype=np.int32)
+        owner = weakref.ref(host)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        view = buffer[2:7][1:3]
+        del host, buffer
+        gc.collect()
+        self.assertIsNotNone(owner())
+        np.testing.assert_array_equal(view.to_numpy(), [3, 4])
+        del view
+        gc.collect()
+        self.assertIsNone(owner())
+        self.allocate.assert_not_called()
+
+    def test_from_ptr_uses_pointer_device_and_restores_current_device(self):
+        self.device = 6
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.assertEqual(buffer.device_id, self.pointer_device)
+        buffer.copy_from_numpy(np.ones(4, dtype=np.int32))
+        self.assertEqual(self.device, 6)
+        self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
+        self.api("PointerGetAttributes").assert_called_once_with(host.ctypes.data)
+        self.api("Memcpy").side_effect = lambda *args: (17,)
+        with self.assertRaisesRegex(RuntimeError, "Memcpy failed with error 17"):
+            buffer.to_numpy()
+        self.assertEqual(self.device, 6)
+
+    def test_from_ptr_device_query_failure_is_reported_and_retryable(self):
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.api("PointerGetAttributes").side_effect = lambda ptr: (18, None)
+        with self.assertRaisesRegex(RuntimeError, "PointerGetAttributes failed with error 18"):
+            buffer.to_numpy()
+        self.api("Memcpy").assert_not_called()
+        self.api("SetDevice").assert_not_called()
+        self.api("PointerGetAttributes").side_effect = lambda ptr: (0, SimpleNamespace(device=2))
+        np.testing.assert_array_equal(buffer.to_numpy(), host)
+
+    def test_from_ptr_validates_metadata_without_gpu_calls(self):
+        for kwargs in (
+            {"ptr": -1, "nbytes": 4, "owner": object()},
+            {"ptr": 0, "nbytes": 4, "owner": object()},
+            {"ptr": 2 * (sys.maxsize + 1), "nbytes": 0, "owner": object()},
+            {"ptr": 2 * sys.maxsize, "nbytes": 4, "owner": object()},
+            {"ptr": 4096, "nbytes": -4, "owner": object()},
+            {"ptr": 4096, "nbytes": 4, "owner": None},
+            {"ptr": 4096, "nbytes": 5, "owner": object(), "dtype": np.uint32},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": object},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": "S0"},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": np.dtype(np.int32).newbyteorder("S")},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.GpuBuffer.from_ptr(**kwargs)
+        with self.assertRaises(OverflowError):
+            self.GpuBuffer.from_ptr(1, sys.maxsize + 1, object())
+        with self.assertRaises(TypeError):
+            self.GpuBuffer.from_ptr(1.5, 4, object())
+        self.allocate.assert_not_called()
+        self.api("PointerGetAttributes").assert_not_called()
+
+    def test_from_ptr_defaults_to_bytes_and_supports_empty_storage(self):
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host)
+        self.assertEqual((buffer.shape, buffer.dtype), ((host.nbytes,), np.dtype(np.uint8)))
+        np.testing.assert_array_equal(buffer.to_numpy(), host.view(np.uint8))
+        self.api("Memcpy").reset_mock()
+        self.api("PointerGetAttributes").reset_mock()
+        empty = self.GpuBuffer.from_ptr(0, 0, object())
+        self.assertEqual((empty.ptr, empty.nbytes, empty.allocation_size), (0, 0, 0))
+        self.assertEqual(empty.to_numpy().shape, (0,))
+        empty.fill(0)
+        self.api("Memcpy").assert_not_called()
+        self.api("PointerGetAttributes").assert_not_called()
+        self.allocate.assert_not_called()
 
     def test_fill_preserves_nonzero_and_negative_zero_bits(self):
         buffer = self.GpuBuffer(5, dtype=np.float32)

@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Optional, Tuple, Dict
 from functools import cached_property
 
+import numpy as np
+
+from mscclpp._core.buffer import GpuBuffer
 
 from mscclpp._mscclpp import (
     CppAlgorithm,
@@ -259,21 +262,21 @@ class AlgorithmCollection:
         self._algorithms.append(algorithm)
 
 
-_flag_buffer_cache: Optional[Tuple[int, int, object]] = None
+_flag_buffer_cache: Optional[GpuBuffer] = None
 
 
-def get_flag_buffer() -> Tuple[int, int, object]:
+def get_flag_buffer() -> GpuBuffer:
     """Get the default flag buffer for algorithm selection.
 
     This buffer is used internally by default algorithms to store selection flags.
-    The native pointer, byte size, and owner are cached so all callers share the
-    same buffer without constructing an array view.
+    The cached GpuBuffer wraps the native allocation without allocating or copying
+    GPU memory and retains its shared owner.
 
     Returns:
-        A tuple of (buffer_ptr, buffer_size, owner). Retain the owner while using
-        the buffer to preserve its native shared ownership.
+        A one-dimensional uint32 GpuBuffer sharing the native flag storage.
     """
     global _flag_buffer_cache
     if _flag_buffer_cache is None:
-        _flag_buffer_cache = cpp_get_flag_buffer()
+        buffer_ptr, buffer_size, owner = cpp_get_flag_buffer()
+        _flag_buffer_cache = GpuBuffer.from_ptr(buffer_ptr, buffer_size, owner, dtype=np.uint32)
     return _flag_buffer_cache

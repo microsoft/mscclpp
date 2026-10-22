@@ -54,6 +54,37 @@ def test_gpu_backend(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(1)
+def test_gpu_buffer_external_view(mpi_group: MpiGroup):
+    expected = np.arange(8, dtype=np.uint32)
+    original = GpuBuffer.from_numpy(expected)
+    wrapped = GpuBuffer.from_ptr(original.ptr, original.nbytes, original, dtype=original.dtype)
+    assert wrapped.ptr == original.ptr
+    assert wrapped.device_id == original.device_id
+    np.testing.assert_array_equal(wrapped.to_numpy(), expected)
+    view = wrapped[2:4]
+    view.fill(19)
+    expected[2:4] = 19
+    np.testing.assert_array_equal(original.to_numpy(), expected)
+    del original, wrapped
+    np.testing.assert_array_equal(view.to_numpy(), expected[2:4])
+
+
+@parametrize_mpi_groups(1)
+def test_flag_buffer_wraps_native_storage(mpi_group: MpiGroup):
+    from mscclpp._core.algorithm import get_flag_buffer
+    from mscclpp._mscclpp import cpp_get_flag_buffer
+
+    ptr, nbytes, owner = cpp_get_flag_buffer()
+    flags = get_flag_buffer()
+    assert isinstance(flags, GpuBuffer)
+    assert flags is get_flag_buffer()
+    assert (flags.data.ptr, flags.nbytes) == (ptr, nbytes)
+    assert flags.dtype == np.dtype(np.uint32)
+    native_view = GpuBuffer.from_ptr(ptr, nbytes, owner, dtype=np.uint32)
+    np.testing.assert_array_equal(flags.to_numpy(), native_view.to_numpy())
+
+
+@parametrize_mpi_groups(1)
 def test_env(mpi_group: MpiGroup):
     e = env()
     assert isinstance(e.debug, str)

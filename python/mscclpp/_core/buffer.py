@@ -32,6 +32,27 @@ def _call(func, *args):
     return values
 
 
+class _ExternalGpuAllocation:
+    def __init__(self, ptr: int, nbytes: int, owner: object):
+        self._ptr = ptr
+        self._nbytes = nbytes
+        self._owner = owner
+        self._device_id = None
+
+    def data(self) -> int:
+        return self._ptr
+
+    def bytes(self) -> int:
+        return self._nbytes
+
+    def device_id(self) -> int:
+        if self._device_id is None:
+            runtime, prefix = _runtime()
+            (attributes,) = _call(getattr(runtime, prefix + "PointerGetAttributes"), self._ptr)
+            self._device_id = int(attributes.device)
+        return self._device_id
+
+
 class GpuBuffer:
     """Native-owned, contiguous GPU storage with explicit host transfers.
 
@@ -48,6 +69,11 @@ class GpuBuffer:
         order: str = "C",
         granularity: CppGpuBufferGranularity = CppGpuBufferGranularity.MultiCastMinimum,
     ):
+        self._set_layout(shape, dtype, strides, order)
+        self._allocation = CppRawGpuBuffer(max(1, self.nbytes), granularity)
+        self._offset = 0
+
+    def _set_layout(self, shape, dtype, strides, order):
         if isinstance(shape, (int, np.integer)):
             shape = (shape,)
         try:
@@ -74,8 +100,34 @@ class GpuBuffer:
         self._strides = tuple(contiguous_strides)
         if strides is not None and tuple(strides) != self.strides:
             raise ValueError("GpuBuffer supports only contiguous strides.")
-        self._allocation = CppRawGpuBuffer(max(1, self.nbytes), granularity)
-        self._offset = 0
+
+    @classmethod
+    def from_ptr(cls, ptr: int, nbytes: int, owner: object, dtype=np.uint8) -> "GpuBuffer":
+        """Wrap existing GPU memory as a one-dimensional buffer without allocating or copying.
+
+        ``ptr`` must point to at least ``nbytes`` bytes of valid GPU storage.
+        ``owner`` must keep that storage alive; this buffer and its slices retain it.
+        The wrapper never frees the pointer itself. The byte size must be a multiple
+        of the dtype's item size. Transfers query the pointer's device, not the current
+        device at construction.
+        """
+        ptr = operator.index(ptr)
+        nbytes = operator.index(nbytes)
+        if nbytes < 0:
+            raise ValueError("Buffer byte size must be non-negative.")
+        address_limit = 2 * (sys.maxsize + 1)
+        if not 0 <= ptr < address_limit or ptr + nbytes > address_limit or (ptr == 0 and nbytes):
+            raise ValueError("Invalid GPU memory pointer or address range.")
+        if owner is None:
+            raise ValueError("An owner is required to keep GPU memory alive.")
+        dtype = np.dtype(dtype)
+        if dtype.itemsize == 0 or nbytes % dtype.itemsize:
+            raise ValueError("Buffer byte size must be a multiple of the dtype item size.")
+        result = cls.__new__(cls)
+        result._set_layout(nbytes // dtype.itemsize, dtype, None, "C")
+        result._allocation = _ExternalGpuAllocation(ptr, nbytes, owner)
+        result._offset = 0
+        return result
 
     @property
     def shape(self) -> tuple[int, ...]:

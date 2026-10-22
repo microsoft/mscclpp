@@ -132,6 +132,15 @@ unit-step slices alias GPU storage and retain the native allocation even after t
 parent wrapper is released. Multidimensional slicing, strided views, implicit array
 conversion, element assignment, and array arithmetic are not supported.
 
+`GpuBuffer.from_ptr(ptr, nbytes, owner, dtype=np.uint8)` wraps existing GPU memory
+without allocating or copying it. It creates a one-dimensional view and requires
+the byte size to be a multiple of the dtype's item size. The buffer and its slices
+retain `owner`, which must keep the memory alive; the wrapper does not free the
+pointer itself. Transfers use the device associated with the pointer.
+The internal `get_flag_buffer()` uses this path to return a cached `uint32`
+`GpuBuffer` over the same native flag allocation used by C++/NCCL, preserving its
+contents and ownership rather than creating a separate Python allocation.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
