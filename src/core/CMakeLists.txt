@@ -41,12 +41,8 @@ if(MSCCLPP_USE_GDRCOPY)
 endif()
 
 if(MSCCLPP_USE_GPUNETIO)
-    # GPU-initiated networking backend for PortChannel (DOCA GPUNetIO dependency).
-    # Link the host object library so the host-side GpuNetIo service can
-    # create QPs / register MRs. Consumer usage requirements are attached to the
-    # final shared/static targets below, independently of internal object compilation.
-    target_link_libraries(mscclpp_obj PRIVATE mscclpp_gpunetio_obj)
-    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_HAS_GPUNETIO)
+    target_link_libraries(mscclpp_obj PUBLIC mscclpp_gpunetio_headers)
+    target_compile_definitions(mscclpp_obj PUBLIC MSCCLPP_USE_GPUNETIO)
 endif()
 
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
@@ -74,44 +70,20 @@ endif()
 
 # libmscclpp
 add_library(mscclpp SHARED)
-target_link_libraries(mscclpp PUBLIC $<BUILD_INTERFACE:mscclpp_obj>)
+target_link_libraries(mscclpp PUBLIC mscclpp_obj)
 if(MSCCLPP_USE_GPUNETIO)
-    target_link_libraries(mscclpp PUBLIC $<BUILD_INTERFACE:mscclpp_gpunetio_obj>)
+    target_sources(mscclpp PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
 endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
-target_link_libraries(mscclpp_static PUBLIC $<BUILD_INTERFACE:mscclpp_obj>)
+target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
 if(MSCCLPP_USE_GPUNETIO)
-    target_link_libraries(mscclpp_static PUBLIC $<BUILD_INTERFACE:mscclpp_gpunetio_obj>)
+    target_sources(mscclpp_static PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
 endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
-foreach(target IN ITEMS mscclpp mscclpp_static)
-    target_include_directories(${target} INTERFACE
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
-        $<INSTALL_INTERFACE:include>)
-    target_compile_features(${target} INTERFACE cxx_std_20)
-    if(MSCCLPP_USE_ROCM AND MSCCLPP_ROCM_USE_FNUZ_FP8)
-        target_compile_definitions(${target} INTERFACE MSCCLPP_ROCM_FP8_FNUZ)
-    endif()
-    if(MSCCLPP_USE_GPUNETIO)
-        target_link_libraries(${target} INTERFACE mscclpp_gpunetio_headers)
-        target_compile_definitions(${target} INTERFACE MSCCLPP_USE_GPUNETIO)
-    endif()
-endforeach()
-add_library(mscclpp::mscclpp ALIAS mscclpp)
-add_library(mscclpp::mscclpp_static ALIAS mscclpp_static)
-
-install(TARGETS mscclpp EXPORT mscclppTargets
+install(TARGETS mscclpp
     LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
-install(TARGETS mscclpp_static EXPORT mscclppTargets
+install(TARGETS mscclpp_static
     ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
-install(EXPORT mscclppTargets NAMESPACE mscclpp:: DESTINATION lib/cmake/mscclpp)
-include(CMakePackageConfigHelpers)
-configure_package_config_file(${PROJECT_SOURCE_DIR}/cmake/mscclpp-config.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-config.cmake INSTALL_DESTINATION lib/cmake/mscclpp)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-config.cmake
-    ${PROJECT_SOURCE_DIR}/cmake/FindNUMA.cmake ${PROJECT_SOURCE_DIR}/cmake/FindIBVerbs.cmake
-    ${PROJECT_SOURCE_DIR}/cmake/FindGDRCopy.cmake DESTINATION lib/cmake/mscclpp)

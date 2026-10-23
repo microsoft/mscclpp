@@ -6,147 +6,138 @@
 
 #include <cstdint>
 
+#include "assert_device.hpp"
 #include "device.hpp"
 
-namespace mscclpp {
+#if defined(MSCCLPP_DEVICE_COMPILE) && defined(MSCCLPP_USE_GPUNETIO)
+#include <doca_gpunetio_device.h>
+#endif
 
-/// One local or remote registration. Keys are stored in host byte order.
+namespace mscclpp {
+namespace detail {
+
+/// A registered memory region that a GPUNetIO PortChannel can address by MemoryId.
 struct GpuNetIoMemoryDeviceHandle {
-  uintptr_t base;
-  uint64_t bytes;
+  /// Base address of the region in the owner's address space.
+  uint64_t addr;
+  /// Size of the region in bytes. Zero marks a MemoryId that is not usable on this channel.
+  uint64_t size;
+  /// Local key (local regions) or remote key (remote regions), in network byte order.
   uint32_t key;
-  int rank;
+  /// Nonzero if the region belongs to the local process.
+  uint32_t isLocal;
 };
 
-/// Device-side context for the GPU-initiated networking (GPUNetIO / GDAKI)
-/// PortChannel backend. This is the kernel-issued RDMA path: instead of pushing
-/// a ProxyTrigger to the host FIFO, the calling thread/warp builds the WQE and
-/// rings the NIC doorbell directly via the DOCA GPUNetIO device verbs.
-///
-/// The legacy `put`, `putWithSignal`, and `atomicAdd` helpers use a symmetric-memory
-/// model: a bootstrap rank selects `rkeys[peer]` and `peerBase[peer]`. The
-/// registered-operation helpers instead use their explicit registration handles.
-/// `qps` uses peerQpOffsets[peer]+qpIndex when offsets are supplied, otherwise
-/// peer*numQpsPerPeer+qpIndex for legacy contexts. All QPs use the same local HCA.
-struct GpuNetIoDeviceContext {
-  /// Per-peer GPU-mapped DOCA GDAKI queue pairs (type doca_gpu_dev_verbs_qp*).
-  /// Kept as void* here so this public header does not pull in the DOCA device
-  /// headers; the implementation reinterprets it.
-  void* qps;
-  /// Per-peer remote keys (network byte order), device array of length numPeers.
-  const uint32_t* rkeys;
-  /// Per-peer remote symmetric-buffer base addresses, device array.
-  const uintptr_t* peerBase;
-  /// This rank's local memory-region key.
-  uint32_t lkey;
-  /// This rank's symmetric-buffer base address.
-  uintptr_t localBase;
-  /// Number of peers (== world size); indices into the arrays above.
-  int numPeers;
-  /// Registered backend-owned fetch-add result slots, one uint64_t per QP.
-  uintptr_t atomicResultBase;
-  /// Local registration key for atomicResultBase, in host byte order.
-  uint32_t atomicResultLkey;
-  /// Maximum per-peer count, or the stride for legacy contexts without offsets.
-  int numQpsPerPeer = 1;
-  /// Compact per-peer QP offsets, length numPeers+1; repeated offsets indicate no connection.
-  const int* peerQpOffsets = nullptr;
+/// Device-side state of a PortChannel whose connection uses EndpointConfig::Ib::Mode::GpuNetIo.
+/// The calling GPU thread builds work requests and rings the NIC doorbell itself (DOCA GPUNetIO).
+struct GpuNetIoDeviceHandle {
+  /// GPU-resident DOCA queue pair (`doca_gpu_dev_verbs_qp*`) of the connection.
+  void* qp;
+  /// Remote semaphore token targeted by signals.
+  uint64_t signalAddr;
+  /// Remote key of the semaphore token, in network byte order.
+  uint32_t signalKey;
+  /// Local key of the connection's atomic fetch-result scratch, in network byte order.
+  uint32_t atomicScratchKey;
+  /// Connection-owned 8-byte buffer that receives atomic fetch results.
+  uint64_t atomicScratchAddr;
+  /// Snapshot of the ProxyService memory table, indexed by MemoryId.
+  const GpuNetIoMemoryDeviceHandle* memories;
+  /// Number of entries in `memories`.
+  uint32_t numMemories;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Write between explicit registrations on the selected peer/QP.
-  MSCCLPP_DEVICE_INLINE void putRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst, uint64_t dstOffset,
-                                           GpuNetIoMemoryDeviceHandle src, uint64_t srcOffset, uint64_t size);
-  /// Write and signal using independent data and signal registrations on one QP.
-  MSCCLPP_DEVICE_INLINE void putRegisteredWithSignal(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
-                                                     uint64_t dstOffset, GpuNetIoMemoryDeviceHandle src,
-                                                     uint64_t srcOffset, uint64_t size,
-                                                     GpuNetIoMemoryDeviceHandle signal);
-  /// Add to an explicit registered destination on the selected peer/QP.
-  MSCCLPP_DEVICE_INLINE void atomicAddRegistered(int peer, int qpIndex, GpuNetIoMemoryDeviceHandle dst,
-                                                 uint64_t dstOffset, int64_t value);
-  /// Kernel-initiated RDMA write of [srcOffset, srcOffset+size) from the local
-  /// symmetric buffer into peer `peer`'s symmetric buffer at dstOffset.
-  MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int qpIndex = 0);
-
-  /// Kernel-initiated RDMA write followed by a fused remote atomic-add signal
-  /// (visible only after the payload settles).
-  MSCCLPP_DEVICE_INLINE void putWithSignal(int peer, uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                           uint64_t signalOffset, uint64_t signalValue, int qpIndex = 0);
-
-  /// Kernel-initiated remote 64-bit atomic add.
-  MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t dstOffset, int64_t value, int qpIndex = 0);
-
-  /// Wait for locally-issued RDMA on this peer's selected QP (device CQ poll).
-  MSCCLPP_DEVICE_INLINE void flush(int peer, int qpIndex = 0);
-
-  /// Bounded version of `flush` for tests/diagnostics. Returns 0 on completion,
-  /// EBUSY on timeout, or a negative CQ error status.
-  MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t maxSpinCount, int qpIndex = 0);
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
-};
-
-}  // namespace mscclpp
-
-#if defined(MSCCLPP_DEVICE_COMPILE)
-// The real DOCA GPUNetIO device-verb implementations live in an internal header
-// that is only pulled in when the backend is compiled in, keeping the heavy DOCA
-// device headers out of this widely-included public header. When the backend is
-// not compiled in, the methods are defined as unreachable traps so that any
-// translation unit still links; the host never selects the GpuNetIo backend in
-// that configuration.
-#if defined(MSCCLPP_USE_GPUNETIO)
-#include "internal/port_channel_gpunetio_device_impl.hpp"
+  MSCCLPP_DEVICE_INLINE static void trap() {
+#if defined(MSCCLPP_DEVICE_CUDA)
+    __trap();
 #else
-namespace mscclpp {
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
-                                                                GpuNetIoMemoryDeviceHandle, uint64_t, uint64_t) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
+    __builtin_trap();
 #endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putRegisteredWithSignal(int, int, GpuNetIoMemoryDeviceHandle,
-                                                                          uint64_t, GpuNetIoMemoryDeviceHandle,
-                                                                          uint64_t, uint64_t,
-                                                                          GpuNetIoMemoryDeviceHandle) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
+  }
+
+  /// Trap on an invalid access even when device assertions are disabled.
+  MSCCLPP_DEVICE_INLINE static void require(bool valid) {
+    if (!valid) {
+      MSCCLPP_ASSERT_DEVICE(false, "Invalid GPUNetIO PortChannel memory access");
+      trap();
+    }
+  }
+
+  /// Resolve a MemoryId and check its owner and bounds.
+  MSCCLPP_DEVICE_INLINE GpuNetIoMemoryDeviceHandle memory(uint32_t id, bool local, uint64_t offset,
+                                                          uint64_t bytes) const {
+    require(id < numMemories);
+    const GpuNetIoMemoryDeviceHandle mem = memories[id];
+    require((mem.isLocal != 0) == local && offset <= mem.size && bytes <= mem.size - offset);
+    return mem;
+  }
+
+  /// RDMA write of `size` bytes from a local region to a remote region.
+  MSCCLPP_DEVICE_INLINE void put(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
+                                 const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    doca_gpu_dev_verbs_ticket_t ticket;
+    doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+        static_cast<doca_gpu_dev_verbs_qp*>(qp), {dst.addr + dstOffset, dst.key}, {src.addr + srcOffset, src.key}, size,
+        &ticket);
+#else
+    trap();
 #endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAddRegistered(int, int, GpuNetIoMemoryDeviceHandle, uint64_t,
-                                                                      int64_t) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
+  }
+
+  /// RDMA write followed by a +1 atomic on the remote semaphore token, ordered after the write.
+  MSCCLPP_DEVICE_INLINE void putWithSignal(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
+                                           const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    doca_gpu_dev_verbs_ticket_t ticket;
+    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+        static_cast<doca_gpu_dev_verbs_qp*>(qp), {dst.addr + dstOffset, dst.key}, {src.addr + srcOffset, src.key}, size,
+        {signalAddr, signalKey}, {atomicScratchAddr, atomicScratchKey}, 1, &ticket);
+#else
+    trap();
 #endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::put(int, uint64_t, uint64_t, uint64_t, int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
+  }
+
+  /// Remote 64-bit atomic add (a zero-byte write fused with the atomic).
+  MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t addr, uint32_t key, int64_t value) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const doca_gpu_dev_verbs_addr remote{addr, key};
+    const doca_gpu_dev_verbs_addr scratch{atomicScratchAddr, atomicScratchKey};
+    doca_gpu_dev_verbs_ticket_t ticket;
+    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+        static_cast<doca_gpu_dev_verbs_qp*>(qp), remote, scratch, 0, remote, scratch, static_cast<uint64_t>(value),
+        &ticket);
+#else
+    trap();
 #endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::putWithSignal(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
-                                                                int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
+  }
+
+  /// Wait until every work request posted so far on the queue pair has completed.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void flush([[maybe_unused]] int64_t maxSpinCount) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
+    const uint64_t ticket =
+        doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->sq_rsvd_index);
+    if (ticket == 0) return;
+    int status;
+    [[maybe_unused]] int64_t spinCount = 0;
+    while ((status = doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(q, ticket - 1)) ==
+           EBUSY) {
+      MSCCLPP_ASSERT_DEVICE((maxSpinCount < 0 || spinCount++ != maxSpinCount), "GPUNetIO flush timed out");
+    }
+    if (status != 0) {
+      MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO completion queue reported an error");
+      trap();
+    }
+#else
+    trap();
 #endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::atomicAdd(int, uint64_t, int64_t, int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
-#endif
-}
-MSCCLPP_DEVICE_INLINE void GpuNetIoDeviceContext::flush(int, int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
-#endif
-}
-MSCCLPP_DEVICE_INLINE int GpuNetIoDeviceContext::tryFlush(int, uint64_t, int) {
-#if defined(MSCCLPP_DEVICE_CUDA)
-  __trap();
-#endif
-  return -1;
-}
-}  // namespace mscclpp
-#endif  // defined(MSCCLPP_USE_GPUNETIO)
+  }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
+};
+
+}  // namespace detail
+}  // namespace mscclpp
 
 #endif  // MSCCLPP_PORT_CHANNEL_GPUNETIO_DEVICE_HPP_

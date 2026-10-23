@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
 
 #include "api.h"
 #include "atomic.hpp"
 #include "connection.hpp"
+#include "gpunetio.hpp"
 #include "logger.hpp"
 #include "proxy_impl.hpp"
 
@@ -16,22 +16,14 @@ namespace mscclpp {
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                                  std::shared_ptr<Proxy> proxy)
-    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
+    : semaphoreId_(semaphoreId),
+      semaphore_(semaphore),
+      proxy_(proxy),
+      gpuNetIo_(semaphore ? detail::GpuNetIoChannel::bind(*semaphore, {}) : nullptr) {}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
     : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
-
-#if !defined(MSCCLPP_HAS_GPUNETIO)
-MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore& semaphore) : BasePortChannel(semaphore, {}) {}
-MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const GpuNetIoSemaphore&, const std::vector<GpuNetIoMemory>&)
-    : semaphoreId_(0) {
-  throw Error("MSCCL++ was built without GPUNetIO", ErrorCode::InvalidUsage);
-}
-MSCCLPP_API_CPP PortChannel::PortChannel(const GpuNetIoSemaphore& semaphore, const GpuNetIoMemory& dst,
-                                         const GpuNetIoMemory& src)
-    : BasePortChannel(semaphore, {dst, src}), dst_(0), src_(1) {}
-#endif
 
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
@@ -91,11 +83,15 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
-  return BasePortChannel(id, semaphores_[id], proxy_);
+  BasePortChannel channel(id, semaphores_[id], proxy_);
+  if (channel.gpuNetIo_) channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
+  return channel;
 }
 
 MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
-  return PortChannel(id, semaphores_[id], proxy_, dst, src);
+  PortChannel channel(id, semaphores_[id], proxy_, dst, src);
+  if (channel.gpuNetIo_) channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
+  return channel;
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
@@ -199,21 +195,25 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  if (gpuNetIoState_) {
-    return gpuNetIoHandle_;
-  }
   auto& conn = semaphore_->connection();
-  return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
+  BasePortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
                                        conn.impl_->getFlushDonePtr());
+  if (gpuNetIo_) {
+    handle.backend_ = PortChannelBackend::GpuNetIo;
+    handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
+  }
+  return handle;
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
-  if (gpuNetIoState_) {
-    return PortChannel::DeviceHandle(gpuNetIoHandle_, dst_, src_);
-  }
   auto& conn = semaphore_->connection();
-  return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
+  PortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
                                    conn.impl_->getFlushDonePtr());
+  if (gpuNetIo_) {
+    handle.backend_ = PortChannelBackend::GpuNetIo;
+    handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
+  }
+  return handle;
 }
 
 void ProxyService::progressFlushes() {
