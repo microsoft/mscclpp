@@ -6,20 +6,20 @@
 namespace mscclpp {
 namespace ep {
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads, 1) void directSendCombineKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
-  combineBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout>(
+  combineBody<CombineMode::DIRECT_SEND, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
 
 struct DirectSendCombineKernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return directSendCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return directSendCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 
