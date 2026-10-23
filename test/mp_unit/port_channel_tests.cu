@@ -1,12 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <mpi.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
+#include <vector>
 
+#include "connection.hpp"
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
@@ -796,6 +801,111 @@ void PortChannelOneToOneTest::testAccumulateRejected(mscclpp::Transport transpor
     EXPECT_TRUE(rejectsBackend);
     EXPECT_TRUE(rejectsHuge);
   }
+}
+
+TEST(PortChannelOneToOneTest, CudaIpcUpdateAndSyncUsesByteOffset) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int peer = 1 - gEnv->rank;
+  // Keep the allocation larger than its registration so a regression that still applies the
+  // offset twice stays inside the physical allocation while the value checks catch the wrong slot.
+  auto backing = mscclpp::detail::gpuCallocShared<uint64_t>(16);
+  auto connectionFuture = communicator->connect(mscclpp::Transport::CudaIpc, peer, /*tag=*/86);
+  auto localMemory = communicator->registerMemory(backing.get(), 2 * sizeof(uint64_t), mscclpp::Transport::CudaIpc);
+  communicator->sendMemory(localMemory, peer, /*tag=*/87);
+  auto remoteMemoryFuture = communicator->recvMemory(peer, /*tag=*/87);
+
+  auto connection = connectionFuture.get();
+  auto remoteMemory = remoteMemoryFuture.get();
+  const uint64_t value = 0x1234000000000000ULL + static_cast<uint64_t>(gEnv->rank);
+  uint64_t source = 0;
+  connection.updateAndSync(remoteMemory, sizeof(uint64_t), &source, value);
+  connection.flush();
+  communicator->bootstrap()->barrier();
+
+  std::vector<uint64_t> observed(16);
+  mscclpp::gpuMemcpy<uint64_t>(observed.data(), backing.get(), observed.size(), cudaMemcpyDeviceToHost);
+  EXPECT_EQ(observed[0], uint64_t{0});
+  EXPECT_EQ(observed[1], 0x1234000000000000ULL + static_cast<uint64_t>(peer));
+  EXPECT_EQ(observed[9], uint64_t{0});
+}
+
+TEST(CommunicatorTestBase, EthernetChunkedWritePreservesPayloadAndNextFrame) {
+  if (gEnv->worldSize != 2) SKIP_TEST() << "Ethernet chunk test requires exactly two ranks";
+
+  const int peer = 1 - gEnv->rank;
+  auto exchangeBytes = [peer](const std::vector<char>& outgoing, int tag) {
+    int outgoingSize = static_cast<int>(outgoing.size());
+    int incomingSize = 0;
+    if (MPI_Sendrecv(&outgoingSize, 1, MPI_INT, peer, tag, &incomingSize, 1, MPI_INT, peer, tag, MPI_COMM_WORLD,
+                     MPI_STATUS_IGNORE) != MPI_SUCCESS ||
+        incomingSize < 0) {
+      return std::vector<char>{};
+    }
+    std::vector<char> incoming(static_cast<size_t>(incomingSize));
+    if (MPI_Sendrecv(outgoing.data(), outgoingSize, MPI_BYTE, peer, tag + 1, incoming.data(), incomingSize, MPI_BYTE,
+                     peer, tag + 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE) != MPI_SUCCESS) {
+      return std::vector<char>{};
+    }
+    return incoming;
+  };
+
+  auto context = communicator->context();
+  mscclpp::EndpointConfig endpointConfig;
+  endpointConfig.transport = mscclpp::Transport::Ethernet;
+  auto localEndpoint = context->createEndpoint(endpointConfig);
+  auto remoteEndpointBytes = exchangeBytes(localEndpoint.serialize(), /*tag=*/21000);
+  ASSERT_FALSE(remoteEndpointBytes.empty());
+  auto remoteEndpoint = mscclpp::Endpoint::deserialize(remoteEndpointBytes);
+
+  constexpr size_t firstPayloadSize = 128;
+  constexpr size_t secondPayloadSize = 16;
+  constexpr size_t totalSize = firstPayloadSize + secondPayloadSize;
+  auto source = mscclpp::detail::gpuCallocShared<uint8_t>(totalSize);
+  auto destination = mscclpp::detail::gpuCallocShared<uint8_t>(totalSize);
+  std::vector<uint8_t> sourceData(totalSize);
+  for (size_t i = 0; i < firstPayloadSize; ++i) {
+    sourceData[i] = static_cast<uint8_t>(gEnv->rank * 19 + i + 1);
+  }
+  // If a broken frame boundary consumes this payload as the next size field, it stays a large
+  // incomplete size and the receiver waits for shutdown instead of copying to a bogus pointer.
+  std::fill(sourceData.begin() + firstPayloadSize, sourceData.end(), uint8_t{0xA5});
+  mscclpp::gpuMemcpy<uint8_t>(source.get(), sourceData.data(), totalSize, cudaMemcpyHostToDevice);
+
+  auto localSource = context->registerMemory(source.get(), totalSize, mscclpp::Transport::Ethernet);
+  auto localDestination = context->registerMemory(destination.get(), totalSize, mscclpp::Transport::Ethernet);
+  auto remoteDestinationBytes = exchangeBytes(localDestination.serialize(), /*tag=*/21002);
+  ASSERT_FALSE(remoteDestinationBytes.empty());
+  auto remoteDestination = mscclpp::RegisteredMemory::deserialize(remoteDestinationBytes);
+
+  // A 64-byte staging buffer has a 48-byte first payload after the 16-byte metadata header.
+  // This crosses the chunk boundary and then verifies that a following frame remains aligned.
+  mscclpp::EthernetConnection connection(context, localEndpoint, remoteEndpoint, /*sendBufferSize=*/64,
+                                         /*recvBufferSize=*/64);
+  connection.write(remoteDestination, 0, localSource, 0, firstPayloadSize);
+  connection.write(remoteDestination, firstPayloadSize, localSource, firstPayloadSize, secondPayloadSize);
+  connection.flush();
+
+  const int sender = peer;
+  std::vector<uint8_t> expected(totalSize);
+  for (size_t i = 0; i < firstPayloadSize; ++i) {
+    expected[i] = static_cast<uint8_t>(sender * 19 + i + 1);
+  }
+  std::fill(expected.begin() + firstPayloadSize, expected.end(), uint8_t{0xA5});
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  uint8_t finalByte = 0;
+  do {
+    mscclpp::gpuMemcpy<uint8_t>(&finalByte, destination.get() + totalSize - 1, 1, cudaMemcpyDeviceToHost);
+    if (finalByte == expected.back()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  } while (std::chrono::steady_clock::now() < deadline);
+
+  std::vector<uint8_t> observed(totalSize);
+  mscclpp::gpuMemcpy<uint8_t>(observed.data(), destination.get(), totalSize, cudaMemcpyDeviceToHost);
+  EXPECT_TRUE(observed == expected);
+  MPI_Barrier(MPI_COMM_WORLD);
 }
 
 #if defined(__HIP_PLATFORM_AMD__)
