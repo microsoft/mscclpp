@@ -105,10 +105,11 @@ def parse_args() -> argparse.Namespace:
         choices=["token_major", "rank_major", "expert_major"],
         default=None,
         help="received-token dispatch layout. When omitted, each backend uses its own default "
-        "layout (NCCL-EP=expert_major, MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
+        "layout (NCCL-EP latency=expert_major, NCCL-EP throughput=token_major, "
+        "MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
         "DeepEP=rank_major). "
         "The explicit value is applied where supported: NCCL-EP latency and DeepEP accept rank_major/expert_major; "
-        "NCCL-EP throughput accepts expert_major only in this benchmark. "
+        "NCCL-EP throughput accepts token_major/expert_major. "
         "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
         "Unsupported layouts are rejected.",
     )

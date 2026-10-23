@@ -29,13 +29,14 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    if args.ep_layout == "token_major":
-        raise ValueError("NCCL-EP supports expert_major or rank_major layout")
-    if args.mode == "throughput" and args.ep_layout == "rank_major":
-        raise ValueError("NCCL-EP throughput supports only expert_major in this benchmark")
     if args.mode == "latency":
+        if args.ep_layout == "token_major":
+            raise ValueError("NCCL-EP latency supports expert_major or rank_major layout")
         algorithm = nccl_ep.Algorithm.LOW_LATENCY
+        nccl_layout = nccl_ep.Layout.RANK_MAJOR if args.ep_layout == "rank_major" else nccl_ep.Layout.EXPERT_MAJOR
     else:
+        if args.ep_layout == "rank_major":
+            raise ValueError("NCCL-EP throughput supports token_major or expert_major layout")
         algorithm = getattr(
             nccl_ep.Algorithm,
             "THROUGHPUT",
@@ -43,6 +44,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         )
         if algorithm is None:
             raise RuntimeError("installed NCCL-EP does not expose a throughput algorithm")
+        nccl_layout = nccl_ep.Layout.EXPERT_MAJOR if args.ep_layout == "expert_major" else nccl_ep.Layout.FLAT
     algorithm_name = getattr(algorithm, "name", str(algorithm))
 
     if rank == 0:
@@ -58,12 +60,16 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     uid = comm.bcast(uid, root=0)
     ncomm = nccl_core.Communicator.init(nranks=num_ranks, rank=rank, unique_id=uid)
 
-    max_recv_tokens = num_tokens * num_ranks * (num_topk if args.mode == "throughput" else 1)
+    max_recv_tokens = (
+        num_tokens
+        * num_ranks
+        * (num_topk if args.mode == "throughput" and nccl_layout == nccl_ep.Layout.EXPERT_MAJOR else 1)
+    )
     config = nccl_ep.GroupConfig(
         algorithm=algorithm,
         num_experts=num_experts,
         max_dispatch_tokens_per_rank=num_tokens,
-        # HT expert-major counts expanded expert slots, not unique received tokens.
+        # HT expert-major counts expanded expert slots; HT flat counts unique received tokens.
         max_recv_tokens_per_rank=max_recv_tokens,
         max_token_bytes=hidden * 2,  # BF16
         alloc=nccl_ep.AllocConfig(),  # default cudaMalloc/cudaFree
@@ -72,9 +78,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
-    # Received-token layout: default/expert_major -> EXPERT_MAJOR (the nccl default),
-    # rank_major -> RANK_MAJOR. NCCL-EP supports both natively via the handle Layout.
-    nccl_layout = nccl_ep.Layout.RANK_MAJOR if args.ep_layout == "rank_major" else nccl_ep.Layout.EXPERT_MAJOR
+    # Received-token layout: LL defaults to EXPERT_MAJOR (or RANK_MAJOR);
+    # HT defaults to FLAT (token_major, or EXPERT_MAJOR).
     if rank == 0:
         _lname = getattr(nccl_layout, "name", str(nccl_layout))
         print(f"[cfg] nccl ep_layout={args.ep_layout or 'default'} -> Layout.{_lname}", flush=True)
@@ -94,7 +99,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     # local expert ([num_local_experts, num_ranks*num_tokens, hidden] + per-expert
     # counters); RANK_MAJOR groups them per source rank ([num_ranks, num_tokens, hidden]
     # + per-source-rank counters, which the LL kernel asserts has leading dim == nRanks).
-    # HT EXPERT_MAJOR instead packs all local expert slots into one 2D token buffer.
+    # HT FLAT and HT EXPERT_MAJOR use a 2D [max_recv_tokens, hidden] token buffer.
     if args.mode == "throughput":
         recv = torch.empty((max_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
         recv_count = None
@@ -113,10 +118,17 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     topk_weights_t = nccl_ep.Tensor(topk_weights)
 
     if args.mode == "throughput":
-        recv_weights = torch.empty((max_recv_tokens,), dtype=torch.float32, device="cuda")
-        recv_weights_t = nccl_ep.Tensor(recv_weights)
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
-        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t)
+        if nccl_layout == nccl_ep.Layout.EXPERT_MAJOR:
+            recv_weights = torch.empty((max_recv_tokens,), dtype=torch.float32, device="cuda")
+            recv_weights_t = nccl_ep.Tensor(recv_weights)
+            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t)
+        else:
+            recv_weights = torch.empty((max_recv_tokens, num_topk), dtype=torch.float32, device="cuda")
+            recv_weights_t = nccl_ep.Tensor(recv_weights)
+            recv_idx = torch.empty((max_recv_tokens, num_topk), dtype=torch.int64, device="cuda")
+            recv_idx_t = nccl_ep.Tensor(recv_idx)
+            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
         dispatch_layout = None
     elif nccl_layout == nccl_ep.Layout.RANK_MAJOR:
         # RANK_MAJOR dispatch carries the per-token weights through as well (the LL

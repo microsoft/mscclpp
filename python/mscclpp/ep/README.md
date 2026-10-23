@@ -337,8 +337,9 @@ The MSCCL++ backend still requires SM90+ and one IPC domain; this benchmark
 does not add inter-domain transport support.
 
 Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
-`token_major` or `rank_major`. NCCL-EP throughput uses `expert_major` in this
-benchmark, so omit `--ep-layout` for a three-backend throughput run.
+`token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
+(`Layout.FLAT`, default) or `expert_major`. DeepEP accepts `rank_major` or
+`expert_major`, so omit `--ep-layout` for a three-backend throughput run.
 An omitted layout keeps each backend's default.
 `--num-sms 0` keeps backend defaults; a positive value sets MSCCL++'s scalar
 dispatch/combine block configuration or DeepEP's communication SM budget.
