@@ -243,7 +243,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(maxTokensPerRank > 0 && maxTokensPerRank <= context.maxTokensPerRank_);
   EP_HOST_ASSERT(numExperts % context.numRanks_ == 0);
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
+  const int minCombineBlocks = dispatchLayout == DispatchLayout::RANK_MAJOR ? 2 : 1;
+  EP_HOST_ASSERT(numBlocks >= minCombineBlocks && numBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(dispatchLayout == context.outputLayout_);
   EP_HOST_ASSERT(mode == context.combineMode_);
 
