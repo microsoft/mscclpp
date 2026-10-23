@@ -6,20 +6,20 @@
 namespace mscclpp {
 namespace ep {
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads, 1) void rankLocalReduceCombineKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
-  combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout>(
+  combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
 }
 
 struct RankLocalReduceCombineKernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return rankLocalReduceCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return rankLocalReduceCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 

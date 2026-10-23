@@ -79,8 +79,9 @@ class LatencyContext(Context):
             raise ValueError("latency mode requires num_experts divisible by world_size")
         if not self.world_size + 2 <= dispatch_blocks <= 130:
             raise ValueError("dispatch block count must be between world_size + 2 and 130 in latency mode")
-        if not 0 < combine_blocks <= 128:
-            raise ValueError("combine block count must be between 1 and 128 in latency mode")
+        min_combine_blocks = 2 if self.output_layout == DispatchLayout.RANK_MAJOR else 1
+        if not min_combine_blocks <= combine_blocks <= 128:
+            raise ValueError(f"combine block count must be between {min_combine_blocks} and 128 in latency mode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.invalid_token_expert_id) is not int:
