@@ -14,7 +14,7 @@ from .ep_bench_common import (
 
 def parse_kineto_kernels(key_averages):
     return (
-        sum_matching_kernel_us(key_averages, ("dispatch", "synchronizepeers")),
+        sum_matching_kernel_us(key_averages, ("dispatch", "synchronizethroughputpeers")),
         sum_matching_kernel_us(key_averages, ("combine",)),
     )
 

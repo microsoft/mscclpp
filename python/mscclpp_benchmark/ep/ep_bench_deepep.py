@@ -150,9 +150,12 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         # -- capture-safe, and also runnable eagerly if the harness capture fails.
         cached_dispatch_args = dict(
             x=x,
+            topk_weights=topk_weights,
             handle=handle,
             num_experts=num_experts,
             num_max_tokens_per_rank=num_tokens,
+            do_expand=do_expand,
+            do_zero_padding=do_expand,
             num_sms=args.num_sms,
         )
 

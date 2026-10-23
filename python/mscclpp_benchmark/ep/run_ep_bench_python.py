@@ -382,14 +382,15 @@ def run_backend(
     ck_disp = ck_comb = 0.0
     inproc_ok = False
     if use_kineto:
+        use_gpu_barrier = os.environ.get("EP_KINETO_BARRIER", "nccl") == "nccl"
         comm.barrier()
         ck_disp, ck_comb = torch_profiler_kernel_us(
             dispatch_fn,
             combine_fn,
             comm,
             iters,
-            barrier=(bench_barrier or nccl_barrier),
-            mid_barrier=nccl_barrier,
+            barrier=(bench_barrier or nccl_barrier) if use_gpu_barrier else None,
+            mid_barrier=nccl_barrier if use_gpu_barrier else None,
             parse_kernels=parse_kernels,
             graph=graph,
         )

@@ -946,11 +946,14 @@ def test_latency_grouped_graph_replay(ep_group, layout):
             with torch.cuda.graph(graph, stream=stream):
                 for _ in range(2):
                     operation()
+            replayed = []
             for value in (2, 3, 4):
                 input.fill_(value)
                 graph.replay()
                 stream.synchronize()
-                torch.testing.assert_close(output, input * (destination + 1), rtol=0, atol=0)
+                replayed.append((output.clone(), (input * (destination + 1)).clone()))
+            for actual, expected in replayed:
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("layout", [DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR])
