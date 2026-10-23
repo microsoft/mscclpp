@@ -327,8 +327,9 @@ detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMe
     if (impl.hostHash == localHostHash && impl.pidHash == localPidHash && impl.transports.has(transport_)) {
       const auto& info = impl.getTransportInfo(transport_);
       if (info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMr->getLkey()), 1};
-    } else if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ &&
-               impl.transports.has(remoteTransport_)) {
+    }
+    if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ &&
+        impl.transports.has(remoteTransport_)) {
       const auto& info = impl.getTransportInfo(remoteTransport_);
       if (!info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMrInfo.rkey), 0};
     }
