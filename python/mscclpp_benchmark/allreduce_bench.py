@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
-import cupy as cp
-from mscclpp_op import (
+from contextlib import ExitStack
+
+import numpy as np
+from mscclpp_benchmark.mscclpp_op import (
     MscclppAllReduce1,
     MscclppAllReduce2,
     MscclppAllReduce3,
@@ -10,21 +12,32 @@ from mscclpp_op import (
     MscclppAllReduce5,
     MscclppAllReduce6,
 )
-from nccl_op import NcclAllReduce
+from mscclpp_benchmark.nccl_op import NcclAllReduce, NcclCommunicator, get_unique_id
 from mpi4py import MPI
-import cupy.cuda.nccl as nccl
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
+from mscclpp_benchmark.gpu import (
+    capture_graph,
+    create_stream,
+    device_synchronize,
+    event_create,
+    event_destroy,
+    event_elapsed_time,
+    event_record,
+    event_synchronize,
+    set_device,
+    stream_destroy,
+)
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
 
-data_type = cp.float32
+data_type = np.float32
 
-if data_type == cp.float16:
+if data_type == np.float16:
     dtype_str = "fp16"
-elif data_type == cp.float32:
+elif data_type == np.float32:
     dtype_str = "fp32"
-elif data_type == cp.int32:
+elif data_type == np.int32:
     dtype_str = "int32"
 else:
     raise RuntimeError("Unknown data type")
@@ -82,21 +95,22 @@ def human_readable_size(size, decimal_places=1):
 def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
-        memory[:] = cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
-        cp.cuda.runtime.deviceSynchronize()
+        memory.fill(p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
+        device_synchronize()
         output_memory = func(None)
-        cp.cuda.runtime.deviceSynchronize()
-        expected = cp.zeros_like(memory)
+        device_synchronize()
+        output = output_memory.to_numpy()
+        expected = np.zeros(memory.shape, dtype=memory.dtype)
         for i in range(MPI.COMM_WORLD.size):
-            expected += cp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
+            expected += np.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
 
-        is_close = cp.isclose(output_memory, expected, rtol=1.0e-2, atol=2)
+        is_close = np.isclose(output, expected, rtol=1.0e-2, atol=2)
         icf = is_close == 0
-        all_close = cp.all(is_close)
+        all_close = np.all(is_close)
         ac = ac and all_close
         if not all_close:
             print(
-                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output_memory[icf][0]}, expected={expected[icf][0]}",
+                f"not close: p={p}, rank={MPI.COMM_WORLD.rank}, output={output[icf][0]}, expected={expected[icf][0]}",
                 flush=True,
             )
 
@@ -105,27 +119,33 @@ def check_correctness(memory, func, niter=100):
 
 
 def bench_time(niter: int, func):
-    # capture cuda graph for nites of the kernel launch
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(niter):
-            func(stream)
-        graph = stream.end_capture()
+    """Benchmark func, passing a native stream pointer to each captured invocation."""
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    # now run a warm up round
-    graph.launch(stream)
+        def capture_ops() -> None:
+            for _ in range(niter):
+                func(stream_ptr)
 
-    # now run the benchmark and measure time
-    start = cp.cuda.Event()
-    end = cp.cuda.Event()
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
 
-    start.record(stream)
-    graph.launch(stream)
-    end.record(stream)
-    end.synchronize()
+        # now run a warm up round
+        graph.launch(stream_ptr)
 
-    return cp.cuda.get_elapsed_time(start, end) / niter * 1000.0
+        # now run the benchmark and measure time
+        start = event_create()[0]
+        resources.callback(event_destroy, start)
+        end = event_create()[0]
+        resources.callback(event_destroy, end)
+        event_record(start, stream_ptr)
+        graph.launch(stream_ptr)
+        event_record(end, stream_ptr)
+        event_synchronize(end)
+
+        return event_elapsed_time(start, end)[0] / niter * 1000.0
 
 
 def find_best_algo(mscclpp_algos, niter):
@@ -158,10 +178,10 @@ def find_best_config(mscclpp_call, niter):
     return best_config, best_time
 
 
-def run_benchmark(mscclpp_group: CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int):
+def run_benchmark(mscclpp_group: CommGroup, nccl_op: NcclCommunicator, table: PrettyTable, niter: int, nelem: int):
     memory = GpuBuffer(nelem, dtype=data_type)
     memory_out = GpuBuffer(nelem, dtype=data_type)
-    cp.cuda.runtime.deviceSynchronize()
+    device_synchronize()
 
     proxy_service = ProxyService()
     if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
@@ -172,7 +192,7 @@ def run_benchmark(mscclpp_group: CommGroup, nccl_op: nccl.NcclCommunicator, tabl
                 MscclppAllReduce1(mscclpp_group, memory),
                 MscclppAllReduce3(mscclpp_group, memory, proxy_service),
             ]
-            if is_nvls_supported() and (data_type == cp.float32 or data_type == cp.float16):
+            if is_nvls_supported() and (data_type == np.float32 or data_type == np.float16):
                 mscclpp_algos.append(MscclppAllReduce6(mscclpp_group, nelem, data_type))
     else:
         if memory.nbytes < 2**22:
@@ -249,61 +269,60 @@ if __name__ == "__main__":
     shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     N_GPUS_PER_NODE = shm_comm.size
     shm_comm.Free()
-    cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
+    set_device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE)
 
     # create a MscclppGroup (MPI-based bootstrap; ephemeral port, matches executor_test.py)
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
 
     # create a NcclComm
     if MPI.COMM_WORLD.rank == 0:
-        uid = nccl.get_unique_id()
+        uid = get_unique_id()
     else:
         uid = None
     uid = MPI.COMM_WORLD.bcast(uid, root=0)
-    nccl_comm = nccl.NcclCommunicator(MPI.COMM_WORLD.size, uid, MPI.COMM_WORLD.rank)
+    with NcclCommunicator(MPI.COMM_WORLD.size, uid, MPI.COMM_WORLD.rank) as nccl_comm:
 
-    table = None
-    if MPI.COMM_WORLD.rank == 0:
-        # Set table headers
-        table = PrettyTable()
-        table.field_names = [
-            f"Size ({dtype_str})",
-            "Time (us)",
-            "AlgBW (GB/s)",
-            "Correctness",
-            "NCCL Time (us)",
-            "NCCL AlgBW (GB/s)",
-            "NCCL Correctness",
-            "Speed Up",
-        ]
+        table = None
+        if MPI.COMM_WORLD.rank == 0:
+            # Set table headers
+            table = PrettyTable()
+            table.field_names = [
+                f"Size ({dtype_str})",
+                "Time (us)",
+                "AlgBW (GB/s)",
+                "Correctness",
+                "NCCL Time (us)",
+                "NCCL AlgBW (GB/s)",
+                "NCCL Correctness",
+                "Speed Up",
+            ]
 
-    sizes = []
-    mscclpp_algbw = []
-    nccl_algbw = []
-    speed_ups = []
-    end_range = 29
-    for i in range(10, end_range):
-        if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
-            nelems = 2**i
-        elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
-            nelems = 3 * 2**i
-        else:
-            raise RuntimeError("Only support one node/two nodes communication")
+        sizes = []
+        mscclpp_algbw = []
+        nccl_algbw = []
+        speed_ups = []
+        end_range = 29
+        for i in range(10, end_range):
+            if MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 1:
+                nelems = 2**i
+            elif MPI.COMM_WORLD.size // N_GPUS_PER_NODE == 2:
+                nelems = 3 * 2**i
+            else:
+                raise RuntimeError("Only support one node/two nodes communication")
 
-        if nelems * data_type().itemsize > 2**32:
-            break  # due to trigger bit width limitation, we can only support up to 2**32
+            if nelems * data_type().itemsize > 2**32:
+                break  # due to trigger bit width limitation, we can only support up to 2**32
 
-        size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
-        sizes.append(size)
-        mscclpp_algbw.append(mscclpp_algBw)
-        nccl_algbw.append(nccl_algBw)
-        speed_ups.append(speed_up)
+            size, mscclpp_algBw, nccl_algBw, speed_up = run_benchmark(mscclpp_group, nccl_comm, table, 100, nelems)
+            sizes.append(size)
+            mscclpp_algbw.append(mscclpp_algBw)
+            nccl_algbw.append(nccl_algBw)
+            speed_ups.append(speed_up)
 
-    if MPI.COMM_WORLD.rank == 0:
-        print()
-        print(table)
+        if MPI.COMM_WORLD.rank == 0:
+            print()
+            print(table)
 
-        plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups)
+            plot_graph(sizes, mscclpp_algbw, nccl_algbw, speed_ups)
 
-    mscclpp_group = None
-    nccl_comm = None
+        mscclpp_group = None

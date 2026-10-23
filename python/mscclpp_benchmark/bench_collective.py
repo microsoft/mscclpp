@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-import cupy as cp
+import numpy as np
 from mpi4py import MPI
+
+if TYPE_CHECKING:
+    from mscclpp import GpuBuffer
 
 _mscclpp_module = None
 
@@ -18,8 +22,8 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
+from mscclpp_benchmark import gpu
 from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB
-from mscclpp_benchmark.gpu import capture_graph, init_runtime, runtime_name, version
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -71,7 +75,7 @@ def _mscclpp():
 @dataclass(frozen=True)
 class DTypeSpec:
     name: str
-    cupy_dtype: Any
+    storage_dtype: Any
     mscclpp_dtype: Any
     accum_dtype: Any | None = None
     fp8_format: str | None = None
@@ -100,19 +104,15 @@ class BenchmarkCase:
     collective: str
     message_size: int
     total_size: int
-    input: cp.ndarray
-    output: cp.ndarray
+    input: GpuBuffer
+    output: GpuBuffer
     dtype_spec: DTypeSpec
     symmetric_memory: bool = False
     buffer_mode: str = "in-place"
 
 
 def _device_name() -> str:
-    props = cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)
-    name = props.get("name", "UNKNOWN")
-    if isinstance(name, bytes):
-        return name.decode("utf-8")
-    return str(name)
+    return gpu.device_name()
 
 
 def _detect_hardware_profile(scale: int) -> HardwareProfile:
@@ -123,19 +123,19 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     mscclpp = _mscclpp()
     normalized = dtype_name.strip().lower().replace("-", "_")
     if normalized in {"float16", "fp16", "half"}:
-        return DTypeSpec("float16", cp.float16, mscclpp.DataType.float16)
+        return DTypeSpec("float16", np.float16, mscclpp.DataType.float16)
     if normalized in {"bfloat16", "bf16"}:
-        return DTypeSpec("bfloat16", cp.uint16, mscclpp.DataType.bfloat16)
+        return DTypeSpec("bfloat16", np.uint16, mscclpp.DataType.bfloat16)
     if normalized in {"float32", "fp32", "float"}:
-        return DTypeSpec("float32", cp.float32, mscclpp.DataType.float32)
+        return DTypeSpec("float32", np.float32, mscclpp.DataType.float32)
     if normalized in {"int32", "i32"}:
-        return DTypeSpec("int32", cp.int32, mscclpp.DataType.int32)
+        return DTypeSpec("int32", np.int32, mscclpp.DataType.int32)
     if normalized in {"uint8", "u8"}:
-        return DTypeSpec("uint8", cp.uint8, mscclpp.DataType.uint8)
+        return DTypeSpec("uint8", np.uint8, mscclpp.DataType.uint8)
     if normalized in {"float8_e4m3fn", "fp8_e4m3fn"}:
         return DTypeSpec(
             "float8_e4m3fn",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3fn,
             accum_dtype=mscclpp.DataType.float16,
             fp8_format="e4m3fn",
@@ -143,7 +143,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     if normalized in {"float8_e4m3fnuz", "fp8_e4m3fnuz"}:
         return DTypeSpec(
             "float8_e4m3fnuz",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3fnuz,
             accum_dtype=mscclpp.DataType.float16,
             fp8_format="e4m3fnuz",
@@ -151,7 +151,7 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     if normalized in {"float8_e4m3b15", "fp8_e4m3b15"}:
         return DTypeSpec(
             "float8_e4m3b15",
-            cp.uint8,
+            np.uint8,
             mscclpp.DataType.float8_e4m3b15,
             accum_dtype=mscclpp.DataType.float32,
             fp8_format="e4m3b15",
@@ -188,7 +188,7 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
 
     return DTypeSpec(
         name=dtype_spec.name,
-        cupy_dtype=dtype_spec.cupy_dtype,
+        storage_dtype=dtype_spec.storage_dtype,
         mscclpp_dtype=dtype_spec.mscclpp_dtype,
         accum_dtype=accum_dtype,
         fp8_format=dtype_spec.fp8_format,
@@ -483,12 +483,12 @@ def _make_case(
 
     if collective == _ALLREDUCE:
         if buffer_mode == "in-place":
-            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
             input_buffer = memory
             output = memory
         else:
-            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
-            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
         return BenchmarkCase(
             collective=collective,
             message_size=input_buffer.nbytes,
@@ -503,7 +503,7 @@ def _make_case(
     if collective == _REDUCESCATTER:
         # The DSL reducescatter is compiled in-place, so the per-rank output chunk always aliases the
         # matching slice of the full input buffer (mirrors python/test/executor_test.py build_bufs).
-        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
         start = comm_group.my_rank * nelems
         output = input_buffer[start : start + nelems]
         return BenchmarkCase(
@@ -520,12 +520,12 @@ def _make_case(
     if collective != _ALLGATHER:
         raise ValueError(f"Unsupported collective: {collective}")
     if buffer_mode == "in-place":
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
         start = comm_group.my_rank * nelems
         input_buffer = output[start : start + nelems]
     else:
-        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
+        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
 
     return BenchmarkCase(
         collective=collective,
@@ -579,40 +579,40 @@ def _measure_case(
     _fill_case_for_benchmark(case, comm.rank)
     if comm.run(case, config) != 0:
         raise RuntimeError("algorithm returned non-zero status")
-    cp.cuda.runtime.deviceSynchronize()
+    gpu.device_synchronize()
     comm.comm_group.barrier()
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    graph = None
+    with ExitStack() as resources:
+        stream = gpu.create_stream(non_blocking=True)
+        resources.callback(gpu.stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    def capture_ops() -> None:
-        for _ in range(n_ops_per_graph):
-            ret = comm.run(case, config, stream)
-            if ret != 0:
-                raise RuntimeError("algorithm returned non-zero status during graph capture")
+        def capture_ops() -> None:
+            for _ in range(n_ops_per_graph):
+                ret = comm.run(case, config, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError("algorithm returned non-zero status during graph capture")
 
-    try:
-        with stream:
-            graph = capture_graph(stream, capture_ops)
+        graph = gpu.capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
 
         for _ in range(n_warmup):
-            graph.launch(stream)
-        stream.synchronize()
+            graph.launch(stream_ptr)
+        gpu.stream_synchronize(stream)
         comm.comm_group.barrier()
 
-        start = cp.cuda.Event()
-        end = cp.cuda.Event()
-        start.record(stream)
+        start = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, start)
+        end = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, end)
+        gpu.event_record(start, stream_ptr)
         for _ in range(n_graph_launches):
-            graph.launch(stream)
-        end.record(stream)
-        end.synchronize()
+            graph.launch(stream_ptr)
+        gpu.event_record(end, stream_ptr)
+        gpu.event_synchronize(end)
 
-        elapsed_us = cp.cuda.get_elapsed_time(start, end) * 1000.0 / (n_graph_launches * n_ops_per_graph)
+        elapsed_us = gpu.event_elapsed_time(start, end)[0] * 1000.0 / (n_graph_launches * n_ops_per_graph)
         return float(MPI.COMM_WORLD.allreduce(elapsed_us, op=MPI.MAX))
-    finally:
-        if graph is not None:
-            graph.close()
 
 
 def _bandwidth_gbps(num_bytes: int, time_us: float) -> float:
@@ -720,14 +720,14 @@ def _validate_args(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     args = _build_parser().parse_args(argv)
     _validate_args(args)
-    init_runtime()
+    gpu.init_runtime()
 
     local_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
     try:
-        visible_devices = cp.cuda.runtime.getDeviceCount()
+        visible_devices = gpu.get_device_count()[0]
         if visible_devices <= 0:
             raise RuntimeError("MSCCL++ benchmark requires at least one visible GPU")
-        cp.cuda.Device(local_comm.Get_rank() % visible_devices).use()
+        gpu.set_device(local_comm.Get_rank() % visible_devices)
     finally:
         local_comm.Free()
 
@@ -746,7 +746,7 @@ def main(argv: list[str] | None = None) -> None:
     # argument parsing above.
     if args.total_sizes is not None:
         size_column = "nelems"
-        itemsize = int(cp.dtype(dtype_spec.cupy_dtype).itemsize)
+        itemsize = int(np.dtype(dtype_spec.storage_dtype).itemsize)
         sweep_points = [
             (str(nelems), nelems)
             for nelems in (
@@ -857,7 +857,7 @@ def main(argv: list[str] | None = None) -> None:
             )
             if comm.rank == 0:
                 print(".", end="", flush=True)
-            if runtime_name() == "hip" and version()[:2] == (7, 2):
+            if gpu.runtime_name() == "hip" and gpu.version()[:2] == (7, 2):
                 # TODO: remove this after ROCm 7.2 HIP IPC export issue is fixed.
                 del case
                 comm.comm_group.barrier()
@@ -891,7 +891,7 @@ def main(argv: list[str] | None = None) -> None:
             )
     finally:
         comm_group.barrier()
-        cp.cuda.runtime.deviceSynchronize()
+        gpu.device_synchronize()
         comm.close()
 
 

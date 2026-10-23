@@ -75,7 +75,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 # only mock the C-extension when using the source tree
-autodoc_mock_imports = ["mscclpp._version", "blake3", "cupy", "mpi4py", "numpy", "sortedcontainers"]
+autodoc_mock_imports = ["mscclpp._version", "blake3", "mpi4py", "numpy", "sortedcontainers"]
 autodoc_typehints = "description"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True

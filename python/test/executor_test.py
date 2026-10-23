@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 
 import argparse
+from contextlib import ExitStack
+
 from mscclpp import (
     DataType,
     Executor,
@@ -16,7 +18,7 @@ import os
 import struct
 from typing import Callable
 
-import cupy as cp
+import numpy as np
 from mpi4py import MPI
 
 
@@ -24,47 +26,64 @@ def parse_dtype(dtype_str):
     """Convert a human-readable data type string to a numpy data type."""
     dtype_str = dtype_str.strip().lower()
     if dtype_str == "float16":
-        return cp.float16
+        return np.float16
     elif dtype_str in ("bfloat16", "bf16"):
-        return cp.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
+        return np.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
     elif dtype_str == "float32":
-        return cp.float32
+        return np.float32
     elif dtype_str == "int32":
-        return cp.int32
+        return np.int32
     else:
         raise ValueError(f"Unknown data type: {dtype_str}")
 
 
 def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
-    """Benchmark execution time. `funcs` is a list of callables; iteration i runs funcs[i % len(funcs)]."""
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(n_iters):
-            funcs[i % len(funcs)](stream)
-        graph = stream.end_capture()
+    """Benchmark execution time, passing a native stream pointer to funcs[i % len(funcs)] each iteration."""
+    from mscclpp_benchmark.gpu import (
+        capture_graph,
+        create_stream,
+        event_create,
+        event_destroy,
+        event_elapsed_time,
+        event_record,
+        event_synchronize,
+        stream_destroy,
+    )
 
-    # now run a warm up round
-    graph.launch(stream)
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-    # now run the benchmark and measure time
-    start = cp.cuda.Event()
-    end = cp.cuda.Event()
+        def capture_ops() -> None:
+            for i in range(n_iters):
+                funcs[i % len(funcs)](stream_ptr)
 
-    start.record(stream)
-    for _ in range(n_graph_iters):
-        graph.launch(stream)
-    end.record(stream)
-    end.synchronize()
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
 
-    return cp.cuda.get_elapsed_time(start, end) / n_iters * 1000.0 / n_graph_iters
+        # now run a warm up round
+        graph.launch(stream_ptr)
+
+        # now run the benchmark and measure time
+        start = event_create()[0]
+        resources.callback(event_destroy, start)
+        end = event_create()[0]
+        resources.callback(event_destroy, end)
+        event_record(start, stream_ptr)
+        for _ in range(n_graph_iters):
+            graph.launch(stream_ptr)
+        event_record(end, stream_ptr)
+        event_synchronize(end)
+
+        return event_elapsed_time(start, end)[0] / n_iters * 1000.0 / n_graph_iters
 
 
 def bench_correctness(
     collective: str,
-    input_bufs: list[cp.ndarray],
-    result_bufs: list[cp.ndarray],
-    test_bufs: list[cp.ndarray],
+    input_bufs: list[GpuBuffer],
+    result_bufs: list[GpuBuffer],
+    test_bufs: list[GpuBuffer],
     dtype_str: str,
     rank: int,
     num_ranks: int,
@@ -72,8 +91,18 @@ def bench_correctness(
     funcs: list[Callable],
     split_mask: int = 0,
 ):
-    """Validate correctness. Buffers and funcs are parallel lists; iteration i uses index i % len(funcs)."""
-    type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
+    """Validate correctness. Buffers and funcs are parallel lists; iteration i uses index i % len(funcs).
+
+    Callables receive a native stream pointer.
+    """
+    from mscclpp_benchmark.gpu import (
+        capture_graph,
+        create_stream,
+        stream_destroy,
+        stream_synchronize,
+    )
+
+    type_size = np.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in collective:
@@ -100,29 +129,34 @@ def bench_correctness(
     nblocks = 64
     nthreads = 1024
 
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        stream.begin_capture()
-        for i in range(n_iters):
-            idx = i % len(funcs)
-            cur_input = input_bufs[idx]
-            cur_result = result_bufs[idx]
-            cur_test = test_bufs[idx]
+    with ExitStack() as resources:
+        stream = create_stream(non_blocking=True)
+        resources.callback(stream_destroy, stream)
+        stream_ptr = int(stream)
 
-            fill_data_params = (
-                pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
-            )
-            fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
-            funcs[idx](stream)
-            test_data_params = (
-                pack(cur_result, cur_test)
-                + struct.pack("Q", cur_input.nbytes // type_size)
-                + pack(num_ranks, rank, i, split_mask)
-            )
-            test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
-        graph = stream.end_capture()
-    graph.launch(stream)
-    stream.synchronize()
+        def capture_ops() -> None:
+            for i in range(n_iters):
+                idx = i % len(funcs)
+                cur_input = input_bufs[idx]
+                cur_result = result_bufs[idx]
+                cur_test = test_bufs[idx]
+
+                fill_data_params = (
+                    pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
+                )
+                fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream_ptr)
+                funcs[idx](stream_ptr)
+                test_data_params = (
+                    pack(cur_result, cur_test)
+                    + struct.pack("Q", cur_input.nbytes // type_size)
+                    + pack(num_ranks, rank, i, split_mask)
+                )
+                test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream_ptr)
+
+        graph = capture_graph(stream_ptr, capture_ops)
+        resources.callback(graph.close)
+        graph.launch(stream_ptr)
+        stream_synchronize(stream)
 
 
 def parse_size(size_str):
@@ -155,13 +189,13 @@ def build_bufs(
     collective: str,
     size: int,
     in_place: bool,
-    dtype: cp.dtype,
+    dtype: np.dtype,
     rank: int,
     num_ranks: int,
 ):
     """Allocate input/result/test buffers. Returns parallel lists (length 2 for sendrecv double-buffering,
     length 1 otherwise) so callers can iterate uniformly."""
-    type_size = cp.dtype(dtype).itemsize
+    type_size = np.dtype(dtype).itemsize
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
 
@@ -170,7 +204,9 @@ def build_bufs(
         n_slots = 2
         input_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
-        test_bufs = [cp.zeros(nelems, dtype=dtype) for _ in range(n_slots)]
+        test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
+        for buffer in test_bufs:
+            buffer.fill(0)
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -188,16 +224,19 @@ def build_bufs(
     result_buf = GpuBuffer(nelems_output, dtype=dtype)
     if in_place:
         if "allgather" in collective:
-            input_buf = cp.split(result_buf, num_ranks)[rank]
+            chunk = result_buf.size // num_ranks
+            input_buf = result_buf[rank * chunk : (rank + 1) * chunk]
         elif "reducescatter" in collective:
             input_buf = GpuBuffer(nelems_input, dtype=dtype)
-            result_buf = cp.split(input_buf, num_ranks)[rank]
+            chunk = input_buf.size // num_ranks
+            result_buf = input_buf[rank * chunk : (rank + 1) * chunk]
         else:
             input_buf = result_buf
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
-    test_buf = cp.zeros(nelems, dtype=dtype)
+    test_buf = GpuBuffer(nelems, dtype=dtype)
+    test_buf.fill(0)
 
     return [input_buf], [result_buf], [test_buf], nelems
 
@@ -218,7 +257,9 @@ def main(
             f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
             f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
         )
-    cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
+    from mscclpp_benchmark.gpu import set_device
+
+    set_device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node)
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
@@ -246,7 +287,7 @@ def main(
                 res.nbytes,
                 dtype_to_mscclpp_dtype(dtype_str),
                 execution_plan,
-                stream.ptr,
+                stream,
                 packet_type,
             )
         )
