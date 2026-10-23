@@ -75,6 +75,9 @@ Kernels compiled against an installed MSCCL++ must add:
 
 - Host-side `Connection` operations (`write`, `updateAndSync`, `accumulate`, `flush`) and `Host2DeviceSemaphore::signal`
   are not supported on GPUNetIO connections and throw `InvalidUsage`.
+- Channels must be created with `ProxyService::portChannel()` / `basePortChannel()`. A `PortChannel` constructed
+  directly over a GPUNetIO connection has no memory bindings, so its `deviceHandle()` throws `InvalidUsage`.
 - A channel captures the memories registered with its `ProxyService` when it is created; memories added later are not
   addressable by it.
+- On RoCE devices only port 1 is supported (the pinned DOCA GPUNetIO resolves the destination MAC on port 1).
 - `accumulate` requires an 8-byte-aligned destination offset.

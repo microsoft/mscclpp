@@ -117,6 +117,11 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   pimpl_->gidIndex = gidIndex < 0 ? 0 : gidIndex;
   pimpl_->info = ibCtx->getPortInfo(port, pimpl_->gidIndex);
   pimpl_->port = port;
+  // The pinned DOCA GPUNetIO (non-SDK path) resolves the RoCE destination MAC on hard-coded port 1 during INIT->RTR.
+  if (pimpl_->info.linkLayer == IBV_LINK_LAYER_ETHERNET && port != 1) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode supports only port 1 on RoCE devices (",
+          ibCtx->getDevName(), " port ", port, ")");
+  }
   if ((pimpl_->info.linkLayer != IBV_LINK_LAYER_INFINIBAND || pimpl_->info.isGrh) && pimpl_->info.spn == 0 &&
       pimpl_->info.iid == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode requires a nonzero GID for RoCE or GRH routing (",
@@ -328,8 +333,7 @@ detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMe
       const auto& info = impl.getTransportInfo(transport_);
       if (info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMr->getLkey()), 1};
     }
-    if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ &&
-        impl.transports.has(remoteTransport_)) {
+    if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ && impl.transports.has(remoteTransport_)) {
       const auto& info = impl.getTransportInfo(remoteTransport_);
       if (!info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMrInfo.rkey), 0};
     }
@@ -364,6 +368,15 @@ std::shared_ptr<GpuNetIoChannel> GpuNetIoChannel::bind(Host2DeviceSemaphore& sem
   }
   channel->deviceHandle.memories = channel->table.get();
   return channel;
+}
+
+void GpuNetIoChannel::requireBound(Host2DeviceSemaphore& semaphore, const std::shared_ptr<GpuNetIoChannel>& channel) {
+  if (channel) return;
+  if (std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore.connection()))) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "PortChannels over IB GpuNetIo-mode connections must be created with ProxyService::portChannel() or "
+          "ProxyService::basePortChannel()");
+  }
 }
 
 }  // namespace detail

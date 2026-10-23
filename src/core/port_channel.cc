@@ -16,10 +16,7 @@ namespace mscclpp {
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                                  std::shared_ptr<Proxy> proxy)
-    : semaphoreId_(semaphoreId),
-      semaphore_(semaphore),
-      proxy_(proxy),
-      gpuNetIo_(semaphore ? detail::GpuNetIoChannel::bind(*semaphore, {}) : nullptr) {}
+    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
@@ -84,13 +81,13 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 
 MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
   BasePortChannel channel(id, semaphores_[id], proxy_);
-  if (channel.gpuNetIo_) channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
+  channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
   return channel;
 }
 
 MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
   PortChannel channel(id, semaphores_[id], proxy_, dst, src);
-  if (channel.gpuNetIo_) channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
+  channel.gpuNetIo_ = detail::GpuNetIoChannel::bind(*semaphores_[id], memories_);
   return channel;
 }
 
@@ -196,6 +193,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
   auto& conn = semaphore_->connection();
+  detail::GpuNetIoChannel::requireBound(*semaphore_, gpuNetIo_);
   BasePortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
                                        conn.impl_->getFlushDonePtr());
   if (gpuNetIo_) {
@@ -207,6 +205,7 @@ MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() co
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
   auto& conn = semaphore_->connection();
+  detail::GpuNetIoChannel::requireBound(*semaphore_, gpuNetIo_);
   PortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
                                    conn.impl_->getFlushDonePtr());
   if (gpuNetIo_) {

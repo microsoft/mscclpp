@@ -84,6 +84,10 @@ struct GpuNetIoChannel {
   static std::shared_ptr<GpuNetIoChannel> bind(Host2DeviceSemaphore& semaphore,
                                                const std::vector<RegisteredMemory>& memories);
 
+  /// Throws if the semaphore's connection is a GpuNetIoConnection but no channel was bound to it, i.e. the PortChannel
+  /// was constructed directly instead of through ProxyService::portChannel()/basePortChannel().
+  static void requireBound(Host2DeviceSemaphore& semaphore, const std::shared_ptr<GpuNetIoChannel>& channel);
+
   std::shared_ptr<BaseConnection> connection;
   std::vector<RegisteredMemory> memories;
   std::shared_ptr<GpuNetIoMemoryDeviceHandle> table;

@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
@@ -1382,6 +1383,41 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbGpuNetIoMode) {
 TEST(PortChannelOneToOneTest, HostAccumulateIbGpuNetIoModeRejected) {
   REQUIRE_GPUNETIO;
   testAccumulateRejected(ibTransport, IbMode::GpuNetIo, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
+}
+
+TEST(PortChannelOneToOneTest, DirectConstructionIbGpuNetIoModeRejected) {
+  REQUIRE_GPUNETIO;
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsDirect = false;
+  bool factoryOk = false;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = IbMode::GpuNetIo;
+    auto conn = communicator->connect(cfg, peer).get();
+    auto localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+    mscclpp::ProxyService service;
+    auto semaphoreId = service.buildAndAddSemaphore(*communicator, conn);
+    auto memoryId = service.addMemory(localMem);
+
+    mscclpp::PortChannel direct(semaphoreId, service.semaphore(semaphoreId), nullptr, memoryId, memoryId);
+    rejectsDirect = rejectsInvalidUsage([&] { direct.deviceHandle(); }, "ProxyService::portChannel()");
+    try {
+      service.portChannel(semaphoreId, memoryId, memoryId).deviceHandle();
+      factoryOk = true;
+    } catch (const std::exception& e) {
+      std::cerr << "ProxyService::portChannel() failed: " << e.what() << std::endl;
+    }
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsDirect);
+    EXPECT_TRUE(factoryOk);
+  }
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbGpuNetIoMode) {

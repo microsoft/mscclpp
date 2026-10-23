@@ -117,6 +117,8 @@ struct BasePortChannel {
   BasePortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with
+  /// ProxyService::basePortChannel() instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
@@ -157,6 +159,8 @@ struct PortChannel : public BasePortChannel {
   PortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with ProxyService::portChannel()
+  /// instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
   /// @param proxy The proxy.
