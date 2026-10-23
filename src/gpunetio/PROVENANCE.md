@@ -1,11 +1,13 @@
 # Dependency: DOCA GPUNetIO (GDAKI)
 
 The bundled DOCA sources and headers have been removed. CMake FetchContent
-uses the unmodified official NVIDIA repository, https://github.com/NVIDIA-DOCA/gpunetio,
+uses the official NVIDIA repository, https://github.com/NVIDIA-DOCA/gpunetio,
 pinned to v4.0.1 commit `bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4`.
 The dependency is BSD-3-Clause licensed. Its headers are installed under
 `include/mscclpp/gpunetio` and its license under `share/licenses/mscclpp/gpunetio`.
 No Git submodule initialization is needed despite the branch name.
+The fetched tree is left unmodified; MSCCL++ compiles one narrow backport from a
+patched build-tree copy (see [QP Export Failure Backport](#qp-export-failure-backport)).
 
 The original port used `qinghuazhou/gpunetio_submodule` at `b11bccc`, on top of
 `feature/ep-experimental` at `672e30d733bca64b13c2976bc0353f74d3f6dca9`.
@@ -83,6 +85,24 @@ and sparse warp writes obtain their QP, addresses and keys from the channel
 binding, not from a duplicated flattened DOCA QP table. The latency context
 synchronizes and destroys the adapter before freeing its payload allocation.
 
+## QP Export Failure Backport
+
+In v4.0.1 (and every v4.x revision), `doca_gpu_verbs_create_qp_hl` returns
+directly when `doca_gpu_verbs_export_qp` fails. That bypasses its own
+`exit_error` cleanup after the CQ, UAR, QP and their UMEMs were created, and leaves
+the output handle null, so `GpuNetIoService` cannot release them. Upstream fixed
+this in v5.0.0-rc1 (`b2b7a291ec70`) by jumping to `exit_error`.
+
+`src/gpunetio/CMakeLists.txt` backports that one-line change: at configure time
+it writes a copy of `src/doca_gpunetio_high_level.cpp` to
+`<build>/src/gpunetio/patched/` with only that return replaced, and compiles the copy
+instead of the fetched file. The fetched tree (or a `FETCHCONTENT_SOURCE_DIR_GPUNETIO`
+checkout) is not modified. Configuration fails if the expected code is not found
+exactly once, so changing the pin forces the backport to be re-evaluated; drop it
+when moving to a revision that contains the upstream fix. The
+`doca_gpu_verbs_create_qp_group_hl` paths with the same pattern are not used by
+MSCCL++ and are not patched.
+
 ## Safety and Validation
 
 The shared service requires direct `GPU_SM_DB` doorbells, valid DBRs and
@@ -90,7 +110,8 @@ noncollapsed GPU-resident CQs. CPU-assisted fallback, AUTO selection, host CQs,
 CPU UMEM and a DOCA CPU progress service are not enabled. Unsupported hardware
 fails setup. This avoids the pinned upstream's known GPU_CPU allocation fallback
 and CPU service shutdown defects; it does not fix those upstream defects or
-carry the old bundled DOCA patches. No upstream source is modified.
+carry the old bundled DOCA patches. The fetched tree is not modified; the QP export
+failure backport above is the only compiled deviation from the pin.
 
 The shared service checks `IbCtx::supportsRdmaAtomics()` and rejects unsupported
 HCAs collectively. Port 1 and `MSCCLPP_IB_GID_INDEX` (default 0) are validated
