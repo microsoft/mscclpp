@@ -76,6 +76,7 @@ struct GpuNetIoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void put(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                  const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    __threadfence_system();
     doca_gpu_dev_verbs_ticket_t ticket;
     doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
         static_cast<doca_gpu_dev_verbs_qp*>(qp), {dst.addr + dstOffset, dst.key}, {src.addr + srcOffset, src.key}, size,
@@ -89,6 +90,7 @@ struct GpuNetIoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void putWithSignal(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                            const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    __threadfence_system();
     doca_gpu_dev_verbs_ticket_t ticket;
     doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
         static_cast<doca_gpu_dev_verbs_qp*>(qp), {dst.addr + dstOffset, dst.key}, {src.addr + srcOffset, src.key}, size,
