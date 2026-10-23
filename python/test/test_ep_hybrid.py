@@ -5,7 +5,8 @@
 
 Covers latency RANK_MAJOR_TOPK_EXPANDED (IPC and GPUNetIO) and, when the job spans
 several CUDA IPC domains with ``MSCCLPP_EP_ENABLE_GPUNETIO=1``, latency RANK_MAJOR
-with RANK_LOCAL_REDUCE over GPUNetIO. Example (two nodes, four GPUs each)::
+with RANK_LOCAL_REDUCE over GPUNetIO, including batched dispatch with chunking and
+deferred flush (enabled by that test itself). Example (two nodes, four GPUs each)::
 
     mpirun -np 8 --map-by ppr:4:node -x MSCCLPP_EP_ENABLE_GPUNETIO=1 \\
         python3 -m pytest python/test/test_ep_hybrid.py -vx
@@ -86,6 +87,22 @@ def token_routes(rank, world_size, token, num_tokens):
     if token == 1:
         routes[1] = -1
     return routes
+
+
+def collective_check(check):
+    """Run ``check`` on every rank and fail on all ranks if any rank failed.
+
+    Use before launching combine: a rank that fails alone would otherwise skip combine while
+    its peers wait for its GPU participation, hanging the job instead of reporting the error.
+    """
+    error = None
+    try:
+        check()
+    except (Exception, pytest.fail.Exception) as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    failed = {rank: e for rank, e in enumerate(MPI.COMM_WORLD.allgather(error)) if e is not None}
+    if failed:
+        pytest.fail(f"Validation failed on ranks {sorted(failed)}: {failed}")
 
 
 def token_values(rank, num_tokens, scale):
@@ -171,18 +188,26 @@ def test_latency_hybrid_dispatch_combine(ep_group, layout, hidden):
             input = token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, hidden)
             input = input.to(torch.bfloat16).contiguous()
             if expanded:
-                with pytest.raises(ValueError, match="runtime_max_tokens_per_rank"):
-                    runtime.dispatch(input, routes, weights, runtime_max_tokens_per_rank=capacity - 1)
+
+                def check_capacity_rejected():
+                    with pytest.raises(ValueError, match="runtime_max_tokens_per_rank"):
+                        runtime.dispatch(input, routes, weights, runtime_max_tokens_per_rank=capacity - 1)
+
+                collective_check(check_capacity_rejected)
 
             result, handle = runtime.dispatch(input, routes, weights, stream=stream)
-            shape = (ep_group.nranks, capacity) + ((NUM_TOPK,) if expanded else ()) + (hidden,)
-            assert tuple(result.tokens.shape) == shape
-            assert tuple(result.combine_input_buffer.shape) == shape
-            assert tuple(result.topk_ids.shape) == shape[:-1] + (() if expanded else (NUM_TOPK,))
-            assert result.layout.kind == layout
-            assert result.quant is None
-            stream.synchronize()
-            _check_dispatch_metadata(ep_group, layout, result, num_tokens)
+
+            def check_dispatch():
+                shape = (ep_group.nranks, capacity) + ((NUM_TOPK,) if expanded else ()) + (hidden,)
+                assert tuple(result.tokens.shape) == shape
+                assert tuple(result.combine_input_buffer.shape) == shape
+                assert tuple(result.topk_ids.shape) == shape[:-1] + (() if expanded else (NUM_TOPK,))
+                assert result.layout.kind == layout
+                assert result.quant is None
+                stream.synchronize()
+                _check_dispatch_metadata(ep_group, layout, result, num_tokens)
+
+            collective_check(check_dispatch)
 
             result.combine_input_buffer.copy_(_expert_output(layout, result, capacity))
             combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
@@ -302,6 +327,81 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group, layout):
                 ep_group.barrier()
                 expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
                 torch.testing.assert_close(output.float(), expected, rtol=0, atol=0)
+
+
+def _all_rank_routes(rank, world_size, num_tokens):
+    """Every token but the last reaches NUM_TOPK distinct experts on min(NUM_TOPK, world_size) ranks."""
+    routes = [
+        [
+            ((rank + slot) % world_size) * NUM_LOCAL_EXPERTS + (token + slot) % NUM_LOCAL_EXPERTS
+            for slot in range(NUM_TOPK)
+        ]
+        for token in range(num_tokens - 1)
+    ]
+    return routes + [[-1] * NUM_TOPK]
+
+
+@pytest.mark.parametrize("defer_flush", ["0", "1"])
+def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_flush, monkeypatch):
+    """Batched GPUNetIO dispatch with several chunks plus a partial tail, deferred flush on and off,
+    and single-round graph replays alternating populated and empty destinations."""
+    if not (_gpunetio_requested() and ep_group.nranks_per_ipc_domain < ep_group.nranks):
+        pytest.skip("Batched dispatch applies only to cross-domain GPUNetIO RANK_MAJOR")
+    # Read at initialize(); every rank sets the same values, which initialize() also verifies.
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH", "1")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", "2")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DEFER_FLUSH", defer_flush)
+    # Each populated destination receives num_tokens - 1 = 7 rows: three 2-row chunks and a 1-row tail.
+    num_tokens, capacity = 8, 8
+    layout = DispatchLayout.RANK_MAJOR
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=layout,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=HIDDEN,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            full = torch.tensor(
+                _all_rank_routes(ep_group.my_rank, ep_group.nranks, num_tokens), dtype=torch.int64, device="cuda"
+            )
+            sparse = torch.tensor(_alternate_routes(ep_group.my_rank, num_tokens), dtype=torch.int64, device="cuda")
+            routes = full.clone()
+            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            input = torch.empty((num_tokens, HIDDEN), dtype=torch.bfloat16, device="cuda")
+            out = torch.empty_like(input)
+
+            def operation():
+                result, handle = runtime.dispatch(input, routes, weights)
+                result.combine_input_buffer.copy_(_expert_output(layout, result, capacity))
+                return runtime.combine(result.combine_input_buffer, handle, out=out)
+
+            def expected():
+                return input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
+
+            input.copy_(token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, HIDDEN))
+            output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+            torch.testing.assert_close(output.float(), expected(), rtol=0, atol=0)
+
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            for step, scale in enumerate((2.0, 0.5, 4.0, 1.0, 3.0, 0.25)):
+                routes.copy_(sparse if step % 2 == 0 else full)
+                input.copy_(token_values(ep_group.my_rank, num_tokens, scale)[:, None].expand(-1, HIDDEN))
+                graph.replay()
+                stream.synchronize()
+                ep_group.barrier()
+                torch.testing.assert_close(output.float(), expected(), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("fast_path", [True, False])
