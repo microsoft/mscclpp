@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 from functools import wraps
+import math
+from numbers import Real
 from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 
-from ._cpp import DispatchDataType, DispatchLayout, MoEMode
+from ._cpp import DispatchDataType, DispatchLayout, MoEMode, NativeQuantConfig
 from .types import MoECommunicatorConfig, QuantConfig
 
 
@@ -62,25 +64,83 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
 def validate_quant(
     quant: Optional[QuantConfig], mode: MoEMode, layout: DispatchLayout, hidden: int
 ) -> DispatchDataType:
-    """Validate the mode-specific dispatch quantization contract."""
+    """Validate the mode-specific dispatch and combine quantization contract."""
     data_type = resolve_dispatch_data_type(quant)
-    if mode == MoEMode.LATENCY and quant is not None and quant.block_scales is not None:
-        raise ValueError("latency dispatch quantizes BF16 input; precomputed block_scales are unsupported")
+    block_scales = None if quant is None else quant.block_scales
+    scale = None if quant is None else quant.scale
+    input_mode = QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode
+    combine_type = DispatchDataType.BF16 if quant is None else quant.combine_format
+    if not isinstance(input_mode, QuantConfig.InputMode):
+        raise TypeError("quant.input_mode must be a QuantConfig.InputMode")
+    if not isinstance(combine_type, DispatchDataType):
+        raise TypeError("quant.combine_format must be a DispatchDataType")
+    if combine_type not in (DispatchDataType.BF16, DispatchDataType.FP8_E4M3_STATIC):
+        raise ValueError("quant.combine_format supports only BF16 or FP8_E4M3_STATIC")
+    static_fp8 = (
+        data_type == DispatchDataType.FP8_E4M3_STATIC
+        and mode == MoEMode.LATENCY
+        and layout == DispatchLayout.RANK_MAJOR
+    )
+    if input_mode != QuantConfig.InputMode.PREQUANTIZED and not static_fp8:
+        raise ValueError("quant.input_mode is supported only by latency RANK_MAJOR static FP8")
+    if combine_type == DispatchDataType.FP8_E4M3_STATIC and not static_fp8:
+        raise ValueError("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch")
+    if scale is not None:
+        if isinstance(scale, bool) or not isinstance(scale, Real):
+            raise TypeError("quant.scale must be a real number")
+        if not math.isfinite(float(scale)) or scale <= 0:
+            raise ValueError("quant.scale must be finite and positive")
+    if data_type == DispatchDataType.BF16:
+        if block_scales is not None:
+            raise ValueError("BF16 dispatch does not accept block_scales")
+        if scale is not None:
+            raise ValueError("BF16 dispatch does not accept a scalar scale")
+        return data_type
     if data_type == DispatchDataType.FP8_E4M3:
         if hidden % 128:
             raise ValueError("FP8 dispatch requires hidden_size to be a multiple of 128")
         if mode == MoEMode.LATENCY and layout == DispatchLayout.RANK_MAJOR:
-            raise ValueError("latency RANK_MAJOR supports BF16 dispatch only")
+            raise ValueError("latency RANK_MAJOR block-scaled FP8 is unsupported; use FP8_E4M3_STATIC")
+        if scale is not None:
+            raise ValueError("quant.scale is supported only by FP8_E4M3_STATIC")
+        if mode == MoEMode.LATENCY and layout != DispatchLayout.RANK_MAJOR and block_scales is not None:
+            raise ValueError("latency EXPERT_MAJOR quantizes BF16 input; precomputed block_scales are unsupported")
+    elif data_type == DispatchDataType.FP8_E4M3_STATIC:
+        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
+            raise ValueError("FP8_E4M3_STATIC dispatch requires latency RANK_MAJOR")
+        if block_scales is not None:
+            raise ValueError("FP8_E4M3_STATIC dispatch does not accept block_scales")
+        if scale is None:
+            raise ValueError("FP8_E4M3_STATIC dispatch requires quant.scale")
+    elif data_type == DispatchDataType.MXFP8_E4M3:
+        if mode != MoEMode.LATENCY or layout != DispatchLayout.RANK_MAJOR:
+            raise ValueError("MXFP8 dispatch requires latency RANK_MAJOR")
+        if hidden % 32:
+            raise ValueError("MXFP8 dispatch requires hidden_size to be a multiple of 32")
+        if block_scales is not None:
+            raise ValueError("latency MXFP8 dispatch quantizes BF16 input; precomputed block_scales are unsupported")
+        if scale is not None:
+            raise ValueError("MXFP8 dispatch does not accept a scalar scale")
     return data_type
 
 
-def resolve_dispatch_format(
-    config: MoECommunicatorConfig, quant: Optional[QuantConfig]
-) -> Tuple[DispatchDataType, Optional[torch.Tensor]]:
+def resolve_dispatch_format(config: MoECommunicatorConfig, quant: Optional[QuantConfig]) -> Tuple[
+    DispatchDataType,
+    Optional[torch.Tensor],
+    Optional[float],
+    NativeQuantConfig.InputMode,
+    DispatchDataType,
+]:
     """Resolve a per-call format override or the communicator's quantization default."""
     quant = config.quant if quant is None else quant
     data_type = validate_quant(quant, config.mode, config.output_layout, config.hidden_size)
-    return data_type, None if quant is None else quant.block_scales
+    return (
+        data_type,
+        None if quant is None else quant.block_scales,
+        None if quant is None or quant.scale is None else float(quant.scale),
+        QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode,
+        DispatchDataType.BF16 if quant is None else quant.combine_format,
+    )
 
 
 def verify_active_capacity(active: Optional[int], capacity: int) -> int:
@@ -183,6 +243,7 @@ def tensor_from_pointer(
     storage_types = {
         torch.bfloat16: "<i2",
         torch.float8_e4m3fn: "|u1",
+        torch.uint8: "|u1",
         torch.int32: "<i4",
         torch.int64: "<i8",
         torch.float32: "<f4",

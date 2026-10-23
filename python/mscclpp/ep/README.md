@@ -104,7 +104,7 @@ not resize those buffers or read counts back to the host.
 | Mode / layout | `tokens` shape | Count metadata | Physical row grouping | Expert-output contract |
 | --- | --- | --- | --- | --- |
 | LATENCY / EXPERT_MAJOR (default) | `[L, R*A, H]` | `layout.num_tokens_per_expert` | One fixed slice per local expert | BF16 per-expert results; native combine applies the original routing weights |
-| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 weighted local sums, or unweighted per-topk rows for DIRECT_SEND |
+| LATENCY / RANK_MAJOR | `[R, A, H]` | `layout.num_tokens_per_rank` | One fixed slice per source rank | BF16 by default, or explicitly configured static-scale FP8 weighted local sums; unweighted per-topk rows for DIRECT_SEND |
 | THROUGHPUT / TOKEN_MAJOR (default) | `[R*A, H]` | Optional `layout.num_tokens_per_expert` (prepare `output_count[L]`) | Compact source-rank segments, preserving token order | BF16 already-weighted local expert sums |
 | THROUGHPUT / RANK_MAJOR | `[R, A, H]` | Optional `layout.num_tokens_per_rank` (prepare `output_count[R]`) | One fixed slice per source rank | BF16 already-weighted local expert sums |
 
@@ -138,23 +138,28 @@ expert IDs in `[0, num_experts)` or negative values for dropped routes.
 means one per valid route. Routing values are not read or validated on the host.
 
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
-`weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global, with
-`invalid_token_expert_id` (default `num_experts`) marking dropped or non-local
-entries. Throughput IDs are local to the destination rank, with `-1` marking
+`weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global by
+default, with `invalid_token_expert_id` (default `num_experts`) marking dropped
+or non-local entries. Latency RANK_MAJOR can set `emit_local_expert_ids=True`
+to emit valid IDs in `[0, num_local_experts)` instead; its default invalid ID is
+`-1`. Throughput IDs are local to the destination rank, with `-1` marking
 invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
-the required BF16 `combine_input_buffer`. With `CombineMode.DIRECT_SEND`, that
-buffer and expert outputs have shape `[R, A, K, H]`: write unweighted BF16
-per-topk results for entries whose returned `topk_ids` identify a local expert.
-Combine applies the original routing weights during FP32 reduction. Otherwise
-write already-weighted local expert sums. Before `combine`, place these results
-in the runtime-owned buffer, either by computing there or by explicitly copying
-them there. Latency rank-major combine rejects an external expert-output tensor
-rather than performing a hidden staging copy. Both throughput layouts have the
-same exact-buffer requirement: pass `combine_input_buffer`, after writing or
-copying expert results into it. Throughput dispatch payload, top-k IDs, weights,
-and FP8 scales are also runtime-owned views.
+the required `combine_input_buffer`. Its dtype is BF16 by default and can be
+configured as E4M3 with `FP8_E4M3_STATIC` dispatch.
+With `CombineMode.DIRECT_SEND`, that buffer and expert outputs have shape
+`[R, A, K, H]`: write unweighted per-topk results for entries whose returned
+`topk_ids` identify a local expert. Combine applies the original routing weights
+during FP32 reduction. Otherwise write already-weighted, locally reduced rank
+partials with shape `[R, A, H]`; combine sums one partial per distinct
+destination rank without applying weights again. Before `combine`, place these
+results in the runtime-owned buffer, either by computing there or by explicitly
+copying them there. Latency rank-major combine rejects an external expert-output
+tensor rather than performing a hidden staging copy. Both throughput layouts
+have the same exact-buffer requirement: pass `combine_input_buffer`, after
+writing or copying BF16 expert results into it. Throughput dispatch payload,
+top-k IDs, weights, and FP8 scales are also runtime-owned views.
 
 `combine` returns token outputs only and has no `output_topk_weights` argument.
 
@@ -166,22 +171,44 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
 ## Formats and buffers
 
 * BF16 dispatch uses BF16 inputs/outputs and no block scales.
-* FP8 E4M3 uses one FP32 scale per 128 hidden elements. Latency EXPERT_MAJOR
+* Latency EXPERT_MAJOR FP8 uses one FP32 scale per 128 hidden elements and
   quantizes **BF16 input** on the fly with
   `QuantConfig(format=DispatchDataType.FP8_E4M3)` and does not accept
   precomputed input scales. Returned FP32 scales have logical shape
   `[L, R*A, H//128]`, transposed from physical `[L, H//128, R*A]`; they are not
   contiguous in logical order.
+* Latency RANK_MAJOR static FP8 uses a finite positive scalar `S` and has two
+  explicit input modes. The default accepts contiguous `torch.float8_e4m3fn`
+  input with
+  `QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=S)` and transports it
+  byte-for-byte. To fuse quantization into dispatch, pass BF16 input with
+  `QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=S,
+  input_mode=QuantConfig.InputMode.QUANTIZE)`. The fused path computes
+  `q = E4M3(real * S)` once per token before sending the same FP8 row to each
+  destination. Neither mode has a block-scale sideband.
+* Latency RANK_MAJOR combine input is BF16 by default. This means MM2 has
+  already produced/dequantized BF16 output. Static-FP8 dispatch may instead set
+  `combine_format=DispatchDataType.FP8_E4M3_STATIC`; MM2 writes
+  `q = E4M3(real * S)` to `combine_input_buffer`, and combine computes
+  `FP32(q) * (1 / S)` with the existing dispatch scale. Combine never
+  quantizes; it applies FP32 route weights only for `DIRECT_SEND`, accumulates
+  in FP32, and writes BF16.
 * Throughput FP8 requires `torch.float8_e4m3fn` input and
   `QuantConfig(format=DispatchDataType.FP8_E4M3, block_scales=scales)`, where
   `scales` is contiguous CUDA FP32 `[num_input_tokens, H//128]`. Output scales
   have shape `tokens.shape[:-1] + (H//128,)` and are contiguous.
-* Latency RANK_MAJOR is BF16-only. **Combine always consumes BF16**, including
-  after FP8 dispatch.
+* Latency RANK_MAJOR additionally supports
+  `QuantConfig(format=DispatchDataType.MXFP8_E4M3)`. It takes BF16 input,
+  returns E4M3 payload plus contiguous uint8 E8M0 scales with shape
+  `[R, A, H//32]`, and requires `H` to be divisible by 32.
+* Combine always returns BF16. E4M3 expert input is supported only for latency
+  RANK_MAJOR static-FP8 dispatch and must be explicitly configured. MXFP8
+  dispatch and every other combine consume BF16 expert output.
 
 Configure a default `quant` on the communicator or override it per dispatch.
 Explicit `QuantConfig(format=DispatchDataType.BF16)` overrides an FP8 default.
-There are no implicit casts or contiguous copies to accept incompatible input.
+There are no implicit casts or contiguous copies to accept incompatible input;
+static FP8 performs BF16 conversion only when its explicit fused mode is selected.
 Payload pointers must be 16-byte aligned. `output_buffer` must match the active
 dispatch shape, while `combine(out=...)` must be `[num_input_tokens, H]`; both
 require the exact dtype, device, and contiguous layout. Only latency
@@ -238,10 +265,18 @@ Runtime views are reused by later operations, not independent results.
   Captured preparation recomputes routing on each replay, so routing values may
   change while their buffer pointer, shape, and active capacity remain fixed.
   Preserve graph ordering, buffers, and owners through the last replay. Python
-  handle checks run during capture, not replay. Latency graphs must contain at
-  least two complete dispatch/combine pairs so readiness epochs alternate across
-  replays. Single-pair latency graph replay can consume stale metadata and is
-  unsupported.
+  handle checks run during capture, not replay.
+* Latency RANK_MAJOR dispatch/expert-write/combine can also be captured and
+  replayed when each graph contains at least two complete dispatch/combine
+  iterations. Each captured iteration has a distinct epoch, so the last count
+  packet from one replay cannot satisfy the first dispatch of the next replay.
+  A graph containing only one iteration is unsupported because graph replay
+  does not advance the host epoch. Combine separately invalidates captured
+  readiness state before its ordered peer rendezvous. Construct, initialize,
+  and warm up the runtime outside capture; input, routing, and weight values may
+  change while their pointers, shapes, token count, and active capacity remain
+  fixed. Every rank must replay collectives in the same order. Latency
+  EXPERT_MAJOR graph replay remains unsupported.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even

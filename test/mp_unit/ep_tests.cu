@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "common/quantization.cuh"
 #include "exception.hpp"
 #include "mp_unit_tests.hpp"
 
@@ -31,6 +32,9 @@ constexpr int NumExperts = 16 * NumRanks;
 constexpr int NumTopk = 8;
 constexpr int CorrectnessTokens = 8;
 constexpr int CorrectnessHidden = 4096;
+// MXFP8 test values (index % 15) * 8 have at most four significant bits, so E4M3 represents them exactly.
+// Tokens 16 apart, which reuse a dispatch staging slot with ten dispatch blocks, still get different values.
+constexpr int Mxfp8ValueModulo = 15;
 constexpr int PerfTokens = 32;
 constexpr int PerfHidden = 7168;
 constexpr int NumWarmups = 10;
@@ -83,6 +87,7 @@ class CudaGraph {
 struct TestBuffers {
   TestBuffers(int numTokens, int hidden, int numExperts = NumExperts)
       : input(static_cast<size_t>(numTokens) * hidden),
+        fp8Input(static_cast<size_t>(numTokens) * hidden),
         output(static_cast<size_t>(numTokens) * hidden),
         expertOutput(static_cast<size_t>(numExperts) * numTokens * hidden),
         topkIdx(static_cast<size_t>(numTokens) * NumTopk),
@@ -93,6 +98,7 @@ struct TestBuffers {
         outputCount(std::max(NumRanks, numExperts / NumRanks)) {}
 
   mscclpp::GpuBuffer<Bf16> input;
+  mscclpp::GpuBuffer<Fp8E4M3> fp8Input;
   mscclpp::GpuBuffer<Bf16> output;
   mscclpp::GpuBuffer<Bf16> expertOutput;
   mscclpp::GpuBuffer<int64_t> topkIdx;
@@ -131,6 +137,14 @@ __global__ void initializeInputs(Bf16* input, float* topkWeights, int rank, int 
   const size_t routingElements = static_cast<size_t>(numTokens) * NumTopk;
   for (size_t index = thread; index < routingElements; index += stride) {
     topkWeights[index] = 1.0f / NumTopk;
+  }
+}
+
+__global__ void quantizeStaticFp8Input(const mscclpp::bf16x8* input, mscclpp::f8_e4m3x8* output, int numVectors,
+                                       float quantScale) {
+  const int vectorIdx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (vectorIdx < numVectors) {
+    output[vectorIdx] = mscclpp::ep::quantizeBf16x8ToStaticFp8(input[vectorIdx], quantScale);
   }
 }
 
@@ -188,7 +202,7 @@ __global__ void dequantizeExpertMajor(Bf16* output, const Fp8E4M3* input, const 
   }
 }
 
-__global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, const int* topkIdx,
+__global__ void stageRankMajorExpertOutput(Bf16* output, const void* input, const uint8_t* scales, const int* topkIdx,
                                            const float* topkWeights, int rank, int rows, int hidden, bool directSend,
                                            int numExperts) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -213,10 +227,54 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const Bf16* input, cons
         }
       }
     }
-    output[index] = localWeight == 0.0f
-                        ? static_cast<Bf16>(0.0f)
-                        : static_cast<Bf16>(static_cast<float>(input[static_cast<size_t>(row) * hidden + hiddenIndex]) *
-                                            localWeight);
+    const size_t elementIndex = static_cast<size_t>(row) * hidden + hiddenIndex;
+    const float value =
+        scales == nullptr
+            ? static_cast<float>(static_cast<const Bf16*>(input)[elementIndex])
+            : fp8ToFloat(static_cast<const Fp8E4M3*>(input)[elementIndex]) *
+                  ldexpf(1.0f,
+                         static_cast<int>(scales[static_cast<size_t>(row) * (hidden / 32) + hiddenIndex / 32]) - 127);
+    output[index] = localWeight == 0.0f ? static_cast<Bf16>(0.0f) : static_cast<Bf16>(value * localWeight);
+  }
+}
+
+__global__ void stageStaticFp8RankMajorExpertOutput(void* output, const Fp8E4M3* input, const int* topkIdx,
+                                                    const float* topkWeights, int rank, int rows, int hidden,
+                                                    bool directSend, int numExperts, float dispatchScale,
+                                                    bool fp8Output) {
+  const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+  const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? static_cast<size_t>(NumTopk) : size_t{1});
+  for (size_t index = thread; index < elements; index += stride) {
+    const int hiddenIndex = static_cast<int>(index % hidden);
+    const size_t routeIndex = index / hidden;
+    const int topkLane = directSend ? static_cast<int>(routeIndex % NumTopk) : 0;
+    const int row = static_cast<int>(directSend ? routeIndex / NumTopk : routeIndex);
+    float localWeight = 0.0f;
+    if (directSend) {
+      const int expert = topkIdx[static_cast<size_t>(row) * NumTopk + topkLane];
+      if (expert >= 0 && expert < numExperts && expert / (numExperts / NumRanks) == rank) {
+        localWeight = 1.0f;
+      }
+    } else {
+      for (int lane = 0; lane < NumTopk; ++lane) {
+        const int expert = topkIdx[static_cast<size_t>(row) * NumTopk + lane];
+        if (expert >= 0 && expert < numExperts && expert / (numExperts / NumRanks) == rank) {
+          localWeight += topkWeights[static_cast<size_t>(row) * NumTopk + lane];
+        }
+      }
+    }
+    const float weighted = localWeight == 0.0f ? 0.0f
+                                               : fp8ToFloat(input[static_cast<size_t>(row) * hidden + hiddenIndex]) *
+                                                     (localWeight / dispatchScale);
+    if (fp8Output) {
+      mscclpp::f32x2 scaled;
+      scaled.data[0] = weighted * dispatchScale;
+      scaled.data[1] = scaled.data[0];
+      static_cast<Fp8E4M3*>(output)[index] = mscclpp::to<mscclpp::f8_e4m3x2>(scaled).data[0];
+    } else {
+      static_cast<Bf16*>(output)[index] = static_cast<Bf16>(weighted);
+    }
   }
 }
 
@@ -233,7 +291,10 @@ __global__ void stageThroughputExpertOutput(Bf16* output, const Bf16* input, con
   }
 }
 
-int numBlocks(size_t elements) { return static_cast<int>(std::min<size_t>((elements + Threads - 1) / Threads, 4096)); }
+// CUDA rejects empty grids, so keep one block for ranks without input tokens.
+int numBlocks(size_t elements) {
+  return static_cast<int>(std::clamp<size_t>((elements + Threads - 1) / Threads, 1, 4096));
+}
 
 void initializeTestBuffers(TestBuffers& buffers, int rank, int numTokens, int hidden, cudaStream_t stream,
                            int numExperts = NumExperts, int valueModulo = 0) {
@@ -263,7 +324,10 @@ std::string caseName(mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMod
   const char* layoutName = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR ? "expert-major" : "rank-major";
   const char* combineName =
       combineMode == mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE ? "rank-local-reduce" : "direct-send";
-  const char* dataTypeName = dataType == mscclpp::ep::DispatchDataType::BF16 ? "bf16" : "fp8-e4m3";
+  const char* dataTypeName = dataType == mscclpp::ep::DispatchDataType::BF16              ? "bf16"
+                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3        ? "fp8-e4m3"
+                             : dataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC ? "fp8-e4m3-static"
+                                                                                          : "mxfp8-e4m3";
   return std::string(layoutName) + "/" + combineName + "/" + dataTypeName;
 }
 
@@ -285,8 +349,8 @@ std::string checkOutput(const Bf16* output, int rank, int numTokens, int hidden,
   return {};
 }
 
-std::string checkCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout, int numTokens, int rank,
-                        int numExperts) {
+std::string checkCounts(const int* outputCount, mscclpp::ep::DispatchLayout layout,
+                        const std::array<int, NumRanks>& numTokensPerRank, int rank, int numExperts) {
   const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
   const int numLocalExperts = numExperts / NumRanks;
   const int countSize = expertMajor ? numLocalExperts : NumRanks;
@@ -294,7 +358,7 @@ std::string checkCounts(const int* outputCount, mscclpp::ep::DispatchLayout layo
   MSCCLPP_CUDATHROW(cudaMemcpy(hostCount.data(), outputCount, hostCount.size() * sizeof(int), cudaMemcpyDeviceToHost));
   std::vector<int> expected(countSize, 0);
   for (int source = 0; source < NumRanks; ++source) {
-    for (int token = 0; token < numTokens; ++token) {
+    for (int token = 0; token < numTokensPerRank[source]; ++token) {
       bool received = false;
       for (int expert : routedExperts(source, token, numExperts)) {
         if (expert / numLocalExperts == rank) {
@@ -402,62 +466,115 @@ std::unique_ptr<mscclpp::ep::MoERuntime> createThroughputRuntime(mscclpp::Commun
                                                    numExperts, NumTopk, layout);
 }
 
-void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
-                        mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMode combineMode,
-                        mscclpp::ep::DispatchDataType dataType) {
-  const std::string label = caseName(layout, combineMode, dataType);
-  auto runtime = createRuntime(communicator, CorrectnessTokens, CorrectnessHidden, layout, combineMode);
+std::array<int, NumRanks> uniformTokens(int numTokens) {
+  std::array<int, NumRanks> numTokensPerRank;
+  numTokensPerRank.fill(numTokens);
+  return numTokensPerRank;
+}
+
+void runCorrectnessCase(
+    mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
+    mscclpp::ep::DispatchLayout layout, mscclpp::ep::CombineMode combineMode, mscclpp::ep::DispatchDataType dataType,
+    int hidden = CorrectnessHidden,
+    const std::array<int, NumRanks>& numTokensPerRank = uniformTokens(CorrectnessTokens),
+    mscclpp::ep::QuantConfig::InputMode inputMode = mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED,
+    mscclpp::ep::DispatchDataType combineDataType = mscclpp::ep::DispatchDataType::BF16) {
+  const int numTokens = numTokensPerRank[rank];
+  // Every rank must use the same active capacity, so take it from the shared token counts.
+  const int maxTokensPerRank = *std::max_element(numTokensPerRank.begin(), numTokensPerRank.end());
+  const std::string label =
+      caseName(layout, combineMode, dataType) + "/hidden=" + std::to_string(hidden) +
+      "/dispatch_blocks=" + std::to_string(dispatchBlocks) + "/tokens=" + std::to_string(numTokens) +
+      (combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC ? "/combine=fp8-static" : "");
+  auto runtime = createRuntime(communicator, maxTokensPerRank, hidden, layout, combineMode);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
 
+  const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
+  const bool blockFp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
+  const bool staticFp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+  const bool fp8 = blockFp8 || staticFp8;
+  const bool mxfp8 = dataType == mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+  const bool fp8Combine = combineDataType == mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+  ASSERT_FALSE(expertMajor && mxfp8);
+  const int valueModulo = mxfp8 || staticFp8 ? Mxfp8ValueModulo : 0;
+
   CudaStream stream;
-  TestBuffers buffers(CorrectnessTokens, CorrectnessHidden);
-  initializeTestBuffers(buffers, rank, CorrectnessTokens, CorrectnessHidden, stream);
+  // Size buffers by capacity so a rank without tokens still passes valid pointers.
+  TestBuffers buffers(maxTokensPerRank, hidden);
+  initializeTestBuffers(buffers, rank, numTokens, hidden, stream, NumExperts, valueModulo);
+  constexpr float StaticFp8Scale = 0.5f;
+  const void* dispatchInput = buffers.input.data();
+  if (staticFp8 && inputMode == mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED) {
+    const int numVectors = numTokens * hidden / mscclpp::bf16x8::Size;
+    quantizeStaticFp8Input<<<numBlocks(numVectors), Threads, 0, stream>>>(
+        reinterpret_cast<const mscclpp::bf16x8*>(buffers.input.data()),
+        reinterpret_cast<mscclpp::f8_e4m3x8*>(buffers.fp8Input.data()), numVectors, StaticFp8Scale);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    dispatchInput = buffers.fp8Input.data();
+  }
 
   void* dispatchOutput = runtime->dispatchOutputBuffer();
-  const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
-  const bool fp8 = dataType == mscclpp::ep::DispatchDataType::FP8_E4M3;
-  ASSERT_FALSE(!expertMajor && fp8);
-
+  void* outputScales = expertMajor && blockFp8 ? static_cast<void*>(buffers.outputScales.data())
+                                               : (mxfp8 ? runtime->outputScalesBuffer() : nullptr);
   auto* outputTopkIdx = expertMajor ? nullptr : static_cast<int*>(runtime->outputTopkIdsBuffer());
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
-  const auto handle = runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
-      .output = dispatchOutput,
-      .outputScales = fp8 ? buffers.outputScales.data() : nullptr,
-      .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
-      .outputTopkIdx = outputTopkIdx,
-      .outputTopkWeights = outputTopkWeights,
-      .outputLayoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
-      .outputCount = buffers.outputCount.data(),
-      .input = buffers.input.data(),
-      .topkIdx = buffers.topkIdx.data(),
-      .topkWeights = buffers.topkWeights.data(),
-      .numTokens = CorrectnessTokens,
-      .maxTokensPerRank = CorrectnessTokens,
-      .invalidTokenExpertId = NumExperts,
-      .dispatchDataType = dataType,
-      .numBlocks = dispatchBlocks,
-      .stream = stream,
-  }});
+  const auto handle = runtime
+                          ->dispatch(
+                              mscclpp::ep::DispatchRequest{
+                                  mscclpp::ep::LatencyDispatchRequest{
+                                      .output = dispatchOutput,
+                                      .outputScales = outputScales,
+                                      .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
+                                      .outputTopkIdx = outputTopkIdx,
+                                      .outputTopkWeights = outputTopkWeights,
+                                      .outputLayoutRange = expertMajor ? buffers.layoutRange.data() : nullptr,
+                                      .outputCount = buffers.outputCount.data(),
+                                      .input = dispatchInput,
+                                      .topkIdx = buffers.topkIdx.data(),
+                                      .topkWeights = buffers.topkWeights.data(),
+                                      .numTokens = numTokens,
+                                      .maxTokensPerRank = maxTokensPerRank,
+                                      .invalidTokenExpertId = NumExperts,
+                                      .quant =
+                                          {
+                                              .dispatchDataType = dataType,
+                                              .dispatchScale = staticFp8 ? StaticFp8Scale : 1.0f,
+                                              .inputMode = inputMode,
+                                              .combineDataType = combineDataType,
+                                          },
+                                      .numBlocks = dispatchBlocks,
+                                      .stream = stream,
+                                  }});
 
   const void* expertOutput = dispatchOutput;
-  if (fp8) {
-    const int rows = NumRanks * CorrectnessTokens;
+  if (blockFp8 && expertMajor) {
+    const int rows = NumRanks * maxTokensPerRank;
     const int numLocalExperts = NumExperts / NumRanks;
-    const size_t elements = static_cast<size_t>(numLocalExperts) * rows * CorrectnessHidden;
+    const size_t elements = static_cast<size_t>(numLocalExperts) * rows * hidden;
     dequantizeExpertMajor<<<numBlocks(elements), Threads, 0, stream>>>(
         buffers.expertOutput.data(), static_cast<const Fp8E4M3*>(dispatchOutput), buffers.outputScales.data(), rows,
-        numLocalExperts, CorrectnessHidden);
+        numLocalExperts, hidden);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = buffers.expertOutput.data();
+  } else if (staticFp8) {
+    void* combineInput = runtime->combineInputBuffer();
+    const bool directSend = combineMode == mscclpp::ep::CombineMode::DIRECT_SEND;
+    const int rows = NumRanks * maxTokensPerRank;
+    const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? NumTopk : 1);
+    stageStaticFp8RankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
+        combineInput, static_cast<const Fp8E4M3*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows, hidden,
+        directSend, NumExperts, StaticFp8Scale, fp8Combine);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    expertOutput = combineInput;
   } else if (!expertMajor) {
     auto* combineInput = static_cast<Bf16*>(runtime->combineInputBuffer());
     const bool directSend = combineMode == mscclpp::ep::CombineMode::DIRECT_SEND;
-    const int rows = NumRanks * CorrectnessTokens;
-    const size_t elements = static_cast<size_t>(rows) * CorrectnessHidden * (directSend ? NumTopk : 1);
+    const int rows = NumRanks * maxTokensPerRank;
+    const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? NumTopk : 1);
     stageRankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
-        combineInput, static_cast<const Bf16*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows,
-        CorrectnessHidden, directSend, NumExperts);
+        combineInput, dispatchOutput, static_cast<const uint8_t*>(outputScales), outputTopkIdx, outputTopkWeights, rank,
+        rows, hidden, directSend, NumExperts);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = combineInput;
   }
@@ -471,9 +588,9 @@ void runCorrectnessCase(mscclpp::Communicator& communicator, int rank, int dispa
   }});
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
-  std::string error = checkCounts(buffers.outputCount.data(), layout, CorrectnessTokens, rank, NumExperts);
+  std::string error = checkCounts(buffers.outputCount.data(), layout, numTokensPerRank, rank, NumExperts);
   if (error.empty()) {
-    error = checkOutput(buffers.output.data(), rank, CorrectnessTokens, CorrectnessHidden, fp8 ? 1.0f : 0.0f);
+    error = checkOutput(buffers.output.data(), rank, numTokens, hidden, fp8 ? 1.0f : 0.0f, valueModulo);
   }
   assertCollectiveSuccess(error, label);
 
@@ -662,17 +779,21 @@ bool rejectsEpRequest(Operation operation) {
 }
 
 void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int dispatchBlocks, int combineBlocks,
-                         mscclpp::ep::DispatchLayout layout, const std::string& perfLabel) {
+                         mscclpp::ep::DispatchLayout layout, const std::string& perfLabel,
+                         mscclpp::ep::DispatchDataType dataType = mscclpp::ep::DispatchDataType::BF16) {
   auto runtime =
       createRuntime(communicator, PerfTokens, PerfHidden, layout, mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE);
   ASSERT_TRUE(runtime->isAvailable());
   runtime->initialize();
 
+  const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
+  const bool mxfp8 = dataType == mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+  const int valueModulo = mxfp8 ? Mxfp8ValueModulo : 0;
   CudaStream stream;
   TestBuffers buffers(PerfTokens, PerfHidden);
-  initializeTestBuffers(buffers, rank, PerfTokens, PerfHidden, stream);
-  const bool expertMajor = layout == mscclpp::ep::DispatchLayout::EXPERT_MAJOR;
+  initializeTestBuffers(buffers, rank, PerfTokens, PerfHidden, stream, NumExperts, valueModulo);
   void* dispatchOutput = runtime->dispatchOutputBuffer();
+  void* outputScales = mxfp8 ? runtime->outputScalesBuffer() : nullptr;
   void* combineInput = expertMajor ? dispatchOutput : runtime->combineInputBuffer();
   auto* outputTopkIdx = expertMajor ? nullptr : static_cast<int*>(runtime->outputTopkIdsBuffer());
   auto* outputTopkWeights = expertMajor ? nullptr : static_cast<float*>(runtime->outputTopkWeightsBuffer());
@@ -680,7 +801,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
   auto dispatch = [&]() {
     return runtime->dispatch(mscclpp::ep::DispatchRequest{mscclpp::ep::LatencyDispatchRequest{
         .output = dispatchOutput,
-        .outputScales = nullptr,
+        .outputScales = outputScales,
         .outputSrcInfo = expertMajor ? buffers.srcInfo.data() : nullptr,
         .outputTopkIdx = outputTopkIdx,
         .outputTopkWeights = outputTopkWeights,
@@ -692,7 +813,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
         .numTokens = PerfTokens,
         .maxTokensPerRank = PerfTokens,
         .invalidTokenExpertId = NumExperts,
-        .dispatchDataType = mscclpp::ep::DispatchDataType::BF16,
+        .quant = {.dispatchDataType = dataType},
         .numBlocks = dispatchBlocks,
         .stream = stream,
     }});
@@ -712,15 +833,15 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
       const int rows = NumRanks * PerfTokens;
       const size_t elements = static_cast<size_t>(rows) * PerfHidden;
       stageRankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
-          static_cast<Bf16*>(combineInput), static_cast<const Bf16*>(dispatchOutput), outputTopkIdx, outputTopkWeights,
-          rank, rows, PerfHidden, false, NumExperts);
+          static_cast<Bf16*>(combineInput), dispatchOutput, static_cast<const uint8_t*>(outputScales), outputTopkIdx,
+          outputTopkWeights, rank, rows, PerfHidden, false, NumExperts);
       MSCCLPP_CUDATHROW(cudaGetLastError());
     }
     combine(handle);
   };
   for (int iteration = 0; iteration < NumWarmups; ++iteration) dispatchCombine();
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f),
+  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f, valueModulo),
                           perfLabel + " warmup");
 
   CudaGraph graph;
@@ -744,7 +865,7 @@ void runGraphPerformance(mscclpp::Communicator& communicator, int rank, int disp
   MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedMs, start, end));
   MSCCLPP_CUDATHROW(cudaEventDestroy(start));
   MSCCLPP_CUDATHROW(cudaEventDestroy(end));
-  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f),
+  assertCollectiveSuccess(checkOutput(buffers.output.data(), rank, PerfTokens, PerfHidden, 0.0f, valueModulo),
                           perfLabel + " replay");
 
   const double localMicroseconds = static_cast<double>(elapsedMs) * 1000.0 / (NumGraphReplays * PairsPerGraph);
@@ -916,8 +1037,63 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
   ASSERT_NE(runtime->dispatchOutputBuffer(), nullptr);
   ASSERT_NE(runtime->outputTopkIdsBuffer(), nullptr);
   ASSERT_NE(runtime->outputTopkWeightsBuffer(), nullptr);
+  ASSERT_NE(runtime->outputScalesBuffer(), nullptr);
   ASSERT_NE(runtime->combineInputBuffer(), nullptr);
   ASSERT_NE(runtime->combineInputBuffer(), runtime->dispatchOutputBuffer());
+
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::BF16;
+    request.quant.inputMode = mscclpp::ep::QuantConfig::InputMode::QUANTIZE;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.combineDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.output = runtime->dispatchOutputBuffer();
+    request.outputTopkIdx = static_cast<int*>(runtime->outputTopkIdsBuffer());
+    request.outputTopkWeights = static_cast<float*>(runtime->outputTopkWeightsBuffer());
+    request.maxTokensPerRank = 1;
+    request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::FP8_E4M3;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::ThroughputDispatchRequest request{};
+    request.maxTokensPerRank = 1;
+    request.numBlocks = dispatchBlocks_;
+    request.dispatchDataType = mscclpp::ep::DispatchDataType::MXFP8_E4M3;
+    throughputRuntime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
 
   bool rejectedDispatch = false;
   try {
@@ -958,6 +1134,13 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
 }
 
 TEST(MoERuntimeTest, DispatchCombineCorrectness) {
+  // Ten dispatch blocks leave eight payload blocks: up to 8 tokens use one 16-warp group, 9-16 tokens use two 8-warp
+  // groups with separate staging slots and barriers, and more tokens make each group reuse its slot. Hidden 9216 needs
+  // several quantization iterations per thread. Uneven counts add an empty source rank and both sides of each limit.
+  constexpr int MultiGroupDispatchBlocks = 10;
+  constexpr int MultiGroupTokens = 19;
+  constexpr int MultiGroupHidden = 9216;
+  constexpr std::array<int, NumRanks> UnevenTokens = {MultiGroupTokens, 0, 17, 8, 9, 1, 16, 18};
   for (const auto combineMode : {mscclpp::ep::CombineMode::RANK_LOCAL_REDUCE, mscclpp::ep::CombineMode::DIRECT_SEND}) {
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::EXPERT_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::BF16);
@@ -965,6 +1148,28 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
                        mscclpp::ep::DispatchDataType::FP8_E4M3);
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::BF16);
+    for (const auto inputMode :
+         {mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED, mscclpp::ep::QuantConfig::InputMode::QUANTIZE}) {
+      runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
+                         uniformTokens(CorrectnessTokens), inputMode);
+      runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
+                         uniformTokens(CorrectnessTokens), inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC);
+    }
+    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                       mscclpp::ep::DispatchDataType::MXFP8_E4M3);
+    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                       mscclpp::ep::DispatchDataType::MXFP8_E4M3, 4352);
+    for (const auto& numTokensPerRank : {uniformTokens(MultiGroupTokens), UnevenTokens}) {
+      runCorrectnessCase(*communicator, gEnv->rank, MultiGroupDispatchBlocks, 0,
+                         mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::MXFP8_E4M3, MultiGroupHidden, numTokensPerRank);
+      runCorrectnessCase(*communicator, gEnv->rank, MultiGroupDispatchBlocks, 0,
+                         mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, MultiGroupHidden, numTokensPerRank,
+                         mscclpp::ep::QuantConfig::InputMode::QUANTIZE);
+    }
   }
 }
 
@@ -1090,6 +1295,9 @@ PERF_TEST(MoERuntimeTest, GraphDispatchCombine32Tokens) {
 PERF_TEST(MoERuntimeTest, GraphRankMajorDispatchCombine32Tokens) {
   runGraphPerformance(*communicator, gEnv->rank, dispatchBlocks_, combineBlocks_,
                       mscclpp::ep::DispatchLayout::RANK_MAJOR, "rank-major 32 tokens/rank graph D+weighted staging+C");
+  runGraphPerformance(
+      *communicator, gEnv->rank, dispatchBlocks_, combineBlocks_, mscclpp::ep::DispatchLayout::RANK_MAJOR,
+      "rank-major mxfp8 32 tokens/rank graph D+weighted staging+C", mscclpp::ep::DispatchDataType::MXFP8_E4M3);
 }
 
 PERF_TEST(MoERuntimeTest, ThroughputPerformance) {

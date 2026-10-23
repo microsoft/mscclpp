@@ -3,6 +3,7 @@
 
 #include <cuda.h>
 
+#include <cmath>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
@@ -142,8 +143,12 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const int maxTokensPerRank = request.maxTokensPerRank;
   const int numExperts = context.numExperts_;
   const int invalidTokenExpertId = request.invalidTokenExpertId;
+  const bool emitLocalExpertIds = request.emitLocalExpertIds;
   const DispatchLayout dispatchLayout = context.outputLayout_;
-  const DispatchDataType dispatchDataType = request.dispatchDataType;
+  const DispatchDataType dispatchDataType = request.quant.dispatchDataType;
+  const float dispatchScale = request.quant.dispatchScale;
+  const QuantConfig::InputMode inputMode = request.quant.inputMode;
+  const DispatchDataType combineDataType = request.quant.combineDataType;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
@@ -154,7 +159,43 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_THROW("Latency requests require 0 <= numTokens <= maxTokensPerRank <= runtime capacity");
   }
   EP_HOST_ASSERT(invalidTokenExpertId < 0 || invalidTokenExpertId >= numExperts);
+  if (emitLocalExpertIds && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("Local expert IDs are supported only by latency RANK_MAJOR dispatch");
+  }
   EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= numRanks_ && numBlocks <= MaxDispatchBlocks);
+  const bool staticFp8RankMajor =
+      dispatchLayout == DispatchLayout::RANK_MAJOR && dispatchDataType == DispatchDataType::FP8_E4M3_STATIC;
+  if (inputMode != QuantConfig::InputMode::PREQUANTIZED && inputMode != QuantConfig::InputMode::QUANTIZE) {
+    EP_THROW("Unsupported static FP8 input mode");
+  }
+  if (staticFp8RankMajor) {
+    if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
+      EP_THROW("Latency RANK_MAJOR static FP8 requires a finite positive quantization scale");
+    }
+    EP_HOST_ASSERT(outputScales == nullptr);
+    if (inputMode == QuantConfig::InputMode::QUANTIZE) {
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
+  } else if (dispatchScale != 1.0f) {
+    EP_THROW("A scalar quantization scale is supported only by FP8_E4M3_STATIC");
+  } else if (inputMode != QuantConfig::InputMode::PREQUANTIZED) {
+    EP_THROW("Static FP8 input mode is supported only by FP8_E4M3_STATIC");
+  }
+  if (dispatchDataType == DispatchDataType::FP8_E4M3 && dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_THROW("Latency RANK_MAJOR block-scaled FP8 is unsupported; use FP8_E4M3_STATIC");
+  }
+  if (dispatchDataType == DispatchDataType::FP8_E4M3_STATIC && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("FP8_E4M3_STATIC dispatch requires latency RANK_MAJOR");
+  }
+  if (dispatchDataType == DispatchDataType::MXFP8_E4M3 && dispatchLayout != DispatchLayout::RANK_MAJOR) {
+    EP_THROW("MXFP8 dispatch requires RANK_MAJOR layout");
+  }
+  if (!isSupportedCombineDataType(combineDataType)) {
+    EP_THROW("Combine input supports only BF16 or FP8_E4M3_STATIC");
+  }
+  if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !staticFp8RankMajor) {
+    EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
+  }
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
                                         context.numRanks_, numExperts, numTopk, context.outputLayout_,
@@ -165,6 +206,10 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
+      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
   }
 
   const Workload workload{.epoch_ = context.epoch_,
@@ -175,7 +220,11 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .invalidTokenExpertId_ = invalidTokenExpertId,
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
-                          .dispatchDataType_ = dispatchDataType};
+                          .dispatchDataType_ = dispatchDataType,
+                          .combineDataType_ = combineDataType,
+                          .dispatchScale_ = dispatchScale,
+                          .emitLocalExpertIds_ = emitLocalExpertIds,
+                          .inputMode_ = inputMode};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
@@ -226,6 +275,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const int numExperts = context.numExperts_;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
+  const DispatchDataType combineDataType = handle.combineDataType_;
+  const float dispatchScale = handle.dispatchScale_;
   const CombineMode mode = context.combineMode_;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
@@ -240,7 +291,11 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .invalidTokenExpertId_ = numExperts,
                           .maxTokensPerRank_ = maxTokensPerRank,
                           .outputLayout_ = dispatchLayout,
-                          .dispatchDataType_ = dispatchDataType};
+                          .dispatchDataType_ = dispatchDataType,
+                          .combineDataType_ = combineDataType,
+                          .dispatchScale_ = dispatchScale,
+                          .emitLocalExpertIds_ = false,
+                          .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
   LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
@@ -267,8 +322,9 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
-  // TODO: Make epoch advancement CUDA-graph-safe. This host-side increment is not replayed;
-  // a graph containing a single dispatch/combine round reuses the same epoch and may hang.
+  // Graph replay does not advance this host epoch. Rank-major latency graphs
+  // therefore require at least two captured dispatch/combine pairs so adjacent
+  // dispatches use different recorded epochs.
   ++context.epoch_;
 }
 

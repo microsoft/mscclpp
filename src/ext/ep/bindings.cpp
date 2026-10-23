@@ -39,7 +39,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("DIRECT_SEND", CombineMode::DIRECT_SEND);
   nb::enum_<DispatchDataType>(m, "DispatchDataType")
       .value("BF16", DispatchDataType::BF16)
-      .value("FP8_E4M3", DispatchDataType::FP8_E4M3);
+      .value("FP8_E4M3", DispatchDataType::FP8_E4M3)
+      .value("MXFP8_E4M3", DispatchDataType::MXFP8_E4M3)
+      .value("FP8_E4M3_STATIC", DispatchDataType::FP8_E4M3_STATIC);
+  auto quantConfig = nb::class_<QuantConfig>(m, "QuantConfig");
+  nb::enum_<QuantConfig::InputMode>(quantConfig, "InputMode")
+      .value("PREQUANTIZED", QuantConfig::InputMode::PREQUANTIZED)
+      .value("QUANTIZE", QuantConfig::InputMode::QUANTIZE);
+  quantConfig.def(nb::init<>())
+      .def_rw("dispatch_data_type", &QuantConfig::dispatchDataType)
+      .def_rw("dispatch_scale", &QuantConfig::dispatchScale)
+      .def_rw("input_mode", &QuantConfig::inputMode)
+      .def_rw("combine_data_type", &QuantConfig::combineDataType);
 
   nb::class_<PrepareHandle>(m, "PrepareHandle").def(nb::init<>());
   nb::class_<DispatchHandle>(m, "DispatchHandle").def(nb::init<>());
@@ -86,8 +97,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t topkWeightsPtr, uintptr_t outputPtr,
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputTopkIdxPtr,
              uintptr_t outputTopkWeightsPtr, uintptr_t outputLayoutRangePtr, uintptr_t outputCountPtr, int numTokens,
-             int maxTokensPerRank, int invalidTokenExpertId, DispatchDataType dataType, int numBlocks,
-             uintptr_t streamPtr) {
+             int maxTokensPerRank, int invalidTokenExpertId, QuantConfig quant, int numBlocks, uintptr_t streamPtr,
+             bool emitLocalExpertIds) {
             return self.dispatch(DispatchRequest{LatencyDispatchRequest{
                 .output = pointer(outputPtr),
                 .outputScales = pointer(outputScalesPtr),
@@ -102,16 +113,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                 .numTokens = numTokens,
                 .maxTokensPerRank = maxTokensPerRank,
                 .invalidTokenExpertId = invalidTokenExpertId,
-                .dispatchDataType = dataType,
+                .quant = quant,
                 .numBlocks = numBlocks,
                 .stream = stream(streamPtr),
+                .emitLocalExpertIds = emitLocalExpertIds,
             }});
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("output_ptr"),
           nb::arg("output_scales_ptr"), nb::arg("output_src_info_ptr"), nb::arg("output_topk_idx_ptr"),
           nb::arg("output_topk_weights_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
-          nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"),
-          nb::arg("dispatch_data_type"), nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::keep_alive<0, 1>())
+          nb::arg("num_tokens"), nb::arg("max_tokens_per_rank"), nb::arg("invalid_token_expert_id"), nb::arg("quant"),
+          nb::arg("num_blocks"), nb::arg("stream_ptr"), nb::arg("emit_local_expert_ids") = false,
+          nb::keep_alive<0, 1>())
       .def(
           "dispatch_throughput",
           [](MoERuntime& self, uintptr_t inputPtr, uintptr_t inputScalesPtr, uintptr_t topkIdxPtr,
