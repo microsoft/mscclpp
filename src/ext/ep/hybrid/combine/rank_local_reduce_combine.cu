@@ -12,12 +12,11 @@ __global__ __launch_bounds__(CombineNThreads, 1) void rankLocalReduceCombineKern
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
-  const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
-  workload.epoch_ = rankMajorRoundEpoch(workspace);
+  workload.epoch_ =
+      beginRankMajorCombineEpoch(WorkspaceView(context->workspace_, context->numRanks_, workload.numExperts_));
   combineBody<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchType, ScaleBlockSize, Layout>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, combineRecvBuffer,
       dispatchRecvBuffer, context);
-  finishRankMajorRound(workspace);
 }
 
 struct RankLocalReduceCombineKernelSelector {

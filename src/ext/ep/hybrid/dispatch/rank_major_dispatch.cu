@@ -12,7 +12,8 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void rankMajorDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx, float* outputTopkWeights,
     int64_t* outputLayout, int* outputCount, const int64_t* topkIndices, const float* topkWeights,
     const void* inputTokens, Workload workload, void* recvBuffer, const DeviceContext* context) {
-  workload.epoch_ = rankMajorRoundEpoch(WorkspaceView(context->workspace_, context->numRanks_, workload.numExperts_));
+  workload.epoch_ =
+      beginRankMajorDispatchEpoch(WorkspaceView(context->workspace_, context->numRanks_, workload.numExperts_));
   dispatchBody<Hidden, DataType, ScaleBlockSize, DispatchLayout::RANK_MAJOR, AsyncDispatch>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, topkIndices,
       topkWeights, inputTokens, workload, recvBuffer, context);
