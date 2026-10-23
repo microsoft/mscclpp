@@ -13,9 +13,7 @@ namespace mscclpp {
 
 struct BasePortChannel;
 struct PortChannel;
-namespace detail {
 struct GpuNetIoChannel;
-}  // namespace detail
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -108,7 +106,16 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
-  std::shared_ptr<detail::GpuNetIoChannel> gpuNetIo_;
+  std::shared_ptr<GpuNetIoChannel> gpuNetIo_;
+
+  /// Internal constructor used by ProxyService. Binds the channel to its connection's backend, giving it the
+  /// complete memory table that its device handle may address.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param proxy The proxy used for communication.
+  /// @param memories The ProxyService memory table, indexed by MemoryId.
+  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                  std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories);
 
   friend class ProxyService;
 
@@ -153,6 +160,12 @@ struct PortChannel : public BasePortChannel {
  private:
   MemoryId dst_;
   MemoryId src_;
+
+  /// Internal constructor used by ProxyService; see the BasePortChannel overload taking a memory table.
+  PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
+              MemoryId dst, MemoryId src, const std::vector<RegisteredMemory>& memories);
+
+  friend class ProxyService;
 
  public:
   /// Constructor.

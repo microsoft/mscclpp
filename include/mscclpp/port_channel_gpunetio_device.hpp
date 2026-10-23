@@ -14,7 +14,6 @@
 #endif
 
 namespace mscclpp {
-namespace detail {
 
 /// A registered memory region that a GPUNetIO PortChannel can address by MemoryId.
 struct GpuNetIoMemoryDeviceHandle {
@@ -139,7 +138,6 @@ struct GpuNetIoDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-}  // namespace detail
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_PORT_CHANNEL_GPUNETIO_DEVICE_HPP_

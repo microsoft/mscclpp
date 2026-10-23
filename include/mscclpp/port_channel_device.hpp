@@ -59,7 +59,7 @@ struct BasePortChannelDeviceHandle {
   PortChannelBackend backend_;
 
   // GPU-initiated networking state; only used when backend_ == PortChannelBackend::GpuNetIo.
-  detail::GpuNetIoDeviceHandle gpuNetIo_;
+  GpuNetIoDeviceHandle gpuNetIo_;
 
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
@@ -181,7 +181,7 @@ struct BasePortChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
     if (backend_ == PortChannelBackend::GpuNetIo) {
       const auto dst = gpuNetIo_.memory(dstId, false, dstOffset, sizeof(uint64_t));
-      detail::GpuNetIoDeviceHandle::require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
+      GpuNetIoDeviceHandle::require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
       gpuNetIo_.atomicAdd(dst.addr + dstOffset, dst.key, value);
       return;
     }
