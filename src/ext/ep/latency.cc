@@ -204,6 +204,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
       EP_THROW("Latency RANK_MAJOR static FP8 requires a finite positive quantization scale");
     }
+    if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !std::isfinite(1.0f / dispatchScale)) {
+      EP_THROW("Latency RANK_MAJOR static FP8 combine requires a quantization scale with a finite reciprocal");
+    }
     EP_HOST_ASSERT(outputScales == nullptr);
     if (inputMode == QuantConfig::InputMode::QUANTIZE) {
       EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
