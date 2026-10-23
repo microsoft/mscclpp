@@ -102,6 +102,7 @@ struct GpuNetIoDeviceHandle {
   /// Remote 64-bit atomic add (a zero-byte write fused with the atomic).
   MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t addr, uint32_t key, int64_t value) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    __threadfence_system();
     const doca_gpu_dev_verbs_addr remote{addr, key};
     const doca_gpu_dev_verbs_addr scratch{atomicScratchAddr, atomicScratchKey};
     doca_gpu_dev_verbs_ticket_t ticket;
