@@ -13,12 +13,9 @@ namespace mscclpp {
 
 struct BasePortChannel;
 struct PortChannel;
-class GpuNetIoService;
-class GpuNetIoSemaphore;
-class GpuNetIoMemory;
 namespace detail {
-struct GpuNetIoChannelState;
-}
+struct GpuNetIoChannel;
+}  // namespace detail
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -67,11 +64,15 @@ class ProxyService : public BaseProxyService {
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
   /// Get a base port channel by semaphore ID.
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @return The base port channel.
   BasePortChannel basePortChannel(SemaphoreId id);
 
   /// Get a port channel by semaphore ID and memory regions.
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
@@ -107,14 +108,17 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
-  std::shared_ptr<detail::GpuNetIoChannelState> gpuNetIoState_;
-  BasePortChannelDeviceHandle gpuNetIoHandle_{};
+  std::shared_ptr<detail::GpuNetIoChannel> gpuNetIo_;
+
+  friend class ProxyService;
 
  public:
   /// Constructor.
   BasePortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with
+  /// ProxyService::basePortChannel() instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
@@ -126,14 +130,6 @@ struct BasePortChannel {
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
-
-  /// Construct from a connection-bound semaphore and an immutable registration table.
-  /// MemoryId is the index in memories. Empty tables support signal/wait/flush only.
-  /// Registrations must belong to the semaphore's service and either local rank or its peer.
-  /// Retains transport, semaphore and registration ownership. Synchronize GPU work before release.
-  BasePortChannel(const GpuNetIoSemaphore& semaphore, const std::vector<GpuNetIoMemory>& memories);
-  /// Construct a signal/wait/flush-only channel on the semaphore's QP.
-  explicit BasePortChannel(const GpuNetIoSemaphore& semaphore);
 
   /// Copy constructor.
   /// @param other The other BasePortChannel to copy from.
@@ -163,6 +159,8 @@ struct PortChannel : public BasePortChannel {
   PortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with ProxyService::portChannel()
+  /// instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
   /// @param proxy The proxy.
@@ -179,10 +177,6 @@ struct PortChannel : public BasePortChannel {
   /// @param src The source memory region.
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
               MemoryId src);
-
-  /// Bind one remote destination and local source registration to a QP-bound semaphore.
-  /// Retains all resources; device offsets are relative to these registrations.
-  PortChannel(const GpuNetIoSemaphore& semaphore, const GpuNetIoMemory& dst, const GpuNetIoMemory& src);
 
   /// Copy constructor.
   /// @param other The other PortChannel to copy from.

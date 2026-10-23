@@ -12,12 +12,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <mscclpp/gpu_net_io_service.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/semaphore.hpp>
+#include <mscclpp/utils.hpp>
 #include <vector>
 
-#include "gpu_net_io_topology.hpp"
+#include "hybrid/include/gpu_net_io_topology.hpp"
 
 namespace mscclpp::ep {
 namespace {
@@ -75,6 +76,16 @@ std::vector<std::string> selectDevices(const std::string& specification, const s
   return devices;
 }
 
+// Resolve an HCA name to the IB transport that Context maps to it (honors MSCCLPP_HCA_DEVICES).
+Transport ibTransportOf(const std::string& name) {
+  constexpr Transport ibs[] = {Transport::IB0, Transport::IB1, Transport::IB2, Transport::IB3,
+                               Transport::IB4, Transport::IB5, Transport::IB6, Transport::IB7};
+  for (auto transport : ibs) {
+    if (getIBDeviceName(transport) == name) return transport;
+  }
+  throw Error("EP GPUNetIO HCA " + name + " is not an available IB transport", ErrorCode::InvalidUsage);
+}
+
 }  // namespace
 
 struct EpGpuNetIoService::Impl {
@@ -82,7 +93,8 @@ struct EpGpuNetIoService::Impl {
   std::string devices;
   int device;
   bool initialized = false;
-  std::vector<std::shared_ptr<GpuNetIoService>> services;
+  std::shared_ptr<Communicator> communicator;
+  std::shared_ptr<ProxyService> proxyService;
   std::vector<PortChannel> channels;
   std::shared_ptr<PortChannelDeviceHandle> handles;
   std::shared_ptr<EpGpuNetIoDeviceContext> context;
@@ -92,7 +104,8 @@ struct EpGpuNetIoService::Impl {
     context.reset();
     handles.reset();
     channels.clear();
-    services.clear();
+    proxyService.reset();
+    communicator.reset();
   }
 };
 
@@ -160,35 +173,72 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
                  rank, state.devices.empty() ? "auto" : "explicit", pciBusId, numaNode, names.c_str(), hcas, queues,
                  queues / hcas);
   }
-  std::vector<PortChannelDeviceHandle> handles(static_cast<size_t>(ranks) * queues);
-  for (int hca = 0; hca < hcas; ++hca) {
-    auto service = std::make_shared<GpuNetIoService>(state.bootstrap, devices[hca], state.device, queues / hcas);
-    service->setup();
-    state.services.push_back(service);
-    GpuNetIoMemory memory;
-    localError.clear();
-    try {
-      memory = service->registerMemory(buffer, bytes);
-    } catch (const std::exception& error) {
-      localError = error.what();
+  // One GpuNetIo-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
+  // selected HCA once and exchanged once per peer, then bound into each channel through ProxyService::portChannel().
+  constexpr int ConnectTagBase = 22000;
+  constexpr int MemoryTag = 21999;
+  std::vector<Transport> transports(hcas);
+  TransportFlags flags;
+  localError.clear();
+  try {
+    for (int hca = 0; hca < hcas; ++hca) {
+      transports[hca] = ibTransportOf(devices[hca]);
+      flags |= transports[hca];
     }
-    std::vector<int> registered(ranks);
-    registered[rank] = localError.empty() ? 1 : 0;
-    state.bootstrap->allGather(registered.data(), sizeof(int));
-    if (std::find(registered.begin(), registered.end(), 0) != registered.end())
-      throw Error("EP GPUNetIO registration failed on a rank. " + localError, ErrorCode::SystemError);
-    for (int first = 0; first < ranks; ++first) {
-      for (int second = first + 1; second < ranks; ++second) {
-        if (rank != first && rank != second) continue;
-        const int peer = rank == first ? second : first;
-        for (int queue = hca; queue < queues; queue += hcas) {
-          const auto connection = service->connect(peer, queue / hcas);
-          const auto remote = service->exchangeMemory(connection, memory, 22000 + queue * 2);
-          const auto semaphore = service->buildSemaphore(connection, 22001 + queue * 2);
-          state.channels.emplace_back(semaphore, remote, memory);
-          handles[static_cast<size_t>(peer) * queues + queue] = state.channels.back().deviceHandle();
-        }
-      }
+  } catch (const std::exception& error) {
+    localError = error.what();
+  }
+  std::vector<int> resolved(ranks);
+  resolved[rank] = localError.empty() ? 1 : 0;
+  state.bootstrap->allGather(resolved.data(), sizeof(int));
+  if (std::find(resolved.begin(), resolved.end(), 0) != resolved.end())
+    throw Error("EP GPUNetIO HCA resolution failed on a rank. " + localError, ErrorCode::InvalidUsage);
+
+  state.communicator = std::make_shared<Communicator>(state.bootstrap);
+  state.proxyService = std::make_shared<ProxyService>();
+  auto& communicator = *state.communicator;
+  RegisteredMemory localMemory;
+  try {
+    localMemory = communicator.registerMemory(buffer, bytes, flags);
+  } catch (const std::exception& error) {
+    localError = error.what();
+  }
+  std::vector<int> registered(ranks);
+  registered[rank] = localError.empty() ? 1 : 0;
+  state.bootstrap->allGather(registered.data(), sizeof(int));
+  if (std::find(registered.begin(), registered.end(), 0) != registered.end())
+    throw Error("EP GPUNetIO registration failed on a rank. " + localError, ErrorCode::SystemError);
+  std::vector<std::vector<std::shared_future<Connection>>> connections(ranks);
+  std::vector<std::shared_future<RegisteredMemory>> remoteMemories(ranks);
+  for (int peer = 0; peer < ranks; ++peer) {
+    if (peer == rank) continue;
+    for (int queue = 0; queue < queues; ++queue) {
+      EndpointConfig config;
+      config.transport = transports[queue % hcas];
+      config.device = {DeviceType::GPU, state.device};
+      config.ib.mode = EndpointConfig::Ib::Mode::GpuNetIo;
+      connections[peer].push_back(communicator.connect(config, peer, ConnectTagBase + queue));
+    }
+    communicator.sendMemory(localMemory, peer, MemoryTag);
+    remoteMemories[peer] = communicator.recvMemory(peer, MemoryTag);
+  }
+  auto& proxyService = *state.proxyService;
+  const MemoryId localMemoryId = proxyService.addMemory(localMemory);
+  std::vector<MemoryId> remoteMemoryIds(ranks, localMemoryId);
+  std::vector<std::vector<SemaphoreId>> semaphores(ranks);
+  for (int peer = 0; peer < ranks; ++peer) {
+    if (peer == rank) continue;
+    remoteMemoryIds[peer] = proxyService.addMemory(remoteMemories[peer].get());
+    for (int queue = 0; queue < queues; ++queue) {
+      semaphores[peer].push_back(proxyService.buildAndAddSemaphore(communicator, connections[peer][queue].get()));
+    }
+  }
+  std::vector<PortChannelDeviceHandle> handles(static_cast<size_t>(ranks) * queues);
+  for (int peer = 0; peer < ranks; ++peer) {
+    if (peer == rank) continue;
+    for (int queue = 0; queue < queues; ++queue) {
+      state.channels.push_back(proxyService.portChannel(semaphores[peer][queue], remoteMemoryIds[peer], localMemoryId));
+      handles[static_cast<size_t>(peer) * queues + queue] = state.channels.back().deviceHandle();
     }
   }
   state.handles = GpuBuffer<PortChannelDeviceHandle>(handles.size()).memory();

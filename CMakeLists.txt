@@ -294,6 +294,10 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
+if(MSCCLPP_USE_GPUNETIO)
+    include(GpuNetIo)
+endif()
+
 if("${INSTALL_PREFIX}" STREQUAL "")
     set(INSTALL_PREFIX "./")
 endif()

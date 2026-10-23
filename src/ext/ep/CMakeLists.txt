@@ -72,11 +72,6 @@ target_link_libraries(mscclpp_ep PUBLIC mscclpp)
 target_link_libraries(mscclpp_ep PRIVATE ${GPU_LIBRARIES} Threads::Threads)
 target_compile_definitions(mscclpp_ep PRIVATE MSCCLPP_USE_CUDA)
 
-# GPU-initiated networking (GPUNetIO) backend for the hybrid cross-IPC-domain latency path.
-if(MSCCLPP_USE_GPUNETIO)
-    target_include_directories(mscclpp_ep PRIVATE ${PROJECT_SOURCE_DIR}/src/gpunetio/host)
-endif()
-
 option(MSCCLPP_EP_GPUNETIO_DIAG "Enable bounded GPUNetIO rank-major count diagnostics" OFF)
 if(MSCCLPP_EP_GPUNETIO_DIAG)
     set_property(SOURCE hybrid/dispatch/rank_major_dispatch.cu APPEND PROPERTY

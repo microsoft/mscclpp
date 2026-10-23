@@ -87,6 +87,7 @@ class BaseConnection {
   friend class CudaIpcConnection;
   friend class IBConnection;
   friend class EthernetConnection;
+  friend class GpuNetIoConnection;
 
   static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
   static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);

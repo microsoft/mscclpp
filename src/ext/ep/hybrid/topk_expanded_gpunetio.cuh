@@ -202,10 +202,9 @@ __device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bo
   const int count = __popc(mask);
   if (count == 0) return 0;
   const auto channel = gin->channel(peer, queue);
-  const auto remote = channel.gpuNetIoMemory(channel.dst_, peer, live ? dstOffset : 0, live ? bytes : 0);
-  const auto local =
-      channel.gpuNetIoMemory(channel.src_, channel.gpuNetIoLocalRank_, live ? srcOffset : 0, live ? bytes : 0);
-  auto* qp = mscclpp::detail::gpuNetIoQp(*channel.gpuNetIo_, peer, channel.gpuNetIoQpIndex_);
+  const auto remote = EpGpuNetIoDeviceContext::remoteAddr(channel, live ? dstOffset : 0, live ? bytes : 0);
+  const auto local = EpGpuNetIoDeviceContext::localAddr(channel, live ? srcOffset : 0, live ? bytes : 0);
+  auto* qp = EpGpuNetIoDeviceContext::qp(channel);
   uint64_t base = 0;
   if (lane == 0)
     base = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
@@ -216,9 +215,8 @@ __device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bo
     const uint64_t ticket = base + offset;
     auto* wqe = doca_gpu_dev_verbs_get_wqe_ptr(qp, ticket);
     doca_gpu_dev_verbs_wqe_prepare_write(qp, wqe, ticket, DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
-                                         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.base + dstOffset,
-                                         mscclpp::detail::gpuNetIoHtobe32(remote.key), local.base + srcOffset,
-                                         mscclpp::detail::gpuNetIoHtobe32(local.key), bytes);
+                                         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.addr, remote.key,
+                                         local.addr, local.key, bytes);
     __threadfence_system();
   }
   __syncwarp();
