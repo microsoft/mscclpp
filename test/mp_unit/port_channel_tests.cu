@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
@@ -284,6 +285,8 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
     kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     EXPECT_EQ(*ret, 0);
+    // Rank 0's next launch writes to rank 1 without waiting; keep it from racing rank 1's final check.
+    communicator->bootstrap()->barrier();
   }
 
   proxyService->stopProxy();
@@ -754,6 +757,8 @@ void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEt
 
   // Every transport defines accumulation modulo 2^64.
   MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0xff, sizeof(uint64_t)));
+  // cudaMemset may still be pending; complete it before the peer's accumulate can arrive.
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   *ret = 0;
   communicator->bootstrap()->barrier();
   kernelPortChannelAccumulateWrap<<<1, 1>>>(reinterpret_cast<uint64_t*>(buff.memory().get()), ret.get());
@@ -1338,3 +1343,116 @@ TEST(PortChannelFanInTest, AccumulateIb) {
 }
 
 TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }
+
+// GPUNetIO (IbMode::GpuNetIo): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
+#if defined(MSCCLPP_USE_GPUNETIO)
+#define REQUIRE_GPUNETIO \
+  REQUIRE_IBVERBS;       \
+  requireIbRdmaAtomics(ibTransport)
+#else  // !defined(MSCCLPP_USE_GPUNETIO)
+#define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built with MSCCLPP_USE_GPUNETIO=OFF"
+#endif  // !defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, PingPongIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+}
+
+TEST(PortChannelOneToOneTest, PingPongIbGpuNetIoModeWithPoll) {
+  REQUIRE_GPUNETIO;
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::GpuNetIo});
+}
+
+TEST(PortChannelOneToOneTest, PacketPingPongIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testPacketPingPong(true, IbMode::GpuNetIo);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testAccumulate(false, true, false, IbMode::GpuNetIo);
+}
+
+TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testSameChanConcurrentFlush(IbMode::GpuNetIo);
+}
+
+TEST(PortChannelOneToOneTest, HostAccumulateIbGpuNetIoModeRejected) {
+  REQUIRE_GPUNETIO;
+  testAccumulateRejected(ibTransport, IbMode::GpuNetIo, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
+}
+
+TEST(PortChannelOneToOneTest, DirectConstructionIbGpuNetIoModeRejected) {
+  REQUIRE_GPUNETIO;
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsDirect = false;
+  bool factoryOk = false;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = IbMode::GpuNetIo;
+    auto conn = communicator->connect(cfg, peer).get();
+    auto localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+    mscclpp::ProxyService service;
+    auto semaphoreId = service.buildAndAddSemaphore(*communicator, conn);
+    auto memoryId = service.addMemory(localMem);
+
+    mscclpp::PortChannel direct(semaphoreId, service.semaphore(semaphoreId), nullptr, memoryId, memoryId);
+    rejectsDirect = rejectsInvalidUsage([&] { direct.deviceHandle(); }, "ProxyService::portChannel()");
+    try {
+      service.portChannel(semaphoreId, memoryId, memoryId).deviceHandle();
+      factoryOk = true;
+    } catch (const std::exception& e) {
+      std::cerr << "ProxyService::portChannel() failed: " << e.what() << std::endl;
+    }
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsDirect);
+    EXPECT_TRUE(factoryOk);
+  }
+}
+
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+}
+
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testPacketPingPongPerf(true, IbMode::GpuNetIo);
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+}
+
+PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpBandwidth(IbMode::GpuNetIo, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpBandwidth(IbMode::GpuNetIo, /*numQps=*/4);
+}
+
+PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpFlushStress(IbMode::GpuNetIo, /*numQps=*/4);
+}
+
+TEST(PortChannelFanInTest, AccumulateIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  testFanIn(false, true, false, IbMode::GpuNetIo);
+}

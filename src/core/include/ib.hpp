@@ -147,6 +147,12 @@ class IbCtx {
   bool isMlx5() const;
   bool isDataDirect() const;
   bool isVirtualFunction() const;
+
+  /// Resolve `port` (or pick any usable port if it is -1) and return the local port/GID addressing info that a
+  /// remote QP needs to connect to a QP on this port. `qpn` is left as 0.
+  IbQpInfo getPortInfo(int& port, int gidIndex) const;
+  ibv_context* getContext() const { return ctx_; }
+  ibv_pd* getPd() const { return pd_; }
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -159,6 +165,9 @@ class IbCtx {
   bool isMlx5() const { return false; }
   bool isDataDirect() const { return false; }
   bool isVirtualFunction() const { return false; }
+  IbQpInfo getPortInfo(int&, int) const { return {}; }
+  ibv_context* getContext() const { return nullptr; }
+  ibv_pd* getPd() const { return nullptr; }
 #endif
 
   const std::string& getDevName() const { return devName_; };

@@ -5,9 +5,17 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
+#include "port_channel_gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
+
+/// Backend that services a PortChannel's device-side operations. It is selected by the channel's connection:
+/// GpuNetIo for IB connections created with EndpointConfig::Ib::Mode::GpuNetIo, Proxy otherwise.
+enum class PortChannelBackend : uint8_t {
+  Proxy = 0,     ///< The device pushes triggers to a FIFO that the ProxyService thread consumes.
+  GpuNetIo = 1,  ///< The device posts RDMA work requests directly (DOCA GPUNetIO).
+};
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
 /// actual semaphores.
@@ -30,6 +38,10 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 }  // namespace detail
 
+/// Device-side handle of a BasePortChannel. With PortChannelBackend::GpuNetIo, the operations documented below as
+/// FIFO pushes are instead posted by the calling thread directly to the connection's queue pair, with the same
+/// ordering semantics: signals are RDMA atomics ordered after the preceding writes, and `flush` waits for the
+/// local completion of every operation posted so far on the connection.
 struct BasePortChannelDeviceHandle {
   SemaphoreId semaphoreId_;
 
@@ -43,12 +55,23 @@ struct BasePortChannelDeviceHandle {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
+  // Backend that services this channel's device operations.
+  PortChannelBackend backend_;
+
+  // GPU-initiated networking state; only used when backend_ == PortChannelBackend::GpuNetIo.
+  GpuNetIoDeviceHandle gpuNetIo_;
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
                                                          FifoDeviceHandle fifo, uint64_t* flushDonePos)
-      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
+      : semaphoreId_(semaphoreId),
+        semaphore_(semaphore),
+        fifo_(fifo),
+        flushDonePos_(flushDonePos),
+        backend_(PortChannelBackend::Proxy),
+        gpuNetIo_{} {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
@@ -59,6 +82,11 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gpuNetIo_.put(gpuNetIo_.memory(dstId, false, dstOffset, size), dstOffset,
+                    gpuNetIo_.memory(srcId, true, srcOffset, size), srcOffset, size);
+      return;
+    }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -72,7 +100,13 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a TriggerSignal to the FIFO.
-  MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_}); }
+  MSCCLPP_DEVICE_INLINE void signal() {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gpuNetIo_.atomicAdd(gpuNetIo_.signalAddr, gpuNetIo_.signalKey, 1);
+      return;
+    }
+    fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
+  }
 
   /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstId The ID of destination memory region.
@@ -82,6 +116,11 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gpuNetIo_.putWithSignal(gpuNetIo_.memory(dstId, false, dstOffset, size), dstOffset,
+                              gpuNetIo_.memory(srcId, true, srcOffset, size), srcOffset, size);
+      return;
+    }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -103,6 +142,11 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      putWithSignal(dstId, dstOffset, srcId, srcOffset, size);
+      gpuNetIo_.flush(maxSpinCount);
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -121,6 +165,10 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      gpuNetIo_.flush(maxSpinCount);
+      return;
+    }
     uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -131,6 +179,12 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
+    if (backend_ == PortChannelBackend::GpuNetIo) {
+      const auto dst = gpuNetIo_.memory(dstId, false, dstOffset, sizeof(uint64_t));
+      GpuNetIoDeviceHandle::require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
+      gpuNetIo_.atomicAdd(dst.addr + dstOffset, dst.key, value);
+      return;
+    }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
     uint64_t operand = static_cast<uint64_t>(value);
     ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,

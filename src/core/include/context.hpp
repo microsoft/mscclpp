@@ -42,8 +42,11 @@ class CudaIpcStream {
 };
 
 class TokenPool;
+struct GpuNetIoContext;
 struct Context::Impl {
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
+  // DOCA GPUNetIO device handles opened on ibContexts_; declared after it so that it is released first.
+  std::shared_ptr<GpuNetIoContext> gpuNetIoContext_;
   std::vector<std::shared_ptr<CudaIpcStream>> ipcStreams_;
   std::shared_ptr<TokenPool> tokenPool_;
   const size_t maxNumTokens_ = 1 << 15;  // 32K tokens

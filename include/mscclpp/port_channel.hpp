@@ -13,6 +13,7 @@ namespace mscclpp {
 
 struct BasePortChannel;
 struct PortChannel;
+struct GpuNetIoChannel;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -61,11 +62,15 @@ class ProxyService : public BaseProxyService {
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
   /// Get a base port channel by semaphore ID.
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @return The base port channel.
   BasePortChannel basePortChannel(SemaphoreId id);
 
   /// Get a port channel by semaphore ID and memory regions.
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
@@ -101,11 +106,26 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
+  std::shared_ptr<GpuNetIoChannel> gpuNetIo_;
+
+  /// Internal constructor used by ProxyService. Binds the channel to its connection's backend, giving it the
+  /// complete memory table that its device handle may address.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param proxy The proxy used for communication.
+  /// @param memories The ProxyService memory table, indexed by MemoryId.
+  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                  std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories);
+
+  friend class ProxyService;
+
  public:
   /// Constructor.
   BasePortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with
+  /// ProxyService::basePortChannel() instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
@@ -141,11 +161,19 @@ struct PortChannel : public BasePortChannel {
   MemoryId dst_;
   MemoryId src_;
 
+  /// Internal constructor used by ProxyService; see the BasePortChannel overload taking a memory table.
+  PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
+              MemoryId dst, MemoryId src, const std::vector<RegisteredMemory>& memories);
+
+  friend class ProxyService;
+
  public:
   /// Constructor.
   PortChannel() = default;
 
   /// Constructor.
+  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with ProxyService::portChannel()
+  /// instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
   /// @param proxy The proxy.
