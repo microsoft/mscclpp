@@ -11,38 +11,35 @@
 include(FetchContent)
 FetchContent_Declare(gpunetio
     GIT_REPOSITORY https://github.com/NVIDIA-DOCA/gpunetio.git
-    GIT_TAG bfe3e5484f16a01ac91a906b2f0046dbc8bd61a4  # v4.0.1
+    GIT_TAG b2b7a291ec70fdeeb1b27ba4b0ab8c8e260a729b  # v5.0.0-rc1
     GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(gpunetio)
 set(GPUNETIO_HOME ${gpunetio_SOURCE_DIR})
 
-# Backport from upstream v5.0.0-rc1 (b2b7a291ec70): in v4.0.1, doca_gpu_verbs_create_qp_hl returns directly when
-# doca_gpu_verbs_export_qp fails, leaking the CQ/UAR/QP it already created. Compile a copy of the file that takes the
-# existing cleanup path instead. The fetched tree is left unmodified. Drop this when moving to a fixed revision.
+# In the CQ creation error path of doca_gpunetio_high_level.cpp, the per-QP cleanup frees the host staging buffer and
+# the common exit path frees it again. Compile a copy of the file that clears the pointer after the first free. The
+# fetched tree is left unmodified. Drop this when moving to a revision that fixes it upstream.
 set(GPUNETIO_HIGH_LEVEL_UPSTREAM ${GPUNETIO_HOME}/src/doca_gpunetio_high_level.cpp)
 set(GPUNETIO_HIGH_LEVEL_PATCHED ${CMAKE_BINARY_DIR}/gpunetio/patched/doca_gpunetio_high_level.cpp)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GPUNETIO_HIGH_LEVEL_UPSTREAM})
 file(READ ${GPUNETIO_HIGH_LEVEL_UPSTREAM} GPUNETIO_HIGH_LEVEL_CONTENT)
-set(GPUNETIO_EXPORT_QP_LEAK [=[
-                                      enable_data_direct, &qp_->qp_gverbs);
-    if (status != DOCA_SUCCESS) {
-        DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
-        return status;
-    }]=])
-set(GPUNETIO_EXPORT_QP_FIX [=[
-                                      enable_data_direct, &qp_->qp_gverbs);
-    if (status != DOCA_SUCCESS) {
-        DOCA_LOG(LOG_ERR, "Failed to create GPU verbs QP");
-        goto exit_error;
-    }]=])
-string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_EXPORT_QP_LEAK}" GPUNETIO_LEAK_FIRST)
-string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_EXPORT_QP_LEAK}" GPUNETIO_LEAK_LAST REVERSE)
-if(GPUNETIO_LEAK_FIRST EQUAL -1 OR NOT GPUNETIO_LEAK_FIRST EQUAL GPUNETIO_LEAK_LAST)
-    message(FATAL_ERROR "GPUNetIO: doca_gpu_verbs_create_qp_hl export-failure backport does not apply to "
+set(GPUNETIO_CQ_DOUBLE_FREE [=[
+        if (cq_ring_haddr) {
+            free(cq_ring_haddr);
+        }]=])
+set(GPUNETIO_CQ_CLEANUP_FIX [=[
+        if (cq_ring_haddr) {
+            free(cq_ring_haddr);
+            cq_ring_haddr = nullptr;
+        }]=])
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_CQ_DOUBLE_FREE}" GPUNETIO_CQ_FIRST)
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_CQ_DOUBLE_FREE}" GPUNETIO_CQ_LAST REVERSE)
+if(GPUNETIO_CQ_FIRST EQUAL -1 OR NOT GPUNETIO_CQ_FIRST EQUAL GPUNETIO_CQ_LAST)
+    message(FATAL_ERROR "GPUNetIO: CQ cleanup fix does not apply to "
                         "${GPUNETIO_HIGH_LEVEL_UPSTREAM}; re-evaluate it when changing the pinned revision")
 endif()
-string(REPLACE "${GPUNETIO_EXPORT_QP_LEAK}" "${GPUNETIO_EXPORT_QP_FIX}" GPUNETIO_HIGH_LEVEL_CONTENT
+string(REPLACE "${GPUNETIO_CQ_DOUBLE_FREE}" "${GPUNETIO_CQ_CLEANUP_FIX}" GPUNETIO_HIGH_LEVEL_CONTENT
                "${GPUNETIO_HIGH_LEVEL_CONTENT}")
 file(WRITE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp "${GPUNETIO_HIGH_LEVEL_CONTENT}")
 file(COPY_FILE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp ${GPUNETIO_HIGH_LEVEL_PATCHED} ONLY_IF_DIFFERENT)
@@ -64,6 +61,8 @@ add_library(mscclpp_gpunetio_obj OBJECT
     ${GPUNETIO_HOME}/src/doca_gpunetio.cpp
     ${GPUNETIO_HOME}/src/doca_gpunetio_log.cpp
     ${GPUNETIO_HIGH_LEVEL_PATCHED}
+    ${GPUNETIO_HOME}/src/doca_gpunetio_signal_map.cpp
+    ${GPUNETIO_HOME}/src/doca_verbs_utils.cpp
     ${GPUNETIO_HOME}/src/doca_verbs_mlx5dv_wrapper.cpp
     ${GPUNETIO_HOME}/src/doca_verbs_ibv_wrapper.cpp
     ${GPUNETIO_HOME}/src/doca_gpunetio_gdrcopy.cpp

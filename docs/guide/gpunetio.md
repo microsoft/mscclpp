@@ -13,16 +13,15 @@ cmake -DMSCCLPP_USE_GPUNETIO=ON ..
 ```
 
 GPUNetIO requires a CUDA build with InfiniBand support (`MSCCLPP_USE_IB=ON`). At configure time, CMake fetches the
-GPUNetIO sources (pinned to v4.0.1, see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`. To build without
-network access, point CMake to a local checkout of the same revision:
+GPUNetIO sources (pinned to v5.0.0-rc1, see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`. To build
+without network access, point CMake to a local checkout of the same revision:
 
 ```bash
 cmake -DMSCCLPP_USE_GPUNETIO=ON -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
 ```
 
-The build compiles a patched copy of `doca_gpunetio_high_level.cpp` that backports an upstream fix for a resource leak
-on a QP creation failure path; the fetched tree itself is not modified. The GPUNetIO license is installed to
-`share/licenses/mscclpp/gpunetio`.
+The build compiles a patched copy of `doca_gpunetio_high_level.cpp` that fixes a double free on a CQ creation failure
+path; the fetched tree itself is not modified. The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 
 ## Requirements
 
