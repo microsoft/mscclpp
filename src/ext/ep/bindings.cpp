@@ -33,7 +33,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   nb::enum_<DispatchLayout>(m, "DispatchLayout")
       .value("EXPERT_MAJOR", DispatchLayout::EXPERT_MAJOR)
       .value("TOKEN_MAJOR", DispatchLayout::TOKEN_MAJOR)
-      .value("RANK_MAJOR", DispatchLayout::RANK_MAJOR);
+      .value("RANK_MAJOR", DispatchLayout::RANK_MAJOR)
+      .value("RANK_MAJOR_TOPK_EXPANDED", DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
   nb::enum_<CombineMode>(m, "CombineMode")
       .value("RANK_LOCAL_REDUCE", CombineMode::RANK_LOCAL_REDUCE)
       .value("DIRECT_SEND", CombineMode::DIRECT_SEND);

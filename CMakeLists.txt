@@ -106,7 +106,7 @@ else()
 endif()
 
 if(MSCCLPP_USE_GPUNETIO AND (NOT MSCCLPP_USE_CUDA OR MSCCLPP_USE_ROCM OR NOT MSCCLPP_USE_IB))
-    message(FATAL_ERROR "GPUNetIO requires MSCCLPP_USE_CUDA=ON, MSCCLPP_USE_ROCM=OFF and MSCCLPP_USE_IB=ON")
+    message(FATAL_ERROR "MSCCLPP_USE_GPUNETIO requires CUDA and InfiniBand (MSCCLPP_USE_CUDA=ON, MSCCLPP_USE_ROCM=OFF, MSCCLPP_USE_IB=ON).")
 endif()
 
 # Code coverage setup
@@ -182,7 +182,7 @@ if(MSCCLPP_GPU_ARCHS)
     endif()
 elseif(MSCCLPP_USE_CUDA)
     if(NVIDIA_FOUND)
-        set(MSCCLPP_GPU_ARCHS "native")
+        set(MSCCLPP_GPU_ARCHS ${NVIDIA_GPU_ARCHS})
     else()
 	    if(CUDAToolkit_VERSION VERSION_LESS "12.0")
 	        message(FATAL_ERROR "CUDA 12.0 or higher required (C++20 build), found ${CUDAToolkit_VERSION}")

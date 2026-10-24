@@ -23,6 +23,10 @@ namespace ep {
 
 struct Workload;
 
+namespace hybrid {
+class LatencyRuntime;
+}  // namespace hybrid
+
 struct PrepareHandle::Impl {
   Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t routingEpoch, const PrepareRequest& request)
       : owner_(std::move(owner)),
@@ -100,6 +104,7 @@ struct LatencyRuntimeContext {
   int rank_;
   int numRanks_;
   int numRanksPerIpcDomain_;
+  int numRanksPerNode_;
   bool available_ = false;
   int deviceId_;
   int maxTokensPerRank_;
@@ -120,6 +125,9 @@ struct LatencyRuntimeContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  // Hybrid NVLink/IPC + GPUNetIO path for GPUNetIO cross-domain RANK_MAJOR and for
+  // RANK_MAJOR_TOPK_EXPANDED; null when the main IPC kernels serve this runtime.
+  std::unique_ptr<hybrid::LatencyRuntime> hybrid_;
 };
 
 struct ThroughputRuntimeContext {
