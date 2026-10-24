@@ -44,6 +44,25 @@ if(GPUNETIO_LEAK_FIRST EQUAL -1 OR NOT GPUNETIO_LEAK_FIRST EQUAL GPUNETIO_LEAK_L
 endif()
 string(REPLACE "${GPUNETIO_EXPORT_QP_LEAK}" "${GPUNETIO_EXPORT_QP_FIX}" GPUNETIO_HIGH_LEVEL_CONTENT
                "${GPUNETIO_HIGH_LEVEL_CONTENT}")
+
+# Prevent the per-QP CQ cleanup from freeing the host staging buffer twice.
+set(GPUNETIO_CQ_DOUBLE_FREE [=[
+        if (cq_ring_haddr) {
+            free(cq_ring_haddr);
+        }]=])
+set(GPUNETIO_CQ_CLEANUP_FIX [=[
+        if (cq_ring_haddr) {
+            free(cq_ring_haddr);
+            cq_ring_haddr = nullptr;
+        }]=])
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_CQ_DOUBLE_FREE}" GPUNETIO_CQ_FIRST)
+string(FIND "${GPUNETIO_HIGH_LEVEL_CONTENT}" "${GPUNETIO_CQ_DOUBLE_FREE}" GPUNETIO_CQ_LAST REVERSE)
+if(GPUNETIO_CQ_FIRST EQUAL -1 OR NOT GPUNETIO_CQ_FIRST EQUAL GPUNETIO_CQ_LAST)
+    message(FATAL_ERROR "GPUNetIO: CQ cleanup backport does not apply to "
+                        "${GPUNETIO_HIGH_LEVEL_UPSTREAM}; re-evaluate it when changing the pinned revision")
+endif()
+string(REPLACE "${GPUNETIO_CQ_DOUBLE_FREE}" "${GPUNETIO_CQ_CLEANUP_FIX}" GPUNETIO_HIGH_LEVEL_CONTENT
+               "${GPUNETIO_HIGH_LEVEL_CONTENT}")
 file(WRITE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp "${GPUNETIO_HIGH_LEVEL_CONTENT}")
 file(COPY_FILE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp ${GPUNETIO_HIGH_LEVEL_PATCHED} ONLY_IF_DIFFERENT)
 file(REMOVE ${GPUNETIO_HIGH_LEVEL_PATCHED}.tmp)
