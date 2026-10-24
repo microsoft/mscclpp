@@ -62,9 +62,8 @@ class GpuNetIoConnection : public BaseConnection {
   /// @param signal The remote semaphore token targeted by signals.
   /// @param memories The memory table indexed by MemoryId. Entries that are neither local nor owned by the remote
   /// peer of this connection, or are not registered for the corresponding IB transport, are marked unusable.
-  detail::GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal,
-                                            std::vector<detail::GpuNetIoMemoryDeviceHandle>& table,
-                                            const std::vector<RegisteredMemory>& memories) const;
+  GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal, std::vector<GpuNetIoMemoryDeviceHandle>& table,
+                                    const std::vector<RegisteredMemory>& memories) const;
 
  private:
   Transport transport_;
@@ -75,8 +74,6 @@ class GpuNetIoConnection : public BaseConnection {
   std::shared_ptr<uint64_t> atomicScratch_;
   RegisteredMemory atomicScratchMem_;
 };
-
-namespace detail {
 
 /// Host-side state of a PortChannel bound to a GpuNetIoConnection.
 struct GpuNetIoChannel {
@@ -94,7 +91,6 @@ struct GpuNetIoChannel {
   GpuNetIoDeviceHandle deviceHandle;
 };
 
-}  // namespace detail
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_GPUNETIO_HPP_

@@ -311,9 +311,9 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& signal,
-                                                              std::vector<detail::GpuNetIoMemoryDeviceHandle>& table,
-                                                              const std::vector<RegisteredMemory>& memories) const {
+GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& signal,
+                                                      std::vector<GpuNetIoMemoryDeviceHandle>& table,
+                                                      const std::vector<RegisteredMemory>& memories) const {
   const auto& signalImpl = getImpl(signal);
   if (!signalImpl.transports.has(remoteTransport_)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "GPUNetIO semaphore token is not registered for ", remoteTransport_);
@@ -326,7 +326,7 @@ detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMe
 
   const uint64_t localHostHash = getImpl(localEndpoint_).hostHash_;
   const uint64_t localPidHash = getImpl(localEndpoint_).pidHash_;
-  table.assign(memories.size(), detail::GpuNetIoMemoryDeviceHandle{});
+  table.assign(memories.size(), GpuNetIoMemoryDeviceHandle{});
   for (size_t i = 0; i < memories.size(); ++i) {
     const auto& impl = getImpl(memories[i]);
     if (impl.hostHash == localHostHash && impl.pidHash == localPidHash && impl.transports.has(transport_)) {
@@ -339,7 +339,7 @@ detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMe
     }
   }
 
-  detail::GpuNetIoDeviceHandle handle{};
+  GpuNetIoDeviceHandle handle{};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
@@ -348,8 +348,6 @@ detail::GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMe
   handle.numMemories = static_cast<uint32_t>(table.size());
   return handle;
 }
-
-namespace detail {
 
 std::shared_ptr<GpuNetIoChannel> GpuNetIoChannel::bind(Host2DeviceSemaphore& semaphore,
                                                        const std::vector<RegisteredMemory>& memories) {
@@ -362,7 +360,7 @@ std::shared_ptr<GpuNetIoChannel> GpuNetIoChannel::bind(Host2DeviceSemaphore& sem
   channel->deviceHandle = connection->deviceHandle(semaphore.semaphore_.remoteMemory(), table, memories);
   if (!table.empty()) {
     CudaDeviceGuard deviceGuard(connection->localDevice().id);
-    channel->table = gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());
+    channel->table = detail::gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());
     mscclpp::gpuMemcpy<GpuNetIoMemoryDeviceHandle>(channel->table.get(), table.data(), table.size(),
                                                    cudaMemcpyHostToDevice);
   }
@@ -379,5 +377,4 @@ void GpuNetIoChannel::requireBound(Host2DeviceSemaphore& semaphore, const std::s
   }
 }
 
-}  // namespace detail
 }  // namespace mscclpp

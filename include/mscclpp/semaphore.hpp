@@ -12,14 +12,12 @@
 
 namespace mscclpp {
 
-namespace detail {
 struct GpuNetIoChannel;
-}  // namespace detail
 
 /// A semaphore for sending signals from the host to the device.
 class Host2DeviceSemaphore {
  private:
-  friend struct detail::GpuNetIoChannel;
+  friend struct GpuNetIoChannel;
 
   Semaphore semaphore_;
   std::shared_ptr<uint64_t> inboundToken_;

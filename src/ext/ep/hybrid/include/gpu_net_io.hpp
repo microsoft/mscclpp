@@ -21,7 +21,7 @@ struct EpGpuNetIoDeviceContext {
   int numHcas;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  MSCCLPP_DEVICE_INLINE static void require(bool valid) { detail::GpuNetIoDeviceHandle::require(valid); }
+  MSCCLPP_DEVICE_INLINE static void require(bool valid) { GpuNetIoDeviceHandle::require(valid); }
 
   MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle channel(int peer, int queue) const {
     require(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer);
