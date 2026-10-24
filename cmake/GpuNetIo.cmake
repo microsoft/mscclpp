@@ -59,6 +59,7 @@ add_library(mscclpp_gpunetio_obj OBJECT
     ${GPUNETIO_HOME}/src/doca_verbs_srq.cpp
     ${GPUNETIO_HOME}/src/doca_verbs_uar.cpp
     ${GPUNETIO_HOME}/src/doca_gpunetio.cpp
+    ${GPUNETIO_HOME}/src/doca_gpunetio_cuda_wrapper.cpp
     ${GPUNETIO_HOME}/src/doca_gpunetio_log.cpp
     ${GPUNETIO_HIGH_LEVEL_PATCHED}
     ${GPUNETIO_HOME}/src/doca_gpunetio_signal_map.cpp
