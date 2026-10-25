@@ -12,10 +12,14 @@
 #include <string>
 #include <vector>
 
+#include "../ep_quantization_reference.hpp"
 #include "../framework.hpp"
 #include "common/quantization.cuh"
 
 namespace {
+
+using mscclpp::test::referenceFp8E4M3;
+using mscclpp::test::referenceScale;
 
 constexpr int Mxfp8BlockSize = 32;
 constexpr int VectorsPerBlock = Mxfp8BlockSize / mscclpp::bf16x8::Size;
@@ -46,37 +50,6 @@ double bf16ToDouble(uint16_t bits) {
   float value;
   std::memcpy(&value, &floatBits, sizeof(value));
   return value;
-}
-
-// Smallest scale byte s in [1, 254] with maxAbs <= 448 * 2^(s - 127); all-zero blocks use 127.
-uint8_t referenceScale(double maxAbs) {
-  if (maxAbs == 0.0) return 127;
-  int scale = 1;
-  while (scale < 254 && maxAbs > std::ldexp(448.0, scale - 127)) ++scale;
-  return static_cast<uint8_t>(scale);
-}
-
-// Nearest finite E4M3 code with ties to the even code; magnitudes above 448 saturate.
-uint8_t referenceFp8E4M3(double value) {
-  static const std::array<double, 0x7F> codeValues = [] {
-    std::array<double, 0x7F> values;
-    for (int code = 0; code < 0x7F; ++code) {
-      const int exponent = code >> 3;
-      const int mantissa = code & 7;
-      values[code] = exponent == 0 ? std::ldexp(mantissa, -9) : std::ldexp(8 + mantissa, exponent - 10);
-    }
-    return values;
-  }();
-  const double magnitude = std::fabs(value);
-  const int upper =
-      static_cast<int>(std::lower_bound(codeValues.begin(), codeValues.end(), magnitude) - codeValues.begin());
-  int code = std::min(upper, 0x7E);
-  if (upper > 0 && upper < 0x7F) {
-    const double below = magnitude - codeValues[upper - 1];
-    const double above = codeValues[upper] - magnitude;
-    if (below < above || (below == above && (upper - 1) % 2 == 0)) code = upper - 1;
-  }
-  return static_cast<uint8_t>((std::signbit(value) ? 0x80 : 0) | code);
 }
 
 // Quantizes 32-element BF16 blocks on the GPU and compares every scale and payload byte with the host reference.
