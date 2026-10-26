@@ -621,8 +621,10 @@ bool IbCtx::isDataDirect() const { return isDataDirect_; }
 bool IbCtx::isVirtualFunction() const { return isVF_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
-  int num;
-  IBVerbs::ibv_get_device_list(&num);
+  int num = 0;
+  struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
+  if (devices == nullptr) return 0;
+  IBVerbs::ibv_free_device_list(devices);
   return num;
 }
 
