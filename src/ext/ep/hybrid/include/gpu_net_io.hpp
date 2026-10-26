@@ -13,7 +13,9 @@ namespace mscclpp::ep {
 /// Device view of the EP GPUNetIO channels: one PortChannel per (peer, queue), each bound to its own queue pair over
 /// an EndpointConfig::Ib::Mode::GpuNetIo connection. Every channel's dst_/src_ are the peer's / local symmetric buffer,
 /// so offsets below are symmetric-buffer offsets. Unlike PortChannelDeviceHandle::put(), these helpers do not fence;
-/// callers order their source writes (see the EP row-fence modes).
+/// callers order their source writes (see the EP row-fence modes). EP posts to a QP from many threads concurrently,
+/// so these helpers use GPU resource-sharing mode and ring the doorbell explicitly (GPU_SM_DB): the core creates
+/// GpuNetIo QPs for exclusive BlueFlame submission, and DOCA's NIC_HANDLER_AUTO submit has no BlueFlame path.
 struct EpGpuNetIoDeviceContext {
   PortChannelDeviceHandle* channels;
   int numPeers;
@@ -58,7 +60,7 @@ struct EpGpuNetIoDeviceContext {
 #if defined(MSCCLPP_USE_GPUNETIO)
     const auto handle = channel(peer, queue);
     doca_gpu_dev_verbs_ticket_t ticket;
-    doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+    doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
         qp(handle), remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, &ticket);
 #else
     require(false);
@@ -72,7 +74,8 @@ struct EpGpuNetIoDeviceContext {
     require(remote.addr % sizeof(uint64_t) == 0);
     const auto scratch = atomicScratch(handle);
     doca_gpu_dev_verbs_ticket_t ticket;
-    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                  DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
         qp(handle), remote, scratch, 0, remote, scratch, static_cast<uint64_t>(value), &ticket);
 #else
     require(false);
@@ -87,7 +90,8 @@ struct EpGpuNetIoDeviceContext {
     const auto signal = remoteAddr(handle, signalOffset, sizeof(uint64_t));
     require(signal.addr % sizeof(uint64_t) == 0);
     doca_gpu_dev_verbs_ticket_t ticket;
-    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                  DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
         qp(handle), remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, signal,
         atomicScratch(handle), signalValue, &ticket);
 #else
@@ -95,7 +99,9 @@ struct EpGpuNetIoDeviceContext {
 #endif
   }
 
-  MSCCLPP_DEVICE_INLINE void flush(int peer, int queue = 0) { channel(peer, queue).flush(-1); }
+  /// Wait for every WQE posted so far on (peer, queue). Unlike PortChannelDeviceHandle::flush(), this polls in GPU
+  /// resource-sharing mode because EP posts to a QP from many threads concurrently.
+  MSCCLPP_DEVICE_INLINE void flush(int peer, int queue = 0) { waitTicket(peer, reservedTicket(peer, queue), queue); }
 
   /// Poll for completion of every WQE posted so far on (peer, queue) for at most `spins` iterations.
   /// @return 0 when drained, EBUSY if still pending, or the completion error status.
