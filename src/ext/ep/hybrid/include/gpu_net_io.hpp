@@ -16,11 +16,33 @@ namespace mscclpp::ep {
 /// callers order their source writes (see the EP row-fence modes). EP posts to a QP from many threads concurrently,
 /// so these helpers use GPU resource-sharing mode and ring the doorbell explicitly (GPU_SM_DB): the core creates
 /// GpuNetIo QPs for exclusive BlueFlame submission, and DOCA's NIC_HANDLER_AUTO submit has no BlueFlame path.
+///
+/// Optional modes (host env, see EpGpuNetIoService::setup):
+///  - blueFlame: submit through the QP's BlueFlame register (64B WQE copy from shared memory) plus the doorbell.
+///  - inlineSignal: a remote flag increment becomes a strong-ordered 8-byte inline RDMA write of a sender-side
+///    counter instead of an RDMA atomic. Valid because every EP flag slot is written by exactly one sender rank,
+///    always through the same QP, by one thread at a time; the receiver only waits for `flag >= target`.
 struct EpGpuNetIoDeviceContext {
+  /// Flag slots per (kind, sender) in the dispatch/combine flag buffers (GpuNetIoMaxQpsPerPeer).
+  static constexpr int SignalQueues = 64;
+  /// Shadow counters per peer: dispatch flags, combine flags, then the expanded-sync flag.
+  static constexpr int SignalTokensPerPeer = 2 * SignalQueues + 1;
+  static constexpr uint64_t NoOffset = ~uint64_t{0};
+
   PortChannelDeviceHandle* channels;
   int numPeers;
   int numQpsPerPeer;
   int numHcas;
+  int rank = -1;
+  int blueFlame = 0;
+  int inlineSignal = 0;
+  /// [numPeers][SignalTokensPerPeer] last value written to each remote flag slot owned by this rank.
+  uint64_t* signalTokens = nullptr;
+  /// Symmetric offset of the dispatch flag buffer; the combine flag buffer follows at + signalFlagsBytes.
+  uint64_t signalFlagsOffset = NoOffset;
+  uint64_t signalFlagsBytes = 0;
+  /// Symmetric offset of the expanded-sync flag buffer (one uint64_t per sender rank).
+  uint64_t signalSyncOffset = NoOffset;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   MSCCLPP_DEVICE_INLINE static void require(bool valid) { GpuNetIoDeviceHandle::require(valid); }
@@ -59,9 +81,12 @@ struct EpGpuNetIoDeviceContext {
   MSCCLPP_DEVICE_INLINE void put(int peer, uint64_t destination, uint64_t source, uint64_t bytes, int queue = 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     const auto handle = channel(peer, queue);
+    auto* q = qp(handle);
     doca_gpu_dev_verbs_ticket_t ticket;
     doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
-        qp(handle), remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, &ticket);
+        q, remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, &ticket,
+        DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_DB_RINGING);
+    submit(q, ticket + 1);
 #else
     require(false);
 #endif
@@ -72,11 +97,21 @@ struct EpGpuNetIoDeviceContext {
     const auto handle = channel(peer, queue);
     const auto remote = remoteAddr(handle, destination, sizeof(uint64_t));
     require(remote.addr % sizeof(uint64_t) == 0);
-    const auto scratch = atomicScratch(handle);
-    doca_gpu_dev_verbs_ticket_t ticket;
-    doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                  DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
-        qp(handle), remote, scratch, 0, remote, scratch, static_cast<uint64_t>(value), &ticket);
+    auto* q = qp(handle);
+    const uint64_t index = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+        q, 1, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+    auto* wqe = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
+    if (auto* token = signalToken(peer, destination)) {
+      prepareSignal(q, wqe, index, remote, nextToken(token, value));
+    } else {
+      const auto scratch = atomicScratch(handle);
+      doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
+                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, remote.addr, remote.key,
+                                            scratch.addr, scratch.key, sizeof(uint64_t), static_cast<uint64_t>(value),
+                                            0);
+    }
+    doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(q, index, index);
+    submit(q, index + 1);
 #else
     require(false);
 #endif
@@ -89,11 +124,33 @@ struct EpGpuNetIoDeviceContext {
     const auto handle = channel(peer, queue);
     const auto signal = remoteAddr(handle, signalOffset, sizeof(uint64_t));
     require(signal.addr % sizeof(uint64_t) == 0);
+    auto* q = qp(handle);
+    if (auto* token = signalToken(peer, signalOffset)) {
+      if (bytes == 0 || bytes > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
+        put(peer, destination, source, bytes, queue);
+        atomicAdd(peer, signalOffset, static_cast<int64_t>(signalValue), queue);
+        return;
+      }
+      const auto remote = remoteAddr(handle, destination, bytes);
+      const auto local = localAddr(handle, source, bytes);
+      const uint64_t index = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+          q, 2, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+      doca_gpu_dev_verbs_wqe_prepare_write(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index), index,
+                                           DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                           DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.addr, remote.key,
+                                           local.addr, local.key, bytes);
+      prepareSignal(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1), index + 1, signal,
+                    nextToken(token, static_cast<int64_t>(signalValue)));
+      doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(q, index, index + 1);
+      submit(q, index + 2);
+      return;
+    }
     doca_gpu_dev_verbs_ticket_t ticket;
     doca_gpu_dev_verbs_put_signal<DOCA_GPUNETIO_VERBS_SIGNAL_OP_ADD, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                   DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
-        qp(handle), remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, signal,
-        atomicScratch(handle), signalValue, &ticket);
+        q, remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, signal,
+        atomicScratch(handle), signalValue, &ticket, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_SKIP_DB_RINGING);
+    submit(q, ticket + 1);
 #else
     require(false);
 #endif
@@ -174,14 +231,83 @@ struct EpGpuNetIoDeviceContext {
                                            remote[index].key, local[index].addr, local[index].key, sizes[index]);
     }
     doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(q, base, base + 2);
-    doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD,
-                              DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(q, base + 3,
-                                                                         DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+    submit(q, base + 3);
 #else
     require(false);
 #endif
   }
-#endif
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  /// Hand every WQE below `prodIndex` (already marked ready) to the NIC: BlueFlame or doorbell, in GPU sharing mode.
+  MSCCLPP_DEVICE_INLINE void submit(doca_gpu_dev_verbs_qp* q, uint64_t prodIndex) const {
+    if (blueFlame) {
+      submitBlueFlame(q, prodIndex);
+      return;
+    }
+    doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD,
+                              DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(q, prodIndex,
+                                                                         DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+  }
+
+ private:
+  /// Sender-side shadow of the remote flag at symmetric `offset` on `peer`, or nullptr when the slot is not an
+  /// EP flag owned by this rank (those keep RDMA atomics).
+  MSCCLPP_DEVICE_INLINE uint64_t* signalToken(int peer, uint64_t offset) const {
+    if (!inlineSignal || signalTokens == nullptr) return nullptr;
+    uint64_t* tokens = signalTokens + static_cast<size_t>(peer) * SignalTokensPerPeer;
+    if (signalFlagsOffset != NoOffset && offset >= signalFlagsOffset &&
+        offset < signalFlagsOffset + 2 * signalFlagsBytes) {
+      const uint64_t relative = offset - signalFlagsOffset;
+      const uint64_t kind = relative / signalFlagsBytes;
+      const int64_t slot = static_cast<int64_t>((relative % signalFlagsBytes) / sizeof(uint64_t)) -
+                           static_cast<int64_t>(rank) * SignalQueues;
+      if (slot < 0 || slot >= SignalQueues) return nullptr;
+      return tokens + kind * SignalQueues + slot;
+    }
+    if (signalSyncOffset != NoOffset && offset == signalSyncOffset + static_cast<uint64_t>(rank) * sizeof(uint64_t))
+      return tokens + 2 * SignalQueues;
+    return nullptr;
+  }
+
+  MSCCLPP_DEVICE_INLINE static uint64_t nextToken(uint64_t* token, int64_t value) {
+    return ::atomicAdd(reinterpret_cast<unsigned long long*>(token), static_cast<unsigned long long>(value)) +
+           static_cast<uint64_t>(value);
+  }
+
+  /// Strong-ordered inline write of `token` to `signal`: placed only after every earlier WQE on the QP.
+  MSCCLPP_DEVICE_INLINE static void prepareSignal(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqe,
+                                                  uint64_t index, const doca_gpu_dev_verbs_addr& signal,
+                                                  uint64_t token) {
+    constexpr auto flags = static_cast<doca_gpu_dev_verbs_wqe_ctrl_flags>(
+        DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE | DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING);
+    doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_header(q, wqe, static_cast<uint16_t>(index), flags, signal.addr,
+                                                         signal.key, sizeof(uint64_t));
+    doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data<uint64_t>(q, wqe, token);
+  }
+
+  /// BlueFlame submit in GPU sharing mode: under the QP lock, copy the last WQE (64B) from the SQ straight to the
+  /// BlueFlame register with 16B stores and ring the doorbell (covers any earlier WQEs). No shared memory needed.
+  MSCCLPP_DEVICE_INLINE static void submitBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t prodIndex) {
+    const uint4* source = reinterpret_cast<const uint4*>(doca_gpu_dev_verbs_get_wqe_ptr(q, prodIndex - 1));
+    doca_gpu_dev_verbs_lock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->sq_lock);
+    const uint64_t previous =
+        doca_gpu_dev_verbs_atomic_max<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, true>(&q->sq_wqe_pi,
+                                                                                                    prodIndex);
+    if (previous < prodIndex) {
+      uint4 wqe[4];
+#pragma unroll
+      for (int index = 0; index < 4; ++index) wqe[index] = source[index];
+      uint4* bf = reinterpret_cast<uint4*>(doca_gpu_dev_verbs_load_const((uintptr_t*)&q->sq_db));
+      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+#pragma unroll
+      for (int index = 0; index < 4; ++index) bf[index] = wqe[index];
+      doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
+      doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, prodIndex);
+    }
+    doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->sq_lock);
+  }
+#endif  // defined(MSCCLPP_USE_GPUNETIO)
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 class EpGpuNetIoService {
@@ -191,6 +317,9 @@ class EpGpuNetIoService {
   EpGpuNetIoService(const EpGpuNetIoService&) = delete;
   EpGpuNetIoService& operator=(const EpGpuNetIoService&) = delete;
   void setup(void* buffer, size_t bytes);
+  /// Register the symmetric offsets of the EP flag buffers whose increments may become inline signals.
+  /// Pass EpGpuNetIoDeviceContext::NoOffset for an absent buffer.
+  void setSignalRegions(uint64_t flagsOffset, uint64_t flagsBytes, uint64_t syncOffset);
   EpGpuNetIoDeviceContext* deviceContext() const;
 
  private:

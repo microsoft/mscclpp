@@ -98,10 +98,13 @@ struct EpGpuNetIoService::Impl {
   std::vector<PortChannel> channels;
   std::shared_ptr<PortChannelDeviceHandle> handles;
   std::shared_ptr<EpGpuNetIoDeviceContext> context;
+  std::shared_ptr<uint64_t> signalTokens;
+  EpGpuNetIoDeviceContext hostContext{};
 
   ~Impl() {
     CudaDeviceGuard guard(device);
     context.reset();
+    signalTokens.reset();
     handles.reset();
     channels.clear();
     proxyService.reset();
@@ -244,11 +247,40 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   state.handles = GpuBuffer<PortChannelDeviceHandle>(handles.size()).memory();
   MSCCLPP_CUDATHROW(
       cudaMemcpy(state.handles.get(), handles.data(), handles.size() * sizeof(handles[0]), cudaMemcpyHostToDevice));
-  const EpGpuNetIoDeviceContext context{state.handles.get(), ranks, queues, hcas};
+  const auto enabled = [](const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr && std::string(value) == "1";
+  };
+  EpGpuNetIoDeviceContext context{state.handles.get(), ranks, queues, hcas};
+  context.rank = rank;
+  context.blueFlame = enabled("MSCCLPP_EP_GPUNETIO_BLUEFLAME") ? 1 : 0;
+  context.inlineSignal = enabled("MSCCLPP_EP_GPUNETIO_INLINE_SIGNAL") ? 1 : 0;
+  if (context.inlineSignal) {
+    const size_t tokens = static_cast<size_t>(ranks) * EpGpuNetIoDeviceContext::SignalTokensPerPeer;
+    state.signalTokens = GpuBuffer<uint64_t>(tokens).memory();
+    MSCCLPP_CUDATHROW(cudaMemset(state.signalTokens.get(), 0, tokens * sizeof(uint64_t)));
+    context.signalTokens = state.signalTokens.get();
+  }
+  if (std::getenv("MSCCLPP_EP_DEBUG_TOPO")) {
+    std::fprintf(stderr, "[EPGPUNETIO] rank=%d blueFlame=%d inlineSignal=%d\n", rank, context.blueFlame,
+                 context.inlineSignal);
+  }
+  state.hostContext = context;
   state.context = GpuBuffer<EpGpuNetIoDeviceContext>(1).memory();
   MSCCLPP_CUDATHROW(cudaMemcpy(state.context.get(), &context, sizeof(context), cudaMemcpyHostToDevice));
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   state.bootstrap->barrier();
+}
+
+void EpGpuNetIoService::setSignalRegions(uint64_t flagsOffset, uint64_t flagsBytes, uint64_t syncOffset) {
+  auto& state = *impl_;
+  if (!state.context) throw Error("EP GPUNetIO signal regions set before setup", ErrorCode::InvalidUsage);
+  CudaDeviceGuard guard(state.device);
+  state.hostContext.signalFlagsOffset = flagsBytes > 0 ? flagsOffset : EpGpuNetIoDeviceContext::NoOffset;
+  state.hostContext.signalFlagsBytes = flagsBytes;
+  state.hostContext.signalSyncOffset = syncOffset;
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(state.context.get(), &state.hostContext, sizeof(state.hostContext), cudaMemcpyHostToDevice));
 }
 
 EpGpuNetIoDeviceContext* EpGpuNetIoService::deviceContext() const { return impl_->context.get(); }

@@ -222,9 +222,7 @@ __device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bo
   __syncwarp();
   if (lane == 0) {
     doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, base, base + count - 1);
-    doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_SYNC_SCOPE_THREAD,
-                              DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(qp, base + count,
-                                                                         DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+    gin->submit(qp, base + count);
   }
   __syncwarp();
   return count;

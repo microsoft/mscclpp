@@ -279,6 +279,19 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
     deviceContext_.gpuNetIoCombineFlagsBuffer_ = storage.gpuNetIoCombineFlagsBuffer_;
     deviceContext_.gpuNetIoCombineLandingBuffer_ = storage.gpuNetIoCombineLandingBuffer_;
     deviceContext_.gpuNetIoSlotStride_ = storage.gpuNetIoSlotStride_;
+    static_assert(EpGpuNetIoDeviceContext::SignalQueues == GpuNetIoMaxQpsPerPeer);
+    const auto offsetOf = [symmetricBuffer](void* pointer) {
+      return pointer == nullptr ? EpGpuNetIoDeviceContext::NoOffset
+                                : static_cast<uint64_t>(static_cast<uint8_t*>(pointer) -
+                                                        static_cast<uint8_t*>(symmetricBuffer));
+    };
+    const uint64_t flagsBytes =
+        storage.gpuNetIoFlagsBuffer_ == nullptr || storage.gpuNetIoCombineFlagsBuffer_ == nullptr
+            ? 0
+            : static_cast<uint64_t>(static_cast<uint8_t*>(storage.gpuNetIoCombineFlagsBuffer_) -
+                                    static_cast<uint8_t*>(storage.gpuNetIoFlagsBuffer_));
+    service->setSignalRegions(offsetOf(storage.gpuNetIoFlagsBuffer_), flagsBytes,
+                              offsetOf(storage.expandedSyncFlags_));
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
