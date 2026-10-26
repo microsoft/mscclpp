@@ -158,7 +158,6 @@ struct GpuNetIoDeviceHandle {
   /// Remote 64-bit atomic add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t addr, uint32_t key, int64_t value) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    __threadfence_system();
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
     const auto index =
