@@ -392,7 +392,7 @@ TEST(PortChannelOneToOneTest, PingPongEthernet) {
                                          /*recvBufferSize=*/64);
   connection.write(remoteDestination, 0, localSource, 0, firstPayloadSize);
   connection.write(remoteDestination, firstPayloadSize, localSource, firstPayloadSize, secondPayloadSize);
-  connection.flush();
+  connection.flush(/*timeoutUsec=*/-1);
 
   const int sender = peer;
   std::vector<uint8_t> expected(totalSize);
