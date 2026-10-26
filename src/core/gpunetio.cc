@@ -141,7 +141,12 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   attr.net_dev = pimpl_->dev;
   attr.ibpd = ibCtx->getPd();
   attr.sq_nwqe = 1024;
-  attr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+  attr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF;
+  int major;
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId));
+  if (major < 9) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode requires Hopper or newer for BlueFlame submission");
+  }
   attr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
   attr.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR;
   attr.cq_type = DOCA_GPUNETIO_VERBS_CQ_64B;
@@ -153,15 +158,13 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   // The device code relies on GPU-rung doorbells with valid DBR records and 64B CQEs in GPU memory.
   const auto* qp = pimpl_->qp;
   if (qp == nullptr || qp->qp_gverbs == nullptr || qp->qp_gverbs->qp_cpu == nullptr ||
-      qp->nic_handler != DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB ||
-      qp->send_dbr_mode_ext != DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR || qp->qp_gverbs->cpu_proxy ||
-      qp->qp_gverbs->send_dbr_mode_ext != DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR ||
-      qp->qp_gverbs->cq_type != DOCA_GPUNETIO_VERBS_CQ_64B ||
-      qp->qp_gverbs->qp_cpu->nic_handler != DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB ||
+      qp->nic_handler != attr.nic_handler || qp->send_dbr_mode_ext != DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR ||
+      qp->qp_gverbs->cpu_proxy || qp->qp_gverbs->send_dbr_mode_ext != DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR ||
+      qp->qp_gverbs->cq_type != DOCA_GPUNETIO_VERBS_CQ_64B || qp->qp_gverbs->qp_cpu->nic_handler != attr.nic_handler ||
       qp->qp_gverbs->qp_cpu->mem_type != DOCA_GPUNETIO_VERBS_MEM_TYPE_GPU) {
     if (pimpl_->qp) (void)doca_gpu_verbs_destroy_qp_hl(pimpl_->qp);
     THROW(NET, Error, ErrorCode::InvalidUsage, "device ", ibCtx->getDevName(),
-          " does not support GPU-initiated (GPU_SM_DB) GPUNetIO queue pairs");
+          " does not support the requested GPU-initiated GPUNetIO queue pair");
   }
   MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(pimpl_->qp->qp, &pimpl_->info.qpn));
 }
@@ -339,12 +342,19 @@ GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& si
     }
   }
 
+  auto& outboundToken = outboundTokens_[signalInfo.ibMrInfo.addr];
+  if (!outboundToken) {
+    CudaDeviceGuard deviceGuard(localEndpoint_.device().id);
+    outboundToken = detail::gpuCallocShared<uint64_t>();
+  }
+
   GpuNetIoDeviceHandle handle{};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
   handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
   handle.atomicScratchAddr = scratchInfo.ibMrInfo.addr;
+  handle.outboundToken = outboundToken.get();
   handle.numMemories = static_cast<uint32_t>(table.size());
   return handle;
 }

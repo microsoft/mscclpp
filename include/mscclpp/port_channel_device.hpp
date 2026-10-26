@@ -40,7 +40,7 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 
 /// Device-side handle of a BasePortChannel. With PortChannelBackend::GpuNetIo, the operations documented below as
 /// FIFO pushes are instead posted by the calling thread directly to the connection's queue pair, with the same
-/// ordering semantics: signals are RDMA atomics ordered after the preceding writes, and `flush` waits for the
+/// ordering semantics: signals are ordered after the preceding writes, and `flush` waits for the
 /// local completion of every operation posted so far on the connection.
 struct BasePortChannelDeviceHandle {
   SemaphoreId semaphoreId_;
@@ -102,7 +102,7 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerSignal to the FIFO.
   MSCCLPP_DEVICE_INLINE void signal() {
     if (backend_ == PortChannelBackend::GpuNetIo) {
-      gpuNetIo_.atomicAdd(gpuNetIo_.signalAddr, gpuNetIo_.signalKey, 1);
+      gpuNetIo_.signal();
       return;
     }
     fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});

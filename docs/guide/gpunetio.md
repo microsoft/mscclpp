@@ -25,9 +25,10 @@ path; the fetched tree itself is not modified. The GPUNetIO license is installed
 
 ## Requirements
 
-- An NVIDIA GPU and an RDMA NIC that support GPU-rung doorbells (`DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB`).
-- RDMA atomics on both sides. Signals are NIC atomic adds on the remote semaphore token, so a GPUNetIO endpoint cannot
-  connect to an endpoint in `HostNoAtomic` mode.
+- A Hopper or newer NVIDIA GPU and an RDMA NIC with a BlueFlame UAR
+  (`DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF`). Device code must target `sm_90` or newer.
+- RDMA atomics on both sides for `accumulate`; a GPUNetIO endpoint cannot connect to an endpoint in `HostNoAtomic`
+  mode.
 - The local endpoint must be on a GPU (`EndpointConfig::device.type == DeviceType::GPU`).
 
 ## Usage
@@ -60,6 +61,26 @@ the remote side observes the data before the semaphore update. `flush` waits for
 requests posted on the queue pair.
 
 Only `port` and `gidIndex` of `EndpointConfig::Ib` are used in this mode; queue sizes are chosen by the backend.
+Small `put` and `putWithSignal` payloads, as well as semaphore signals, are embedded in the work request rather than
+read separately by the NIC.
+
+Callers must make source data ready before `put` or `putWithSignal`, synchronizing with its producers as needed.
+These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
+every submission. Keep non-inline source buffers unchanged until their transfers complete.
+
+### Exclusively accessed queue pairs
+
+GPUNetIO always uses exclusive QPs. Callers must serialize **all** GPU operations on each connection, including
+`flush` and channels sharing that connection. A different thread may take over after a barrier or release/acquire
+handoff; the caller need not be thread zero. Different QPs can be used concurrently.
+
+All requests, including strong-ordered inline semaphore signals (`DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING`),
+atomics and non-inline transfers, are submitted through BlueFlame.
+GPU-resident recovery WQEs are retained. BF submission uses 8 KiB of per-block shared-memory WQE scratch (64 pairs of
+WQE slots) and waits for async source consumption before reusing a slot. Thread zero and blocks with up to 64 threads
+have dedicated slot pairs; additional threads in larger blocks serialize access to their hashed slot pair using an
+internal workspace lock, so different QPs cannot overwrite each other's WQEs.
+There is no regular-doorbell-only or CPU-proxy fallback.
 
 ## Using the device API from another project
 

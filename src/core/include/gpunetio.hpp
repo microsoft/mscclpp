@@ -8,6 +8,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/semaphore.hpp>
+#include <unordered_map>
 #include <vector>
 
 #include "connection.hpp"
@@ -73,6 +74,7 @@ class GpuNetIoConnection : public BaseConnection {
   std::shared_ptr<GpuNetIoQp> qp_;
   std::shared_ptr<uint64_t> atomicScratch_;
   RegisteredMemory atomicScratchMem_;
+  mutable std::unordered_map<uint64_t, std::shared_ptr<uint64_t>> outboundTokens_;
 };
 
 /// Host-side state of a PortChannel bound to a GpuNetIoConnection.
