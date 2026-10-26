@@ -2,8 +2,14 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/gpu_utils.hpp>
+#include <type_traits>
 
 #include "../framework.hpp"
+
+static_assert(!std::is_copy_constructible_v<mscclpp::CudaStreamWithFlags>);
+static_assert(!std::is_copy_assignable_v<mscclpp::CudaStreamWithFlags>);
+static_assert(!std::is_copy_constructible_v<mscclpp::GpuStream>);
+static_assert(!std::is_copy_assignable_v<mscclpp::GpuStream>);
 
 TEST(GpuUtilsTest, StreamPool) {
   auto streamPool = mscclpp::gpuStreamPool();
@@ -28,6 +34,12 @@ TEST(GpuUtilsTest, StreamPool) {
 TEST(GpuUtilsTest, AllocShared) {
   auto p1 = mscclpp::detail::gpuCallocShared<uint32_t>();
   auto p2 = mscclpp::detail::gpuCallocShared<int64_t>(5);
+
+  mscclpp::GpuBuffer<uint32_t> empty(0);
+  EXPECT_EQ(empty.nelems(), 0U);
+  EXPECT_EQ(empty.bytes(), 0U);
+  EXPECT_TRUE(empty.data() == nullptr);
+  EXPECT_EQ(empty.deviceId(), -1);
 }
 
 TEST(GpuUtilsTest, AllocUnique) {
