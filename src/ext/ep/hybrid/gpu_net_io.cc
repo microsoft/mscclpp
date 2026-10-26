@@ -255,6 +255,7 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   context.rank = rank;
   context.blueFlame = enabled("MSCCLPP_EP_GPUNETIO_BLUEFLAME") ? 1 : 0;
   context.inlineSignal = enabled("MSCCLPP_EP_GPUNETIO_INLINE_SIGNAL") ? 1 : 0;
+  context.exclusive = enabled("MSCCLPP_EP_GPUNETIO_EXCLUSIVE") ? 1 : 0;
   if (context.inlineSignal) {
     const size_t tokens = static_cast<size_t>(ranks) * EpGpuNetIoDeviceContext::SignalTokensPerPeer;
     state.signalTokens = GpuBuffer<uint64_t>(tokens).memory();
@@ -262,8 +263,8 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
     context.signalTokens = state.signalTokens.get();
   }
   if (std::getenv("MSCCLPP_EP_DEBUG_TOPO")) {
-    std::fprintf(stderr, "[EPGPUNETIO] rank=%d blueFlame=%d inlineSignal=%d\n", rank, context.blueFlame,
-                 context.inlineSignal);
+    std::fprintf(stderr, "[EPGPUNETIO] rank=%d blueFlame=%d inlineSignal=%d exclusive=%d\n", rank,
+                 context.blueFlame, context.inlineSignal, context.exclusive);
   }
   state.hostContext = context;
   state.context = GpuBuffer<EpGpuNetIoDeviceContext>(1).memory();

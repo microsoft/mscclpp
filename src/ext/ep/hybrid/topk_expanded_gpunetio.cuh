@@ -207,8 +207,9 @@ __device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bo
   auto* qp = EpGpuNetIoDeviceContext::qp(channel);
   uint64_t base = 0;
   if (lane == 0)
-    base = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
-        qp, count, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
+    base = gin->exclusive ? EpGpuNetIoDeviceContext::beginExclusive(qp, count)
+                          : doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                                qp, count, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
   base = __shfl_sync(0xffffffff, base, 0);
   if (live) {
     const int offset = __popc(mask & ((1u << lane) - 1));
@@ -221,8 +222,12 @@ __device__ int putWarpRows(EpGpuNetIoDeviceContext* gin, int peer, int queue, bo
   }
   __syncwarp();
   if (lane == 0) {
-    doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, base, base + count - 1);
-    gin->submit(qp, base + count);
+    if (gin->exclusive) {
+      gin->endExclusive(qp, base + count, nullptr);
+    } else {
+      doca_gpu_dev_verbs_mark_wqes_ready<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(qp, base, base + count - 1);
+      gin->submit(qp, base + count);
+    }
   }
   __syncwarp();
   return count;

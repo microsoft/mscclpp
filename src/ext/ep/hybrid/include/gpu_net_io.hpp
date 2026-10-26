@@ -18,7 +18,11 @@ namespace mscclpp::ep {
 /// GpuNetIo QPs for exclusive BlueFlame submission, and DOCA's NIC_HANDLER_AUTO submit has no BlueFlame path.
 ///
 /// Optional modes (host env, see EpGpuNetIoService::setup):
-///  - blueFlame: submit through the QP's BlueFlame register (64B WQE copy from shared memory) plus the doorbell.
+///  - exclusive: each post holds the QP's sq_lock across reserve, WQE preparation, ready and submit, so the QP is
+///    driven with DOCA EXCLUSIVE-mode bookkeeping (plain index updates, no atomic reservation, no ready-index CAS
+///    chain, no second lock for the doorbell). The last WQE is built in registers and, with blueFlame, written to
+///    the BlueFlame register directly from them. Completion polling stays in GPU sharing mode.
+///  - blueFlame: submit through the QP's BlueFlame register (64B WQE write) plus the doorbell.
 ///  - inlineSignal: a remote flag increment becomes a strong-ordered 8-byte inline RDMA write of a sender-side
 ///    counter instead of an RDMA atomic. Valid because every EP flag slot is written by exactly one sender rank,
 ///    always through the same QP, by one thread at a time; the receiver only waits for `flag >= target`.
@@ -36,6 +40,7 @@ struct EpGpuNetIoDeviceContext {
   int rank = -1;
   int blueFlame = 0;
   int inlineSignal = 0;
+  int exclusive = 0;
   /// [numPeers][SignalTokensPerPeer] last value written to each remote flag slot owned by this rank.
   uint64_t* signalTokens = nullptr;
   /// Symmetric offset of the dispatch flag buffer; the combine flag buffer follows at + signalFlagsBytes.
@@ -82,6 +87,10 @@ struct EpGpuNetIoDeviceContext {
 #if defined(MSCCLPP_USE_GPUNETIO)
     const auto handle = channel(peer, queue);
     auto* q = qp(handle);
+    if (exclusive) {
+      putExclusive(q, remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes);
+      return;
+    }
     doca_gpu_dev_verbs_ticket_t ticket;
     doca_gpu_dev_verbs_put<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(
         q, remoteAddr(handle, destination, bytes), localAddr(handle, source, bytes), bytes, &ticket,
@@ -98,6 +107,22 @@ struct EpGpuNetIoDeviceContext {
     const auto remote = remoteAddr(handle, destination, sizeof(uint64_t));
     require(remote.addr % sizeof(uint64_t) == 0);
     auto* q = qp(handle);
+    if (exclusive) {
+      auto* token = signalToken(peer, destination);
+      const auto scratch = atomicScratch(handle);
+      const uint64_t index = beginExclusive(q, 1);
+      ExclusiveWqe last;
+      if (token != nullptr) {
+        prepareSignal(q, &last.wqe, index, remote, nextToken(token, value));
+      } else {
+        doca_gpu_dev_verbs_wqe_prepare_atomic(q, &last.wqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
+                                              DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, remote.addr, remote.key,
+                                              scratch.addr, scratch.key, sizeof(uint64_t),
+                                              static_cast<uint64_t>(value), 0);
+      }
+      endExclusive(q, index + 1, &last);
+      return;
+    }
     const uint64_t index = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
         q, 1, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
     auto* wqe = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
@@ -125,6 +150,32 @@ struct EpGpuNetIoDeviceContext {
     const auto signal = remoteAddr(handle, signalOffset, sizeof(uint64_t));
     require(signal.addr % sizeof(uint64_t) == 0);
     auto* q = qp(handle);
+    if (exclusive) {
+      auto* token = signalToken(peer, signalOffset);
+      if (bytes == 0 || bytes > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
+        put(peer, destination, source, bytes, queue);
+        atomicAdd(peer, signalOffset, static_cast<int64_t>(signalValue), queue);
+        return;
+      }
+      const auto remote = remoteAddr(handle, destination, bytes);
+      const auto local = localAddr(handle, source, bytes);
+      const auto scratch = atomicScratch(handle);
+      const uint64_t index = beginExclusive(q, 2);
+      doca_gpu_dev_verbs_wqe_prepare_write(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index), index,
+                                           DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                           DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.addr, remote.key,
+                                           local.addr, local.key, bytes);
+      ExclusiveWqe last;
+      if (token != nullptr) {
+        prepareSignal(q, &last.wqe, index + 1, signal, nextToken(token, static_cast<int64_t>(signalValue)));
+      } else {
+        doca_gpu_dev_verbs_wqe_prepare_atomic(q, &last.wqe, index + 1, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
+                                              DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, signal.addr, signal.key,
+                                              scratch.addr, scratch.key, sizeof(uint64_t), signalValue, 0);
+      }
+      endExclusive(q, index + 2, &last);
+      return;
+    }
     if (auto* token = signalToken(peer, signalOffset)) {
       if (bytes == 0 || bytes > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
         put(peer, destination, source, bytes, queue);
@@ -221,6 +272,22 @@ struct EpGpuNetIoDeviceContext {
       local[index] = localAddr(handle, sources[index], sizes[index]);
     }
     auto* q = qp(handle);
+    if (exclusive) {
+      const uint64_t base = beginExclusive(q, 3);
+#pragma unroll
+      for (int index = 0; index < 2; ++index) {
+        doca_gpu_dev_verbs_wqe_prepare_write(q, doca_gpu_dev_verbs_get_wqe_ptr(q, base + index), base + index,
+                                             DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                             DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote[index].addr,
+                                             remote[index].key, local[index].addr, local[index].key, sizes[index]);
+      }
+      ExclusiveWqe last;
+      doca_gpu_dev_verbs_wqe_prepare_write(q, &last.wqe, base + 2, DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                           DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote[2].addr, remote[2].key,
+                                           local[2].addr, local[2].key, sizes[2]);
+      endExclusive(q, base + 3, &last);
+      return;
+    }
     const uint64_t base = doca_gpu_dev_verbs_reserve_wq_slots<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
         q, 3, DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
 #pragma unroll
@@ -249,7 +316,74 @@ struct EpGpuNetIoDeviceContext {
                                                                          DOCA_GPUNETIO_VERBS_GPU_CODE_OPT_DEFAULT);
   }
 
+  struct alignas(16) ExclusiveWqe {
+    doca_gpu_dev_verbs_wqe wqe;
+  };
+
+  /// Exclusive mode: take the QP lock and reserve `count` WQE slots. Must be paired with endExclusive().
+  MSCCLPP_DEVICE_INLINE static uint64_t beginExclusive(doca_gpu_dev_verbs_qp* q, uint32_t count) {
+    doca_gpu_dev_verbs_lock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->sq_lock);
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_device> reserved(q->sq_rsvd_index);
+    const uint64_t index = reserved.load(cuda::memory_order_relaxed);
+    doca_gpu_dev_verbs_wait_until_slot_available<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(q,
+                                                                                               index + count - 1);
+    reserved.store(index + count, cuda::memory_order_relaxed);
+    return index;
+  }
+
+  /// Exclusive mode: store `last` (the WQE at prodIndex - 1; nullptr if already in the SQ), publish, ring, unlock.
+  MSCCLPP_DEVICE_INLINE void endExclusive(doca_gpu_dev_verbs_qp* q, uint64_t prodIndex,
+                                          const ExclusiveWqe* last) const {
+    ExclusiveWqe copy;
+    auto* slot = reinterpret_cast<uint64_t*>(doca_gpu_dev_verbs_get_wqe_ptr(q, prodIndex - 1));
+    if (last != nullptr) {
+      auto* words = const_cast<uint64_t*>(reinterpret_cast<const uint64_t*>(&last->wqe));
+#pragma unroll
+      for (int index = 0; index < 8; index += 2) doca_gpu_dev_verbs_store_wqe_seg(slot + index, words + index);
+    } else if (blueFlame) {
+#pragma unroll
+      for (int index = 0; index < 4; ++index)
+        reinterpret_cast<uint4*>(&copy.wqe)[index] = reinterpret_cast<const uint4*>(slot)[index];
+      last = &copy;
+    }
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_device>(q->sq_ready_index).store(prodIndex,
+                                                                                    cuda::memory_order_relaxed);
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_device>(q->sq_wqe_pi).store(prodIndex, cuda::memory_order_relaxed);
+    if (blueFlame) {
+      auto* bf = reinterpret_cast<uint4*>(doca_gpu_dev_verbs_load_const((uintptr_t*)&q->sq_db));
+      const auto* words = reinterpret_cast<const uint4*>(&last->wqe);
+      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+#pragma unroll
+      for (int index = 0; index < 4; ++index) bf[index] = words[index];
+      doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
+      doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, prodIndex);
+    } else {
+      doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, prodIndex);
+      doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
+      doca_gpu_dev_verbs_ring_db<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, prodIndex);
+    }
+    doca_gpu_dev_verbs_unlock<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->sq_lock);
+  }
+
  private:
+  /// Exclusive-mode RDMA write; transfers above the per-WQE limit are split.
+  MSCCLPP_DEVICE_INLINE void putExclusive(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_addr remote,
+                                          doca_gpu_dev_verbs_addr local, uint64_t bytes) const {
+    do {
+      const uint64_t chunk =
+          bytes > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE ? DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE : bytes;
+      const uint64_t index = beginExclusive(q, 1);
+      ExclusiveWqe last;
+      doca_gpu_dev_verbs_wqe_prepare_write(q, &last.wqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_RDMA_WRITE,
+                                           DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, 0, remote.addr, remote.key,
+                                           local.addr, local.key, chunk);
+      endExclusive(q, index + 1, &last);
+      remote.addr += chunk;
+      local.addr += chunk;
+      bytes -= chunk;
+    } while (bytes > 0);
+  }
+
   /// Sender-side shadow of the remote flag at symmetric `offset` on `peer`, or nullptr when the slot is not an
   /// EP flag owned by this rank (those keep RDMA atomics).
   MSCCLPP_DEVICE_INLINE uint64_t* signalToken(int peer, uint64_t offset) const {
