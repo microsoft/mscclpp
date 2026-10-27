@@ -324,11 +324,12 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize,
+          DispatchLayout Layout = DispatchLayout::EXPERT_MAJOR>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
   const size_t controlBytes = dispatchSharedControlBytes(nRanks);
   const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t recvBytes = Layout == DispatchLayout::EXPERT_MAJOR ? dispatchRecvTmaBytes<Hidden, DataType>() : 0;
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

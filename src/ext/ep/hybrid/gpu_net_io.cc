@@ -55,6 +55,31 @@ std::vector<std::string> selectDevices(const std::string& specification, const s
     auto devices =
         detail::gpunetio::selectClosestHcas(canonicalPath("/sys/bus/pci/devices/" + gpuPciBusId), gpuNumaNode, hcas);
     if (devices.empty()) throw Error("No active EP GPUNetIO HCAs", ErrorCode::InvalidUsage);
+    if (devices.size() > 1) {
+      int deviceCount = 0;
+      if (cudaGetDeviceCount(&deviceCount) == cudaSuccess && deviceCount > 0) {
+        int sameNumaIndex = 0;
+        int sameNumaCount = 0;
+        for (int dev = 0; dev < deviceCount; ++dev) {
+          char busId[32] = {};
+          if (cudaDeviceGetPCIBusId(busId, sizeof(busId), dev) != cudaSuccess) continue;
+          for (char& c : busId) {
+            if (c >= 'A' && c <= 'F') c = static_cast<char>(c - 'A' + 'a');
+          }
+          const int devNuma = readNumber("/sys/bus/pci/devices/" + std::string(busId) + "/numa_node", -1);
+          if (devNuma == gpuNumaNode) {
+            if (gpuPciBusId == std::string(busId)) sameNumaIndex = sameNumaCount;
+            ++sameNumaCount;
+          }
+        }
+        if (sameNumaCount > 0 && devices.size() >= static_cast<size_t>(sameNumaCount) &&
+            devices.size() % static_cast<size_t>(sameNumaCount) == 0) {
+          const size_t perGpu = devices.size() / static_cast<size_t>(sameNumaCount);
+          devices = std::vector<std::string>(devices.begin() + sameNumaIndex * perGpu,
+                                             devices.begin() + (sameNumaIndex + 1) * perGpu);
+        }
+      }
+    }
     return devices;
   }
   std::vector<std::string> devices;
@@ -97,11 +122,13 @@ struct EpGpuNetIoService::Impl {
   std::shared_ptr<ProxyService> proxyService;
   std::vector<PortChannel> channels;
   std::shared_ptr<PortChannelDeviceHandle> handles;
+  std::shared_ptr<EpGpuNetIoSignalState> signalStates;
   std::shared_ptr<EpGpuNetIoDeviceContext> context;
 
   ~Impl() {
     CudaDeviceGuard guard(device);
     context.reset();
+    signalStates.reset();
     handles.reset();
     channels.clear();
     proxyService.reset();
@@ -244,7 +271,8 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   state.handles = GpuBuffer<PortChannelDeviceHandle>(handles.size()).memory();
   MSCCLPP_CUDATHROW(
       cudaMemcpy(state.handles.get(), handles.data(), handles.size() * sizeof(handles[0]), cudaMemcpyHostToDevice));
-  const EpGpuNetIoDeviceContext context{state.handles.get(), ranks, queues, hcas};
+  state.signalStates = detail::gpuCallocShared<EpGpuNetIoSignalState>(handles.size());
+  const EpGpuNetIoDeviceContext context{state.handles.get(), state.signalStates.get(), ranks, queues, hcas};
   state.context = GpuBuffer<EpGpuNetIoDeviceContext>(1).memory();
   MSCCLPP_CUDATHROW(cudaMemcpy(state.context.get(), &context, sizeof(context), cudaMemcpyHostToDevice));
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());

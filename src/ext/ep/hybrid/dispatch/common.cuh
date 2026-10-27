@@ -322,10 +322,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
     const long long stageDone = clock64();
 #endif
     // Registered staging must be visible to NIC DMA, not just local GPU threads.
-    if (transport.gpuNetIoBatchedDispatch_)
-      fenceRankMajorStagedRow(transport);
-    else
-      __threadfence_system();
+    fenceRankMajorStagedRow(transport);
     __syncwarp();
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
     const long long fenceDone = clock64();
@@ -1194,7 +1191,6 @@ MSCCLPP_DEVICE_INLINE void writeRankMajorCounts(const TransportView& transport, 
       auto* gin = transport.gpuNetIo_;
       auto* scratch = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + 2 * nRanks + dstRank;
       scratch->write(static_cast<uint32_t>(rankTokenCounts[dstRank]), epoch);
-      __threadfence_system();
       auto* remotePacket = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + nRanks + transport.rank_;
       gin->put(dstRank, transport.symmetricOffset(remotePacket), transport.symmetricOffset(scratch),
                sizeof(mscclpp::LL8Packet), static_cast<int>(blockIdx.x) % gin->numQpsPerPeer);
@@ -1293,6 +1289,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorNotify(const TransportView& transpor
   if constexpr (AsyncDispatch) {
     for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
       if (transport.isNvlinkPeer(peer)) continue;
+      workspaceView.dispatchRankPayloadCompletions_[peer] = rankTokenCounts[peer];
       mscclpp::atomicStore<int, mscclpp::scopeDevice>(&transport.gpuNetIoDispatchPeers_[peer].expectedRowsPlusOne,
                                                       rankTokenCounts[peer] + 1, mscclpp::memoryOrderRelease);
       if (rankTokenCounts[peer] == 0) markRankMajorGpuNetIoPeer(transport, peer);
@@ -1777,6 +1774,24 @@ MSCCLPP_DEVICE_INLINE void dispatchBody(void* output, void* outputScales, int* o
                                                         maxTokensPerRank, nTopk, workspaceView);
             __syncthreads();
           }
+          for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
+            if (!transport.isNvlinkPeer(peer)) {
+              workspaceView.dispatchRankPayloadCompletions_[peer] = workspaceView.dispatchRankPayloadSlots_[peer];
+              workspaceView.dispatchRankPayloadSlots_[peer] = 0;
+            }
+            if (transport.gpuNetIoTailRows_ != nullptr) {
+              transport.gpuNetIoTailRows_[peer] = 0;
+            }
+          }
+          if (transport.gpuNetIoPipelineChunkRows_ > 0) {
+            const int counters = nRanks * configCellDiv(maxTokensPerRank, transport.gpuNetIoPipelineChunkRows_);
+            for (int idx = threadIdx.x; idx < counters; idx += blockDim.x) {
+              transport.gpuNetIoChunkReady_[idx] = 0;
+            }
+          }
+          if (threadIdx.x == 0) {
+            *context->gpuNetIoDispatchDone_ = 0;
+          }
           for (int index = threadIdx.x; index < nRanks * nQp; index += blockDim.x) {
             const int peer = index / nQp, qpIndex = index % nQp;
             if (!transport.isNvlinkPeer(peer)) postRankMajorGpuNetIoMarker(transport, peer, qpIndex);
@@ -1850,7 +1865,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   const int nRanks = context.numRanks_;
   const int nTopk = workload.numTopk_;
 
-  const size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize>(nRanks, nExperts, nTopk);
+  const size_t dynamicSharedBytes =
+      dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Layout>(nRanks, nExperts, nTopk);
   static thread_local KernelConfigCache kernelConfig;
   auto kernel = KernelSelector::template get<Hidden, DataType, ScaleBlockSize>();
   const int residentBlocks = configureKernel(kernel, DispatchNThreads, dynamicSharedBytes, context, kernelConfig);

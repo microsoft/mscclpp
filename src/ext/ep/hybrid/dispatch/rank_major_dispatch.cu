@@ -43,36 +43,22 @@ void rankMajorDispatch(void* output, int* outputTopkIdx, float* outputTopkWeight
   void* outputScales = nullptr;
   int* outputSrcInfo = nullptr;
   int64_t* outputLayout = nullptr;
-  // dfa5e151: reset before any producer can allocate a destination slot. Unlike
-  // the old workspace, this layout starts with persistent arrival baselines and
-  // recv counts; never memset workspace[0..R) here. This node is graph-captured.
-  const WorkspaceView workspace(context.workspace_, context.numRanks_, workload.numExperts_);
-  MSCCLPP_CUDATHROW(cudaMemsetAsync(workspace.dispatchRankPayloadSlots_, 0,
-                                    static_cast<size_t>(context.numRanks_) * sizeof(int), stream));
-  if (context.gpuNetIoPipelineChunkRows_ > 0) {
-    EP_HOST_ASSERT(context.gpuNetIoChunkReady_ != nullptr);
-    const size_t counters = static_cast<size_t>(context.numRanks_) *
-                            configCellDiv(workload.maxTokensPerRank_, context.gpuNetIoPipelineChunkRows_);
-    if (context.gpuNetIoTailRows_ != nullptr)
-      MSCCLPP_CUDATHROW(
-          cudaMemsetAsync(context.gpuNetIoTailRows_, 0, (counters + context.numRanks_) * sizeof(int), stream));
-    else
-      MSCCLPP_CUDATHROW(cudaMemsetAsync(context.gpuNetIoChunkReady_, 0, counters * sizeof(int), stream));
-  }
   if (context.gpuNetIoAsyncDispatch_) {
     EP_HOST_ASSERT(context.gpuNetIo_ != nullptr && context.gpuNetIoDispatchPeers_ != nullptr);
     EP_HOST_ASSERT(context.gpuNetIoBatchedDispatch_ && context.gpuNetIoPipelineChunkRows_ > 0);
     EP_HOST_ASSERT(numBlocks > context.numRanks_ + 1);
+    const WorkspaceView workspace(context.workspace_, context.numRanks_, workload.numExperts_);
+    MSCCLPP_CUDATHROW(cudaMemsetAsync(workspace.dispatchRankPayloadSlots_, 0,
+                                      static_cast<size_t>(context.numRanks_) * sizeof(int), stream));
+    const size_t counters = static_cast<size_t>(context.numRanks_) *
+                            configCellDiv(workload.maxTokensPerRank_, context.gpuNetIoPipelineChunkRows_);
+    MSCCLPP_CUDATHROW(cudaMemsetAsync(context.gpuNetIoChunkReady_, 0, counters * sizeof(int), stream));
     MSCCLPP_CUDATHROW(cudaMemsetAsync(context.gpuNetIoDispatchPeers_, 0,
                                       static_cast<size_t>(context.numRanks_) * sizeof(GpuNetIoDispatchPeerState),
                                       stream));
     return dispatchAlgorithm<DispatchLayout::RANK_MAJOR, RankMajorAsyncDispatchKernelSelector>(
         output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
         topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
-  }
-  if (context.gpuNetIo_ != nullptr) {
-    EP_HOST_ASSERT(context.gpuNetIoDispatchDone_ != nullptr);
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(context.gpuNetIoDispatchDone_, 0, sizeof(int), stream));
   }
   dispatchAlgorithm<DispatchLayout::RANK_MAJOR, RankMajorDispatchKernelSelector>(
       output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input, topkIdx,

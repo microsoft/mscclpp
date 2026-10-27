@@ -119,16 +119,19 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
                                 int maxSharedMemoryPerBlock, int numSms, int deviceId) {
   EP_HOST_ASSERT(deviceContext_.devicePtr_ == nullptr);
   const bool gpuNetIoRankMajor = useGpuNetIo_ && outputLayout_ == DispatchLayout::RANK_MAJOR;
-  const int numNodes = numRanksPerNode_ > 0 && numRanks_ % numRanksPerNode_ == 0 ? numRanks_ / numRanksPerNode_ : 0;
+  const int domainSize = numRanksPerIpcDomain_ > 0 ? numRanksPerIpcDomain_ : numRanksPerNode_;
+  const int numNodes = domainSize > 0 && numRanks_ % domainSize == 0 ? numRanks_ / domainSize : 0;
 
   // Rank-major GPUNetIO pipeline knobs. Parallel staging, the GPU-scope row fence and the
   // deferred send flush default on with batched dispatch. They apply only to GPUNetIO
   // RANK_MAJOR, so a shared environment does not affect IPC or TOPK_EXPANDED runtimes.
   const bool knobs = gpuNetIoRankMajor;
-  const int batchedDispatch = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH", 0) : 0;
+  const int defaultBatched =
+      knobs && static_cast<size_t>(numRanks_) * maxTokensPerRank_ <= GpuNetIoStagingSlots ? 1 : 0;
+  const int batchedDispatch = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH", defaultBatched) : 0;
   const int batchAllQps = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS", 0) : 0;
-  // Default dispatch chunk rows: 4 rows for 2-7 nodes, 16 rows for >= 8 nodes.
-  const int defaultChunkRows = batchedDispatch == 1 && numNodes >= 2 ? (numNodes >= 8 ? 16 : 4) : 0;
+  // Default dispatch chunk rows: 8 rows for 2-7 nodes, 16 rows for >= 8 nodes.
+  const int defaultChunkRows = batchedDispatch == 1 && numNodes >= 2 ? (numNodes >= 8 ? 16 : 8) : 0;
   const int pipelineChunkRows = knobs ? envCount("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", defaultChunkRows, 3) : 0;
   const int asyncDispatch = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_ASYNC_DISPATCH", 0) : 0;
   const int parallelStage = knobs ? envCount("MSCCLPP_EP_GPUNETIO_PARALLEL_STAGE", batchedDispatch == 1 ? 1 : 0, 2) : 0;
@@ -141,7 +144,7 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
                                        : -1;
   }
   const int deferFlush = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_DEFER_FLUSH", batchedDispatch == 1 ? 1 : 0) : 0;
-  const int defaultCombineChunkRows = knobs && numNodes >= 2 ? std::min(32, maxTokensPerRank_) : 0;
+  const int defaultCombineChunkRows = 0;
   const int combineChunkRows =
       knobs ? envCount("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", defaultCombineChunkRows, 3) : 0;
 
@@ -237,9 +240,9 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   }
   if (pipelineChunkRows > 0) {
     const size_t counters = static_cast<size_t>(numRanks_) * configCellDiv(maxTokensPerRank_, pipelineChunkRows);
-    // Early tail post: producer-posted chunks only (not async).
+    // Early tail post: producer-posted chunks only (not async). Default on for batched rank-major dispatch.
     const char* earlyTail = std::getenv("MSCCLPP_EP_GPUNETIO_EARLY_TAIL");
-    const bool tailRows = earlyTail != nullptr && std::string(earlyTail) == "1" && gpuNetIoRankMajor &&
+    const bool tailRows = (earlyTail == nullptr || std::string(earlyTail) != "0") && gpuNetIoRankMajor &&
                           asyncDispatch == 0 && deviceContext_.gpuNetIoBatchedDispatch_;
     chunkReady_ = mscclpp::detail::gpuCallocShared<int>(counters + (tailRows ? numRanks_ : 0));
     deviceContext_.gpuNetIoTailRows_ = tailRows ? chunkReady_.get() : nullptr;
