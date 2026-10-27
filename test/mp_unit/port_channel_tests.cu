@@ -394,7 +394,7 @@ PERF_TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestPortChansSyncer;
 
-template <bool CheckCorrectness>
+template <bool CheckCorrectness, bool RotateSubmitter = false>
 __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf, int rank,
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
@@ -409,6 +409,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
   const int nPkt = nElem / 2;
   for (int i = 0; i < nTries; i++) {
     uint64_t flag = (uint64_t)i + 1;
+    const int submitter = RotateSubmitter ? i % numThreads : 0;
 
     // rank=0: 0, 1, 0, 1, ...
     // rank=1: 1, 0, 1, 0, ...
@@ -423,13 +424,13 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       }
       mscclpp::copyToPackets(putPktBuf, buff, nElem * sizeof(int), threadId, numThreads, flag);
       gChannelOneToOneTestPortChansSyncer.sync(gridDim.x);
-      if (threadId == 0) {
+      if (threadId == submitter) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
         portChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
       }
       flusher++;
       if (flusher == 64) {
-        if (threadId == 0) portChan.flush();
+        if (threadId == submitter) portChan.flush();
         flusher = 0;
       }
     } else {
@@ -494,8 +495,13 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   // The least nelem is 2 for packet ping pong
   for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
     *ret = 0;
-    kernelProxyLLPingPong<true>
-        <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    if (ibMode == IbMode::GpuNetIo) {
+      kernelProxyLLPingPong<true, true>
+          <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    } else {
+      kernelProxyLLPingPong<true>
+          <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    }
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     EXPECT_EQ(*ret, 0);
   }
@@ -751,7 +757,8 @@ void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEt
   *ret = 0;
 
   proxyService->startProxy();
-  kernelPortChannelAccumulate<<<32, 1>>>(buff.memory().get(), 20, syncer.get(), ret.get());
+  kernelPortChannelAccumulate<<<ibMode == IbMode::GpuNetIo ? 1 : 32, 1>>>(buff.memory().get(), 20, syncer.get(),
+                                                                          ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   EXPECT_EQ(*ret, 0);
 
@@ -1150,16 +1157,20 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // that could be assigned out-of-order relative to the FIFO push order.
 __constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
 
+template <bool Serialize>
 __global__ void kernelSameChanConcurrentFlush(int nIters) {
   auto& chan = gSingleChanForConcurrentFlush;
   int tid = threadIdx.x;
   for (int i = 0; i < nIters; i++) {
-    // Each thread writes to a distinct slot (so puts don't overlap on remote side),
-    // then concurrently flushes on the same channel.
-    uint64_t offset = tid * sizeof(int);
-    chan.putWithSignalAndFlush(offset, offset, sizeof(int));
-    // Each thread waits for one signal from the remote rank's symmetric putWithSignalAndFlush.
-    chan.wait();
+    for (int issuer = 0; issuer < (Serialize ? blockDim.x : 1); issuer++) {
+      if (!Serialize || tid == issuer) {
+        uint64_t offset = tid * sizeof(int);
+        chan.put(offset, offset, sizeof(int));
+        chan.putWithSignalAndFlush(offset, offset, sizeof(int));
+        chan.wait();
+      }
+      if constexpr (Serialize) __syncthreads();
+    }
   }
 }
 
@@ -1180,7 +1191,11 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   proxyService->startProxy();
 
   // Warm-up
-  kernelSameChanConcurrentFlush<<<1, nThreads>>>(10);
+  if (ibMode == IbMode::GpuNetIo) {
+    kernelSameChanConcurrentFlush<true><<<1, nThreads>>>(10);
+  } else {
+    kernelSameChanConcurrentFlush<false><<<1, nThreads>>>(10);
+  }
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
@@ -1188,7 +1203,11 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   // concurrent-flush caller waited on its own TriggerFlush (not someone else's earlier one).
   const int nIters = 500;
   mscclpp::Timer timer;
-  kernelSameChanConcurrentFlush<<<1, nThreads>>>(nIters);
+  if (ibMode == IbMode::GpuNetIo) {
+    kernelSameChanConcurrentFlush<true><<<1, nThreads>>>(nIters);
+  } else {
+    kernelSameChanConcurrentFlush<false><<<1, nThreads>>>(nIters);
+  }
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   double elapsedUs = timer.elapsed();
   communicator->bootstrap()->barrier();
@@ -1375,7 +1394,7 @@ TEST(PortChannelOneToOneTest, AccumulateIbGpuNetIoMode) {
   testAccumulate(false, true, false, IbMode::GpuNetIo);
 }
 
-TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, SameChanSerializedFlushIbGpuNetIoMode) {
   REQUIRE_GPUNETIO;
   testSameChanConcurrentFlush(IbMode::GpuNetIo);
 }
