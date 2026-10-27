@@ -95,7 +95,7 @@ must be passed as their integer `.ptr` value instead.
 Kernel loading and launching use `cuda-bindings` on CUDA and `hip-python` on ROCm,
 selected by `mscclpp._mscclpp.is_hip`. CUDA initializes the current device's runtime
 context before loading a module. Failed driver calls raise `RuntimeError` with the
-API name and error code. Neither kernel launching nor `GpuBuffer` requires CuPy.
+API name and error code.
 
 `pack()` extracts pointers from NumPy arrays, PyTorch tensors, and GPU arrays that
 expose an integer `array.data.ptr`, including `GpuBuffer`. The packing implementation
