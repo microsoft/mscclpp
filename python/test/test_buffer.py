@@ -346,6 +346,7 @@ class CudaBufferTests(unittest.TestCase):
 
     def test_executor_buffers_remain_on_device_and_inplace_views_alias(self):
         mscclpp = SimpleNamespace(
+            gpu=self.buffer_module.gpu,
             GpuBuffer=self.GpuBuffer,
             DataType=object,
             Executor=object,

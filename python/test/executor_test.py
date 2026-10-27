@@ -13,6 +13,7 @@ from mscclpp import (
     env,
 )
 from mscclpp import CommGroup, GpuBuffer
+import mscclpp.gpu as gpu
 from mscclpp.utils import KernelBuilder, pack
 import os
 import struct
@@ -39,44 +40,33 @@ def parse_dtype(dtype_str):
 
 def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
     """Benchmark execution time, passing a native stream pointer to funcs[i % len(funcs)] each iteration."""
-    from mscclpp.gpu import (
-        capture_graph,
-        create_stream,
-        event_create,
-        event_destroy,
-        event_elapsed_time,
-        event_record,
-        event_synchronize,
-        stream_destroy,
-    )
-
     with ExitStack() as resources:
-        stream = create_stream(non_blocking=True)
-        resources.callback(stream_destroy, stream)
+        stream = gpu.create_stream(non_blocking=True)
+        resources.callback(gpu.stream_destroy, stream)
         stream_ptr = int(stream)
 
         def capture_ops() -> None:
             for i in range(n_iters):
                 funcs[i % len(funcs)](stream_ptr)
 
-        graph = capture_graph(stream_ptr, capture_ops)
+        graph = gpu.capture_graph(stream_ptr, capture_ops)
         resources.callback(graph.close)
 
         # now run a warm up round
         graph.launch(stream_ptr)
 
         # now run the benchmark and measure time
-        start = event_create()[0]
-        resources.callback(event_destroy, start)
-        end = event_create()[0]
-        resources.callback(event_destroy, end)
-        event_record(start, stream_ptr)
+        start = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, start)
+        end = gpu.event_create()[0]
+        resources.callback(gpu.event_destroy, end)
+        gpu.event_record(start, stream_ptr)
         for _ in range(n_graph_iters):
             graph.launch(stream_ptr)
-        event_record(end, stream_ptr)
-        event_synchronize(end)
+        gpu.event_record(end, stream_ptr)
+        gpu.event_synchronize(end)
 
-        return event_elapsed_time(start, end)[0] / n_iters * 1000.0 / n_graph_iters
+        return gpu.event_elapsed_time(start, end)[0] / n_iters * 1000.0 / n_graph_iters
 
 
 def bench_correctness(
@@ -95,13 +85,6 @@ def bench_correctness(
 
     Callables receive a native stream pointer.
     """
-    from mscclpp.gpu import (
-        capture_graph,
-        create_stream,
-        stream_destroy,
-        stream_synchronize,
-    )
-
     type_size = np.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
@@ -130,8 +113,8 @@ def bench_correctness(
     nthreads = 1024
 
     with ExitStack() as resources:
-        stream = create_stream(non_blocking=True)
-        resources.callback(stream_destroy, stream)
+        stream = gpu.create_stream(non_blocking=True)
+        resources.callback(gpu.stream_destroy, stream)
         stream_ptr = int(stream)
 
         def capture_ops() -> None:
@@ -153,10 +136,10 @@ def bench_correctness(
                 )
                 test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream_ptr)
 
-        graph = capture_graph(stream_ptr, capture_ops)
+        graph = gpu.capture_graph(stream_ptr, capture_ops)
         resources.callback(graph.close)
         graph.launch(stream_ptr)
-        stream_synchronize(stream)
+        gpu.stream_synchronize(stream)
 
 
 def parse_size(size_str):
@@ -257,9 +240,7 @@ def main(
             f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
             f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
         )
-    from mscclpp.gpu import set_device
-
-    set_device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node)
+    gpu.set_device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node)
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
