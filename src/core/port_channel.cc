@@ -206,6 +206,7 @@ MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() co
   if (gpuNetIo_) {
     handle.backend_ = PortChannelBackend::GpuNetIo;
     handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
+    handle.gpuNetIo_.channelId = semaphoreId_;
   }
   return handle;
 }
@@ -218,6 +219,7 @@ MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
   if (gpuNetIo_) {
     handle.backend_ = PortChannelBackend::GpuNetIo;
     handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
+    handle.gpuNetIo_.channelId = semaphoreId_;
   }
   return handle;
 }
