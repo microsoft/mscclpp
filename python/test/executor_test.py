@@ -39,7 +39,7 @@ def parse_dtype(dtype_str):
 
 def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
     """Benchmark execution time, passing a native stream pointer to funcs[i % len(funcs)] each iteration."""
-    from mscclpp_benchmark.gpu import (
+    from mscclpp.gpu import (
         capture_graph,
         create_stream,
         event_create,
@@ -95,7 +95,7 @@ def bench_correctness(
 
     Callables receive a native stream pointer.
     """
-    from mscclpp_benchmark.gpu import (
+    from mscclpp.gpu import (
         capture_graph,
         create_stream,
         stream_destroy,
@@ -257,7 +257,7 @@ def main(
             f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
             f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
         )
-    from mscclpp_benchmark.gpu import set_device
+    from mscclpp.gpu import set_device
 
     set_device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node)
     executor = Executor(mscclpp_group.communicator)

@@ -15,7 +15,7 @@ from mscclpp_benchmark.mscclpp_op import (
 from mscclpp_benchmark.nccl_op import NcclAllReduce, NcclCommunicator, get_unique_id
 from mpi4py import MPI
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
-from mscclpp_benchmark.gpu import (
+from mscclpp.gpu import (
     capture_graph,
     create_stream,
     device_synchronize,

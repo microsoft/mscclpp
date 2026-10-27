@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 from mpi4py import MPI
 
-from mscclpp_benchmark.gpu import device_synchronize
+from mscclpp.gpu import device_synchronize
 
 _mscclpp_module = None
 

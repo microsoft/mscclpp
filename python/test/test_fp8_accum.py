@@ -17,7 +17,7 @@ from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp, is_nvls_supported
 from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
 from mscclpp.utils import get_device_arch
-from mscclpp_benchmark.gpu import device_synchronize
+from mscclpp.gpu import device_synchronize
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.

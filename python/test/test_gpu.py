@@ -132,13 +132,16 @@ class CudaGpuTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, r"get_device_count failed: test failure \(20\)"):
             self.gpu.init_runtime()
 
-    def test_benchmark_imports_share_helpers_and_runtime(self):
-        compat = self.load_module("_benchmark_gpu_test", self.python_dir / "mscclpp_benchmark" / "gpu.py")
-        for name in self.gpu.__all__:
-            self.assertIs(getattr(compat, name), getattr(self.gpu, name))
-        self.assertIsNone(self.gpu._RUNTIME)
-        compat.init_runtime()
-        self.gpu.init_runtime()
+    def test_direct_imports_share_helpers_and_runtime(self):
+        from mscclpp import gpu
+        from mscclpp.gpu import current_device, init_runtime
+
+        self.assertIs(gpu, self.gpu)
+        self.assertIs(current_device, gpu.current_device)
+        self.assertIs(init_runtime, gpu.init_runtime)
+        self.assertIsNone(gpu._RUNTIME)
+        init_runtime()
+        self.assertEqual(current_device(), gpu.current_device())
         self.api("GetDeviceCount").assert_called_once_with()
 
     def test_device_names_and_stream_flags(self):

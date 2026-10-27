@@ -26,7 +26,7 @@ from mscclpp.ep import (
     MoEMode,
     QuantConfig,
 )
-from mscclpp_benchmark.gpu import current_device
+from mscclpp.gpu import current_device
 
 NUM_TOPK = 8
 HIDDEN = 4096

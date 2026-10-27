@@ -33,7 +33,7 @@ from mscclpp import (
 from mscclpp import CommGroup, GpuBuffer
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
-from mscclpp_benchmark.gpu import (
+from mscclpp.gpu import (
     create_stream,
     device_synchronize,
     runtime_name,

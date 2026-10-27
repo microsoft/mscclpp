@@ -10,8 +10,8 @@ not initialize a GPU or require a visible device.
 Shared CUDA/HIP runtime helpers are available in `mscclpp.gpu`, including device
 queries, synchronization, streams, events, and graph capture. They use the backend
 selected by the native build and initialize the Python runtime on first use.
-`mscclpp.utils.get_device_arch()` uses these helpers to query the current device.
-The previous `mscclpp_benchmark.gpu` import path remains available for compatibility.
+The benchmarks use these helpers directly, as does `mscclpp.utils.get_device_arch()`
+when querying the current device.
 
 ## Setup Channel with Python API
 

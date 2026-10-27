@@ -13,7 +13,7 @@ _REDUCESCATTER_COLLECTIVE = "reducescatter"
 _mscclpp_module = None
 
 from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, compile_dsl_algorithms
-from mscclpp_benchmark.gpu import current_device, device_name, set_device
+from mscclpp.gpu import current_device, device_name, set_device
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
 

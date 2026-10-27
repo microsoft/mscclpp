@@ -20,7 +20,7 @@ def pytest_configure(config):
         shm_comm = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED, 0, MPI.INFO_NULL)
         N_GPUS_PER_NODE = shm_comm.size
         shm_comm.Free()
-        from mscclpp_benchmark.gpu import set_device
+        from mscclpp.gpu import set_device
 
         set_device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE)
 

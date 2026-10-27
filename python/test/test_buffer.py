@@ -358,7 +358,7 @@ class CudaBufferTests(unittest.TestCase):
             sys.modules,
             {
                 "mpi4py": SimpleNamespace(MPI=mpi),
-                "mscclpp_benchmark.gpu": SimpleNamespace(device_synchronize=lambda: None),
+                "mscclpp.gpu": SimpleNamespace(device_synchronize=lambda: None),
             },
         ):
             correctness = load_module(
