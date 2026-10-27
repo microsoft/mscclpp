@@ -5,14 +5,16 @@
 
 MegaMoE is an SM100-family routed SwiGLU expert implementation with packed
 MXFP4 weights, dynamically quantized E4M3 activations, BF16 inputs/outputs, and
-CUDA IPC communication. Only routed W4A8 execution is supported.
+CUDA IPC communication within an NVLink rack plus InfiniBand communication across
+racks. Only routed W4A8 execution is supported.
 
 ## Requirements
 
 - NVIDIA SM100-family GPU
 - CUDA toolkit and `nvcc` 13.0 or newer
 - A compatible CUTLASS checkout
-- One rank per GPU in the same active NVLink fabric
+- One rank per GPU; ranks of a rack share an active NVLink fabric
+- For more than one rack: InfiniBand with GPUDirect RDMA on every rank
 
 Build with `MSCCLPP_BUILD_EXT_MEGAMOE=ON`. The installed JIT source bundle
 contains `megamoe_w4a8.cu`, `megamoe_launch.cu`, `megamoe_jit.cu`, and their
@@ -60,6 +62,43 @@ output = moe(inputs, topk_ids, topk_weights)
 
 `inputs` and outputs are BF16. Routing IDs are int32; `-1` masks an unused slot.
 Routing weights are float32.
+
+## Inter-rack execution
+
+Ranks are grouped into contiguous racks of `ranks_per_rack` ranks (at most 72).
+Peers in the local rack keep the direct CUDA IPC path; peers in other racks are
+reached over InfiniBand through MSCCL++ port channels served by a proxy thread
+that the context owns. Up to 256 ranks are supported.
+
+```python
+config = MegaMoEConfig(
+    rank=rank, world_size=144, max_tokens=128, hidden=4096, intermediate=6656,
+    num_experts=1152, top_k=8, ranks_per_rack=72,
+)
+```
+
+`ranks_per_rack=0` (the default) detects racks from the NVLink fabric reported by
+NVML: a rack is rank 0's fabric when every fabric is a contiguous rank block of the
+same size, and a single rank when no fabric is active. An explicit value smaller
+than a fabric routes the remaining fabric peers over InfiniBand, which is useful
+for testing. `MegaMoE.ranks_per_rack` reports the value in effect.
+
+Per forward, every rank sends each network peer one message before the routed
+kernel: the routes that peer owns and each needed token once, as FP8 activations
+and E8M0 scales. The owner relays the routes into the same routing slots NVLink
+sources write, computes them with the NVLink-routed tokens, and returns the
+weighted rows in one transfer per source after FC2. Each (source, owner) pair
+therefore uses at most three RDMA writes and two signals per forward, and the
+forward stays CUDA Graph capturable. GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
+
+The registered network workspace (`workspace_bytes["network"]`) grows with the
+number of network peers `P`, about
+`2 * P * max_tokens * (hidden + hidden/32) + P * max_tokens * top_k * hidden * 2`
+bytes for MXFP8. Port-channel offsets are 32-bit, so construction rejects shapes
+whose transferred regions (`2 * P * max_tokens * (hidden + hidden/32)` plus one
+`max_tokens * top_k` block of result rows) exceed 4 GiB. JIT modules built
+before inter-rack support must be recompiled; the content-addressed cache does
+this automatically.
 
 ## Kernel policy and JIT
 
@@ -138,7 +177,8 @@ separate from the selectable JIT policies.
 
 ## Benchmark
 
-Launch the routed benchmark with `torchrun`:
+Launch the routed benchmark with `torchrun` (`--nnodes`, `--node-rank`, and
+`--master-addr` for several racks, optionally with `--ranks-per-rack`):
 
 ```bash
 torchrun --nproc-per-node=4 -m mscclpp.ext.megamoe.benchmark \

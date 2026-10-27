@@ -327,17 +327,32 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
       bulkStoreCommit();
       return;
     }
+    // Rows of network sources are staged locally and returned after FC2 (megamoe_net.hpp).
+    uint8_t* netRow = params.net.isNet(route.rank)
+                          ? netCombineRow(params.net, route.rank, route.token, route.slot, params.config.topK,
+                                          size_t(params.config.maxTokens) * params.config.topK)
+                          : nullptr;
     if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
-      auto* output = peerAt<uint8_t>(params, route.rank, params.symmetric.partialOutput);
-      size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+      uint8_t* output;
+      size_t offset;
+      if (netRow) {
+        output = netRow;
+        offset = feature;
+      } else {
+        output = peerAt<uint8_t>(params, route.rank, params.symmetric.partialOutput);
+        offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+      }
       bulkStore(output + offset, s.epilogue.packedFp8 + token * PackedFp8RowStride, CtaTileM * sizeof(uint8_t));
       bulkStoreCommit();
       return;
     }
     __bfloat16* output;
     size_t offset;
-    if (!params.config.combineRouteWeights && KernelParams::WeightMxfp4 && params.config.worldSize == 1 &&
-        params.config.topK == 1) {
+    if (netRow) {
+      output = reinterpret_cast<__bfloat16*>(netRow);
+      offset = feature;
+    } else if (!params.config.combineRouteWeights && KernelParams::WeightMxfp4 && params.config.worldSize == 1 &&
+               params.config.topK == 1) {
       // Delivered also finalizes a unique local contribution by TMA store; BF16 TMA reduction is only needed
       // when another contribution targets the same token.
       output = finalOutput;
@@ -626,12 +641,21 @@ __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* 
   }
   traceKernel(KernelTracePhase::OutputJoin, true);
   syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  if (p.net.nNet) {
+    // Every FC2 store has completed: return network sources' rows, then collect this rank's rows from network owners.
+    const uint64_t epoch = p.workspace.control->epoch;
+    if (blockIdx.x == 0) {
+      for (int index = threadIdx.x; index < p.net.nNet; index += blockDim.x) netReturnResults(p.net, index, epoch);
+    }
+    netCollectResults(p.net, at<uint8_t>(p.local, p.symmetric.partialOutput), tokens * p.config.topK, epoch);
+    syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  }
   if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
     traceKernel(KernelTracePhase::OutputJoin, false);
     return;
   }
   if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
-  if (threadIdx.x < p.config.worldSize) {
+  if (threadIdx.x < p.config.worldSize && !p.net.isNet(threadIdx.x)) {
     // Only CTA0 consumes the peer notification; followers observe the same epoch.
     if (blockIdx.x == 0)
       signalAndWait(p, threadIdx.x);

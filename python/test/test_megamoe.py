@@ -31,6 +31,13 @@ def test_config_dimensions_and_policy():
     assert W4A8KernelConfig().cluster_size == 2
 
 
+def test_config_accepts_multiple_racks():
+    config = _config(world_size=144, num_experts=1152, top_k=8, ranks_per_rack=72)
+    assert config.ranks_per_rack == 72
+    assert config.local_experts == 8
+    assert _config().ranks_per_rack == 0
+
+
 def test_config_preserves_positional_gate_clamp():
     config = MegaMoEConfig(0, 4, 32, 4096, 4352, 64, 7, 32, 0.125)
     assert config.gate_up_clamp == 0.125
@@ -41,7 +48,10 @@ def test_config_preserves_positional_gate_clamp():
     [
         {"rank": 4},
         {"world_size": 0},
-        {"world_size": 73},
+        {"world_size": 257, "num_experts": 257},
+        {"ranks_per_rack": -1},
+        {"ranks_per_rack": 3},
+        {"world_size": 146, "num_experts": 146, "ranks_per_rack": 73},
         {"max_tokens": 0},
         {"max_tokens": True},
         {"hidden": 3968},

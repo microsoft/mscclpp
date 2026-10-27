@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/port_channel.hpp>
+#include <mscclpp/utils.hpp>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -16,6 +19,7 @@
 
 #include "megamoe.hpp"
 #include "megamoe_jit.hpp"
+#include "megamoe_net.hpp"
 
 namespace mscclpp::megamoe {
 namespace {
@@ -119,6 +123,8 @@ struct JitModule {
   void* handle = nullptr;
   const MegaMoeJitApiV1* api = nullptr;
   MegaMoeJitLaunchDirectV1 launchDirect = nullptr;
+  // Absent from modules built before inter-rack support; required only by inter-rack contexts.
+  MegaMoeJitCreatePlanNetV1 createPlanNet = nullptr;
   bool fixedTokenCount = false;
   uint32_t optimizationFlags = 0;
 
@@ -176,6 +182,9 @@ struct JitModule {
     const char* launchError = dlerror();
     if (launchError || !launchDirect)
       throw std::invalid_argument("MegaMoE W4A8 JIT module is missing the direct launch entrypoint; recompile it");
+    createPlanNet =
+        reinterpret_cast<MegaMoeJitCreatePlanNetV1>(dlsym(handle, MSCCLPP_MEGAMOE_JIT_CREATE_PLAN_NET_ENTRYPOINT));
+    (void)dlerror();
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
     this->api = api;
@@ -203,7 +212,7 @@ size_t product(std::initializer_list<size_t> factors) {
 }
 
 struct RankInfo {
-  std::array<int, 11> config;
+  std::array<int, 12> config;
   int tag = 0;
   std::array<int, 19> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
@@ -228,7 +237,8 @@ RankInfo rankInfo(const NativeConfig& c, int device) {
                  int(c.weightDtype),
                  int(c.activationDtype),
                  int(c.combineRouteWeights),
-                 int(c.computeOnly)};
+                 int(c.computeOnly),
+                 c.ranksPerRack};
   info.gateUpClamp = c.gateUpClamp;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)
@@ -259,7 +269,10 @@ RankInfo rankInfo(const NativeConfig& c, int device) {
   return info;
 }
 
-void validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig& c, const RankInfo& info) {
+// Validate peers and return the ranks per rack. Racks are contiguous rank blocks of one NVLink fabric; other racks are
+// reached over IB. Without ranksPerRack, a rack is the NVLink fabric of rank 0's block, or a single rank when the
+// fabric is unavailable.
+int validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig& c, const RankInfo& info) {
   std::vector<RankInfo> peers(c.worldSize);
   peers[c.rank] = info;
   comm->bootstrap()->allGather(peers.data(), sizeof(RankInfo));
@@ -273,14 +286,50 @@ void validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig
         peer.symmetricBytes != local.symmetricBytes || peer.privateBytes != local.privateBytes)
       throw std::invalid_argument(
           "MegaMoE kernel IDs, specialization metadata, and workspace sizes must match on every rank");
-    if (c.worldSize > 1 && (!peer.fabricReady || !local.fabricReady || peer.cliqueId != local.cliqueId ||
-                            std::memcmp(peer.fabricUuid, local.fabricUuid, sizeof(local.fabricUuid))))
-      throw std::invalid_argument(
-          "MegaMoE requires all peers in one active NVLink fabric; PCIe/IB peers are unsupported");
     for (int previous = 0; previous < rank; ++previous)
       if (!std::strcmp(peer.gpuUuid, peers[previous].gpuUuid))
         throw std::invalid_argument("MegaMoE requires exactly one rank per GPU");
   }
+  auto sameFabric = [&](int a, int b) {
+    const auto& x = peers[a];
+    const auto& y = peers[b];
+    return x.fabricReady && y.fabricReady && x.cliqueId == y.cliqueId &&
+           !std::memcmp(x.fabricUuid, y.fabricUuid, sizeof(x.fabricUuid));
+  };
+  int rackSize = c.ranksPerRack;
+  const bool detect = !rackSize;
+  if (detect) {
+    rackSize = 1;
+    while (rackSize < c.worldSize && sameFabric(0, rackSize)) ++rackSize;
+    if (rackSize > MaxRackSize)
+      throw std::invalid_argument("MegaMoE detected an NVLink fabric of more than " + std::to_string(MaxRackSize) +
+                                  " ranks; set ranksPerRack");
+    if (c.worldSize % rackSize)
+      throw std::invalid_argument("MegaMoE detected NVLink racks of unequal size; set ranksPerRack");
+  }
+  for (int rank = 0; rank < c.worldSize; ++rank) {
+    const int leader = rank / rackSize * rackSize;
+    if (rank != leader && !sameFabric(leader, rank))
+      throw std::invalid_argument(
+          "MegaMoE requires the ranks of each rack in one active NVLink fabric; PCIe peers are unsupported");
+    // Detected racks must cover whole fabrics, so a fabric never mixes NVLink and IB peers.
+    if (detect && rank == leader && rank && sameFabric(rank - 1, rank))
+      throw std::invalid_argument("MegaMoE detected NVLink racks of unequal size; set ranksPerRack");
+  }
+  return rackSize;
+}
+
+// The proxy holds the main region, one remote region per network peer, and one result slot per network peer.
+static_assert(1 + 2 * (MaxWorldSize - 1) <= (1 << TriggerBitsMemoryId), "port-channel memory IDs are exhausted");
+static_assert(MaxWorldSize - 1 <= (1 << TriggerBitsSemaphoreId), "port-channel semaphore IDs are exhausted");
+
+Transport netTransport(int device) {
+  static constexpr Transport IBs[] = {Transport::IB0, Transport::IB1, Transport::IB2, Transport::IB3,
+                                      Transport::IB4, Transport::IB5, Transport::IB6, Transport::IB7};
+  const int count = std::min(getIBDeviceCount(), int(std::size(IBs)));
+  if (count <= 0) throw std::runtime_error("MegaMoE inter-rack execution requires an InfiniBand device");
+  // As elsewhere in MSCCL++, GPU i uses IB device i; MSCCLPP_HCA_DEVICES remaps the devices.
+  return IBs[device % count];
 }
 
 bool overlaps(const void* a, size_t aBytes, const void* b, size_t bBytes) {
@@ -324,6 +373,18 @@ struct MegaMoeContext::Impl {
   std::shared_ptr<KernelPlan> plan;
   std::shared_ptr<JitModule> module;
   std::unique_ptr<JitPlan> jitPlan;
+  // Inter-rack network path; empty when every peer shares the local rack.
+  int rackSize = 1;
+  NetLayout netLayout;
+  std::unique_ptr<GpuBuffer<char>> netBuffer;
+  RegisteredMemory netMemory;
+  // Owner-side result slots, one registered memory per network source to keep put offsets within 32 bits.
+  std::vector<RegisteredMemory> netSlotMemories;
+  std::vector<RegisteredMemory> netPeerMemories;
+  std::vector<Connection> netConnections;
+  std::shared_ptr<ProxyService> proxy;
+  bool proxyStarted = false;
+  std::shared_ptr<PortChannelDeviceHandle> netChannels;
 
   ~Impl() {
     if (device < 0) return;
@@ -334,9 +395,18 @@ struct MegaMoeContext::Impl {
     (void)cudaSetDevice(device);
     (void)cudaDeviceSynchronize();
     if (startResetEvent) (void)cudaEventDestroy(startResetEvent);
+    // The proxy may still reference the network memories and connections.
+    if (proxyStarted) proxy->stopProxy();
     plan.reset();
     jitPlan.reset();
     module.reset();
+    proxy.reset();
+    netChannels.reset();
+    netConnections.clear();
+    netPeerMemories.clear();
+    netSlotMemories.clear();
+    netMemory = RegisteredMemory{};
+    netBuffer.reset();
     connections.clear();
     peerMemories.clear();
     localMemory = RegisteredMemory{};
@@ -359,8 +429,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     validateNativeConfig(c);
     if (comm->bootstrap()->getRank() != c.rank || comm->bootstrap()->getNranks() != c.worldSize)
       throw std::invalid_argument("MegaMoE rank/worldSize must match its communicator");
-    if (tag < 0 || tag == std::numeric_limits<int>::max())
-      throw std::invalid_argument("MegaMoE bootstrap tag must be in [0, INT_MAX-1)");
+    if (tag < 0 || tag > std::numeric_limits<int>::max() - 5)
+      throw std::invalid_argument("MegaMoE bootstrap tag must be in [0, INT_MAX-5]");
     if (!weights.fc1 || !weights.fc1Scale || !weights.fc2 || !weights.fc2Scale)
       throw std::invalid_argument("MegaMoE requires four non-null canonical weight buffers");
     cudaStreamCaptureStatus capture;
@@ -434,7 +504,10 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     info.symmetricBytes = p.layout.bytes;
     info.privateBytes = p.workspaceBytes;
   });
-  validatePeers(comm, c, info);
+  p.rackSize = validatePeers(comm, c, info);
+  p.netLayout = getNetLayout(c, p.rackSize);
+  const int rackBegin = c.rank / p.rackSize * p.rackSize;
+  auto isNet = [&](int rank) { return rank < rackBegin || rank >= rackBegin + p.rackSize; };
   p.communicator = comm;
   PackedWeights packed{};
   collectiveCheck(comm, "allocation and weight packing", [&] {
@@ -444,6 +517,15 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     p.kernelEntrySignal = mscclpp::detail::gpuCallocShared<uint32_t>(1);
     MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
     p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
+    if (p.netLayout.bytes) {
+      p.netBuffer = std::make_unique<GpuBuffer<char>>(p.netLayout.bytes);
+      const Transport transport = netTransport(p.device);
+      p.netMemory = p.communicator->registerMemory(p.netBuffer->data(), p.netLayout.mainBytes, transport);
+      for (int index = 0; index < c.worldSize - p.rackSize; ++index)
+        p.netSlotMemories.push_back(p.communicator->registerMemory(
+            p.netBuffer->data() + p.netLayout.combineOut + size_t(index) * p.netLayout.slotBytes, p.netLayout.slotBytes,
+            transport));
+    }
     size_t localExperts = c.numExperts / c.worldSize;
     const size_t valuesPerByte = c.weightDtype == WeightDtype::Mxfp4 ? 2 : 1;
     const std::array<size_t, 4> sizes{
@@ -468,22 +550,43 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   });
   std::vector<std::shared_future<RegisteredMemory>> memoryFutures;
   std::vector<std::shared_future<Connection>> connectionFutures;
+  std::vector<std::shared_future<Semaphore>> semaphoreFutures;
   std::vector<uint64_t> peerPointers;
   collectiveCheck(comm, "peer exchange setup", [&] {
     p.peerMemories.resize(c.worldSize);
     p.peerMemories[c.rank] = p.localMemory;
+    p.netPeerMemories.resize(c.worldSize);
     memoryFutures.resize(c.worldSize);
     connectionFutures.resize(c.worldSize);
     peerPointers.resize(c.worldSize);
     for (int rank = 0; rank < c.worldSize; ++rank) {
       if (rank == c.rank) continue;
+      if (isNet(rank)) {
+        EndpointConfig endpoint;
+        endpoint.transport = netTransport(p.device);
+        connectionFutures[rank] = p.communicator->connect(endpoint, rank, tag + 2);
+        p.communicator->sendMemory(p.netMemory, rank, tag + 3);
+        memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 3);
+        continue;
+      }
       connectionFutures[rank] = p.communicator->connect(Transport::CudaIpc, rank, tag);
       p.communicator->sendMemory(p.localMemory, rank, tag + 1);
       memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 1);
     }
   });
   collectiveCheck(comm, "peer mapping", [&] {
+    semaphoreFutures.resize(c.worldSize);
     for (int rank = 0; rank < c.worldSize; ++rank) {
+      if (isNet(rank)) {
+        p.netConnections.push_back(connectionFutures[rank].get());
+        p.netPeerMemories[rank] = memoryFutures[rank].get();
+        if (p.netPeerMemories[rank].size() != p.netLayout.mainBytes)
+          throw std::runtime_error("MegaMoE could not register a matching network peer workspace");
+        // One semaphore per connection: IB modes without RDMA atomics forward a single signal address per connection.
+        semaphoreFutures[rank] = p.communicator->buildSemaphore(p.netConnections.back(), rank, tag + 4);
+        peerPointers[rank] = 0;
+        continue;
+      }
       if (rank != c.rank) {
         p.connections.push_back(connectionFutures[rank].get());
         p.peerMemories[rank] = memoryFutures[rank].get();
@@ -493,21 +596,53 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       peerPointers[rank] = reinterpret_cast<uint64_t>(p.peerMemories[rank].data());
     }
   });
+  if (p.netLayout.bytes) {
+    collectiveCheck(comm, "network channel setup", [&] {
+      p.proxy = std::make_shared<ProxyService>();
+      const MemoryId local = p.proxy->addMemory(p.netMemory);
+      std::vector<PortChannelDeviceHandle> channels(2 * c.worldSize);
+      for (int rank = 0; rank < c.worldSize; ++rank) {
+        if (!isNet(rank)) continue;
+        const MemoryId remote = p.proxy->addMemory(p.netPeerMemories[rank]);
+        const MemoryId slot = p.proxy->addMemory(p.netSlotMemories[rank < rackBegin ? rank : rank - p.rackSize]);
+        const SemaphoreId semaphore = p.proxy->addSemaphore(semaphoreFutures[rank].get());
+        channels[rank] = p.proxy->portChannel(semaphore, remote, local).deviceHandle();
+        channels[c.worldSize + rank] = p.proxy->portChannel(semaphore, remote, slot).deviceHandle();
+      }
+      p.netChannels = mscclpp::detail::gpuCallocShared<PortChannelDeviceHandle>(channels.size());
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.netChannels.get(), channels.data(),
+                                        channels.size() * sizeof(PortChannelDeviceHandle), cudaMemcpyHostToDevice,
+                                        stream));
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      p.proxy->startProxy();
+      p.proxyStarted = true;
+    });
+  }
   collectiveCheck(comm, "plan creation", [&] {
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.peerBases.get(), peerPointers.data(), c.worldSize * sizeof(uint64_t),
                                       cudaMemcpyHostToDevice, stream));
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    const NetPlan net{p.rackSize, p.netBuffer ? p.netBuffer->data() : nullptr, p.netChannels.get()};
     if (p.module) {
       p.jitPlan = std::make_unique<JitPlan>(p.module);
       const auto config = jitConfig(c);
       const auto weights = jitWeights(packed);
       char error[ErrorCapacity]{};
-      checkJit(p.module->api->createPlan(&config, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), &weights,
-                                         &p.jitPlan->handle, error, sizeof(error)),
-               error, "plan creation");
+      if (p.module->createPlanNet) {
+        const MegaMoeJitNetV1 jitNet{net.rackSize, 0, p.netLayout.bytes, net.buffer, net.channels};
+        checkJit(p.module->createPlanNet(&config, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), &weights,
+                                         &jitNet, &p.jitPlan->handle, error, sizeof(error)),
+                 error, "plan creation");
+      } else if (p.netLayout.bytes) {
+        throw std::invalid_argument("MegaMoE JIT module predates inter-rack support; recompile it");
+      } else {
+        checkJit(p.module->api->createPlan(&config, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), &weights,
+                                           &p.jitPlan->handle, error, sizeof(error)),
+                 error, "plan creation");
+      }
       if (!p.jitPlan->handle) throw std::runtime_error("MegaMoE JIT module returned a null plan");
     } else {
-      p.plan = createKernelPlan(c, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), packed);
+      p.plan = createKernelPlan(c, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), packed, &net);
       p.resources.ctas = kernelPlanCtaCount(*p.plan);
       p.resources.sharedBytes = kernelPlanSharedBytes(*p.plan);
     }
@@ -524,6 +659,8 @@ int MegaMoeContext::ctaCount() const { return impl_->resources.ctas; }
 size_t MegaMoeContext::sharedBytes() const { return impl_->resources.sharedBytes; }
 size_t MegaMoeContext::symmetricBytes() const { return impl_->layout.bytes; }
 size_t MegaMoeContext::privateBytes() const { return impl_->workspaceBytes; }
+int MegaMoeContext::ranksPerRack() const { return impl_->rackSize; }
+size_t MegaMoeContext::networkBytes() const { return impl_->netLayout.bytes; }
 const std::string& MegaMoeContext::kernelId() const { return impl_->kernelId; }
 int MegaMoeContext::kernelTileM() const {
   if (impl_->module) return impl_->module->api->tileM;

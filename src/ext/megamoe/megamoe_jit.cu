@@ -7,6 +7,7 @@
 
 #include "megamoe_jit.hpp"
 #include "megamoe_kernel.hpp"
+#include "megamoe_net.hpp"
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
 #error "The MegaMoE JIT entrypoint must be built as a JIT module"
@@ -112,15 +113,30 @@ int jitPack(const MegaMoeJitConfigV1* config, const MegaMoeJitWeightsV1* source,
   });
 }
 
-int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peers, void* workspace,
-              const MegaMoeJitWeightsV1* weights, void** plan, char* error, size_t capacity) noexcept {
+int jitCreateNet(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peers, void* workspace,
+                 const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV1* net, void** plan, char* error,
+                 size_t capacity) noexcept {
   if (plan) *plan = nullptr;
   return jitCall(error, capacity, [&] {
     if (!plan) throw std::invalid_argument("Null MegaMoE JIT plan output");
+    auto c = nativeConfig(config);
+    NetPlan netPlan{};
+    if (net) {
+      if (net->reserved) throw std::invalid_argument("MegaMoE JIT network descriptor has nonzero reserved fields");
+      netPlan =
+          NetPlan{net->rackSize, net->buffer, static_cast<const mscclpp::PortChannelDeviceHandle*>(net->channels)};
+      if (net->bufferBytes != getNetLayout(c, net->rackSize).bytes)
+        throw std::invalid_argument("MegaMoE JIT network workspace size does not match the module layout");
+    }
     auto result = std::make_unique<JitPlan>(
-        jit::createKernelPlan(nativeConfig(config), symmetric, peers, workspace, nativeWeights(weights)));
+        jit::createKernelPlan(c, symmetric, peers, workspace, nativeWeights(weights), net ? &netPlan : nullptr));
     *plan = result.release();
   });
+}
+
+int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peers, void* workspace,
+              const MegaMoeJitWeightsV1* weights, void** plan, char* error, size_t capacity) noexcept {
+  return jitCreateNet(config, symmetric, peers, workspace, weights, nullptr, plan, error, capacity);
 }
 
 void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
@@ -195,4 +211,10 @@ extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch
     int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) {
   return jitLaunchDirect(plan, input, inputScales, topkIds, topkWeights, numTokens, output, stream, kernelEntrySignal,
                          error, capacity);
+}
+
+extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_create_plan_net_v1(
+    const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases, void* workspace,
+    const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV1* net, void** plan, char* error, size_t capacity) {
+  return jitCreateNet(config, symmetric, peerBases, workspace, weights, net, plan, error, capacity);
 }

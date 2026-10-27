@@ -21,6 +21,10 @@ class MegaMoEConfig:
     ``intermediate`` is the post-SwiGLU width. Experts are assigned in contiguous
     ``num_experts // world_size`` blocks. ``sm_margin`` reserves SMs, not a fraction:
     32 on a 152-SM GB200 permits at most 120 persistent CTAs.
+
+    Ranks form contiguous racks of ``ranks_per_rack`` ranks sharing an NVLink fabric;
+    peers in other racks are reached over InfiniBand. ``0`` detects racks from the
+    NVLink fabric of each rank (a single rank when no fabric is available).
     """
 
     rank: int
@@ -37,6 +41,7 @@ class MegaMoEConfig:
     activation_scale: float | None = None
     combine_route_weights: bool = False
     compute_only: bool = False
+    ranks_per_rack: int = 0
 
     def __post_init__(self):
         for name in (
@@ -48,12 +53,15 @@ class MegaMoEConfig:
             "num_experts",
             "top_k",
             "sm_margin",
+            "ranks_per_rack",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 2**31 - 1:
                 raise ValueError(f"{name} must be a nonnegative 32-bit integer")
-        if not 1 <= self.world_size <= 72 or not self.rank < self.world_size:
-            raise ValueError("world_size must be in [1, 72] and rank in [0, world_size)")
+        if not 1 <= self.world_size <= 256 or not self.rank < self.world_size:
+            raise ValueError("world_size must be in [1, 256] and rank in [0, world_size)")
+        if self.ranks_per_rack and (self.ranks_per_rack > 72 or self.world_size % self.ranks_per_rack):
+            raise ValueError("ranks_per_rack must be 0 (detect) or in [1, 72] and divide world_size")
         if self.max_tokens < 1:
             raise ValueError("max_tokens must be positive")
         if any(value < 128 or value % 128 or value > (2**31 - 1) // 2 for value in (self.hidden, self.intermediate)):
@@ -139,8 +147,9 @@ def _tensor(tensor, name, shape, dtype, device):
 class MegaMoE:
     """Routed SwiGLU experts with CUDA Graph-compatible MSCCL++ communication.
 
-    Construction is collective, outside graph capture, on one SM100-family GPU per rank
-    in the same active NVLink fabric. ``fc1`` and ``fc2`` are packed uint8
+    Construction is collective, outside graph capture, on one SM100-family GPU per rank.
+    Ranks of a rack share an active NVLink fabric; racks communicate over InfiniBand
+    through an MSCCL++ proxy thread owned by the context. ``fc1`` and ``fc2`` are packed uint8
     [local_experts, 2*I, H//2] and
     [local_experts, H, I//2], with the even K element in the lower nibble. The
     first I FC1 rows are gate and the second I rows are up. Scales are canonical
@@ -226,6 +235,7 @@ class MegaMoE:
             "gate_up_clamp",
             "combine_route_weights",
             "compute_only",
+            "ranks_per_rack",
         ):
             setattr(native_config, name, getattr(config, name))
         native_config.weight_dtype = (
@@ -312,9 +322,18 @@ class MegaMoE:
         return self._native.cta_count
 
     @property
+    def ranks_per_rack(self) -> int:
+        """Ranks per NVLink rack in effect; ``world_size`` when no peer uses InfiniBand."""
+        return self._native.ranks_per_rack
+
+    @property
     def workspace_bytes(self) -> dict:
-        """Symmetric/private byte sizes (packed weights are not included)."""
-        return {"symmetric": self._native.symmetric_bytes, "private": self._native.private_bytes}
+        """Symmetric/private/network byte sizes (packed weights are not included)."""
+        return {
+            "symmetric": self._native.symmetric_bytes,
+            "private": self._native.private_bytes,
+            "network": self._native.network_bytes,
+        }
 
     def input_view(self, num_tokens=None):
         """Return a zero-copy BF16 [T,H] Torch view that owns the native context.

@@ -15,6 +15,8 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 // also writes its token count to every peer's LL8 tokenCount[source] at launch. Routes of local experts never leave
 // the source CTA. Entries, headers, and token counts carry the launch epoch, so owners poll only their own memory.
 // A rank's own routingPackets slice instead holds the LL8 weights of its remote routes, which owners read in dispatch.
+// Routes owned by another rack travel over the network instead (megamoe_net.hpp); the owner relays them into the same
+// LL8 slots, so received-route processing does not distinguish NVLink and network sources.
 
 // Pack a route entry: the owner's local expert and the route's offset in its source chunk.
 MSCCLPP_DEVICE_INLINE uint32_t packRouteEntry(int expert, int offset) {
@@ -150,7 +152,7 @@ __device__ void processSourceRouteChunks(const P& p, int nTokens, const int32_t*
   const int nLiveChunks = nRoutes ? routeChunks(nRoutes) : 0;
   // Thread `peer` sends that peer the headers of this rank's chunks.
   mscclpp::LL8Packet* peerHeaders = nullptr;
-  if (shouldSendHeaders && threadIdx.x < c.worldSize && threadIdx.x != c.rank)
+  if (shouldSendHeaders && threadIdx.x < c.worldSize && threadIdx.x != c.rank && !p.net.isNet(threadIdx.x))
     peerHeaders = peerAt<mscclpp::LL8Packet>(p, threadIdx.x, p.symmetric.routingHeaders) +
                   size_t(c.rank) * routeChunks(c.maxTokens * c.topK);
   for (int chunkIdx = blockIdx.x; chunkIdx < nLiveChunks; chunkIdx += gridDim.x) {
@@ -169,7 +171,8 @@ __device__ void processSourceRouteChunks(const P& p, int nTokens, const int32_t*
       localExpert = expertId - ownerRank * nLocalExperts;
     }
     if constexpr (Publish) {
-      const bool isRemote = ownerRank >= 0 && ownerRank != c.rank;
+      // Network owners receive their routes from netSendKernel and the relay instead.
+      const bool isRemote = ownerRank >= 0 && ownerRank != c.rank && !p.net.isNet(ownerRank);
       const bool sendRemoteWeights = isRemote && !c.combineRouteWeights;
       if (routeIndex < nRoutes && (shouldStageScores || sendRemoteWeights)) {
         float weight = scores ? scores[routeIndex] : localScores[routeIndex];
@@ -437,7 +440,7 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   if (blockIdx.x == 0 && threadIdx.x == 0) w.control->epoch = epoch;
   if (!FixedTokenCount && c.worldSize > 1 && blockIdx.x == gridDim.x - 1) {
     for (int peer = threadIdx.x; peer < c.worldSize; peer += P::ThreadCount) {
-      if (peer != c.rank)
+      if (peer != c.rank && !p.net.isNet(peer))
         peerAt<mscclpp::LL8Packet>(p, peer, p.symmetric.tokenCount)[c.rank].write(uint32_t(nTokens), uint32_t(epoch));
     }
   }
@@ -462,6 +465,17 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   auto cacheOwnedRoute = [&](int expert, uint32_t route, int lane) { cacheRoute(scratch, expert, route, lane); };
   processSourceRouteChunks<true>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
                                  cacheOwnedRoute);
+  if (p.net.nNet) {
+    // Republish network sources' routes as if their owners had received them over NVLink.
+    const NetRouting netRouting{FixedTokenCount ? nullptr : at<mscclpp::LL8Packet>(p.local, p.symmetric.tokenCount),
+                                at<mscclpp::LL8Packet>(p.local, p.symmetric.routingHeaders),
+                                at<mscclpp::LL8Packet>(p.local, p.symmetric.routingPackets),
+                                routeChunks(c.maxTokens * c.topK),
+                                c.maxTokens,
+                                c.topK};
+    for (int index = blockIdx.x; index < p.net.nNet; index += gridDim.x)
+      netRelaySource<RouteChunk>(p.net, netRouting, index, epoch);
+  }
   if (c.worldSize > 1) {
     if constexpr (!FixedTokenCount) {
       tabulateSourceChunks(p, epoch, scratch);

@@ -319,6 +319,12 @@ def main():
     parser.add_argument("--top-k", type=int, default=7)
     parser.add_argument("--sm-margin", type=int, default=32)
     parser.add_argument("--gate-up-clamp", type=float, default=-1.0)
+    parser.add_argument(
+        "--ranks-per-rack",
+        type=int,
+        default=0,
+        help="ranks per NVLink rack; other racks use InfiniBand (0 detects racks from the NVLink fabric)",
+    )
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
@@ -481,6 +487,7 @@ def main():
         activation_scale=args.activation_scale,
         combine_route_weights=args.combine_route_weights,
         compute_only=args.compute_only,
+        ranks_per_rack=args.ranks_per_rack,
     )
     kernel_config = W4A8KernelConfig()
     if not config.is_w8a16 and args.w4_profile is not None:
@@ -513,7 +520,8 @@ def main():
     kernel = None if config.is_w8a16 else compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
-    # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
+    # All timed expert communication uses native MSCCL++ CudaIpc mappings within a rack and IB port channels across
+    # racks.
     dist.init_process_group("gloo", rank=rank, world_size=world)
     bootstrap = TcpBootstrap.create(rank, world)
     port = args.bootstrap_port or int(os.environ["MASTER_PORT"]) + 1
@@ -611,6 +619,7 @@ def main():
         {
             "rank": rank,
             "cta_count": context.cta_count,
+            "ranks_per_rack": context.ranks_per_rack,
             "workspace_bytes": context.workspace_bytes,
             "initialization_ms": initialization_ms,
             "kernel_id": context.kernel_id,

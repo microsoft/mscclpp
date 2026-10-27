@@ -34,6 +34,11 @@ add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
 add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
+if(MSCCLPP_USE_CUDA AND MSCCLPP_USE_IB)
+    # Exercises the MegaMoE inter-rack IB exchange on any CUDA GPU; the routed kernel itself requires SM100.
+    add_test_executable(megamoe_net_test megamoe_net_test.cu)
+    target_include_directories(megamoe_net_test PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/megamoe/include)
+endif()
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 

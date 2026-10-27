@@ -13,6 +13,10 @@ namespace mscclpp::megamoe {
 
 /// Owns a native MegaMoE plan, packed weights, registered workspace, and peer mappings.
 ///
+/// Ranks form contiguous racks that each share an NVLink fabric. Peers in the local rack
+/// use CUDA IPC; peers in other racks use IB through MSCCL++ port channels and a proxy
+/// thread owned by this context.
+///
 /// Construction is collective and must take place outside CUDA Graph capture on
 /// the rank's current CUDA device. All ranks must keep their contexts alive until
 /// all collective launches have completed. A context is not concurrently reusable:
@@ -20,7 +24,7 @@ namespace mscclpp::megamoe {
 class MegaMoeContext {
  public:
   /// Collectively create a context and pack canonical MXFP4 weights.
-  /// @param communicator Communicator spanning one NVLink fabric.
+  /// @param communicator Communicator spanning every rank, possibly across several NVLink racks.
   /// @param config Identical configuration on all ranks, except for rank.
   /// @param weights Canonical local weights and E8M0 K32 scales. MXFP4 values
   /// are packed two per byte with the even K element in the lower nibble.
@@ -53,6 +57,10 @@ class MegaMoeContext {
   size_t symmetricBytes() const;
   /// Return the private workspace size in bytes, excluding weights.
   size_t privateBytes() const;
+  /// Return the ranks per NVLink rack; equal to worldSize when no peer is reached over IB.
+  int ranksPerRack() const;
+  /// Return the IB-registered inter-rack workspace size in bytes, or 0 within a single rack.
+  size_t networkBytes() const;
   /// Return the specialization digest, or "builtin" for the builtin module.
   const std::string& kernelId() const;
   /// Return the routed output-feature tile width.

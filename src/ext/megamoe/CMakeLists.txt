@@ -69,5 +69,7 @@ install(FILES
     include/megamoe_tasks.cuh
     include/megamoe_kernel.hpp
     include/megamoe_jit.hpp
+    include/megamoe_net.hpp
+    include/megamoe_net.cuh
     include/megamoe_specialization.hpp
     DESTINATION "${MEGAMOE_JIT_INSTALL_DIR}/include")

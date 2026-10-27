@@ -242,7 +242,17 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
     const uint8_t* source = nullptr;
     const uint8_t* sourceScale = nullptr;
-    if (hasRow) {
+    float netWeight = 0.0f;
+    // computeOnly gathers already-delivered rows locally, so it never reads network staging.
+    const bool netRow = !LocalGather && hasRow && p.net.isNet(route.rank);
+    if (netRow) {
+      // Network sources' rows and weights arrived before routing relayed their routes.
+      NetEntry entry = netRouteEntry(p.net, route.rank, route.token, route.slot, p.config.topK,
+                                     size_t(p.config.maxTokens) * p.config.topK);
+      source = netRecvRow(p.net, route.rank, entry.row, p.config.maxTokens);
+      sourceScale = source + hidden;
+      netWeight = entry.weight;
+    } else if (hasRow) {
       if constexpr (LocalGather)
         resolveLocalGatherSource<IsBf16>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
                                          source, sourceScale);
@@ -271,8 +281,9 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
       if (!p.config.combineRouteWeights)
-        routeWeight =
-            LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
+        routeWeight = netRow        ? netWeight
+                      : LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens)
+                                    : loadRouteWeight(p, route);
     }
     auto process = [&](int chunk) {
       int stage = chunk % DispatchStages;

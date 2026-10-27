@@ -41,7 +41,11 @@ struct NativeConfig {
   float activationScale = 1.0f;
   bool combineRouteWeights = false;
   bool computeOnly = false;
+  // Ranks per NVLink rack; ranks in other racks are reached over IB. 0 detects racks from the NVLink fabric.
+  int ranksPerRack = 0;
 };
+
+struct NetPlan;
 
 struct SymmetricLayout {
   size_t bytes = 0;
@@ -93,9 +97,10 @@ struct KernelPlan;
 
 // All allocations and imported peer mappings must outlive this plan and every
 // queued launch. Create outside CUDA Graph capture; initialize workspaces to zero.
+// Peer bases of network peers are unused. A null or single-rack network plan keeps every peer on NVLink.
 std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& config, void* symmetricBase,
                                              const uint64_t* devicePeerBases, void* privateWorkspace,
-                                             const PackedWeights& weights);
+                                             const PackedWeights& weights, const NetPlan* net = nullptr);
 int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
