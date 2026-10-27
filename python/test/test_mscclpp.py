@@ -3,9 +3,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+import gc
 import os
 import time
 import threading
+import weakref
 
 import numpy as np
 import netifaces as ni
@@ -67,6 +69,94 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     np.testing.assert_array_equal(original.to_numpy(), expected)
     del original, wrapped
     np.testing.assert_array_equal(view.to_numpy(), expected[2:4])
+
+
+@parametrize_mpi_groups(1)
+@pytest.mark.parametrize("shape, order", [((2, 3), "C"), ((2, 3), "F"), ((), "C"), ((0, 3), "C")])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        np.float16,
+        np.float32,
+        np.float64,
+        np.int8,
+        np.int16,
+        np.int32,
+        np.int64,
+        np.uint8,
+        np.uint16,
+        np.uint32,
+        np.uint64,
+        np.bool_,
+        np.complex64,
+        np.complex128,
+    ],
+)
+def test_gpu_buffer_to_torch(mpi_group: MpiGroup, shape, order, dtype):
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, np.dtype(dtype).name):
+        pytest.skip("This PyTorch version does not support the dtype")
+    buffer = GpuBuffer(shape, dtype=dtype, order=order)
+    expected = np.ones(shape, dtype=dtype, order=order)
+    buffer.copy_from_numpy(expected)
+    tensor = buffer.to_torch()
+    assert tuple(tensor.shape) == shape
+    assert tensor.dtype == getattr(torch, np.dtype(dtype).name)
+    assert tensor.device.index == buffer.device_id
+    if buffer.size:
+        assert tensor.data_ptr() == buffer.ptr
+        assert tensor.stride() == tuple(s // buffer.itemsize for s in buffer.strides)
+    np.testing.assert_array_equal(tensor.cpu().numpy(), expected)
+    with torch.cuda.device(tensor.device):
+        tensor.zero_()
+        torch.cuda.synchronize()
+    np.testing.assert_array_equal(buffer.to_numpy(), np.zeros(shape, dtype=dtype))
+    del buffer
+    gc.collect()
+    np.testing.assert_array_equal(tensor.cpu().numpy(), np.zeros(shape, dtype=dtype))
+
+
+@parametrize_mpi_groups(1)
+def test_gpu_buffer_to_torch_retains_external_owner_and_slice(mpi_group: MpiGroup):
+    torch = pytest.importorskip("torch")
+    original = GpuBuffer.from_numpy(np.arange(8, dtype=np.float32))
+    owner = weakref.ref(original)
+    wrapped = GpuBuffer.from_ptr(original.ptr, original.nbytes, original, original.dtype)
+    view = wrapped[1:7][2:4]
+    tensor = view.to_torch()
+    second = view.to_torch()
+    assert tensor.data_ptr() == second.data_ptr() == original.ptr + 3 * original.itemsize
+    del original, wrapped, view
+    gc.collect()
+    assert owner() is not None
+    np.testing.assert_array_equal(tensor.cpu().numpy(), [3, 4])
+    with torch.cuda.device(tensor.device):
+        tensor.fill_(19)
+        torch.cuda.synchronize()
+    np.testing.assert_array_equal(owner().to_numpy(), [0, 1, 2, 19, 19, 5, 6, 7])
+    child = tensor[:1]
+    del tensor, second
+    gc.collect()
+    assert owner() is not None
+    np.testing.assert_array_equal(child.cpu().numpy(), [19])
+    del child
+    gc.collect()
+    assert owner() is None
+
+
+@parametrize_mpi_groups(1)
+def test_gpu_buffer_unconsumed_dlpack_releases_owner(mpi_group: MpiGroup):
+    from mscclpp._mscclpp import cpp_gpu_buffer_to_dlpack
+
+    buffer = GpuBuffer(4, np.float32)
+    owner = weakref.ref(buffer)
+    capsule = cpp_gpu_buffer_to_dlpack(buffer.ptr, "torch.float32", [4], [1], buffer.device_id, buffer)
+    del buffer
+    gc.collect()
+    assert owner() is not None
+    del capsule
+    gc.collect()
+    assert owner() is None
 
 
 @parametrize_mpi_groups(1)

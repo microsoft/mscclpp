@@ -144,6 +144,66 @@ class CudaBufferTests(unittest.TestCase):
         self.assertEqual(buffer.strides, matrix.strides)
         np.testing.assert_array_equal(buffer.to_numpy(), matrix)
 
+    def test_to_torch_exports_exact_view_metadata_without_copying(self):
+        class TorchDtype:
+            def __str__(self):
+                return "torch.float32"
+
+        capsule, tensor = object(), object()
+        export = Mock(return_value=capsule)
+        consume = Mock(return_value=tensor)
+        torch = SimpleNamespace(
+            dtype=TorchDtype,
+            float32=TorchDtype(),
+            utils=SimpleNamespace(dlpack=SimpleNamespace(from_dlpack=consume)),
+        )
+        native = sys.modules["mscclpp._mscclpp"]
+        buffers = [
+            self.GpuBuffer((2, 3), np.float32),
+            self.GpuBuffer((2, 3), np.float32, order="F"),
+            self.GpuBuffer((), np.float32),
+            self.GpuBuffer((0, 3), np.float32),
+            self.GpuBuffer(8, np.float32)[1:7][2:4],
+        ]
+        host = np.arange(8, dtype=np.float32)
+        buffers.append(self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, np.float32)[2:5])
+        allocations = self.allocate.call_count
+        self.device = 6
+        with (
+            patch.object(native, "cpp_gpu_buffer_to_dlpack", export, create=True),
+            patch.dict(sys.modules, {"torch": torch}),
+        ):
+            for buffer in buffers:
+                with self.subTest(shape=buffer.shape, strides=buffer.strides):
+                    self.assertIs(buffer.to_torch(), tensor)
+                    export.assert_called_with(
+                        buffer.ptr,
+                        "torch.float32",
+                        buffer.shape,
+                        tuple(s // buffer.itemsize for s in buffer.strides),
+                        2,
+                        buffer._allocation,
+                    )
+                    consume.assert_called_with(capsule)
+        self.assertEqual(self.allocate.call_count, allocations)
+        self.api("Memcpy").assert_not_called()
+        self.api("DeviceSynchronize").assert_not_called()
+        self.api("SetDevice").assert_not_called()
+
+    def test_to_torch_requires_optional_torch_and_rejects_unsupported_dtype(self):
+        buffer = self.GpuBuffer(4, np.float32)
+        with patch.dict(sys.modules, {"torch": None}):
+            with self.assertRaises(ImportError):
+                buffer.to_torch()
+        export = Mock()
+        with (
+            patch.object(sys.modules["mscclpp._mscclpp"], "cpp_gpu_buffer_to_dlpack", export, create=True),
+            patch.dict(sys.modules, {"torch": SimpleNamespace(dtype=type("TorchDtype", (), {}))}),
+        ):
+            with self.assertRaisesRegex(ValueError, "Unsupported PyTorch dtype"):
+                buffer.to_torch()
+        export.assert_not_called()
+
     def test_views_alias_and_retain_allocation(self):
         host = np.arange(8, dtype=np.int32)
         buffer = self.GpuBuffer.from_numpy(host)

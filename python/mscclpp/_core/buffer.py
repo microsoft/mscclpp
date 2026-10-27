@@ -6,10 +6,14 @@ from contextlib import contextmanager
 import math
 import operator
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 from mscclpp import gpu
 from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity, is_hip
+
+if TYPE_CHECKING:
+    import torch
 
 __all__ = ["GpuBuffer", "GpuBufferGranularity"]
 
@@ -222,6 +226,29 @@ class GpuBuffer:
         result = np.empty(self.shape, dtype=self.dtype, order=self._order)
         self._copy(result.ctypes.data, self.ptr, "DeviceToHost")
         return result
+
+    def to_torch(self) -> "torch.Tensor":
+        """Return a zero-copy PyTorch view retaining this buffer's allocation or external owner.
+
+        Shape, dtype, device, and slice offsets are preserved. No synchronization is
+        performed: callers must order accesses on different GPU streams explicitly.
+        PyTorch is required only when this method is called.
+        """
+        import torch
+        from mscclpp._mscclpp import cpp_gpu_buffer_to_dlpack
+
+        dtype = getattr(torch, self.dtype.name, None)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"Unsupported PyTorch dtype: {self.dtype}")
+        capsule = cpp_gpu_buffer_to_dlpack(
+            self.ptr,
+            str(dtype),
+            self.shape,
+            tuple(stride // self.itemsize for stride in self.strides),
+            self.device_id,
+            self._allocation,
+        )
+        return torch.utils.dlpack.from_dlpack(capsule)
 
     def copy_from_numpy(self, values) -> None:
         """Synchronously upload host values with the same shape and dtype."""

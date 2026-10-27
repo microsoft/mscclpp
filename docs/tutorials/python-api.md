@@ -145,6 +145,24 @@ The internal `get_flag_buffer()` uses this path to return a cached `uint32`
 `GpuBuffer` over the same native flag allocation used by C++/NCCL, preserving its
 contents and ownership rather than creating a separate Python allocation.
 
+`buffer.to_torch()` returns a zero-copy PyTorch tensor sharing the same GPU
+memory. It preserves shape, dtype, device, and strides, including slices and
+Fortran layouts. The tensor retains the allocation (or external owner), so it
+remains valid after the `GpuBuffer` wrapper is released. PyTorch is optional and
+is imported only when this method is called; unsupported dtypes raise `ValueError`.
+Empty buffers and scalars keep their shapes.
+
+```python
+tensor = buffer.to_torch()
+assert tensor.data_ptr() == buffer.data.ptr  # For a nonempty buffer.
+tensor.zero_()  # Updates the shared GPU storage in place.
+```
+
+Conversion does not copy data or synchronize GPU streams. Use the same stream
+for dependent operations, or establish ordering with events/synchronization.
+Keep the tensor or buffer alive until asynchronous operations using its pointer
+have completed.
+
 The test kernel is defined in `test.cu` as follows:
 ```cuda
 #include <mscclpp/packet_device.hpp>
