@@ -95,7 +95,7 @@ def human_readable_size(size, decimal_places=1):
 def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
-        memory.fill(p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank)
+        memory.copy_from_numpy(np.full(memory.shape, p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank, dtype=memory.dtype))
         device_synchronize()
         output_memory = func(None)
         device_synchronize()

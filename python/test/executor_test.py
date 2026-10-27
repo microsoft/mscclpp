@@ -189,7 +189,7 @@ def build_bufs(
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         for buffer in test_bufs:
-            buffer.fill(0)
+            buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -219,7 +219,7 @@ def build_bufs(
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
     test_buf = GpuBuffer(nelems, dtype=dtype)
-    test_buf.fill(0)
+    test_buf.copy_from_numpy(np.zeros(test_buf.shape, dtype=test_buf.dtype))
 
     return [input_buf], [result_buf], [test_buf], nelems
 

@@ -120,12 +120,15 @@ NVLS alignment); bind an unsliced buffer's pointer and allocation size to NVLS.
 host = np.arange(1024, dtype=np.float32)
 buffer = GpuBuffer.from_numpy(host)
 buffer.copy_from_numpy(host * 2)
-buffer[256:512].fill(0)
+view = buffer[256:512]
+view.copy_from_numpy(np.zeros(view.shape, dtype=view.dtype))
 result = buffer.to_numpy()
 ```
 
-Transfers and `fill()` synchronize the allocation's device and restore the previous
+Transfers synchronize the allocation's device and restore the previous
 current device. Run them outside graph capture and timed benchmark operations.
+To initialize existing storage, upload `np.zeros(...)` or `np.full(...)` with
+the buffer's shape and dtype using `copy_from_numpy()`.
 Use NumPy on downloaded arrays for arithmetic, comparisons, or advanced indexing.
 Buffers support C- or F-contiguous layouts with native-endian numeric/boolean dtypes;
 explicit strides must match that layout. Dimensions may be zero. One-dimensional

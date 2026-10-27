@@ -62,7 +62,7 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     assert wrapped.device_id == original.device_id
     np.testing.assert_array_equal(wrapped.to_numpy(), expected)
     view = wrapped[2:4]
-    view.fill(19)
+    view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
     expected[2:4] = 19
     np.testing.assert_array_equal(original.to_numpy(), expected)
     del original, wrapped
@@ -236,7 +236,8 @@ def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: np.dtype):
     host = (np.arange(nelem) % 17).astype(dtype)
     memory.copy_from_numpy(host)
     np.testing.assert_array_equal(memory.to_numpy(), host)
-    memory[: nelem // 2].fill(3)
+    view = memory[: nelem // 2]
+    view.copy_from_numpy(np.full(view.shape, 3, dtype=view.dtype))
     host[: nelem // 2] = 3
     np.testing.assert_array_equal(memory.to_numpy(), host)
 
@@ -249,7 +250,8 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
     memory = GpuBuffer(nelem, dtype=np.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))].fill(group.my_rank + 1)
+    view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
     memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -311,9 +313,11 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     connections[next_rank].write(all_reg_memories[next_rank], 0, all_reg_memories[group.my_rank], 0, bufferSize)
     connections[next_rank].flush()
     if group.my_rank == 0:
-        memory.fill(0)
         if device == "cuda":
+            memory.copy_from_numpy(np.zeros(memory.shape, dtype=memory.dtype))
             device_synchronize()
+        else:
+            memory.fill(0)
     connections[next_rank].update_and_sync(
         all_signal_memories[next_rank], 0, dummy_memory_on_cpu.ctypes.data, signal_val
     )
@@ -548,7 +552,8 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     else:
         scratch = None
     nelemPerRank = nelem // group.nranks
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))].fill(group.my_rank + 1)
+    view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
     memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -593,7 +598,8 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     memory = GpuBuffer(nelem, dtype=np.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))].fill(group.my_rank + 1)
+    view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
     memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -647,7 +653,8 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
         scratch = GpuBuffer(1, dtype=np.int32)  # just so that we can pass a valid ptr
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
-    memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))].fill(group.my_rank + 1)
+    view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
     memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1

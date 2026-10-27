@@ -46,7 +46,7 @@ def fill_case_for_benchmark(case: Any, rank: int) -> None:
     if case.collective == "allreduce":
         case.input.copy_from_numpy(encoded)
         return
-    case.output.fill(0)
+    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.output.dtype))
     case.input.copy_from_numpy(encoded)
 
 
@@ -112,7 +112,7 @@ def _fill_case_for_correctness(case: Any, rank: int, iteration: int) -> None:
     if case.collective == "allreduce":
         case.input.copy_from_numpy(encoded)
         return
-    case.output.fill(0)
+    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.output.dtype))
     case.input.copy_from_numpy(encoded)
 
 

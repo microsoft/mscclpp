@@ -237,18 +237,3 @@ class GpuBuffer:
         result = cls(array.shape, dtype=array.dtype, order="F" if np.isfortran(array) else "C")
         result.copy_from_numpy(array)
         return result
-
-    def fill(self, value) -> None:
-        """Synchronously fill storage with a scalar, outside graph capture."""
-        if self.nbytes == 0:
-            return
-        scalar = np.asarray(value, dtype=self.dtype)
-        if scalar.ndim != 0:
-            raise ValueError("Fill value must be a scalar.")
-        if not scalar.tobytes().strip(b"\0"):
-            with self._on_device() as (runtime, prefix):
-                gpu.device_synchronize()
-                _call(getattr(runtime, prefix + "Memset"), self.ptr, 0, self.nbytes)
-                gpu.device_synchronize()
-        else:
-            self.copy_from_numpy(np.full(self.shape, value, dtype=self.dtype, order=self._order))

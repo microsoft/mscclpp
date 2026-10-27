@@ -57,10 +57,6 @@ class CudaBufferTests(unittest.TestCase):
             ctypes.memmove(dst, src, size)
             return (0,)
 
-        def memset(dst, value, size):
-            ctypes.memset(dst, value, size)
-            return (0,)
-
         self.runtime = SimpleNamespace()
         self.pointer_device = 2
         for name, callback in (
@@ -71,7 +67,6 @@ class CudaBufferTests(unittest.TestCase):
             ("SetDevice", set_device),
             ("DeviceSynchronize", lambda: (0,)),
             ("Memcpy", memcpy),
-            ("Memset", memset),
         ):
             setattr(self.runtime, self.prefix + name, Mock(__name__=self.prefix + name, side_effect=callback))
         setattr(
@@ -155,7 +150,7 @@ class CudaBufferTests(unittest.TestCase):
         view = buffer[2:7][1:3]
         self.assertEqual(view.ptr, buffer.ptr + 3 * host.itemsize)
         self.assertEqual(view.nbytes, 2 * host.itemsize)
-        view.fill(19)
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
         host[3:5] = 19
         np.testing.assert_array_equal(buffer.to_numpy(), host)
         owner = weakref.ref(buffer._allocation)
@@ -181,9 +176,9 @@ class CudaBufferTests(unittest.TestCase):
         np.testing.assert_array_equal(buffer.to_numpy(), host)
         view = buffer[2:6][1:3]
         self.assertEqual(view.ptr, host.ctypes.data + 3 * host.itemsize)
-        view.fill(19)
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
         np.testing.assert_array_equal(host, [0, 1, 2, 19, 19, 5, 6, 7])
-        buffer.fill(0)
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
         np.testing.assert_array_equal(host, np.zeros(8, dtype=np.uint32))
         self.allocate.assert_not_called()
 
@@ -258,25 +253,22 @@ class CudaBufferTests(unittest.TestCase):
         empty = self.GpuBuffer.from_ptr(0, 0, object())
         self.assertEqual((empty.ptr, empty.nbytes, empty.allocation_size), (0, 0, 0))
         self.assertEqual(empty.to_numpy().shape, (0,))
-        empty.fill(0)
+        empty.copy_from_numpy(np.zeros(empty.shape, dtype=empty.dtype))
         self.api("Memcpy").assert_not_called()
         self.api("PointerGetAttributes").assert_not_called()
         self.allocate.assert_not_called()
 
-    def test_fill_preserves_nonzero_and_negative_zero_bits(self):
+    def test_upload_preserves_nonzero_and_negative_zero_bits(self):
         buffer = self.GpuBuffer(5, dtype=np.float32)
         for value in (2.5, -0.0, 0.0):
-            buffer.fill(value)
             expected = np.full(5, value, dtype=np.float32)
+            buffer.copy_from_numpy(expected)
             np.testing.assert_array_equal(buffer.to_numpy().view(np.uint32), expected.view(np.uint32))
-        self.api("Memset").assert_called_once_with(buffer.ptr, 0, buffer.nbytes)
-        with self.assertRaisesRegex(ValueError, "scalar"):
-            buffer.fill([1, 2])
 
     def test_transfers_restore_device_even_on_failure(self):
         buffer = self.GpuBuffer(4, dtype=np.int32)
         self.device = 6
-        buffer.fill(0)
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("Memcpy").side_effect = lambda *args: (17,)
