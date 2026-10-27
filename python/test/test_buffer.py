@@ -8,7 +8,7 @@ import gc
 import importlib.util
 from pathlib import Path
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 import weakref
@@ -64,7 +64,9 @@ class CudaBufferTests(unittest.TestCase):
         self.runtime = SimpleNamespace()
         self.pointer_device = 2
         for name, callback in (
+            ("GetDeviceCount", lambda: (0, 8)),
             ("GetDevice", lambda: (0, self.device)),
+            ("GetErrorString", lambda error: (0, b"native error")),
             ("PointerGetAttributes", lambda ptr: (0, SimpleNamespace(device=self.pointer_device))),
             ("SetDevice", set_device),
             ("DeviceSynchronize", lambda: (0,)),
@@ -77,7 +79,17 @@ class CudaBufferTests(unittest.TestCase):
             self.prefix + "MemcpyKind",
             SimpleNamespace(**{self.prefix + "MemcpyHostToDevice": 1, self.prefix + "MemcpyDeviceToHost": 2}),
         )
+        setattr(self.runtime, self.prefix + "Error_t", SimpleNamespace(**{self.prefix + "Success": 0}))
+        setattr(
+            self.runtime,
+            self.prefix + "StreamCaptureMode",
+            SimpleNamespace(**{self.prefix + "StreamCaptureModeRelaxed": 2}),
+        )
+        setattr(self.runtime, self.prefix + "StreamNonBlocking", 1)
+        package = ModuleType("mscclpp")
+        package.__path__ = [str(self.python_dir / "mscclpp")]
         modules = {
+            "mscclpp": package,
             "mscclpp._mscclpp": SimpleNamespace(
                 CppRawGpuBuffer=self.allocate,
                 CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
@@ -91,6 +103,11 @@ class CudaBufferTests(unittest.TestCase):
         module_patch = patch.dict(sys.modules, modules)
         module_patch.start()
         self.addCleanup(module_patch.stop)
+        package.gpu = load_module("mscclpp.gpu", self.python_dir / "mscclpp" / "gpu.py")
+        for names in package.gpu._API_NAMES.values():
+            name = names[0 if self.is_hip else 1]
+            if not hasattr(self.runtime, name):
+                setattr(self.runtime, name, Mock(return_value=(0,)))
         self.buffer_module = load_module("_native_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
         self.GpuBuffer = self.buffer_module.GpuBuffer
 
@@ -268,8 +285,18 @@ class CudaBufferTests(unittest.TestCase):
         self.assertEqual(self.device, 6)
         self.api("SetDevice").side_effect = lambda device: (18,)
         self.api("Memcpy").reset_mock()
-        with self.assertRaisesRegex(RuntimeError, "SetDevice failed"):
+        with self.assertRaisesRegex(RuntimeError, "set_device failed"):
             buffer.to_numpy()
+        self.api("Memcpy").assert_not_called()
+
+    def test_shared_synchronization_failure_restores_device(self):
+        buffer = self.GpuBuffer(4, dtype=np.int32)
+        self.device = 6
+        self.api("DeviceSynchronize").side_effect = lambda: (19,)
+        with self.assertRaisesRegex(RuntimeError, r"device_synchronize failed: native error \(19\)"):
+            buffer.to_numpy()
+        self.assertEqual(self.device, 6)
+        self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("Memcpy").assert_not_called()
 
     def test_invalid_layout_and_dtype_fail_before_allocation(self):

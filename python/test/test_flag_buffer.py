@@ -69,7 +69,9 @@ class FlagBufferTests(unittest.TestCase):
             is_hip=False,
         )
         root = Path(__file__).resolve().parents[1] / "mscclpp"
-        with patch.dict(sys.modules, {"mscclpp._mscclpp": native, "cupy": None}):
+        with patch.dict(
+            sys.modules, {"mscclpp": SimpleNamespace(gpu=object()), "mscclpp._mscclpp": native, "cupy": None}
+        ):
             self.buffer_module = _load_module("_mscclpp_flag_buffer_storage_test", root / "_core" / "buffer.py")
             with patch.dict(sys.modules, {"mscclpp._core.buffer": self.buffer_module}):
                 self.algorithm = _load_module("_mscclpp_flag_buffer_test", root / "_core" / "algorithm.py")

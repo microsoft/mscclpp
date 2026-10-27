@@ -8,6 +8,7 @@ import operator
 import sys
 
 import numpy as np
+from mscclpp import gpu
 from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity, is_hip
 
 __all__ = ["GpuBuffer", "GpuBufferGranularity"]
@@ -197,24 +198,24 @@ class GpuBuffer:
     @contextmanager
     def _on_device(self):
         runtime, prefix = _runtime()
-        (previous,) = _call(getattr(runtime, prefix + "GetDevice"))
+        previous = gpu.current_device()
         if previous != self.device_id:
-            _call(getattr(runtime, prefix + "SetDevice"), self.device_id)
+            gpu.set_device(self.device_id)
         try:
             yield runtime, prefix
         finally:
             if previous != self.device_id:
-                _call(getattr(runtime, prefix + "SetDevice"), previous)
+                gpu.set_device(previous)
 
     def _copy(self, dst: int, src: int, direction: str) -> None:
         if self.nbytes == 0:
             return
         with self._on_device() as (runtime, prefix):
             # Include writes on non-default streams before exposing data to the host.
-            _call(getattr(runtime, prefix + "DeviceSynchronize"))
+            gpu.device_synchronize()
             kind = getattr(getattr(runtime, prefix + "MemcpyKind"), prefix + "Memcpy" + direction)
             _call(getattr(runtime, prefix + "Memcpy"), dst, src, self.nbytes, kind)
-            _call(getattr(runtime, prefix + "DeviceSynchronize"))
+            gpu.device_synchronize()
 
     def to_numpy(self) -> np.ndarray:
         """Synchronously copy this buffer to a new NumPy array."""
@@ -246,8 +247,8 @@ class GpuBuffer:
             raise ValueError("Fill value must be a scalar.")
         if not scalar.tobytes().strip(b"\0"):
             with self._on_device() as (runtime, prefix):
-                _call(getattr(runtime, prefix + "DeviceSynchronize"))
+                gpu.device_synchronize()
                 _call(getattr(runtime, prefix + "Memset"), self.ptr, 0, self.nbytes)
-                _call(getattr(runtime, prefix + "DeviceSynchronize"))
+                gpu.device_synchronize()
         else:
             self.copy_from_numpy(np.full(self.shape, value, dtype=self.dtype, order=self._order))
