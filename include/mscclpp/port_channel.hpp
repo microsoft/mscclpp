@@ -13,7 +13,6 @@ namespace mscclpp {
 
 struct BasePortChannel;
 struct PortChannel;
-struct GpuNetIoChannel;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
 class BaseProxyService {
@@ -106,7 +105,9 @@ struct BasePortChannel {
 
   std::shared_ptr<Proxy> proxy_;
 
-  std::shared_ptr<GpuNetIoChannel> gpuNetIo_;
+  /// Host-side state of a channel whose connection uses EndpointConfig::Ib::Mode::Device; null otherwise.
+  struct DeviceModeState;
+  std::shared_ptr<DeviceModeState> deviceMode_;
 
   /// Internal constructor used by ProxyService. Binds the channel to its connection's backend, giving it the
   /// complete memory table that its device handle may address.
@@ -116,6 +117,13 @@ struct BasePortChannel {
   /// @param memories The ProxyService memory table, indexed by MemoryId.
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                   std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories);
+
+  /// Returns the Device-mode state of the channel, or nullptr if its connection does not use Device mode. Throws if the
+  /// connection uses Device mode but the channel was not created through ProxyService.
+  const DeviceModeState* deviceModeState() const;
+
+  /// Switches a device handle to the Device-mode backend when the channel has Device-mode state.
+  static void setDeviceModeHandle(BasePortChannelDeviceHandle& handle, const DeviceModeState* state);
 
   friend class ProxyService;
 

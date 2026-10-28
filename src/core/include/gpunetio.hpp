@@ -79,24 +79,6 @@ class GpuNetIoConnection : public BaseConnection {
   uint32_t wqeSlot_;
 };
 
-/// Host-side state of a PortChannel bound to a GpuNetIoConnection.
-struct GpuNetIoChannel {
-  /// Returns nullptr if the semaphore's connection is not a GpuNetIoConnection.
-  static std::shared_ptr<GpuNetIoChannel> bind(Host2DeviceSemaphore& semaphore,
-                                               const std::vector<RegisteredMemory>& memories);
-
-  /// Throws if the semaphore's connection is a GpuNetIoConnection but no channel was bound to it, i.e. the PortChannel
-  /// was constructed directly instead of through ProxyService::portChannel()/basePortChannel().
-  static void requireBound(Host2DeviceSemaphore& semaphore, const std::shared_ptr<GpuNetIoChannel>& channel);
-
-  std::shared_ptr<BaseConnection> connection;
-  std::vector<RegisteredMemory> memories;
-  std::shared_ptr<GpuNetIoMemoryDeviceHandle> table;
-  /// Outbound counter shared with the semaphore and its other channels; kept alive while the channel exists.
-  std::shared_ptr<uint64_t> outboundToken;
-  GpuNetIoDeviceHandle deviceHandle;
-};
-
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_GPUNETIO_HPP_

@@ -397,40 +397,4 @@ GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& si
   return handle;
 }
 
-std::shared_ptr<GpuNetIoChannel> GpuNetIoChannel::bind(Host2DeviceSemaphore& semaphore,
-                                                       const std::vector<RegisteredMemory>& memories) {
-  auto connection = std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore.connection()));
-  if (!connection) return nullptr;
-  auto channel = std::make_shared<GpuNetIoChannel>();
-  channel->connection = connection;
-  channel->memories = memories;
-  // The counter belongs to the semaphore: its channels share it, and a semaphore rebuilt on the same connection
-  // starts from zero even if its remote token reuses the address of a destroyed one.
-  if (!semaphore.gpuNetIoOutboundToken_) {
-    CudaDeviceGuard deviceGuard(connection->localDevice().id);
-    semaphore.gpuNetIoOutboundToken_ = detail::gpuCallocShared<uint64_t>();
-  }
-  channel->outboundToken = semaphore.gpuNetIoOutboundToken_;
-  std::vector<GpuNetIoMemoryDeviceHandle> table;
-  channel->deviceHandle =
-      connection->deviceHandle(semaphore.semaphore_.remoteMemory(), channel->outboundToken.get(), table, memories);
-  if (!table.empty()) {
-    CudaDeviceGuard deviceGuard(connection->localDevice().id);
-    channel->table = detail::gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());
-    mscclpp::gpuMemcpy<GpuNetIoMemoryDeviceHandle>(channel->table.get(), table.data(), table.size(),
-                                                   cudaMemcpyHostToDevice);
-  }
-  channel->deviceHandle.memories = channel->table.get();
-  return channel;
-}
-
-void GpuNetIoChannel::requireBound(Host2DeviceSemaphore& semaphore, const std::shared_ptr<GpuNetIoChannel>& channel) {
-  if (channel) return;
-  if (std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore.connection()))) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "PortChannels over IB Device-mode connections must be created with ProxyService::portChannel() or "
-          "ProxyService::basePortChannel()");
-  }
-}
-
 }  // namespace mscclpp
