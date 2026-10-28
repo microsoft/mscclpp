@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef MSCCLPP_PORT_CHANNEL_GPUNETIO_DEVICE_HPP_
-#define MSCCLPP_PORT_CHANNEL_GPUNETIO_DEVICE_HPP_
+#ifndef MSCCLPP_GPUNETIO_DEVICE_HPP_
+#define MSCCLPP_GPUNETIO_DEVICE_HPP_
 
 #include <cstdint>
 
@@ -484,4 +484,4 @@ struct GpuNetIoDeviceHandle {
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_PORT_CHANNEL_GPUNETIO_DEVICE_HPP_
+#endif  // MSCCLPP_GPUNETIO_DEVICE_HPP_

@@ -5,7 +5,7 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
-#include "port_channel_gpunetio_device.hpp"
+#include "gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
