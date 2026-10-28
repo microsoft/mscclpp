@@ -352,7 +352,7 @@ struct EpGpuNetIoDeviceContext {
     if (blueFlame) {
       auto* bf = reinterpret_cast<uint4*>(doca_gpu_dev_verbs_load_const((uintptr_t*)&q->sq_db));
       const auto* words = reinterpret_cast<const uint4*>(&last->wqe);
-      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
 #pragma unroll
       for (int index = 0; index < 4; ++index) bf[index] = words[index];
       doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
@@ -432,7 +432,7 @@ struct EpGpuNetIoDeviceContext {
 #pragma unroll
       for (int index = 0; index < 4; ++index) wqe[index] = source[index];
       uint4* bf = reinterpret_cast<uint4*>(doca_gpu_dev_verbs_load_const((uintptr_t*)&q->sq_db));
-      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+      doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
 #pragma unroll
       for (int index = 0; index < 4; ++index) bf[index] = wqe[index];
       doca_priv_gpu_dev_verbs_update_dbr<DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
