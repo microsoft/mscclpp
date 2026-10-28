@@ -257,7 +257,7 @@ struct GpuNetIoQp::Impl {
 
 GpuNetIoQp::GpuNetIoQp(IbCtx*, std::shared_ptr<GpuNetIoContext>&, Transport, int, int, int) {
   THROW(NET, Error, ErrorCode::InvalidUsage,
-        "IB GpuNetIo mode is unavailable: MSCCL++ was built without GPUNetIO (MSCCLPP_USE_GPUNETIO=OFF)");
+        "IB GpuNetIo mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
 }
 
 GpuNetIoQp::~GpuNetIoQp() = default;

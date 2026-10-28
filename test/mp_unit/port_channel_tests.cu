@@ -1369,7 +1369,7 @@ TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); 
   REQUIRE_IBVERBS;       \
   requireIbRdmaAtomics(ibTransport)
 #else  // !defined(MSCCLPP_USE_GPUNETIO)
-#define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built with MSCCLPP_USE_GPUNETIO=OFF"
+#define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
 
 TEST(PortChannelOneToOneTest, PingPongIbGpuNetIoMode) {

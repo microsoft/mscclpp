@@ -55,7 +55,6 @@ option(MSCCLPP_BUILD_EXT_EP "Build Expert-Parallel (MoE dispatch/combine) extens
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
-option(MSCCLPP_USE_GPUNETIO "Build the DOCA GPUNetIO (GDAKI) GPU-initiated networking backend for PortChannel." OFF)
 option(MSCCLPP_USE_MRC "Enable MRC support" OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
@@ -103,10 +102,6 @@ else()
     else()
         message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
     endif()
-endif()
-
-if(MSCCLPP_USE_GPUNETIO AND (NOT MSCCLPP_USE_CUDA OR MSCCLPP_USE_ROCM OR NOT MSCCLPP_USE_IB))
-    message(FATAL_ERROR "GPUNetIO requires MSCCLPP_USE_CUDA=ON, MSCCLPP_USE_ROCM=OFF and MSCCLPP_USE_IB=ON")
 endif()
 
 # Code coverage setup
@@ -294,8 +289,14 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
-if(MSCCLPP_USE_GPUNETIO)
+# The GPUNetIO backend is built whenever the platform supports it (CUDA with InfiniBand).
+if(MSCCLPP_USE_CUDA AND NOT MSCCLPP_USE_ROCM AND MSCCLPP_USE_IB)
+    set(MSCCLPP_USE_GPUNETIO ON)
+    message(STATUS "GPUNetIO backend enabled")
     include(GpuNetIo)
+else()
+    set(MSCCLPP_USE_GPUNETIO OFF)
+    message(STATUS "GPUNetIO backend disabled (requires CUDA and InfiniBand)")
 endif()
 
 if("${INSTALL_PREFIX}" STREQUAL "")
