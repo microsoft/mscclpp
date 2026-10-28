@@ -29,8 +29,6 @@ inline constexpr bool isSupportedHidden(int hidden) {
 }
 
 struct Workload {
-  /// Latency packet epoch; throughput kernels leave the default value unused.
-  uint32_t epoch_ = 0;
   /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.

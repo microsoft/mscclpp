@@ -980,7 +980,7 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
         (DispatchDataType.FP8_E4M3_STATIC, 0.5),
     ],
 )
-def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode, data_type, scale):
+def test_latency_rank_major_graph_replay(ep_group, combine_mode, data_type, scale):
     num_tokens, capacity, active_capacity = 2, 4, 3
     fp8 = data_type == DispatchDataType.FP8_E4M3_STATIC
     quant = QuantConfig(
@@ -997,6 +997,7 @@ def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode,
         hidden_size=1024,
         topk=1,
         max_tokens_per_rank=capacity,
+        num_blocks=(ep_group.nranks + 2, ep_group.nranks + 3),
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -1043,8 +1044,7 @@ def test_latency_rank_major_multi_iteration_graph_replay(ep_group, combine_mode,
 
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, stream=stream):
-                for _ in range(2):
-                    result, handle, output = operation()
+                result, handle, output = operation()
             stream.synchronize()
             ep_group.barrier()
 

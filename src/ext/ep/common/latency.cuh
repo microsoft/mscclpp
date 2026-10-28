@@ -30,9 +30,14 @@ constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;
 constexpr int DispatchWarpGroupBarrierBase = 1;
 constexpr int DispatchSchedulerPrefixBarrier = DispatchWarpGroupBarrierBase + DispatchMaxNWarpGroups;
 constexpr int DispatchSchedulerReadyBarrier = DispatchSchedulerPrefixBarrier + 1;
+// Fixed logical-block slots shared by latency dispatch and rank-major combine.
+constexpr int DispatchEpochSlots = 256;
 constexpr size_t OptimizedDynamicSharedMemoryBytes = 226 * 1024;
 constexpr size_t TmaWorkerControlBytes = DispatchMaxNWarpGroups * WARP_SIZE * sizeof(int);
 static_assert(DispatchNWarps % DispatchMinNWarpsPerGroup == 0);
+static_assert(DispatchEpochSlots >= MaxDispatchBlocks);
+static_assert(DispatchEpochSlots >= MaxWorkerBlocks);
+static_assert(DispatchEpochSlots <= DispatchNThreads);
 static_assert(sizeof(mscclpp::DeviceSemaphore) == sizeof(int));
 static_assert(alignof(mscclpp::DeviceSemaphore) <= alignof(int));
 static_assert(sizeof(mscclpp::DeviceSyncer) % sizeof(int) == 0);
@@ -93,6 +98,7 @@ static_assert(sizeof(RecvTask) % sizeof(int) == 0);
 static_assert(alignof(RecvTask) <= alignof(int));
 
 struct WorkspaceView {
+  uint32_t* dispatchEpochs_;
   int* dispatchRankPayloadSlots_;
   int* dispatchRankPayloadCompletions_;
   mscclpp::DeviceSemaphore* dispatchLocalPayloadReady_;
@@ -107,6 +113,8 @@ struct WorkspaceView {
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
+    dispatchEpochs_ = reinterpret_cast<uint32_t*>(cursor);
+    cursor += DispatchEpochSlots;
     dispatchRankPayloadSlots_ = cursor;
     cursor += nRanks;
     dispatchRankPayloadCompletions_ = cursor;
@@ -128,11 +136,12 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
-           static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
-           sizeof(mscclpp::DeviceSemaphore) +                // dispatchLocalPayloadReady_
-           static_cast<size_t>(nExperts) * sizeof(int) +     // dispatchExpertCopiedCounts_
-           static_cast<size_t>(nRanks) * sizeof(uint32_t) +  // dispatchRankReadyEpochs_
+    return static_cast<size_t>(DispatchEpochSlots) * sizeof(uint32_t) +  // dispatchEpochs_
+           static_cast<size_t>(nRanks) * sizeof(int) +                   // dispatchRankPayloadSlots_
+           static_cast<size_t>(nRanks) * sizeof(int) +                   // dispatchRankPayloadCompletions_
+           sizeof(mscclpp::DeviceSemaphore) +                            // dispatchLocalPayloadReady_
+           static_cast<size_t>(nExperts) * sizeof(int) +                 // dispatchExpertCopiedCounts_
+           static_cast<size_t>(nRanks) * sizeof(uint32_t) +              // dispatchRankReadyEpochs_
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyEpoch_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyEpochs_
@@ -140,6 +149,29 @@ struct WorkspaceView {
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
+
+MSCCLPP_DEVICE_INLINE uint32_t beginDispatchEpoch(const WorkspaceView& workspaceView) {
+  return workspaceView.dispatchEpochs_[static_cast<int>(blockIdx.x)] + 1;
+}
+
+MSCCLPP_DEVICE_INLINE void finishDispatchEpoch(WorkspaceView& workspaceView, uint32_t epoch) {
+  // Every thread snapshots its block's slot before reaching this barrier, so
+  // thread 0 cannot publish the next value while a late warp is still loading.
+  __syncthreads();
+
+  const int block = static_cast<int>(blockIdx.x);
+  const int thread = static_cast<int>(threadIdx.x);
+  if (thread == 0) {
+    workspaceView.dispatchEpochs_[block] = epoch;
+  }
+  if (block == 0 && thread >= static_cast<int>(gridDim.x) && thread < DispatchEpochSlots) {
+    workspaceView.dispatchEpochs_[thread] = epoch;
+  }
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t loadDispatchEpoch(const WorkspaceView& workspaceView) {
+  return workspaceView.dispatchEpochs_[static_cast<int>(blockIdx.x)];
+}
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
   return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);

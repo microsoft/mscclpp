@@ -212,8 +212,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     }
   }
 
-  const Workload workload{.epoch_ = context.epoch_,
-                          .numTokens_ = numTokens,
+  const Workload workload{.numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
                           .numExperts_ = numExperts,
@@ -227,7 +226,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .inputMode_ = inputMode};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
+  DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.generation_, request));
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
                       input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
@@ -253,7 +252,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   if (owner != latencyContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
-  if (handle.epoch_ != context.epoch_) {
+  if (handle.generation_ != context.generation_) {
     EP_THROW("Stale dispatch handle: its dispatch has already been combined");
   }
 
@@ -283,8 +282,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
 
   EP_HOST_ASSERT(context.available_);
   EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-  const Workload workload{.epoch_ = handle.epoch_,
-                          .numTokens_ = numTokens,
+  const Workload workload{.numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
                           .numExperts_ = numExperts,
@@ -322,10 +320,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
-  // Graph replay does not advance this host epoch. Rank-major latency graphs
-  // therefore require at least two captured dispatch/combine pairs so adjacent
-  // dispatches use different recorded epochs.
-  ++context.epoch_;
+  ++context.generation_;
 }
 
 }  // namespace ep

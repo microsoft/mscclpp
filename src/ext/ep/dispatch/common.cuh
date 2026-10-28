@@ -22,7 +22,8 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
     const int expectedPayloadCount = rankTokenCounts[dstRank];
     if (expectedPayloadCount > 0) {
       while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspaceView.dispatchRankPayloadCompletions_ + dstRank,
-                                                            mscclpp::memoryOrderAcquire) != expectedPayloadCount);
+                                                            mscclpp::memoryOrderAcquire) != expectedPayloadCount)
+        ;
     }
     workspaceView.dispatchRankPayloadSlots_[dstRank] = 0;
     workspaceView.dispatchRankPayloadCompletions_[dstRank] = 0;

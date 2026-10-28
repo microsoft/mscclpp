@@ -368,11 +368,13 @@ MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, WorkspaceView& worksp
   const int taskIdx = static_cast<int>(blockIdx.x) - 1;
   if (threadIdx.x == 0) {
     while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspaceView.dispatchTasksReadyEpoch_,
-                                                               mscclpp::memoryOrderAcquire) != epoch);
+                                                               mscclpp::memoryOrderAcquire) != epoch)
+      ;
     if (taskIdx < *workspaceView.dispatchNumRecvTasks_) {
       task = workspaceView.dispatchRecvTasks_[taskIdx];
       while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                 workspaceView.dispatchRankReadyEpochs_ + task.sourceRank_, mscclpp::memoryOrderAcquire) != epoch);
+                 workspaceView.dispatchRankReadyEpochs_ + task.sourceRank_, mscclpp::memoryOrderAcquire) != epoch)
+        ;
       *sharedTask = task;
     } else {
       *sharedTask = {-1, 0, 0};
@@ -528,7 +530,8 @@ __global__ __launch_bounds__(DispatchNThreads,
   const int nTopk = workload.numTopk_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(context);
-  const uint32_t epoch = workload.epoch_;
+  WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
+  const uint32_t epoch = beginDispatchEpoch(workspaceView);
 
   dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
                                                  nTokens, nTopk, maxTokensPerRank, recvBuffer, context->workspace_,
@@ -542,6 +545,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                          context->rank_, nRanks, nTopk, maxTokensPerRank, recvBuffer,
                                                          context->workspace_, epoch, sharedMem);
   }
+  finishDispatchEpoch(workspaceView, epoch);
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 

@@ -267,16 +267,13 @@ Runtime views are reused by later operations, not independent results.
   Preserve graph ordering, buffers, and owners through the last replay. Python
   handle checks run during capture, not replay.
 * Latency RANK_MAJOR dispatch/expert-write/combine can also be captured and
-  replayed when each graph contains at least two complete dispatch/combine
-  iterations. Each captured iteration has a distinct epoch, so the last count
-  packet from one replay cannot satisfy the first dispatch of the next replay.
-  A graph containing only one iteration is unsupported because graph replay
-  does not advance the host epoch. Combine separately invalidates captured
-  readiness state before its ordered peer rendezvous. Construct, initialize,
-  and warm up the runtime outside capture; input, routing, and weight values may
-  change while their pointers, shapes, token count, and active capacity remain
-  fixed. Every rank must replay collectives in the same order. Latency
-  EXPERT_MAJOR graph replay remains unsupported.
+  replayed with one or more complete dispatch/combine iterations per graph.
+  Dispatch advances device-resident epochs on every replay, so stale count
+  packets and combine readiness state cannot satisfy a later iteration.
+  Construct, initialize, and warm up the runtime outside capture; input,
+  routing, and weight values may change while their pointers, shapes, token
+  count, and active capacity remain fixed. Every rank must replay collectives
+  in the same order. Latency EXPERT_MAJOR graph replay remains unsupported.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even

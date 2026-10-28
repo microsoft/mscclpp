@@ -221,7 +221,7 @@ __global__ __launch_bounds__(CombineNThreads,
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    const uint32_t epoch = workload.epoch_;
+    const uint32_t epoch = loadDispatchEpoch(workspaceView);
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
     } else {
