@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-// Host state of the hybrid NVLink/IPC + GPUNetIO latency path.
+// Network service and pipeline state for NVLink/IPC + GPUNetIO latency kernels.
 //
 // LatencyRuntimeContext owns the symmetric buffer, workspace and IPC mappings. When the
-// hybrid path is selected, it sizes them from this runtime and hands them over during
+// network path is selected, it sizes them from this runtime and hands them over during
 // initialize(); this runtime then owns the GPUNetIO service and the per-dispatch
-// pipeline state, and launches the hybrid kernels.
+// pipeline state, and launches the rank-major network algorithms.
 
-#ifndef MSCCLPP_EP_HYBRID_RUNTIME_HPP_
-#define MSCCLPP_EP_HYBRID_RUNTIME_HPP_
+#ifndef MSCCLPP_EP_INTERRACK_RUNTIME_HPP_
+#define MSCCLPP_EP_INTERRACK_RUNTIME_HPP_
 
 #include <cuda_runtime.h>
 
@@ -19,8 +19,8 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <vector>
 
-#include "hybrid/include/config.hpp"
-#include "hybrid/include/device_context.hpp"
+#include "config.hpp"
+#include "device_context.hpp"
 
 namespace mscclpp {
 namespace ep {
@@ -28,14 +28,10 @@ namespace ep {
 class EpGpuNetIoService;
 struct Workload;
 
-namespace hybrid {
+namespace interrack {
 
-/// Whether the hybrid path supports @p hidden.
+/// Whether the network path supports @p hidden.
 bool isSupportedHidden(int hidden);
-
-/// Whether a latency runtime with this configuration must use the hybrid path.
-/// @p useGpuNetIo selects GPUNetIO for ranks outside the CUDA IPC domain.
-bool requiresHybrid(DispatchLayout outputLayout, bool useGpuNetIo);
 
 /// Whether GPUNetIO cross-domain transport is requested and supported for this configuration.
 bool gpuNetIoRequested(int numRanks, int numRanksPerIpcDomain, DispatchLayout outputLayout, CombineMode combineMode);
@@ -52,9 +48,8 @@ class LatencyRuntime {
 
   size_t symmetricBufferBytes() const { return symmetricBufferBytes_; }
   size_t workspaceBytes() const { return workspaceBytes_; }
-  bool useGpuNetIo() const { return useGpuNetIo_; }
 
-  /// Collectively set up the GPUNetIO backend and the hybrid device context.
+  /// Collectively set up GPUNetIO and populate the shared device context.
   void initialize(mscclpp::Communicator& communicator, void* symmetricBuffer,
                   const std::vector<void*>& peerMappedBufferBases, void** peerMappedBufferBasesGpu,
                   mscclpp::BaseMemoryChannelDeviceHandle* channels, void* workspace, int maxSharedMemoryPerBlock,
@@ -67,9 +62,8 @@ class LatencyRuntime {
                 const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* dispatchRecvBuffer,
                 int numBlocks, cudaStream_t stream);
 
-  void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-               const Workload& workload, void* combineRecvBuffer, void* dispatchRecvBuffer, int numBlocks,
-               cudaStream_t stream);
+  void combine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
+               void* combineRecvBuffer, void* dispatchRecvBuffer, int numBlocks, cudaStream_t stream);
 
  private:
   int rank_;
@@ -100,8 +94,8 @@ class LatencyRuntime {
   std::shared_ptr<int> aggregateChunkReady_;
 };
 
-}  // namespace hybrid
+}  // namespace interrack
 }  // namespace ep
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EP_HYBRID_RUNTIME_HPP_
+#endif  // MSCCLPP_EP_INTERRACK_RUNTIME_HPP_

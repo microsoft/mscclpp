@@ -105,10 +105,7 @@ class RequestBuilder:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
         data_type, _, scale, input_mode, combine_data_type = resolve_dispatch_format(config, quant)
-        expanded = config.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-        rank_major = config.output_layout == DispatchLayout.RANK_MAJOR or expanded
-        if expanded and active != config.max_tokens_per_rank:
-            raise ValueError("RANK_MAJOR_TOPK_EXPANDED requires runtime_max_tokens_per_rank == max_tokens_per_rank")
+        rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3_STATIC
         prequantized_static_fp8 = static_fp8 and input_mode == QuantConfig.InputMode.PREQUANTIZED
         input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
@@ -293,11 +290,7 @@ class RequestBuilder:
         apply_router_weights: Optional[bool],
     ) -> _CombineRequest:
         if apply_router_weights is None:
-            # TOPK_EXPANDED expert rows are unweighted; combine applies the routing weights.
-            apply_router_weights = (
-                self._config.combine_mode == CombineMode.DIRECT_SEND
-                or self._config.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-            )
+            apply_router_weights = self._config.combine_mode == CombineMode.DIRECT_SEND
         output = self._combine_output(expert_output, handle, out)
         return _CombineRequest(
             arguments=dict(
@@ -360,10 +353,7 @@ class RequestBuilder:
         return output_buffer
 
     def _routing_views(self, output_shape: tuple) -> Tuple[torch.Tensor, torch.Tensor]:
-        metadata_shape = output_shape[:-1]
-        if self._config.output_layout != DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
-            # TOPK_EXPANDED carries one expert ID and weight per expanded row.
-            metadata_shape += (self._config.topk,)
+        metadata_shape = output_shape[:-1] + (self._config.topk,)
         return (
             self._view(self._runtime.output_topk_ids_buffer_ptr(), metadata_shape, torch.int32),
             self._view(self._runtime.output_topk_weights_buffer_ptr(), metadata_shape, torch.float32),

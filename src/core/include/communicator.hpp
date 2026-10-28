@@ -7,7 +7,6 @@
 #include <list>
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -60,9 +59,6 @@ struct ConnectionInfo {
 struct Communicator::Impl {
   std::shared_ptr<Bootstrap> bootstrap_;
   std::shared_ptr<Context> context_;
-  // Guards connectionInfos_ and lastRecvItems_. Deferred receive futures update both maps from whichever
-  // thread waits on them, so they may race with calls on the communicator's owning thread.
-  std::mutex mutex_;
   std::unordered_map<const BaseConnection*, ConnectionInfo> connectionInfos_;
 
   // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
@@ -85,9 +81,6 @@ struct Communicator::Impl {
 
   // Clear the last RecvItem only if it still matches the expected item.
   void clearLastRecvItemIfMatches(int remoteRank, int tag, const std::shared_ptr<BaseRecvItem>& expectedItem);
-
-  void setConnectionInfo(const BaseConnection* connection, int remoteRank, int tag);
-  ConnectionInfo connectionInfo(const BaseConnection* connection);
 
   struct Connector;
 };

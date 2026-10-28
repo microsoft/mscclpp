@@ -166,8 +166,6 @@ def dispatch_shape(config: MoECommunicatorConfig, num_ranks: int, active: int) -
         return config.num_local_experts, num_ranks * active, config.hidden_size
     if config.output_layout == DispatchLayout.RANK_MAJOR:
         return num_ranks, active, config.hidden_size
-    if config.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
-        return num_ranks, active, config.topk, config.hidden_size
     return num_ranks * active, config.hidden_size
 
 

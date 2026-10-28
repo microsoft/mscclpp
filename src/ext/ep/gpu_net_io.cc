@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "hybrid/include/gpu_net_io.hpp"
+#include "gpu_net_io.hpp"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 #include <dirent.h>
@@ -18,7 +18,7 @@
 #include <mscclpp/utils.hpp>
 #include <vector>
 
-#include "hybrid/include/gpu_net_io_topology.hpp"
+#include "gpu_net_io_topology.hpp"
 
 namespace mscclpp::ep {
 namespace {

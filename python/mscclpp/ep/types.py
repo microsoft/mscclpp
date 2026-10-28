@@ -78,7 +78,7 @@ class MoECommunicatorConfig:
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
-        from .utils import gpunetio_requested, resolve_dispatch_data_type, resolve_num_blocks, validate_quant
+        from .utils import gpunetio_requested, resolve_num_blocks, validate_quant
 
         for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
             value = getattr(self, name)
@@ -99,7 +99,7 @@ class MoECommunicatorConfig:
         if not isinstance(layout, DispatchLayout):
             raise TypeError("output_layout must be a DispatchLayout")
         supported = (
-            (DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR, DispatchLayout.RANK_MAJOR_TOPK_EXPANDED)
+            (DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR)
             if latency
             else (DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR)
         )
@@ -109,15 +109,8 @@ class MoECommunicatorConfig:
             raise ValueError("emit_local_expert_ids requires latency RANK_MAJOR dispatch")
         if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
             raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
-        expanded = layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED
-        if expanded:
-            if self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
-                raise ValueError("RANK_MAJOR_TOPK_EXPANDED requires RANK_LOCAL_REDUCE combine")
-            if resolve_dispatch_data_type(self.quant) != DispatchDataType.BF16:
-                raise ValueError("RANK_MAJOR_TOPK_EXPANDED supports BF16 dispatch only")
         if latency:
-            # 1024 is served only by the IPC kernels; 5120 only by the hybrid
-            # GPUNetIO/TOPK_EXPANDED kernels. The native runtime rejects unsupported combinations.
+            # The native runtime validates the hidden size against the selected transport.
             if self.hidden_size not in (1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216):
                 raise ValueError(
                     "latency hidden_size must be one of 1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216"
@@ -191,8 +184,6 @@ class DispatchLayoutInfo:
     private routing metadata and ignores unused tail rows. Its per-expert counts
     count routes and do not define disjoint token ranges.
     RANK_MAJOR uses ``num_tokens_per_rank`` to bound each source rank.
-    RANK_MAJOR_TOPK_EXPANDED keeps fixed ``[source rank, token, top-k slot]`` rows;
-    its ``num_tokens_per_rank`` counts the routed rows received from each source rank.
     EXPERT_MAJOR uses ``num_tokens_per_expert`` to bound each local expert.
     Throughput dispatch exposes the caller-provided ``output_count`` from its
     preparation handle in the field matching the layout. Both fields remain

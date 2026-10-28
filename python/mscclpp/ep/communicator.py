@@ -283,9 +283,9 @@ class MoECommunicator:
     ) -> torch.Tensor:
         """Combine expert outputs into BF16 ``[local_num_tokens, hidden_size]``.
 
-        EXPERT_MAJOR, latency RANK_MAJOR DIRECT_SEND and RANK_MAJOR_TOPK_EXPANDED
-        apply routing weights natively. The latter two expect unweighted per-topk
-        rows; other rank/token layouts expect already-weighted local expert sums. Non-EXPERT_MAJOR
+        EXPERT_MAJOR and latency RANK_MAJOR DIRECT_SEND apply routing weights
+        natively. The latter expects unweighted per-topk rows; other rank/token
+        layouts expect already-weighted local expert sums. Non-EXPERT_MAJOR
         inputs must use ``DispatchOutput.combine_input_buffer``.
         Latency RANK_MAJOR input dtype follows ``QuantConfig.combine_format``:
         BF16 by default, or ``FP8_E4M3_STATIC`` with matching static-FP8
@@ -293,7 +293,7 @@ class MoECommunicator:
         retained by the handle.
         For latency DIRECT_SEND, set ``apply_router_weights=False`` for
         preweighted expert outputs. By default it is enabled only for
-        DIRECT_SEND and RANK_MAJOR_TOPK_EXPANDED; other modes ignore this option.
+        DIRECT_SEND; other modes ignore this option.
         There is no implicit copy from external expert-output tensors.
         The output must not overlap expert inputs or runtime combine storage.
         The caller must ensure these conditions; buffer aliasing is not checked.

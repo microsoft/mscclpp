@@ -23,9 +23,9 @@ namespace ep {
 
 struct Workload;
 
-namespace hybrid {
+namespace interrack {
 class LatencyRuntime;
-}  // namespace hybrid
+}  // namespace interrack
 
 struct PrepareHandle::Impl {
   Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t routingEpoch, const PrepareRequest& request)
@@ -125,9 +125,8 @@ struct LatencyRuntimeContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-  // Hybrid NVLink/IPC + GPUNetIO path for GPUNetIO cross-domain RANK_MAJOR and for
-  // RANK_MAJOR_TOPK_EXPANDED; null when the main IPC kernels serve this runtime.
-  std::unique_ptr<hybrid::LatencyRuntime> hybrid_;
+  // Optional GPUNetIO service and pipeline state for cross-domain rank-major algorithms.
+  std::unique_ptr<interrack::LatencyRuntime> interrack_;
 };
 
 struct ThroughputRuntimeContext {

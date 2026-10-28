@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef MSCCLPP_EP_HYBRID_GPU_NET_IO_TOPOLOGY_HPP_
-#define MSCCLPP_EP_HYBRID_GPU_NET_IO_TOPOLOGY_HPP_
+#ifndef MSCCLPP_EP_GPU_NET_IO_TOPOLOGY_HPP_
+#define MSCCLPP_EP_GPU_NET_IO_TOPOLOGY_HPP_
 
 #include <algorithm>
 #include <limits>
@@ -68,4 +68,4 @@ inline std::vector<std::string> selectClosestHcas(const std::string& gpuPath, in
 }  // namespace detail
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EP_HYBRID_GPU_NET_IO_TOPOLOGY_HPP_
+#endif  // MSCCLPP_EP_GPU_NET_IO_TOPOLOGY_HPP_

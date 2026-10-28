@@ -110,6 +110,15 @@ void throughputReduceCombine(void* output, const Workload& workload, const Throu
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
+void gpuNetIoRankMajorDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, int* outputCount,
+                               const void* input, const int64_t* topkIdx, const float* topkWeights,
+                               const Workload& workload, void* recvBuffer, const DeviceContext& context, int numBlocks,
+                               cudaStream_t stream);
+
+void gpuNetIoRankMajorCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
+                              void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
+                              cudaStream_t stream);
+
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                          const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,

@@ -27,23 +27,18 @@ enable_language(CUDA)
 
 set(CHECK_SRC "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_nvidia_gpu.cu")
 
-try_run(RUN_RESULT COMPILE_SUCCESS SOURCES ${CHECK_SRC}
-        RUN_OUTPUT_VARIABLE NVIDIA_GPU_ARCHS)
+try_run(RUN_RESULT COMPILE_SUCCESS
+        SOURCES ${CHECK_SRC}
+        RUN_OUTPUT_VARIABLE NVIDIA_GPU_ARCH_OUTPUT)
 
 if(COMPILE_SUCCESS AND RUN_RESULT EQUAL 0)
-    string(STRIP "${NVIDIA_GPU_ARCHS}" NVIDIA_GPU_ARCHS)
-    list(REMOVE_DUPLICATES NVIDIA_GPU_ARCHS)
-    if(NVIDIA_GPU_ARCHS MATCHES "^[0-9]+(;[0-9]+)*$")
+    string(STRIP "${NVIDIA_GPU_ARCH_OUTPUT}" NVIDIA_GPU_ARCH_OUTPUT)
+    if(NVIDIA_GPU_ARCH_OUTPUT MATCHES "^[0-9]+$")
         set(NVIDIA_FOUND "TRUE")
-        # Lowest detected architecture, used by components with a minimum requirement.
-        list(SORT NVIDIA_GPU_ARCHS COMPARE NATURAL)
-        list(GET NVIDIA_GPU_ARCHS 0 NVIDIA_GPU_ARCH)
-        message(STATUS "Detected NVIDIA GPU architectures: ${NVIDIA_GPU_ARCHS}")
+        set(NVIDIA_GPU_ARCH "${NVIDIA_GPU_ARCH_OUTPUT}")
     else()
         unset(CMAKE_CUDA_ARCHITECTURES)
-        unset(NVIDIA_GPU_ARCHS)
     endif()
 else()
     unset(CMAKE_CUDA_ARCHITECTURES)
-    unset(NVIDIA_GPU_ARCHS)
 endif()

@@ -68,23 +68,25 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
-### Hybrid EP queue pairs
+### EP network queue pairs
 
 For latency `RANK_MAJOR` EP, `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` selects the number of QPs created per peer. It defaults
 to the number of selected HCAs and must be a multiple of that count. QP `q` uses HCA `q % numHcas`, so multiple QPs
 do not change the GPU-to-NIC mapping.
 
-Batched dispatch distributes its chunks over all configured QPs by default.
-`MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS=0` retains dispatch striping by HCA count instead.
+Batched dispatch distributes its chunks over all configured QPs.
 Unchunked combine stripes peer payloads by selected HCA count and waits for those stripes before consuming their rows.
 With one selected HCA per GPU, it uses one payload QP per peer even when multiple QPs are configured.
 Chunked combine distributes chunks over the configured QPs.
 
-`MSCCLPP_EP_GPUNETIO_ASYNC_DISPATCH=1` opts into dedicated receive CTAs and per-peer completion publication instead
-of waiting for the global producer join. It requires batched dispatch, a positive dispatch chunk size, and at least
-`world_size + 2` dispatch blocks. This path drains its sends before returning, so it does not use deferred send flush.
-It also enqueues three workspace resets before each dispatch; include those operations when comparing complete
-CUDA graph latency, not just dispatch kernel time. The default remains disabled.
+Batched rank-major dispatch uses dedicated receive CTAs and per-peer completion publication rather than waiting
+for the global producer join. Its minimum grid is `world_size + 2` blocks: one receive CTA per rank, at least one
+producer, and one control CTA. A zero dispatch chunk size means one capacity-sized chunk per destination, not
+disabled receive overlap. Empty destinations still publish completion. Batched staging requires
+`world_size * max_tokens_per_rank <= 32768`; larger capacities retain the unbatched path unless batching is
+explicitly requested, in which case initialization rejects the configuration.
+The batched path drains sends before returning and does not defer send flush. It enqueues three workspace resets
+before each dispatch; include them when comparing complete CUDA graph latency, not just kernel time.
 
 ### Optional send-and-distribute dispatch
 
@@ -93,7 +95,7 @@ CUDA graph latency, not just dispatch kernel time. The default remains disabled.
 Initialization collectively checks the actual IPC mapping matrix. Sorted members of the two domains are paired:
 each source sends to its corresponding gateway in the other domain, not to one central gateway.
 Incompatible domain mappings or QP counts fail initialization. Other layouts and IPC-only paths retain their
-existing behavior; hybrid initialization logs a fallback for unsupported layouts.
+existing behavior.
 
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
@@ -117,14 +119,18 @@ After all forwarding writers join, separate warps publish the acknowledgment and
 Every posting lease ends before waiting for the acknowledgment; all outgoing QPs are then drained independently
 before dispatch returns. Empty rounds participate in the same protocol.
 
-This specialization overrides the direct dispatch batching/async/flush tuning choices; by default it does not change
-Combine. Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default). It requires more than
-`world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
+This specialization replaces direct dispatch batching and its receive/flush schedule; by default it does not change
+Combine. Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default).
+It requires more than `world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
 workspace resets are part of each dispatch without aggregate Combine: include them in end-to-end CUDA graph timing.
 `MSCCLPP_EP_GPUNETIO_ROW_FENCE` defaults to `gpu+poster`: row writers use device fences, and each QP poster
-acquires the completed chunk's release sequence before a system fence and the NIC post. `sys` retains system
-fences on every row writer. Unlike the direct path, the poster's system fence is unconditional, including when
-`gpu` is selected. Header, forwarding-completion, and acknowledgment publication remains system-scoped.
+acquires the completed chunk's release sequence before a system fence and the NIC post. `sys` fences every row
+writer instead, so the acquiring poster does not repeat that fence. Unlike the direct path, the poster retains
+its system fence when `gpu` is selected. Headers larger than the inline-transfer limit retain system publication;
+inline headers are copied into the WQE after their writers join. Forwarding writers retain system fences before their
+completion join, covering ordinary NVLink metadata stores as well as completed TMA payloads. The joined writers already establish visibility for
+the inline acknowledgment, so its posting thread does not repeat the system fence. Standalone LL count packets
+validate their own epochs; nonempty payloads use a separate ready signal.
 `MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE_STATS=1` prints actual unique rows, direct-path remote rows, hidden payload
 bytes, row wire bytes (including routing metadata and alignment), and header bytes per rank/round for validation.
 These byte counts exclude transport framing and completion signals. Disable statistics for performance measurements.
@@ -142,9 +148,14 @@ IPC-only runtimes retain their existing paths.
 The paired gateway reads the local-domain **BF16 preweighted rank partials**, sums them in FP32, and returns
 compact FP32 rows in independently posted, ordered per-QP IB chunks. Gateway production prioritizes the first
 chunk on each QP before later chunks, and completes before independent local-domain reads begin. Those local
-FP32 reductions overlap the posted IB transfers. The final result adds the two FP32 domain partials and casts to BF16 once; there is no intermediate
-BF16 group rounding. **FP32 addition grouping changes**, so this mode is numerically distinct from direct Combine
+FP32 reductions overlap the posted IB transfers. The final result adds the two FP32 domain partials and casts to
+BF16 once; there is no intermediate BF16 group rounding. **FP32 addition grouping changes**, so this mode is numerically distinct from direct Combine
 and must be explicitly opted into.
+
+Gateway row writers join at a CTA barrier before thread zero updates the device-scoped release counter, so they do
+not need an additional per-writer fence. Each QP poster acquires its completed chunk and retains the cumulative
+system fence before NIC DMA. DOCA's GPU-scoped queue-publication release alone is not used as a substitute for
+publishing source rows written by other CTAs.
 
 Dispatch records a private token-to-compact-row map and caches incoming IDs, destination slots, and row counts on
 the gateway. These caches cannot be overwritten by another rank's next dispatch. FP32 send and receive buffers

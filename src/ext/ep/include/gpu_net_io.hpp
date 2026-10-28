@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_HYBRID_GPU_NET_IO_HPP_
-#define MSCCLPP_EP_HYBRID_GPU_NET_IO_HPP_
+#ifndef MSCCLPP_EP_GPU_NET_IO_HPP_
+#define MSCCLPP_EP_GPU_NET_IO_HPP_
 
 #include <memory>
 #include <mscclpp/core.hpp>
@@ -19,8 +19,8 @@ struct EpGpuNetIoSignalState {
 
 /// Device view of the EP GPUNetIO channels: one PortChannel per (peer, queue), each bound to its own queue pair over
 /// an EndpointConfig::Ib::Mode::GpuNetIo connection. Every channel's dst_/src_ are the peer's / local symmetric buffer,
-/// so offsets below are symmetric-buffer offsets. Unlike PortChannelDeviceHandle::put(), these helpers do not fence;
-/// callers order their source writes (see the EP row-fence modes).
+/// so offsets below are symmetric-buffer offsets. As with GPUNetIO PortChannel operations, callers establish
+/// source-data visibility; DOCA supplies queue-publication ordering (see the EP row-fence modes).
 struct EpGpuNetIoDeviceContext {
   PortChannelDeviceHandle* channels;
   EpGpuNetIoSignalState* signalStates;

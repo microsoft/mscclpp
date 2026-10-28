@@ -1,23 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include "interrack_runtime.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <mscclpp/gpu_utils.hpp>
 #include <string>
 
-#include "hybrid/include/kernels.hpp"
-#include "hybrid/include/runtime.hpp"
 #include "include/exception.hpp"
+#include "kernels.hpp"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-#include "hybrid/include/gpu_net_io.hpp"
+#include "gpu_net_io.hpp"
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
 namespace mscclpp {
 namespace ep {
-namespace hybrid {
+namespace interrack {
 
 namespace {
 
@@ -50,19 +51,13 @@ bool isSupportedHidden(int hidden) {
          hidden == 8192 || hidden == 8704 || hidden == 9216;
 }
 
-bool requiresHybrid(DispatchLayout outputLayout, bool useGpuNetIo) {
-  return useGpuNetIo || outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED;
-}
-
 bool gpuNetIoRequested(int numRanks, int numRanksPerIpcDomain, DispatchLayout outputLayout, CombineMode combineMode) {
 #if defined(MSCCLPP_USE_GPUNETIO)
   if (numRanksPerIpcDomain >= numRanks) return false;
   const char* enable = std::getenv("MSCCLPP_EP_ENABLE_GPUNETIO");
   if (enable == nullptr || std::atoi(enable) == 0) return false;
-  // The network protocol carries one pre-reduced BF16 row per rank (or per route for
-  // TOPK_EXPANDED); expert-major and DIRECT_SEND stay IPC-only.
-  return (outputLayout == DispatchLayout::RANK_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) &&
-         combineMode == CombineMode::RANK_LOCAL_REDUCE;
+  // The network protocol carries one pre-reduced BF16 row per rank.
+  return outputLayout == DispatchLayout::RANK_MAJOR && combineMode == CombineMode::RANK_LOCAL_REDUCE;
 #else
   (void)numRanks;
   (void)numRanksPerIpcDomain;
@@ -90,15 +85,10 @@ LatencyRuntime::LatencyRuntime(int rank, int numRanks, int numRanksPerIpcDomain,
                       envSwitch("MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE", 0) == 1),
       aggregateCombine_(sendDistribute_ && envSwitch("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", 0) == 1) {
   if (!isSupportedHidden(hidden)) {
-    EP_THROW("Unsupported hybrid latency hidden size: " + std::to_string(hidden));
+    EP_THROW("Unsupported GPUNetIO latency hidden size: " + std::to_string(hidden));
   }
-  EP_HOST_ASSERT(outputLayout == DispatchLayout::RANK_MAJOR ||
-                 outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE);
-  if (outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    EP_HOST_ASSERT(numTopk <= 9);
-    EP_HOST_ASSERT(static_cast<int64_t>(maxTokensPerRank) * numTopk <= INT32_MAX);
-  }
   symmetricBufferBytes_ = latencyStorageSize(maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout,
                                              combineMode, useGpuNetIo, sendDistribute_, aggregateCombine_);
   workspaceBytes_ = workspaceSize(numRanks, numExperts, maxTokensPerRank, numTopk);
@@ -125,23 +115,25 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   const int domainSize = numRanksPerIpcDomain_ > 0 ? numRanksPerIpcDomain_ : numRanksPerNode_;
   const int numNodes = domainSize > 0 && numRanks_ % domainSize == 0 ? numRanks_ / domainSize : 0;
 
-  // Rank-major GPUNetIO pipeline knobs. Parallel staging, the GPU-scope row fence and the
-  // deferred send flush default on with batched dispatch. They apply only to GPUNetIO
-  // RANK_MAJOR, so a shared environment does not affect IPC or TOPK_EXPANDED runtimes.
+  // Rank-major GPUNetIO pipeline knobs. Batched dispatch uses parallel staging,
+  // GPU-scope row fences and dedicated receive CTAs. They apply only to GPUNetIO
+  // RANK_MAJOR, so a shared environment does not affect IPC runtimes.
   const bool knobs = gpuNetIoRankMajor && !sendDistribute_;
   const int sendDistribute = envSwitch("MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE", 0);
   const int aggregateCombine = envSwitch("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", 0);
   const int defaultBatched =
       knobs && static_cast<size_t>(numRanks_) * maxTokensPerRank_ <= GpuNetIoStagingSlots ? 1 : 0;
   const int batchedDispatch = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH", defaultBatched) : 0;
-  const int batchAllQps = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS", batchedDispatch == 1 ? 1 : 0) : 0;
   // Default dispatch chunk rows: 8 rows for 2-7 nodes, 16 rows for >= 8 nodes.
   const int defaultChunkRows = sendDistribute_                         ? GpuNetIoDistributeDefaultChunkRows
                                : batchedDispatch == 1 && numNodes >= 2 ? (numNodes >= 8 ? 16 : 8)
                                                                        : 0;
-  const int pipelineChunkRows =
+  const int requestedChunkRows =
       gpuNetIoRankMajor ? envCount("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", defaultChunkRows, 3) : 0;
-  const int asyncDispatch = knobs ? envSwitch("MSCCLPP_EP_GPUNETIO_ASYNC_DISPATCH", 0) : 0;
+  // Whole-destination batching is one capacity-sized chunk. Dedicated receive
+  // CTAs and per-peer completion apply to every batched dispatch, including zero rows.
+  const bool asyncDispatch = batchedDispatch == 1;
+  const int pipelineChunkRows = asyncDispatch && requestedChunkRows == 0 ? maxTokensPerRank_ : requestedChunkRows;
   const int parallelStage = knobs ? envCount("MSCCLPP_EP_GPUNETIO_PARALLEL_STAGE", batchedDispatch == 1 ? 1 : 0, 2) : 0;
   int rowFence = sendDistribute_        ? GpuNetIoRowFenceGpuPoster
                  : batchedDispatch == 1 ? GpuNetIoRowFenceGpu
@@ -164,9 +156,7 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
     int ipcDomainSize;
     int useGpuNetIo;
     int batchedDispatch;
-    int batchAllQps;
     int pipelineChunkRows;
-    int asyncDispatch;
     int parallelStage;
     int rowFence;
     int deferFlush;
@@ -179,9 +169,7 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
                            numRanksPerIpcDomain_,
                            useGpuNetIo_ ? 1 : 0,
                            batchedDispatch,
-                           batchAllQps,
                            pipelineChunkRows,
-                           asyncDispatch,
                            parallelStage,
                            rowFence,
                            deferFlush,
@@ -192,8 +180,7 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   for (const auto& config : storageConfigs) {
     EP_HOST_ASSERT(config.bytes == static_cast<uint64_t>(symmetricBufferBytes_) &&
                    config.ipcDomainSize == numRanksPerIpcDomain_ && config.useGpuNetIo == (useGpuNetIo_ ? 1 : 0) &&
-                   config.batchedDispatch == batchedDispatch && config.batchAllQps == batchAllQps &&
-                   config.pipelineChunkRows == pipelineChunkRows && config.asyncDispatch == asyncDispatch &&
+                   config.batchedDispatch == batchedDispatch && config.pipelineChunkRows == pipelineChunkRows &&
                    config.parallelStage == parallelStage && config.rowFence == rowFence &&
                    config.deferFlush == deferFlush && config.combineChunkRows == combineChunkRows &&
                    config.sendDistribute == sendDistribute && config.aggregateCombine == aggregateCombine);
@@ -206,12 +193,10 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   if (aggregateCombine_ && (numTopk_ > 8 || combineChunkRows < 1 || combineChunkRows > 128)) {
     EP_THROW("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE requires topk <= 8 and COMBINE_CHUNK_ROWS in [1,128]");
   }
-  EP_HOST_ASSERT(batchedDispatch >= 0 && batchAllQps >= 0 && asyncDispatch >= 0 && deferFlush >= 0);
-  EP_HOST_ASSERT(pipelineChunkRows >= 0 && pipelineChunkRows <= 128);
-  EP_HOST_ASSERT(asyncDispatch == 0 || (batchedDispatch == 1 && pipelineChunkRows > 0));
+  EP_HOST_ASSERT(batchedDispatch >= 0 && deferFlush >= 0);
+  EP_HOST_ASSERT(requestedChunkRows >= 0 && requestedChunkRows <= 128);
   EP_HOST_ASSERT(pipelineChunkRows == 0 || batchedDispatch == 1 || sendDistribute_);
   EP_HOST_ASSERT(!sendDistribute_ || pipelineChunkRows > 0);
-  EP_HOST_ASSERT(batchAllQps == 0 || batchedDispatch == 1);
   EP_HOST_ASSERT(parallelStage >= 0 && parallelStage <= 16);
   EP_HOST_ASSERT(parallelStage == 0 || batchedDispatch == 1);
   EP_HOST_ASSERT(rowFence >= 0);
@@ -222,23 +207,17 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
 
   deviceContext_ = {.localBufferBase_ = symmetricBuffer,
                     .peerBufferBases_ = peerMappedBufferBasesGpu,
-                    .peerPayloadBases_ = nullptr,
                     .channels_ = channels,
                     .workspace_ = workspace,
-                    .combineRecvIdx_ = nullptr,
-                    .mappedRecvCounter_ = nullptr,
-                    .mappedRecvExpertCounters_ = nullptr,
                     .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
                     .numSms_ = numSms,
                     .deviceId_ = deviceId,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
   deviceContext_.gpuNetIoBatchedDispatch_ = batchedDispatch == 1;
-  deviceContext_.gpuNetIoBatchAllQps_ = batchAllQps == 1;
   deviceContext_.gpuNetIoPipelineChunkRows_ = pipelineChunkRows;
   deviceContext_.gpuNetIoParallelStage_ = parallelStage;
   deviceContext_.gpuNetIoRowFence_ = rowFence;
-  deviceContext_.gpuNetIoAsyncDispatch_ = asyncDispatch == 1;
   deviceContext_.gpuNetIoSendDistribute_ = sendDistribute_;
   deviceContext_.gpuNetIoAggregateCombine_ = aggregateCombine_;
   deviceContext_.gpuNetIoDistributeStats_ =
@@ -303,9 +282,6 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
       deviceContext_.gpuNetIoCombineChunkBase_ = combineChunkBase_.get();
     }
   }
-  if (const char* noBarrier = std::getenv("MSCCLPP_EP_GPUNETIO_COMBINE_NO_BARRIER")) {
-    deviceContext_.gpuNetIoCombineNoBarrier_ = useGpuNetIo_ && std::string(noBarrier) == "1";
-  }
   if (asyncDispatch == 1) {
     dispatchPeers_ = mscclpp::detail::gpuCallocShared<GpuNetIoDispatchPeerState>(numRanks_);
     deviceContext_.gpuNetIoDispatchPeers_ = dispatchPeers_.get();
@@ -320,13 +296,8 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   }
   if (pipelineChunkRows > 0 && !sendDistribute_) {
     const size_t counters = static_cast<size_t>(numRanks_) * configCellDiv(maxTokensPerRank_, pipelineChunkRows);
-    // Early tail post: producer-posted chunks only (not async). Default on for batched rank-major dispatch.
-    const char* earlyTail = std::getenv("MSCCLPP_EP_GPUNETIO_EARLY_TAIL");
-    const bool tailRows = (earlyTail == nullptr || std::string(earlyTail) != "0") && gpuNetIoRankMajor &&
-                          asyncDispatch == 0 && deviceContext_.gpuNetIoBatchedDispatch_;
-    chunkReady_ = mscclpp::detail::gpuCallocShared<int>(counters + (tailRows ? numRanks_ : 0));
-    deviceContext_.gpuNetIoTailRows_ = tailRows ? chunkReady_.get() : nullptr;
-    deviceContext_.gpuNetIoChunkReady_ = chunkReady_.get() + (tailRows ? numRanks_ : 0);
+    chunkReady_ = mscclpp::detail::gpuCallocShared<int>(counters);
+    deviceContext_.gpuNetIoChunkReady_ = chunkReady_.get();
   }
   if (const char* tma = std::getenv("MSCCLPP_EP_GPUNETIO_TMA_STAGE");
       tma != nullptr && (std::string(tma) == "1" || std::string(tma) == "2")) {
@@ -335,13 +306,12 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   if (useGpuNetIo_ && rank_ == 0) {
     std::fprintf(
         stderr,
-        "[EPGPUNETIO] ranks=%d ipcDomain=%d nodes=%d sendDistribute=%d aggregateCombine=%d batched=%d stripe=%s "
+        "[EPGPUNETIO] ranks=%d ipcDomain=%d nodes=%d sendDistribute=%d aggregateCombine=%d batched=%d stripe=all_qps "
         "dispatchChunkRows=%d async=%d "
         "parallelStage=%d rowFence=%s deferFlush=%d combineChunkRows=%d\n",
         numRanks_, numRanksPerIpcDomain_, numNodes, sendDistribute_ ? 1 : 0, aggregateCombine_ ? 1 : 0, batchedDispatch,
-        sendDistribute_ || batchAllQps ? "all_qps" : "hca", pipelineChunkRows, asyncDispatch, parallelStage,
-        gpuNetIoRowFenceName(rowFence), deviceContext_.gpuNetIoDeferFlush_ ? 1 : 0,
-        deviceContext_.gpuNetIoCombineChunkRows_);
+        pipelineChunkRows, asyncDispatch ? 1 : 0, parallelStage, gpuNetIoRowFenceName(rowFence),
+        deviceContext_.gpuNetIoDeferFlush_ ? 1 : 0, deviceContext_.gpuNetIoCombineChunkRows_);
     std::fflush(stderr);
   }
 
@@ -390,27 +360,6 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 
-  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    // Expanded fast paths are enabled only when every rank agrees.
-    std::vector<int> enabled(numRanks_, 0);
-    if (numRanksPerIpcDomain_ >= numRanks_) {
-      const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_IPC_FASTPATH");
-      const bool allMapped = std::all_of(peerMappedBufferBases.begin(), peerMappedBufferBases.end(),
-                                         [](void* base) { return base != nullptr; });
-      enabled[rank_] =
-          (requested == nullptr || std::atoi(requested) != 0) && allMapped && deviceContext_.gpuNetIo_ == nullptr;
-    } else {
-      const char* requested = std::getenv("MSCCLPP_EP_EXPANDED_GPUNETIO_FASTPATH");
-      enabled[rank_] = (requested == nullptr || std::atoi(requested) != 0) && deviceContext_.gpuNetIo_ != nullptr;
-    }
-    communicator.bootstrap()->allGather(enabled.data(), sizeof(int));
-    const bool allEnabled = std::all_of(enabled.begin(), enabled.end(), [](int value) { return value != 0; });
-    if (numRanksPerIpcDomain_ >= numRanks_) {
-      deviceContext_.expandedIpcFastPath_ = allEnabled;
-    } else {
-      deviceContext_.expandedGpuNetIoFastPath_ = allEnabled;
-    }
-  }
   if (std::getenv("MSCCLPP_EP_DEBUG_TOPO") != nullptr) {
     // nvlinkPeerMap[r] = '1' when peer r is IPC-mapped and '0' when it is served over GPUNetIO.
     std::string nvlinkPeerMap(static_cast<size_t>(numRanks_), '0');
@@ -419,9 +368,8 @@ void LatencyRuntime::initialize(mscclpp::Communicator& communicator, void* symme
     }
     std::fprintf(stderr,
                  "[EPTOPO] rank=%d numRanks=%d numRanksPerIpcDomain=%d numRanksPerNode=%d gpuNetIo=%d "
-                 "expandedIpcFastPath=%d expandedGpuNetIoFastPath=%d nvlinkPeerMap=%s\n",
+                 "nvlinkPeerMap=%s\n",
                  rank_, numRanks_, numRanksPerIpcDomain_, numRanksPerNode_, deviceContext_.gpuNetIo_ != nullptr ? 1 : 0,
-                 deviceContext_.expandedIpcFastPath_ ? 1 : 0, deviceContext_.expandedGpuNetIoFastPath_ ? 1 : 0,
                  nvlinkPeerMap.c_str());
     std::fflush(stderr);
   }
@@ -435,30 +383,18 @@ void LatencyRuntime::dispatch(void* output, int* outputTopkIdx, float* outputTop
   EP_HOST_ASSERT(deviceContext_.devicePtr_ != nullptr);
   EP_HOST_ASSERT(workspaceSize(numRanks_, numExperts_, workload.maxTokensPerRank_, numTopk_) <= workspaceBytes_);
   if (sendDistribute_) EP_HOST_ASSERT(workload.maxTokensPerRank_ <= maxTokensPerRank_);
-  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    EP_HOST_ASSERT(workload.maxTokensPerRank_ == maxTokensPerRank_);
-    topk_expanded::dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
-                            workload, deviceContext_, numBlocks, stream);
-  } else {
-    rankMajorDispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights, workload,
-                      dispatchRecvBuffer, deviceContext_, numBlocks, stream);
-  }
+  gpuNetIoRankMajorDispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                            workload, dispatchRecvBuffer, deviceContext_, numBlocks, stream);
 }
 
-void LatencyRuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                             const Workload& workload, void* combineRecvBuffer, void* dispatchRecvBuffer, int numBlocks,
-                             cudaStream_t stream) {
+void LatencyRuntime::combine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
+                             void* combineRecvBuffer, void* dispatchRecvBuffer, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(deviceContext_.devicePtr_ != nullptr);
   if (deviceContext_.gpuNetIo_ != nullptr) EP_HOST_ASSERT(numBlocks >= numRanks_);
-  if (outputLayout_ == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED) {
-    EP_HOST_ASSERT(workload.maxTokensPerRank_ == maxTokensPerRank_ && numBlocks > numRanks_);
-    topk_expanded::combine(output, input, topkIdx, topkWeights, workload, deviceContext_, numBlocks, stream);
-  } else {
-    rankMajorGatherReduceCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer,
-                                 deviceContext_, numBlocks, stream);
-  }
+  gpuNetIoRankMajorCombine(output, input, topkIdx, workload, combineRecvBuffer, dispatchRecvBuffer, deviceContext_,
+                           numBlocks, stream);
 }
 
-}  // namespace hybrid
+}  // namespace interrack
 }  // namespace ep
 }  // namespace mscclpp

@@ -10,7 +10,7 @@
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 
 #include "exception.hpp"
-#include "hybrid/include/runtime.hpp"
+#include "interrack_runtime.hpp"
 #include "kernels.hpp"
 #include "moe_runtime_context.hpp"
 
@@ -36,12 +36,8 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
-  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR ||
-                 outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED);
+  EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE || combineMode == CombineMode::DIRECT_SEND);
-  if (outputLayout == DispatchLayout::RANK_MAJOR_TOPK_EXPANDED && combineMode != CombineMode::RANK_LOCAL_REDUCE) {
-    EP_THROW("RANK_MAJOR_TOPK_EXPANDED requires CombineMode::RANK_LOCAL_REDUCE");
-  }
   // Optionally shrink the CUDA IPC domain (for example to one node) so that traffic
   // between domains is served by GPUNetIO instead of multi-node NVLink.
   if (const char* forced = std::getenv("MSCCLPP_EP_IPC_DOMAIN_SIZE")) {
@@ -54,13 +50,13 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
-  const bool useGpuNetIo = hybrid::gpuNetIoRequested(numRanks_, numRanksPerIpcDomain_, outputLayout, combineMode);
-  if (hybrid::requiresHybrid(outputLayout, useGpuNetIo)) {
-    hybrid_ = std::make_unique<hybrid::LatencyRuntime>(rank_, numRanks_, numRanksPerIpcDomain_, numRanksPerNode_,
-                                                       maxTokensPerRank, hidden, numExperts, numTopk, outputLayout,
-                                                       combineMode, useGpuNetIo);
-    symmetricBufferBytes_ = static_cast<int64_t>(hybrid_->symmetricBufferBytes());
-    workspaceBytes_ = hybrid_->workspaceBytes();
+  const bool useGpuNetIo = interrack::gpuNetIoRequested(numRanks_, numRanksPerIpcDomain_, outputLayout, combineMode);
+  if (useGpuNetIo) {
+    interrack_ = std::make_unique<interrack::LatencyRuntime>(rank_, numRanks_, numRanksPerIpcDomain_, numRanksPerNode_,
+                                                             maxTokensPerRank, hidden, numExperts, numTopk,
+                                                             outputLayout, combineMode, useGpuNetIo);
+    symmetricBufferBytes_ = static_cast<int64_t>(interrack_->symmetricBufferBytes());
+    workspaceBytes_ = interrack_->workspaceBytes();
     available_ = isSupportedRanks(numRanks_) && (numRanksPerIpcDomain_ >= numRanks_ || useGpuNetIo);
     return;
   }
@@ -76,8 +72,8 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   CudaDeviceGuard deviceGuard(deviceId_);
-  // The hybrid runtime's GPUNetIO service references the symmetric buffer; release it first.
-  hybrid_.reset();
+  // The network service references the symmetric buffer; release it first.
+  interrack_.reset();
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
@@ -151,9 +147,9 @@ void LatencyRuntimeContext::initialize() {
                     .numRanks_ = numRanks_};
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
-  if (hybrid_ != nullptr) {
-    hybrid_->initialize(communicator_, symmetricBuffer_.get(), peerMappedBufferBases_, peerMappedBufferBasesGpu_,
-                        baseMemoryChannelHandles_.get(), workspace_, maxSharedMemoryPerBlock, numSms, deviceId_);
+  if (interrack_ != nullptr) {
+    interrack_->initialize(communicator_, symmetricBuffer_.get(), peerMappedBufferBases_, peerMappedBufferBasesGpu_,
+                           baseMemoryChannelHandles_.get(), workspace_, maxSharedMemoryPerBlock, numSms, deviceId_);
   }
 }
 
@@ -245,21 +241,21 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .dispatchScale_ = dispatchScale,
                           .emitLocalExpertIds_ = emitLocalExpertIds,
                           .inputMode_ = inputMode};
-  if (context.hybrid_ != nullptr) {
+  if (context.interrack_ != nullptr) {
     if (dispatchDataType != DispatchDataType::BF16 || combineDataType != DispatchDataType::BF16) {
-      EP_THROW("GPUNetIO and RANK_MAJOR_TOPK_EXPANDED latency dispatch support BF16 only");
+      EP_THROW("GPUNetIO latency dispatch supports BF16 only");
     }
     if (emitLocalExpertIds) {
-      EP_THROW("Local expert IDs are unsupported by GPUNetIO and RANK_MAJOR_TOPK_EXPANDED latency dispatch");
+      EP_THROW("Local expert IDs are unsupported by GPUNetIO latency dispatch");
     }
-    const auto hybridLayout = context.hybrid_->layout(context.symmetricBuffer_.get());
-    EP_HOST_ASSERT(hybridLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
-    EP_HOST_ASSERT(output == hybridLayout.dispatchOutputBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == hybridLayout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == hybridLayout.rankMajorTopkWeightsBuffer_);
+    const auto networkLayout = context.interrack_->layout(context.symmetricBuffer_.get());
+    EP_HOST_ASSERT(networkLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
+    EP_HOST_ASSERT(output == networkLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == networkLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == networkLayout.rankMajorTopkWeightsBuffer_);
     DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
-    context.hybrid_->dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
-                              workload, hybridLayout.dispatchRecvBuffer_, numBlocks, stream);
+    context.interrack_->dispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                                 workload, networkLayout.dispatchRecvBuffer_, numBlocks, stream);
     return handle;
   }
 
@@ -351,11 +347,11 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
-  if (context.hybrid_ != nullptr) {
-    const auto hybridLayout = context.hybrid_->layout(context.symmetricBuffer_.get());
-    EP_HOST_ASSERT(input == hybridLayout.combineRecvBuffer_);
-    context.hybrid_->combine(output, input, topkIdx, topkWeights, workload, hybridLayout.combineRecvBuffer_,
-                             hybridLayout.dispatchRecvBuffer_, numBlocks, stream);
+  if (context.interrack_ != nullptr) {
+    const auto networkLayout = context.interrack_->layout(context.symmetricBuffer_.get());
+    EP_HOST_ASSERT(input == networkLayout.combineBuffer_);
+    context.interrack_->combine(output, input, topkIdx, workload, networkLayout.combineBuffer_,
+                                networkLayout.dispatchRecvBuffer_, numBlocks, stream);
     ++context.epoch_;
     return;
   }

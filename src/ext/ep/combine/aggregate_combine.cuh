@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_HYBRID_COMBINE_AGGREGATE_COMBINE_CUH_
-#define MSCCLPP_EP_HYBRID_COMBINE_AGGREGATE_COMBINE_CUH_
+#ifndef MSCCLPP_EP_COMBINE_AGGREGATE_COMBINE_CUH_
+#define MSCCLPP_EP_COMBINE_AGGREGATE_COMBINE_CUH_
 
-#include "hybrid/combine/common.cuh"
+#include "combine/common.cuh"
 
-namespace mscclpp::ep::hybrid {
+namespace mscclpp::ep {
 
 #if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
 
@@ -17,14 +17,14 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   constexpr int HiddenVectors = HiddenBytes / sizeof(int4);
   constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  constexpr size_t RowsBytes = RankMajorTmaMaxNTopk * HiddenBytes;
-  const int lane = get_lane_id();
+  constexpr size_t RowsBytes = MaxNumTopk * HiddenBytes;
+  const int lane = getLaneId();
   const int topk = workload.numTopk_;
   const int localExperts = workload.numExperts_ / context->numRanks_;
   const int owner = gateway ? context->gpuNetIoGateway_ : context->rank_;
   auto* tiles = reinterpret_cast<int4*>(sharedMemory);
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
-  auto* valid = reinterpret_cast<int*>(barriers + RankMajorTmaMaxNTopk);
+  auto* valid = reinterpret_cast<int*>(barriers + MaxNumTopk);
   if (threadIdx.x < WARP_SIZE) {
     int64_t expert = -1;
     int slot = -1;
@@ -41,7 +41,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
     const int peer = expert >= 0 && expert < workload.numExperts_ ? static_cast<int>(expert) / localExperts : -1;
     const bool leader = isFirstLaneForRank(peer, lane);
     const bool active = peer >= 0 && leader && transport.isNvlinkPeer(peer);
-    if (lane < RankMajorTmaMaxNTopk) valid[lane] = active;
+    if (lane < MaxNumTopk) valid[lane] = active;
     bool pending = active;
     while (__any_sync(0xffffffff, pending)) {
       if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
@@ -64,7 +64,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
   for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
     mscclpp::f32x2 sum[PairsPerVector] = {};
 #pragma unroll
-    for (int route = 0; route < RankMajorTmaMaxNTopk; ++route) {
+    for (int route = 0; route < MaxNumTopk; ++route) {
       if (!valid[route]) continue;
       const int4 packed = tiles[route * HiddenVectors + vector];
       const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
@@ -80,9 +80,8 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
       reinterpret_cast<mscclpp::f32x2*>(destination)[vector * PairsPerVector + pair] = sum[pair];
     }
   }
-  // Join all FP32 writers into the row publisher; the QP poster supplies the
-  // cumulative system fence after acquiring the completed chunk.
-  if (gateway && threadIdx.x < HiddenVectors) __threadfence();
+  // The CTA barrier joins every writer into thread 0's release counter. The
+  // acquiring poster system-fences the complete chunk before NIC DMA.
   __syncthreads();
   if (gateway && threadIdx.x == 0) {
     (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
@@ -96,7 +95,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
                                             const TransportView& transport, const WorkspaceView& workspace) {
   const int peer = threadIdx.x;
   const int ranks = context->numRanks_;
-  auto* gin = transport.gpuNetIo_;
+  auto* network = transport.gpuNetIo_;
   const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(ranks, WARP_SIZE);
   if (peer < ranks && transport.isNvlinkPeer(peer)) {
     if (!transport.isSelf(peer)) {
@@ -116,28 +115,30 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
       transport.baseMemoryChannels_[peer].wait(-1);
     }
   }
-  if (queue < 0 || queue >= gin->numQpsPerPeer || get_lane_id() != 0) return;
+  if (queue < 0 || queue >= network->numQpsPerPeer || getLaneId() != 0) return;
   const int rows = *context->gpuNetIoAggregateIncomingRows_;
   const int chunkRows = context->gpuNetIoCombineChunkRows_;
   constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(float);
   const int gateway = context->gpuNetIoGateway_;
-  auto handle = gin->channel(gateway, queue);
+  auto handle = network->channel(gateway, queue);
   const uint64_t dstOffset = transport.symmetricOffset(context->gpuNetIoAggregateRecv_);
   const uint64_t srcOffset = transport.symmetricOffset(context->gpuNetIoAggregateSend_);
   const uint64_t flagOffset = transport.symmetricOffset(context->gpuNetIoAggregateControl_->chunks + queue);
   const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, dstOffset, rows * RowBytes);
   const auto src = handle.gpuNetIo_.memory(handle.src_, true, srcOffset, rows * RowBytes);
   const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, flagOffset, sizeof(uint64_t));
-  gin->withChannelLock(gateway, queue, [&](EpGpuNetIoSignalState& state) {
+  network->withChannelLock(gateway, queue, [&](EpGpuNetIoSignalState& state) {
     for (int chunk = queue, begin = queue * chunkRows; begin < rows;
-         chunk += gin->numQpsPerPeer, begin += gin->numQpsPerPeer * chunkRows) {
+         chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * chunkRows) {
       const int count = rows - begin < chunkRows ? rows - begin : chunkRows;
       while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoAggregateChunkReady_ + chunk,
                                                             mscclpp::memoryOrderAcquire) != count) {
       }
+      // These DMA sources were written by other CTAs; DOCA's queue-release fence is GPU-scoped.
       __threadfence_system();
       handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * RowBytes, src, srcOffset + begin * RowBytes,
-                                       count * RowBytes, sig, flagOffset, gin->nextSignalToken(state, flagOffset, 1));
+                                       count * RowBytes, sig, flagOffset,
+                                       network->nextSignalToken(state, flagOffset, 1));
     }
     // The posting warp owns this QP until its final completion drain.
     handle.flush(-1);
@@ -190,9 +191,9 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
   if (blockIdx.x == 0) {
     aggregateControl<Hidden>(workload, context, transport, workspace);
   } else {
-    constexpr size_t RowsBytes = static_cast<size_t>(RankMajorTmaMaxNTopk) * Hidden * sizeof(Bf16);
+    constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(Bf16);
     auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
-    if (threadIdx.x < RankMajorTmaMaxNTopk) barriers[threadIdx.x].init();
+    if (threadIdx.x < MaxNumTopk) barriers[threadIdx.x].init();
     __syncthreads();
     uint32_t phase = 0;
     const int worker = static_cast<int>(blockIdx.x) - 1;
@@ -316,6 +317,6 @@ struct RankMajorAggregateCombineKernelSelector {
   }
 };
 
-}  // namespace mscclpp::ep::hybrid
+}  // namespace mscclpp::ep
 
 #endif
