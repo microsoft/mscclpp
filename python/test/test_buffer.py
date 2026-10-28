@@ -53,8 +53,15 @@ class CudaBufferTests(unittest.TestCase):
             self.device = device
             return (0,)
 
-        def memcpy(dst, src, size, direction):
-            ctypes.memmove(dst, src, size)
+        self.pending_copies = {}
+
+        def memcpy_async(dst, src, size, direction, stream):
+            self.pending_copies.setdefault(stream, []).append((dst, src, size))
+            return (0,)
+
+        def stream_synchronize(stream):
+            for dst, src, size in self.pending_copies.pop(stream, []):
+                ctypes.memmove(dst, src, size)
             return (0,)
 
         self.runtime = SimpleNamespace()
@@ -66,7 +73,9 @@ class CudaBufferTests(unittest.TestCase):
             ("PointerGetAttributes", lambda ptr: (0, SimpleNamespace(device=self.pointer_device))),
             ("SetDevice", set_device),
             ("DeviceSynchronize", lambda: (0,)),
-            ("Memcpy", memcpy),
+            ("MemcpyAsync", memcpy_async),
+            ("StreamSynchronize", stream_synchronize),
+            ("StreamIsCapturing", lambda stream: (0, 0)),
         ):
             setattr(self.runtime, self.prefix + name, Mock(__name__=self.prefix + name, side_effect=callback))
         setattr(
@@ -105,6 +114,7 @@ class CudaBufferTests(unittest.TestCase):
                 setattr(self.runtime, name, Mock(return_value=(0,)))
         self.buffer_module = load_module("_native_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
         self.GpuBuffer = self.buffer_module.GpuBuffer
+        self.addCleanup(self.api("DeviceSynchronize").assert_not_called)
 
     def api(self, name):
         return getattr(self.runtime, self.prefix + name)
@@ -126,14 +136,17 @@ class CudaBufferTests(unittest.TestCase):
                 host = np.arange(24, dtype=np.float32).reshape(4, 6)[:, ::2]
                 buffer = self.GpuBuffer(host.shape, dtype=host.dtype, order=order)
                 buffer.copy_from_numpy(host)
-                upload = self.api("Memcpy").call_args.args
+                upload = self.api("MemcpyAsync").call_args.args
                 self.assertEqual((upload[0], upload[2], upload[3]), (buffer.ptr, host.nbytes, 1))
                 result = buffer.to_numpy()
-                self.assertEqual(self.api("Memcpy").call_args.args, (result.ctypes.data, buffer.ptr, host.nbytes, 2))
+                self.assertEqual(
+                    self.api("MemcpyAsync").call_args.args, (result.ctypes.data, buffer.ptr, host.nbytes, 2, 0)
+                )
                 np.testing.assert_array_equal(result, host)
                 self.assertEqual(buffer.strides, result.strides)
                 self.assertEqual(result.flags.f_contiguous, order == "F")
-                self.assertGreaterEqual(self.api("DeviceSynchronize").call_count, 4)
+                self.api("StreamSynchronize").assert_called_with(0)
+                self.assertFalse(self.pending_copies)
 
     def test_from_numpy_casts_and_uploads_handle_bytes(self):
         host = memoryview(b"\x00\xff\x10\x00")
@@ -143,6 +156,39 @@ class CudaBufferTests(unittest.TestCase):
         buffer = self.GpuBuffer.from_numpy(matrix)
         self.assertEqual(buffer.strides, matrix.strides)
         np.testing.assert_array_equal(buffer.to_numpy(), matrix)
+
+    def test_default_stream_orders_copies_and_leaves_other_streams_pending(self):
+        source = np.arange(8, dtype=np.int32)
+        unrelated = np.zeros_like(source)
+        self.pending_copies[987] = [(unrelated.ctypes.data, source.ctypes.data, source.nbytes)]
+        buffer = self.GpuBuffer.from_numpy(source)
+        updated = source + 10
+        self.pending_copies[0] = [(buffer.ptr, updated.ctypes.data, updated.nbytes)]
+        np.testing.assert_array_equal(buffer.to_numpy(), updated)
+        self.assertNotIn(0, self.pending_copies)
+        self.assertIn(987, self.pending_copies)
+        np.testing.assert_array_equal(unrelated, 0)
+        self.assertTrue(all(call.args[-1] == 0 for call in self.api("MemcpyAsync").call_args_list))
+        self.assertTrue(all(call.args == (0,) for call in self.api("StreamSynchronize").call_args_list))
+
+    def test_capture_is_rejected_before_copy_and_restores_device(self):
+        buffer = self.GpuBuffer(4, np.int32)
+        self.device = 6
+        for error, status, message in (
+            (0, 1, "graph capture"),
+            (0, 2, "graph capture"),
+            (20, None, "StreamIsCapturing failed"),
+        ):
+            self.api("StreamIsCapturing").side_effect = lambda stream: (error, status)
+            for transfer in (
+                lambda: buffer.to_numpy(),
+                lambda: buffer.copy_from_numpy(np.ones(4, dtype=np.int32)),
+            ):
+                with self.subTest(error=error, status=status), self.assertRaisesRegex(RuntimeError, message):
+                    transfer()
+                self.assertEqual(self.device, 6)
+        self.api("MemcpyAsync").assert_not_called()
+        self.api("StreamSynchronize").assert_not_called()
 
     def test_to_torch_exports_exact_view_metadata_without_copying(self):
         class TorchDtype:
@@ -186,7 +232,7 @@ class CudaBufferTests(unittest.TestCase):
                     )
                     consume.assert_called_with(capsule)
         self.assertEqual(self.allocate.call_count, allocations)
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
         self.api("DeviceSynchronize").assert_not_called()
         self.api("SetDevice").assert_not_called()
 
@@ -265,8 +311,8 @@ class CudaBufferTests(unittest.TestCase):
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("PointerGetAttributes").assert_called_once_with(host.ctypes.data)
-        self.api("Memcpy").side_effect = lambda *args: (17,)
-        with self.assertRaisesRegex(RuntimeError, "Memcpy failed with error 17"):
+        self.api("MemcpyAsync").side_effect = lambda *args: (17,)
+        with self.assertRaisesRegex(RuntimeError, "MemcpyAsync failed with error 17"):
             buffer.to_numpy()
         self.assertEqual(self.device, 6)
 
@@ -276,7 +322,7 @@ class CudaBufferTests(unittest.TestCase):
         self.api("PointerGetAttributes").side_effect = lambda ptr: (18, None)
         with self.assertRaisesRegex(RuntimeError, "PointerGetAttributes failed with error 18"):
             buffer.to_numpy()
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
         self.api("SetDevice").assert_not_called()
         self.api("PointerGetAttributes").side_effect = lambda ptr: (0, SimpleNamespace(device=2))
         np.testing.assert_array_equal(buffer.to_numpy(), host)
@@ -308,14 +354,18 @@ class CudaBufferTests(unittest.TestCase):
         buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host)
         self.assertEqual((buffer.shape, buffer.dtype), ((host.nbytes,), np.dtype(np.uint8)))
         np.testing.assert_array_equal(buffer.to_numpy(), host.view(np.uint8))
-        self.api("Memcpy").reset_mock()
+        self.api("MemcpyAsync").reset_mock()
         self.api("PointerGetAttributes").reset_mock()
+        self.api("StreamSynchronize").reset_mock()
+        self.api("StreamIsCapturing").reset_mock()
         empty = self.GpuBuffer.from_ptr(0, 0, object())
         self.assertEqual((empty.ptr, empty.nbytes, empty.allocation_size), (0, 0, 0))
         self.assertEqual(empty.to_numpy().shape, (0,))
         empty.copy_from_numpy(np.zeros(empty.shape, dtype=empty.dtype))
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
         self.api("PointerGetAttributes").assert_not_called()
+        self.api("StreamSynchronize").assert_not_called()
+        self.api("StreamIsCapturing").assert_not_called()
         self.allocate.assert_not_called()
 
     def test_upload_preserves_nonzero_and_negative_zero_bits(self):
@@ -331,25 +381,28 @@ class CudaBufferTests(unittest.TestCase):
         buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
-        self.api("Memcpy").side_effect = lambda *args: (17,)
-        with self.assertRaisesRegex(RuntimeError, self.prefix + "Memcpy failed with error 17"):
+        self.api("MemcpyAsync").side_effect = lambda *args: (17,)
+        self.api("StreamSynchronize").reset_mock()
+        with self.assertRaisesRegex(RuntimeError, self.prefix + "MemcpyAsync failed with error 17"):
             buffer.to_numpy()
+        self.api("StreamSynchronize").assert_not_called()
         self.assertEqual(self.device, 6)
         self.api("SetDevice").side_effect = lambda device: (18,)
-        self.api("Memcpy").reset_mock()
+        self.api("MemcpyAsync").reset_mock()
         with self.assertRaisesRegex(RuntimeError, "set_device failed"):
             buffer.to_numpy()
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
 
     def test_shared_synchronization_failure_restores_device(self):
         buffer = self.GpuBuffer(4, dtype=np.int32)
         self.device = 6
-        self.api("DeviceSynchronize").side_effect = lambda: (19,)
-        with self.assertRaisesRegex(RuntimeError, r"device_synchronize failed: native error \(19\)"):
+        self.api("StreamSynchronize").side_effect = lambda stream: (19,)
+        with self.assertRaisesRegex(RuntimeError, r"stream_synchronize failed: native error \(19\)"):
             buffer.to_numpy()
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
-        self.api("Memcpy").assert_not_called()
+        self.api("StreamSynchronize").assert_called_once_with(0)
+        self.assertEqual(self.api("MemcpyAsync").call_args.args[-1], 0)
 
     def test_invalid_layout_and_dtype_fail_before_allocation(self):
         for kwargs in (
@@ -374,12 +427,12 @@ class CudaBufferTests(unittest.TestCase):
         scalar = self.GpuBuffer.from_numpy(np.array(7, dtype=np.int32))
         self.assertEqual(scalar.shape, ())
         self.assertEqual(scalar.to_numpy().item(), 7)
-        self.api("Memcpy").reset_mock()
+        self.api("MemcpyAsync").reset_mock()
         empty = self.GpuBuffer((0, 3), np.int32)
         self.assertEqual(empty.nbytes, 0)
         self.assertEqual(empty.to_numpy().shape, (0, 3))
         self.assertEqual(self.GpuBuffer(4)[3:1].size, 0)
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
 
     def test_unsupported_array_operations_and_uploads_are_explicit(self):
         buffer = self.GpuBuffer(4, dtype=np.int32)
@@ -394,7 +447,7 @@ class CudaBufferTests(unittest.TestCase):
         for host in (np.ones(3, dtype=np.int32), np.ones(4, dtype=np.float32)):
             with self.assertRaisesRegex(ValueError, "shape and dtype"):
                 buffer.copy_from_numpy(host)
-        self.api("Memcpy").assert_not_called()
+        self.api("MemcpyAsync").assert_not_called()
 
     def test_executor_buffers_remain_on_device_and_inplace_views_alias(self):
         mscclpp = SimpleNamespace(

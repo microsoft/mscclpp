@@ -215,11 +215,12 @@ class GpuBuffer:
         if self.nbytes == 0:
             return
         with self._on_device() as (runtime, prefix):
-            # Include writes on non-default streams before exposing data to the host.
-            gpu.device_synchronize()
+            (capture_status,) = _call(getattr(runtime, prefix + "StreamIsCapturing"), 0)
+            if int(capture_status) != 0:
+                raise RuntimeError("Host transfers are not supported during GPU graph capture.")
             kind = getattr(getattr(runtime, prefix + "MemcpyKind"), prefix + "Memcpy" + direction)
-            _call(getattr(runtime, prefix + "Memcpy"), dst, src, self.nbytes, kind)
-            gpu.device_synchronize()
+            _call(getattr(runtime, prefix + "MemcpyAsync"), dst, src, self.nbytes, kind, 0)
+            gpu.stream_synchronize(0)
 
     def to_numpy(self) -> np.ndarray:
         """Synchronously copy this buffer to a new NumPy array."""

@@ -12,7 +12,7 @@ queries, synchronization, streams, events, and graph capture. They use the backe
 selected by the native build and initialize the Python runtime on first use.
 The benchmarks use these helpers directly, as does `mscclpp.utils.get_device_arch()`
 when querying the current device.
-`GpuBuffer` also uses them for device selection and device synchronization.
+`GpuBuffer` also uses them for device selection and stream synchronization.
 
 ## Setup Channel with Python API
 
@@ -125,8 +125,12 @@ view.copy_from_numpy(np.zeros(view.shape, dtype=view.dtype))
 result = buffer.to_numpy()
 ```
 
-Transfers synchronize the allocation's device and restore the previous
-current device. Run them outside graph capture and timed benchmark operations.
+NumPy transfers enqueue a copy on native stream `0` and wait for that stream,
+restoring the previous device. They do not select PyTorch's current stream;
+synchronize nondefault producer streams before calling these methods.
+Default-stream ordering and pageable-memory staging may still block, but no
+device-wide synchronization is requested.
+Nonempty transfers reject graph capture. Keep transfers outside timed operations.
 To initialize existing storage, upload `np.zeros(...)` or `np.full(...)` with
 the buffer's shape and dtype using `copy_from_numpy()`.
 Use NumPy on downloaded arrays for arithmetic, comparisons, or advanced indexing.
