@@ -1365,9 +1365,26 @@ TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); 
 
 // GPUNetIO (IbMode::GpuNetIo): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
 #if defined(MSCCLPP_USE_GPUNETIO)
-#define REQUIRE_GPUNETIO \
-  REQUIRE_IBVERBS;       \
-  requireIbRdmaAtomics(ibTransport)
+#define REQUIRE_GPUNETIO                                                                            \
+  REQUIRE_IBVERBS;                                                                                  \
+  requireIbRdmaAtomics(ibTransport);                                                                 \
+  do {                                                                                             \
+    int localSupport = 0;                                                                          \
+    try {                                                                                         \
+      int gpuId = 0;                                                                              \
+      int major = 0;                                                                              \
+      MSCCLPP_CUDATHROW(cudaGetDevice(&gpuId));                                                     \
+      MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId)); \
+      localSupport = major >= 9 ? 1 : 0;                                                          \
+    } catch (...) {                                                                               \
+      /* Treat failed capability queries as unsupported so every rank reaches the collective. */ \
+    }                                                                                             \
+    int allSupport = 0;                                                                           \
+    MPI_Allreduce(&localSupport, &allSupport, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);                  \
+    if (!allSupport) {                                                                            \
+      SKIP_TEST() << "GPUNetIO BlueFlame tests require SM90 or newer on every rank";                \
+    }                                                                                             \
+  } while (0)
 #else  // !defined(MSCCLPP_USE_GPUNETIO)
 #define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
