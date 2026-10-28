@@ -4,6 +4,7 @@
 """CPU-only coverage of zero-copy flag-buffer wrapping and ownership without CuPy."""
 
 import gc
+from enum import Enum
 import importlib.util
 from pathlib import Path
 import sys
@@ -68,6 +69,7 @@ class FlagBufferTests(unittest.TestCase):
             CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
             is_hip=False,
         )
+        native.CppDataType = Enum("DataType", "float32")
         root = Path(__file__).resolve().parents[1] / "mscclpp"
         with patch.dict(
             sys.modules, {"mscclpp": SimpleNamespace(gpu=object()), "mscclpp._mscclpp": native, "cupy": None}

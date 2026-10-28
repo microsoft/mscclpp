@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from mscclpp import gpu
 from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity, is_hip
+from mscclpp._mscclpp import CppDataType as DataType
 
 if TYPE_CHECKING:
     import torch
@@ -69,7 +70,7 @@ class GpuBuffer:
     def __init__(
         self,
         shape: int | tuple[int, ...],
-        dtype=float,
+        dtype=DataType.float32,
         strides: tuple[int, ...] | None = None,
         order: str = "C",
         granularity: CppGpuBufferGranularity = CppGpuBufferGranularity.MultiCastMinimum,
@@ -87,7 +88,7 @@ class GpuBuffer:
             raise ValueError("Shape must be an integer or a sequence of integers.") from exc
         if any(s < 0 for s in self.shape):
             raise ValueError("Shape dimensions must be non-negative.")
-        self._dtype = np.dtype(dtype)
+        self._dtype = np.dtype(dtype.name if isinstance(dtype, DataType) else dtype)
         if self.dtype.kind not in "biufc" or not self.dtype.isnative:
             raise ValueError("GpuBuffer requires a native-endian numeric or boolean dtype.")
         if order not in ("C", "F"):

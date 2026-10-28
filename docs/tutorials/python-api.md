@@ -116,6 +116,12 @@ implementation does not import CuPy.
 `allocation_size` is the actual allocation extent (which may exceed `nbytes` for
 NVLS alignment); bind an unsliced buffer's pointer and allocation size to NVLS.
 
+The constructor defaults to `mscclpp.DataType.float32` (four bytes per element),
+instead of the previous `float`/float64 default. It accepts `DataType` values with
+NumPy equivalents (`float32`, `float16`, `int32`, `uint32`, and `uint8`), while
+existing NumPy dtype inputs and the NumPy `.dtype` property remain unchanged.
+BF16/FP8 enum values are not supported by this NumPy-backed constructor.
+
 ```python
 host = np.arange(1024, dtype=np.float32)
 buffer = GpuBuffer.from_numpy(host)

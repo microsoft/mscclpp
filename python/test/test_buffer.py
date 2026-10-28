@@ -4,6 +4,7 @@
 """CPU-only checks of native-buffer ownership, transfers, and consumer boundaries."""
 
 import ctypes
+from enum import Enum
 import gc
 import importlib.util
 from pathlib import Path
@@ -14,6 +15,8 @@ from unittest.mock import Mock, patch
 import weakref
 
 import numpy as np
+
+DataType = Enum("DataType", "float32 float16 int32 uint32 uint8 bfloat16 float8_e4m3fn")
 
 
 def load_module(name, path):
@@ -97,6 +100,7 @@ class CudaBufferTests(unittest.TestCase):
             "mscclpp._mscclpp": SimpleNamespace(
                 CppRawGpuBuffer=self.allocate,
                 CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
+                CppDataType=DataType,
                 is_hip=self.is_hip,
             ),
             "cupy": None,
@@ -118,6 +122,22 @@ class CudaBufferTests(unittest.TestCase):
 
     def api(self, name):
         return getattr(self.runtime, self.prefix + name)
+
+    def test_constructor_default_and_enum_inputs_keep_numpy_metadata(self):
+        buffer = self.GpuBuffer(4)
+        self.assertEqual((buffer.dtype, buffer.itemsize, buffer.nbytes), (np.dtype(np.float32), 4, 16))
+        for dtype in (DataType.float32, DataType.float16, DataType.int32, DataType.uint32, DataType.uint8):
+            with self.subTest(dtype=dtype):
+                host = np.arange(4, dtype=dtype.name)
+                buffer = self.GpuBuffer(4, dtype=dtype)
+                self.assertEqual((buffer.dtype, buffer.nbytes), (host.dtype, host.nbytes))
+                buffer.copy_from_numpy(host)
+                np.testing.assert_array_equal(buffer.to_numpy(), host)
+        self.assertEqual(self.GpuBuffer(4, dtype=float).dtype, np.dtype(float))
+        for dtype in (DataType.bfloat16, DataType.float8_e4m3fn):
+            with self.subTest(dtype=dtype), self.assertRaises(TypeError):
+                self.GpuBuffer(4, dtype=dtype)
+        self.assertEqual(self.allocate.call_count, 7)
 
     def test_allocation_metadata_and_granularity(self):
         buffer = self.GpuBuffer((2, 3), dtype=np.int32, granularity=7)
