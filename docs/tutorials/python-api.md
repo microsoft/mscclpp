@@ -151,6 +151,8 @@ without allocating or copying it. It creates a one-dimensional view and requires
 the byte size to be a multiple of the dtype's item size. The buffer and its slices
 retain `owner`, which must keep the memory alive; the wrapper does not free the
 pointer itself. Transfers use the device associated with the pointer.
+Null-backed empty storage (`from_ptr(0, 0, owner)`) uses the current device on its
+first device lookup, including `to_torch()`, and retains that device for later use.
 The internal `get_flag_buffer()` uses this path to return a cached `uint32`
 `GpuBuffer` over the same native flag allocation used by C++/NCCL, preserving its
 contents and ownership rather than creating a separate Python allocation.

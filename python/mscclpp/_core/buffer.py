@@ -53,9 +53,12 @@ class _ExternalGpuAllocation:
 
     def device_id(self) -> int:
         if self._device_id is None:
-            runtime, prefix = _runtime()
-            (attributes,) = _call(getattr(runtime, prefix + "PointerGetAttributes"), self._ptr)
-            self._device_id = int(attributes.device)
+            if self._ptr == 0:
+                self._device_id = gpu.current_device()
+            else:
+                runtime, prefix = _runtime()
+                (attributes,) = _call(getattr(runtime, prefix + "PointerGetAttributes"), self._ptr)
+                self._device_id = int(attributes.device)
         return self._device_id
 
 
@@ -115,7 +118,8 @@ class GpuBuffer:
         ``owner`` must keep that storage alive; this buffer and its slices retain it.
         The wrapper never frees the pointer itself. The byte size must be a multiple
         of the dtype's item size. Transfers query the pointer's device, not the current
-        device at construction.
+        device at construction. Null-backed empty storage uses the current device
+        on its first device lookup and caches that choice.
         """
         ptr = operator.index(ptr)
         nbytes = operator.index(nbytes)

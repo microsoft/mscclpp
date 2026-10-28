@@ -251,6 +251,16 @@ class CudaBufferTests(unittest.TestCase):
                         buffer._allocation,
                     )
                     consume.assert_called_with(capsule)
+            self.api("PointerGetAttributes").reset_mock()
+            empty = self.GpuBuffer.from_ptr(0, 0, object(), np.float32)
+            self.api("GetDevice").assert_not_called()
+            self.assertIs(empty.to_torch(), tensor)
+            export.assert_called_with(0, "torch.float32", (0,), (1,), 6, empty._allocation)
+            self.device = 7
+            self.assertIs(empty[:].to_torch(), tensor)
+            export.assert_called_with(0, "torch.float32", (0,), (1,), 6, empty._allocation)
+            self.api("GetDevice").assert_called_once_with()
+            self.api("PointerGetAttributes").assert_not_called()
         self.assertEqual(self.allocate.call_count, allocations)
         self.api("MemcpyAsync").assert_not_called()
         self.api("DeviceSynchronize").assert_not_called()

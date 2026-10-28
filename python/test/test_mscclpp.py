@@ -117,6 +117,21 @@ def test_gpu_buffer_to_torch(mpi_group: MpiGroup, shape, order, dtype):
 
 
 @parametrize_mpi_groups(1)
+def test_gpu_buffer_to_torch_null_backed_empty_storage(mpi_group: MpiGroup):
+    torch = pytest.importorskip("torch")
+    buffer = GpuBuffer.from_ptr(0, 0, object())
+    tensor = buffer.to_torch()
+    assert tuple(tensor.shape) == (0,)
+    assert tensor.dtype == torch.uint8
+    assert tensor.device.type == "cuda"
+    assert tensor.device.index == torch.cuda.current_device() == buffer.device_id
+    assert buffer.ptr == 0
+    del buffer
+    gc.collect()
+    assert tensor.numel() == 0
+
+
+@parametrize_mpi_groups(1)
 def test_gpu_buffer_to_torch_retains_external_owner_and_slice(mpi_group: MpiGroup):
     torch = pytest.importorskip("torch")
     original = GpuBuffer.from_numpy(np.arange(8, dtype=np.float32))
