@@ -1,12 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
+#include <vector>
 
+#include "connection.hpp"
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
@@ -349,6 +352,65 @@ TEST(PortChannelOneToOneTest, PingPongIbHostMode) {
 TEST(PortChannelOneToOneTest, PingPongEthernet) {
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
+  if (gEnv->rank >= numRanksToUse) return;
+
+  communicator->bootstrap()->barrier();
+  const int peer = 1 - gEnv->rank;
+  auto context = communicator->context();
+  mscclpp::EndpointConfig endpointConfig;
+  endpointConfig.transport = mscclpp::Transport::Ethernet;
+  auto localEndpoint = context->createEndpoint(endpointConfig);
+  constexpr int endpointTag = 96;
+  communicator->bootstrap()->send(localEndpoint.serialize(), peer, endpointTag);
+  std::vector<char> remoteEndpointBytes;
+  communicator->bootstrap()->recv(remoteEndpointBytes, peer, endpointTag);
+  auto remoteEndpoint = mscclpp::Endpoint::deserialize(remoteEndpointBytes);
+
+  constexpr size_t firstPayloadSize = 128;
+  constexpr size_t secondPayloadSize = 16;
+  constexpr size_t totalSize = firstPayloadSize + secondPayloadSize;
+  auto sourceBuffer = mscclpp::detail::gpuCallocShared<uint8_t>(totalSize);
+  auto destinationBuffer = mscclpp::detail::gpuCallocShared<uint8_t>(totalSize);
+  std::vector<uint8_t> sourceData(totalSize);
+  for (size_t i = 0; i < firstPayloadSize; ++i) {
+    sourceData[i] = static_cast<uint8_t>(gEnv->rank * 19 + i + 1);
+  }
+  std::fill(sourceData.begin() + firstPayloadSize, sourceData.end(), uint8_t{0xA5});
+  mscclpp::gpuMemcpy<uint8_t>(sourceBuffer.get(), sourceData.data(), totalSize, cudaMemcpyHostToDevice);
+
+  auto localSource = context->registerMemory(sourceBuffer.get(), totalSize, mscclpp::Transport::Ethernet);
+  mscclpp::RegisteredMemory localDestination;
+  mscclpp::RegisteredMemory remoteDestination;
+  registerMemoryPair(destinationBuffer.get(), totalSize, mscclpp::Transport::Ethernet, /*tag=*/97, peer,
+                     localDestination, remoteDestination);
+
+  // Reuse the existing small-buffer constructor seam so the first 48-byte payload chunk is crossed without
+  // allocating the production 256 MiB staging buffers for this correctness check.
+  mscclpp::EthernetConnection connection(context, localEndpoint, remoteEndpoint, /*sendBufferSize=*/64,
+                                         /*recvBufferSize=*/64);
+  connection.write(remoteDestination, 0, localSource, 0, firstPayloadSize);
+  connection.write(remoteDestination, firstPayloadSize, localSource, firstPayloadSize, secondPayloadSize);
+  connection.flush(/*timeoutUsec=*/-1);
+
+  const int sender = peer;
+  std::vector<uint8_t> expected(totalSize);
+  for (size_t i = 0; i < firstPayloadSize; ++i) {
+    expected[i] = static_cast<uint8_t>(sender * 19 + i + 1);
+  }
+  std::fill(expected.begin() + firstPayloadSize, expected.end(), uint8_t{0xA5});
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  uint8_t finalByte = 0;
+  do {
+    mscclpp::gpuMemcpy<uint8_t>(&finalByte, destinationBuffer.get() + totalSize - 1, 1, cudaMemcpyDeviceToHost);
+    if (finalByte == expected.back()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  } while (std::chrono::steady_clock::now() < deadline);
+
+  std::vector<uint8_t> observed(totalSize);
+  mscclpp::gpuMemcpy<uint8_t>(observed.data(), destinationBuffer.get(), totalSize, cudaMemcpyDeviceToHost);
+  EXPECT_TRUE(observed == expected);
+  communicator->bootstrap()->barrier();
 }
 
 TEST(PortChannelOneToOneTest, PingPongWithPoll) {
