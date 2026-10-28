@@ -35,6 +35,12 @@ add_test_executable(allgather_test_host_offloading allgather_test_host_offloadin
 add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
 
+add_executable(proxy_service_lifecycle proxy_service_lifecycle.cu)
+target_link_libraries(proxy_service_lifecycle ${TEST_LIBS_COMMON})
+target_include_directories(proxy_service_lifecycle ${TEST_INC_COMMON})
+add_test(NAME proxy_service_lifecycle COMMAND proxy_service_lifecycle)
+set_tests_properties(proxy_service_lifecycle PROPERTIES TIMEOUT 60 ENVIRONMENT "MSCCLPP_SOCKET_IFNAME=lo")
+
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 include(CTest)

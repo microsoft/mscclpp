@@ -51,6 +51,13 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
+    name: ProxyServiceLifecycle
+    displayName: Run proxy service lifecycle scenario
+    remoteScript: |
+      MSCCLPP_SOCKET_IFNAME=lo timeout 60s ./build/bin/proxy_service_lifecycle
+
+- template: run-remote-task.yml
+  parameters:
     name: MpUnitTests
     displayName: Run mscclpp multi-process unit tests
     remoteScript: |

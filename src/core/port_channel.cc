@@ -45,6 +45,8 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   proxy_->pimpl_->setProgressHandler([this]() { progressFlushes(); });
 }
 
+MSCCLPP_API_CPP ProxyService::~ProxyService() { stopProxy(); }
+
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
                                                                const Connection& connection) {
   semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
