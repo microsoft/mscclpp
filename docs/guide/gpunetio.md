@@ -68,6 +68,105 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
+### Hybrid EP queue pairs
+
+For latency `RANK_MAJOR` EP, `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` selects the number of QPs created per peer. It defaults
+to the number of selected HCAs and must be a multiple of that count. QP `q` uses HCA `q % numHcas`, so multiple QPs
+do not change the GPU-to-NIC mapping.
+
+Batched dispatch distributes its chunks over all configured QPs by default.
+`MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS=0` retains dispatch striping by HCA count instead.
+Unchunked combine stripes peer payloads by selected HCA count and waits for those stripes before consuming their rows.
+With one selected HCA per GPU, it uses one payload QP per peer even when multiple QPs are configured.
+Chunked combine distributes chunks over the configured QPs.
+
+`MSCCLPP_EP_GPUNETIO_ASYNC_DISPATCH=1` opts into dedicated receive CTAs and per-peer completion publication instead
+of waiting for the global producer join. It requires batched dispatch, a positive dispatch chunk size, and at least
+`world_size + 2` dispatch blocks. This path drains its sends before returning, so it does not use deferred send flush.
+It also enqueues three workspace resets before each dispatch; include those operations when comparing complete
+CUDA graph latency, not just dispatch kernel time. The default remains disabled.
+
+### Optional send-and-distribute dispatch
+
+`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE=1` selects an experimental BF16 `RANK_MAJOR` dispatch with
+`RANK_LOCAL_REDUCE`. It requires exactly two equal, fully IPC-mapped NVLink domains and one or four QPs per peer.
+Initialization collectively checks the actual IPC mapping matrix. Sorted members of the two domains are paired:
+each source sends to its corresponding gateway in the other domain, not to one central gateway.
+Incompatible domain mappings or QP counts fail initialization. Other layouts and IPC-only paths retain their
+existing behavior; hybrid initialization logs a fallback for unsupported layouts.
+
+Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
+source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
+`MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS` controls their size (1–128 rows, default eight).
+Each QP has an independent posting warp that preserves chunk order while holding one posting-phase queue lease.
+A self-validating LL header carries fresh destination counts, which the gateway publishes locally before completion.
+The row count and every destination count each carry their own epoch in an `LL8Packet`; only the active
+`(1 + world_size) * sizeof(LL8Packet)` bytes are sent by one plain RDMA write. Every consumed word validates its own
+epoch, so no separate header-ready signal is needed under the existing LL eight-byte IB/RDMA atomicity contract.
+Header arrival does **not** establish payload readiness: every payload chunk still has its strong-ordered signal,
+including on relaxed-ordering registered memory.
+Dedicated gateway CTAs and completed producer CTAs forward arrived rows over NVLink while later chunks are still
+transferring. Reused producer CTAs retain two independent warp/TMA row slots and join the same completion counter
+as dedicated forwarders. The specialization retains its shared-memory allocation and full-grid residency check.
+Row assignment and completion counts use the active workload, configured chunk/QP counts, and launch grid;
+there is no special-case token count, hidden dimension, balanced routing pattern, or fixed number of chunks.
+Separate registered send and gateway landing allocations are reserved at
+runtime construction. Chunk flags are cumulative; consumers use dedicated per-original-source readiness epochs,
+and an explicit gateway acknowledgment protects staging reuse even when no route targets the gateway itself.
+After all forwarding writers join, separate warps publish the acknowledgment and local readiness concurrently.
+Every posting lease ends before waiting for the acknowledgment; all outgoing QPs are then drained independently
+before dispatch returns. Empty rounds participate in the same protocol.
+
+This specialization overrides the direct dispatch batching/async/flush tuning choices; by default it does not change
+Combine. Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default). It requires more than
+`world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
+workspace resets are part of each dispatch without aggregate Combine: include them in end-to-end CUDA graph timing.
+`MSCCLPP_EP_GPUNETIO_ROW_FENCE` defaults to `gpu+poster`: row writers use device fences, and each QP poster
+acquires the completed chunk's release sequence before a system fence and the NIC post. `sys` retains system
+fences on every row writer. Unlike the direct path, the poster's system fence is unconditional, including when
+`gpu` is selected. Header, forwarding-completion, and acknowledgment publication remains system-scoped.
+`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE_STATS=1` prints actual unique rows, direct-path remote rows, hidden payload
+bytes, row wire bytes (including routing metadata and alignment), and header bytes per rank/round for validation.
+These byte counts exclude transport framing and completion signals. Disable statistics for performance measurements.
+Payload reduction alone does not establish a latency improvement; compare measured complete dispatch/combine
+rounds on the same routing workload and topology.
+
+### Optional FP32 gateway aggregation for Combine
+
+`MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE=1` additionally enables reverse-gateway aggregation. It defaults off and
+requires send-and-distribute, BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated two-domain,
+one-or-four-QP topology. `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS` selects 1–128 rows per chunk (default eight when
+aggregation is enabled). Incompatible rank-major requests fail collective initialization; other layouts and
+IPC-only runtimes retain their existing paths.
+
+The paired gateway reads the local-domain **BF16 preweighted rank partials**, sums them in FP32, and returns
+compact FP32 rows in independently posted, ordered per-QP IB chunks. Gateway production prioritizes the first
+chunk on each QP before later chunks, and completes before independent local-domain reads begin. Those local
+FP32 reductions overlap the posted IB transfers. The final result adds the two FP32 domain partials and casts to BF16 once; there is no intermediate
+BF16 group rounding. **FP32 addition grouping changes**, so this mode is numerically distinct from direct Combine
+and must be explicitly opted into.
+
+Dispatch records a private token-to-compact-row map and caches incoming IDs, destination slots, and row counts on
+the gateway. These caches cannot be overwritten by another rank's next dispatch. FP32 send and receive buffers
+are separate runtime-owned, registered allocations; the local FP32 accumulator is private. All workers finish
+their assigned gateway production before waiting for returned rows. Local start/end handshakes and outgoing
+QP completion drains are retained. The end handshake starts only after every local worker finishes all NVLink
+reads, overlapping the remaining FP32 IB returns; the final grid join still waits for every result consumer,
+posting warp, QP drain, and end handshake before resetting workspace. The gateway's next Dispatch must receive the owner's next-Dispatch ACK before
+its next Combine can overwrite that owner's FP32 landing, including empty rounds. This relies on the existing
+stream-ordered Dispatch/Combine sequence.
+There must be **one fresh Dispatch before every aggregate Combine**, including CUDA graph replays.
+Repeated eager use of a consumed dispatch handle is already rejected by the host runtime. A device-side epoch
+guard rejects aggregate Combine-only graph replays without a new Dispatch; this reports a diagnostic and traps
+the CUDA context, rather than allowing unsafe landing-buffer reuse.
+
+One fused `rankMajorAggregateCombineKernel` performs all reduction, posting, and finalization, using the requested
+Combine grid and its full-residency check. After the completion join and local end handshakes, it resets the private
+Dispatch/Combine counters and readiness epochs for the next round, eliminating the four separate workspace resets
+in a paired graph. Network counters, arrival baselines, and replay validation epochs remain persistent.
+With send-and-distribute statistics enabled, `[EP-AGGREGATE-COMBINE]` reports actual returned FP32
+rows and payload bytes. No latency gain is implied by the reduction in transferred rows.
+
 ### Exclusively accessed queue pairs
 
 GPUNetIO always uses exclusive QPs. Callers must serialize **all** GPU operations on each connection, including

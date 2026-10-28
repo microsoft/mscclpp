@@ -1252,7 +1252,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
 
-  if (useRankMajorTma) {
+  if (useRankMajorTma && !context.gpuNetIoAggregateCombine_) {
     const WorkspaceView workspace(context.workspace_, nRanks, nExperts);
     // Kernels take their epoch from the device generation, which is never 0, so zero is always stale.
     MSCCLPP_CUDATHROW(

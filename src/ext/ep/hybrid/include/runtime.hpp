@@ -83,6 +83,8 @@ class LatencyRuntime {
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
   bool useGpuNetIo_;
+  bool sendDistribute_;
+  bool aggregateCombine_;
   size_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   DeviceContext deviceContext_{};
@@ -92,6 +94,10 @@ class LatencyRuntime {
   std::shared_ptr<uint64_t> combineChunkBase_;
   std::shared_ptr<int> dispatchDone_;
   std::shared_ptr<GpuNetIoDispatchPeerState> dispatchPeers_;
+  std::shared_ptr<int> distributeScratch_;
+  std::shared_ptr<int> aggregateMetadata_;
+  std::shared_ptr<float> aggregateLocal_;
+  std::shared_ptr<int> aggregateChunkReady_;
 };
 
 }  // namespace hybrid

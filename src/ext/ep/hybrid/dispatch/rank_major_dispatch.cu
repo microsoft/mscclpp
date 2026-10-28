@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "hybrid/dispatch/common.cuh"
+#include "hybrid/dispatch/send_distribute.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -43,6 +44,22 @@ void rankMajorDispatch(void* output, int* outputTopkIdx, float* outputTopkWeight
   void* outputScales = nullptr;
   int* outputSrcInfo = nullptr;
   int64_t* outputLayout = nullptr;
+  if (context.gpuNetIoSendDistribute_) {
+    EP_HOST_ASSERT(context.gpuNetIo_ != nullptr);
+    EP_HOST_ASSERT(numBlocks > context.numRanks_ + GpuNetIoDistributeForwardBlocks + 1);
+    if (!context.gpuNetIoAggregateCombine_) {
+      const WorkspaceView workspace(context.workspace_, context.numRanks_, workload.numExperts_);
+      MSCCLPP_CUDATHROW(cudaMemsetAsync(workspace.dispatchRankPayloadSlots_, 0,
+                                        static_cast<size_t>(context.numRanks_) * 2 * sizeof(int), stream));
+      MSCCLPP_CUDATHROW(cudaMemsetAsync(
+          context.gpuNetIoDistributeScratch_, 0,
+          (3 + configCellDiv(context.gpuNetIoDistributeCapacity_, context.gpuNetIoPipelineChunkRows_)) * sizeof(int),
+          stream));
+    }
+    return dispatchAlgorithm<DispatchLayout::RANK_MAJOR, RankMajorSendDistributeKernelSelector>(
+        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+  }
   if (context.gpuNetIoAsyncDispatch_) {
     EP_HOST_ASSERT(context.gpuNetIo_ != nullptr && context.gpuNetIoDispatchPeers_ != nullptr);
     EP_HOST_ASSERT(context.gpuNetIoBatchedDispatch_ && context.gpuNetIoPipelineChunkRows_ > 0);

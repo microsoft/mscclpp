@@ -141,8 +141,10 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
-  /// @warning Latency epoch advancement is host-side. Replaying a graph with
-  /// a single dispatch/combine pair is not supported.
+  /// @warning Latency paths using only host-side epochs do not support replay
+  /// of a single dispatch/combine pair. Hybrid send-and-distribute uses device
+  /// epochs and supports paired replay. Its aggregate combine still requires
+  /// a fresh dispatch before each combine, including graph replays.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a

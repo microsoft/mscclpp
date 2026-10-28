@@ -16,6 +16,8 @@ namespace ep {
 namespace hybrid {
 
 struct GpuNetIoDispatchPeerState;
+struct GpuNetIoDistributeControl;
+struct GpuNetIoAggregateControl;
 
 constexpr int GpuNetIoRowFenceSystem = 0;
 constexpr int GpuNetIoRowFenceGpu = 1;
@@ -109,6 +111,29 @@ struct DeviceContext {
   bool gpuNetIoCombineNoBarrier_ = false;
   /// Local destination counts and post-completion state, reset before graph replay.
   GpuNetIoDispatchPeerState* gpuNetIoDispatchPeers_ = nullptr;
+  /// Optional single-copy dispatch to the paired gateway in the other NVLink domain.
+  bool gpuNetIoSendDistribute_ = false;
+  bool gpuNetIoDistributeStats_ = false;
+  int gpuNetIoGateway_ = -1;
+  int gpuNetIoDistributeCapacity_ = 0;
+  void* gpuNetIoDistributeSend_ = nullptr;
+  void* gpuNetIoDistributeRecv_ = nullptr;
+  GpuNetIoDistributeControl* gpuNetIoDistributeControl_ = nullptr;
+  /// Local [compact row allocator, completed forward CTAs, per-chunk staged rows].
+  int* gpuNetIoDistributeScratch_ = nullptr;
+  /// Optional reverse-gateway FP32 aggregation; dispatch caches live until the next local dispatch.
+  bool gpuNetIoAggregateCombine_ = false;
+  int* gpuNetIoAggregateTokenRows_ = nullptr;
+  int* gpuNetIoAggregateIncomingRows_ = nullptr;
+  /// Private [compact row, IDs then destination slots] cache, never exposed to remote writes.
+  int* gpuNetIoAggregateRoutes_ = nullptr;
+  float* gpuNetIoAggregateLocal_ = nullptr;
+  /// Independent registered FP32 send/landing rows, indexed by compact remote row.
+  float* gpuNetIoAggregateSend_ = nullptr;
+  float* gpuNetIoAggregateRecv_ = nullptr;
+  GpuNetIoAggregateControl* gpuNetIoAggregateControl_ = nullptr;
+  /// Private completed-row counters, reset on the caller stream before each aggregate combine.
+  int* gpuNetIoAggregateChunkReady_ = nullptr;
 };
 
 }  // namespace hybrid

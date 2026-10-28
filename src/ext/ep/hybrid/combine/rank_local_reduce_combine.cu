@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include "hybrid/combine/aggregate_combine.cuh"
 #include "hybrid/combine/common.cuh"
 
 namespace mscclpp {
@@ -31,6 +32,14 @@ namespace {
 void runRankLocalReduce(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                         const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                         void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  if (context.gpuNetIoAggregateCombine_) {
+    EP_HOST_ASSERT(context.gpuNetIoSendDistribute_ && workload.numTopk_ <= RankMajorTmaMaxNTopk);
+    EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR &&
+                   workload.dispatchDataType_ == DispatchDataType::BF16);
+    return combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, RankMajorAggregateCombineKernelSelector>(
+        output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+        numBlocks, stream);
+  }
   combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, RankLocalReduceCombineKernelSelector>(
       output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
       numBlocks, stream);

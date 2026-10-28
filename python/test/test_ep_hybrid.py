@@ -341,16 +341,332 @@ def _all_rank_routes(rank, world_size, num_tokens):
     return routes + [[-1] * NUM_TOPK]
 
 
+@pytest.mark.parametrize(
+    "qps_per_peer,chunk_rows,hidden",
+    [("1", 8, 7168), ("4", 8, 7168), ("4", 7, 7168), ("1", 7, 2048), ("4", 16, 4096)],
+)
+@pytest.mark.parametrize("aggregate_combine", [False, True])
+def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, aggregate_combine, monkeypatch):
+    """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
+    domain = ep_group.nranks_per_ipc_domain
+    if not (_gpunetio_requested() and ep_group.nranks == 2 * domain and domain >= 2):
+        pytest.skip("Send-and-distribute coverage requires two equal NVLink domains with at least two ranks each")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE", "1")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1" if aggregate_combine else "0")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", str(chunk_rows))
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", str(chunk_rows) if aggregate_combine else "0")
+    layout = DispatchLayout.RANK_MAJOR
+    capacity = 272
+    invalid_expert = NUM_LOCAL_EXPERTS * ep_group.nranks
+
+    def routes_for(source, tokens, active, rotation, routing="mixed"):
+        local_base = source // domain * domain
+        remote_base = domain - local_base
+        gateway = remote_base + source % domain
+        peers = [peer for peer in range(remote_base, remote_base + domain) if peer != gateway]
+        if routing == "uneven":
+            active = (0, active // 3, active)[source % 3]
+        result = []
+        for token in range(tokens):
+            if token >= active:
+                result.append(
+                    [source * NUM_LOCAL_EXPERTS] + [-1] * (NUM_TOPK - 1)
+                    if token == active and routing == "mixed"
+                    else [-1] * NUM_TOPK
+                )
+                continue
+            a, b, c = [peers[(source + token + rotation + shift) % len(peers)] for shift in range(3)]
+            ranks = (
+                [a, a, b, c, source, local_base + (source + 1) % domain, a]
+                if routing == "mixed"
+                else [a, a, b, c, a, b, a]
+            )
+            experts = [peer * NUM_LOCAL_EXPERTS + (token + slot) % NUM_LOCAL_EXPERTS for slot, peer in enumerate(ranks)]
+            experts[1] = experts[0]  # Duplicate expert as well as duplicate destination rank.
+            result.append(experts + [-1])
+        return result
+
+    def inputs_for(source, tokens, scale):
+        token = torch.arange(tokens, device="cuda")
+        features = torch.arange(hidden, device="cuda") % 3 + 1
+        values = (((token + source) % 7 + 1)[:, None] * 8 * features[None, :]).float()
+        # Two small exact BF16 components identify rows without enlarging weighted
+        # identity results past the exact range used by the combine assertions.
+        values[:, 0] = token % 33 + 1
+        values[:, 1] = token // 33 + 1
+        return (values * scale).to(torch.bfloat16)
+
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=layout,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=invalid_expert,
+        hidden_size=hidden,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+        invalid_token_expert_id=invalid_expert,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            # Change the active row stride within one runtime-owned registered allocation.
+            # Larger rounds reuse forwarding TMA slots and assign multiple
+            # gateway rows to each Combine worker before it may wait remotely.
+            token_counts = sorted(
+                {0, 1, 7, 8, 9, 31, 32, 33, 65, 73, 129, 257, chunk_rows - 1, chunk_rows, chunk_rows + 1}
+            )
+            for step, tokens in enumerate(token_counts):
+                active_capacity = max(tokens, 1) if step % 2 else capacity
+                routes = torch.tensor(
+                    routes_for(ep_group.my_rank, tokens, tokens, step), dtype=torch.int64, device="cuda"
+                ).reshape(tokens, NUM_TOPK)
+                weights = torch.full((tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+                input = inputs_for(ep_group.my_rank, tokens, 1.0)
+                result, handle = runtime.dispatch(input, routes, weights, runtime_max_tokens_per_rank=active_capacity)
+
+                def check_dispatch():
+                    stream.synchronize()
+                    counts = result.layout.num_tokens_per_rank.cpu().tolist()
+                    for source in range(ep_group.nranks):
+                        expected_routes = routes_for(source, tokens, tokens, step)
+                        routed = [
+                            token
+                            for token, row in enumerate(expected_routes)
+                            if any(expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank for expert in row)
+                        ]
+                        count = counts[source]
+                        assert count == len(routed)
+                        ids = result.topk_ids[source].cpu()
+                        actual_weights = result.weights[source].cpu()
+                        row_ids = result.tokens[source, :count, :2].cpu().int() - 1
+                        rows = (row_ids[:, 0] + 33 * row_ids[:, 1]).tolist()
+                        assert sorted(rows) == routed
+                        expected_input = inputs_for(source, tokens, 1.0)
+                        if rows:
+                            torch.testing.assert_close(
+                                result.tokens[source, :count], expected_input[rows], rtol=0, atol=0
+                            )
+                        for index, token in enumerate(rows):
+                            for slot, expert in enumerate(expected_routes[token]):
+                                local = expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank
+                                assert ids[index, slot].item() == (expert if local else invalid_expert)
+                                assert actual_weights[index, slot].item() == (1.0 / NUM_TOPK if local else 0)
+                        assert (ids[count:] == invalid_expert).all()
+                        assert (actual_weights[count:] == 0).all()
+
+                collective_check(check_dispatch)
+                result.combine_input_buffer.copy_(_expert_output(layout, result, active_capacity))
+                output = runtime.combine(result.combine_input_buffer, handle)
+                expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
+                stream.synchronize()
+                collective_check(lambda: torch.testing.assert_close(output.float(), expected, rtol=0, atol=0))
+
+            # Capture one fixed-shape round, then vary routing, weights, and contents.
+            # No inter-rank barriers between replays: Combine does not return data from
+            # the gateway itself, so only the new protocol's ACK protects reuse.
+            tokens = 257
+            routes = torch.empty((tokens, NUM_TOPK), dtype=torch.int64, device="cuda")
+            weights = torch.full((tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            input = inputs_for(ep_group.my_rank, tokens, 1.0)
+            out = torch.empty_like(input)
+            routes.copy_(torch.tensor(routes_for(ep_group.my_rank, tokens, tokens, 0), device="cuda"))
+
+            def operation():
+                result, handle = runtime.dispatch(input, routes, weights)
+                result.combine_input_buffer.copy_(_expert_output(layout, result, capacity))
+                return runtime.combine(result.combine_input_buffer, handle, out=out)
+
+            operation()
+            stream.synchronize()
+            ep_group.barrier()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+            observed, expected = [], []
+            rounds = [
+                (active, "mixed")
+                for active in (
+                    0,
+                    1,
+                    chunk_rows - 1,
+                    chunk_rows,
+                    chunk_rows + 1,
+                    31,
+                    32,
+                    33,
+                    0,
+                    129,
+                    1,
+                    0,
+                    9,
+                    194,
+                    7,
+                    257,
+                )
+            ] + [(257, "remote"), (257, "uneven"), (1, "uneven"), (257, "remote")]
+            for step, (active, routing) in enumerate(rounds):
+                next_routes = routes_for(ep_group.my_rank, tokens, active, step, routing)
+                if active == 0 and step % 2 == 0:
+                    next_routes = [[-1] * NUM_TOPK for _ in range(tokens)]
+                routes.copy_(torch.tensor(next_routes, dtype=torch.int64, device="cuda"))
+                scale = (1.0, 0.5, 0.25, 2.0)[step % 4]
+                input.copy_(inputs_for(ep_group.my_rank, tokens, scale))
+                weights[:, 6] = 0 if step % 2 else 1.0 / NUM_TOPK
+                expected.append(input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True))
+                graph.replay()
+                observed.append(output.clone())
+            stream.synchronize()
+
+            def check_replays():
+                for actual, reference in zip(observed, expected):
+                    torch.testing.assert_close(actual.float(), reference, rtol=0, atol=0)
+
+            collective_check(check_replays)
+
+
+@pytest.mark.parametrize("qps_per_peer", ["1", "4"])
+def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, monkeypatch):
+    """FP32 group sums, random BF16 partials, asymmetric tokens, and no intermediate BF16 rounding."""
+    domain = ep_group.nranks_per_ipc_domain
+    if not (_gpunetio_requested() and ep_group.nranks == 2 * domain and domain >= 3):
+        pytest.skip("Aggregate partial coverage requires two NVLink domains with at least three ranks each")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE", "1")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", "8")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", "8")
+    hidden, capacity, tokens = 2048, 16, 9
+    # Rank zero still has gateway rows to produce for its paired rank.
+    own_tokens = 0 if ep_group.my_rank == 0 else tokens
+    invalid_expert = NUM_LOCAL_EXPERTS * ep_group.nranks
+
+    def destinations(owner, token):
+        local_base = owner // domain * domain
+        remote_base = domain - local_base
+        gateway = remote_base + owner % domain
+        peers = [peer for peer in range(remote_base, remote_base + domain) if peer != gateway]
+        a, b = peers[(owner + token) % len(peers)], peers[(owner + token + 1) % len(peers)]
+        return a, b, local_base + (owner + 1) % domain
+
+    def routes_for(mode):
+        rows = []
+        for token in range(own_tokens):
+            a, b, neighbor = destinations(ep_group.my_rank, token)
+            peers = [a, a, b, ep_group.my_rank, neighbor, a, -1, -1]
+            row = []
+            for slot, peer in enumerate(peers):
+                local = peer >= 0 and peer // domain == ep_group.my_rank // domain
+                valid = peer >= 0 and mode != "empty" and (mode == "full" or (mode == "local") == local)
+                row.append(peer * NUM_LOCAL_EXPERTS + (token + slot) % NUM_LOCAL_EXPERTS if valid else -1)
+            row[1] = row[0]
+            rows.append(row)
+        return torch.tensor(rows, dtype=torch.int64, device="cuda").reshape(own_tokens, NUM_TOPK)
+
+    def partials(owner, peer):
+        generator = torch.Generator(device="cuda").manual_seed(8191 + owner * ep_group.nranks + peer)
+        values = torch.randn((tokens, hidden), generator=generator, device="cuda").to(torch.bfloat16)
+        for token in range(tokens):
+            a, b, _ = destinations(owner, token)
+            # Remote sum 256+1 must remain FP32 until it is added to local -256.
+            values[token, 0] = 256 if peer == a else 1 if peer == b else -256 if peer == owner else 0
+        return values
+
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        num_experts=invalid_expert,
+        hidden_size=hidden,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+        invalid_token_expert_id=invalid_expert,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            table = torch.stack([partials(owner, ep_group.my_rank) for owner in range(ep_group.nranks)])
+            expected_partials = torch.stack(
+                [partials(ep_group.my_rank, peer)[:own_tokens].float() for peer in range(ep_group.nranks)]
+            )
+            owners = torch.arange(ep_group.nranks, device="cuda")[:, None]
+            peers = torch.arange(ep_group.nranks, device="cuda")
+            row_indices = torch.arange(capacity, device="cuda")[None, :]
+            features = torch.arange(hidden, device="cuda") % 7
+            input = (torch.arange(own_tokens, device="cuda")[:, None] + 1 + features[None, :]).to(torch.bfloat16)
+            weights = torch.ones((own_tokens, NUM_TOPK), device="cuda")
+            routes = routes_for("full")
+
+            def oracle():
+                routed = (
+                    (routes[:, :, None] >= 0) & (routes[:, :, None] // NUM_LOCAL_EXPERTS == peers[None, None, :])
+                ).any(dim=1)
+                return (expected_partials * routed.T[:, :, None]).sum(dim=0).to(torch.bfloat16).float()
+
+            def operation():
+                result, handle = runtime.dispatch(input, routes, weights)
+                token_ids = (result.tokens[:, :, 0].float().long() - 1).clamp(0, tokens - 1)
+                valid = row_indices < result.layout.num_tokens_per_rank[:, None]
+                result.combine_input_buffer.copy_(torch.where(valid[:, :, None], table[owners, token_ids], 0))
+                return runtime.combine(result.combine_input_buffer, handle)
+
+            def check(actual, expected, mode):
+                torch.testing.assert_close(actual.float(), expected, rtol=2**-7, atol=2**-10)
+                if mode == "full":
+                    torch.testing.assert_close(
+                        actual[:, 0].float(), torch.ones(own_tokens, device="cuda"), rtol=0, atol=0
+                    )
+
+            for mode in ("full", "local", "empty", "remote", "full"):
+                routes.copy_(routes_for(mode))
+                output = operation()
+                expected = oracle()
+                stream.synchronize()
+                collective_check(lambda: check(output, expected, mode))
+            ep_group.barrier()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                output = operation()
+            stream.synchronize()
+            ep_group.barrier()
+            observed, references = [], []
+            modes = ("empty", "full", "remote", "local", "full", "remote", "empty", "full")
+            for mode in modes:
+                routes.copy_(routes_for(mode))
+                references.append(oracle())
+                graph.replay()
+                observed.append(output.clone())
+            stream.synchronize()
+
+            def check_replays():
+                for actual, expected, mode in zip(observed, references, modes):
+                    check(actual, expected, mode)
+
+            collective_check(check_replays)
+
+
 @pytest.mark.parametrize("defer_flush", ["0", "1"])
-def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_flush, monkeypatch):
-    """Batched GPUNetIO dispatch with several chunks plus a partial tail, deferred flush on and off,
-    and single-round graph replays alternating populated and empty destinations."""
+@pytest.mark.parametrize("qps_per_peer", ["1", "4"])
+@pytest.mark.parametrize("combine_chunk_rows", ["0", "2"])
+@pytest.mark.parametrize("hidden", [HIDDEN, 7168])
+def test_latency_hybrid_batched_dispatch_chunked_graph_replay(
+    ep_group, defer_flush, qps_per_peer, combine_chunk_rows, hidden, monkeypatch
+):
+    """Exercise all-QP dispatch and combine across full, single-row and empty peer payloads,
+    with partial chunks, both flush modes, and changing routes during single-round graph replay."""
     if not (_gpunetio_requested() and ep_group.nranks_per_ipc_domain < ep_group.nranks):
         pytest.skip("Batched dispatch applies only to cross-domain GPUNetIO RANK_MAJOR")
     # Read at initialize(); every rank sets the same values, which initialize() also verifies.
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE", "0")
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "0")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_BATCHED_DISPATCH", "1")
+    monkeypatch.delenv("MSCCLPP_EP_GPUNETIO_BATCH_ALL_QPS", raising=False)
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", "2")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DEFER_FLUSH", defer_flush)
+    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", combine_chunk_rows)
     # Each populated destination receives num_tokens - 1 = 7 rows: three 2-row chunks and a 1-row tail.
     num_tokens, capacity = 8, 8
     layout = DispatchLayout.RANK_MAJOR
@@ -360,7 +676,7 @@ def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_fl
         output_layout=layout,
         combine_mode=CombineMode.RANK_LOCAL_REDUCE,
         num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
-        hidden_size=HIDDEN,
+        hidden_size=hidden,
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
     ) as runtime:
@@ -369,10 +685,12 @@ def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_fl
             full = torch.tensor(
                 _all_rank_routes(ep_group.my_rank, ep_group.nranks, num_tokens), dtype=torch.int64, device="cuda"
             )
+            single = full.clone()
+            single[1:] = -1
             sparse = torch.tensor(_alternate_routes(ep_group.my_rank, num_tokens), dtype=torch.int64, device="cuda")
             routes = full.clone()
             weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
-            input = torch.empty((num_tokens, HIDDEN), dtype=torch.bfloat16, device="cuda")
+            input = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
             out = torch.empty_like(input)
 
             def operation():
@@ -383,7 +701,8 @@ def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_fl
             def expected():
                 return input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
 
-            input.copy_(token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, HIDDEN))
+            features = (torch.arange(hidden, device="cuda") % 5 + 1)[None, :]
+            input.copy_(token_values(ep_group.my_rank, num_tokens, 1.0)[:, None] * features)
             output = operation()
             stream.synchronize()
             ep_group.barrier()
@@ -395,9 +714,11 @@ def test_latency_hybrid_batched_dispatch_chunked_graph_replay(ep_group, defer_fl
             stream.synchronize()
             ep_group.barrier()
 
-            for step, scale in enumerate((2.0, 0.5, 4.0, 1.0, 3.0, 0.25)):
-                routes.copy_(sparse if step % 2 == 0 else full)
-                input.copy_(token_values(ep_group.my_rank, num_tokens, scale)[:, None].expand(-1, HIDDEN))
+            for next_routes, scale in zip(
+                (single, sparse, full, single, full, sparse), (2.0, 0.5, 4.0, 1.0, 3.0, 0.25)
+            ):
+                routes.copy_(next_routes)
+                input.copy_(token_values(ep_group.my_rank, num_tokens, scale)[:, None] * features)
                 graph.replay()
                 stream.synchronize()
                 ep_group.barrier()

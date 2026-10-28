@@ -1,16 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
+#include <numeric>
 #include <thread>
 
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include <cooperative_groups.h>
+#endif
 
 // Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
 // On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
@@ -1465,6 +1473,537 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbGpuNetIoMode) {
   REQUIRE_GPUNETIO;
   testMultiQpBandwidth(IbMode::GpuNetIo, /*numQps=*/4);
 }
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+namespace {
+__global__ void kernelEpPairedStreams(int chunkBytes, int chunks, int qps, int halfBytes, int iterations,
+                                      uint64_t* durations) {
+  const int q = threadIdx.x / 32;
+  const bool owner = threadIdx.x % 32 == 0 && q < qps;
+  __shared__ uint64_t start;
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    if (threadIdx.x == 0) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start));
+    __syncthreads();
+    if (owner) {
+      auto channel = gMultiQpPortChans[q];
+      // Each QP has one owner warp and a distinct channelId/WQE scratch slot.
+      // All chunks are posted before any completion wait; sources are immutable.
+      for (int chunk = q; chunk < chunks; chunk += qps) {
+        const size_t offset = static_cast<size_t>(chunk / qps) * chunkBytes;
+        channel.putWithSignal(halfBytes + offset, offset, chunkBytes);
+      }
+      for (int chunk = q; chunk < chunks; chunk += qps) channel.wait(-1);
+      channel.flush(-1);
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      uint64_t end;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(end));
+      durations[iteration] = end - start;
+    }
+    __syncthreads();
+  }
+}
+
+template <bool FinalSignalOnly, bool RecordStages>
+__global__ void kernelEpSignalAblation(int chunkBytes, int chunks, int qps, int halfBytes, int iterations,
+                                       uint64_t* durations, uint64_t* stages) {
+  const int q = threadIdx.x / 32;
+  const bool owner = threadIdx.x % 32 == 0 && q < qps;
+  __shared__ uint64_t start;
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    if (threadIdx.x == 0) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start));
+    __syncthreads();
+    if (owner) {
+      auto channel = gMultiQpPortChans[q];
+      for (int chunk = q; chunk < chunks; chunk += qps) {
+        const size_t offset = static_cast<size_t>(chunk / qps) * chunkBytes;
+        if constexpr (FinalSignalOnly) {
+          // Keep the last signal strongly ordered after every payload on this QP.
+          // Only the readiness granularity changes; no payload or CQ drain is omitted.
+          if (chunk + qps < chunks)
+            channel.put(halfBytes + offset, offset, chunkBytes);
+          else
+            channel.putWithSignal(halfBytes + offset, offset, chunkBytes);
+        } else {
+          channel.putWithSignal(halfBytes + offset, offset, chunkBytes);
+        }
+      }
+      const size_t record = (static_cast<size_t>(iteration) * qps + q) * 3;
+      if constexpr (RecordStages) {
+        uint64_t now;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+        stages[record] = now - start;
+      }
+      if constexpr (FinalSignalOnly) {
+        if (q < chunks) channel.wait(-1);
+      } else {
+        for (int chunk = q; chunk < chunks; chunk += qps) channel.wait(-1);
+      }
+      if constexpr (RecordStages) {
+        uint64_t now;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+        stages[record + 1] = now - start;
+      }
+      channel.flush(-1);
+      if constexpr (RecordStages) {
+        uint64_t now;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+        stages[record + 2] = now - start;
+      }
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      uint64_t end;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(end));
+      durations[iteration] = end - start;
+    }
+    __syncthreads();
+  }
+}
+}  // namespace
+
+PERF_TEST(PortChannelOneToOneTest, EpPairedStreamsIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  if (gEnv->worldSize != 2) {
+    SKIP_TEST() << "Requires exactly two ranks; launch separate pairs for concurrent NIC load.";
+  }
+  if (gEnv->rank >= numRanksToUse) return;
+  constexpr int HalfBytes = 3 * 229376;
+  constexpr int HalfWords = HalfBytes / sizeof(int);
+  constexpr int Iterations = 1000;
+  const bool ablation = gEnv->args.count("ep_signal_ablation") && gEnv->args["ep_signal_ablation"] == "1";
+  const bool recordStages = ablation && gEnv->args.count("ep_signal_stages") && gEnv->args["ep_signal_stages"] == "1";
+  const int rank = communicator->bootstrap()->getRank();
+  std::vector<std::shared_ptr<int>> buffers;
+  std::vector<mscclpp::RegisteredMemory> local, remote;
+  std::vector<mscclpp::PortChannel> channels;
+  setupMultiQpChannels(4, 2 * HalfWords, IbMode::GpuNetIo, 3000, buffers, local, remote, channels);
+  std::vector<mscclpp::PortChannelDeviceHandle> handles;
+  int valid = 1, allValid = 0;
+  for (int q = 0; q < 4; ++q) {
+    handles.push_back(channels[q].deviceHandle());
+    for (int previous = 0; previous < q; ++previous)
+      valid &= handles[q].gpuNetIo_.channelId != handles[previous].gpuNetIo_.channelId &&
+               handles[q].gpuNetIo_.qp != handles[previous].gpuNetIo_.qp;
+    std::vector<uint32_t> source(HalfWords);
+    for (int i = 0; i < HalfWords; ++i) source[i] = static_cast<uint32_t>(rank + 1) * 0x9e3779b9u ^ (q * HalfWords + i);
+    MSCCLPP_CUDATHROW(cudaMemcpy(buffers[q].get(), source.data(), HalfBytes, cudaMemcpyHostToDevice));
+  }
+  MPI_Allreduce(&valid, &allValid, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  ASSERT_EQ(allValid, 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), handles.size() * sizeof(handles[0])));
+  auto deviceDurations = mscclpp::GpuBuffer<uint64_t>(Iterations).memory();
+  auto deviceStages =
+      recordStages ? mscclpp::GpuBuffer<uint64_t>(Iterations * 4 * 3).memory() : std::shared_ptr<uint64_t>{};
+  std::vector<uint64_t> durations(Iterations), allDurations(rank == 0 ? Iterations * 2 : 0);
+  std::vector<uint64_t> stages(recordStages ? Iterations * 4 * 3 : 0);
+  std::vector<uint32_t> received(HalfWords);
+  std::ofstream samples, phaseSamples;
+  if (gEnv->args.count("perf_output")) {
+    samples.open(gEnv->args["perf_output"] + ".rank" + std::to_string(rank) + ".csv");
+    samples << (ablation ? "mode,stages,chunk_bytes,chunks,qps,repetition,round,total_ns\n"
+                         : "chunk_bytes,chunks,qps,repetition,round,total_ns\n");
+    if (recordStages) {
+      phaseSamples.open(gEnv->args["perf_output"] + ".phases.rank" + std::to_string(rank) + ".csv");
+      phaseSamples << "mode,chunk_bytes,chunks,qps,repetition,round,qp,posted_ns,markers_ns,cq_ns\n";
+    }
+  }
+  cudaEvent_t begin, end;
+  MSCCLPP_CUDATHROW(cudaEventCreate(&begin));
+  MSCCLPP_CUDATHROW(cudaEventCreate(&end));
+  struct Shape {
+    int bytes, chunks, qps;
+  };
+  int phase = 0;
+  for (const Shape shape : {Shape{14336, 1, 1},
+                            {115712, 1, 1},
+                            {229376, 1, 1},
+                            {115712, 8, 4},
+                            {115712, 12, 4},
+                            {229376, 8, 4},
+                            {229376, 12, 4}}) {
+    if (ablation && (shape.bytes != 115712 || shape.qps != 4)) continue;
+    for (int mode = 0; mode < (ablation ? 2 : 1); ++mode) {
+      const bool finalSignalOnly = mode == 1;
+      auto launch = [&](int iterations) {
+        if (!ablation) {
+          kernelEpPairedStreams<<<1, 128>>>(shape.bytes, shape.chunks, shape.qps, HalfBytes, iterations,
+                                            deviceDurations.get());
+        } else if (recordStages && finalSignalOnly) {
+          kernelEpSignalAblation<true, true><<<1, 128>>>(shape.bytes, shape.chunks, shape.qps, HalfBytes, iterations,
+                                                         deviceDurations.get(), deviceStages.get());
+        } else if (recordStages) {
+          kernelEpSignalAblation<false, true><<<1, 128>>>(shape.bytes, shape.chunks, shape.qps, HalfBytes, iterations,
+                                                          deviceDurations.get(), deviceStages.get());
+        } else if (finalSignalOnly) {
+          kernelEpSignalAblation<true, false>
+              <<<1, 128>>>(shape.bytes, shape.chunks, shape.qps, HalfBytes, iterations, deviceDurations.get(), nullptr);
+        } else {
+          kernelEpSignalAblation<false, false>
+              <<<1, 128>>>(shape.bytes, shape.chunks, shape.qps, HalfBytes, iterations, deviceDurations.get(), nullptr);
+        }
+      };
+      for (int repetition = 0; repetition < 3; ++repetition) {
+        for (auto& buffer : buffers) MSCCLPP_CUDATHROW(cudaMemset(buffer.get() + HalfWords, 0, HalfBytes));
+        MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        communicator->bootstrap()->barrier();
+        launch(32);
+        MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        communicator->bootstrap()->barrier();
+        // Independent two-rank jobs can align their load windows without adding MPI traffic to timing.
+        if (gEnv->args.count("roofline_start_ms")) {
+          const auto startMs = std::stoll(gEnv->args["roofline_start_ms"]) + phase * 1000;
+          std::this_thread::sleep_until(std::chrono::system_clock::time_point(std::chrono::milliseconds(startMs)));
+        }
+        ++phase;
+        const auto hostBegin = std::chrono::system_clock::now();
+        MSCCLPP_CUDATHROW(cudaEventRecord(begin));
+        launch(Iterations);
+        MSCCLPP_CUDATHROW(cudaEventRecord(end));
+        MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
+        const auto hostEnd = std::chrono::system_clock::now();
+        float milliseconds = 0;
+        MSCCLPP_CUDATHROW(cudaEventElapsedTime(&milliseconds, begin, end));
+        communicator->bootstrap()->barrier();
+        uint64_t errors = 0, allErrors = 0;
+        for (int q = 0; q < 4; ++q) {
+          MSCCLPP_CUDATHROW(
+              cudaMemcpy(received.data(), buffers[q].get() + HalfWords, HalfBytes, cudaMemcpyDeviceToHost));
+          const int writtenWords =
+              q < shape.qps ? (shape.chunks + shape.qps - 1 - q) / shape.qps * shape.bytes / sizeof(int) : 0;
+          for (int i = 0; i < HalfWords; ++i) {
+            const uint32_t expected =
+                i < writtenWords ? static_cast<uint32_t>(2 - rank) * 0x9e3779b9u ^ (q * HalfWords + i) : 0;
+            errors += received[i] != expected;
+          }
+        }
+        MPI_Allreduce(&errors, &allErrors, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+        EXPECT_EQ(allErrors, 0u);
+        MSCCLPP_CUDATHROW(
+            cudaMemcpy(durations.data(), deviceDurations.get(), Iterations * sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        double phaseSum[3] = {}, allPhaseSum[3] = {};
+        if (recordStages) {
+          MSCCLPP_CUDATHROW(
+              cudaMemcpy(stages.data(), deviceStages.get(), stages.size() * sizeof(uint64_t), cudaMemcpyDeviceToHost));
+          for (int i = 0; i < Iterations; ++i) {
+            uint64_t last[3] = {};
+            for (int q = 0; q < shape.qps; ++q) {
+              const auto* record = stages.data() + (i * shape.qps + q) * 3;
+              for (int field = 0; field < 3; ++field) last[field] = std::max(last[field], record[field]);
+              if (phaseSamples)
+                phaseSamples << mode << ',' << shape.bytes << ',' << shape.chunks << ',' << shape.qps << ','
+                             << repetition << ',' << i << ',' << q << ',' << record[0] << ',' << record[1] << ','
+                             << record[2] << '\n';
+            }
+            for (int field = 0; field < 3; ++field) phaseSum[field] += last[field] / (1000.0 * Iterations);
+          }
+        }
+        MPI_Reduce(phaseSum, allPhaseSum, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        for (int i = 0; i < Iterations; ++i) {
+          if (samples) {
+            if (ablation) samples << mode << ',' << recordStages << ',';
+            samples << shape.bytes << ',' << shape.chunks << ',' << shape.qps << ',' << repetition << ',' << i << ','
+                    << durations[i] << '\n';
+          }
+        }
+        MPI_Gather(durations.data(), Iterations, MPI_UINT64_T, allDurations.data(), Iterations, MPI_UINT64_T, 0,
+                   MPI_COMM_WORLD);
+        double eventUs = milliseconds * 1000.0 / Iterations, sumEventUs = 0;
+        MPI_Reduce(&eventUs, &sumEventUs, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (rank == 0) {
+          std::sort(allDurations.begin(), allDurations.end());
+          const double mean =
+              std::accumulate(allDurations.begin(), allDurations.end(), 0.0) / allDurations.size() / 1000;
+          const size_t bytes = static_cast<size_t>(shape.bytes) * shape.chunks;
+          std::cout << std::setprecision(9) << "[IB_PAIRED_STREAMS] repetition=" << repetition
+                    << " chunk_bytes=" << shape.bytes << " chunks=" << shape.chunks << " qps=" << shape.qps
+                    << " bytes=" << bytes << " event_mean_us=" << sumEventUs / 2 << " round_mean_us=" << mean
+                    << " p50_us=" << allDurations[allDurations.size() / 2] / 1000.0
+                    << " p95_us=" << allDurations[allDurations.size() * 95 / 100] / 1000.0
+                    << " GBps=" << bytes / (sumEventUs / 2) / 1000 << " errors=" << allErrors << " host_begin_ns="
+                    << std::chrono::duration_cast<std::chrono::nanoseconds>(hostBegin.time_since_epoch()).count()
+                    << " host_end_ns="
+                    << std::chrono::duration_cast<std::chrono::nanoseconds>(hostEnd.time_since_epoch()).count()
+                    << (ablation ? " ablation=1" : " ablation=0") << " final_signal_only=" << finalSignalOnly
+                    << " stages=" << recordStages << " post_mean_us=" << allPhaseSum[0] / 2
+                    << " markers_mean_us=" << allPhaseSum[1] / 2 << " cq_mean_us=" << allPhaseSum[2] / 2 << std::endl;
+          ::mscclpp::test::reportPerfResult(std::to_string(shape.bytes) + "B x" + std::to_string(shape.chunks) +
+                                                " rep" + std::to_string(repetition) +
+                                                (ablation ? " finalSignalOnly=" + std::to_string(mode) : ""),
+                                            bytes / (sumEventUs / 2) / 1000, "GB/s");
+        }
+      }
+    }
+  }
+  MSCCLPP_CUDATHROW(cudaEventDestroy(begin));
+  MSCCLPP_CUDATHROW(cudaEventDestroy(end));
+  for (auto& memory : local) registeredMemories.push_back(memory);
+  for (auto& memory : remote) registeredMemories.push_back(memory);
+}
+
+class PortChannelBipartiteTest : public CommunicatorTestBase {};
+
+namespace {
+constexpr int BipartiteChannels = 64;
+constexpr uint64_t BipartitePayloadBytes = 8 * 7168 * sizeof(uint16_t);
+constexpr uint64_t BipartiteMetadataBytes = 8 * 8 * sizeof(uint32_t);
+constexpr uint64_t BipartiteSlotBytes = BipartitePayloadBytes + 2 * BipartiteMetadataBytes;
+
+template <bool Distributed>
+__device__ void bipartiteSync() {
+  if constexpr (Distributed) {
+    cooperative_groups::this_grid().sync();
+  } else {
+    __syncthreads();
+  }
+}
+
+template <bool Distributed>
+__global__ void kernelBipartiteTransport(mscclpp::PortChannelDeviceHandle* channels, int rank, int iterations,
+                                         int remotePeers, int qps, bool metadata, uint64_t* durations,
+                                         uint64_t* tickets) {
+  const int channelIndex = Distributed ? static_cast<int>(blockIdx.x) : static_cast<int>(threadIdx.x);
+  const bool active = !Distributed || threadIdx.x == 0;
+  const bool leader = channelIndex == 0 && active;
+  auto channel = channels[channelIndex];
+  auto handle = channel.gpuNetIo_;
+  const uint64_t sourceBase = static_cast<uint64_t>(channelIndex) * BipartiteSlotBytes;
+  const uint64_t destinationBase =
+      static_cast<uint64_t>((rank % remotePeers) * qps + channelIndex % qps) * BipartiteSlotBytes;
+  uint64_t sourceOffsets[3] = {sourceBase, sourceBase + BipartitePayloadBytes,
+                               sourceBase + BipartitePayloadBytes + BipartiteMetadataBytes};
+  uint64_t destinationOffsets[3] = {destinationBase, destinationBase + BipartitePayloadBytes,
+                                    destinationBase + BipartitePayloadBytes + BipartiteMetadataBytes};
+  uint64_t sizes[3] = {BipartitePayloadBytes, BipartiteMetadataBytes, BipartiteMetadataBytes};
+  mscclpp::GpuNetIoMemoryDeviceHandle sources[3], destinations[3];
+  for (int i = 0; i < 3; ++i) {
+    sources[i] = handle.memory(channel.src_, true, sourceOffsets[i], sizes[i]);
+    destinations[i] = handle.memory(channel.dst_, false, destinationOffsets[i], sizes[i]);
+  }
+  __shared__ uint64_t start;
+  if (leader) tickets[0] = handle.reservedTicket();
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    if (leader) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start));
+    bipartiteSync<Distributed>();
+    // Sources are immutable and their host-to-device copy completed before this kernel.
+    if (active) {
+      if (metadata) {
+        handle.putBatched3(destinations, destinationOffsets, sources, sourceOffsets, sizes);
+        handle.signal();
+      } else {
+        handle.putWithSignal(destinations[0], destinationOffsets[0], sources[0], sourceOffsets[0], sizes[0]);
+      }
+    }
+    bipartiteSync<Distributed>();
+    if (leader) {
+      uint64_t now;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+      durations[2 * iteration + 1] = now - start;
+    }
+    if (active) {
+      channel.wait(-1);
+      handle.flush(-1);
+    }
+    bipartiteSync<Distributed>();
+    if (leader) {
+      uint64_t now;
+      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(now));
+      durations[2 * iteration] = now - start;
+    }
+    bipartiteSync<Distributed>();
+  }
+  if (leader) tickets[1] = handle.reservedTicket();
+}
+}  // namespace
+
+// Opposite rank halves exchange 112 KiB on each of 64 QPs/GPU: 1x64, 4x16, or 16x4 peers/QPs.
+// Distributed submission is the default; --bipartite_compare_packed also measures one 64-thread CTA.
+PERF_TEST(PortChannelBipartiteTest, EpGranularityIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  if (gEnv->worldSize != 2 && gEnv->worldSize != 8 && gEnv->worldSize != 32) {
+    SKIP_TEST() << "Requires 2, 8, or 32 ranks; opposite rank halves communicate only over IB";
+  }
+  const int remotePeers = gEnv->worldSize / 2;
+  const int qps = BipartiteChannels / remotePeers;
+  const bool comparePacked = gEnv->args.count("bipartite_compare_packed") != 0;
+  int cooperative = 0, allCooperative = 0;
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&cooperative, cudaDevAttrCooperativeLaunch, rankToLocalRank(gEnv->rank)));
+  MPI_Allreduce(&cooperative, &allCooperative, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allCooperative) {
+    SKIP_TEST() << "Distributed-QP diagnostic requires cooperative launches on every rank";
+  }
+  const int rank = gEnv->rank;
+  constexpr size_t PoolBytes = BipartiteChannels * BipartiteSlotBytes;
+  constexpr size_t PoolWords = PoolBytes / sizeof(uint32_t);
+  constexpr size_t SlotWords = BipartiteSlotBytes / sizeof(uint32_t);
+  constexpr size_t PayloadWords = BipartitePayloadBytes / sizeof(uint32_t);
+  auto sendBuffer = mscclpp::GpuBuffer<uint32_t>(PoolWords).memory();
+  auto receiveBuffer = mscclpp::GpuBuffer<uint32_t>(PoolWords).memory();
+  std::vector<uint32_t> hostSource(PoolWords);
+  for (size_t i = 0; i < PoolWords; ++i) hostSource[i] = static_cast<uint32_t>(rank + 1) * 0x9e3779b9u ^ i;
+  MSCCLPP_CUDATHROW(cudaMemcpy(sendBuffer.get(), hostSource.data(), PoolBytes, cudaMemcpyHostToDevice));
+  auto localSource = communicator->registerMemory(sendBuffer.get(), PoolBytes, ibTransport);
+  auto localDestination = communicator->registerMemory(receiveBuffer.get(), PoolBytes, ibTransport);
+  registeredMemories.push_back(localSource);
+  registeredMemories.push_back(localDestination);
+  auto proxy = std::make_shared<mscclpp::ProxyService>();
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(BipartiteChannels);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> memoryFutures(remotePeers);
+  std::vector<std::shared_future<mscclpp::Semaphore>> semaphoreFutures(BipartiteChannels);
+  const int remoteBase = rank < remotePeers ? remotePeers : 0;
+  mscclpp::EndpointConfig config;
+  config.transport = ibTransport;
+  config.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+  config.ib.mode = IbMode::GpuNetIo;
+  for (int peerIndex = 0; peerIndex < remotePeers; ++peerIndex) {
+    const int peer = remoteBase + peerIndex;
+    communicator->sendMemory(localDestination, peer, 900);
+    memoryFutures[peerIndex] = communicator->recvMemory(peer, 900);
+    for (int q = 0; q < qps; ++q)
+      connectionFutures[peerIndex * qps + q] = communicator->connect(config, peer, 1000 + q);
+  }
+  for (int channel = 0; channel < BipartiteChannels; ++channel) {
+    semaphoreFutures[channel] = communicator->buildSemaphore(connectionFutures[channel].get(),
+                                                             remoteBase + channel / qps, 2000 + channel % qps);
+  }
+  std::vector<mscclpp::PortChannel> portChannels;
+  std::vector<mscclpp::PortChannelDeviceHandle> handles;
+  std::vector<bool> usedSlots(BipartiteChannels, false);
+  int slotsValid = 1, allSlotsValid = 0;
+  const auto sourceId = proxy->addMemory(localSource);
+  for (int peer = 0; peer < remotePeers; ++peer) {
+    auto remoteMemory = memoryFutures[peer].get();
+    registeredMemories.push_back(remoteMemory);
+    const auto destinationId = proxy->addMemory(remoteMemory);
+    for (int q = 0; q < qps; ++q) {
+      const auto semaphoreId = proxy->addSemaphore(semaphoreFutures[peer * qps + q].get());
+      portChannels.push_back(proxy->portChannel(semaphoreId, destinationId, sourceId));
+      handles.push_back(portChannels.back().deviceHandle());
+      const auto slot = handles.back().gpuNetIo_.channelId;
+      if (slot >= BipartiteChannels || usedSlots[slot]) {
+        slotsValid = 0;
+      } else {
+        usedSlots[slot] = true;
+      }
+    }
+  }
+  MPI_Allreduce(&slotsValid, &allSlotsValid, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  ASSERT_EQ(allSlotsValid, 1);
+  auto deviceChannels = mscclpp::GpuBuffer<mscclpp::PortChannelDeviceHandle>(BipartiteChannels).memory();
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(deviceChannels.get(), handles.data(), handles.size() * sizeof(handles[0]), cudaMemcpyHostToDevice));
+  constexpr int Iterations = 4096;
+  auto deviceDurations = mscclpp::GpuBuffer<uint64_t>(2 * Iterations).memory();
+  auto deviceTickets = mscclpp::GpuBuffer<uint64_t>(2).memory();
+  std::vector<uint64_t> durations(2 * Iterations);
+  std::vector<uint32_t> received(PoolWords);
+  std::ofstream samples;
+  if (gEnv->args.count("perf_output")) {
+    samples.open(gEnv->args["perf_output"] + ".rank" + std::to_string(rank) + ".csv");
+    EXPECT_TRUE(samples.good());
+    samples << "distributed,repetition,metadata,round,total_ns,post_ns,qp0_end_ticket\n";
+  }
+  cudaEvent_t begin, end;
+  MSCCLPP_CUDATHROW(cudaEventCreate(&begin));
+  MSCCLPP_CUDATHROW(cudaEventCreate(&end));
+  auto launch = [&](int iterations, bool metadata, bool distributed) {
+    if (distributed) {
+      auto* channelData = deviceChannels.get();
+      auto* durationData = deviceDurations.get();
+      auto* ticketData = deviceTickets.get();
+      int rankArgument = rank;
+      int remotePeersArgument = remotePeers, qpsArgument = qps;
+      void* arguments[] = {&channelData, &rankArgument, &iterations,   &remotePeersArgument,
+                           &qpsArgument, &metadata,     &durationData, &ticketData};
+      MSCCLPP_CUDATHROW(cudaLaunchCooperativeKernel(reinterpret_cast<void*>(kernelBipartiteTransport<true>),
+                                                    dim3(BipartiteChannels), dim3(32), arguments));
+    } else {
+      kernelBipartiteTransport<false><<<1, BipartiteChannels>>>(deviceChannels.get(), rank, iterations, remotePeers,
+                                                                qps, metadata, deviceDurations.get(),
+                                                                deviceTickets.get());
+      MSCCLPP_CUDATHROW(cudaGetLastError());
+    }
+  };
+  for (bool distributed : {false, true}) {
+    if (!distributed && !comparePacked) continue;
+    for (int repetition = 0; repetition < 3; ++repetition) {
+      for (bool metadata : {false, true}) {
+        MSCCLPP_CUDATHROW(cudaMemset(receiveBuffer.get(), 0, PoolBytes));
+        MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        communicator->bootstrap()->barrier();
+        launch(16, metadata, distributed);
+        MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        communicator->bootstrap()->barrier();
+        MSCCLPP_CUDATHROW(cudaMemset(receiveBuffer.get(), 0, PoolBytes));
+        MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+        communicator->bootstrap()->barrier();
+        MSCCLPP_CUDATHROW(cudaEventRecord(begin));
+        launch(Iterations, metadata, distributed);
+        MSCCLPP_CUDATHROW(cudaEventRecord(end));
+        MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
+        float elapsedMs;
+        MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedMs, begin, end));
+        MSCCLPP_CUDATHROW(cudaMemcpy(durations.data(), deviceDurations.get(), durations.size() * sizeof(uint64_t),
+                                     cudaMemcpyDeviceToHost));
+        uint64_t tickets[2];
+        MSCCLPP_CUDATHROW(cudaMemcpy(tickets, deviceTickets.get(), sizeof(tickets), cudaMemcpyDeviceToHost));
+        communicator->bootstrap()->barrier();
+        MSCCLPP_CUDATHROW(cudaMemcpy(received.data(), receiveBuffer.get(), PoolBytes, cudaMemcpyDeviceToHost));
+        uint64_t errors = 0;
+        for (size_t i = 0; i < PoolWords; ++i) {
+          const int sourceRank = remoteBase + i / SlotWords / qps;
+          const size_t sourceSlot = (rank % remotePeers) * qps + i / SlotWords % qps;
+          const size_t word = i % SlotWords;
+          const uint32_t expected = metadata || word < PayloadWords
+                                        ? static_cast<uint32_t>(sourceRank + 1) * 0x9e3779b9u ^
+                                              static_cast<uint32_t>(sourceSlot * SlotWords + word)
+                                        : 0;
+          errors += received[i] != expected;
+        }
+        uint64_t allErrors = 0;
+        MPI_Allreduce(&errors, &allErrors, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+        EXPECT_EQ(allErrors, 0u);
+        EXPECT_EQ(tickets[1] - tickets[0], static_cast<uint64_t>(Iterations) * (metadata ? 4 : 2));
+        std::vector<double> localDurations(Iterations);
+        double postUs = 0;
+        for (int i = 0; i < Iterations; ++i) {
+          localDurations[i] = static_cast<double>(durations[2 * i]) / 1000;
+          postUs += static_cast<double>(durations[2 * i + 1]) / 1000 / Iterations;
+          if (samples)
+            samples << distributed << ',' << repetition << ',' << metadata << ',' << i << ',' << durations[2 * i] << ','
+                    << durations[2 * i + 1] << ',' << tickets[0] + static_cast<uint64_t>(i + 1) * (metadata ? 4 : 2)
+                    << '\n';
+        }
+        std::vector<double> allDurations(rank == 0 ? Iterations * gEnv->worldSize : 0);
+        MPI_Gather(localDurations.data(), Iterations, MPI_DOUBLE, allDurations.data(), Iterations, MPI_DOUBLE, 0,
+                   MPI_COMM_WORLD);
+        double eventUs = static_cast<double>(elapsedMs) * 1000 / Iterations;
+        double meanEventUs = 0, meanPostUs = 0;
+        MPI_Reduce(&eventUs, &meanEventUs, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&postUs, &meanPostUs, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (rank == 0) {
+          std::sort(allDurations.begin(), allDurations.end());
+          const double mean = std::accumulate(allDurations.begin(), allDurations.end(), 0.0) / allDurations.size();
+          std::cout << std::setprecision(9) << "[IB_BIPARTITE] distributed=" << distributed
+                    << " repetition=" << repetition << " metadata=" << metadata << " ranks=" << gEnv->worldSize
+                    << " remote_peers=" << remotePeers << " qps_per_peer=" << qps
+                    << " payload_bytes=" << BipartiteChannels * BipartitePayloadBytes
+                    << " event_mean_us=" << meanEventUs / gEnv->worldSize << " round_mean_us=" << mean
+                    << " p50_us=" << allDurations[allDurations.size() / 2]
+                    << " p95_us=" << allDurations[allDurations.size() * 95 / 100]
+                    << " p99_us=" << allDurations[allDurations.size() * 99 / 100] << " max_us=" << allDurations.back()
+                    << " post_mean_us=" << meanPostUs / gEnv->worldSize
+                    << " payload_GBps=" << BipartiteChannels * BipartitePayloadBytes / mean / 1000
+                    << " errors=" << allErrors << std::endl;
+        }
+      }
+    }
+  }
+  MSCCLPP_CUDATHROW(cudaEventDestroy(begin));
+  MSCCLPP_CUDATHROW(cudaEventDestroy(end));
+}
+#endif
 
 PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbGpuNetIoMode) {
   REQUIRE_GPUNETIO;

@@ -1865,8 +1865,16 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   const int nRanks = context.numRanks_;
   const int nTopk = workload.numTopk_;
 
-  const size_t dynamicSharedBytes =
-      dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Layout>(nRanks, nExperts, nTopk);
+  size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Layout>(nRanks, nExperts, nTopk);
+  if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
+    if (context.gpuNetIoSendDistribute_) {
+      const size_t forwardSharedBytes =
+          dispatchSharedControlBytes(nRanks) +
+          GpuNetIoDistributeForwardWarps *
+              (dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0) + sizeof(mscclpp::BulkBarrier));
+      dynamicSharedBytes = std::max(dynamicSharedBytes, forwardSharedBytes);
+    }
+  }
   static thread_local KernelConfigCache kernelConfig;
   auto kernel = KernelSelector::template get<Hidden, DataType, ScaleBlockSize>();
   const int residentBlocks = configureKernel(kernel, DispatchNThreads, dynamicSharedBytes, context, kernelConfig);
