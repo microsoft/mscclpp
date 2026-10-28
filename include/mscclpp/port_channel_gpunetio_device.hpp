@@ -17,6 +17,18 @@
 
 namespace mscclpp {
 
+#if defined(MSCCLPP_DEVICE_COMPILE) && defined(MSCCLPP_USE_GPUNETIO)
+namespace detail {
+// Locks for the shared-memory WQE slot pair used by connections without a dedicated slot, hashed by grid and block.
+#if defined(__CUDACC_RDC__)
+inline
+#else
+static
+#endif
+    __device__ unsigned int gpuNetIoSharedWqeLocks[1024] = {};
+}  // namespace detail
+#endif
+
 /// A registered memory region that a GPUNetIO PortChannel can address by MemoryId.
 struct GpuNetIoMemoryDeviceHandle {
   /// Base address of the region in the owner's address space.
@@ -50,8 +62,15 @@ struct GpuNetIoDeviceHandle {
   const GpuNetIoMemoryDeviceHandle* memories;
   /// Number of entries in `memories`.
   uint32_t numMemories;
-  /// Channel identifier (from `semaphoreId_`) used to select a per-channel shared-memory WQE slot.
-  uint32_t channelId;
+  /// Shared-memory WQE slot pair of the connection. Values below kNumDedicatedWqeSlots are unique among the live
+  /// GPUNetIO connections of the process and used without locking; kSharedWqeSlot is shared by all other
+  /// connections and guarded by a per-block lock.
+  uint32_t wqeSlot;
+
+  /// Number of shared-memory WQE slot pairs reserved for one connection each.
+  static constexpr uint32_t kNumDedicatedWqeSlots = 63;
+  /// The slot pair used, under a lock, by connections that did not get a dedicated slot.
+  static constexpr uint32_t kSharedWqeSlot = kNumDedicatedWqeSlots;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   MSCCLPP_DEVICE_INLINE static void trap() {
@@ -413,11 +432,39 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
+  // Per-block lock of the shared WQE slot pair, hashed by grid and block. The lock helpers are kept out of line to
+  // limit register pressure in the inlined submission paths.
+  MSCCLPP_DEVICE_INLINE static unsigned int* sharedWqeLock() {
+    uint64_t gridId;
+    asm volatile("mov.u64 %0, %%gridid;" : "=l"(gridId));
+    const uint64_t block = blockIdx.x + uint64_t(gridDim.x) * (blockIdx.y + uint64_t(gridDim.y) * blockIdx.z);
+    constexpr uint64_t numLocks = sizeof(detail::gpuNetIoSharedWqeLocks) / sizeof(detail::gpuNetIoSharedWqeLocks[0]);
+    static_assert((numLocks & (numLocks - 1)) == 0, "the number of shared WQE slot locks must be a power of two");
+    return &detail::gpuNetIoSharedWqeLocks[(gridId ^ (block * 67)) & (numLocks - 1)];
+  }
+
+  __device__ __noinline__ static void acquireSharedWqe() {
+    unsigned int* lock = sharedWqeLock();
+    while (atomicCAS(lock, 0u, 1u) != 0u) {
+    }
+    doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+  }
+
+  __device__ __noinline__ static void releaseSharedWqe() {
+    doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+    atomicExch(sharedWqeLock(), 0u);
+  }
+
   template <typename Fn>
   MSCCLPP_DEVICE_INLINE void withSharedWqe(Fn&& fn) const {
 #if MSCCLPP_BULK_AVAILABLE
-    __shared__ __align__(16) doca_gpu_dev_verbs_wqe sharedWqes[128];
-    fn(&sharedWqes[(channelId & 63u) * 2]);
+    __shared__ __align__(16) doca_gpu_dev_verbs_wqe sharedWqes[(kNumDedicatedWqeSlots + 1) * 2];
+    // Callers serialize all operations on a connection, so a dedicated slot has at most one user at a time, and every
+    // submission waits for the asynchronous BlueFlame read of its slot before returning.
+    const bool shared = wqeSlot >= kNumDedicatedWqeSlots;
+    if (shared) acquireSharedWqe();
+    fn(&sharedWqes[(shared ? kSharedWqeSlot : wqeSlot) * 2]);
+    if (shared) releaseSharedWqe();
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO BlueFlame requires device code compiled for sm_90 or newer");
     trap();

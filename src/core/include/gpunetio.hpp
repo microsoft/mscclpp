@@ -8,7 +8,6 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/semaphore.hpp>
-#include <unordered_map>
 #include <vector>
 
 #include "connection.hpp"
@@ -48,6 +47,7 @@ class GpuNetIoQp {
 class GpuNetIoConnection : public BaseConnection {
  public:
   GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  ~GpuNetIoConnection();
 
   Transport transport() const override;
 
@@ -61,9 +61,11 @@ class GpuNetIoConnection : public BaseConnection {
 
   /// Build the device-side state for a channel on this connection.
   /// @param signal The remote semaphore token targeted by signals.
+  /// @param outboundToken The device-resident outbound counter of the channel's semaphore.
   /// @param memories The memory table indexed by MemoryId. Entries that are neither local nor owned by the remote
   /// peer of this connection, or are not registered for the corresponding IB transport, are marked unusable.
-  GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal, std::vector<GpuNetIoMemoryDeviceHandle>& table,
+  GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
+                                    std::vector<GpuNetIoMemoryDeviceHandle>& table,
                                     const std::vector<RegisteredMemory>& memories) const;
 
  private:
@@ -74,7 +76,7 @@ class GpuNetIoConnection : public BaseConnection {
   std::shared_ptr<GpuNetIoQp> qp_;
   std::shared_ptr<uint64_t> atomicScratch_;
   RegisteredMemory atomicScratchMem_;
-  mutable std::unordered_map<uint64_t, std::shared_ptr<uint64_t>> outboundTokens_;
+  uint32_t wqeSlot_;
 };
 
 /// Host-side state of a PortChannel bound to a GpuNetIoConnection.
@@ -90,6 +92,8 @@ struct GpuNetIoChannel {
   std::shared_ptr<BaseConnection> connection;
   std::vector<RegisteredMemory> memories;
   std::shared_ptr<GpuNetIoMemoryDeviceHandle> table;
+  /// Outbound counter shared with the semaphore and its other channels; kept alive while the channel exists.
+  std::shared_ptr<uint64_t> outboundToken;
   GpuNetIoDeviceHandle deviceHandle;
 };
 

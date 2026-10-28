@@ -74,9 +74,11 @@ handoff; the caller need not be thread zero. Different QPs can be used concurren
 All requests, including strong-ordered inline semaphore signals (`DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING`),
 atomics and non-inline transfers, are submitted through BlueFlame.
 GPU-resident recovery WQEs are retained. BF submission uses 8 KiB of per-block shared-memory WQE scratch (64 pairs of
-WQE slots) and waits for async source consumption before reusing a slot. Thread zero and blocks with up to 64 threads
-have dedicated slot pairs; additional threads in larger blocks serialize access to their hashed slot pair using an
-internal workspace lock, so different QPs cannot overwrite each other's WQEs.
+WQE slots) and waits for async source consumption before reusing a slot. Each connection gets one of 63 dedicated slot
+pairs, unique among the live GPUNetIO connections of the process, and uses it without locking; because operations on a
+connection are serialized, no two concurrent submissions share a dedicated slot. When all dedicated slots are in use,
+further connections share the last slot pair and serialize access to it with an internal lock, so different QPs never
+overwrite each other's WQEs.
 There is no regular-doorbell-only or CPU-proxy fallback.
 
 ## Using the device API from another project

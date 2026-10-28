@@ -5,6 +5,7 @@
 
 #include <endian.h>
 
+#include <bitset>
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 #include <mutex>
@@ -270,6 +271,41 @@ void GpuNetIoQp::connect(const IbQpInfo&) {}
 
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
 
+namespace {
+
+// Hands out the shared-memory WQE slot pairs of GpuNetIoDeviceHandle. Each live connection of the process gets a
+// distinct dedicated slot while any is free, so concurrent submissions on different connections never share one.
+class WqeSlotAllocator {
+ public:
+  static WqeSlotAllocator& instance() {
+    static WqeSlotAllocator allocator;
+    return allocator;
+  }
+
+  uint32_t acquire() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (uint32_t slot = 0; slot < GpuNetIoDeviceHandle::kNumDedicatedWqeSlots; ++slot) {
+      if (!used_[slot]) {
+        used_[slot] = true;
+        return slot;
+      }
+    }
+    return GpuNetIoDeviceHandle::kSharedWqeSlot;
+  }
+
+  void release(uint32_t slot) {
+    if (slot >= GpuNetIoDeviceHandle::kNumDedicatedWqeSlots) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    used_[slot] = false;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::bitset<GpuNetIoDeviceHandle::kNumDedicatedWqeSlots> used_;
+};
+
+}  // namespace
+
 GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint)
     : BaseConnection(context, localEndpoint),
@@ -289,8 +325,15 @@ GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const E
   CudaDeviceGuard deviceGuard(localEndpoint.device().id);
   atomicScratch_ = detail::gpuCallocShared<uint64_t>();
   atomicScratchMem_ = context->registerMemory(atomicScratch_.get(), sizeof(uint64_t), transport_);
-  INFO(CONN, "GPUNetIO connection created");
+  wqeSlot_ = WqeSlotAllocator::instance().acquire();
+  if (wqeSlot_ == GpuNetIoDeviceHandle::kSharedWqeSlot) {
+    INFO(CONN, "GPUNetIO connection created; all dedicated WQE slots are in use, so it uses the locked shared slot");
+  } else {
+    INFO(CONN, "GPUNetIO connection created with WQE slot ", wqeSlot_);
+  }
 }
+
+GpuNetIoConnection::~GpuNetIoConnection() { WqeSlotAllocator::instance().release(wqeSlot_); }
 
 Transport GpuNetIoConnection::transport() const { return transport_; }
 
@@ -314,7 +357,7 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& signal,
+GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
                                                       std::vector<GpuNetIoMemoryDeviceHandle>& table,
                                                       const std::vector<RegisteredMemory>& memories) const {
   const auto& signalImpl = getImpl(signal);
@@ -342,20 +385,15 @@ GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& si
     }
   }
 
-  auto& outboundToken = outboundTokens_[signalInfo.ibMrInfo.addr];
-  if (!outboundToken) {
-    CudaDeviceGuard deviceGuard(localEndpoint_.device().id);
-    outboundToken = detail::gpuCallocShared<uint64_t>();
-  }
-
   GpuNetIoDeviceHandle handle{};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
   handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
   handle.atomicScratchAddr = scratchInfo.ibMrInfo.addr;
-  handle.outboundToken = outboundToken.get();
+  handle.outboundToken = outboundToken;
   handle.numMemories = static_cast<uint32_t>(table.size());
+  handle.wqeSlot = wqeSlot_;
   return handle;
 }
 
@@ -366,8 +404,16 @@ std::shared_ptr<GpuNetIoChannel> GpuNetIoChannel::bind(Host2DeviceSemaphore& sem
   auto channel = std::make_shared<GpuNetIoChannel>();
   channel->connection = connection;
   channel->memories = memories;
+  // The counter belongs to the semaphore: its channels share it, and a semaphore rebuilt on the same connection
+  // starts from zero even if its remote token reuses the address of a destroyed one.
+  if (!semaphore.gpuNetIoOutboundToken_) {
+    CudaDeviceGuard deviceGuard(connection->localDevice().id);
+    semaphore.gpuNetIoOutboundToken_ = detail::gpuCallocShared<uint64_t>();
+  }
+  channel->outboundToken = semaphore.gpuNetIoOutboundToken_;
   std::vector<GpuNetIoMemoryDeviceHandle> table;
-  channel->deviceHandle = connection->deviceHandle(semaphore.semaphore_.remoteMemory(), table, memories);
+  channel->deviceHandle =
+      connection->deviceHandle(semaphore.semaphore_.remoteMemory(), channel->outboundToken.get(), table, memories);
   if (!table.empty()) {
     CudaDeviceGuard deviceGuard(connection->localDevice().id);
     channel->table = detail::gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());

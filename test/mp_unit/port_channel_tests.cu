@@ -283,6 +283,7 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
     *ret = 0;
     kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaGetLastError());
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     EXPECT_EQ(*ret, 0);
     // Rank 0's next launch writes to rank 1 without waiting; keep it from racing rank 1's final check.
@@ -318,6 +319,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   // Warm-up
   kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
@@ -325,6 +327,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   // Measure latency
   mscclpp::Timer timer;
   kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
@@ -1365,26 +1368,30 @@ TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); 
 
 // GPUNetIO (IbMode::GpuNetIo): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
 #if defined(MSCCLPP_USE_GPUNETIO)
-#define REQUIRE_GPUNETIO                                                                            \
-  REQUIRE_IBVERBS;                                                                                  \
-  requireIbRdmaAtomics(ibTransport);                                                                 \
-  do {                                                                                             \
-    int localSupport = 0;                                                                          \
-    try {                                                                                         \
-      int gpuId = 0;                                                                              \
-      int major = 0;                                                                              \
-      MSCCLPP_CUDATHROW(cudaGetDevice(&gpuId));                                                     \
-      MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId)); \
-      localSupport = major >= 9 ? 1 : 0;                                                          \
-    } catch (...) {                                                                               \
-      /* Treat failed capability queries as unsupported so every rank reaches the collective. */ \
-    }                                                                                             \
-    int allSupport = 0;                                                                           \
-    MPI_Allreduce(&localSupport, &allSupport, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);                  \
-    if (!allSupport) {                                                                            \
-      SKIP_TEST() << "GPUNetIO BlueFlame tests require SM90 or newer on every rank";                \
-    }                                                                                             \
-  } while (0)
+// GPUNetIO submits through BlueFlame, which requires Hopper or newer. Check every rank before any connection setup so
+// that an unsupported rank cannot leave a supported peer waiting for its endpoint.
+inline void requireGpuNetIoCapableGpus() {
+  int localSupport = 0;
+  try {
+    int gpuId = 0;
+    int major = 0;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&gpuId));
+    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId));
+    localSupport = major >= 9 ? 1 : 0;
+  } catch (...) {
+    // Treat a failed capability query as unsupported so that every rank still reaches the collective below.
+  }
+  int allSupport = 0;
+  MPI_Allreduce(&localSupport, &allSupport, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allSupport) {
+    SKIP_TEST() << "GPUNetIO BlueFlame submission requires SM90 or newer on every rank";
+  }
+}
+
+#define REQUIRE_GPUNETIO             \
+  REQUIRE_IBVERBS;                   \
+  requireIbRdmaAtomics(ibTransport); \
+  requireGpuNetIoCapableGpus()
 #else  // !defined(MSCCLPP_USE_GPUNETIO)
 #define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
@@ -1454,6 +1461,125 @@ TEST(PortChannelOneToOneTest, DirectConstructionIbGpuNetIoModeRejected) {
     EXPECT_TRUE(rejectsDirect);
     EXPECT_TRUE(factoryOk);
   }
+}
+
+__global__ void kernelGpuNetIoSignalOrWaitOnce(bool sender) {
+  auto& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0) return;
+  if (sender) {
+    portChan.signal();
+    portChan.flush();
+  } else {
+    portChan.wait();
+  }
+}
+
+// Destroy and rebuild a semaphore on the same connection several times. Each new semaphore must start counting from
+// zero, so a single signal must leave exactly 1 in the remote token, even if the remote token reuses the address of a
+// destroyed one.
+TEST(PortChannelOneToOneTest, SemaphoreRebuildIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  const bool participates = gEnv->rank < numRanksToUse;
+  const bool sender = gEnv->rank == 0;
+  constexpr int numRounds = 4;
+  std::vector<uint64_t> tokens;
+
+  mscclpp::Connection conn;
+  std::shared_ptr<int64_t> buff;
+  mscclpp::RegisteredMemory localMem;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = IbMode::GpuNetIo;
+    conn = communicator->connect(cfg, peer).get();
+    localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+  }
+
+  for (int round = 0; round < numRounds; ++round) {
+    if (participates) {
+      mscclpp::ProxyService service;
+      auto semaphoreId = service.buildAndAddSemaphore(*communicator, conn);
+      auto memoryId = service.addMemory(localMem);
+      auto channel = service.portChannel(semaphoreId, memoryId, memoryId);
+      DeviceHandle<mscclpp::PortChannel> handle = channel.deviceHandle();
+      MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, &handle, sizeof(handle)));
+
+      kernelGpuNetIoSignalOrWaitOnce<<<1, 1>>>(sender);
+      MSCCLPP_CUDATHROW(cudaGetLastError());
+      MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+      if (!sender) {
+        uint64_t token = 0;
+        MSCCLPP_CUDATHROW(cudaMemcpy(&token, service.semaphore(semaphoreId)->deviceHandle().inboundToken, sizeof(token),
+                                     cudaMemcpyDeviceToHost));
+        tokens.push_back(token);
+      }
+    }
+    // Keep both sides' semaphores alive until the signal has been observed, then destroy them together.
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+
+  if (participates && !sender) {
+    ASSERT_EQ(tokens.size(), size_t(numRounds));
+    for (uint64_t token : tokens) {
+      EXPECT_EQ(token, uint64_t(1));
+    }
+  }
+}
+
+__global__ void kernelGpuNetIoManyConnections(DeviceHandle<mscclpp::PortChannel>* chans, int numConns, int rank) {
+  const int q = threadIdx.x;
+  if (q >= numConns) return;
+  const uint64_t offset = rank * sizeof(int);
+  chans[q].putWithSignal(offset, offset, sizeof(int));
+  chans[q].wait();
+  chans[q].flush();
+}
+
+// More live GPUNetIO connections than dedicated shared-memory WQE slots, all used concurrently from one block. The
+// connections beyond the dedicated slots share one slot under a lock, and every transfer must still arrive intact.
+TEST(PortChannelOneToOneTest, ManyConnectionsIbGpuNetIoMode) {
+  REQUIRE_GPUNETIO;
+  if (gEnv->rank >= numRanksToUse) return;
+
+  constexpr int numConns = mscclpp::GpuNetIoDeviceHandle::kNumDedicatedWqeSlots + 3;
+  const int rank = communicator->bootstrap()->getRank();
+  const int peer = 1 - rank;
+  std::vector<std::shared_ptr<int>> buffs;
+  std::vector<mscclpp::RegisteredMemory> localMems;
+  std::vector<mscclpp::RegisteredMemory> remoteMems;
+  std::vector<mscclpp::PortChannel> portChannels;
+  setupMultiQpChannels(numConns, /*elemsPerChan=*/2, IbMode::GpuNetIo, /*tagBase=*/900, buffs, localMems, remoteMems,
+                       portChannels);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
+  int numSharedSlots = 0;
+  for (int q = 0; q < numConns; q++) {
+    int value = (rank + 1) * 1000 + q;
+    MSCCLPP_CUDATHROW(cudaMemcpy(buffs[q].get() + rank, &value, sizeof(int), cudaMemcpyHostToDevice));
+    handles.push_back(portChannels[q].deviceHandle());
+    if (handles.back().gpuNetIo_.wqeSlot == mscclpp::GpuNetIoDeviceHandle::kSharedWqeSlot) numSharedSlots++;
+  }
+  EXPECT_GE(numSharedSlots, 3);
+  auto deviceHandles = mscclpp::detail::gpuCallocShared<DeviceHandle<mscclpp::PortChannel>>(numConns);
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(deviceHandles.get(), handles.data(), numConns * sizeof(handles[0]), cudaMemcpyHostToDevice));
+  communicator->bootstrap()->barrier();
+
+  kernelGpuNetIoManyConnections<<<1, numConns>>>(deviceHandles.get(), numConns, rank);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  for (int q = 0; q < numConns; q++) {
+    int value = 0;
+    MSCCLPP_CUDATHROW(cudaMemcpy(&value, buffs[q].get() + peer, sizeof(int), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(value, (peer + 1) * 1000 + q);
+  }
+  communicator->bootstrap()->barrier();
+  for (auto& m : localMems) registeredMemories.push_back(m);
+  for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbGpuNetIoMode) {
