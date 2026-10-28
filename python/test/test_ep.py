@@ -972,6 +972,7 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
 
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize("graph_iterations", [1, 2])
 @pytest.mark.parametrize(
     "data_type,scale",
     [
@@ -980,8 +981,9 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
         (DispatchDataType.FP8_E4M3_STATIC, 0.5),
     ],
 )
-def test_latency_rank_major_graph_replay(ep_group, combine_mode, data_type, scale):
-    num_tokens, capacity, active_capacity = 2, 4, 3
+def test_latency_rank_major_graph_replay(ep_group, combine_mode, graph_iterations, data_type, scale):
+    num_tokens = ep_group.nranks + 2
+    capacity, active_capacity = num_tokens + 1, num_tokens
     fp8 = data_type == DispatchDataType.FP8_E4M3_STATIC
     quant = QuantConfig(
         format=data_type,
@@ -1012,7 +1014,8 @@ def test_latency_rank_major_graph_replay(ep_group, combine_mode, data_type, scal
                 dtype=torch.int64,
                 device="cuda",
             )
-            weights = torch.tensor([[1.0], [0.0]], dtype=torch.float32, device="cuda")
+            weights = torch.ones((num_tokens, 1), dtype=torch.float32, device="cuda")
+            weights[1].zero_()
             out = torch.empty((num_tokens, 1024), dtype=torch.bfloat16, device="cuda")
 
             def operation():
@@ -1044,7 +1047,8 @@ def test_latency_rank_major_graph_replay(ep_group, combine_mode, data_type, scal
 
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, stream=stream):
-                result, handle, output = operation()
+                for _ in range(graph_iterations):
+                    result, handle, output = operation()
             stream.synchronize()
             ep_group.barrier()
 
