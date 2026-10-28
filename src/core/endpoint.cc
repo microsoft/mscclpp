@@ -38,7 +38,7 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
         config_.ib.gidIndex = env()->ibGidIndex;
       }
       gpuNetIoQp_ =
-          std::make_shared<GpuNetIoQp>(contextImpl.getIbContext(config_.transport), contextImpl.gpuNetIoContext_,
+          std::make_shared<GpuNetIoQp>(*contextImpl.getIbContext(config_.transport), contextImpl.gpuNetIoContext_,
                                        config_.transport, config_.device.id, config_.ib.port, config_.ib.gidIndex);
       ibQpInfo_ = gpuNetIoQp_->info();
       return;

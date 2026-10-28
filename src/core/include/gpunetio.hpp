@@ -24,7 +24,7 @@ class GpuNetIoQp {
  public:
   /// @param ibCtx The IB device context whose protection domain the QP is created on.
   /// @param sharedContext DOCA device handles shared by the QPs of a Context; created on first use.
-  GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId, int port,
+  GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId, int port,
              int gidIndex);
   ~GpuNetIoQp();
 

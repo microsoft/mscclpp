@@ -50,12 +50,12 @@ struct GpuNetIoContext {
     for (auto& [transport, dev] : devs) (void)doca_verbs_dev_close(dev);
   }
 
-  doca_dev_t* dev(IbCtx* ibCtx, Transport transport) {
+  doca_dev_t* dev(IbCtx& ibCtx, Transport transport) {
     std::lock_guard<std::mutex> lock(mutex);
     auto it = devs.find(transport);
     if (it != devs.end()) return it->second;
     doca_dev_t* dev = nullptr;
-    MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx->getPd(), &dev));
+    MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev));
     devs.emplace(transport, dev);
     return dev;
   }
@@ -107,26 +107,26 @@ struct GpuNetIoQp::Impl {
   IbQpInfo info;
 };
 
-GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId,
+GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId,
                        int port, int gidIndex)
     : pimpl_(std::make_unique<Impl>()) {
-  if (!ibCtx->supportsRdmaAtomics()) {
+  if (!ibCtx.supportsRdmaAtomics()) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires RDMA atomics, which device ",
-          ibCtx->getDevName(), " does not support");
+          ibCtx.getDevName(), " does not support");
   }
   pimpl_->gpuId = gpuId;
   pimpl_->gidIndex = gidIndex < 0 ? 0 : gidIndex;
-  pimpl_->info = ibCtx->getPortInfo(port, pimpl_->gidIndex);
+  pimpl_->info = ibCtx.getPortInfo(port, pimpl_->gidIndex);
   pimpl_->port = port;
   // The pinned DOCA GPUNetIO (non-SDK path) resolves the RoCE destination MAC on hard-coded port 1 during INIT->RTR.
   if (pimpl_->info.linkLayer == IBV_LINK_LAYER_ETHERNET && port != 1) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode supports only port 1 on RoCE devices (",
-          ibCtx->getDevName(), " port ", port, ")");
+          ibCtx.getDevName(), " port ", port, ")");
   }
   if ((pimpl_->info.linkLayer != IBV_LINK_LAYER_INFINIBAND || pimpl_->info.isGrh) && pimpl_->info.spn == 0 &&
       pimpl_->info.iid == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires a nonzero GID for RoCE or GRH routing (",
-          ibCtx->getDevName(), " port ", port, " GID index ", pimpl_->gidIndex, ")");
+          ibCtx.getDevName(), " port ", port, " GID index ", pimpl_->gidIndex, ")");
   }
   checkMtu(pimpl_->info.mtu);
 
@@ -140,7 +140,7 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   doca_gpu_verbs_qp_init_attr_hl attr{};
   attr.gpu_dev = gpu;
   attr.net_dev = pimpl_->dev;
-  attr.ibpd = ibCtx->getPd();
+  attr.ibpd = ibCtx.getPd();
   attr.sq_nwqe = 1024;
   attr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF;
   int major;
@@ -164,7 +164,7 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
       qp->qp_gverbs->cq_type != DOCA_GPUNETIO_VERBS_CQ_64B || qp->qp_gverbs->qp_cpu->nic_handler != attr.nic_handler ||
       qp->qp_gverbs->qp_cpu->mem_type != DOCA_GPUNETIO_VERBS_MEM_TYPE_GPU) {
     if (pimpl_->qp) (void)doca_gpu_verbs_destroy_qp_hl(pimpl_->qp);
-    THROW(NET, Error, ErrorCode::InvalidUsage, "device ", ibCtx->getDevName(),
+    THROW(NET, Error, ErrorCode::InvalidUsage, "device ", ibCtx.getDevName(),
           " does not support the requested GPU-initiated GPUNetIO queue pair");
   }
   MSCCLPP_DOCA_THROW(doca_verbs_qp_get_qpn(pimpl_->qp->qp, &pimpl_->info.qpn));
@@ -256,7 +256,7 @@ struct GpuNetIoQp::Impl {
   IbQpInfo info;
 };
 
-GpuNetIoQp::GpuNetIoQp(IbCtx*, std::shared_ptr<GpuNetIoContext>&, Transport, int, int, int) {
+GpuNetIoQp::GpuNetIoQp(IbCtx&, std::shared_ptr<GpuNetIoContext>&, Transport, int, int, int) {
   THROW(NET, Error, ErrorCode::InvalidUsage,
         "IB Device mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
 }
