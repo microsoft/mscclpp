@@ -154,5 +154,8 @@ override configurable `W4A8KernelConfig` fields (such as
 `lognormal` with `--lognormal-sigma`) to benchmark unbalanced expert routing
 distributions. Use `--activation-dtype fp8_static` with optional
 `--activation-scale` to run with per-tensor static-scaled FP8 E4M3 activations
-and FP8 combine.
+and FP8 combine, `--weight-dtype mxfp8` (with `activation_dtype='bf16'`) to
+run W8A16 (`float8_e4m3fn` weights + `uint8` E8M0 K32 scales and BF16
+activations), or `--combine-route-weights` (`MegaMoEConfig(combine_route_weights=True)`)
+to apply routing weights during the combine step rather than in FC1/FC2.
 

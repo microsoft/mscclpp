@@ -28,6 +28,12 @@ constexpr int W4Threads = W4NumWarps * 32;
 constexpr int W4TmemColumns = 512;
 constexpr int EntryRegisters = 128;
 constexpr int TransferRegisters = 32;
+constexpr int LocalThreads = W8A16WarpSchedule<true>::NumWarps * 32;
+constexpr int LocalEntryRegisters = 168;
+constexpr int LocalComputeRegisters = 232;
+static_assert(256 * LocalComputeRegisters + (LocalThreads - 256) * TransferRegisters <=
+              LocalThreads * LocalEntryRegisters);
+constexpr int LocalTokenAlignment = 64;
 constexpr int64_t SpinLimit = 1000000000;
 
 constexpr bool validW4RegisterBudget(int epilogueWarps, int epilogueRegisters, int transferRegisters) {
@@ -105,7 +111,8 @@ __host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return (hidd
 
 template <class Types>
 __host__ __device__ constexpr int w4InputChunks(int hidden) {
-  return (hidden + Types::DispatchChunk - 1) / Types::DispatchChunk;
+  constexpr int ElemBytes = Types::WeightMxfp4 ? sizeof(uint8_t) : sizeof(__bfloat16);
+  return (hidden * ElemBytes + Types::DispatchChunk - 1) / Types::DispatchChunk;
 }
 
 constexpr int W4ReadyCounterStride = 32;
@@ -117,36 +124,6 @@ __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidd
   return chunk == chunks - 1 ? w.inputReady + size_t(block) * W4ReadyCounterStride
                              : w.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
 }
-
-template <class Types, bool Borrowed = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
-struct KernelParameters {
-  template <class T>
-  using Resource = std::conditional_t<Borrowed, const T&, T>;
-  using Collective = Types;
-  using Tiles = typename Types::Tiles;
-  static constexpr int ThreadCount = Types::NumWarps * 32;
-  static constexpr ActivationDtype Activation = ActDtype;
-  NativeConfig config;
-  Resource<SymmetricLayout> symmetric;
-  Resource<Workspace> workspace;
-  void* local;
-  const uint64_t* peers;
-  Resource<cutlass::FastDivmod> fc1TaskDivisor;
-  Resource<cutlass::FastDivmod> fc2TaskDivisor;
-  Resource<typename Types::Mainloop::Params> fc1;
-  Resource<typename Types::Mainloop::Params> fc2;
-};
-
-using W4A8Parameters = KernelParameters<W4A8CollectiveTypes>;
-
-template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
-__device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
-  using View = KernelParameters<typename P::Collective, true, ActDtype>;
-  return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
-}
-
-using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
-W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 
 template <class Types>
 struct W4DispatchStorageT {
@@ -174,14 +151,21 @@ struct alignas(128) EpilogueStorage {
   };
 };
 
-// Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
-// RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached
-// routes stay aligned.
-constexpr int RouteSegmentBatch = 32;
-
-__host__ __device__ constexpr size_t routingScratchHeaderInts(int localExperts, int worldSize) {
-  return (2 * size_t(localExperts) + 3 * size_t(worldSize) + 2 * RouteSegmentBatch + 3 + 1) / 2 * 2;
-}
+template <class Types>
+struct alignas(1024) W8A16SharedStorageT {
+  union {
+    typename Types::Mainloop::TensorStorage tensors;
+    int routing[sizeof(typename Types::Mainloop::TensorStorage) / sizeof(int)];
+  };
+  typename Types::LoadA::SharedStorage mainloopA;
+  typename Types::LoadB::SharedStorage mainloopB;
+  typename Types::Transform::SharedStorage transformed;
+  typename Types::Accumulate::SharedStorage accumulated;
+  uint32_t tmem;
+  cutlass::arch::ClusterBarrier tmemReady;
+  EpilogueStorage<Types::EpilogueTokens> epilogue;
+  std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
+};
 
 template <class Types>
 struct alignas(1024) W4A8SharedStorageT {
@@ -200,6 +184,57 @@ struct alignas(1024) W4A8SharedStorageT {
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
+
+template <class Types, bool Borrowed = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
+struct KernelParameters {
+  template <class T>
+  using Resource = std::conditional_t<Borrowed, const T&, T>;
+  using Collective = Types;
+  using Tiles = typename Types::Tiles;
+  using SharedStorage = std::conditional_t<Types::WeightMxfp4, W4A8SharedStorageT<Types>, W8A16SharedStorageT<Types>>;
+  static constexpr int ThreadCount = Types::NumWarps * 32;
+  static constexpr bool WeightMxfp4 = Types::WeightMxfp4;
+  static constexpr bool LocalExpert = Types::LocalExpert;
+  static constexpr ActivationDtype Activation = ActDtype;
+  NativeConfig config;
+  Resource<SymmetricLayout> symmetric;
+  Resource<Workspace> workspace;
+  void* local;
+  const uint64_t* peers;
+  Resource<cutlass::FastDivmod> fc1TaskDivisor;
+  Resource<cutlass::FastDivmod> fc2TaskDivisor;
+  Resource<typename Types::Mainloop::Params> fc1;
+  Resource<typename Types::Mainloop::Params> fc2;
+};
+
+using W4A8Parameters = KernelParameters<W4A8CollectiveTypes>;
+using W8A16Parameters = KernelParameters<W8A16CollectiveTypesT<false>, false, ActivationDtype::Bf16>;
+using W8A16LocalParameters = KernelParameters<W8A16CollectiveTypesT<true>, false, ActivationDtype::Bf16>;
+
+template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
+__device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
+  using View = KernelParameters<typename P::Collective, true, ActDtype>;
+  return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
+}
+
+using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
+W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
+
+template <int LocalMode = 0>
+using W8A16KernelEntry = void (*)(std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>, int,
+                                  __bfloat16*, uint32_t*, const int32_t*, const float*);
+
+template <int LocalMode = 0>
+W8A16KernelEntry<LocalMode> w8a16KernelEntry();
+
+// Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
+// RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached
+// routes stay aligned.
+constexpr int RouteSegmentBatch = 32;
+
+__host__ __device__ constexpr size_t routingScratchHeaderInts(int localExperts, int worldSize) {
+  return (2 * size_t(localExperts) + 3 * size_t(worldSize) + 2 * RouteSegmentBatch + 3 + 1) / 2 * 2;
+}
 
 template <class T>
 __host__ __device__ T* at(void* base, size_t offset) {

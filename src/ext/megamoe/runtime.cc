@@ -71,10 +71,18 @@ void checkJit(int status, const char* error, const char* operation) {
 }
 
 MegaMoeJitConfigV1 jitConfig(const NativeConfig& c) {
-  return MegaMoeJitConfigV1{
-      c.rank,           c.worldSize, c.maxTokens, c.hidden,      c.intermediate,
-      c.numExperts,     c.topK,      c.smMargin,  c.gateUpClamp, static_cast<int32_t>(c.activationDtype),
-      c.activationScale};
+  return MegaMoeJitConfigV1{c.rank,
+                            c.worldSize,
+                            c.maxTokens,
+                            c.hidden,
+                            c.intermediate,
+                            c.numExperts,
+                            c.topK,
+                            c.smMargin,
+                            c.gateUpClamp,
+                            static_cast<int32_t>(c.activationDtype),
+                            c.activationScale,
+                            int32_t(c.combineRouteWeights)};
 }
 
 MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
@@ -194,9 +202,9 @@ size_t product(std::initializer_list<size_t> factors) {
 }
 
 struct RankInfo {
-  std::array<int, 8> config;
+  std::array<int, 10> config;
   int tag = 0;
-  std::array<int, 18> specialization;
+  std::array<int, 19> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
   size_t symmetricBytes = 0;
   size_t privateBytes = 0;
@@ -209,8 +217,8 @@ struct RankInfo {
 
 RankInfo rankInfo(const NativeConfig& c, int device) {
   RankInfo info{};
-  info.config = {c.worldSize,  c.maxTokens, c.hidden,   c.intermediate,
-                 c.numExperts, c.topK,      c.smMargin, int(c.activationDtype)};
+  info.config = {c.worldSize, c.maxTokens, c.hidden,           c.intermediate,         c.numExperts,
+                 c.topK,      c.smMargin,  int(c.weightDtype), int(c.activationDtype), int(c.combineRouteWeights)};
   info.gateUpClamp = c.gateUpClamp;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)
@@ -358,6 +366,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       p.workspaceBytes = getPrivateWorkspaceBytes(c);
       p.resources = preflightKernel(c);
     } else {
+      if (c.weightDtype != WeightDtype::Mxfp4)
+        throw std::invalid_argument("MegaMoE W4A8 JIT module requires weightDtype=Mxfp4");
       // Even rejected modules must stay mapped until Impl synchronizes: CUDA
       // may still have deferred registration work referencing their host stubs.
       p.module = std::make_shared<JitModule>();
@@ -391,21 +401,21 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     }
     info = rankInfo(c, p.device);
     info.tag = tag;
-    const auto* api = p.module ? p.module->api : nullptr;
     info.specialization = {kernelTileM(),
                            kernelTileN(),
                            kernelTileK(),
                            kernelLoadStages(),
-                           api ? api->numWarps : detail::W4NumWarps,
-                           api ? api->transferRegisters : detail::W4TransferRegisters,
-                           api ? api->loadWarps : detail::W4LoadWarps,
-                           api ? api->splitPipelines : int(detail::W4SplitPipelines),
-                           api ? api->epilogueTokens : detail::W4EpilogueTokens,
-                           api ? api->epilogueWarps : detail::W4EpilogueWarps,
-                           api ? api->epilogueRegisters : detail::W4EpilogueRegisters,
-                           api ? api->dispatchChunk : detail::W4DispatchChunk,
-                           api ? api->dispatchWarps : detail::W4DispatchWarps,
-                           api ? api->dispatchStages : detail::W4DispatchStages,
+                           kernelTransformStages(),
+                           kernelNumWarps(),
+                           kernelTransferRegisters(),
+                           kernelLoadWarps(),
+                           int(kernelSplitPipelines()),
+                           kernelEpilogueTokens(),
+                           kernelEpilogueWarps(),
+                           kernelEpilogueRegisters(),
+                           kernelDispatchChunk(),
+                           kernelDispatchWarps(),
+                           kernelDispatchStages(),
                            int(kernelExpertMajorTasks()),
                            int(kernelCacheWeights()),
                            int(kernelAdaptiveCacheWeights()),
@@ -425,10 +435,12 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
     p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
     size_t localExperts = c.numExperts / c.worldSize;
-    const std::array<size_t, 4> sizes{product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden)}) / 2,
-                                      product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden / 32)}),
-                                      product({localExperts, size_t(c.hidden), size_t(c.intermediate)}) / 2,
-                                      product({localExperts, size_t(c.hidden), size_t(c.intermediate / 32)})};
+    const size_t valuesPerByte = c.weightDtype == WeightDtype::Mxfp4 ? 2 : 1;
+    const std::array<size_t, 4> sizes{
+        product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden)}) / valuesPerByte,
+        product({localExperts, 2, size_t(c.intermediate), size_t(c.hidden / 32)}),
+        product({localExperts, size_t(c.hidden), size_t(c.intermediate)}) / valuesPerByte,
+        product({localExperts, size_t(c.hidden), size_t(c.intermediate / 32)})};
     for (size_t i = 0; i < sizes.size(); ++i) p.weightBuffers[i] = mscclpp::detail::gpuCallocShared<uint8_t>(sizes[i]);
     packed = PackedWeights{p.weightBuffers[0].get(), p.weightBuffers[1].get(), p.weightBuffers[2].get(),
                            p.weightBuffers[3].get()};
@@ -509,7 +521,7 @@ int MegaMoeContext::kernelTileM() const {
 }
 int MegaMoeContext::kernelClusterSize() const {
   if (impl_->module) return impl_->module->api->clusterSize;
-  return detail::W4ClusterSize;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4ClusterSize : 2;
 }
 int MegaMoeContext::kernelTileN() const {
   if (impl_->module) return impl_->module->api->tileN;
@@ -521,35 +533,38 @@ int MegaMoeContext::kernelTileK() const {
 }
 int MegaMoeContext::kernelLoadStages() const {
   if (impl_->module) return impl_->module->api->loadStages;
-  return detail::W4LoadStages;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4LoadStages : detail::W8LoadStages;
+}
+int MegaMoeContext::kernelTransformStages() const {
+  return config().weightDtype == WeightDtype::Mxfp4 ? 0 : detail::W8TransformStages;
 }
 int MegaMoeContext::kernelNumWarps() const {
   if (impl_->module) return impl_->module->api->numWarps;
-  return detail::W4NumWarps;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4NumWarps : detail::W8A16WarpSchedule<false>::NumWarps;
 }
 int MegaMoeContext::kernelTransferRegisters() const {
   if (impl_->module) return impl_->module->api->transferRegisters;
-  return detail::W4TransferRegisters;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4TransferRegisters : 32;
 }
 int MegaMoeContext::kernelLoadWarps() const {
   if (impl_->module) return impl_->module->api->loadWarps;
-  return detail::W4LoadWarps;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4LoadWarps : 2;
 }
 bool MegaMoeContext::kernelSplitPipelines() const {
   if (impl_->module) return bool(impl_->module->api->splitPipelines);
-  return detail::W4SplitPipelines;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4SplitPipelines : false;
 }
 int MegaMoeContext::kernelEpilogueTokens() const {
   if (impl_->module) return impl_->module->api->epilogueTokens;
-  return detail::W4EpilogueTokens;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4EpilogueTokens : 32;
 }
 int MegaMoeContext::kernelEpilogueWarps() const {
   if (impl_->module) return impl_->module->api->epilogueWarps;
-  return detail::W4EpilogueWarps;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4EpilogueWarps : 4;
 }
 int MegaMoeContext::kernelEpilogueRegisters() const {
   if (impl_->module) return impl_->module->api->epilogueRegisters;
-  return detail::W4EpilogueRegisters;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4EpilogueRegisters : 224;
 }
 int MegaMoeContext::kernelDispatchChunk() const {
   if (impl_->module) return impl_->module->api->dispatchChunk;
@@ -557,27 +572,27 @@ int MegaMoeContext::kernelDispatchChunk() const {
 }
 int MegaMoeContext::kernelDispatchWarps() const {
   if (impl_->module) return impl_->module->api->dispatchWarps;
-  return detail::W4DispatchWarps;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4DispatchWarps : 4;
 }
 int MegaMoeContext::kernelDispatchStages() const {
   if (impl_->module) return impl_->module->api->dispatchStages;
-  return detail::W4DispatchStages;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4DispatchStages : 2;
 }
 bool MegaMoeContext::kernelFixedTokenCount() const {
   if (impl_->module) return impl_->module->fixedTokenCount;
-  return detail::W4FixedTokenCount;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4FixedTokenCount : false;
 }
 bool MegaMoeContext::kernelExpertMajorTasks() const {
   if (impl_->module) return (impl_->module->optimizationFlags & MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS) != 0;
-  return detail::W4ExpertMajorTasks;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4ExpertMajorTasks : false;
 }
 bool MegaMoeContext::kernelCacheWeights() const {
   if (impl_->module) return (impl_->module->optimizationFlags & MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS) != 0;
-  return detail::W4CacheWeights;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4CacheWeights : false;
 }
 bool MegaMoeContext::kernelAdaptiveCacheWeights() const {
   if (impl_->module) return (impl_->module->optimizationFlags & MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS) != 0;
-  return detail::W4AdaptiveCacheWeights;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4AdaptiveCacheWeights : false;
 }
 
 size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) const {
@@ -597,12 +612,25 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   const size_t inputBytes = validateForward(x, output, tokens);
   const size_t routingBytes = size_t(tokens) * config().topK * 4;
   if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
+  const bool isW4 = config().weightDtype == WeightDtype::Mxfp4;
+  const bool local = !isW4 && !config().combineRouteWeights && config().worldSize == 1 && config().numExperts == 1 &&
+                     config().topK == 1;
   // Cross-input aliases require the original ordered copies rather than concurrent staging.
   const bool fusedStage =
-      !overlaps(x, inputBytes, topkIds(), routingBytes) && !overlaps(x, inputBytes, topkWeights(), routingBytes) &&
-      !overlaps(ids, routingBytes, input(), inputBytes) && !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
+      !local && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
+      !overlaps(x, inputBytes, topkWeights(), routingBytes) && !overlaps(ids, routingBytes, input(), inputBytes) &&
+      !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
       !overlaps(scores, routingBytes, input(), inputBytes) && !overlaps(scores, routingBytes, topkIds(), routingBytes);
-  if (fusedStage) {
+  if (!isW4) {
+    stage(input(), x, inputBytes, stream);
+    if (fusedStage) {
+      validateStage(topkIds(), ids, routingBytes);
+      validateStage(topkWeights(), scores, routingBytes);
+    } else {
+      stage(topkIds(), ids, routingBytes, stream);
+      stage(topkWeights(), scores, routingBytes, stream);
+    }
+  } else if (fusedStage) {
     validateStage(input(), x, inputBytes);
     validateStage(topkIds(), ids, routingBytes);
     validateStage(topkWeights(), scores, routingBytes);
@@ -628,10 +656,23 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     checkJit(impl_->module->launchDirect(impl_->jitPlan->handle, launchInput, launchIds, launchScores, tokens, output,
                                          stream, signal, error, sizeof(error)),
              error, "launch");
-  } else {
+  } else if (isW4) {
     launchNativeW4A8(impl_->plan, launchInput, launchIds, launchScores, tokens, output, stream, signal);
+  } else {
+    launchNativeW8A16(impl_->plan, launchIds, launchScores, tokens, output, stream, signal);
   }
   impl_->startRecorded = signalStart;
+}
+
+void MegaMoeContext::forwardShared(const void* x, void* output, int tokens, cudaStream_t stream) {
+  if (config().weightDtype != WeightDtype::Mxfp8 || config().worldSize != 1 || config().numExperts != 1 ||
+      config().topK != 1)
+    throw std::invalid_argument(
+        "MegaMoE forwardShared requires weightDtype=Mxfp8, worldSize=1, numExperts=1, and topK=1");
+  const size_t inputBytes = validateForward(x, output, tokens);
+  stage(input(), x, inputBytes, stream);
+  impl_->startRecorded = false;
+  launchNativeSharedExpert(impl_->plan, tokens, output, stream);
 }
 
 void MegaMoeContext::waitUntilStarted(cudaStream_t stream) {

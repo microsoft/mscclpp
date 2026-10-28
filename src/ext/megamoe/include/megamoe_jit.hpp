@@ -37,6 +37,7 @@ typedef struct MegaMoeJitConfigV1 {
   float gateUpClamp;
   int32_t activationDtype;
   float activationScale;
+  int32_t combineRouteWeights;
 } MegaMoeJitConfigV1;
 
 typedef struct MegaMoeJitWeightsV1 {

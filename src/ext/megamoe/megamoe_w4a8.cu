@@ -7,7 +7,6 @@
 #include "megamoe_dispatch.cuh"
 #include "megamoe_epilogue.cuh"
 #include "megamoe_mma.cuh"
-#include "megamoe_roles.cuh"
 #include "megamoe_routing.cuh"
 #include "megamoe_tasks.cuh"
 #include "megamoe_w4a8_roles.cuh"
@@ -121,7 +120,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
         runEpilogueRole<Schedule>(p, s, accumulatePipeline, tmemStorage.accumulators, hidden, intermediate, cluster,
-                                  tasks);
+                                  tasks, output);
       } else {
         runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
                    warp, cta, cluster, tasks);
@@ -132,7 +131,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
     // Arrive without waiting so copies overlap the compute-side initialization.
     cute::cluster_arrive_relaxed();
-    runW4A8DispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
+    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
   }
   // Join even idle roles before the next register reconfiguration.
   __syncthreads();
@@ -145,31 +144,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
-  // EP1/topK=1 FC2 has already drained its direct TMA stores. No peer can still contribute and there is no
-  // partial-output consumer, so kernel completion provides the only remaining ordering.
-  if constexpr (ActDtype == ActivationDtype::Mxfp8) {
-    if (p.config.worldSize == 1 && p.config.topK == 1) return;
-  }
-  traceKernel(KernelTracePhase::OutputJoin, true);
-  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
-  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
-    traceKernel(KernelTracePhase::OutputJoin, false);
-    return;
-  }
-  if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
-  if (threadIdx.x < p.config.worldSize) {
-    // Only CTA0 consumes the peer notification; followers observe the same epoch.
-    if (blockIdx.x == 0)
-      signalAndWait(p, threadIdx.x);
-    else if (threadIdx.x != p.config.rank)
-      waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
-                                         p.workspace.control->epoch);
-  }
-  __syncthreads();
-  traceKernel(KernelTracePhase::OutputJoin, false);
-  traceKernel(KernelTracePhase::Combine, true);
-  combineResults<Hidden>(p, tokens, output);
-  traceKernel(KernelTracePhase::Combine, false);
+  finishAndCombine<Hidden>(p, tokens, output);
 }
 
 struct W4A8KernelRegistration {

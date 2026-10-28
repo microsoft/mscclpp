@@ -14,9 +14,15 @@
 
 namespace mscclpp::megamoe {
 
+enum class WeightDtype : int32_t {
+  Mxfp4 = 0,
+  Mxfp8 = 1,
+};
+
 enum class ActivationDtype : int32_t {
   Mxfp8 = 0,
   Fp8Static = 1,
+  Bf16 = 2,
 };
 
 struct NativeConfig {
@@ -30,8 +36,10 @@ struct NativeConfig {
   int smMargin = 0;
   // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
   float gateUpClamp = -1.0f;
+  WeightDtype weightDtype = WeightDtype::Mxfp4;
   ActivationDtype activationDtype = ActivationDtype::Mxfp8;
   float activationScale = 1.0f;
+  bool combineRouteWeights = false;
 };
 
 struct SymmetricLayout {
@@ -92,6 +100,10 @@ size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
                       const float* scores, int numTokens, void* output, cudaStream_t stream,
                       uint32_t* kernelEntrySignal);
+void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int numTokens,
+                       void* output, cudaStream_t stream, uint32_t* kernelEntrySignal);
+void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
+                              cudaStream_t stream);
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE
 

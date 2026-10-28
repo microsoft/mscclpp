@@ -206,15 +206,19 @@ def _routing_summary(config, ids, tile_n):
 
 def _weights(config, device):
     import torch
-    from .quantization import quantize_mxfp4
+    from .quantization import quantize_mxfp4, quantize_mxfp8
 
     tensors = []
     for m, k in ((2 * config.intermediate, config.hidden), (config.hidden, config.intermediate)):
-        values = torch.empty((config.local_experts, m, k // 2), dtype=torch.uint8, device=device)
+        values = torch.empty(
+            (config.local_experts, m, k if config.is_w8a16 else k // 2),
+            dtype=torch.float8_e4m3fn if config.is_w8a16 else torch.uint8,
+            device=device,
+        )
         scales = torch.empty((config.local_experts, m, k // 32), dtype=torch.uint8, device=device)
         for expert in range(config.local_experts):
             source = torch.randn((m, k), dtype=torch.float32, device=device) / k**0.5
-            quantized, scale = quantize_mxfp4(source)
+            quantized, scale = quantize_mxfp8(source) if config.is_w8a16 else quantize_mxfp4(source)
             values[expert].copy_(quantized)
             scales[expert].copy_(scale)
         tensors.extend((values, scales))
@@ -249,6 +253,22 @@ def _reference(config, inputs, ids, scores, weights):
         token, slot = torch.where(all_ids == config.rank * config.local_experts + expert)
         if not token.numel():
             continue
+        if config.is_w8a16:
+            first = dequantize_mxfp8(fc1[expert], fc1_scale[expert], dtype=torch.bfloat16).float()
+            second = dequantize_mxfp8(fc2[expert], fc2_scale[expert], dtype=torch.bfloat16).float()
+            gate, up = (all_inputs[token].float() @ first.T).chunk(2, dim=-1)
+            if config.gate_up_clamp >= 0:
+                gate = gate.clamp(max=config.gate_up_clamp)
+                up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
+            if config.combine_route_weights:
+                hidden = (functional.silu(gate) * up).to(torch.bfloat16)
+                partial[token, slot] = (hidden.float() @ second.T).to(torch.bfloat16).float() * all_scores[
+                    token, slot, None
+                ]
+            else:
+                hidden = (functional.silu(gate) * up * all_scores[token, slot, None]).to(torch.bfloat16)
+                partial[token, slot] = (hidden.float() @ second.T).to(torch.bfloat16).float()
+            continue
         first = dequantize_mxfp4(fc1[expert], fc1_scale[expert], dtype=torch.float32)
         second = dequantize_mxfp4(fc2[expert], fc2_scale[expert], dtype=torch.float32)
         if config.is_static_fp8:
@@ -263,12 +283,20 @@ def _reference(config, inputs, ids, scores, weights):
         hidden = functional.silu(gate) * up
         if config.is_static_fp8:
             hidden = quantize_fp8_static(hidden, config.activation_scale).float()
-            result = (hidden @ second.T) * all_scores[token, slot, None]
-            partial[token, slot] = quantize_fp8_static(result, 1.0).float()
+            if config.combine_route_weights:
+                result = hidden @ second.T
+                partial[token, slot] = quantize_fp8_static(result, 1.0).float() * all_scores[token, slot, None]
+            else:
+                result = (hidden @ second.T) * all_scores[token, slot, None]
+                partial[token, slot] = quantize_fp8_static(result, 1.0).float()
         else:
             hidden = dequantize_mxfp8(*quantize_mxfp8(hidden), dtype=torch.float32)
-            result = (hidden @ second.T) * all_scores[token, slot, None]
-            partial[token, slot] = result.to(torch.bfloat16).float()
+            if config.combine_route_weights:
+                result = hidden @ second.T
+                partial[token, slot] = result.to(torch.bfloat16).float() * all_scores[token, slot, None]
+            else:
+                result = (hidden @ second.T) * all_scores[token, slot, None]
+                partial[token, slot] = result.to(torch.bfloat16).float()
     host_partial = partial.cpu()
     if config.world_size > 1:
         dist.all_reduce(host_partial)
@@ -321,10 +349,16 @@ def main():
         help="log-normal sigma for lognormal routing pattern (default: 0.85, matching c1024-decode-all-ranks-p50)",
     )
     parser.add_argument(
+        "--weight-dtype",
+        choices=("mxfp4", "mxfp8"),
+        default="mxfp4",
+        help="weight quantization mode (mxfp4 for W4A8, mxfp8 for W8A16)",
+    )
+    parser.add_argument(
         "--activation-dtype",
-        choices=("mxfp8", "fp8_static"),
+        choices=("mxfp8", "fp8_static", "bf16"),
         default="mxfp8",
-        help="activation and combine quantization mode (mxfp8 block-scaled or fp8_static per-tensor scaled)",
+        help="activation and combine mode (mxfp8, fp8_static, or bf16 for W8A16)",
     )
     parser.add_argument("--activation-scale", type=float, default=None, help="static FP8 activation scale")
     parser.add_argument("--tile-k", type=int, default=None, help="override W4A8KernelConfig.tile_k")
@@ -378,11 +412,18 @@ def main():
     parser.add_argument("--atol", type=float, default=None)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--bootstrap-port", type=int, default=None, help="MSCCL++ port (default MASTER_PORT+1)")
+    parser.add_argument(
+        "--combine-route-weights",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="apply routing weights in combine instead of FC1/FC2",
+    )
     parser.add_argument("--json-output", default=None, help="optional output path")
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
-    if (args.hidden, args.intermediate) not in (
+    is_w8a16 = args.weight_dtype == "mxfp8" or args.activation_dtype == "bf16"
+    if not is_w8a16 and (args.hidden, args.intermediate) not in (
         (4096, 5120),
         (4096, 6656),
         (8192, 4096),
@@ -421,11 +462,13 @@ def main():
         top_k=args.top_k,
         sm_margin=args.sm_margin,
         gate_up_clamp=args.gate_up_clamp,
+        weight_dtype=args.weight_dtype,
         activation_dtype=args.activation_dtype,
         activation_scale=args.activation_scale,
+        combine_route_weights=args.combine_route_weights,
     )
     kernel_config = W4A8KernelConfig()
-    if args.w4_profile is not None:
+    if not config.is_w8a16 and args.w4_profile is not None:
         kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
     policy_overrides = {
         name: getattr(args, name)
@@ -452,7 +495,7 @@ def main():
     }
     if policy_overrides:
         kernel_config = replace(kernel_config, **policy_overrides)
-    kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
+    kernel = None if config.is_w8a16 else compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
     # All timed expert communication uses the native MSCCL++ CudaIpc mappings.

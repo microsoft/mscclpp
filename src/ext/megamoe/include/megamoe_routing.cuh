@@ -169,10 +169,11 @@ __device__ void processSourceRouteChunks(const P& p, int nTokens, const int32_t*
     }
     if constexpr (Publish) {
       const bool isRemote = ownerRank >= 0 && ownerRank != c.rank;
-      if (routeIndex < nRoutes && (shouldStageScores || isRemote)) {
+      const bool sendRemoteWeights = isRemote && !c.combineRouteWeights;
+      if (routeIndex < nRoutes && (shouldStageScores || sendRemoteWeights)) {
         float weight = scores ? scores[routeIndex] : localScores[routeIndex];
         if (shouldStageScores) localScores[routeIndex] = weight;
-        if (isRemote) weightPackets[routeIndex].write(mscclpp::bit_cast<uint32_t>(weight), uint32_t(epoch));
+        if (sendRemoteWeights) weightPackets[routeIndex].write(mscclpp::bit_cast<uint32_t>(weight), uint32_t(epoch));
       }
       if (shouldSendHeaders) {
         auto* ownerPackets = isRemote ? peerAt<mscclpp::LL8Packet>(p, ownerRank, p.symmetric.routingPackets) : nullptr;
@@ -346,7 +347,7 @@ MSCCLPP_DEVICE_INLINE void resetReadyCounters(const P& p, int nTokenBlocks) {
 // whose routes exceed the scratch rescans them instead.
 template <bool FixedTokenCount = false, class P>
 __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = nullptr, const float* scores = nullptr) {
-  using SharedStorage = W4A8SharedStorageT<typename P::Collective>;
+  using SharedStorage = typename P::SharedStorage;
   const auto& c = p.config;
   const auto& w = p.workspace;
   // Issue this CTA's first route load ahead of the routing setup, which hides its latency.

@@ -24,22 +24,37 @@ __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
 }
 
 template <class P>
-__device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate) {
+__device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
+  if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
+  return p.workspace.control->tokenBlocks;
+}
+
+template <class P>
+__device__ __forceinline__ TokenBlock resolveTokenBlock(const P& p, int& block, int& m, int tiles, int tokens) {
+  if constexpr (P::LocalExpert) {
+    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0};
+  }
+  TokenBlock tokenBlock = p.workspace.blocks[block];
+  if (tokenBlock.groupShift > 0) {
+    int inGroup = int(tokenBlock.groupOffset) * tiles + m;
+    block += (inGroup & ((1 << tokenBlock.groupShift) - 1)) - int(tokenBlock.groupOffset);
+    m = inGroup >> tokenBlock.groupShift;
+  }
+  return tokenBlock;
+}
+
+template <class P>
+__device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate, int tokens = 0) {
   int fc1Tiles = fc1TaskTiles<P>(intermediate);
   int fc2Tiles = fc2TaskTiles<P>(hidden);
-  int fc1Tasks = p.workspace.control->tokenBlocks * fc1Tiles;
+  int fc1Tasks = taskTokenBlocks(p, tokens) * fc1Tiles;
   bool fc1 = ordinal < fc1Tasks;
   int local = fc1 ? ordinal : ordinal - fc1Tasks;
   int tiles = fc1 ? fc1Tiles : fc2Tiles;
   int block, m;
   (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
-  TokenBlock tokens = p.workspace.blocks[block];
-  if (tokens.groupShift > 0) {
-    int inGroup = int(tokens.groupOffset) * tiles + m;
-    block += (inGroup & ((1 << tokens.groupShift) - 1)) - int(tokens.groupOffset);
-    m = inGroup >> tokens.groupShift;
-  }
-  return Task{fc1, block, m, tokens};
+  TokenBlock tokenBlock = resolveTokenBlock(p, block, m, tiles, tokens);
+  return Task{fc1, block, m, tokenBlock};
 }
 
 template <class P>

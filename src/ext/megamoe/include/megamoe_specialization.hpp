@@ -66,6 +66,9 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
+constexpr int W8LoadStages = 4;
+constexpr int W8TransformStages = 4;
+
 constexpr int W4ClusterSize = MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE;
 constexpr int W4TileM = 128 * W4ClusterSize;
 constexpr int W4TileN = MSCCLPP_MEGAMOE_W4_TILE_N;
@@ -121,6 +124,20 @@ struct TilePolicy {
   static constexpr int CtaM = M / ClusterSize;
   static constexpr int Fc1M = M / 2;
   static constexpr int CtaFc1M = CtaM / 2;
+};
+
+template <bool Local = false>
+struct W8A16WarpSchedule {
+  static constexpr int NumWarps = Local ? 12 : 16;
+  static constexpr int EpilogueBegin = 0;
+  static constexpr int EpilogueEnd = 4;
+  static constexpr int MmaWarp = 4;
+  static constexpr int LoadAWarp = 5;
+  static constexpr int LoadBWarp = 6;
+  static constexpr int DispatchBegin = 8;
+  static constexpr int DispatchEnd = Local ? 8 : 12;
+  static constexpr int TransformBegin = Local ? 8 : 12;
+  static constexpr int TransformEnd = Local ? 12 : 16;
 };
 
 template <int NumWarps_, int EpilogueWarps, int DispatchWarps>

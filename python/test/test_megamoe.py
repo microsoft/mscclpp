@@ -56,15 +56,38 @@ def test_config_preserves_positional_gate_clamp():
         {"gate_up_clamp": float("inf")},
         {"max_tokens": 2**30},
         {"hidden": 2**31},
-        {"activation_dtype": "bf16"},
+        {"weight_dtype": "fp8"},
+        {"weight_dtype": "mxfp8", "activation_dtype": "fp8_static"},
+        {"weight_dtype": "mxfp8", "activation_scale": 1.0},
         {"activation_scale": 0.0},
         {"activation_scale": -1.0},
         {"activation_scale": float("nan")},
+        {"combine_route_weights": 1},
     ],
 )
 def test_config_rejects_invalid(override):
     with pytest.raises(ValueError):
         _config(**override)
+
+
+def test_w8a16_config_and_local_expert():
+    cfg = _config(weight_dtype="mxfp8")
+    assert cfg.is_w8a16
+    assert cfg.weight_dtype == "mxfp8"
+    assert cfg.activation_dtype == "bf16"
+    cfg_bf16 = _config(activation_dtype="bf16")
+    assert cfg_bf16.is_w8a16
+    assert cfg_bf16.weight_dtype == "mxfp8"
+    local_cfg = _config(
+        world_size=1,
+        max_tokens=16,
+        hidden=128,
+        intermediate=128,
+        num_experts=1,
+        top_k=1,
+        weight_dtype="mxfp8",
+    )
+    assert local_cfg.is_w8a16 and local_cfg.local_experts == 1
 
 
 def test_static_fp8_config_and_roundtrip():
@@ -146,3 +169,211 @@ def test_benchmark_unbalanced_routing_generation(pattern):
         counts = _build_global_expert_counts(config, pattern, 1.2, 1234)
         assert len(counts) == 128 and sum(counts) == 4 * 64 * 8
         assert max(counts) > min(counts)
+
+
+def test_native_w8a16_local_and_shared_expert_graph():
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    config = _config(
+        world_size=1,
+        max_tokens=33,
+        hidden=128,
+        intermediate=128,
+        num_experts=1,
+        top_k=1,
+        sm_margin=32,
+        weight_dtype="mxfp8",
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    generator = torch.Generator(device=device).manual_seed(1729)
+    source1 = torch.randn((1, 256, 128), generator=generator, device=device).mul_(0.03125)
+    source2 = torch.randn((1, 128, 128), generator=generator, device=device).mul_(0.03125)
+    fc1, scale1 = quantize_mxfp8(source1)
+    fc2, scale2 = quantize_mxfp8(source2)
+    first = dequantize_mxfp8(fc1, scale1, dtype=torch.bfloat16).float()[0]
+    second = dequantize_mxfp8(fc2, scale2, dtype=torch.bfloat16).float()[0]
+    context = MegaMoE(config, Communicator(bootstrap), fc1, scale1, fc2, scale2)
+    inputs = torch.randn((33, 128), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
+    ids = torch.zeros((33, 1), dtype=torch.int32, device=device)
+    ids[::5] = -1
+    scores = torch.rand((33, 1), generator=generator, device=device, dtype=torch.float32)
+
+    gate, up = (inputs.float() @ first.T).chunk(2, dim=-1)
+    shared_hidden = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+    expected_shared = (shared_hidden.float() @ second.T).to(torch.bfloat16)
+    out_shared = context.forward_shared(inputs)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(out_shared, expected_shared, rtol=0.02, atol=0.001)
+
+    active = (ids[:, 0] == 0).unsqueeze(-1)
+    weighted_hidden = (torch.nn.functional.silu(gate) * up * torch.where(active, scores, 0.0)).to(torch.bfloat16)
+    expected_local = torch.where(active, (weighted_hidden.float() @ second.T).to(torch.bfloat16), 0)
+    out_local = context(inputs, ids, scores)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(out_local, expected_local, rtol=0.02, atol=0.001)
+    del context
+
+
+def test_native_w8a16_routed_and_graph():
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    config = _config(
+        world_size=1,
+        max_tokens=65,
+        hidden=384,
+        intermediate=640,
+        num_experts=4,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        gate_up_clamp=0.125,
+        weight_dtype="mxfp8",
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    generator = torch.Generator(device=device).manual_seed(4189)
+    source1 = torch.randn((4, 1280, 384), generator=generator, device=device).mul_(0.03125)
+    source2 = torch.randn((4, 384, 640), generator=generator, device=device).mul_(0.03125)
+    fc1, sf1 = quantize_mxfp8(source1)
+    fc2, sf2 = quantize_mxfp8(source2)
+    context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
+    assert context.effective_kernel_config["tile_n"] == 128
+    assert context.effective_kernel_config["transform_stages"] == 4
+    first = dequantize_mxfp8(fc1, sf1, dtype=torch.bfloat16).float()
+    second = dequantize_mxfp8(fc2, sf2, dtype=torch.bfloat16).float()
+    inputs = torch.randn((65, 384), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
+    ids = torch.arange(65, device=device, dtype=torch.int32).remainder(4)
+    ids = torch.stack((ids, (ids + 1).remainder(4)), dim=1).contiguous()
+    scores = torch.rand((65, 2), generator=generator, device=device)
+    scores /= scores.sum(dim=1, keepdim=True)
+    output = torch.empty_like(inputs)
+
+    def reference(tokens):
+        partial = torch.zeros((tokens, 2, 384), device=device, dtype=torch.float32)
+        for expert in range(4):
+            rows, slots = torch.where(ids[:tokens] == expert)
+            if rows.numel() == 0:
+                continue
+            gate, up = (inputs[rows].float() @ first[expert].T).chunk(2, dim=-1)
+            gate = gate.clamp(max=0.125)
+            up = up.clamp(-0.125, 0.125)
+            hidden = (torch.nn.functional.silu(gate) * up * scores[rows, slots, None]).to(torch.bfloat16)
+            partial[rows, slots] = (hidden.float() @ second[expert].T).to(torch.bfloat16).float()
+        return partial.sum(dim=1).to(torch.bfloat16)
+
+    for tokens in (65, 32, 1, 0, 49):
+        context(inputs[:tokens], ids[:tokens], scores[:tokens], output=output[:tokens])
+        expected = reference(tokens)
+        torch.cuda.synchronize()
+        torch.testing.assert_close(output[:tokens], expected, rtol=0.02, atol=0.001)
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    with torch.cuda.graph(graph, stream=stream):
+        context(inputs[:49], ids[:49], scores[:49], output=output[:49], stream=stream)
+    with torch.cuda.stream(stream):
+        inputs.neg_()
+        for _ in range(10):
+            graph.replay()
+    stream.synchronize()
+    torch.testing.assert_close(output[:49], reference(49), rtol=0.02, atol=0.001)
+    torch.cuda.synchronize()
+    del graph, context
+
+    config_combine = _config(
+        world_size=1,
+        max_tokens=65,
+        hidden=384,
+        intermediate=640,
+        num_experts=4,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        gate_up_clamp=0.125,
+        weight_dtype="mxfp8",
+        combine_route_weights=True,
+    )
+    context_combine = MegaMoE(config_combine, Communicator(bootstrap), fc1, sf1, fc2, sf2, tag=18100)
+
+    def reference_combine(tokens):
+        partial = torch.zeros((tokens, 2, 384), device=device, dtype=torch.float32)
+        for expert in range(4):
+            rows, slots = torch.where(ids[:tokens] == expert)
+            if rows.numel() == 0:
+                continue
+            gate, up = (inputs[rows].float() @ first[expert].T).chunk(2, dim=-1)
+            gate = gate.clamp(max=0.125)
+            up = up.clamp(-0.125, 0.125)
+            hidden = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+            partial[rows, slots] = (hidden.float() @ second[expert].T).to(torch.bfloat16).float() * scores[
+                rows, slots, None
+            ]
+        return partial.sum(dim=1).to(torch.bfloat16)
+
+    context_combine(inputs[:49], ids[:49], scores[:49], output=output[:49])
+    torch.cuda.synchronize()
+    torch.testing.assert_close(output[:49], reference_combine(49), rtol=0.02, atol=0.001)
+    del context_combine
+
+
+@pytest.mark.parametrize("activation_dtype,activation_scale", [("mxfp8", None), ("fp8_static", 0.25)])
+def test_native_w4a8_combine_route_weights(activation_dtype, activation_scale):
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+    from mscclpp.ext.megamoe.benchmark import _reference, _weights
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    config = _config(
+        world_size=1,
+        max_tokens=33,
+        hidden=4096,
+        intermediate=5120,
+        num_experts=4,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        activation_dtype=activation_dtype,
+        activation_scale=activation_scale,
+        combine_route_weights=True,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    torch.manual_seed(5179)
+    weights = _weights(config, device)
+    context = MegaMoE(config, Communicator(bootstrap), *weights)
+    inputs = torch.randn((33, 4096), device=device, dtype=torch.bfloat16).mul_(0.125)
+    ids = torch.arange(33, device=device, dtype=torch.int32).remainder(4)
+    ids = torch.stack((ids, (ids + 1).remainder(4)), dim=1).contiguous()
+    ids[::7, 1] = -1
+    scores = torch.rand((33, 2), device=device, dtype=torch.float32)
+    scores[ids == -1] = float("nan")
+    output = context(inputs, ids, scores, validate_routing=False)
+    torch.cuda.synchronize()
+    expected = _reference(config, inputs, ids, torch.where(ids >= 0, scores, 0.0), weights)
+    torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
+    del context

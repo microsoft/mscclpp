@@ -32,8 +32,10 @@ class MegaMoEConfig:
     top_k: int
     sm_margin: int = 0
     gate_up_clamp: float = -1.0
+    weight_dtype: str = "mxfp4"
     activation_dtype: str = "mxfp8"
     activation_scale: float | None = None
+    combine_route_weights: bool = False
 
     def __post_init__(self):
         for name in (
@@ -61,17 +63,30 @@ class MegaMoEConfig:
             raise ValueError("top_k must be in [1, min(32, num_experts)]")
         if self.world_size * self.max_tokens * self.top_k > 2**31 - 1:
             raise ValueError("routing capacity exceeds signed 32-bit indexing")
-        if self.hidden < 4096:
-            raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
-        if (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
-            raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
+        if not isinstance(self.combine_route_weights, bool):
+            raise ValueError("combine_route_weights must be a bool")
+        if not isinstance(self.weight_dtype, str) or self.weight_dtype not in ("mxfp4", "mxfp8"):
+            raise ValueError("weight_dtype must be 'mxfp4' or 'mxfp8'")
         if not isinstance(self.activation_dtype, str) or self.activation_dtype not in (
             "mxfp8",
             "fp8_static",
+            "bf16",
         ):
-            raise ValueError("activation_dtype must be 'mxfp8' or 'fp8_static'")
+            raise ValueError("activation_dtype must be 'mxfp8', 'fp8_static', or 'bf16'")
+        if self.weight_dtype == "mxfp8" and self.activation_dtype == "mxfp8" and self.activation_scale is None:
+            object.__setattr__(self, "activation_dtype", "bf16")
+        elif self.activation_dtype == "bf16" and self.weight_dtype == "mxfp4":
+            object.__setattr__(self, "weight_dtype", "mxfp8")
+        if self.weight_dtype == "mxfp8":
+            if self.activation_dtype != "bf16" or self.activation_scale is not None:
+                raise ValueError("weight_dtype='mxfp8' requires activation_dtype='bf16' without activation_scale")
+        else:
+            if self.hidden < 4096:
+                raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
+            if (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
+                raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if self.activation_scale is not None:
             if (
                 isinstance(self.activation_scale, bool)
@@ -85,6 +100,11 @@ class MegaMoEConfig:
                 object.__setattr__(self, "activation_dtype", "fp8_static")
         elif self.activation_dtype == "fp8_static":
             object.__setattr__(self, "activation_scale", 1.0)
+
+    @property
+    def is_w8a16(self) -> bool:
+        """Whether weights use MXFP8 (E4M3 + E8M0 K32) and activations use BF16."""
+        return self.weight_dtype == "mxfp8"
 
     @property
     def is_static_fp8(self) -> bool:
@@ -171,18 +191,21 @@ class MegaMoE:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError("Construct MegaMoE before CUDA Graph capture")
         e, h, i = config.local_experts, config.hidden, config.intermediate
-        fc1_shape = (e, 2 * i, h // 2)
-        fc2_shape = (e, h, i // 2)
-        _tensor(fc1, "fc1", fc1_shape, torch.uint8, self.device)
+        fc1_shape = (e, 2 * i, h if config.is_w8a16 else h // 2)
+        fc2_shape = (e, h, i if config.is_w8a16 else i // 2)
+        weight_dtype = torch.float8_e4m3fn if config.is_w8a16 else torch.uint8
+        _tensor(fc1, "fc1", fc1_shape, weight_dtype, self.device)
         _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
-        _tensor(fc2, "fc2", fc2_shape, torch.uint8, self.device)
+        _tensor(fc2, "fc2", fc2_shape, weight_dtype, self.device)
         _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
         if kernel is None:
             kernel = load_cached_kernel("builtin")
         if not isinstance(kernel, (W4A8KernelConfig, CompiledKernel)):
             raise TypeError("kernel must be W4A8KernelConfig, CompiledKernel, or None")
+        if config.is_w8a16 and (isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin"):
+            raise ValueError("W4A8KernelConfig requires weight_dtype='mxfp4'")
         selected = kernel if isinstance(kernel, W4A8KernelConfig) else kernel.config
-        cluster_size = selected.cluster_size
+        cluster_size = 2 if config.is_w8a16 else selected.cluster_size
         if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - cluster_size:
             raise ValueError(f"sm_margin must leave at least {cluster_size} SMs for the selected cluster")
         if isinstance(kernel, W4A8KernelConfig):
@@ -199,12 +222,20 @@ class MegaMoE:
             "top_k",
             "sm_margin",
             "gate_up_clamp",
+            "combine_route_weights",
         ):
             setattr(native_config, name, getattr(config, name))
+        native_config.weight_dtype = (
+            _mscclpp.CppMegaMoeWeightDtype.Mxfp8 if config.is_w8a16 else _mscclpp.CppMegaMoeWeightDtype.Mxfp4
+        )
         native_config.activation_dtype = (
-            _mscclpp.CppMegaMoeActivationDtype.Fp8Static
-            if config.is_static_fp8
-            else _mscclpp.CppMegaMoeActivationDtype.Mxfp8
+            _mscclpp.CppMegaMoeActivationDtype.Bf16
+            if config.is_w8a16
+            else (
+                _mscclpp.CppMegaMoeActivationDtype.Fp8Static
+                if config.is_static_fp8
+                else _mscclpp.CppMegaMoeActivationDtype.Mxfp8
+            )
         )
         native_config.activation_scale = float(config.activation_scale or 1.0)
         self._native = _mscclpp.CppMegaMoeContext.create(
@@ -249,6 +280,8 @@ class MegaMoE:
             "adaptive_cache_weights": self._native.kernel_adaptive_cache_weights,
             "cluster_size": self._native.kernel_cluster_size,
         }
+        if self.config.is_w8a16:
+            policy["transform_stages"] = self._native.kernel_transform_stages
         return policy
 
     @property
@@ -308,6 +341,37 @@ class MegaMoE:
         stream = self._stream(stream)
         with torch.cuda.device(self.device):
             self._native.wait_until_started(stream.cuda_stream)
+
+    def forward_shared(self, inputs, *, output=None, stream=None):
+        """Enqueue one unweighted local W8A16 expert and return BF16 [T,H] output on ``stream``."""
+        import torch
+
+        if (
+            not self.config.is_w8a16
+            or self.config.combine_route_weights
+            or (
+                self.config.world_size,
+                self.config.num_experts,
+                self.config.top_k,
+            )
+            != (1, 1, 1)
+        ):
+            raise ValueError("forward_shared requires weight_dtype='mxfp8', world_size=1, num_experts=1, and top_k=1")
+        stream = self._stream(stream)
+        if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
+            raise ValueError("inputs must be a rank-2 torch.Tensor")
+        t, h = inputs.shape
+        if t > self.config.max_tokens:
+            raise ValueError("input token count exceeds max_tokens")
+        _tensor(inputs, "inputs", (t, self.config.hidden), torch.bfloat16, self.device)
+        with torch.cuda.device(self.device), torch.cuda.stream(stream):
+            if output is None:
+                output = torch.empty((t, h), dtype=torch.bfloat16, device=self.device)
+            _tensor(output, "output", (t, h), torch.bfloat16, self.device)
+            inputs.record_stream(stream)
+            output.record_stream(stream)
+            self._native.forward_shared(inputs.data_ptr(), output.data_ptr(), t, stream.cuda_stream)
+        return output
 
     def forward(
         self, inputs, topk_ids, topk_weights, *, output=None, stream=None, validate_routing=False, signal_start=False

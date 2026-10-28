@@ -26,8 +26,8 @@ MSCCLPP_DEVICE_INLINE float loadRouteWeight(const P& p, const Route& route) {
 }
 
 template <class Types, class Storage>
-__device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp, int* counter, bool hasRow,
-                                                 uint32_t phase) {
+__device__ __forceinline__ void publishDispatchChunk(Storage& storage, int localWarp, int* counter, bool hasRow,
+                                                     uint32_t phase) {
 #if MSCCLPP_BULK_AVAILABLE
   // Every warp arrives, including padded rows; only live rows contribute to readiness.
   constexpr uint32_t Arrival = 1u << 16;
@@ -53,9 +53,9 @@ __device__ __forceinline__ void publishW4A8Chunk(Storage& storage, int localWarp
 }
 
 template <int DispatchBytes, int DispatchStages, class P, class Storage, class NextLoad>
-__device__ __forceinline__ void storeW4A8Chunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
-                                               uint8_t* destination, int bytes, uint32_t& phase, bool issueNext,
-                                               NextLoad&& loadNext) {
+__device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
+                                                   uint8_t* destination, int bytes, uint32_t& phase, bool issueNext,
+                                                   NextLoad&& loadNext) {
 #if MSCCLPP_BULK_AVAILABLE
   int lane = threadIdx.x % warpSize;
   int stage = chunk % DispatchStages;
@@ -144,10 +144,10 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
 }
 
 template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int localWarp) {
+__device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   using Types = typename P::Collective;
-  static_assert(Hidden > 0);
+  static_assert(Hidden >= 0);
   static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
   static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
   static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
@@ -166,8 +166,10 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
   // All dispatch warps must observe the leader's cleared counters and initialized barriers before publishing.
   cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
   uint32_t loadPhases[DispatchStages] = {};
-  constexpr int hidden = Hidden;
-  constexpr int chunks = (Hidden + DispatchBytes - 1) / DispatchBytes;
+  constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
+  const int hidden = Hidden > 0 ? Hidden : p.config.hidden;
+  const int rowBytes = hidden * ElemBytes;
+  const int chunks = (rowBytes + DispatchBytes - 1) / DispatchBytes;
   constexpr int TileN = P::Tiles::N;
   constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
   static_assert((nDispatchGroupsPerTile & (nDispatchGroupsPerTile - 1)) == 0,
@@ -195,18 +197,20 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
     Route route{};
     if (hasRow) route = w.routes[row];
     hasRow = hasRow && route.rank >= 0;
-    // Local input quantization precedes this kernel; remote inputs are ordered by
+    // Local input staging/quantization precedes this kernel; remote inputs are ordered by
     // the source's current-epoch route packets consumed in prepareRoutes.
-    auto* source =
-        hasRow ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInput) + size_t(route.token) * hidden : nullptr;
-    auto* sourceScale = hasRow ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
-                                     size_t(route.token) * w4SourceScaleStride(hidden)
-                               : nullptr;
-    auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * hidden : nullptr;
+    constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
+    auto* source = hasRow ? peerAt<uint8_t>(p, route.rank, IsBf16 ? p.symmetric.input : p.symmetric.quantizedInput) +
+                                size_t(route.token) * rowBytes
+                          : nullptr;
+    auto* sourceScale = (!IsBf16 && hasRow) ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
+                                                  size_t(route.token) * w4SourceScaleStride(hidden)
+                                            : nullptr;
+    auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * rowBytes : nullptr;
     auto load = [&](int chunk) {
       int stage = chunk % DispatchStages;
-      int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
-      if constexpr (P::Activation == ActivationDtype::Fp8Static) {
+      int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
+      if constexpr (P::Activation != ActivationDtype::Mxfp8) {
         barriers[stage].arriveAndExpect(bytes);
         bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
       } else {
@@ -217,26 +221,26 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
                  barriers[stage]);
       }
     };
-    float routeWeight = 0.0f;
+    float routeWeight = 1.0f;
     if (lane == 0 && hasRow) {
       bulkFence();
 #pragma unroll
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
-      routeWeight = loadRouteWeight(p, route);
+      if (!p.config.combineRouteWeights) routeWeight = loadRouteWeight(p, route);
     }
     auto process = [&](int chunk) {
       int stage = chunk % DispatchStages;
-      int bytes = min(DispatchBytes, hidden - chunk * DispatchBytes);
+      int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
       if (hasRow)
-        storeW4A8Chunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
-                                                      loadPhases[stage], chunk + DispatchStages < chunks,
-                                                      [&] { load(chunk + DispatchStages); });
+        storeDispatchChunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
+                                                          loadPhases[stage], chunk + DispatchStages < chunks,
+                                                          [&] { load(chunk + DispatchStages); });
       if (lane == 0) {
         auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
-        if (hasRow && chunk == chunks - 1) w.routes[row].weight = routeWeight;
+        if (hasRow && chunk == chunks - 1 && !p.config.combineRouteWeights) w.routes[row].weight = routeWeight;
         publicationPhase ^= 1u;
-        publishW4A8Chunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
+        publishDispatchChunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
       }
       __syncwarp();
     };
@@ -250,11 +254,11 @@ __device__ __forceinline__ void dispatchW4A8Tokens(const P& p, Storage& s, int l
 }
 
 template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void runW4A8DispatchRole(const P& p, Storage& s, int warp) {
+__device__ __forceinline__ void runDispatchRole(const P& p, Storage& s, int warp) {
   using Schedule = typename P::Collective::WarpSchedule;
   if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
     traceKernel(KernelTracePhase::Dispatch, true);
-    dispatchW4A8Tokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
+    dispatchTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
     traceKernel(KernelTracePhase::Dispatch, false);
   }
 }

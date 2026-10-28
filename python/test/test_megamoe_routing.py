@@ -123,7 +123,17 @@ class _Runtime:
             pytest.fail("\n".join(message for message in errors if message), pytrace=False)
         return result
 
-    def config(self, capacity, *, local_experts=8, top_k=2, clamp=-1.0, hidden=4096, intermediate=6656):
+    def config(
+        self,
+        capacity,
+        *,
+        local_experts=8,
+        top_k=2,
+        clamp=-1.0,
+        hidden=4096,
+        intermediate=6656,
+        weight_dtype="mxfp4",
+    ):
         from mscclpp.ext.megamoe import MegaMoEConfig
 
         sms = self.torch.cuda.get_device_properties(self.device).multi_processor_count
@@ -137,6 +147,7 @@ class _Runtime:
             top_k=top_k,
             sm_margin=max(0, sms - 8),
             gate_up_clamp=clamp,
+            weight_dtype=weight_dtype,
         )
 
 
@@ -318,12 +329,20 @@ def _check_output(runtime, buffers, sample, expected):
     return output
 
 
+@pytest.mark.parametrize("weight_dtype", ["mxfp4", "mxfp8"])
 @pytest.mark.parametrize("top_k", [1, 2])
-def test_native_routing_capacity_boundary(routing_runtime, top_k):
+def test_native_routing_capacity_boundary(routing_runtime, top_k, weight_dtype):
     runtime, torch = routing_runtime, routing_runtime.torch
     routing_slots = 4096
     capacity = routing_slots // (runtime.world * top_k)
-    configs = [runtime.config(capacity + extra, top_k=top_k) for extra in (0, 1)]
+    hidden = 4096 if weight_dtype == "mxfp4" else 128
+    intermediate = 6656 if weight_dtype == "mxfp4" else 128
+    configs = [
+        runtime.config(
+            capacity + extra, top_k=top_k, hidden=hidden, intermediate=intermediate, weight_dtype=weight_dtype
+        )
+        for extra in (0, 1)
+    ]
     assert configs[0].world_size * configs[0].max_tokens * top_k == routing_slots
     assert configs[1].world_size * configs[1].max_tokens * top_k > routing_slots
     weights = _host_weights(configs[0])

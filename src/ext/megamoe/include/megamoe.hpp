@@ -65,6 +65,8 @@ class MegaMoeContext {
   int kernelTileK() const;
   /// Return the routed raw-weight/scale/activation load pipeline depth.
   int kernelLoadStages() const;
+  /// Return the routed transformed-weight pipeline depth (zero for W4A8).
+  int kernelTransformStages() const;
   /// Return the routed kernel warp count.
   int kernelNumWarps() const;
   /// Return the W4A8 transfer-role register budget.
@@ -117,6 +119,11 @@ class MegaMoeContext {
   /// before reusing the context, including before the next graph replay.
   /// @param stream Consumer stream on the context's device.
   void waitUntilStarted(cudaStream_t stream);
+
+  /// Enqueue one unweighted local expert without routing metadata or communication.
+  /// Requires weightDtype=Mxfp8, worldSize=1, numExperts=1, topK=1. Inputs/outputs
+  /// are BF16 [numTokens, hidden]. Shares the context's nonconcurrent workspace lifetime.
+  void forwardShared(const void* input, void* output, int numTokens, cudaStream_t stream);
 
  private:
   size_t validateForward(const void* input, void* output, int numTokens) const;
