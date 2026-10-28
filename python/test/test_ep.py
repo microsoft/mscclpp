@@ -972,6 +972,95 @@ def test_throughput_graph_replay(ep_group, layout, num_tokens, prepared):
 
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+def test_latency_expert_major_graph_replay(ep_group, combine_mode):
+    if ep_group.nranks < 2:
+        pytest.skip("requires at least two ranks")
+    num_tokens, capacity, active_capacity = 2, 3, 2
+    hidden_size = 1024
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.EXPERT_MAJOR,
+        combine_mode=combine_mode,
+        num_experts=ep_group.nranks,
+        hidden_size=hidden_size,
+        topk=1,
+        max_tokens_per_rank=capacity,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            input = torch.empty((num_tokens, hidden_size), dtype=torch.bfloat16, device="cuda")
+            routes = torch.full((num_tokens, 1), ep_group.my_rank, dtype=torch.int64, device="cuda")
+            weights = torch.tensor([[1.0], [0.5]], dtype=torch.float32, device="cuda")
+            output = torch.empty_like(input)
+            token_offsets = torch.arange(num_tokens, dtype=torch.float32, device="cuda")
+
+            def set_input(value):
+                values = token_offsets + value + ep_group.my_rank * num_tokens
+                input.copy_(values[:, None].expand_as(input))
+
+            def operation():
+                result, handle = runtime.dispatch(
+                    input,
+                    routes,
+                    weights,
+                    runtime_max_tokens_per_rank=active_capacity,
+                )
+                return result, handle, runtime.combine(result.tokens, handle, out=output)
+
+            def assert_result(result, combined, value, source):
+                assert result.layout.kind == DispatchLayout.EXPERT_MAJOR
+                assert result.layout.num_tokens_per_rank is None
+                counts = result.layout.num_tokens_per_expert
+                assert counts.shape == (1,)
+                expected_count = 0 if source is None else num_tokens
+                torch.testing.assert_close(
+                    counts,
+                    torch.tensor([expected_count], dtype=torch.int32, device="cuda"),
+                    rtol=0,
+                    atol=0,
+                )
+                if source is not None:
+                    actual_tokens = result.tokens[0, :num_tokens]
+                    actual_tokens = actual_tokens[actual_tokens[:, 0].argsort()]
+                    expected_values = token_offsets + value + source * num_tokens
+                    expected_tokens = expected_values[:, None].expand(-1, hidden_size).to(torch.bfloat16)
+                    torch.testing.assert_close(actual_tokens, expected_tokens, rtol=0, atol=0)
+                    expected_output = (input.float() * weights).to(torch.bfloat16)
+                else:
+                    expected_output = torch.zeros_like(input)
+                torch.testing.assert_close(combined, expected_output, rtol=0, atol=0)
+
+            set_input(1)
+            operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            set_input(2)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                result, handle, combined = operation()
+            stream.synchronize()
+            ep_group.barrier()
+
+            # Warmup leaves the peer source inactive; the first replay activates it.
+            for value, destination, source in (
+                (4, (ep_group.my_rank + 1) % ep_group.nranks, (ep_group.my_rank - 1) % ep_group.nranks),
+                (6, -1, None),
+                (8, ep_group.my_rank, ep_group.my_rank),
+            ):
+                set_input(value)
+                routes.fill_(destination)
+                graph.replay()
+                stream.synchronize()
+                ep_group.barrier()
+                assert_result(result, combined, value, source)
+
+            assert result.quant is None
+            assert handle.output_info.layout is result.layout
+
+
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("graph_iterations", [1, 2])
 @pytest.mark.parametrize(
     "data_type,scale",
