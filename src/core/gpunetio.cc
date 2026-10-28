@@ -111,7 +111,7 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
                        int port, int gidIndex)
     : pimpl_(std::make_unique<Impl>()) {
   if (!ibCtx->supportsRdmaAtomics()) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode requires RDMA atomics, which device ",
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires RDMA atomics, which device ",
           ibCtx->getDevName(), " does not support");
   }
   pimpl_->gpuId = gpuId;
@@ -120,12 +120,12 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   pimpl_->port = port;
   // The pinned DOCA GPUNetIO (non-SDK path) resolves the RoCE destination MAC on hard-coded port 1 during INIT->RTR.
   if (pimpl_->info.linkLayer == IBV_LINK_LAYER_ETHERNET && port != 1) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode supports only port 1 on RoCE devices (",
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode supports only port 1 on RoCE devices (",
           ibCtx->getDevName(), " port ", port, ")");
   }
   if ((pimpl_->info.linkLayer != IBV_LINK_LAYER_INFINIBAND || pimpl_->info.isGrh) && pimpl_->info.spn == 0 &&
       pimpl_->info.iid == 0) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode requires a nonzero GID for RoCE or GRH routing (",
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires a nonzero GID for RoCE or GRH routing (",
           ibCtx->getDevName(), " port ", port, " GID index ", pimpl_->gidIndex, ")");
   }
   checkMtu(pimpl_->info.mtu);
@@ -146,7 +146,7 @@ GpuNetIoQp::GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   int major;
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId));
   if (major < 9) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "IB GpuNetIo mode requires Hopper or newer for BlueFlame submission");
+    THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires Hopper or newer for BlueFlame submission");
   }
   attr.mreg_type = DOCA_GPUNETIO_VERBS_MEM_REG_TYPE_DEFAULT;
   attr.send_dbr_mode_ext = DOCA_GPUNETIO_VERBS_SEND_DBR_MODE_EXT_VALID_DBR;
@@ -258,7 +258,7 @@ struct GpuNetIoQp::Impl {
 
 GpuNetIoQp::GpuNetIoQp(IbCtx*, std::shared_ptr<GpuNetIoContext>&, Transport, int, int, int) {
   THROW(NET, Error, ErrorCode::InvalidUsage,
-        "IB GpuNetIo mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
+        "IB Device mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
 }
 
 GpuNetIoQp::~GpuNetIoQp() = default;
@@ -315,11 +315,11 @@ GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const E
       remotePidHash_(getImpl(remoteEndpoint).pidHash_),
       qp_(getImpl(localEndpoint).gpuNetIoQp_) {
   if (!qp_) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage, "local endpoint was not created in IB GpuNetIo mode");
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "local endpoint was not created in IB Device mode");
   }
   if (getImpl(remoteEndpoint).ibNoAtomic_) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "IB GpuNetIo mode signals with RDMA atomics; the remote endpoint must not use IB HostNoAtomic mode");
+          "IB Device mode signals with RDMA atomics; the remote endpoint must not use IB HostNoAtomic mode");
   }
   qp_->connect(getImpl(remoteEndpoint).ibQpInfo_);
   CudaDeviceGuard deviceGuard(localEndpoint.device().id);
@@ -428,7 +428,7 @@ void GpuNetIoChannel::requireBound(Host2DeviceSemaphore& semaphore, const std::s
   if (channel) return;
   if (std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore.connection()))) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "PortChannels over IB GpuNetIo-mode connections must be created with ProxyService::portChannel() or "
+          "PortChannels over IB Device-mode connections must be created with ProxyService::portChannel() or "
           "ProxyService::basePortChannel()");
   }
 }

@@ -4,7 +4,7 @@ By default, `PortChannel` operations over InfiniBand are pushed by GPU threads i
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
 the proxy from the data path. The setup flow and the `PortChannel` device API are unchanged; the backend is selected
-per endpoint with `EndpointConfig::Ib::Mode::GpuNetIo`.
+per endpoint with `EndpointConfig::Ib::Mode::Device`.
 
 ## Build
 
@@ -35,7 +35,7 @@ Create the connection with the GPUNetIO mode and build the channel with `ProxySe
 ```cpp
 mscclpp::EndpointConfig cfg;
 cfg.transport = mscclpp::Transport::IB0;
-cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::GpuNetIo;
+cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
 auto connection = communicator->connect(cfg, remoteRank).get();
 
 auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB0);

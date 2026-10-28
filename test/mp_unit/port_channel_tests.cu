@@ -498,7 +498,7 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   // The least nelem is 2 for packet ping pong
   for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
     *ret = 0;
-    if (ibMode == IbMode::GpuNetIo) {
+    if (ibMode == IbMode::Device) {
       kernelProxyLLPingPong<true, true>
           <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
     } else {
@@ -760,8 +760,8 @@ void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEt
   *ret = 0;
 
   proxyService->startProxy();
-  kernelPortChannelAccumulate<<<ibMode == IbMode::GpuNetIo ? 1 : 32, 1>>>(buff.memory().get(), 20, syncer.get(),
-                                                                          ret.get());
+  kernelPortChannelAccumulate<<<ibMode == IbMode::Device ? 1 : 32, 1>>>(buff.memory().get(), 20, syncer.get(),
+                                                                        ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   EXPECT_EQ(*ret, 0);
 
@@ -1194,7 +1194,7 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   proxyService->startProxy();
 
   // Warm-up
-  if (ibMode == IbMode::GpuNetIo) {
+  if (ibMode == IbMode::Device) {
     kernelSameChanConcurrentFlush<true><<<1, nThreads>>>(10);
   } else {
     kernelSameChanConcurrentFlush<false><<<1, nThreads>>>(10);
@@ -1206,7 +1206,7 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   // concurrent-flush caller waited on its own TriggerFlush (not someone else's earlier one).
   const int nIters = 500;
   mscclpp::Timer timer;
-  if (ibMode == IbMode::GpuNetIo) {
+  if (ibMode == IbMode::Device) {
     kernelSameChanConcurrentFlush<true><<<1, nThreads>>>(nIters);
   } else {
     kernelSameChanConcurrentFlush<false><<<1, nThreads>>>(nIters);
@@ -1366,7 +1366,7 @@ TEST(PortChannelFanInTest, AccumulateIb) {
 
 TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }
 
-// GPUNetIO (IbMode::GpuNetIo): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
+// GPUNetIO (IbMode::Device): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
 #if defined(MSCCLPP_USE_GPUNETIO)
 // GPUNetIO submits through BlueFlame, which requires Hopper or newer. Check every rank before any connection setup so
 // that an unsupported rank cannot leave a supported peer waiting for its endpoint.
@@ -1396,39 +1396,39 @@ inline void requireGpuNetIoCapableGpus() {
 #define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
 
-TEST(PortChannelOneToOneTest, PingPongIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, PingPongIbDeviceMode) {
   REQUIRE_GPUNETIO;
   testPingPong(PingPongTestParams{
-      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
 }
 
-TEST(PortChannelOneToOneTest, PingPongIbGpuNetIoModeWithPoll) {
+TEST(PortChannelOneToOneTest, PingPongIbDeviceModeWithPoll) {
   REQUIRE_GPUNETIO;
   testPingPong(PingPongTestParams{
-      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::GpuNetIo});
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Device});
 }
 
-TEST(PortChannelOneToOneTest, PacketPingPongIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, PacketPingPongIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testPacketPingPong(true, IbMode::GpuNetIo);
+  testPacketPingPong(true, IbMode::Device);
 }
 
-TEST(PortChannelOneToOneTest, AccumulateIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, AccumulateIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testAccumulate(false, true, false, IbMode::GpuNetIo);
+  testAccumulate(false, true, false, IbMode::Device);
 }
 
-TEST(PortChannelOneToOneTest, SameChanSerializedFlushIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, SameChanSerializedFlushIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testSameChanConcurrentFlush(IbMode::GpuNetIo);
+  testSameChanConcurrentFlush(IbMode::Device);
 }
 
-TEST(PortChannelOneToOneTest, HostAccumulateIbGpuNetIoModeRejected) {
+TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   REQUIRE_GPUNETIO;
-  testAccumulateRejected(ibTransport, IbMode::GpuNetIo, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
+  testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
 }
 
-TEST(PortChannelOneToOneTest, DirectConstructionIbGpuNetIoModeRejected) {
+TEST(PortChannelOneToOneTest, DirectConstructionIbDeviceModeRejected) {
   REQUIRE_GPUNETIO;
   const bool participates = gEnv->rank < numRanksToUse;
   bool rejectsDirect = false;
@@ -1439,7 +1439,7 @@ TEST(PortChannelOneToOneTest, DirectConstructionIbGpuNetIoModeRejected) {
     mscclpp::EndpointConfig cfg;
     cfg.transport = ibTransport;
     cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
-    cfg.ib.mode = IbMode::GpuNetIo;
+    cfg.ib.mode = IbMode::Device;
     auto conn = communicator->connect(cfg, peer).get();
     auto localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
     mscclpp::ProxyService service;
@@ -1477,7 +1477,7 @@ __global__ void kernelGpuNetIoSignalOrWaitOnce(bool sender) {
 // Destroy and rebuild a semaphore on the same connection several times. Each new semaphore must start counting from
 // zero, so a single signal must leave exactly 1 in the remote token, even if the remote token reuses the address of a
 // destroyed one.
-TEST(PortChannelOneToOneTest, SemaphoreRebuildIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, SemaphoreRebuildIbDeviceMode) {
   REQUIRE_GPUNETIO;
   const bool participates = gEnv->rank < numRanksToUse;
   const bool sender = gEnv->rank == 0;
@@ -1493,7 +1493,7 @@ TEST(PortChannelOneToOneTest, SemaphoreRebuildIbGpuNetIoMode) {
     mscclpp::EndpointConfig cfg;
     cfg.transport = ibTransport;
     cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
-    cfg.ib.mode = IbMode::GpuNetIo;
+    cfg.ib.mode = IbMode::Device;
     conn = communicator->connect(cfg, peer).get();
     localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
   }
@@ -1540,7 +1540,7 @@ __global__ void kernelGpuNetIoManyConnections(DeviceHandle<mscclpp::PortChannel>
 
 // More live GPUNetIO connections than dedicated shared-memory WQE slots, all used concurrently from one block. The
 // connections beyond the dedicated slots share one slot under a lock, and every transfer must still arrive intact.
-TEST(PortChannelOneToOneTest, ManyConnectionsIbGpuNetIoMode) {
+TEST(PortChannelOneToOneTest, ManyConnectionsIbDeviceMode) {
   REQUIRE_GPUNETIO;
   if (gEnv->rank >= numRanksToUse) return;
 
@@ -1551,7 +1551,7 @@ TEST(PortChannelOneToOneTest, ManyConnectionsIbGpuNetIoMode) {
   std::vector<mscclpp::RegisteredMemory> localMems;
   std::vector<mscclpp::RegisteredMemory> remoteMems;
   std::vector<mscclpp::PortChannel> portChannels;
-  setupMultiQpChannels(numConns, /*elemsPerChan=*/2, IbMode::GpuNetIo, /*tagBase=*/900, buffs, localMems, remoteMems,
+  setupMultiQpChannels(numConns, /*elemsPerChan=*/2, IbMode::Device, /*tagBase=*/900, buffs, localMems, remoteMems,
                        portChannels);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
@@ -1582,39 +1582,39 @@ TEST(PortChannelOneToOneTest, ManyConnectionsIbGpuNetIoMode) {
   for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
-PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {
   REQUIRE_GPUNETIO;
   testPingPongPerf(PingPongTestParams{
-      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
 }
 
-PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testPacketPingPongPerf(true, IbMode::GpuNetIo);
+  testPacketPingPongPerf(true, IbMode::Device);
 }
 
-PERF_TEST(PortChannelOneToOneTest, BandwidthIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbDeviceMode) {
   REQUIRE_GPUNETIO;
   testBandwidth(PingPongTestParams{
-      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::GpuNetIo});
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
 }
 
-PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testMultiQpBandwidth(IbMode::GpuNetIo, /*numQps=*/1);
+  testMultiQpBandwidth(IbMode::Device, /*numQps=*/1);
 }
 
-PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testMultiQpBandwidth(IbMode::GpuNetIo, /*numQps=*/4);
+  testMultiQpBandwidth(IbMode::Device, /*numQps=*/4);
 }
 
-PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbGpuNetIoMode) {
+PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testMultiQpFlushStress(IbMode::GpuNetIo, /*numQps=*/4);
+  testMultiQpFlushStress(IbMode::Device, /*numQps=*/4);
 }
 
-TEST(PortChannelFanInTest, AccumulateIbGpuNetIoMode) {
+TEST(PortChannelFanInTest, AccumulateIbDeviceMode) {
   REQUIRE_GPUNETIO;
-  testFanIn(false, true, false, IbMode::GpuNetIo);
+  testFanIn(false, true, false, IbMode::Device);
 }

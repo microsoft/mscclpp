@@ -62,14 +62,14 @@ class ProxyService : public BaseProxyService {
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
   /// Get a base port channel by semaphore ID.
-  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::Device, the channel captures the memories added
   /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @return The base port channel.
   BasePortChannel basePortChannel(SemaphoreId id);
 
   /// Get a port channel by semaphore ID and memory regions.
-  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::GpuNetIo, the channel captures the memories added
+  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::Device, the channel captures the memories added
   /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
@@ -124,7 +124,7 @@ struct BasePortChannel {
   BasePortChannel() = default;
 
   /// Constructor.
-  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with
+  /// Channels over EndpointConfig::Ib::Mode::Device connections must be created with
   /// ProxyService::basePortChannel() instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
@@ -172,7 +172,7 @@ struct PortChannel : public BasePortChannel {
   PortChannel() = default;
 
   /// Constructor.
-  /// Channels over EndpointConfig::Ib::Mode::GpuNetIo connections must be created with ProxyService::portChannel()
+  /// Channels over EndpointConfig::Ib::Mode::Device connections must be created with ProxyService::portChannel()
   /// instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.

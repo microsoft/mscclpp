@@ -11,7 +11,7 @@
 namespace mscclpp {
 
 /// Backend that services a PortChannel's device-side operations. It is selected by the channel's connection:
-/// GpuNetIo for IB connections created with EndpointConfig::Ib::Mode::GpuNetIo, Proxy otherwise.
+/// GpuNetIo for IB connections created with EndpointConfig::Ib::Mode::Device, Proxy otherwise.
 enum class PortChannelBackend : uint8_t {
   Proxy = 0,     ///< The device pushes triggers to a FIFO that the ProxyService thread consumes.
   GpuNetIo = 1,  ///< The device posts RDMA work requests directly (DOCA GPUNetIO).

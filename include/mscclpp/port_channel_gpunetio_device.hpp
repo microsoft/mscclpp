@@ -41,7 +41,7 @@ struct GpuNetIoMemoryDeviceHandle {
   uint32_t isLocal;
 };
 
-/// Device-side state of a PortChannel whose connection uses EndpointConfig::Ib::Mode::GpuNetIo.
+/// Device-side state of a PortChannel whose connection uses EndpointConfig::Ib::Mode::Device.
 /// The calling GPU thread builds work requests and rings the NIC doorbell itself (DOCA GPUNetIO).
 /// Callers must make source data ready before put operations; DOCA orders queue publication.
 /// All operations on a QP must be serialized, including across channels and submitting threads.
