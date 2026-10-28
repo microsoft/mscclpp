@@ -247,7 +247,7 @@ Runtime views are reused by later operations, not independent results.
   next dispatch or preparation because runtime storage is reused. A dispatch
   that explicitly reuses a preparation leaves that `PrepareHandle` reusable.
   The Python wrapper checks handle type and runtime ownership, while the native
-  runtime validates generations and exact preparation pointer, token count,
+  runtime validates handle freshness and exact preparation pointer, token count,
   capacity, and block count. Preparation mismatches raise an MSCCL++ error
   rather than a Python `ValueError`.
 * Keep routing and borrowed metadata unchanged through matching combine work.

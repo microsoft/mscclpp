@@ -34,7 +34,7 @@ struct PrepareHandle::Impl {
         stream_(request.stream) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
-  // Snapshot of the routing workspace's generation; a new prepare invalidates this handle.
+  // Snapshot of the routing workspace epoch; a new prepare invalidates this handle.
   uint64_t routingEpoch_;
   const int64_t* topkIdx_;
   int numTokens_;
@@ -55,9 +55,9 @@ struct DispatchHandle::Impl {
     uint64_t routingEpoch_;
   };
 
-  Impl(std::weak_ptr<void> owner, uint32_t generation, const LatencyDispatchRequest& request)
+  Impl(std::weak_ptr<void> owner, uint32_t epoch, const LatencyDispatchRequest& request)
       : owner_(std::move(owner)),
-        generation_(generation),
+        epoch_(epoch),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.quant.dispatchDataType),
@@ -74,8 +74,8 @@ struct DispatchHandle::Impl {
         metadata_(ThroughputMetadata{routingEpoch}) {}
 
   std::weak_ptr<void> owner_;
-  // Latency handle generation; packet epochs are maintained on the device.
-  uint32_t generation_ = 0;
+  // Latency handle epoch; packet flags are maintained on the device.
+  uint32_t epoch_ = 0;
   int numTokens_;
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
@@ -110,7 +110,7 @@ struct LatencyRuntimeContext {
   CombineMode combineMode_;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
-  uint32_t generation_ = 1;
+  uint32_t epoch_ = 1;
   mscclpp::detail::UniqueGpuPhysicalPtr<uint8_t> symmetricBuffer_;
   void* workspace_ = nullptr;
   DeviceContext deviceContext_{};

@@ -226,7 +226,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .inputMode_ = inputMode};
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.generation_, request));
+  DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
                       input, topkIdx, topkWeights, workload, dispatchRecvBuffer, context.deviceContext_, numBlocks,
@@ -252,7 +252,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   if (owner != latencyContext_) {
     EP_THROW("Dispatch handle belongs to a different runtime");
   }
-  if (handle.generation_ != context.generation_) {
+  if (handle.epoch_ != context.epoch_) {
     EP_THROW("Stale dispatch handle: its dispatch has already been combined");
   }
 
@@ -320,7 +320,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
     expertMajorLocalReduceCombine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, combineBuffer,
                                   dispatchRecvBuffer, context.deviceContext_, numBlocks, stream);
   }
-  ++context.generation_;
+  ++context.epoch_;
 }
 
 }  // namespace ep

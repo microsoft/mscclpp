@@ -221,12 +221,12 @@ __global__ __launch_bounds__(CombineNThreads,
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    const uint32_t epoch = loadDispatchEpoch(workspaceView);
+    const uint32_t flag = loadDispatchFlag(workspaceView);
     if (blockIdx.x == 0) {
-      publishRankMajorCombineReady(transport, nRanks, epoch, workspaceView);
+      publishRankMajorCombineReady(transport, nRanks, flag, workspaceView);
     } else {
       recvRankMajorRemotePartialsTma<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType>(
-          output, expertOutput, topkIndices, nullptr, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, epoch,
+          output, expertOutput, topkIndices, nullptr, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, flag,
           transport, workspaceView, sharedMemory,
           DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f);
     }
