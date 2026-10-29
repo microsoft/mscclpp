@@ -247,7 +247,7 @@ Runtime views are reused by later operations, not independent results.
   next dispatch or preparation because runtime storage is reused. A dispatch
   that explicitly reuses a preparation leaves that `PrepareHandle` reusable.
   The Python wrapper checks handle type and runtime ownership, while the native
-  runtime validates generations and exact preparation pointer, token count,
+  runtime validates handle freshness and exact preparation pointer, token count,
   capacity, and block count. Preparation mismatches raise an MSCCL++ error
   rather than a Python `ValueError`.
 * Keep routing and borrowed metadata unchanged through matching combine work.
@@ -266,17 +266,12 @@ Runtime views are reused by later operations, not independent results.
   change while their buffer pointer, shape, and active capacity remain fixed.
   Preserve graph ordering, buffers, and owners through the last replay. Python
   handle checks run during capture, not replay.
-* Latency RANK_MAJOR dispatch/expert-write/combine can also be captured and
-  replayed when each graph contains at least two complete dispatch/combine
-  iterations. Each captured iteration has a distinct epoch, so the last count
-  packet from one replay cannot satisfy the first dispatch of the next replay.
-  A graph containing only one iteration is unsupported because graph replay
-  does not advance the host epoch. Combine separately invalidates captured
-  readiness state before its ordered peer rendezvous. Construct, initialize,
-  and warm up the runtime outside capture; input, routing, and weight values may
-  change while their pointers, shapes, token count, and active capacity remain
-  fixed. Every rank must replay collectives in the same order. Latency
-  EXPERT_MAJOR graph replay remains unsupported.
+* Latency EXPERT_MAJOR and RANK_MAJOR dispatch/expert-write/combine can also be
+  captured and replayed with one or more complete dispatch/combine iterations
+  per graph. Construct, initialize, and warm up the runtime outside capture;
+  input, routing, and weight values may change while their pointers, shapes,
+  token count, and active capacity remain fixed. Every rank must replay
+  collectives in the same order.
 * CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
   are unsupported. The implementation accepts 1-64 ranks, not a claim of
   hardware qualification of every 64-rank topology. Expert placement is even
