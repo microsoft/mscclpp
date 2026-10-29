@@ -30,7 +30,7 @@ struct Endpoint::Impl {
   bool ibNoAtomic_;
   std::shared_ptr<IbQp> ibQp_;
   IbQpInfo ibQpInfo_;
-  // Only used for EndpointConfig::Ib::Mode::GpuNetIo, in place of ibQp_.
+  // Only used for EndpointConfig::Ib::Mode::Device, in place of ibQp_.
   std::shared_ptr<GpuNetIoQp> gpuNetIoQp_;
 
   // The following are only used for Ethernet and are undefined for other transports.

@@ -158,7 +158,7 @@ void register_core(nb::module_& m) {
       .value("Default", EndpointConfig::Ib::Mode::Default)
       .value("Host", EndpointConfig::Ib::Mode::Host)
       .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic)
-      .value("GpuNetIo", EndpointConfig::Ib::Mode::GpuNetIo);
+      .value("Device", EndpointConfig::Ib::Mode::Device);
 
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())

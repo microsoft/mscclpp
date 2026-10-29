@@ -7,9 +7,11 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mscclpp/core.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/proxy.hpp>
 #include <thread>
+#include <vector>
 
 namespace mscclpp {
 
@@ -21,6 +23,9 @@ struct Proxy::Impl {
   std::atomic_bool threadStarted;
   std::thread service;
   std::atomic_bool running;
+  // Registered memories indexed by MemoryId. The proxy thread resolves the memory IDs of FIFO triggers through this
+  // table, and channels over Device-mode connections build their device-side memory tables from it.
+  std::vector<RegisteredMemory> memories;
 
   Impl(ProxyHandler handler, std::function<void()> threadInit, int fifoSize)
       : handler(handler),

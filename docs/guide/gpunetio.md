@@ -4,20 +4,17 @@ By default, `PortChannel` operations over InfiniBand are pushed by GPU threads i
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
 the proxy from the data path. The setup flow and the `PortChannel` device API are unchanged; the backend is selected
-per endpoint with `EndpointConfig::Ib::Mode::GpuNetIo`.
+per endpoint with `EndpointConfig::Ib::Mode::Device`.
 
 ## Build
 
-```bash
-cmake -DMSCCLPP_USE_GPUNETIO=ON ..
-```
-
-GPUNetIO requires a CUDA build with InfiniBand support (`MSCCLPP_USE_IB=ON`). At configure time, CMake fetches the
-GPUNetIO sources (pinned to v5.0.0-rc1, see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`. To build
-without network access, point CMake to a local checkout of the same revision:
+The backend is built automatically for CUDA builds with InfiniBand support (`MSCCLPP_USE_IB=ON`, the default); no
+extra CMake option is needed. ROCm builds and builds with `MSCCLPP_USE_IB=OFF` skip it. At configure time, CMake
+fetches the GPUNetIO sources (pinned to v5.0.0-rc1, see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`.
+To build without network access, point CMake to a local checkout of the same revision:
 
 ```bash
-cmake -DMSCCLPP_USE_GPUNETIO=ON -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
+cmake -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
 ```
 
 The build compiles a patched copy of `doca_gpunetio_high_level.cpp` that fixes a double free on a CQ creation failure
@@ -38,7 +35,7 @@ Create the connection with the GPUNetIO mode and build the channel with `ProxySe
 ```cpp
 mscclpp::EndpointConfig cfg;
 cfg.transport = mscclpp::Transport::IB0;
-cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::GpuNetIo;
+cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
 auto connection = communicator->connect(cfg, remoteRank).get();
 
 auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB0);
@@ -77,9 +74,11 @@ handoff; the caller need not be thread zero. Different QPs can be used concurren
 All requests, including strong-ordered inline semaphore signals (`DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING`),
 atomics and non-inline transfers, are submitted through BlueFlame.
 GPU-resident recovery WQEs are retained. BF submission uses 8 KiB of per-block shared-memory WQE scratch (64 pairs of
-WQE slots) and waits for async source consumption before reusing a slot. Thread zero and blocks with up to 64 threads
-have dedicated slot pairs; additional threads in larger blocks serialize access to their hashed slot pair using an
-internal workspace lock, so different QPs cannot overwrite each other's WQEs.
+WQE slots) and waits for async source consumption before reusing a slot. Each connection gets one of 63 dedicated slot
+pairs, unique among the live GPUNetIO connections of the process, and uses it without locking; because operations on a
+connection are serialized, no two concurrent submissions share a dedicated slot. When all dedicated slots are in use,
+further connections share the last slot pair and serialize access to it with an internal lock, so different QPs never
+overwrite each other's WQEs.
 There is no regular-doorbell-only or CPU-proxy fallback.
 
 ## Using the device API from another project
@@ -95,9 +94,7 @@ Kernels compiled against an installed MSCCL++ must add:
 
 - Host-side `Connection` operations (`write`, `updateAndSync`, `accumulate`, `flush`) and `Host2DeviceSemaphore::signal`
   are not supported on GPUNetIO connections and throw `InvalidUsage`.
-- Channels must be created with `ProxyService::portChannel()` / `basePortChannel()`. A `PortChannel` constructed
-  directly over a GPUNetIO connection has no memory bindings, so its `deviceHandle()` throws `InvalidUsage`.
-- A channel captures the memories registered with its `ProxyService` when it is created; memories added later are not
-  addressable by it.
+- Memory IDs are resolved through the memories registered with the channel's proxy (`ProxyService::addMemory()`)
+  when `deviceHandle()` is called; memories added later are only addressable by device handles obtained afterwards.
 - On RoCE devices only port 1 is supported (the pinned DOCA GPUNetIO resolves the destination MAC on port 1).
 - `accumulate` requires an 8-byte-aligned destination offset.

@@ -200,7 +200,7 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
                  rank, state.devices.empty() ? "auto" : "explicit", pciBusId, numaNode, names.c_str(), hcas, queues,
                  queues / hcas);
   }
-  // One GpuNetIo-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
+  // One Device-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
   // selected HCA once and exchanged once per peer, then bound into each channel through ProxyService::portChannel().
   constexpr int ConnectTagBase = 22000;
   constexpr int MemoryTag = 21999;
@@ -243,7 +243,7 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
       EndpointConfig config;
       config.transport = transports[queue % hcas];
       config.device = {DeviceType::GPU, state.device};
-      config.ib.mode = EndpointConfig::Ib::Mode::GpuNetIo;
+      config.ib.mode = EndpointConfig::Ib::Mode::Device;
       connections[peer].push_back(communicator.connect(config, peer, ConnectTagBase + queue));
     }
     communicator.sendMemory(localMemory, peer, MemoryTag);

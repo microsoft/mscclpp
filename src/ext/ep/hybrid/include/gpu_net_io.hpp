@@ -18,7 +18,7 @@ struct EpGpuNetIoSignalState {
 };
 
 /// Device view of the EP GPUNetIO channels: one PortChannel per (peer, queue), each bound to its own queue pair over
-/// an EndpointConfig::Ib::Mode::GpuNetIo connection. Every channel's dst_/src_ are the peer's / local symmetric buffer,
+/// an EndpointConfig::Ib::Mode::Device connection. Every channel's dst_/src_ are the peer's / local symmetric buffer,
 /// so offsets below are symmetric-buffer offsets. Unlike PortChannelDeviceHandle::put(), these helpers do not fence;
 /// callers order their source writes (see the EP row-fence modes).
 struct EpGpuNetIoDeviceContext {
@@ -34,7 +34,7 @@ struct EpGpuNetIoDeviceContext {
   MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle channel(int peer, int queue) const {
     require(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer);
     const auto handle = channels[static_cast<size_t>(peer) * numQpsPerPeer + queue];
-    require(handle.backend_ == PortChannelBackend::GpuNetIo && handle.gpuNetIo_.qp != nullptr);
+    require(handle.backend_ == PortChannelBackend::Device && handle.device_.qp != nullptr);
     return handle;
   }
 
@@ -45,18 +45,18 @@ struct EpGpuNetIoDeviceContext {
 
 #if defined(MSCCLPP_USE_GPUNETIO)
   MSCCLPP_DEVICE_INLINE static doca_gpu_dev_verbs_qp* qp(const PortChannelDeviceHandle& handle) {
-    return static_cast<doca_gpu_dev_verbs_qp*>(handle.gpuNetIo_.qp);
+    return static_cast<doca_gpu_dev_verbs_qp*>(handle.device_.qp);
   }
 
   MSCCLPP_DEVICE_INLINE static doca_gpu_dev_verbs_addr remoteAddr(const PortChannelDeviceHandle& handle,
                                                                   uint64_t offset, uint64_t bytes) {
-    const auto memory = handle.gpuNetIo_.memory(handle.dst_, false, offset, bytes);
+    const auto memory = handle.device_.memory(handle.dst_, false, offset, bytes);
     return {memory.addr + offset, memory.key};
   }
 
   MSCCLPP_DEVICE_INLINE static doca_gpu_dev_verbs_addr localAddr(const PortChannelDeviceHandle& handle, uint64_t offset,
                                                                  uint64_t bytes) {
-    const auto memory = handle.gpuNetIo_.memory(handle.src_, true, offset, bytes);
+    const auto memory = handle.device_.memory(handle.src_, true, offset, bytes);
     return {memory.addr + offset, memory.key};
   }
 
@@ -100,9 +100,9 @@ struct EpGpuNetIoDeviceContext {
   MSCCLPP_DEVICE_INLINE void atomicAdd(int peer, uint64_t destination, int64_t value, int queue = 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     auto handle = channel(peer, queue);
-    const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, destination, sizeof(uint64_t));
+    const auto dst = handle.device_.memory(handle.dst_, false, destination, sizeof(uint64_t));
     withChannelLock(peer, queue, [&](EpGpuNetIoSignalState& state) {
-      handle.gpuNetIo_.signalAt(dst, destination, nextSignalToken(state, destination, static_cast<uint64_t>(value)));
+      handle.device_.signalAt(dst, destination, nextSignalToken(state, destination, static_cast<uint64_t>(value)));
     });
 #else
     require(false);
@@ -114,12 +114,12 @@ struct EpGpuNetIoDeviceContext {
                                            uint64_t signalOffset, uint64_t signalValue, int queue = 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     auto handle = channel(peer, queue);
-    const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, destination, bytes);
-    const auto src = handle.gpuNetIo_.memory(handle.src_, true, source, bytes);
-    const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, signalOffset, sizeof(uint64_t));
+    const auto dst = handle.device_.memory(handle.dst_, false, destination, bytes);
+    const auto src = handle.device_.memory(handle.src_, true, source, bytes);
+    const auto sig = handle.device_.memory(handle.dst_, false, signalOffset, sizeof(uint64_t));
     withChannelLock(peer, queue, [&](EpGpuNetIoSignalState& state) {
-      handle.gpuNetIo_.putWithSignalAt(dst, destination, src, source, bytes, sig, signalOffset,
-                                       nextSignalToken(state, signalOffset, signalValue));
+      handle.device_.putWithSignalAt(dst, destination, src, source, bytes, sig, signalOffset,
+                                     nextSignalToken(state, signalOffset, signalValue));
     });
 #else
     require(false);
@@ -132,7 +132,7 @@ struct EpGpuNetIoDeviceContext {
   /// @return 0 when drained, EBUSY if still pending, or the completion error status.
   MSCCLPP_DEVICE_INLINE int tryFlush(int peer, uint64_t spins, int queue = 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    return channel(peer, queue).gpuNetIo_.tryFlush(spins);
+    return channel(peer, queue).device_.tryFlush(spins);
 #else
     require(false);
     return 0;
@@ -142,7 +142,7 @@ struct EpGpuNetIoDeviceContext {
   /// Send-queue reservation index of (peer, queue): every WQE posted so far lies below it.
   MSCCLPP_DEVICE_INLINE uint64_t reservedTicket(int peer, int queue = 0) {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    return channel(peer, queue).gpuNetIo_.reservedTicket();
+    return channel(peer, queue).device_.reservedTicket();
 #else
     require(false);
     return 0;
@@ -155,11 +155,11 @@ struct EpGpuNetIoDeviceContext {
     if (ticket == 0) return;
     auto handle = channel(peer, queue);
     auto& state = signalState(peer, queue);
-    while (!handle.gpuNetIo_.isTicketDone(ticket)) {
+    while (!handle.device_.isTicketDone(ticket)) {
       if (atomicCAS(&state.lock, 0u, 1u) == 0u) {
         doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
-        if (!handle.gpuNetIo_.isTicketDone(ticket)) {
-          handle.gpuNetIo_.waitTicket(ticket);
+        if (!handle.device_.isTicketDone(ticket)) {
+          handle.device_.waitTicket(ticket);
         }
         doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
         atomicExch(&state.lock, 0u);
@@ -181,11 +181,11 @@ struct EpGpuNetIoDeviceContext {
     const uint64_t sizes[3] = {size0, size1, size2};
     GpuNetIoMemoryDeviceHandle dst[3], src[3];
     for (int index = 0; index < 3; ++index) {
-      dst[index] = handle.gpuNetIo_.memory(handle.dst_, false, dstOffsets[index], sizes[index]);
-      src[index] = handle.gpuNetIo_.memory(handle.src_, true, srcOffsets[index], sizes[index]);
+      dst[index] = handle.device_.memory(handle.dst_, false, dstOffsets[index], sizes[index]);
+      src[index] = handle.device_.memory(handle.src_, true, srcOffsets[index], sizes[index]);
     }
     withChannelLock(peer, queue, [&](EpGpuNetIoSignalState&) {
-      handle.gpuNetIo_.putBatched3(dst, dstOffsets, src, srcOffsets, sizes);
+      handle.device_.putBatched3(dst, dstOffsets, src, srcOffsets, sizes);
     });
 #else
     require(false);

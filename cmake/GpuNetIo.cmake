@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 #
 # Fetches and builds the third-party DOCA GPUNetIO (GDAKI) sources used by the GPU-initiated IB endpoint mode
-# (EndpointConfig::Ib::Mode::GpuNetIo). See docs/guide/gpunetio.md.
+# (EndpointConfig::Ib::Mode::Device). See docs/guide/gpunetio.md.
 #
 # Defines:
 #   mscclpp_gpunetio_headers  INTERFACE target with the GPUNetIO include directories.
