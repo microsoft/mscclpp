@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         choices=("latency", "throughput"),
         default="latency",
         help="algorithm family for backends with an explicit mode (MSCCL++ and NCCL-EP). "
-        "DeepEP V2 uses one ElasticBuffer path and is tuned with --num-sms.",
+        "DeepEP V2.5 uses one EPBuffer path and is tuned with --num-sms.",
     )
     p.add_argument(
         "--num-sms",
@@ -73,17 +73,38 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     p.add_argument(
         "--dispatch-dtype",
-        choices=("bf16", "fp8_e4m3"),
+        choices=("bf16", "fp8_e4m3", "fp8_e4m3_static", "mxfp8_e4m3"),
         default="bf16",
-        help="MSCCL++ latency dispatch wire format. NCCL-EP itself supports FP8, but its path in this "
-        "benchmark is wired BF16-only (the harness does not plumb NCCL-EP's dispatch scales yet).",
+        help="dispatch wire format. MSCCL++ latency supports bf16, fp8_e4m3 (block-scaled on expert_major "
+        "or static FP8 on rank_major), fp8_e4m3_static (rank_major), and mxfp8_e4m3 (rank_major); "
+        "MSCCL++ throughput supports bf16 and fp8_e4m3. DeepEP EPBuffer supports all four "
+        "(pre-quantized input). NCCL-EP supports bf16 and fp8_e4m3 (latency expert_major or throughput).",
+    )
+    p.add_argument(
+        "--combine-dtype",
+        choices=("bf16", "fp8_e4m3_static"),
+        default="bf16",
+        help="MSCCL++ latency rank_major combine input format (fp8_e4m3_static requires static FP8 dispatch).",
+    )
+    p.add_argument(
+        "--fp8-scale",
+        type=float,
+        default=1.0,
+        help="Static FP8 multiplier scale for MSCCL++ and DeepEP.",
+    )
+    p.add_argument(
+        "--fp8-input-mode",
+        choices=("quantize", "prequantized"),
+        default="quantize",
+        help="MSCCL++ latency rank_major static FP8 dispatch input mode (fused BF16 quantize or prequantized E4M3).",
     )
     p.add_argument(
         "--combine-mode",
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
         default="rank_local_reduce",
-        help="MSCCL++ latency combine mode (direct_send is bit-exact; rank_local_reduce is faster).",
+        help="combine reduction mode for MSCCL++ latency and DeepEP EPBuffer "
+        "(direct_send / allow_multiple_reduction=0 vs rank_local_reduce / allow_multiple_reduction=1).",
     )
     p.add_argument(
         "--cuda-graph",
@@ -135,13 +156,36 @@ def parse_args() -> argparse.Namespace:
         # Grouping only applies to graph capture; treat as 1 for eager runs so the
         # non-1 default does not error a plain (non-graph) benchmark.
         args.iters_per_graph = 1
-    if args.dispatch_dtype == "fp8_e4m3" and args.backend != "mscclpp":
-        raise SystemExit(
-            "--dispatch-dtype fp8_e4m3 is only wired for the mscclpp backend in this benchmark "
-            "(NCCL-EP supports FP8 but its path here is BF16-only); use --backend mscclpp"
-        )
-    if args.dispatch_dtype == "fp8_e4m3" and args.mode != "latency":
-        raise SystemExit("MSCCL++ throughput mode currently supports BF16 dispatch only")
+    if args.dispatch_dtype in ("fp8_e4m3_static", "mxfp8_e4m3"):
+        if args.backend in ("nccl", "all"):
+            raise SystemExit(
+                f"--dispatch-dtype {args.dispatch_dtype} is supported only by mscclpp and deepep "
+                "(NCCL-EP supports only bf16 and fp8_e4m3)"
+            )
+        if args.backend == "mscclpp" and (args.mode != "latency" or args.ep_layout != "rank_major"):
+            raise SystemExit(
+                f"MSCCL++ --dispatch-dtype {args.dispatch_dtype} requires --mode latency --ep-layout rank_major"
+            )
+        if args.backend == "deepep" and args.ep_layout == "expert_major":
+            raise SystemExit(
+                f"DeepEP --dispatch-dtype {args.dispatch_dtype} requires rank_major layout (omit --ep-layout or pass rank_major)"
+            )
+    if (
+        args.dispatch_dtype == "fp8_e4m3"
+        and args.backend == "nccl"
+        and args.mode == "latency"
+        and args.ep_layout == "rank_major"
+    ):
+        raise SystemExit("NCCL-EP latency rank_major does not support --dispatch-dtype fp8_e4m3")
+    if args.combine_dtype != "bf16":
+        if args.backend != "mscclpp" or args.mode != "latency" or args.ep_layout != "rank_major":
+            raise SystemExit(
+                "--combine-dtype fp8_e4m3_static requires --backend mscclpp --mode latency --ep-layout rank_major"
+            )
+        if args.dispatch_dtype not in ("fp8_e4m3", "fp8_e4m3_static"):
+            raise SystemExit("--combine-dtype fp8_e4m3_static requires static FP8 dispatch")
+    if not (args.fp8_scale > 0.0 and torch.isfinite(torch.tensor(args.fp8_scale))):
+        raise SystemExit("--fp8-scale must be finite and positive")
     return args
 
 
@@ -181,7 +225,7 @@ def torch_profiler_kernel_us(
 
     NOTE: for DeepEP this is SINGLE-NODE ONLY. Inserting ANY collective (even a
     plain NCCL all_reduce) between DeepEP's dispatch and combine corrupts the
-    ElasticBuffer's pending symmetric-memory state and crashes on the multi-node
+    EPBuffer's pending symmetric-memory state and crashes on the multi-node
     scale-out path (Cuda 719 in DeepEP symmetric.hpp). mscclpp / NCCL-EP have
     independent dispatch/combine and tolerate it at any scale.
 
@@ -338,9 +382,12 @@ def run_backend(
     _, _, _, num_valid_selections = base_inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
-    disp_elt = 1 if getattr(args, "dispatch_dtype", "bf16") == "fp8_e4m3" else 2
+    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
+    raw_comb_dtype = getattr(args, "combine_dtype", "bf16")
+    disp_elt = 2 if raw_disp_dtype == "bf16" else 1
+    comb_elt = 1 if raw_comb_dtype == "fp8_e4m3_static" else 2
     disp_bytes = num_valid_selections * hidden * disp_elt  # dispatch wire format
-    comb_bytes = num_valid_selections * hidden * 2  # BF16 combine output (per ep_bench)
+    comb_bytes = num_valid_selections * hidden * comb_elt  # combine wire format
 
     stream = torch.cuda.current_stream()
 
@@ -407,13 +454,27 @@ def run_backend(
     group = graph_group_size if graph is not None else 1
     total_us = [starts[i].elapsed_time(ends[i]) * 1e3 / group for i in range(iters)]
     timings = [("Total (D+C)", total_us, disp_bytes + comb_bytes)]
-    dispatch_dtype = "FP8 E4M3" if disp_elt == 1 else "BF16"
+    is_static_fp8_map = raw_disp_dtype == "fp8_e4m3" and (
+        (
+            name == "mscclpp"
+            and getattr(args, "mode", "latency") == "latency"
+            and getattr(args, "ep_layout", None) == "rank_major"
+        )
+        or (name == "deepep" and getattr(args, "ep_layout", None) != "expert_major")
+    )
+    dispatch_dtype = {
+        "bf16": "BF16",
+        "fp8_e4m3": "FP8 E4M3 Static" if is_static_fp8_map else "FP8 E4M3",
+        "fp8_e4m3_static": "FP8 E4M3 Static",
+        "mxfp8_e4m3": "MXFP8 E4M3",
+    }.get(raw_disp_dtype, raw_disp_dtype.upper())
+    combine_dtype = "FP8 E4M3 Static" if comb_elt == 1 else "BF16"
     if graph is None:
         dispatch_us = [starts[i].elapsed_time(dispatch_ends[i]) * 1e3 for i in range(iters)]
         combine_us = [max(combine_starts[i].elapsed_time(ends[i]) * 1e3, 1e-3) for i in range(iters)]
         timings = [
             (f"Dispatch ({dispatch_dtype})", dispatch_us, disp_bytes),
-            ("Combine (BF16)", combine_us, comb_bytes),
+            (f"Combine ({combine_dtype})", combine_us, comb_bytes),
             *timings,
         ]
 
@@ -479,7 +540,7 @@ def run_backend(
 
         print(
             f"\nLogical routed bytes: dispatch={disp_bytes / 1e6:.2f} MB ({dispatch_dtype}), "
-            f"combine={comb_bytes / 1e6:.2f} MB (BF16), selections={num_valid_selections}"
+            f"combine={comb_bytes / 1e6:.2f} MB ({combine_dtype}), selections={num_valid_selections}"
         )
 
 

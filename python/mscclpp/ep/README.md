@@ -299,10 +299,10 @@ Runtime views are reused by later operations, not independent results.
 ## Unified EP benchmark
 
 `python -m mscclpp_benchmark.ep.run_ep_bench_python` compares MSCCL++ EP, NVIDIA NCCL-EP,
-and DeepEP V2 (`ElasticBuffer`) through their Python APIs using the same BF16
+and DeepEP V2.5 (`EPBuffer`) through their Python APIs using the same BF16
 tokens, routing IDs, and weights. Install PyTorch and `mpi4py`, plus the backends
 being compared: this project's EP extension, NCCL's `nccl4py` package exposing
-`nccl.core` and `nccl.ep`, and DeepEP V2 exposing `deep_ep.ElasticBuffer`.
+`nccl.core` and `nccl.ep`, and DeepEP V2.5 exposing `deep_ep.EPBuffer`.
 NCCL-EP also needs compatible `libnccl_ep.so`/`libnccl.so` libraries and its
 JIT kernel build environment. Follow each backend's installation instructions.
 The JIT compiler must also find NCCL-EP's public headers, including `ep_enums.h`;
@@ -343,9 +343,20 @@ Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
 An omitted layout keeps each backend's default.
 `--num-sms 0` keeps backend defaults; a positive value sets MSCCL++'s scalar
 dispatch/combine block configuration or DeepEP's communication SM budget.
-`--combine-mode` selects MSCCL++ latency reduction. `--dispatch-dtype fp8_e4m3`
-is wired only for MSCCL++ latency EXPERT_MAJOR; combine remains BF16.
-`--validate` checks MSCCL++'s identity-expert combine result before timing.
+`--combine-mode` selects reduction for MSCCL++ latency (`rank_local_reduce` or
+`direct_send`) and DeepEP `EPBuffer` (`allow_multiple_reduction=1` vs `0`).
+`--dispatch-dtype` selects the dispatch wire format: `bf16` (default),
+`fp8_e4m3` (128-element FP32 block-scaled on `expert_major`/`token_major`, or
+mapped to static FP8 on `rank_major` for MSCCL++ latency and DeepEP),
+`fp8_e4m3_static` (`rank_major` static FP8 for MSCCL++ latency and DeepEP), or
+`mxfp8_e4m3` (`rank_major` MXFP8 for MSCCL++ latency and DeepEP). NCCL-EP
+supports `bf16` and `fp8_e4m3` (latency `expert_major` or throughput). For
+static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
+`--fp8-input-mode` selects MSCCL++ fused BF16 quantization (`quantize`,
+default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`
+selects MSCCL++ latency `rank_major` combine input (`bf16` default or
+`fp8_e4m3_static`). `--validate` checks MSCCL++'s identity-expert combine
+result before timing.
 
 CUDA events measure paired dispatch/combine, excluding input generation and
 synthetic expert-output construction. NCCL-EP uses a prebuilt routing handle;

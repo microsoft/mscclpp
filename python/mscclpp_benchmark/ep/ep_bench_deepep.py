@@ -11,7 +11,7 @@ from .ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
 
 def parse_kineto_kernels(key_averages):
     """Map a kineto key_averages() table to (dispatch_us, combine_us) for DeepEP
-    V2. Its low-latency path runs a dispatch_impl kernel + a copy epilogue and a
+    V2.5. Its path runs a dispatch_impl kernel + a copy epilogue and a
     combine_impl kernel + a reduce epilogue; every one carries the phase word in
     its function name, so a case-insensitive substring match sums each phase."""
     return (
@@ -21,10 +21,10 @@ def parse_kineto_kernels(key_averages):
 
 
 # ============================================================================
-# Backend: DeepEP V2 (deepseek-ai/DeepEP, unified ElasticBuffer).
+# Backend: DeepEP V2.5 (deepseek-ai/DeepEP, EPBuffer).
 # ============================================================================
 def setup_deepep(args, comm, rank, num_ranks, inputs):
-    """DeepEP V2 dispatch/combine via `deep_ep.ElasticBuffer`, wired
+    """DeepEP V2.5 dispatch/combine via `deep_ep.EPBuffer`, wired
     the same way as the mscclpp / NCCL-EP backends: return (dispatch_fn,
     combine_fn, teardown). DeepEP needs a torch.distributed NCCL group (reused
     from `_ensure_torch_dist`) and, for a same-rack NVLink run, `EP_DISABLE_GIN=1`.
@@ -41,23 +41,38 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     if args.ep_layout == "token_major":
-        raise ValueError("DeepEP ElasticBuffer supports rank_major or expert_major layout")
+        raise ValueError("DeepEP EPBuffer supports rank_major or expert_major layout")
+
+    # DeepEP EPBuffer supports local pre-reduction (allow_multiple_reduction=True,
+    # corresponding to rank_local_reduce) or single combine-epilogue reduction
+    # (allow_multiple_reduction=False, corresponding to direct_send).
+    allow_multiple_reduction = int(getattr(args, "combine_mode", "rank_local_reduce") != "direct_send")
+    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
+    use_fp8_dispatch = raw_disp_dtype != "bf16"
+    if use_fp8_dispatch and getattr(args, "fp8_input_mode", "quantize") == "quantize" and rank == 0:
+        print(
+            "[cfg] deepep EPBuffer does not fuse dispatch quantization; " "pre-quantizing input outside the timed loop",
+            flush=True,
+        )
 
     if rank == 0:
         print(
-            f"[cfg] backend=deepep ElasticBuffer num_sms={args.num_sms} "
+            f"[cfg] backend=deepep EPBuffer num_sms={args.num_sms} "
+            f"combine_mode={args.combine_mode} dispatch_dtype={raw_disp_dtype} "
             f"num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
         )
 
-    buffer = deep_ep.ElasticBuffer(
+    buffer = deep_ep.EPBuffer(
         group,
         num_max_tokens_per_rank=num_tokens,
         hidden=hidden,
+        num_topk=num_topk,
+        use_fp8_dispatch=use_fp8_dispatch,
         allow_hybrid_mode=0,  # NVLink-only bench (same-rack MNNVL, EP_DISABLE_GIN=1); hybrid RDMA+NVLink tier unused
-        allow_multiple_reduction=1,
+        allow_multiple_reduction=allow_multiple_reduction,
         explicitly_destroy=True,
     )
 
@@ -69,9 +84,30 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         _lay = "expert_major (do_expand)" if do_expand else "rank_major (plain)"
         print(f"[cfg] deepep ep_layout={args.ep_layout or 'default'} -> {_lay}", flush=True)
 
-    # DeepEP dispatch args (BF16; non-cached so dispatch_impl + copy epilogue run).
+    dispatch_x = x
+    if raw_disp_dtype in ("fp8_e4m3_static", "fp8_e4m3") and not do_expand:
+        # On rank_major, --dispatch-dtype fp8_e4m3 maps to static FP8 (no scale sideband).
+        scale = float(getattr(args, "fp8_scale", 1.0))
+        dispatch_x = (x.float() * scale).to(torch.float8_e4m3fn)
+    elif raw_disp_dtype == "fp8_e4m3":
+        from deep_ep.utils.math import per_token_cast_to_fp8
+
+        dispatch_x = per_token_cast_to_fp8(x)
+    elif raw_disp_dtype == "mxfp8_e4m3":
+        if hidden % 128 != 0:
+            raise ValueError("DeepEP packed MXFP8 scale factors require hidden to be a multiple of 128")
+        x_blocks = x.float().view(num_tokens, hidden // 32, 32)
+        amax = x_blocks.abs().amax(dim=-1).clamp(min=1e-4)
+        exp = torch.ceil(torch.log2(amax / 448.0)).to(torch.int32)
+        e8m0 = (exp + 127).clamp(1, 254).to(torch.uint8)
+        inv_scale = torch.ldexp(torch.ones_like(amax), -exp)
+        x_fp8 = (x_blocks * inv_scale.unsqueeze(-1)).to(torch.float8_e4m3fn).view(num_tokens, hidden).contiguous()
+        sf_packed = e8m0.contiguous().view(torch.int32)
+        dispatch_x = (x_fp8, sf_packed)
+
+    # DeepEP dispatch args (non-cached so dispatch_impl + copy epilogue run).
     dispatch_args = dict(
-        x=x,
+        x=dispatch_x,
         topk_idx=topk_idx,
         topk_weights=topk_weights,
         num_experts=num_experts,
@@ -103,7 +139,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
 
     combine_args = dict(
         x=input_for_combine,
-        topk_weights=recv_topk_weights,
+        topk_weights=None if (do_expand and not allow_multiple_reduction) else recv_topk_weights,
         handle=handle,
         num_sms=args.num_sms,
     )
@@ -112,9 +148,9 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     # combine recv-spin far more tightly than a generic all_reduce; this is what
     # DeepEP's own test_ep.py uses for kineto profiling.
     def deepep_barrier():
-        buffer.barrier(use_comm_stream=True, with_cpu_sync=False, sequential=True)
+        buffer.barrier(wait_comm_stream=True, with_cpu_sync=False, sequential=True)
 
-    # DeepEP V2 (ElasticBuffer) CUDA-graph capture is limited by TRANSPORT, not node
+    # DeepEP V2.5 (EPBuffer) CUDA-graph capture is limited by TRANSPORT, not node
     # count. On the all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain)
     # the dispatch/combine kernels stay on-stream and ARE graph-capturable at any node
     # count -- verified capturing at 1/2/4 nodes on a GB200 NVL72. The RDMA/IB
@@ -122,7 +158,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     # GDAKI / DOCA GPUNetIO -- not the legacy NVSHMEM/IBGDA Buffer path), and in our
     # testing that path is not graph-capturable, so we gate capture on EP_DISABLE_GIN
     # and run the GIN scale-out path eagerly. The on-stream blocker is the dispatch
-    # CPU sync that reads exact received-token counts (elastic.py do_cpu_sync=True); the
+    # CPU sync that reads exact received-token counts (ep.py do_cpu_sync=True); the
     # cached dispatch below forces do_cpu_sync=False, which is why the NVLink path is
     # capture-safe.
     gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
@@ -149,7 +185,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         # and skips the host-side count read, leaving a pure on-stream kernel launch
         # -- capture-safe, and also runnable eagerly if the harness capture fails.
         cached_dispatch_args = dict(
-            x=x,
+            x=dispatch_x,
             topk_weights=topk_weights,
             handle=handle,
             num_experts=num_experts,
@@ -178,6 +214,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         nonlocal buffer
         buffer.destroy()
         buffer = None
+        deep_ep.destroy_all_managed_nccl_comm()
 
     return {
         "dispatch": dispatch_fn,

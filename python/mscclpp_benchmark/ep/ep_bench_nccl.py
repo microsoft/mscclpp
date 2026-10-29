@@ -29,6 +29,13 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
+    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
+    use_fp8 = raw_disp_dtype != "bf16"
+    if use_fp8:
+        if raw_disp_dtype != "fp8_e4m3":
+            raise ValueError(f"NCCL-EP does not support --dispatch-dtype {raw_disp_dtype}")
+        if args.mode == "latency" and args.ep_layout == "rank_major":
+            raise ValueError("NCCL-EP latency rank_major does not support FP8 dispatch (scales require expert_major)")
     if args.mode == "latency":
         if args.ep_layout == "token_major":
             raise ValueError("NCCL-EP latency supports expert_major or rank_major layout")
@@ -49,7 +56,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     if rank == 0:
         print(
-            f"[cfg] backend=nccl algorithm={algorithm_name} num_ranks={num_ranks} tokens/rank={num_tokens} "
+            f"[cfg] backend=nccl algorithm={algorithm_name} dispatch_dtype={raw_disp_dtype} "
+            f"num_ranks={num_ranks} tokens/rank={num_tokens} "
             f"hidden={hidden} num_experts={num_experts} top_k={num_topk} "
             f"warmup={args.num_warmup} iters={args.num_iters}",
             flush=True,
@@ -100,35 +108,58 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     # counters); RANK_MAJOR groups them per source rank ([num_ranks, num_tokens, hidden]
     # + per-source-rank counters, which the LL kernel asserts has leading dim == nRanks).
     # HT FLAT and HT EXPERT_MAJOR use a 2D [max_recv_tokens, hidden] token buffer.
+    recv_dtype = torch.float8_e4m3fn if use_fp8 else torch.bfloat16
     if args.mode == "throughput":
-        recv = torch.empty((max_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        recv = torch.empty((max_recv_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = None
     elif nccl_layout == nccl_ep.Layout.RANK_MAJOR:
-        recv = torch.empty((num_ranks, num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        recv = torch.empty((num_ranks, num_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = torch.empty((num_ranks,), dtype=torch.int32, device="cuda")
     else:
-        recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
+    combine_in = recv if not use_fp8 else torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda").normal_(0.0, 0.1)
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
-    x_t = nccl_ep.Tensor(x)
+    dispatch_x = x
+    in_scales_t = recv_scales_t = None
+    if use_fp8 and args.mode == "throughput":
+        if hidden % 512 != 0:
+            raise ValueError("NCCL-EP throughput FP8 requires hidden to be a multiple of 512 (16B-aligned scales)")
+        dispatch_x = x.to(torch.float8_e4m3fn)
+        in_scales = torch.ones((num_tokens, hidden // 128), dtype=torch.float32, device="cuda")
+        recv_scales = torch.empty((max_recv_tokens, hidden // 128), dtype=torch.float32, device="cuda")
+        in_scales_t = nccl_ep.Tensor(in_scales)
+        recv_scales_t = nccl_ep.Tensor(recv_scales)
+    elif use_fp8:
+        if hidden % 512 != 0:
+            raise ValueError("NCCL-EP latency FP8 requires hidden to be a multiple of 512")
+        recv_scales = torch.empty(
+            (num_local_experts, num_ranks * num_tokens, hidden // 128), dtype=torch.float32, device="cuda"
+        )
+        recv_scales_t = nccl_ep.Tensor(recv_scales)
+
+    x_t = nccl_ep.Tensor(dispatch_x)
     recv_t = nccl_ep.Tensor(recv)
+    combine_in_t = recv_t if combine_in is recv else nccl_ep.Tensor(combine_in)
     recv_count_t = None if recv_count is None else nccl_ep.Tensor(recv_count)
     out_t = nccl_ep.Tensor(out)
     topk_weights_t = nccl_ep.Tensor(topk_weights)
 
     if args.mode == "throughput":
-        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
+        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t, scales=in_scales_t)
         if nccl_layout == nccl_ep.Layout.EXPERT_MAJOR:
             recv_weights = torch.empty((max_recv_tokens,), dtype=torch.float32, device="cuda")
             recv_weights_t = nccl_ep.Tensor(recv_weights)
-            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t)
+            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, scales=recv_scales_t)
         else:
             recv_weights = torch.empty((max_recv_tokens, num_topk), dtype=torch.float32, device="cuda")
             recv_weights_t = nccl_ep.Tensor(recv_weights)
             recv_idx = torch.empty((max_recv_tokens, num_topk), dtype=torch.int64, device="cuda")
             recv_idx_t = nccl_ep.Tensor(recv_idx)
-            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
+            dispatch_outputs = nccl_ep.DispatchOutputs(
+                tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t, scales=recv_scales_t
+            )
         dispatch_layout = None
     elif nccl_layout == nccl_ep.Layout.RANK_MAJOR:
         # RANK_MAJOR dispatch carries the per-token weights through as well (the LL
@@ -143,10 +174,10 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         dispatch_layout = nccl_ep.LayoutInfo(src_rank_counters=recv_count_t)
     else:
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
-        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t)
+        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, scales=recv_scales_t)
         dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
     dispatch_config = nccl_ep.DispatchConfig()
-    combine_inputs = nccl_ep.CombineInputs(tokens=recv_t)
+    combine_inputs = nccl_ep.CombineInputs(tokens=combine_in_t)
     combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
     combine_config = nccl_ep.CombineConfig()
 

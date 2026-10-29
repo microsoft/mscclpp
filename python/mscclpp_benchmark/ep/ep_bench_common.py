@@ -129,12 +129,23 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
 # ----------------------------------------------------------------------------
 def simulated_gemm_output(dispatch_out):
     """Simulate the downstream expert GEMM so combine consumes BF16 expert output:
-    identity for BF16 dispatch; dequantize (tokens * block_scales) for FP8_E4M3."""
-    if dispatch_out.quant is None:
+    identity for BF16 dispatch; dequantize (tokens * scales) for FP8 / MXFP8."""
+    if dispatch_out.quant is None or dispatch_out.tokens.dtype == torch.bfloat16:
         return dispatch_out.tokens
-    tokens = dispatch_out.tokens
-    token_blocks = tokens.float().reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
-    return (token_blocks * dispatch_out.quant.block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+    tokens = dispatch_out.tokens.float()
+    quant = dispatch_out.quant
+    if quant.scale is not None:
+        return (tokens / quant.scale).to(torch.bfloat16)
+    block_scales = quant.block_scales
+    if block_scales.dtype == torch.uint8:
+        scales = torch.ldexp(
+            torch.ones_like(block_scales, dtype=torch.float32),
+            block_scales.to(torch.int32) - 127,
+        )
+        token_blocks = tokens.reshape(*tokens.shape[:-1], tokens.size(-1) // 32, 32)
+        return (token_blocks * scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
+    token_blocks = tokens.reshape(*tokens.shape[:-1], tokens.size(-1) // 128, 128)
+    return (token_blocks * block_scales.unsqueeze(-1)).reshape(tokens.shape).to(torch.bfloat16)
 
 
 def validate_combine_output_mpi(actual, expected, comm, *, exact):
