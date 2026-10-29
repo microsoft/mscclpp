@@ -58,7 +58,24 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
     static_scale = quant.scale if quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC else None
     combine_fp8 = quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC
     if static_scale is not None:
-        x_float = (x_float * static_scale).to(torch.float8_e4m3fn).float() / static_scale
+        x_float = ((x_float * static_scale).to(torch.float8_e4m3fn).float() / static_scale).to(torch.bfloat16).float()
+    elif quant is not None and quant.format == ep.DispatchDataType.MXFP8_E4M3:
+        blocks = x_float.reshape(x.size(0), x.size(1) // 32, 32)
+        amax = blocks.abs().amax(dim=-1)
+        bits = amax.view(torch.int32)
+        exponent = (bits >> 23) & 0xFF
+        scale = (exponent - 8 + ((bits & 0x7FFFFF) > 0x600000).to(torch.int32)).clamp(1, 254)
+        scale = torch.where(amax == 0, torch.full_like(scale, 127), scale)
+        inv_bits = torch.where(scale == 254, torch.full_like(scale, 0x00400000), (254 - scale) << 23)
+        inv_scale = inv_bits.view(torch.float32)
+        q = (blocks * inv_scale.unsqueeze(-1)).to(torch.float8_e4m3fn).float()
+        dequant_scale = torch.ldexp(torch.ones_like(inv_scale), scale - 127)
+        x_float = (q * dequant_scale.unsqueeze(-1)).reshape(x.shape).to(torch.bfloat16).float()
+    elif quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3:
+        blocks = x_float.reshape(x.size(0), x.size(1) // 128, 128)
+        amax = blocks.abs().amax(dim=-1).clamp(min=1e-4)
+        q = (blocks * (448.0 / amax.unsqueeze(-1))).to(torch.float8_e4m3fn).float()
+        x_float = (q * (amax / 448.0).unsqueeze(-1)).reshape(x.shape).to(torch.bfloat16).float()
 
     def stage(values):
         if combine_fp8:
@@ -66,7 +83,7 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
         return values.to(torch.bfloat16).float()
 
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
-        staged = stage(x_float) if static_scale is not None else x_float
+        staged = stage(x_float) if quant is not None else x_float
         for lane in range(config.topk):
             weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0)
             expected = torch.addcmul(expected, staged, weight[:, None])

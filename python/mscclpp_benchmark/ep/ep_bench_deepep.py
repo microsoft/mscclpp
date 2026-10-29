@@ -124,8 +124,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     #
     # NOTE: the PLAIN (rank-major) path uses the per-expert combine; the expanded
     # (expert-major) path runs DeepEP's reduce/expand combine, which processes more
-    # rows in the reduce epilogue (measured more expensive on this uniform workload:
-    # 1n 74 vs 46, 4n 188 vs 136, 8n 199 vs 120 us). Both are exercised via --ep-layout.
+    # rows in the reduce epilogue. Both are exercised via --ep-layout.
     recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(**dispatch_args)
     recv_x_bf16 = recv_x[0] if isinstance(recv_x, (tuple, list)) else recv_x
     input_for_combine = torch.empty_like(recv_x_bf16, dtype=torch.bfloat16)
@@ -149,17 +148,8 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     def deepep_barrier():
         buffer.barrier(wait_comm_stream=True, with_cpu_sync=False, sequential=True)
 
-    # DeepEP V2.5 (EPBuffer) CUDA-graph capture is limited by TRANSPORT, not node
-    # count. On the all-NVLink / MNNVL path (EP_DISABLE_GIN=1, a single NVL72 domain)
-    # the dispatch/combine kernels stay on-stream and ARE graph-capturable at any node
-    # count -- verified capturing at 1/2/4 nodes on a GB200 NVL72. The RDMA/IB
-    # scale-out path uses NCCL GIN (GPU-Initiated Networking; on this stack backed by
-    # GDAKI / DOCA GPUNetIO -- not the legacy NVSHMEM/IBGDA Buffer path), and in our
-    # testing that path is not graph-capturable, so we gate capture on EP_DISABLE_GIN
-    # and run the GIN scale-out path eagerly. The on-stream blocker is the dispatch
-    # CPU sync that reads exact received-token counts (ep.py do_cpu_sync=True); the
-    # cached dispatch below forces do_cpu_sync=False, which is why the NVLink path is
-    # capture-safe.
+    # DeepEP CUDA-graph capture requires the NVLink/MNNVL path (EP_DISABLE_GIN=1)
+    # and cached dispatch (do_cpu_sync=False); the RDMA/IB GIN path runs eagerly.
     gin_disabled = os.environ.get("EP_DISABLE_GIN", "0") == "1"
     deepep_can_graph = args.cuda_graph and gin_disabled
 

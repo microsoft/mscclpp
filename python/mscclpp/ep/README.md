@@ -365,14 +365,11 @@ recomputes layout with CPU count synchronization; its graph path uses cached
 routing. These API costs are part of the measured dispatch time. The first timed
 iteration is discarded when more than one is requested.
 Kineto adds kernel-only measurements with L2 flushing and GPU barriers;
-set `EP_KERNEL_TIMER=events` to disable it, or `EP_KINETO_BARRIER=mpi` to use host
-barriers.
+set `EP_KERNEL_TIMER=events` to disable it.
 Bandwidth uses logical routed bytes (`tokens * topk * hidden * element_bytes`),
 not measured link traffic; kernel-only times are not end-to-end latency.
 
-MSCCL++ supports both latency and throughput graph replay. Latency requires
-`--iters-per-graph >= 2` because its readiness epochs must change between pairs;
-the default is `50`. Throughput also supports a single pair per graph.
+MSCCL++ supports both latency and throughput graph replay.
 NCCL-EP graph timing is wired for latency, and DeepEP graph capture uses the
 NVLink path (`EP_DISABLE_GIN=1`). A captured graph contains
 `--iters-per-graph` pairs; event timing reports total D+C only, normalized per

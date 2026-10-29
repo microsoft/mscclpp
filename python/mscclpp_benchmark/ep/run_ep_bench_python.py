@@ -199,10 +199,8 @@ def _flush_l2_cache():
 def torch_profiler_kernel_us(
     dispatch_fn,
     combine_fn,
-    comm,
     num_tests,
     flush_l2=True,
-    use_barrier=True,
     barrier=None,
     mid_barrier=None,
     parse_kernels=None,
@@ -255,13 +253,9 @@ def torch_profiler_kernel_us(
         )
 
     def _do_barrier():
-        if not use_barrier:
-            return
         torch.cuda._sleep(int(2e7))  # ~10 ms GPU spin to absorb host launch skew
         if barrier is not None:
             barrier()  # GPU-side barrier (aligns ranks on-device)
-        else:
-            comm.barrier()  # Host-only alignment.
 
     if separate:
         # ---- Two separate passes, each: [flush; barrier; single op] ----
@@ -396,8 +390,8 @@ def run_backend(
         comm.barrier()
 
     # Kernel-only timing (EP_KERNEL_TIMER=kineto, the default): DeepEP bench_kineto-style
-    # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
-    # per iteration (EP_KINETO_BARRIER=nccl) to align ranks on-device -- skew-free avg.
+    # torch.profiler pass with an L2 flush and a GPU-side barrier per iteration
+    # to align ranks on-device -- skew-free avg.
     use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
 
     starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -423,16 +417,14 @@ def run_backend(
     ck_disp = ck_comb = 0.0
     inproc_ok = False
     if use_kineto:
-        use_gpu_barrier = os.environ.get("EP_KINETO_BARRIER", "nccl") == "nccl"
         allow_mid_barrier = name != "deepep" or os.environ.get("EP_DISABLE_GIN", "1") == "1"
         comm.barrier()
         ck_disp, ck_comb = torch_profiler_kernel_us(
             dispatch_fn,
             combine_fn,
-            comm,
             iters,
-            barrier=(bench_barrier or nccl_barrier) if use_gpu_barrier else None,
-            mid_barrier=nccl_barrier if (use_gpu_barrier and allow_mid_barrier) else None,
+            barrier=bench_barrier or nccl_barrier,
+            mid_barrier=nccl_barrier if allow_mid_barrier else None,
             parse_kernels=parse_kernels,
             graph=graph,
         )
@@ -601,11 +593,12 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
     # loads libnccl_ep.so, which some DeepEP versions mistake for another runtime.
     for name in reversed(backends):
         package = {"nccl": "nccl.ep", "mscclpp": "mscclpp.ep", "deepep": "deep_ep"}[name]
+        root_package = package.split(".", 1)[0]
         try:
             importlib.import_module(package)
             available = 1
-        except ModuleNotFoundError:
-            if args.backend != "all":
+        except ModuleNotFoundError as exc:
+            if exc.name not in (package, root_package):
                 raise
             available = 0
         if comm.allreduce(available, op=MPI.MIN) == 0:
@@ -620,10 +613,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         raise RuntimeError("No EP backend was available")
 
     nccl_barrier = None
-    if (
-        os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
-        and os.environ.get("EP_KINETO_BARRIER", "nccl") == "nccl"
-    ):
+    if os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto":
         nccl_barrier = _init_torch_nccl(comm, rank, num_ranks)
         if rank == 0:
             print("[cfg] kineto barrier: torch NCCL all_reduce (GPU-side)", flush=True)
