@@ -235,5 +235,4 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
-        "paired_profile": True,
     }

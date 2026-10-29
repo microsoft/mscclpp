@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import os
 
 import torch
 
@@ -202,50 +201,16 @@ def torch_profiler_kernel_us(
     num_tests,
     flush_l2=True,
     barrier=None,
-    mid_barrier=None,
     parse_kernels=None,
     graph=None,
 ):
     """DeepEP bench_kineto-style kernel timing: torch.profiler (CUDA activity)
-    over the paired dispatch->combine loop (the default), with a per-iteration L2 flush and a
-    cuda._sleep(~10ms) + cross-rank barrier to absorb host launch skew. Returns
+    over the paired dispatch->combine loop, with a per-iteration L2 flush and a
+    cuda._sleep(~10ms) + cross-rank GPU barrier to absorb host launch skew. Returns
     the average per-kernel GPU time (us) for the dispatch and combine kernels,
-    matched by name substring in the profiler key_averages() table.
-
-    EP_KINETO_BARRIER_COMBINE=1 inserts a SECOND GPU-side barrier between eager
-    dispatch and combine so the combine kernel also enters GPU-aligned across
-    ranks. This is the same treatment the FlashInfer harness applies (barrier
-    before BOTH phases) to collapse the combine recv-spin skew -- without it the
-    single pre-dispatch barrier aligns dispatch but combine drifts again because
-    it is a separate launch whose in-kernel arrival-wait absorbs the skew.
-    The mid barrier uses a PLAIN NCCL all_reduce (``mid_barrier``), not the
-    backend's native barrier.
-
-    NOTE: for DeepEP this is SINGLE-NODE ONLY. Inserting ANY collective (even a
-    plain NCCL all_reduce) between DeepEP's dispatch and combine corrupts the
-    EPBuffer's pending symmetric-memory state and crashes on the multi-node
-    scale-out path (Cuda 719 in DeepEP symmetric.hpp). mscclpp / NCCL-EP have
-    independent dispatch/combine and tolerate it at any scale.
-
-    EP_KINETO_SEPARATE=1 measures dispatch and combine in TWO separate
-    profiled passes -- each a single op per iteration with the barrier immediately
-    before it -- exactly like DeepEP's own bench_kineto (which is called once per
-    op). This aligns BOTH kernels at entry without ever placing a barrier between
-    a paired dispatch->combine (so it is safe for DeepEP multi-node), collapsing
-    the combine recv-spin skew. This opt-in mode is limited to backends that can
-    repeat each phase independently; MSCCL++ always uses paired calls because
-    latency handles are single-use. EP_KINETO_SEPARATE=0 is required
-    whenever a backend captures dispatch+combine in ONE CUDA graph: a
-    single replay runs both phases, so the separate pass can no longer isolate
-    combine and the per-phase split must come from the paired pass instead."""
+    matched by name substring in the profiler key_averages() table."""
     import torch.profiler as _tp
 
-    use_mid = graph is None and os.environ.get("EP_KINETO_BARRIER_COMBINE", "0") == "1" and mid_barrier is not None
-    separate = graph is None and os.environ.get("EP_KINETO_SEPARATE", "0") == "1"
-    # Backend-specific kineto parse: maps a key_averages() table to
-    # (dispatch_us, combine_us) using that library's kernel names (see
-    # ep_bench_<lib>.parse_kineto_kernels). Fall back to the generic phase-word
-    # split when none is supplied.
     if parse_kernels is None:
         parse_kernels = lambda ka: (
             sum_matching_kernel_us(ka, ("dispatch",)),
@@ -257,48 +222,6 @@ def torch_profiler_kernel_us(
         if barrier is not None:
             barrier()  # GPU-side barrier (aligns ranks on-device)
 
-    if separate:
-        # ---- Two separate passes, each: [flush; barrier; single op] ----
-        # Generic two-pass timing method (adopted from DeepEP's bench_kineto,
-        # which profiles one op per call): dispatch and combine are each timed in
-        # their own profiled loop with the barrier immediately before the op, so
-        # both kernels enter GPU-aligned across ranks and the combine recv-spin
-        # skew collapses. It applies to every backend -- the dispatch_fn/combine_fn
-        # closures are backend-supplied and this loop has no per-library logic.
-        # Because no barrier is ever placed BETWEEN a paired dispatch->combine, it
-        # is also safe for DeepEP multi-node (a mid-pair collective would corrupt
-        # its symmetric-memory state; see the class docstring).
-        def _run_pass(op_fn):
-            op_fn()  # warm / auto-tune
-            torch.cuda.synchronize()
-            schedule = _tp.schedule(wait=0, warmup=1, active=1, repeat=1)
-            with _tp.profile(activities=[_tp.ProfilerActivity.CUDA], schedule=schedule, acc_events=True) as prof:
-                for _ in range(2):
-                    for _ in range(num_tests):
-                        if flush_l2:
-                            _flush_l2_cache()
-                        _do_barrier()
-                        op_fn()
-                    torch.cuda.synchronize()
-                    prof.step()
-            return prof.key_averages()
-
-        # Dispatch pass.
-        ka_d = _run_pass(dispatch_fn)
-        # Combine pass: prime one dispatch to obtain a valid combine input, then
-        # replay combine alone. The primed dout carries whatever state the backend
-        # needs (DeepEP replays its fixed primed handle; mscclpp / NCCL-EP consume
-        # this dout each iteration) -- all via the backend-supplied combine_fn.
-        dout = dispatch_fn()
-        torch.cuda.synchronize()
-        ka_c = _run_pass(lambda: combine_fn(dout))
-        # Dispatch time from the dispatch pass, combine time from the combine pass.
-        return parse_kernels(ka_d)[0], parse_kernels(ka_c)[1]
-
-    # ---- Paired single-pass loop (EP_KINETO_SEPARATE=0) ----
-    # Times dispatch and combine in ONE profiled pass over the paired
-    # dispatch->combine loop. REQUIRED for single-graph CUDA-graph backends (one
-    # replay runs both phases, so the separate pass cannot isolate combine).
     if graph is None:
         combine_fn(dispatch_fn())
     else:
@@ -312,10 +235,7 @@ def torch_profiler_kernel_us(
                     _flush_l2_cache()
                 _do_barrier()
                 if graph is None:
-                    dout = dispatch_fn()
-                    if use_mid:
-                        mid_barrier()
-                    combine_fn(dout)
+                    combine_fn(dispatch_fn())
                 else:
                     graph.replay()
             torch.cuda.synchronize()
@@ -389,11 +309,8 @@ def run_backend(
         stream.synchronize()
         comm.barrier()
 
-    # Kernel-only timing (EP_KERNEL_TIMER=kineto, the default): DeepEP bench_kineto-style
-    # torch.profiler pass with an L2 flush and a GPU-side barrier per iteration
-    # to align ranks on-device -- skew-free avg.
-    use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
-
+    # Kernel-only timing: DeepEP bench_kineto-style torch.profiler pass with an
+    # L2 flush and a GPU-side barrier per iteration to align ranks on-device.
     starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     ends = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     if graph is None:
@@ -414,21 +331,16 @@ def run_backend(
 
     torch.cuda.synchronize()
 
-    ck_disp = ck_comb = 0.0
-    inproc_ok = False
-    if use_kineto:
-        allow_mid_barrier = name != "deepep" or os.environ.get("EP_DISABLE_GIN", "1") == "1"
-        comm.barrier()
-        ck_disp, ck_comb = torch_profiler_kernel_us(
-            dispatch_fn,
-            combine_fn,
-            iters,
-            barrier=bench_barrier or nccl_barrier,
-            mid_barrier=nccl_barrier if allow_mid_barrier else None,
-            parse_kernels=parse_kernels,
-            graph=graph,
-        )
-        inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
+    comm.barrier()
+    ck_disp, ck_comb = torch_profiler_kernel_us(
+        dispatch_fn,
+        combine_fn,
+        iters,
+        barrier=bench_barrier or nccl_barrier,
+        parse_kernels=parse_kernels,
+        graph=graph,
+    )
+    inproc_ok = ck_disp > 0.0 and ck_comb > 0.0
 
     # --- Per-iter times (ms->us), trim the first (warmup outlier). ---
     # graph_group_size is the number of dispatch->combine iterations captured in one
@@ -485,39 +397,34 @@ def run_backend(
     # kernel ends in a cross-rank recv spin-wait, so a lagging rank's device time
     # includes wait skew; the cross-rank MIN (the rank that did not wait) is the
     # representative kernel floor. Combine has little recv-spin and is stable. ---
-    kernel_ok = 0
-    gk_d_avg = gk_d_min = gk_d_max = 0.0
-    gk_c_avg = gk_c_min = gk_c_max = 0.0
-    if use_kineto:
-        kernel_ok = comm.allreduce(1 if inproc_ok else 0, op=MPI.MIN)
-        gk_d_avg, gk_d_min, gk_d_max = _mpi_stats(comm, ck_disp, ck_disp, ck_disp, num_ranks)
-        gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
+    kernel_ok = comm.allreduce(1 if inproc_ok else 0, op=MPI.MIN)
+    gk_d_avg, gk_d_min, gk_d_max = _mpi_stats(comm, ck_disp, ck_disp, ck_disp, num_ranks)
+    gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
 
     if rank == 0:
-        if use_kineto:
-            _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
-            print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
-            if kernel_ok:
-                # Report BOTH min and avg for dispatch and combine. The LL dispatch
-                # kernel ends in a cross-rank recv spin-wait, so its avg/max carry
-                # wait skew on lagging ranks; the cross-rank MIN is the representative
-                # kernel floor. Combine has little recv-spin, so its min ~ avg.
-                print(
-                    f"Dispatch:    avg={gk_d_avg:.2f} us, min={gk_d_min:.2f} us (representative), "
-                    f"max={gk_d_max:.2f} us [avg/max carry recv-spin skew on lagging ranks]"
-                )
-                print(
-                    f"                  throughput: avg={(disp_bytes / 1e9) / (gk_d_avg * 1e-6):.2f} GB/s, "
-                    f"@min={(disp_bytes / 1e9) / (gk_d_min * 1e-6):.2f} GB/s"
-                )
-                print(f"Combine:     avg={gk_c_avg:.2f} us, min={gk_c_min:.2f} us, max={gk_c_max:.2f} us")
-                print(f"                  throughput: avg={(comb_bytes / 1e9) / (gk_c_avg * 1e-6):.2f} GB/s")
-                print(
-                    f"Total (D+C): avg={gk_d_avg + gk_c_avg:.2f} us (dispatch avg + combine avg), "
-                    f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
-                )
-            else:
-                print("  NOTE: kineto captured 0 EP kernels (collector unavailable).")
+        _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
+        print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
+        if kernel_ok:
+            # Report BOTH min and avg for dispatch and combine. The LL dispatch
+            # kernel ends in a cross-rank recv spin-wait, so its avg/max carry
+            # wait skew on lagging ranks; the cross-rank MIN is the representative
+            # kernel floor. Combine has little recv-spin, so its min ~ avg.
+            print(
+                f"Dispatch:    avg={gk_d_avg:.2f} us, min={gk_d_min:.2f} us (representative), "
+                f"max={gk_d_max:.2f} us [avg/max carry recv-spin skew on lagging ranks]"
+            )
+            print(
+                f"                  throughput: avg={(disp_bytes / 1e9) / (gk_d_avg * 1e-6):.2f} GB/s, "
+                f"@min={(disp_bytes / 1e9) / (gk_d_min * 1e-6):.2f} GB/s"
+            )
+            print(f"Combine:     avg={gk_c_avg:.2f} us, min={gk_c_min:.2f} us, max={gk_c_max:.2f} us")
+            print(f"                  throughput: avg={(comb_bytes / 1e9) / (gk_c_avg * 1e-6):.2f} GB/s")
+            print(
+                f"Total (D+C): avg={gk_d_avg + gk_c_avg:.2f} us (dispatch avg + combine avg), "
+                f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
+            )
+        else:
+            print("  NOTE: kineto captured 0 EP kernels (collector unavailable).")
 
         print(
             f"\nLogical routed bytes: dispatch={disp_bytes / 1e6:.2f} MB ({dispatch_dtype}), "
@@ -544,14 +451,6 @@ _PARSE_KINETO = {
 def main() -> None:
     args = parse_args()
     comm, rank, num_ranks = init_mpi()
-    # Debug aid: EP_FAULTHANDLER_SECS>0 dumps every thread's Python traceback if the
-    # process is still alive after N seconds (surfaces the exact hang location under
-    # an mpirun timeout). Off unless the env var is set.
-    _fh_secs = float(os.environ.get("EP_FAULTHANDLER_SECS", "0") or "0")
-    if _fh_secs > 0:
-        import faulthandler
-
-        faulthandler.dump_traceback_later(_fh_secs, repeat=True)
     if args.num_experts % num_ranks:
         raise ValueError("num_experts must be divisible by num_ranks")
     # Single routing input reused for every captured iteration. --iters-per-graph
@@ -566,10 +465,6 @@ def main() -> None:
         args.seed,
     )
 
-    # Snapshot the user's EP_KINETO_SEPARATE so we can restore it per backend below
-    # (cuda-graph capture toggles it for some backends only -- see the loop).
-    _user_kineto_separate = os.environ.get("EP_KINETO_SEPARATE")
-
     backends = ["nccl", "mscclpp", "deepep"] if args.backend == "all" else [args.backend]
     benchmark_stream = torch.cuda.Stream()
     benchmark_stream.wait_stream(torch.cuda.current_stream())
@@ -577,10 +472,6 @@ def main() -> None:
         with torch.cuda.stream(benchmark_stream):
             _run_backends(args, comm, rank, num_ranks, inputs, backends)
     finally:
-        if _user_kineto_separate is None:
-            os.environ.pop("EP_KINETO_SEPARATE", None)
-        else:
-            os.environ["EP_KINETO_SEPARATE"] = _user_kineto_separate
         import torch.distributed as dist
 
         if dist.is_initialized():
@@ -612,31 +503,18 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
     if not available_backends:
         raise RuntimeError("No EP backend was available")
 
-    nccl_barrier = None
-    if os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto":
-        nccl_barrier = _init_torch_nccl(comm, rank, num_ranks)
-        if rank == 0:
-            print("[cfg] kineto barrier: torch NCCL all_reduce (GPU-side)", flush=True)
+    nccl_barrier = _init_torch_nccl(comm, rank, num_ranks)
+    if rank == 0:
+        print("[cfg] kineto barrier: torch NCCL all_reduce (GPU-side)", flush=True)
 
-    user_separate = os.environ.get("EP_KINETO_SEPARATE")
     for name in backends:
         if name not in available_backends:
             continue
-        if user_separate is None:
-            os.environ.pop("EP_KINETO_SEPARATE", None)
-        else:
-            os.environ["EP_KINETO_SEPARATE"] = user_separate
         ops = _SETUP[name](args, comm, rank, num_ranks, inputs)
         dispatch_fn = ops["dispatch"]
         combine_fn = ops["combine"]
         teardown = ops["teardown"]
         backend_barrier = ops.get("barrier")
-        if ops.get("paired_profile"):
-            os.environ["EP_KINETO_SEPARATE"] = "0"
-            if user_separate == "1" and rank == 0:
-                print(
-                    f"[cfg] {name} profiling stays paired: dispatch/combine cannot be replayed separately", flush=True
-                )
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -648,7 +526,6 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                     graph_group_size=args.iters_per_graph,
                 )
                 effective_group_size = args.iters_per_graph
-                os.environ["EP_KINETO_SEPARATE"] = "0"
                 if rank == 0:
                     print(
                         f"[cfg] {name} cuda_graph captured "

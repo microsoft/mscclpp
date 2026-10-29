@@ -364,8 +364,7 @@ throughput MSCCL++ reuses a fixed-routing prepare handle. DeepEP eager dispatch
 recomputes layout with CPU count synchronization; its graph path uses cached
 routing. These API costs are part of the measured dispatch time. The first timed
 iteration is discarded when more than one is requested.
-Kineto adds kernel-only measurements with L2 flushing and GPU barriers;
-set `EP_KERNEL_TIMER=events` to disable it.
+Kineto adds kernel-only measurements with L2 flushing and GPU barriers.
 Bandwidth uses logical routed bytes (`tokens * topk * hidden * element_bytes`),
 not measured link traffic; kernel-only times are not end-to-end latency.
 
