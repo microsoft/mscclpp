@@ -43,7 +43,9 @@ def _stage_expert_output(dispatch_out, config):
             expert_output = torch.addcmul(expert_output, tokens, weight[..., None])
     quant = dispatch_out.quant
     if quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC:
-        dispatch_out.combine_input_buffer.copy_((expert_output * quant.scale).to(torch.float8_e4m3fn))
+        dispatch_out.combine_input_buffer.copy_(
+            (expert_output * quant.scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+        )
     else:
         dispatch_out.combine_input_buffer.copy_(expert_output.to(torch.bfloat16))
     return dispatch_out.combine_input_buffer
@@ -58,9 +60,7 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
     static_scale = quant.scale if quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC else None
     combine_fp8 = quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC
     if static_scale is not None:
-        scaled = x_float * static_scale
-        if quant.input_mode == ep.QuantConfig.InputMode.QUANTIZE:
-            scaled = scaled.clamp(-448.0, 448.0)
+        scaled = (x_float * static_scale).clamp(-448.0, 448.0)
         x_float = (scaled.to(torch.float8_e4m3fn).float() / static_scale).to(torch.bfloat16).float()
     elif quant is not None and quant.format == ep.DispatchDataType.MXFP8_E4M3:
         blocks = x_float.reshape(x.size(0), x.size(1) // 32, 32)
@@ -82,7 +82,7 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
 
     def stage(values):
         if combine_fp8:
-            return (values * static_scale).to(torch.float8_e4m3fn).float() / static_scale
+            return (values * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float() / static_scale
         return values.to(torch.bfloat16).float()
 
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
@@ -144,7 +144,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "token_major": ep.DispatchLayout.TOKEN_MAJOR,
     }.get(args.ep_layout, ep.DispatchLayout.EXPERT_MAJOR if latency else ep.DispatchLayout.TOKEN_MAJOR)
     combine_mode = (
-        ep.CombineMode.DIRECT_SEND if args.combine_mode == "direct_send" else ep.CombineMode.RANK_LOCAL_REDUCE
+        ep.CombineMode.DIRECT_SEND
+        if latency and args.combine_mode == "direct_send"
+        else ep.CombineMode.RANK_LOCAL_REDUCE
     )
     quant = _build_quant_config(args, mode, layout)
     group = CommGroup(mpi_comm=comm)
@@ -194,7 +196,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC
         and quant.input_mode == ep.QuantConfig.InputMode.PREQUANTIZED
     ):
-        dispatch_input = (x.float() * quant.scale).to(torch.float8_e4m3fn)
+        dispatch_input = (x.float() * quant.scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
     output_buffer = moe.get_dispatch_output_buffer()
     out = torch.empty_like(x)
 
