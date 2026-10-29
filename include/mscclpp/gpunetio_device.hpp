@@ -165,38 +165,6 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
-  /// Post three RDMA writes in a single batched doorbell submission.
-  MSCCLPP_DEVICE_INLINE void putBatched3(const GpuNetIoMemoryDeviceHandle (&dst)[3], const uint64_t (&dstOffsets)[3],
-                                         const GpuNetIoMemoryDeviceHandle (&src)[3], const uint64_t (&srcOffsets)[3],
-                                         const uint64_t (&sizes)[3]) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    for (int i = 0; i < 3; ++i) {
-      require(sizes[i] <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
-    }
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    constexpr auto sharing = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
-    const uint64_t base =
-        doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 3);
-    withSharedWqe([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
-      prepareWriteWqe(q, &sharedWqe[0], base, dst[0].addr + dstOffsets[0], dst[0].key, src[0].addr + srcOffsets[0],
-                      src[0].key, sizes[0]);
-      copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, base), &sharedWqe[0]);
-
-      prepareWriteWqe(q, &sharedWqe[1], base + 1, dst[1].addr + dstOffsets[1], dst[1].key, src[1].addr + srcOffsets[1],
-                      src[1].key, sizes[1]);
-      copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, base + 1), &sharedWqe[1]);
-
-      prepareWriteWqe(q, &sharedWqe[1], base + 2, dst[2].addr + dstOffsets[2], dst[2].key, src[2].addr + srcOffsets[2],
-                      src[2].key, sizes[2]);
-      copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, base + 2), &sharedWqe[1]);
-      doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, base, base + 2);
-      submitPreparedFromShared(q, base + 2, &sharedWqe[0]);
-    });
-#else
-    trap();
-#endif
-  }
-
   /// Remote 64-bit atomic add.
   MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t addr, uint32_t key, int64_t value) {
 #if defined(MSCCLPP_USE_GPUNETIO)
@@ -212,68 +180,6 @@ struct GpuNetIoDeviceHandle {
       doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
       submitPreparedFromShared(q, index, sharedWqe);
     });
-#else
-    trap();
-#endif
-  }
-
-  /// Poll for completion of every WQE posted so far on the queue pair for at most `spins` iterations.
-  /// @return 0 when drained, EBUSY if still pending, or the completion error status.
-  MSCCLPP_DEVICE_INLINE int tryFlush(uint64_t spins) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    const uint64_t ticket =
-        doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE>(
-            &q->sq_rsvd_index);
-    if (ticket == 0) return 0;
-    for (uint64_t spin = 0; spin < spins; ++spin) {
-      const int status =
-          doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE,
-                                            DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, ticket - 1);
-      if (status != EBUSY) return status;
-    }
-    return EBUSY;
-#else
-    trap();
-    return 0;
-#endif
-  }
-
-  /// Send-queue reservation index: every WQE posted so far lies below it.
-  MSCCLPP_DEVICE_INLINE uint64_t reservedTicket() const {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    return doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE>(
-        &q->sq_rsvd_index);
-#else
-    trap();
-    return 0;
-#endif
-  }
-
-  /// Return whether all WQEs below `ticket` have already been observed as completed in `cqe_ci`.
-  MSCCLPP_DEVICE_INLINE bool isTicketDone(uint64_t ticket) const {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    if (ticket == 0) return true;
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    return doca_gpu_dev_verbs_load_relaxed<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(&q->cq_sq.cqe_ci) >= ticket;
-#else
-    trap();
-    return false;
-#endif
-  }
-
-  /// Wait until every WQE below `ticket` (from `reservedTicket()`) has completed.
-  MSCCLPP_DEVICE_INLINE void waitTicket(uint64_t ticket) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    if (ticket == 0) return;
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    int status;
-    do {
-      status = doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE,
-                                                 DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, ticket - 1);
-    } while (status == EBUSY);
-    require(status == 0);
 #else
     trap();
 #endif
