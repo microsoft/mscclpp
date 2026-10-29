@@ -18,7 +18,7 @@ launch examples, layouts, and timing limitations.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import os
 
 import torch
@@ -336,7 +336,7 @@ def torch_profiler_kernel_us(
 # replays dispatch+combine as ONE combined graph, so this single helper captures
 # the paired op from any backend; the backend only supplies its capture-safe ops.
 # ============================================================================
-def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None, graph_group_size=1):
+def _capture_paired_graph(dispatch_op, combine_op, graph_group_size=1):
     """Capture paired dispatch->combine operations and return their CUDA graph.
     One replay runs both phases. dispatch_op/combine_op are the backend's capture-safe
     ops (no CPU sync, no host collective) that go inside the graph.
@@ -346,14 +346,9 @@ def _capture_paired_graph(dispatch_op, combine_op, prime=True, pre_capture=None,
     skew (reported times are divided back to per-iteration by the caller). Capture is
     performed on the same non-default stream used for setup and eager calls;
     capture failures propagate instead of reusing potentially invalid state."""
-    if prime:
-        if pre_capture is not None:
-            pre_capture()
-        dispatch_op()
-        combine_op()
-        torch.cuda.synchronize()
-    if pre_capture is not None:
-        pre_capture()
+    dispatch_op()
+    combine_op()
+    torch.cuda.synchronize()
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph, stream=torch.cuda.current_stream()):
         for _ in range(graph_group_size):
@@ -378,12 +373,11 @@ def run_backend(
     graph_group_size=1,
     graph=None,
 ):
-    base_inputs = inputs[0] if isinstance(inputs, list) else inputs
-    _, _, _, num_valid_selections = base_inputs
+    _, _, _, num_valid_selections = inputs
     hidden = args.hidden
     warmup, iters = args.num_warmup, args.num_iters
-    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
-    raw_comb_dtype = getattr(args, "combine_dtype", "bf16")
+    raw_disp_dtype = args.dispatch_dtype
+    raw_comb_dtype = args.combine_dtype
     disp_elt = 2 if raw_disp_dtype == "bf16" else 1
     comb_elt = 1 if raw_comb_dtype == "fp8_e4m3_static" else 2
     disp_bytes = num_valid_selections * hidden * disp_elt  # dispatch wire format
@@ -405,7 +399,6 @@ def run_backend(
     # torch.profiler pass with an L2 flush and a GPU-side torch NCCL all_reduce barrier
     # per iteration (EP_KINETO_BARRIER=nccl) to align ranks on-device -- skew-free avg.
     use_kineto = os.environ.get("EP_KERNEL_TIMER", "kineto") == "kineto"
-    have_kernel = use_kineto
 
     starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     ends = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -455,12 +448,8 @@ def run_backend(
     total_us = [starts[i].elapsed_time(ends[i]) * 1e3 / group for i in range(iters)]
     timings = [("Total (D+C)", total_us, disp_bytes + comb_bytes)]
     is_static_fp8_map = raw_disp_dtype == "fp8_e4m3" and (
-        (
-            name == "mscclpp"
-            and getattr(args, "mode", "latency") == "latency"
-            and getattr(args, "ep_layout", None) == "rank_major"
-        )
-        or (name == "deepep" and getattr(args, "ep_layout", None) != "expert_major")
+        (name == "mscclpp" and args.mode == "latency" and args.ep_layout == "rank_major")
+        or (name == "deepep" and args.ep_layout != "expert_major")
     )
     dispatch_dtype = {
         "bf16": "BF16",
@@ -507,13 +496,13 @@ def run_backend(
     kernel_ok = 0
     gk_d_avg = gk_d_min = gk_d_max = 0.0
     gk_c_avg = gk_c_min = gk_c_max = 0.0
-    if have_kernel:
+    if use_kineto:
         kernel_ok = comm.allreduce(1 if inproc_ok else 0, op=MPI.MIN)
         gk_d_avg, gk_d_min, gk_d_max = _mpi_stats(comm, ck_disp, ck_disp, ck_disp, num_ranks)
         gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
 
     if rank == 0:
-        if have_kernel:
+        if use_kineto:
             _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
             print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
             if kernel_ok:
@@ -544,7 +533,6 @@ def run_backend(
         )
 
 
-# ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------
 # Backend registry.
 # ----------------------------------------------------------------------------
@@ -612,16 +600,21 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
     # DeepEP validates loaded libnccl paths at import; import it before NCCL-EP
     # loads libnccl_ep.so, which some DeepEP versions mistake for another runtime.
     for name in reversed(backends):
-        package = {"nccl": "nccl", "mscclpp": "mscclpp", "deepep": "deep_ep"}[name]
-        available = int(importlib.util.find_spec(package) is not None)
+        package = {"nccl": "nccl.ep", "mscclpp": "mscclpp.ep", "deepep": "deep_ep"}[name]
+        try:
+            importlib.import_module(package)
+            available = 1
+        except ModuleNotFoundError:
+            if args.backend != "all":
+                raise
+            available = 0
         if comm.allreduce(available, op=MPI.MIN) == 0:
             message = f"backend '{name}' requires the '{package}' Python package on every rank"
             if args.backend != "all":
-                raise ImportError(message)
+                raise ModuleNotFoundError(message, name=package)
             if rank == 0:
                 print(f"\n[skip] {message}", flush=True)
             continue
-        importlib.import_module({"nccl": "nccl.ep", "mscclpp": "mscclpp.ep", "deepep": "deep_ep"}[name])
         available_backends.append(name)
     if not available_backends:
         raise RuntimeError("No EP backend was available")
@@ -651,7 +644,9 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         if ops.get("paired_profile"):
             os.environ["EP_KINETO_SEPARATE"] = "0"
             if user_separate == "1" and rank == 0:
-                print("[cfg] mscclpp profiling stays paired: latency handles cannot be combined twice", flush=True)
+                print(
+                    f"[cfg] {name} profiling stays paired: dispatch/combine cannot be replayed separately", flush=True
+                )
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -660,7 +655,6 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 graph = _capture_paired_graph(
                     spec["dispatch"],
                     spec["combine"],
-                    pre_capture=spec.get("pre_capture"),
                     graph_group_size=args.iters_per_graph,
                 )
                 effective_group_size = args.iters_per_graph

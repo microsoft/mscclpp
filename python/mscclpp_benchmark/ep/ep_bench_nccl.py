@@ -9,12 +9,15 @@ from .ep_bench_common import sum_matching_kernel_us
 
 
 def parse_kineto_kernels(key_averages):
-    """Map a kineto key_averages() table to (dispatch_us, combine_us) for NCCL-EP,
-    which runs a single dispatch kernel and a single combine kernel with the
-    phase word in each function name."""
+    """Map a kineto key_averages() table to (dispatch_us, combine_us) for NCCL-EP.
+    In addition to the main dispatch/combine kernels, HT mode launches
+    sparse_to_dense_prob / dense_to_sparse_prob (or legacy local_permute_dup)
+    in dispatch, and local_permute_reduce (if present) in combine."""
     return (
-        sum_matching_kernel_us(key_averages, ("dispatch",)),
-        sum_matching_kernel_us(key_averages, ("combine",)),
+        sum_matching_kernel_us(
+            key_averages, ("dispatch", "sparse_to_dense_prob", "dense_to_sparse_prob", "local_permute_dup")
+        ),
+        sum_matching_kernel_us(key_averages, ("combine", "local_permute_reduce")),
     )
 
 
@@ -29,7 +32,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
-    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
+    raw_disp_dtype = args.dispatch_dtype
     use_fp8 = raw_disp_dtype != "bf16"
     if use_fp8:
         if raw_disp_dtype != "fp8_e4m3":
@@ -118,7 +121,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     else:
         recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
-    combine_in = recv if not use_fp8 else torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda").normal_(0.0, 0.1)
+    combine_in = torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda").normal_(0.0, 0.1)
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     dispatch_x = x
@@ -141,7 +144,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     x_t = nccl_ep.Tensor(dispatch_x)
     recv_t = nccl_ep.Tensor(recv)
-    combine_in_t = recv_t if combine_in is recv else nccl_ep.Tensor(combine_in)
+    combine_in_t = nccl_ep.Tensor(combine_in)
     recv_count_t = None if recv_count is None else nccl_ep.Tensor(recv_count)
     out_t = nccl_ep.Tensor(out)
     topk_weights_t = nccl_ep.Tensor(topk_weights)
@@ -232,4 +235,5 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "paired_profile": True,
     }

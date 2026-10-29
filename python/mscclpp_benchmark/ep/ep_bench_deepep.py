@@ -46,12 +46,12 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     # DeepEP EPBuffer supports local pre-reduction (allow_multiple_reduction=True,
     # corresponding to rank_local_reduce) or single combine-epilogue reduction
     # (allow_multiple_reduction=False, corresponding to direct_send).
-    allow_multiple_reduction = int(getattr(args, "combine_mode", "rank_local_reduce") != "direct_send")
-    raw_disp_dtype = getattr(args, "dispatch_dtype", "bf16")
+    allow_multiple_reduction = int(args.combine_mode != "direct_send")
+    raw_disp_dtype = args.dispatch_dtype
     use_fp8_dispatch = raw_disp_dtype != "bf16"
-    if use_fp8_dispatch and getattr(args, "fp8_input_mode", "quantize") == "quantize" and rank == 0:
+    if use_fp8_dispatch and args.fp8_input_mode == "quantize" and rank == 0:
         print(
-            "[cfg] deepep EPBuffer does not fuse dispatch quantization; " "pre-quantizing input outside the timed loop",
+            "[cfg] deepep EPBuffer does not fuse dispatch quantization; pre-quantizing input outside the timed loop",
             flush=True,
         )
 
@@ -87,8 +87,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     dispatch_x = x
     if raw_disp_dtype in ("fp8_e4m3_static", "fp8_e4m3") and not do_expand:
         # On rank_major, --dispatch-dtype fp8_e4m3 maps to static FP8 (no scale sideband).
-        scale = float(getattr(args, "fp8_scale", 1.0))
-        dispatch_x = (x.float() * scale).to(torch.float8_e4m3fn)
+        dispatch_x = (x.float() * float(args.fp8_scale)).to(torch.float8_e4m3fn)
     elif raw_disp_dtype == "fp8_e4m3":
         from deep_ep.utils.math import per_token_cast_to_fp8
 

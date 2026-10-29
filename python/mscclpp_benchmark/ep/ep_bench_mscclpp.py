@@ -84,35 +84,28 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
 def _build_quant_config(args, mode, layout):
     import mscclpp.ep as ep
 
-    combine_dtype = getattr(args, "combine_dtype", "bf16")
     combine_format = (
-        ep.DispatchDataType.FP8_E4M3_STATIC if combine_dtype == "fp8_e4m3_static" else ep.DispatchDataType.BF16
+        ep.DispatchDataType.FP8_E4M3_STATIC if args.combine_dtype == "fp8_e4m3_static" else ep.DispatchDataType.BF16
     )
-    dtype = getattr(args, "dispatch_dtype", "bf16")
+    dtype = args.dispatch_dtype
     if dtype == "bf16":
-        if combine_format != ep.DispatchDataType.BF16:
-            raise ValueError("--combine-dtype fp8_e4m3_static requires static FP8 dispatch")
         return None
     if dtype == "mxfp8_e4m3":
-        if combine_format != ep.DispatchDataType.BF16:
-            raise ValueError("--combine-dtype fp8_e4m3_static requires static FP8 dispatch")
         return ep.QuantConfig(format=ep.DispatchDataType.MXFP8_E4M3)
     if dtype == "fp8_e4m3_static" or (
         dtype == "fp8_e4m3" and mode == ep.MoEMode.LATENCY and layout == ep.DispatchLayout.RANK_MAJOR
     ):
         input_mode = (
             ep.QuantConfig.InputMode.PREQUANTIZED
-            if getattr(args, "fp8_input_mode", "quantize") == "prequantized"
+            if args.fp8_input_mode == "prequantized"
             else ep.QuantConfig.InputMode.QUANTIZE
         )
         return ep.QuantConfig(
             format=ep.DispatchDataType.FP8_E4M3_STATIC,
-            scale=float(getattr(args, "fp8_scale", 1.0)),
+            scale=float(args.fp8_scale),
             input_mode=input_mode,
             combine_format=combine_format,
         )
-    if combine_format != ep.DispatchDataType.BF16:
-        raise ValueError("--combine-dtype fp8_e4m3_static requires static FP8 dispatch")
     return ep.QuantConfig(format=ep.DispatchDataType.FP8_E4M3)
 
 
@@ -236,12 +229,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         graph_spec = {"dispatch": graph_dispatch, "combine": graph_combine}
 
     if rank == 0:
-        combine_dtype = getattr(args, "combine_dtype", "bf16")
         print(
             f"[cfg] backend=mscclpp algorithm={args.mode.upper()} layout={layout} "
             f"combine_mode={combine_mode} num_ranks={num_ranks} tokens/rank={args.num_tokens} "
             f"hidden={args.hidden} num_experts={args.num_experts} top_k={args.num_topk} "
-            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={combine_dtype}",
+            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype}",
             flush=True,
         )
 
