@@ -58,7 +58,10 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
     static_scale = quant.scale if quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC else None
     combine_fp8 = quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC
     if static_scale is not None:
-        x_float = ((x_float * static_scale).to(torch.float8_e4m3fn).float() / static_scale).to(torch.bfloat16).float()
+        scaled = x_float * static_scale
+        if quant.input_mode == ep.QuantConfig.InputMode.QUANTIZE:
+            scaled = scaled.clamp(-448.0, 448.0)
+        x_float = (scaled.to(torch.float8_e4m3fn).float() / static_scale).to(torch.bfloat16).float()
     elif quant is not None and quant.format == ep.DispatchDataType.MXFP8_E4M3:
         blocks = x_float.reshape(x.size(0), x.size(1) // 32, 32)
         amax = blocks.abs().amax(dim=-1)
