@@ -23,7 +23,7 @@ class Host2DeviceSemaphore {
   std::shared_ptr<uint64_t> inboundToken_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   std::unique_ptr<uint64_t> outboundToken_;
-  std::shared_ptr<uint64_t> gpuNetIoOutboundToken_;
+  std::shared_ptr<uint64_t> deviceOutboundToken_;
 
  public:
   /// Constructor.

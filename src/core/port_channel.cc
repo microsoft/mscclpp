@@ -3,6 +3,7 @@
 
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mutex>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -15,48 +16,38 @@ namespace mscclpp {
 
 struct BasePortChannel::DeviceModeState {
   std::shared_ptr<GpuNetIoConnection> connection;
-  std::vector<RegisteredMemory> memories;
-  std::shared_ptr<GpuNetIoMemoryDeviceHandle> table;
   /// Outbound counter shared with the semaphore and its other channels; kept alive while the channel exists.
   std::shared_ptr<uint64_t> outboundToken;
-  GpuNetIoDeviceHandle deviceHandle;
+  std::mutex mutex;
+  /// Device-side memory tables built so far. Older tables stay alive for device handles that still reference them.
+  std::vector<std::shared_ptr<GpuNetIoMemoryDeviceHandle>> tables;
+  /// Number of proxy memories covered by `deviceHandle`; memories are only ever appended to the proxy.
+  size_t numMemories = 0;
+  GpuNetIoDeviceHandle deviceHandle{};
+  bool built = false;
 };
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                                  std::shared_ptr<Proxy> proxy)
-    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
+    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {
+  if (!semaphore_) return;
+  auto connection = std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore_->connection()));
+  if (!connection) return;
+  deviceMode_ = std::make_shared<DeviceModeState>();
+  deviceMode_->connection = connection;
+  // The counter belongs to the semaphore: its channels share it, and a semaphore rebuilt on the same connection
+  // starts from zero even if its remote token reuses the address of a destroyed one.
+  if (!semaphore_->deviceOutboundToken_) {
+    CudaDeviceGuard deviceGuard(connection->localDevice().id);
+    semaphore_->deviceOutboundToken_ = detail::gpuCallocShared<uint64_t>();
+  }
+  deviceMode_->outboundToken = semaphore_->deviceOutboundToken_;
+}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
     : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
-
-BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                                 std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories)
-    : BasePortChannel(semaphoreId, semaphore, proxy) {
-  auto connection = std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore_->connection()));
-  if (!connection) return;
-  auto state = std::make_shared<DeviceModeState>();
-  state->connection = connection;
-  state->memories = memories;
-  // The counter belongs to the semaphore: its channels share it, and a semaphore rebuilt on the same connection
-  // starts from zero even if its remote token reuses the address of a destroyed one.
-  if (!semaphore_->gpuNetIoOutboundToken_) {
-    CudaDeviceGuard deviceGuard(connection->localDevice().id);
-    semaphore_->gpuNetIoOutboundToken_ = detail::gpuCallocShared<uint64_t>();
-  }
-  state->outboundToken = semaphore_->gpuNetIoOutboundToken_;
-  std::vector<GpuNetIoMemoryDeviceHandle> table;
-  state->deviceHandle =
-      connection->deviceHandle(semaphore_->semaphore_.remoteMemory(), state->outboundToken.get(), table, memories);
-  if (!table.empty()) {
-    CudaDeviceGuard deviceGuard(connection->localDevice().id);
-    state->table = detail::gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());
-    gpuMemcpy<GpuNetIoMemoryDeviceHandle>(state->table.get(), table.data(), table.size(), cudaMemcpyHostToDevice);
-  }
-  state->deviceHandle.memories = state->table.get();
-  deviceMode_ = std::move(state);
-}
 
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
@@ -65,11 +56,6 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
-
-PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                         std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src,
-                         const std::vector<RegisteredMemory>& memories)
-    : BasePortChannel(semaphoreId, semaphore, proxy, memories), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   int cudaDevice;
@@ -104,15 +90,16 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2Devi
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
-  memories_.push_back(memory);
-  return memories_.size() - 1;
+  auto& memories = proxy_->pimpl_->memories;
+  memories.push_back(memory);
+  return memories.size() - 1;
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::nextMemoryId([[maybe_unused]] uint32_t count) const {
   if (count == 0) {
     throw Error("count must be greater than 0", ErrorCode::InvalidUsage);
   }
-  MemoryId firstId = memories_.size();
+  MemoryId firstId = proxy_->pimpl_->memories.size();
   return firstId;
 }
 
@@ -121,11 +108,11 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
-  return BasePortChannel(id, semaphores_[id], proxy_, memories_);
+  return BasePortChannel(id, semaphores_[id], proxy_);
 }
 
 MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
-  return PortChannel(id, semaphores_[id], proxy_, dst, src, memories_);
+  return PortChannel(id, semaphores_[id], proxy_, dst, src);
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
@@ -167,10 +154,11 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   auto& conn = semaphore->connection();
   int maxWriteQueueSize = conn.getMaxWriteQueueSize();
   auto& numRequests = inflightRequests_[conn.impl_];
+  auto& memories = proxy_->pimpl_->memories;
 
   auto put = [&]() {
-    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
-    RegisteredMemory& src = memories_[trigger.fields.srcMemoryId];
+    RegisteredMemory& dst = memories[trigger.fields.dstMemoryId];
+    RegisteredMemory& src = memories[trigger.fields.srcMemoryId];
     conn.write(dst, trigger.fields.dstOffset, src, trigger.fields.srcOffset, trigger.fields.size);
     numRequests++;
   };
@@ -179,7 +167,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
     numRequests++;
   };
   auto accumulate = [&]() {
-    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    RegisteredMemory& dst = memories[trigger.fields.dstMemoryId];
     // The operand is the full fst word, spanning the size and srcOffset fields.
     conn.accumulate(dst, trigger.fields.dstOffset, static_cast<int64_t>(trigger.fst));
     numRequests++;
@@ -228,37 +216,45 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   return ProxyHandlerResult::Continue;
 }
 
-const BasePortChannel::DeviceModeState* BasePortChannel::deviceModeState() const {
-  if (!deviceMode_ &&
-      std::dynamic_pointer_cast<GpuNetIoConnection>(BaseConnection::getImpl(semaphore_->connection()))) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "PortChannels over IB Device-mode connections must be created with ProxyService::portChannel() or "
-          "ProxyService::basePortChannel()");
+void BasePortChannel::setDeviceModeHandle(BasePortChannelDeviceHandle& handle) const {
+  if (!deviceMode_) return;
+  auto& state = *deviceMode_;
+  const auto& memories = proxy_->pimpl_->memories;
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (!state.built || state.numMemories != memories.size()) {
+    auto& connection = *state.connection;
+    std::vector<GpuNetIoMemoryDeviceHandle> table;
+    GpuNetIoDeviceHandle deviceHandle =
+        connection.deviceHandle(semaphore_->semaphore_.remoteMemory(), state.outboundToken.get(), table, memories);
+    std::shared_ptr<GpuNetIoMemoryDeviceHandle> deviceTable;
+    if (!table.empty()) {
+      CudaDeviceGuard deviceGuard(connection.localDevice().id);
+      deviceTable = detail::gpuCallocShared<GpuNetIoMemoryDeviceHandle>(table.size());
+      gpuMemcpy<GpuNetIoMemoryDeviceHandle>(deviceTable.get(), table.data(), table.size(), cudaMemcpyHostToDevice);
+      state.tables.push_back(deviceTable);
+    }
+    deviceHandle.memories = deviceTable.get();
+    state.deviceHandle = deviceHandle;
+    state.numMemories = memories.size();
+    state.built = true;
   }
-  return deviceMode_.get();
-}
-
-void BasePortChannel::setDeviceModeHandle(BasePortChannelDeviceHandle& handle, const DeviceModeState* state) {
-  if (state == nullptr) return;
-  handle.backend_ = PortChannelBackend::GpuNetIo;
-  handle.gpuNetIo_ = state->deviceHandle;
+  handle.backend_ = PortChannelBackend::Device;
+  handle.device_ = state.deviceHandle;
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
   auto& conn = semaphore_->connection();
-  const DeviceModeState* deviceMode = deviceModeState();
   BasePortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
                                        conn.impl_->getFlushDonePtr());
-  setDeviceModeHandle(handle, deviceMode);
+  setDeviceModeHandle(handle);
   return handle;
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
   auto& conn = semaphore_->connection();
-  const DeviceModeState* deviceMode = deviceModeState();
   PortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
                                    conn.impl_->getFlushDonePtr());
-  setDeviceModeHandle(handle, deviceMode);
+  setDeviceModeHandle(handle);
   return handle;
 }
 

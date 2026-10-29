@@ -58,7 +58,8 @@ struct GpuNetIoDeviceHandle {
   uint64_t atomicScratchAddr;
   /// Device-resident outbound semaphore counter for inline signal writes.
   uint64_t* outboundToken;
-  /// Snapshot of the ProxyService memory table, indexed by MemoryId.
+  /// Memory table indexed by MemoryId, built from the memories registered with the proxy when the channel device
+  /// handle was created.
   const GpuNetIoMemoryDeviceHandle* memories;
   /// Number of entries in `memories`.
   uint32_t numMemories;

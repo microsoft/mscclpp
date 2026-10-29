@@ -1428,11 +1428,15 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
 }
 
-TEST(PortChannelOneToOneTest, DirectConstructionIbDeviceModeRejected) {
+// A Device-mode channel resolves memory IDs through the memories registered with its proxy when deviceHandle() is
+// called, so memories added after the channel was created are addressable by handles obtained afterwards.
+TEST(PortChannelOneToOneTest, MemoryTableAtDeviceHandleIbDeviceMode) {
   REQUIRE_GPUNETIO;
   const bool participates = gEnv->rank < numRanksToUse;
-  bool rejectsDirect = false;
-  bool factoryOk = false;
+  uint32_t numMemoriesBefore = UINT32_MAX;
+  uint32_t numMemoriesAfter = 0;
+  bool tableAfter = false;
+  bool copySharesTable = false;
   if (participates) {
     const int peer = 1 - gEnv->rank;
     auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
@@ -1444,22 +1448,27 @@ TEST(PortChannelOneToOneTest, DirectConstructionIbDeviceModeRejected) {
     auto localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
     mscclpp::ProxyService service;
     auto semaphoreId = service.buildAndAddSemaphore(*communicator, conn);
-    auto memoryId = service.addMemory(localMem);
+    auto memoryId = service.nextMemoryId();
+    auto channel = service.portChannel(semaphoreId, memoryId, memoryId);
 
-    mscclpp::PortChannel direct(semaphoreId, service.semaphore(semaphoreId), nullptr, memoryId, memoryId);
-    rejectsDirect = rejectsInvalidUsage([&] { direct.deviceHandle(); }, "ProxyService::portChannel()");
-    try {
-      service.portChannel(semaphoreId, memoryId, memoryId).deviceHandle();
-      factoryOk = true;
-    } catch (const std::exception& e) {
-      std::cerr << "ProxyService::portChannel() failed: " << e.what() << std::endl;
-    }
+    auto before = channel.deviceHandle();
+    numMemoriesBefore = before.device_.numMemories;
+    EXPECT_TRUE(before.backend_ == mscclpp::PortChannelBackend::Device);
+
+    service.addMemory(localMem);
+    auto after = channel.deviceHandle();
+    numMemoriesAfter = after.device_.numMemories;
+    tableAfter = after.device_.memories != nullptr;
+    auto copy = channel;
+    copySharesTable = copy.deviceHandle().device_.memories == after.device_.memories;
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
   if (participates) {
-    EXPECT_TRUE(rejectsDirect);
-    EXPECT_TRUE(factoryOk);
+    EXPECT_EQ(numMemoriesBefore, 0u);
+    EXPECT_EQ(numMemoriesAfter, 1u);
+    EXPECT_TRUE(tableAfter);
+    EXPECT_TRUE(copySharesTable);
   }
 }
 
@@ -1560,7 +1569,7 @@ TEST(PortChannelOneToOneTest, ManyConnectionsIbDeviceMode) {
     int value = (rank + 1) * 1000 + q;
     MSCCLPP_CUDATHROW(cudaMemcpy(buffs[q].get() + rank, &value, sizeof(int), cudaMemcpyHostToDevice));
     handles.push_back(portChannels[q].deviceHandle());
-    if (handles.back().gpuNetIo_.wqeSlot == mscclpp::GpuNetIoDeviceHandle::kSharedWqeSlot) numSharedSlots++;
+    if (handles.back().device_.wqeSlot == mscclpp::GpuNetIoDeviceHandle::kSharedWqeSlot) numSharedSlots++;
   }
   EXPECT_GE(numSharedSlots, 3);
   auto deviceHandles = mscclpp::detail::gpuCallocShared<DeviceHandle<mscclpp::PortChannel>>(numConns);

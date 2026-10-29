@@ -61,15 +61,11 @@ class ProxyService : public BaseProxyService {
   std::shared_ptr<Host2DeviceSemaphore> semaphore(SemaphoreId id) const;
 
   /// Get a base port channel by semaphore ID.
-  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::Device, the channel captures the memories added
-  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @return The base port channel.
   BasePortChannel basePortChannel(SemaphoreId id);
 
   /// Get a port channel by semaphore ID and memory regions.
-  /// If the semaphore's connection uses EndpointConfig::Ib::Mode::Device, the channel captures the memories added
-  /// so far; add every memory the channel will address with addMemory() before calling this.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
@@ -85,7 +81,6 @@ class ProxyService : public BaseProxyService {
 
  private:
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
-  std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
   // Latest pending TriggerFlush FIFO position per connection. Proxy publishes pos+1 to the
@@ -109,31 +104,15 @@ struct BasePortChannel {
   struct DeviceModeState;
   std::shared_ptr<DeviceModeState> deviceMode_;
 
-  /// Internal constructor used by ProxyService. Binds the channel to its connection's backend, giving it the
-  /// complete memory table that its device handle may address.
-  /// @param semaphoreId The ID of the semaphore.
-  /// @param semaphore The semaphore used to synchronize the communication.
-  /// @param proxy The proxy used for communication.
-  /// @param memories The ProxyService memory table, indexed by MemoryId.
-  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                  std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories);
-
-  /// Returns the Device-mode state of the channel, or nullptr if its connection does not use Device mode. Throws if the
-  /// connection uses Device mode but the channel was not created through ProxyService.
-  const DeviceModeState* deviceModeState() const;
-
-  /// Switches a device handle to the Device-mode backend when the channel has Device-mode state.
-  static void setDeviceModeHandle(BasePortChannelDeviceHandle& handle, const DeviceModeState* state);
-
-  friend class ProxyService;
+  /// Switch a device handle to the Device backend if the channel's connection uses Device mode. Memory IDs are
+  /// resolved through the memories registered with the proxy at the time of the call.
+  void setDeviceModeHandle(BasePortChannelDeviceHandle& handle) const;
 
  public:
   /// Constructor.
   BasePortChannel() = default;
 
   /// Constructor.
-  /// Channels over EndpointConfig::Ib::Mode::Device connections must be created with
-  /// ProxyService::basePortChannel() instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
@@ -159,6 +138,9 @@ struct BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the BasePortChannel is not released when using the returned handle.
+  /// Over EndpointConfig::Ib::Mode::Device connections, the handle addresses memories by looking up the memories
+  /// registered with the proxy (e.g. ProxyService::addMemory()) at the time of this call; add every memory that the
+  /// handle will use before calling it.
   /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };
@@ -169,19 +151,11 @@ struct PortChannel : public BasePortChannel {
   MemoryId dst_;
   MemoryId src_;
 
-  /// Internal constructor used by ProxyService; see the BasePortChannel overload taking a memory table.
-  PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
-              MemoryId dst, MemoryId src, const std::vector<RegisteredMemory>& memories);
-
-  friend class ProxyService;
-
  public:
   /// Constructor.
   PortChannel() = default;
 
   /// Constructor.
-  /// Channels over EndpointConfig::Ib::Mode::Device connections must be created with ProxyService::portChannel()
-  /// instead; deviceHandle() throws for directly constructed ones.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
   /// @param proxy The proxy.
@@ -212,6 +186,9 @@ struct PortChannel : public BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the PortChannel is not released when using the returned handle.
+  /// Over EndpointConfig::Ib::Mode::Device connections, the handle addresses memories by looking up the memories
+  /// registered with the proxy (e.g. ProxyService::addMemory()) at the time of this call; add every memory that the
+  /// handle will use before calling it.
   /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };

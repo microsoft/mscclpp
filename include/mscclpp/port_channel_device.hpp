@@ -11,10 +11,10 @@
 namespace mscclpp {
 
 /// Backend that services a PortChannel's device-side operations. It is selected by the channel's connection:
-/// GpuNetIo for IB connections created with EndpointConfig::Ib::Mode::Device, Proxy otherwise.
+/// Device for IB connections created with EndpointConfig::Ib::Mode::Device, Proxy otherwise.
 enum class PortChannelBackend : uint8_t {
-  Proxy = 0,     ///< The device pushes triggers to a FIFO that the ProxyService thread consumes.
-  GpuNetIo = 1,  ///< The device posts RDMA work requests directly (DOCA GPUNetIO).
+  Proxy = 0,   ///< The device pushes triggers to a FIFO that a host proxy thread consumes.
+  Device = 1,  ///< The device posts RDMA work requests to the connection's queue pair directly.
 };
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
@@ -38,7 +38,7 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 }  // namespace detail
 
-/// Device-side handle of a BasePortChannel. With PortChannelBackend::GpuNetIo, the operations documented below as
+/// Device-side handle of a BasePortChannel. With PortChannelBackend::Device, the operations documented below as
 /// FIFO pushes are instead posted by the calling thread directly to the connection's queue pair, with the same
 /// ordering semantics: signals are ordered after the preceding writes, and `flush` waits for the
 /// local completion of every operation posted so far on the connection.
@@ -58,8 +58,8 @@ struct BasePortChannelDeviceHandle {
   // Backend that services this channel's device operations.
   PortChannelBackend backend_;
 
-  // GPU-initiated networking state; only used when backend_ == PortChannelBackend::GpuNetIo.
-  GpuNetIoDeviceHandle gpuNetIo_;
+  // State of the device-initiated backend; only used when backend_ == PortChannelBackend::Device.
+  GpuNetIoDeviceHandle device_;
 
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
@@ -71,7 +71,7 @@ struct BasePortChannelDeviceHandle {
         fifo_(fifo),
         flushDonePos_(flushDonePos),
         backend_(PortChannelBackend::Proxy),
-        gpuNetIo_{} {}
+        device_{} {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
@@ -82,9 +82,9 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
-      gpuNetIo_.put(gpuNetIo_.memory(dstId, false, dstOffset, size), dstOffset,
-                    gpuNetIo_.memory(srcId, true, srcOffset, size), srcOffset, size);
+    if (backend_ == PortChannelBackend::Device) {
+      device_.put(device_.memory(dstId, false, dstOffset, size), dstOffset,
+                  device_.memory(srcId, true, srcOffset, size), srcOffset, size);
       return;
     }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
@@ -101,8 +101,8 @@ struct BasePortChannelDeviceHandle {
 
   /// Push a TriggerSignal to the FIFO.
   MSCCLPP_DEVICE_INLINE void signal() {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
-      gpuNetIo_.signal();
+    if (backend_ == PortChannelBackend::Device) {
+      device_.signal();
       return;
     }
     fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
@@ -116,9 +116,9 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
-      gpuNetIo_.putWithSignal(gpuNetIo_.memory(dstId, false, dstOffset, size), dstOffset,
-                              gpuNetIo_.memory(srcId, true, srcOffset, size), srcOffset, size);
+    if (backend_ == PortChannelBackend::Device) {
+      device_.putWithSignal(device_.memory(dstId, false, dstOffset, size), dstOffset,
+                            device_.memory(srcId, true, srcOffset, size), srcOffset, size);
       return;
     }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
@@ -142,9 +142,9 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
+    if (backend_ == PortChannelBackend::Device) {
       putWithSignal(dstId, dstOffset, srcId, srcOffset, size);
-      gpuNetIo_.flush(maxSpinCount);
+      device_.flush(maxSpinCount);
       return;
     }
     uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
@@ -165,8 +165,8 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
-      gpuNetIo_.flush(maxSpinCount);
+    if (backend_ == PortChannelBackend::Device) {
+      device_.flush(maxSpinCount);
       return;
     }
     uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
@@ -179,10 +179,10 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
-    if (backend_ == PortChannelBackend::GpuNetIo) {
-      const auto dst = gpuNetIo_.memory(dstId, false, dstOffset, sizeof(uint64_t));
+    if (backend_ == PortChannelBackend::Device) {
+      const auto dst = device_.memory(dstId, false, dstOffset, sizeof(uint64_t));
       GpuNetIoDeviceHandle::require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
-      gpuNetIo_.atomicAdd(dst.addr + dstOffset, dst.key, value);
+      device_.atomicAdd(dst.addr + dstOffset, dst.key, value);
       return;
     }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
