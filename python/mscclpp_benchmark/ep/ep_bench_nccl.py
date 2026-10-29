@@ -37,8 +37,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     if use_fp8:
         if raw_disp_dtype != "fp8_e4m3":
             raise ValueError(f"NCCL-EP does not support --dispatch-dtype {raw_disp_dtype}")
-        if args.mode == "latency" and args.ep_layout == "rank_major":
-            raise ValueError("NCCL-EP latency rank_major does not support FP8 dispatch (scales require expert_major)")
+        if args.mode != "latency" or args.ep_layout == "rank_major":
+            raise ValueError("NCCL-EP FP8 dispatch requires latency mode with expert_major layout")
     if args.mode == "latency":
         if args.ep_layout == "token_major":
             raise ValueError("NCCL-EP latency supports expert_major or rank_major layout")
@@ -125,16 +125,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     dispatch_x = x
-    in_scales_t = recv_scales_t = None
-    if use_fp8 and args.mode == "throughput":
-        if hidden % 512 != 0:
-            raise ValueError("NCCL-EP throughput FP8 requires hidden to be a multiple of 512 (16B-aligned scales)")
-        dispatch_x = x.to(torch.float8_e4m3fn)
-        in_scales = torch.ones((num_tokens, hidden // 128), dtype=torch.float32, device="cuda")
-        recv_scales = torch.empty((max_recv_tokens, hidden // 128), dtype=torch.float32, device="cuda")
-        in_scales_t = nccl_ep.Tensor(in_scales)
-        recv_scales_t = nccl_ep.Tensor(recv_scales)
-    elif use_fp8:
+    recv_scales_t = None
+    if use_fp8:
         if hidden % 512 != 0:
             raise ValueError("NCCL-EP latency FP8 requires hidden to be a multiple of 512")
         recv_scales = torch.empty(
@@ -150,19 +142,17 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     topk_weights_t = nccl_ep.Tensor(topk_weights)
 
     if args.mode == "throughput":
-        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t, scales=in_scales_t)
+        dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
         if nccl_layout == nccl_ep.Layout.EXPERT_MAJOR:
             recv_weights = torch.empty((max_recv_tokens,), dtype=torch.float32, device="cuda")
             recv_weights_t = nccl_ep.Tensor(recv_weights)
-            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, scales=recv_scales_t)
+            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t)
         else:
             recv_weights = torch.empty((max_recv_tokens, num_topk), dtype=torch.float32, device="cuda")
             recv_weights_t = nccl_ep.Tensor(recv_weights)
             recv_idx = torch.empty((max_recv_tokens, num_topk), dtype=torch.int64, device="cuda")
             recv_idx_t = nccl_ep.Tensor(recv_idx)
-            dispatch_outputs = nccl_ep.DispatchOutputs(
-                tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t, scales=recv_scales_t
-            )
+            dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
         dispatch_layout = None
     elif nccl_layout == nccl_ep.Layout.RANK_MAJOR:
         # RANK_MAJOR dispatch carries the per-token weights through as well (the LL

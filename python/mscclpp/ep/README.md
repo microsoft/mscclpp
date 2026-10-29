@@ -350,7 +350,7 @@ dispatch/combine block configuration or DeepEP's communication SM budget.
 mapped to static FP8 on `rank_major` for MSCCL++ latency and DeepEP),
 `fp8_e4m3_static` (`rank_major` static FP8 for MSCCL++ latency and DeepEP), or
 `mxfp8_e4m3` (`rank_major` MXFP8 for MSCCL++ latency and DeepEP). NCCL-EP
-supports `bf16` and `fp8_e4m3` (latency `expert_major` or throughput). For
+supports `bf16` and `fp8_e4m3` (latency `expert_major`). For
 static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
 `--fp8-input-mode` selects MSCCL++ fused BF16 quantization (`quantize`,
 default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`

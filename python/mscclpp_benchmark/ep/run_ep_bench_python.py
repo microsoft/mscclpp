@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         help="dispatch wire format. MSCCL++ latency supports bf16, fp8_e4m3 (block-scaled on expert_major "
         "or static FP8 on rank_major), fp8_e4m3_static (rank_major), and mxfp8_e4m3 (rank_major); "
         "MSCCL++ throughput supports bf16 and fp8_e4m3. DeepEP EPBuffer supports all four "
-        "(pre-quantized input). NCCL-EP supports bf16 and fp8_e4m3 (latency expert_major or throughput).",
+        "(pre-quantized input). NCCL-EP supports bf16 and fp8_e4m3 (latency expert_major).",
     )
     p.add_argument(
         "--combine-dtype",
@@ -169,13 +169,9 @@ def parse_args() -> argparse.Namespace:
             raise SystemExit(
                 f"DeepEP --dispatch-dtype {args.dispatch_dtype} requires rank_major layout (omit --ep-layout or pass rank_major)"
             )
-    if (
-        args.dispatch_dtype == "fp8_e4m3"
-        and args.backend == "nccl"
-        and args.mode == "latency"
-        and args.ep_layout == "rank_major"
-    ):
-        raise SystemExit("NCCL-EP latency rank_major does not support --dispatch-dtype fp8_e4m3")
+    if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
+        if args.mode != "latency" or args.ep_layout == "rank_major":
+            raise SystemExit("NCCL-EP --dispatch-dtype fp8_e4m3 is supported only in latency expert_major mode")
     if args.combine_dtype != "bf16":
         if args.backend != "mscclpp" or args.mode != "latency" or args.ep_layout != "rank_major":
             raise SystemExit(
