@@ -38,8 +38,6 @@ class MoECommunicator:
 
     LATENCY defaults to EXPERT_MAJOR; THROUGHPUT defaults to TOKEN_MAJOR.
     Construction and collective initialization must precede graph capture.
-    Latency graph replay supports one or more complete
-    dispatch/expert-write/combine iterations with fixed pointers and geometry.
     Operations otherwise initialize lazily. Host calls must be serialized, and
     expert computation must use the same stream as communication. This interface
     supplies no autograd backward.
