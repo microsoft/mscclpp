@@ -49,10 +49,9 @@ set(MSCCLPP_EP_SOURCES
     dispatch/rank_major_dispatch.cu
     dispatch/throughput_dispatch.cu
     dispatch/throughput_prepare.cu
-    combine/gpunetio_rank_major_combine.cu
-    dispatch/gpunetio_rank_major_dispatch.cu
+    combine/hybrid_combine.cu
+    dispatch/hybrid_dispatch.cu
     gpu_net_io.cc
-    interrack_runtime.cc
     latency.cc
     moe_runtime.cc
     throughput.cc
@@ -70,18 +69,6 @@ target_include_directories(mscclpp_ep PRIVATE
 target_link_libraries(mscclpp_ep PUBLIC mscclpp)
 target_link_libraries(mscclpp_ep PRIVATE ${GPU_LIBRARIES} Threads::Threads)
 target_compile_definitions(mscclpp_ep PRIVATE MSCCLPP_USE_CUDA)
-
-option(MSCCLPP_EP_GPUNETIO_DIAG "Enable bounded GPUNetIO rank-major count diagnostics" OFF)
-if(MSCCLPP_EP_GPUNETIO_DIAG)
-    set_property(SOURCE dispatch/gpunetio_rank_major_dispatch.cu APPEND PROPERTY
-        COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_DIAG)
-endif()
-
-option(MSCCLPP_EP_GPUNETIO_TIMING "Enable device printf timing for GPUNetIO rank-major kernels" OFF)
-if(MSCCLPP_EP_GPUNETIO_TIMING)
-    set_property(SOURCE dispatch/gpunetio_rank_major_dispatch.cu combine/gpunetio_rank_major_combine.cu
-        APPEND PROPERTY COMPILE_DEFINITIONS MSCCLPP_EP_GPUNETIO_TIMING)
-endif()
 
 set_target_properties(mscclpp_ep PROPERTIES
     CUDA_ARCHITECTURES "${_mscclpp_ep_gpu_archs}"

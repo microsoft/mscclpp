@@ -23,9 +23,9 @@ inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks
 inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
 inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 
-inline constexpr bool isSupportedHidden(int hidden) {
-  return hidden == 1024 || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 6656 || hidden == 7168 ||
-         hidden == 8192 || hidden == 8704 || hidden == 9216;
+inline constexpr bool isSupportedHidden(int hidden, bool network = false) {
+  return hidden == (network ? 5120 : 1024) || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 6656 ||
+         hidden == 7168 || hidden == 8192 || hidden == 8704 || hidden == 9216;
 }
 
 struct Workload {
@@ -110,14 +110,12 @@ void throughputReduceCombine(void* output, const Workload& workload, const Throu
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
 
-void gpuNetIoRankMajorDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, int* outputCount,
-                               const void* input, const int64_t* topkIdx, const float* topkWeights,
-                               const Workload& workload, void* recvBuffer, const DeviceContext& context, int numBlocks,
-                               cudaStream_t stream);
+void hybridDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, int* outputCount, const void* input,
+                    const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+                    const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
-void gpuNetIoRankMajorCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload,
-                              void* recvBuffer, void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks,
-                              cudaStream_t stream);
+void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload, void* recvBuffer,
+                   void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,

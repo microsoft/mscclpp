@@ -21,10 +21,7 @@ namespace ep {
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
 
-// Number of hidden-sized rows in the GPUNetIO inter-domain send-staging ring.
-inline constexpr int GpuNetIoStagingSlots = 32768;
 inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
-inline constexpr int GpuNetIoFlushInterval = 128;
 inline constexpr int GpuNetIoDistributeDefaultChunkRows = 8;
 inline constexpr int GpuNetIoDistributeForwardBlocks = 8;
 inline constexpr int GpuNetIoDistributeForwardWarps = 8;
@@ -87,12 +84,6 @@ struct alignas(BufferAlignmentBytes) GpuNetIoAggregateControl {
   uint32_t lastCombineEpoch;
 };
 static_assert(sizeof(GpuNetIoAggregateControl) == BufferAlignmentBytes);
-
-struct alignas(BufferAlignmentBytes) GpuNetIoDispatchPeerState {
-  int expectedRowsPlusOne;
-  int postedRows;
-  int markersPosted;
-};
 
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
@@ -228,9 +219,7 @@ struct LatencyPayloadView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  // Network counts reserve [R,2R) for receive and [2R,3R) for registered send scratch.
-  const int packets = numRanks + numExperts > 3 * numRanks ? numRanks + numExperts : 3 * numRanks;
-  return configAlign<size_t>(static_cast<size_t>(packets) * sizeof(mscclpp::LL8Packet), BufferAlignmentBytes);
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
@@ -247,30 +236,10 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
       rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk) + numEntries * sizeof(float), 128);
 }
 
-struct RankMajorBatchView {
-  uint8_t* tokens_;
-  int* ids_;
-  float* weights_;
-  size_t numBytes_;
-
-  MSCCLPP_HOST_DEVICE_INLINE RankMajorBatchView(void* base, int numRanks, int capacity, int hidden, int topk) {
-    const size_t rows = static_cast<size_t>(numRanks) * capacity;
-    const size_t tokenBytes = rows * hidden * sizeof(Bf16);
-    const size_t idBytes = rows * topk * sizeof(int);
-    tokens_ = reinterpret_cast<uint8_t*>(base);
-    ids_ = reinterpret_cast<int*>(tokens_ + tokenBytes);
-    weights_ = reinterpret_cast<float*>(tokens_ + tokenBytes + idBytes);
-    numBytes_ = tokenBytes + idBytes + rows * topk * sizeof(float);
-  }
-};
-
 struct LatencyStorageLayout {
   size_t totalBytes_;
-  void* gpuNetIoStagingBuffer_ = nullptr;
-  void* gpuNetIoFlagsBuffer_ = nullptr;
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
-  size_t gpuNetIoSlotStride_ = 0;
   void* gpuNetIoDistributeSend_ = nullptr;
   void* gpuNetIoDistributeRecv_ = nullptr;
   GpuNetIoDistributeControl* gpuNetIoDistributeControl_ = nullptr;
@@ -287,7 +256,7 @@ struct LatencyStorageLayout {
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
                        int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool useGpuNetIo = false,
-                       bool sendDistribute = false, bool aggregateCombine = false) {
+                       bool aggregateCombine = false) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
@@ -325,28 +294,19 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
-    gpuNetIoSlotStride_ = useGpuNetIo
-                              ? configAlign<size_t>(static_cast<size_t>(hidden) * sizeof(Bf16) +
-                                                        static_cast<size_t>(numTopk) * (sizeof(int) + sizeof(float)),
-                                                    BufferAlignmentBytes)
-                              : 0;
-    const size_t gpuNetIoStagingBytes =
-        configAlign<size_t>(static_cast<size_t>(GpuNetIoStagingSlots) * gpuNetIoSlotStride_, BufferAlignmentBytes);
-    const size_t gpuNetIoFlagsBytes =
-        useGpuNetIo ? configAlign<size_t>(static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t),
-                                          BufferAlignmentBytes)
-                    : 0;
-    const size_t gpuNetIoCombineFlagsBytes = gpuNetIoFlagsBytes;
+    const bool directCombine = useGpuNetIo && !aggregateCombine;
+    const size_t gpuNetIoCombineFlagsBytes =
+        directCombine ? configAlign<size_t>(static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t),
+                                            BufferAlignmentBytes)
+                      : 0;
     const size_t gpuNetIoCombineLandingBytes =
-        useGpuNetIo ? configAlign<size_t>(rankMajorDispatchOutputBytes, BufferAlignmentBytes) : 0;
-    const size_t gpuNetIoRegionBytes =
-        gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
+        directCombine ? configAlign<size_t>(rankMajorDispatchOutputBytes, BufferAlignmentBytes) : 0;
     const size_t baseBytes = totalBytes_;
-    totalBytes_ += gpuNetIoRegionBytes;
+    totalBytes_ += gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
     const size_t distributeOffset = totalBytes_;
     const size_t distributeBytes =
-        sendDistribute ? static_cast<size_t>(maxTokensPerRank) * GpuNetIoDistributeRow::stride(hidden, numTopk) : 0;
-    if (sendDistribute) totalBytes_ += 2 * distributeBytes + sizeof(GpuNetIoDistributeControl);
+        useGpuNetIo ? static_cast<size_t>(maxTokensPerRank) * GpuNetIoDistributeRow::stride(hidden, numTopk) : 0;
+    if (useGpuNetIo) totalBytes_ += 2 * distributeBytes + sizeof(GpuNetIoDistributeControl);
     const size_t aggregateOffset = totalBytes_;
     const size_t aggregateBytes = aggregateCombine ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
     if (aggregateCombine) totalBytes_ += 2 * aggregateBytes + sizeof(GpuNetIoAggregateControl);
@@ -361,17 +321,11 @@ struct LatencyStorageLayout {
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
       combineBuffer_ =
           useGpuNetIo && rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
-      if (useGpuNetIo) {
-        auto* gpuNetIoBase = base + baseBytes;
-        gpuNetIoStagingBuffer_ = gpuNetIoBase;
-        gpuNetIoCombineLandingBuffer_ =
-            gpuNetIoBase + gpuNetIoStagingBytes + gpuNetIoFlagsBytes + gpuNetIoCombineFlagsBytes;
+      if (directCombine) {
+        gpuNetIoCombineFlagsBuffer_ = base + baseBytes;
+        gpuNetIoCombineLandingBuffer_ = base + baseBytes + gpuNetIoCombineFlagsBytes;
       }
       if (useGpuNetIo) {
-        gpuNetIoFlagsBuffer_ = base + baseBytes + gpuNetIoStagingBytes;
-        gpuNetIoCombineFlagsBuffer_ = base + baseBytes + gpuNetIoStagingBytes + gpuNetIoFlagsBytes;
-      }
-      if (sendDistribute) {
         gpuNetIoDistributeSend_ = base + distributeOffset;
         gpuNetIoDistributeRecv_ = base + distributeOffset + distributeBytes;
         gpuNetIoDistributeControl_ =
@@ -389,9 +343,9 @@ struct LatencyStorageLayout {
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
                                  DispatchLayout outputLayout, CombineMode combineMode, bool useGpuNetIo = false,
-                                 bool sendDistribute = false, bool aggregateCombine = false) {
+                                 bool aggregateCombine = false) {
   const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
-                                             outputLayout, combineMode, useGpuNetIo, sendDistribute, aggregateCombine)
+                                             outputLayout, combineMode, useGpuNetIo, aggregateCombine)
                             .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }

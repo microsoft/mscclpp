@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_COMBINE_AGGREGATE_COMBINE_CUH_
-#define MSCCLPP_EP_COMBINE_AGGREGATE_COMBINE_CUH_
+#ifndef MSCCLPP_EP_COMBINE_HYBRID_COMBINE_CUH_
+#define MSCCLPP_EP_COMBINE_HYBRID_COMBINE_CUH_
 
 #include "combine/common.cuh"
 
@@ -62,7 +62,11 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
   }
   __syncthreads();
   for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
-    mscclpp::f32x2 sum[PairsPerVector] = {};
+    mscclpp::f32x2 sum[PairsPerVector];
+#pragma unroll
+    for (int pair = 0; pair < PairsPerVector; ++pair) {
+      sum[pair].storage = make_float2(0.0f, 0.0f);
+    }
 #pragma unroll
     for (int route = 0; route < MaxNumTopk; ++route) {
       if (!valid[route]) continue;
@@ -104,7 +108,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
     }
     mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyEpochs_ + peer, workload.epoch_,
                                                          mscclpp::memoryOrderRelease);
-    // Dispatch leaves its QP handback word at one. During Combine it counts
+    // Dispatch leaves its forward-complete word at one. During Combine it counts
     // worker CTAs that have finished every NVLink read; FP32 IB consumption is
     // independent, so the end handshake can overlap that remaining work.
     while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2,
@@ -245,7 +249,7 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
     const int chunks = configCellDiv(context->gpuNetIoDistributeScratch_[0], context->gpuNetIoCombineChunkRows_);
     const int qps = transport.gpuNetIo_->numQpsPerPeer;
     for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
-      context->gpuNetIoAggregateControl_->chunkBase[queue] += rankMajorCombineChunksOnStripe(chunks, queue, qps);
+      context->gpuNetIoAggregateControl_->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
     }
     // No additional IB ACK offset: the gateway's NEXT Dispatch cannot finish
     // without our next-Dispatch ACK, issued only after this Combine consumed its
@@ -281,7 +285,7 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
 #endif
 
 template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
-__global__ __launch_bounds__(CombineNThreads, 1) void rankMajorAggregateCombineKernel(
+__global__ __launch_bounds__(CombineNThreads, 1) void hybridAggregateCombineKernel(
     void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
     const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
     const DeviceContext* context) {
@@ -309,10 +313,10 @@ __global__ __launch_bounds__(CombineNThreads, 1) void rankMajorAggregateCombineK
 #endif
 }
 
-struct RankMajorAggregateCombineKernelSelector {
+struct HybridAggregateCombineKernelSelector {
   template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
   static auto get() {
-    return rankMajorAggregateCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return hybridAggregateCombineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
   }
 };
 

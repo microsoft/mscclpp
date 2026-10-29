@@ -109,18 +109,13 @@ struct WorkspaceView {
   uint32_t* rankMajorRoundEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
-  // GPUNetIO cross-domain: cumulative per-source arrival baseline (dispatch recv
-  // flag poll target, never reset) and persisted per-source recv counts (read by
-  // the combine PUSH sender after the recvBuffer count packet is cleared).
-  uint64_t* dispatchArrivedBaseline_;
+  // Direct network Combine retains arrival baselines and the source counts from Dispatch.
   uint64_t* combineArrivedBaseline_;
   int* dispatchRecvCounts_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
     // 8-byte-aligned field first (workspace base is allocation-aligned).
-    dispatchArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
-    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
     combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
     cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
     dispatchRecvCounts_ = cursor;
@@ -148,8 +143,7 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // dispatchArrivedBaseline_
-           static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // combineArrivedBaseline_
+    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +  // combineArrivedBaseline_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRecvCounts_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +       // dispatchRankPayloadCompletions_
@@ -196,10 +190,9 @@ MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
 
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool network = false) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
-  return configAlign<size_t>(
-      static_cast<size_t>(nSlots + (network ? DispatchMaxNWarpGroups * nRanks : 0)) * sizeof(int),
-      BufferAlignmentBytes);
+  const int counts = nRanks + (network ? 1 : 0);
+  const int nSlots = counts > NSendSlots ? counts : NSendSlots;
+  return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>

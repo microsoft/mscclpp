@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#ifndef MSCCLPP_EP_DISPATCH_SEND_DISTRIBUTE_CUH_
-#define MSCCLPP_EP_DISPATCH_SEND_DISTRIBUTE_CUH_
+#ifndef MSCCLPP_EP_DISPATCH_HYBRID_DISPATCH_CUH_
+#define MSCCLPP_EP_DISPATCH_HYBRID_DISPATCH_CUH_
 
 #include "dispatch/common.cuh"
 
@@ -101,7 +101,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     }
     const RankMajorRoute route{destination, slot, leader};
     sendRankMajorMetadataNvlink(transport, outputIds, outputWeights, routes, weights, route, token, topk, localExperts,
-                                workload.maxTokensPerRank_, workload.invalidTokenExpertId_, true);
+                                workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
     completeRankMajorTokenStore(workspace, destination >= 0 && leader && !remote ? destination : -1);
     __syncwarp();
   }
@@ -170,55 +170,53 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, dstOffset, rows * stride);
     const auto src = handle.gpuNetIo_.memory(handle.src_, true, srcOffset, rows * stride);
     const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, flagOffset, sizeof(uint64_t));
-    auto postChunks = [&](EpGpuNetIoSignalState& sequence) {
-      if (queue == 0) {
-        const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
-        const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
-        const size_t headerBytes = GpuNetIoDistributeHeader::wireBytes(ranks);
-        const auto headerDst = handle.gpuNetIo_.memory(handle.dst_, false, recvHeader, headerBytes);
-        const auto headerSrc = handle.gpuNetIo_.memory(handle.src_, true, sendHeader, headerBytes);
-        // Inline puts copy the header into the WQE after the CTA join; larger
-        // headers remain DMA sources and need system publication.
-        if (headerBytes > DOCA_GPUNETIO_VERBS_MAX_INLINE_SIZE) __threadfence_system();
-        // Each LL word validates its own epoch; no separate metadata-ready WQE
-        // is needed. This says nothing about the independently signaled payload.
-        handle.gpuNetIo_.put(headerDst, recvHeader, headerSrc, sendHeader, headerBytes);
+    auto& sequence = network->signalState(gateway, queue);
+    if (queue == 0) {
+      const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
+      const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
+      const size_t headerBytes = GpuNetIoDistributeHeader::wireBytes(ranks);
+      const auto headerDst = handle.gpuNetIo_.memory(handle.dst_, false, recvHeader, headerBytes);
+      const auto headerSrc = handle.gpuNetIo_.memory(handle.src_, true, sendHeader, headerBytes);
+      // Inline puts copy the header into the WQE after the CTA join; larger
+      // headers remain DMA sources and need system publication.
+      if (headerBytes > DOCA_GPUNETIO_VERBS_MAX_INLINE_SIZE) __threadfence_system();
+      // Each LL word validates its own epoch; no separate metadata-ready WQE
+      // is needed. This says nothing about the independently signaled payload.
+      handle.gpuNetIo_.put(headerDst, recvHeader, headerSrc, sendHeader, headerBytes);
+    }
+    // Each QP has one ordered chunk stream. Other QPs may overtake the header;
+    // the gateway validates the LL row count before consuming an arriving chunk.
+    for (int chunk = queue, begin = queue * chunkRows; begin < rows; chunk += qps, begin += qps * chunkRows) {
+      const int count = rows - begin < chunkRows ? rows - begin : chunkRows;
+      while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
+                 context->gpuNetIoDistributeScratch_ + DistributeScratchCounters + chunk,
+                 mscclpp::memoryOrderAcquire) != count) {
       }
-      // Each QP has one ordered chunk stream. Other QPs may overtake the header;
-      // the gateway validates the LL row count before consuming an arriving chunk.
-      for (int chunk = queue, begin = queue * chunkRows; begin < rows; chunk += qps, begin += qps * chunkRows) {
-        const int count = rows - begin < chunkRows ? rows - begin : chunkRows;
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
-                   context->gpuNetIoDistributeScratch_ + DistributeScratchCounters + chunk,
-                   mscclpp::memoryOrderAcquire) != count) {
-        }
-        // System-fenced writers already published the entire acquired chunk.
-        if (transport.gpuNetIoRowFence_ != GpuNetIoRowFenceSystem) __threadfence_system();
-        handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * stride, src, srcOffset + begin * stride,
-                                         count * stride, sig, flagOffset,
-                                         network->nextSignalToken(sequence, flagOffset, 1));
-      }
-    };
-    // Only QP 0 is shared with the forwarding ACK; every other QP has this single posting warp.
-    if (queue == 0)
-      network->withChannelLock(gateway, queue, postChunks);
-    else
-      postChunks(network->signalState(gateway, queue));
+      // System-fenced writers already published the entire acquired chunk.
+      if (transport.gpuNetIoRowFence_ != GpuNetIoRowFenceSystem) __threadfence_system();
+      handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * stride, src, srcOffset + begin * stride, count * stride,
+                                       sig, flagOffset, network->nextSignalToken(sequence, flagOffset, 1));
+    }
   }
-  // Hand all posting QPs back to the coordinator before it drains them.
+  // All QP posting warps finish before QP 0's owner sends the forwarding credit.
   __syncthreads();
   // Combine need not involve the gateway. Its explicit credit is what protects
   // both registered staging regions against the next dispatch (including empty rounds).
   if (threadIdx.x == 0) {
+    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2,
+                                                          mscclpp::memoryOrderAcquire) != 1) {
+    }
+    // Forwarding writers system-fenced before the release/acquire completion join.
+    // Send our inline ACK before waiting for the peer's ACK, including empty rounds.
+    const auto offset = transport.symmetricOffset(&state->ack);
+    auto channel = network->channel(gateway, 0);
+    const auto destination = channel.gpuNetIo_.memory(channel.dst_, false, offset, sizeof(uint64_t));
+    auto& sequence = network->signalState(gateway, 0);
+    channel.gpuNetIo_.signalAt(destination, offset, network->nextSignalToken(sequence, offset, 1));
     const uint64_t ack = state->ackBase + 1;
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) < ack) {
     }
     state->ackBase = ack;
-    // Our forwarder can post an ACK on gateway/QP0 concurrently with our chunks.
-    // Only drain after it hands ownership back; Combine then inherits idle QPs.
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2,
-                                                          mscclpp::memoryOrderAcquire) == 0) {
-    }
   }
   __syncthreads();
   if (warp < qps && lane == 0) network->channel(gateway, warp).flush(-1);
@@ -358,17 +356,9 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
     state->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
   }
   __syncthreads();
-  // Landing reuse and local readiness depend on the same completed writers, not
-  // on each other. Publish the IB credit from a separate warp in parallel.
+  // Hand forwarding completion to the sole QP 0 poster. Local readiness can
+  // publish independently because both depend on the same completed writers.
   if (threadIdx.x == configAlign(context->numRanks_, WARP_SIZE)) {
-    // Writers already fenced before the acq_rel CTA join; this ACK is inline, not DMA source data.
-    auto* network = transport.gpuNetIo_;
-    const auto offset = transport.symmetricOffset(&state->ack);
-    auto channel = network->channel(source, 0);
-    const auto destination = channel.gpuNetIo_.memory(channel.dst_, false, offset, sizeof(uint64_t));
-    network->withChannelLock(source, 0, [&](EpGpuNetIoSignalState& sequence) {
-      channel.gpuNetIo_.signalAt(destination, offset, network->nextSignalToken(sequence, offset, 1));
-    });
     mscclpp::atomicStore<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2, 1,
                                                     mscclpp::memoryOrderRelease);
   }
@@ -415,7 +405,7 @@ MSCCLPP_DEVICE_INLINE void distributeReceive(int* outputIds, float* outputWeight
 #endif
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(DispatchNThreads, 1) void rankMajorSendDistributeDispatchKernel(
+__global__ __launch_bounds__(DispatchNThreads, 1) void hybridSendDistributeDispatchKernel(
     void* output, void* outputScales, int* outputSrcInfo, int* outputIds, float* outputWeights, int64_t* outputLayout,
     int* outputCount, const int64_t* routes, const float* weights, const void* input, Workload workload,
     void* recvBuffer, const DeviceContext* context) {
@@ -443,10 +433,10 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void rankMajorSendDistributeDi
 #endif
 }
 
-struct RankMajorSendDistributeKernelSelector {
+struct HybridSendDistributeDispatchKernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return rankMajorSendDistributeDispatchKernel<Hidden, DataType, ScaleBlockSize>;
+    return hybridSendDistributeDispatchKernel<Hidden, DataType, ScaleBlockSize>;
   }
 };
 

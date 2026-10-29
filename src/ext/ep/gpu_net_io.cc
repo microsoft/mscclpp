@@ -4,83 +4,22 @@
 #include "gpu_net_io.hpp"
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-#include <dirent.h>
-#include <limits.h>
-
 #include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/utils.hpp>
 #include <vector>
 
-#include "gpu_net_io_topology.hpp"
-
 namespace mscclpp::ep {
 namespace {
 
-int readNumber(const std::string& path, int fallback) {
-  std::ifstream file(path);
-  int value = fallback;
-  if (file.is_open()) file >> value;
-  return value;
-}
-
-std::string canonicalPath(const std::string& path) {
-  char resolved[PATH_MAX] = {};
-  return realpath(path.c_str(), resolved) == nullptr ? std::string() : std::string(resolved);
-}
-
-std::vector<std::string> selectDevices(const std::string& specification, const std::string& gpuPciBusId,
-                                       int gpuNumaNode) {
+std::vector<std::string> configuredDevices(const std::string& specification) {
   if (specification.empty()) {
-    const std::string root = "/sys/class/infiniband";
-    const auto closeDirectory = [](DIR* directory) { closedir(directory); };
-    std::unique_ptr<DIR, decltype(closeDirectory)> directory(opendir(root.c_str()), closeDirectory);
-    if (!directory) throw Error("Cannot discover EP GPUNetIO HCAs", ErrorCode::SystemError);
-    std::vector<detail::gpunetio::HcaTopology> hcas;
-    while (auto* entry = readdir(directory.get())) {
-      if (entry->d_name[0] == '.') continue;
-      const std::string name = entry->d_name;
-      const std::string path = root + "/" + name;
-      if (canonicalPath(path + "/device/driver").find("/mlx5_core") == std::string::npos ||
-          readNumber(path + "/ports/1/state", 0) != 4)
-        continue;
-      hcas.push_back({name, canonicalPath(path + "/device"), readNumber(path + "/device/numa_node", -1)});
-    }
-    auto devices =
-        detail::gpunetio::selectClosestHcas(canonicalPath("/sys/bus/pci/devices/" + gpuPciBusId), gpuNumaNode, hcas);
-    if (devices.empty()) throw Error("No active EP GPUNetIO HCAs", ErrorCode::InvalidUsage);
-    if (devices.size() > 1) {
-      int deviceCount = 0;
-      if (cudaGetDeviceCount(&deviceCount) == cudaSuccess && deviceCount > 0) {
-        int sameNumaIndex = 0;
-        int sameNumaCount = 0;
-        for (int dev = 0; dev < deviceCount; ++dev) {
-          char busId[32] = {};
-          if (cudaDeviceGetPCIBusId(busId, sizeof(busId), dev) != cudaSuccess) continue;
-          for (char& c : busId) {
-            if (c >= 'A' && c <= 'F') c = static_cast<char>(c - 'A' + 'a');
-          }
-          const int devNuma = readNumber("/sys/bus/pci/devices/" + std::string(busId) + "/numa_node", -1);
-          if (devNuma == gpuNumaNode) {
-            if (gpuPciBusId == std::string(busId)) sameNumaIndex = sameNumaCount;
-            ++sameNumaCount;
-          }
-        }
-        if (sameNumaCount > 0 && devices.size() >= static_cast<size_t>(sameNumaCount) &&
-            devices.size() % static_cast<size_t>(sameNumaCount) == 0) {
-          const size_t perGpu = devices.size() / static_cast<size_t>(sameNumaCount);
-          devices = std::vector<std::string>(devices.begin() + sameNumaIndex * perGpu,
-                                             devices.begin() + (sameNumaIndex + 1) * perGpu);
-        }
-      }
-    }
-    return devices;
+    throw Error("Set MSCCLPP_EP_GPUNETIO_HCAS to the HCA list for this rank", ErrorCode::InvalidUsage);
   }
   std::vector<std::string> devices;
   size_t begin = 0;
@@ -161,15 +100,13 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   std::vector<std::string> devices;
   std::string localError;
   char pciBusId[32] = {};
-  int numaNode = -1;
   int queues = 0;
   try {
     MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), state.device));
     for (char& digit : pciBusId) {
       if (digit >= 'A' && digit <= 'F') digit = static_cast<char>(digit - 'A' + 'a');
     }
-    numaNode = readNumber("/sys/bus/pci/devices/" + std::string(pciBusId) + "/numa_node", -1);
-    devices = selectDevices(state.devices, pciBusId, numaNode);
+    devices = configuredDevices(state.devices);
     queues = static_cast<int>(devices.size());
     if (const char* value = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER")) {
       const std::string text(value);
@@ -196,9 +133,8 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
     std::string names;
     for (const auto& name : devices) names += (names.empty() ? "" : ",") + name;
     std::fprintf(stderr,
-                 "[EPGPUNETIO] rank=%d hcaSelection=%s gpu=%s numa=%d hcas=%s numHcas=%d qpsPerPeer=%d qpsPerHca=%d\n",
-                 rank, state.devices.empty() ? "auto" : "explicit", pciBusId, numaNode, names.c_str(), hcas, queues,
-                 queues / hcas);
+                 "[EPGPUNETIO] rank=%d hcaSelection=explicit gpu=%s hcas=%s numHcas=%d qpsPerPeer=%d qpsPerHca=%d\n",
+                 rank, pciBusId, names.c_str(), hcas, queues, queues / hcas);
   }
   // One GpuNetIo-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
   // selected HCA once and exchanged once per peer, then bound into each channel through ProxyService::portChannel().

@@ -128,21 +128,6 @@ MSCCLPP_DEVICE_INLINE void dequantizeAndAccumulateFp8E4M3(const mscclpp::f8_e4m3
   }
 }
 
-// Accumulates (payload * dequantScale) * weight without forming dequantScale * weight first.
-MSCCLPP_DEVICE_INLINE void dequantizeWeightAndAccumulateFp8E4M3(const mscclpp::f8_e4m3x8& packed, float dequantScale,
-                                                                float weight, mscclpp::f32x2* accumulated) {
-  const mscclpp::f32x8 converted = mscclpp::to<mscclpp::f32x8>(packed);
-  const auto* convertedPairs = reinterpret_cast<const mscclpp::f32x2*>(&converted);
-  const mscclpp::f32x2 scales = make_float2(dequantScale, dequantScale);
-  const mscclpp::f32x2 weights = make_float2(weight, weight);
-  const mscclpp::f32x2 zeros = make_float2(0.0f, 0.0f);
-#pragma unroll
-  for (int pair = 0; pair < mscclpp::f32x8::Size / mscclpp::f32x2::Size; ++pair) {
-    const mscclpp::f32x2 dequantized = mscclpp::fma(convertedPairs[pair], scales, zeros);
-    accumulated[pair] = mscclpp::fma(dequantized, weights, accumulated[pair]);
-  }
-}
-
 }  // namespace ep
 }  // namespace mscclpp
 

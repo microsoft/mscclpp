@@ -23,9 +23,7 @@ namespace ep {
 
 struct Workload;
 
-namespace interrack {
-class LatencyRuntime;
-}  // namespace interrack
+class EpGpuNetIoService;
 
 struct PrepareHandle::Impl {
   Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t routingEpoch, const PrepareRequest& request)
@@ -100,6 +98,8 @@ struct LatencyRuntimeContext {
   friend class MoERuntime;
 
   void initialize();
+  void initializeNetwork();
+  LatencyStorageLayout storageLayout() const;
 
   int rank_;
   int numRanks_;
@@ -113,6 +113,8 @@ struct LatencyRuntimeContext {
   int numTopk_;
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
+  bool useGpuNetIo_ = false;
+  bool networkConfigValid_ = true;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 1;
@@ -125,8 +127,11 @@ struct LatencyRuntimeContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-  // Optional GPUNetIO service and pipeline state for cross-domain rank-major algorithms.
-  std::unique_ptr<interrack::LatencyRuntime> interrack_;
+  std::shared_ptr<EpGpuNetIoService> gpuNetIoService_;
+  std::shared_ptr<int> distributeScratch_;
+  std::shared_ptr<int> aggregateMetadata_;
+  std::shared_ptr<float> aggregateLocal_;
+  std::shared_ptr<int> aggregateChunkReady_;
 };
 
 struct ThroughputRuntimeContext {

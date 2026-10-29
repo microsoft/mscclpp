@@ -23,9 +23,4 @@ target_sources(unit_tests PRIVATE
 if(TARGET mscclpp_ep)
     target_sources(unit_tests PRIVATE ep_quantization_tests.cu)
     target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
-
-    add_executable(gpunetio_topology_test gpunetio_topology_test.cc)
-    target_include_directories(gpunetio_topology_test PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
-    target_compile_features(gpunetio_topology_test PRIVATE cxx_std_17)
-    add_test(NAME gpunetio_topology_test COMMAND gpunetio_topology_test)
 endif()

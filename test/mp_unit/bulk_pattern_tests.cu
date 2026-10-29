@@ -18,22 +18,13 @@
 // as the expert-parallel kernels do; the channels carry only signal/wait. That split is the reason
 // the bulk primitives are pointer-based rather than channel methods.
 
-#include <mpi.h>
-
 #include <algorithm>
-#include <fstream>
-#include <iomanip>
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <numeric>
 #include <vector>
 
 #include "mp_unit_tests.hpp"
-
-#if defined(MSCCLPP_DEVICE_CUDA)
-#include <cooperative_groups.h>
-#endif
 
 void BulkPatternTest::SetUp() {
   if (gEnv->nRanksPerNode < 2) {
@@ -429,185 +420,6 @@ TEST(BulkPatternTest, CombineReduce) {
       EXPECT_EQ(out[rowOffset(0, t) + h], expected);
     }
   }
-}
-
-class BulkEpMeshPerfTest : public BulkPatternTest {
- protected:
-  void SetUp() override {
-    setNumRanksToUse(gEnv->worldSize);
-    CommunicatorTestBase::SetUp();
-    rank = gEnv->rank;
-    worldSize = numRanksToUse;
-  }
-};
-
-namespace {
-constexpr int EpRowBytes = 14336;
-constexpr int EpRowsPerPeer = 64;
-constexpr int EpRowWorkers = 8;
-constexpr int EpRowWords = EpRowBytes / sizeof(uint32_t);
-
-__global__ void kernelEpTmaMesh(void** pools, mscclpp::BaseMemoryChannelDeviceHandle* channels, int rank, int ranks,
-                                bool read, int iterations, uint64_t* durations) {
-#if MSCCLPP_BULK_AVAILABLE
-  extern __shared__ __align__(128) uint8_t tiles[];
-  __shared__ mscclpp::BulkBarrier barriers[EpRowWorkers];
-  __shared__ uint64_t start;
-  const int warp = threadIdx.x / 32;
-  const bool owner = threadIdx.x % 32 == 0;
-  const size_t halfBytes = static_cast<size_t>(ranks) * EpRowsPerPeer * EpRowBytes;
-  auto grid = cooperative_groups::this_grid();
-  if (owner) barriers[warp].init();
-  grid.sync();
-  uint32_t phase = 0;
-  for (int iteration = 0; iteration < iterations; ++iteration) {
-    if (blockIdx.x == 0 && threadIdx.x == 0) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(start));
-    grid.sync();
-    if (owner) {
-      for (int row = blockIdx.x * EpRowWorkers + warp; row < (ranks - 1) * EpRowsPerPeer;
-           row += gridDim.x * EpRowWorkers) {
-        const int peerIndex = row / EpRowsPerPeer;
-        const int peer = peerIndex < rank ? peerIndex : peerIndex + 1;
-        const int token = row % EpRowsPerPeer;
-        const size_t localOffset = static_cast<size_t>(peer * EpRowsPerPeer + token) * EpRowBytes;
-        const size_t remoteOffset = static_cast<size_t>(rank * EpRowsPerPeer + token) * EpRowBytes;
-        const auto* source =
-            static_cast<const uint8_t*>(pools[read ? peer : rank]) + (read ? remoteOffset : localOffset);
-        auto* destination =
-            static_cast<uint8_t*>(pools[read ? rank : peer]) + halfBytes + (read ? localOffset : remoteOffset);
-        auto* tile = tiles + warp * EpRowBytes;
-        barriers[warp].arriveAndExpect(EpRowBytes);
-        mscclpp::bulkLoad(tile, source, EpRowBytes, barriers[warp]);
-        barriers[warp].wait(phase);
-        mscclpp::bulkFence();
-        // Read mode materializes every received word in local HBM, not an unused shared tile.
-        mscclpp::bulkStore(destination, tile, EpRowBytes);
-        mscclpp::bulkStoreCommit();
-        mscclpp::bulkStoreWait<0>();
-      }
-    }
-    // Full destination completion precedes publication; no rank overwrites another rank's rows.
-    grid.sync();
-    if (blockIdx.x == 0 && threadIdx.x < ranks - 1) {
-      channels[threadIdx.x].signal();
-      channels[threadIdx.x].wait(-1);
-    }
-    grid.sync();
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-      uint64_t end;
-      asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(end));
-      durations[iteration] = end - start;
-    }
-  }
-  if (owner) barriers[warp].invalidate();
-#endif
-}
-}  // namespace
-
-PERF_TEST(BulkEpMeshPerfTest, EpTmaRowMeshBandwidth) {
-  int supported = mscclpp::isBulkSupported(), allSupported = 0;
-  int cooperative = 0, device = 0;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
-  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&cooperative, cudaDevAttrCooperativeLaunch, device));
-  supported &= cooperative && worldSize > 1 && worldSize <= 32 &&
-               communicator->bootstrap()->getNranksPerIpcDomain() == worldSize;
-  MPI_Allreduce(&supported, &allSupported, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-  if (!allSupported) {
-    SKIP_TEST() << "Requires one full CUDA IPC/fabric domain, bulk copy and cooperative launch.";
-  }
-  constexpr int Blocks = 128;
-  constexpr int Iterations = 1000;
-  constexpr size_t SharedBytes = EpRowWorkers * EpRowBytes;
-  MSCCLPP_CUDATHROW(cudaFuncSetAttribute(kernelEpTmaMesh, cudaFuncAttributeMaxDynamicSharedMemorySize, SharedBytes));
-  int blocksPerSm = 0, sms = 0;
-  MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocksPerSm, kernelEpTmaMesh, 256, SharedBytes));
-  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
-  int resident = blocksPerSm * sms >= Blocks, allResident = 0;
-  MPI_Allreduce(&resident, &allResident, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-  if (!allResident) {
-    SKIP_TEST() << "The fixed 128-CTA, eight-row-worker shape must fit concurrently on every GPU.";
-  }
-  const size_t halfWords = static_cast<size_t>(worldSize) * EpRowsPerPeer * EpRowWords;
-  const size_t halfBytes = halfWords * sizeof(uint32_t);
-  auto pool = mscclpp::GpuBuffer<uint32_t>(2 * halfWords).memory();
-  std::vector<uint32_t> source(halfWords), received(halfWords);
-  for (size_t i = 0; i < halfWords; ++i)
-    source[i] = static_cast<uint32_t>(rank + 1) * 0x9e3779b9u ^ static_cast<uint32_t>(i);
-  MSCCLPP_CUDATHROW(cudaMemcpy(pool.get(), source.data(), halfBytes, cudaMemcpyHostToDevice));
-  setupPeerPools(pool.get(), 2 * halfBytes);
-  auto state = uploadPeerState(syncHandles, peerPools);
-  auto deviceDurations = mscclpp::GpuBuffer<uint64_t>(Iterations).memory();
-  std::vector<uint64_t> durations(Iterations), allDurations(rank == 0 ? Iterations * worldSize : 0);
-  std::ofstream samples;
-  if (gEnv->args.count("perf_output")) {
-    samples.open(gEnv->args["perf_output"] + ".rank" + std::to_string(rank) + ".csv");
-    samples << "read,repetition,round,total_ns\n";
-  }
-  cudaEvent_t begin, end;
-  MSCCLPP_CUDATHROW(cudaEventCreate(&begin));
-  MSCCLPP_CUDATHROW(cudaEventCreate(&end));
-  auto launch = [&](bool read, int iterations) {
-    auto** pools = state.pools.get();
-    auto* channels = state.chans.get();
-    auto* times = deviceDurations.get();
-    void* arguments[] = {&pools, &channels, &rank, &worldSize, &read, &iterations, &times};
-    MSCCLPP_CUDATHROW(cudaLaunchCooperativeKernel(reinterpret_cast<void*>(kernelEpTmaMesh), dim3(Blocks), dim3(256),
-                                                  arguments, SharedBytes));
-  };
-  for (bool read : {false, true}) {
-    for (int repetition = 0; repetition < 3; ++repetition) {
-      MSCCLPP_CUDATHROW(cudaMemset(pool.get() + halfWords, 0, halfBytes));
-      MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-      communicator->bootstrap()->barrier();
-      launch(read, 16);
-      MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-      communicator->bootstrap()->barrier();
-      MSCCLPP_CUDATHROW(cudaEventRecord(begin));
-      launch(read, Iterations);
-      MSCCLPP_CUDATHROW(cudaEventRecord(end));
-      MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
-      float milliseconds = 0;
-      MSCCLPP_CUDATHROW(cudaEventElapsedTime(&milliseconds, begin, end));
-      communicator->bootstrap()->barrier();
-      MSCCLPP_CUDATHROW(cudaMemcpy(received.data(), pool.get() + halfWords, halfBytes, cudaMemcpyDeviceToHost));
-      uint64_t errors = 0, allErrors = 0;
-      for (size_t i = 0; i < halfWords; ++i) {
-        const int peer = i / (EpRowsPerPeer * EpRowWords);
-        const size_t sourceWord =
-            static_cast<size_t>(rank) * EpRowsPerPeer * EpRowWords + i % (EpRowsPerPeer * EpRowWords);
-        const uint32_t expected =
-            peer == rank ? 0 : static_cast<uint32_t>(peer + 1) * 0x9e3779b9u ^ static_cast<uint32_t>(sourceWord);
-        errors += received[i] != expected;
-      }
-      MPI_Allreduce(&errors, &allErrors, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
-      EXPECT_EQ(allErrors, 0u);
-      MSCCLPP_CUDATHROW(
-          cudaMemcpy(durations.data(), deviceDurations.get(), Iterations * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-      for (int i = 0; i < Iterations; ++i)
-        if (samples) samples << read << ',' << repetition << ',' << i << ',' << durations[i] << '\n';
-      MPI_Gather(durations.data(), Iterations, MPI_UINT64_T, allDurations.data(), Iterations, MPI_UINT64_T, 0,
-                 MPI_COMM_WORLD);
-      double eventUs = milliseconds * 1000.0 / Iterations, sumEventUs = 0;
-      MPI_Reduce(&eventUs, &sumEventUs, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-      if (rank == 0) {
-        std::sort(allDurations.begin(), allDurations.end());
-        const double mean = std::accumulate(allDurations.begin(), allDurations.end(), 0.0) / allDurations.size() / 1000;
-        const size_t bytes = static_cast<size_t>(worldSize - 1) * EpRowsPerPeer * EpRowBytes;
-        std::cout << std::setprecision(9) << "[NVL_TMA_MESH] read=" << read << " repetition=" << repetition
-                  << " ranks=" << worldSize << " ipc_domain=" << communicator->bootstrap()->getNranksPerIpcDomain()
-                  << " blocks=" << Blocks << " threads=256 workers=8 row_bytes=" << EpRowBytes
-                  << " rows_per_peer=" << EpRowsPerPeer << " bytes=" << bytes
-                  << " event_mean_us=" << sumEventUs / worldSize << " round_mean_us=" << mean
-                  << " p50_us=" << allDurations[allDurations.size() / 2] / 1000.0
-                  << " p95_us=" << allDurations[allDurations.size() * 95 / 100] / 1000.0
-                  << " GBps=" << bytes / (sumEventUs / worldSize) / 1000 << " errors=" << allErrors << std::endl;
-        ::mscclpp::test::reportPerfResult(std::string(read ? "read" : "write") + " rep" + std::to_string(repetition),
-                                          bytes / (sumEventUs / worldSize) / 1000, "GB/s");
-      }
-    }
-  }
-  MSCCLPP_CUDATHROW(cudaEventDestroy(begin));
-  MSCCLPP_CUDATHROW(cudaEventDestroy(end));
 }
 
 #endif  // defined(MSCCLPP_DEVICE_CUDA)

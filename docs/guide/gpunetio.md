@@ -68,40 +68,49 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
+### EP NIC selection
+
+Cross-domain EP requires an explicit, nonempty `MSCCLPP_EP_GPUNETIO_HCAS` for each rank. Set it to one HCA name or
+a comma-separated list, for example:
+
+```bash
+export MSCCLPP_EP_GPUNETIO_HCAS=mlx5_0,mlx5_1
+```
+
+The launcher must select the appropriate HCAs for each GPU; EP does not discover or choose NICs from PCI or NUMA
+topology. Names must resolve to available IB transports, respecting `MSCCLPP_HCA_DEVICES` when configured.
+All ranks must select the same number of HCAs, though device names may differ. Missing, empty, duplicate, or
+unavailable HCA configurations fail collective initialization. IPC-only EP does not require this setting.
+
 ### EP network queue pairs
 
 For latency `RANK_MAJOR` EP, `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` selects the number of QPs created per peer. It defaults
 to the number of selected HCAs and must be a multiple of that count. QP `q` uses HCA `q % numHcas`, so multiple QPs
 do not change the GPU-to-NIC mapping.
 
-Batched dispatch distributes its chunks over all configured QPs.
-Unchunked combine stripes peer payloads by selected HCA count and waits for those stripes before consuming their rows.
+Hybrid dispatch distributes its chunks over all configured QPs.
+Direct combine stripes peer payloads by selected HCA count and waits for those stripes before consuming their rows.
 With one selected HCA per GPU, it uses one payload QP per peer even when multiple QPs are configured.
-Chunked combine distributes chunks over the configured QPs.
+Aggregate combine distributes chunks over the configured gateway QPs.
 
-Batched rank-major dispatch uses dedicated receive CTAs and per-peer completion publication rather than waiting
-for the global producer join. Its minimum grid is `world_size + 2` blocks: one receive CTA per rank, at least one
-producer, and one control CTA. A zero dispatch chunk size means one capacity-sized chunk per destination, not
-disabled receive overlap. Empty destinations still publish completion. Batched staging requires
-`world_size * max_tokens_per_rank <= 32768`; larger capacities retain the unbatched path unless batching is
-explicitly requested, in which case initialization rejects the configuration.
-The batched path drains sends before returning and does not defer send flush. It enqueues three workspace resets
-before each dispatch; include them when comparing complete CUDA graph latency, not just kernel time.
+### Hybrid dispatch
 
-### Optional send-and-distribute dispatch
-
-`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE=1` selects an experimental BF16 `RANK_MAJOR` dispatch with
-`RANK_LOCAL_REDUCE`. It requires exactly two equal, fully IPC-mapped NVLink domains and one or four QPs per peer.
+Cross-domain EP enabled by `MSCCLPP_EP_ENABLE_GPUNETIO=1` uses the send-and-distribute hybrid BF16 `RANK_MAJOR`
+dispatch with `RANK_LOCAL_REDUCE`. It requires exactly two equal, fully IPC-mapped NVLink domains and one or four QPs per peer.
 Initialization collectively checks the actual IPC mapping matrix. Sorted members of the two domains are paired:
 each source sends to its corresponding gateway in the other domain, not to one central gateway.
 Incompatible domain mappings or QP counts fail initialization. Other layouts and IPC-only paths retain their
 existing behavior.
 
+The legacy multi-producer direct network dispatch is removed. `SEND_DISTRIBUTE`, `BATCHED_DISPATCH`, `ASYNC`,
+`DEFER_FLUSH`, `PARALLEL_STAGE`, and `TMA_STAGE` no longer select EP algorithms or pipeline modes.
+There is no fixed-capacity staging ring or fallback for other network topologies.
+
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
 `MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS` controls their size (1–128 rows, default eight).
-Each QP has an independent posting warp that preserves chunk order. Only QP 0 shares submission with the forwarding
-ACK, so it takes a posting-phase lock; the other QPs need no lock.
+Each QP has one independent posting warp that preserves chunk order. QP 0's posting thread also sends the forwarding
+ACK after all chunk posters finish, so the hybrid dispatch requires no QP locks.
 A self-validating LL header carries fresh destination counts, which the gateway publishes locally before completion.
 The row count and every destination count each carry their own epoch in an `LL8Packet`; only the active
 `(1 + world_size) * sizeof(LL8Packet)` bytes are sent by one plain RDMA write. Every consumed word validates its own
@@ -113,35 +122,36 @@ transferring. Reused producer CTAs retain two independent warp/TMA row slots and
 as dedicated forwarders. The specialization retains its shared-memory allocation and full-grid residency check.
 Row assignment and completion counts use the active workload, configured chunk/QP counts, and launch grid;
 there is no special-case token count, hidden dimension, balanced routing pattern, or fixed number of chunks.
-Separate registered send and gateway landing allocations are reserved at
+Separate send and gateway landing regions in the runtime's symmetric registered allocation are reserved at
 runtime construction. Chunk flags are cumulative; consumers use dedicated per-original-source readiness epochs,
 and an explicit gateway acknowledgment protects staging reuse even when no route targets the gateway itself.
-After all forwarding writers join, separate warps publish the acknowledgment and local readiness concurrently.
-The shared-QP lease ends before waiting for the acknowledgment; all outgoing QPs are then drained independently
-before dispatch returns. Empty rounds participate in the same protocol.
+After all forwarding writers join, the last forwarder release-publishes local completion and publishes local
+readiness independently. QP 0's posting thread acquires forwarding completion, sends the acknowledgment, and only
+then waits for the peer's acknowledgment. All outgoing QPs are drained independently before dispatch returns.
+Empty rounds participate in the same protocol.
 
-This specialization replaces direct dispatch batching and its receive/flush schedule; by default it does not change
-Combine. Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default).
+By default, Combine returns each rank's preweighted BF16 partials directly to the source.
+Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default).
 It requires more than `world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
 workspace resets are part of each dispatch without aggregate Combine: include them in end-to-end CUDA graph timing.
 `MSCCLPP_EP_GPUNETIO_ROW_FENCE` defaults to `gpu+poster`: row writers use device fences, and each QP poster
 acquires the completed chunk's release sequence before a system fence and the NIC post. `sys` fences every row
-writer instead, so the acquiring poster does not repeat that fence. Unlike the direct path, the poster retains
+writer instead, so the acquiring poster does not repeat that fence. The poster retains
 its system fence when `gpu` is selected. Headers larger than the inline-transfer limit retain system publication;
 inline headers are copied into the WQE after their writers join. Forwarding writers retain system fences before their
 completion join, covering ordinary NVLink metadata stores as well as completed TMA payloads. The joined writers already establish visibility for
 the inline acknowledgment, so its posting thread does not repeat the system fence. Standalone LL count packets
 validate their own epochs; nonempty payloads use a separate ready signal.
-`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE_STATS=1` prints actual unique rows, direct-path remote rows, hidden payload
+`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE_STATS=1` prints actual unique rows, remote rows before domain deduplication, hidden payload
 bytes, row wire bytes (including routing metadata and alignment), and header bytes per rank/round for validation.
 These byte counts exclude transport framing and completion signals. Disable statistics for performance measurements.
 Payload reduction alone does not establish a latency improvement; compare measured complete dispatch/combine
 rounds on the same routing workload and topology.
 
-### Optional FP32 gateway aggregation for Combine
+### Hybrid combine
 
 `MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE=1` additionally enables reverse-gateway aggregation. It defaults off and
-requires send-and-distribute, BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated two-domain,
+requires BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated two-domain,
 one-or-four-QP topology. `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS` selects 1–128 rows per chunk (default eight when
 aggregation is enabled). Incompatible rank-major requests fail collective initialization; other layouts and
 IPC-only runtimes retain their existing paths.
@@ -153,9 +163,9 @@ FP32 reductions overlap the posted IB transfers. The final result adds the two F
 BF16 once; there is no intermediate BF16 group rounding. **FP32 addition grouping changes**, so this mode is numerically distinct from direct Combine
 and must be explicitly opted into.
 
-Combine assigns one submitter to each outgoing QP, so it uses the existing PortChannel GPUNetIO operations without
-an extra EP lock. The EP device context only indexes channels and notification state and provides a device-scoped
-acquire/release lock for genuinely shared QPs. It does not implement a separate put, signal, batching, or flush API.
+Dispatch and Combine assign one submitter to each outgoing QP, so they use the existing PortChannel GPUNetIO
+operations without EP locks. The EP device context only indexes channels and notification state.
+It does not implement a separate put, signal, batching, or flush API.
 
 Gateway row writers join at a CTA barrier before thread zero updates the device-scoped release counter, so they do
 not need an additional per-writer fence. Each QP poster acquires its completed chunk and retains the cumulative
@@ -164,7 +174,7 @@ publishing source rows written by other CTAs.
 
 Dispatch records a private token-to-compact-row map and caches incoming IDs, destination slots, and row counts on
 the gateway. These caches cannot be overwritten by another rank's next dispatch. FP32 send and receive buffers
-are separate runtime-owned, registered allocations; the local FP32 accumulator is private. All workers finish
+are separate regions in the runtime's symmetric registered allocation; the local FP32 accumulator is private. All workers finish
 their assigned gateway production before waiting for returned rows. Local start/end handshakes and outgoing
 QP completion drains are retained. The end handshake starts only after every local worker finishes all NVLink
 reads, overlapping the remaining FP32 IB returns; the final grid join still waits for every result consumer,
@@ -176,12 +186,16 @@ Repeated eager use of a consumed dispatch handle is already rejected by the host
 guard rejects aggregate Combine-only graph replays without a new Dispatch; this reports a diagnostic and traps
 the CUDA context, rather than allowing unsafe landing-buffer reuse.
 
-One fused `rankMajorAggregateCombineKernel` performs all reduction, posting, and finalization, using the requested
+One fused `hybridAggregateCombineKernel` performs all reduction, posting, and finalization, using the requested
 Combine grid and its full-residency check. After the completion join and local end handshakes, it resets the private
 Dispatch/Combine counters and readiness epochs for the next round, eliminating the four separate workspace resets
 in a paired graph. Network counters, arrival baselines, and replay validation epochs remain persistent.
 With send-and-distribute statistics enabled, `[EP-AGGREGATE-COMBINE]` reports actual returned FP32
 rows and payload bytes. No latency gain is implied by the reduction in transferred rows.
+
+Both hybrid algorithms reuse `LatencyRuntimeContext`, including its symmetric allocation, workspace, IPC channels,
+and single device-context copy. The context also owns the network service and private pipeline state, and waits
+for outstanding device work before releasing the service and registered memory.
 
 ### Exclusively accessed queue pairs
 

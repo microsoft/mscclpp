@@ -4,7 +4,6 @@
 #define MSCCLPP_EP_GPU_NET_IO_HPP_
 
 #include <memory>
-#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/port_channel_device.hpp>
 #include <string>
@@ -12,8 +11,6 @@
 namespace mscclpp::ep {
 
 struct EpGpuNetIoSignalState {
-  unsigned int lock;
-  unsigned int pad;
   uint64_t offsets[4];
   uint64_t tokens[4];
 };
@@ -38,7 +35,7 @@ struct EpGpuNetIoDeviceContext {
     return handle;
   }
 
-  /// Mutable notification state; callers must own the QP or hold its lock.
+  /// Mutable notification state for the QP's sole submitting thread.
   MSCCLPP_DEVICE_INLINE EpGpuNetIoSignalState& signalState(int peer, int queue) const {
     GpuNetIoDeviceHandle::require(signalStates != nullptr && peer >= 0 && peer < numPeers && queue >= 0 &&
                                   queue < numQpsPerPeer);
@@ -46,22 +43,6 @@ struct EpGpuNetIoDeviceContext {
   }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-  /// Execute an operation or posting phase with exclusive ownership of the existing PortChannel's QP.
-  template <typename Fn>
-  MSCCLPP_DEVICE_INLINE void withChannelLock(int peer, int queue, Fn&& fn) const {
-    auto& state = signalState(peer, queue);
-    cuda::atomic_ref<unsigned int, cuda::thread_scope_device> lock(state.lock);
-    bool done = false;
-    do {
-      unsigned int expected = 0;
-      if (lock.compare_exchange_weak(expected, 1u, cuda::memory_order_acquire, cuda::memory_order_relaxed)) {
-        fn(state);
-        lock.store(0u, cuda::memory_order_release);
-        done = true;
-      }
-    } while (!done);
-  }
-
   MSCCLPP_DEVICE_INLINE static uint64_t nextSignalToken(EpGpuNetIoSignalState& state, uint64_t signalOffset,
                                                         uint64_t signalValue) {
     for (int i = 0; i < 4; ++i) {
