@@ -87,7 +87,7 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
     dispatch_x = x
     if raw_disp_dtype in ("fp8_e4m3_static", "fp8_e4m3") and not do_expand:
         # On rank_major, --dispatch-dtype fp8_e4m3 maps to static FP8 (no scale sideband).
-        dispatch_x = (x.float() * float(args.fp8_scale)).to(torch.float8_e4m3fn)
+        dispatch_x = (x.float() * float(args.fp8_scale)).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
     elif raw_disp_dtype == "fp8_e4m3":
         from deep_ep.utils.math import per_token_cast_to_fp8
 
