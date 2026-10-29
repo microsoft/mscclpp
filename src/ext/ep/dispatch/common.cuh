@@ -184,13 +184,23 @@ MSCCLPP_DEVICE_INLINE void postRankMajorGpuNetIoRows(const TransportView& transp
     const size_t sourceRow = static_cast<size_t>(destination) * capacity + begin;
     const size_t remoteRow = static_cast<size_t>(transport.rank_) * capacity + begin;
     const size_t metadataBytes = static_cast<size_t>(count) * nTopk * sizeof(int);
-    transport.gpuNetIo_->putBatched3(
-        destination, queue, transport.symmetricOffset(reinterpret_cast<uint8_t*>(output) + remoteRow * HiddenBytes),
-        transport.symmetricOffset(batch.tokens_ + sourceRow * HiddenBytes), static_cast<size_t>(count) * HiddenBytes,
+    const uint64_t destinations[3] = {
+        transport.symmetricOffset(reinterpret_cast<uint8_t*>(output) + remoteRow * HiddenBytes),
         transport.symmetricOffset(outputTopkIdx + remoteRow * nTopk),
-        transport.symmetricOffset(batch.ids_ + sourceRow * nTopk), metadataBytes,
-        transport.symmetricOffset(outputTopkWeights + remoteRow * nTopk),
-        transport.symmetricOffset(batch.weights_ + sourceRow * nTopk), metadataBytes);
+        transport.symmetricOffset(outputTopkWeights + remoteRow * nTopk)};
+    const uint64_t sources[3] = {transport.symmetricOffset(batch.tokens_ + sourceRow * HiddenBytes),
+                                 transport.symmetricOffset(batch.ids_ + sourceRow * nTopk),
+                                 transport.symmetricOffset(batch.weights_ + sourceRow * nTopk)};
+    const uint64_t sizes[3] = {static_cast<size_t>(count) * HiddenBytes, metadataBytes, metadataBytes};
+    auto channel = transport.gpuNetIo_->channel(destination, queue);
+    GpuNetIoMemoryDeviceHandle dst[3], src[3];
+    for (int i = 0; i < 3; ++i) {
+      dst[i] = channel.gpuNetIo_.memory(channel.dst_, false, destinations[i], sizes[i]);
+      src[i] = channel.gpuNetIo_.memory(channel.src_, true, sources[i], sizes[i]);
+    }
+    transport.gpuNetIo_->withChannelLock(destination, queue, [&](EpGpuNetIoSignalState&) {
+      channel.gpuNetIo_.putBatched3(dst, destinations, src, sources, sizes);
+    });
     begin += count;
   }
 }
@@ -214,12 +224,17 @@ MSCCLPP_DEVICE_INLINE bool completeRankMajorGpuNetIoChunk(int* completedRows, in
   return true;
 }
 
-// Arrival marker for (peer, queue): remote atomic add on the peer's per-QP flag.
+// Publish the next ordered arrival token at the peer's per-QP flag.
 MSCCLPP_DEVICE_INLINE void postRankMajorGpuNetIoMarker(const TransportView& transport, int peer, int queue) {
   auto* network = transport.gpuNetIo_;
   auto* flagsSelf = static_cast<uint64_t*>(transport.gpuNetIoFlagsBuffer_) +
                     static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
-  network->atomicAdd(peer, transport.symmetricOffset(flagsSelf + queue), 1, queue);
+  const uint64_t offset = transport.symmetricOffset(flagsSelf + queue);
+  auto channel = network->channel(peer, queue);
+  const auto destination = channel.gpuNetIo_.memory(channel.dst_, false, offset, sizeof(uint64_t));
+  network->withChannelLock(peer, queue, [&](EpGpuNetIoSignalState& state) {
+    channel.gpuNetIo_.signalAt(destination, offset, network->nextSignalToken(state, offset, 1));
+  });
 }
 
 MSCCLPP_DEVICE_INLINE void markRankMajorGpuNetIoPeer(const TransportView& transport, int peer) {
@@ -344,11 +359,21 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorGpuNetIo(const TransportView& transport,
       auto* remoteToken = reinterpret_cast<uint8_t*>(output) + rowBase * HiddenBytes;
       auto* remoteIds = reinterpret_cast<uint8_t*>(outputTopkIdx) + rowBase * nTopk * sizeof(int);
       auto* remoteWeights = reinterpret_cast<uint8_t*>(outputTopkWeights) + rowBase * nTopk * sizeof(float);
-      network->putBatched3(destinationRank, qpIndex, transport.symmetricOffset(remoteToken),
-                           transport.symmetricOffset(slot), HiddenBytes, transport.symmetricOffset(remoteIds),
-                           transport.symmetricOffset(slotIds), static_cast<size_t>(nTopk) * sizeof(int),
-                           transport.symmetricOffset(remoteWeights), transport.symmetricOffset(slotWeights),
-                           static_cast<size_t>(nTopk) * sizeof(float));
+      const uint64_t destinations[3] = {transport.symmetricOffset(remoteToken), transport.symmetricOffset(remoteIds),
+                                        transport.symmetricOffset(remoteWeights)};
+      const uint64_t sources[3] = {transport.symmetricOffset(slot), transport.symmetricOffset(slotIds),
+                                   transport.symmetricOffset(slotWeights)};
+      const uint64_t sizes[3] = {HiddenBytes, static_cast<size_t>(nTopk) * sizeof(int),
+                                 static_cast<size_t>(nTopk) * sizeof(float)};
+      auto channel = network->channel(destinationRank, qpIndex);
+      GpuNetIoMemoryDeviceHandle dst[3], src[3];
+      for (int i = 0; i < 3; ++i) {
+        dst[i] = channel.gpuNetIo_.memory(channel.dst_, false, destinations[i], sizes[i]);
+        src[i] = channel.gpuNetIo_.memory(channel.src_, true, sources[i], sizes[i]);
+      }
+      network->withChannelLock(destinationRank, qpIndex, [&](EpGpuNetIoSignalState&) {
+        channel.gpuNetIo_.putBatched3(dst, destinations, src, sources, sizes);
+      });
     }
     __syncwarp();
 #if defined(MSCCLPP_EP_GPUNETIO_TIMING)
@@ -519,7 +544,7 @@ MSCCLPP_DEVICE_INLINE void joinRankMajorGpuNetIoProducers(int* completed, int nW
 
 MSCCLPP_DEVICE_INLINE void flushAllCrossDomain(const TransportView& transport, int nRanks, int qpIndex) {
   for (int peer = 0; peer < nRanks; ++peer) {
-    if (!transport.isNvlinkPeer(peer)) transport.gpuNetIo_->flush(peer, qpIndex);
+    if (!transport.isNvlinkPeer(peer)) transport.gpuNetIo_->channel(peer, qpIndex).flush(-1);
   }
 }
 
@@ -717,8 +742,12 @@ MSCCLPP_DEVICE_INLINE void writeRankMajorCounts(const TransportView& transport, 
       auto* scratch = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + 2 * nRanks + dstRank;
       scratch->write(static_cast<uint32_t>(rankTokenCounts[dstRank]), epoch);
       auto* remotePacket = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer) + nRanks + transport.rank_;
-      network->put(dstRank, transport.symmetricOffset(remotePacket), transport.symmetricOffset(scratch),
-                   sizeof(mscclpp::LL8Packet), static_cast<int>(blockIdx.x) % network->numQpsPerPeer);
+      const int queue = static_cast<int>(blockIdx.x) % network->numQpsPerPeer;
+      auto channel = network->channel(dstRank, queue);
+      network->withChannelLock(dstRank, queue, [&](EpGpuNetIoSignalState&) {
+        channel.put(transport.symmetricOffset(remotePacket), transport.symmetricOffset(scratch),
+                    sizeof(mscclpp::LL8Packet));
+      });
       continue;
     }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)

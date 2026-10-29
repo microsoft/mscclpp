@@ -127,22 +127,21 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
   const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, dstOffset, rows * RowBytes);
   const auto src = handle.gpuNetIo_.memory(handle.src_, true, srcOffset, rows * RowBytes);
   const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, flagOffset, sizeof(uint64_t));
-  network->withChannelLock(gateway, queue, [&](EpGpuNetIoSignalState& state) {
-    for (int chunk = queue, begin = queue * chunkRows; begin < rows;
-         chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * chunkRows) {
-      const int count = rows - begin < chunkRows ? rows - begin : chunkRows;
-      while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoAggregateChunkReady_ + chunk,
-                                                            mscclpp::memoryOrderAcquire) != count) {
-      }
-      // These DMA sources were written by other CTAs; DOCA's queue-release fence is GPU-scoped.
-      __threadfence_system();
-      handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * RowBytes, src, srcOffset + begin * RowBytes,
-                                       count * RowBytes, sig, flagOffset,
-                                       network->nextSignalToken(state, flagOffset, 1));
+  // Dispatch has drained its QPs, and this warp is the only Combine submitter for this QP.
+  auto& state = network->signalState(gateway, queue);
+  for (int chunk = queue, begin = queue * chunkRows; begin < rows;
+       chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * chunkRows) {
+    const int count = rows - begin < chunkRows ? rows - begin : chunkRows;
+    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoAggregateChunkReady_ + chunk,
+                                                          mscclpp::memoryOrderAcquire) != count) {
     }
-    // The posting warp owns this QP until its final completion drain.
-    handle.flush(-1);
-  });
+    // These DMA sources were written by other CTAs; DOCA's queue-release fence is GPU-scoped.
+    __threadfence_system();
+    handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * RowBytes, src, srcOffset + begin * RowBytes,
+                                     count * RowBytes, sig, flagOffset, network->nextSignalToken(state, flagOffset, 1));
+  }
+  // The posting warp owns this QP until its final completion drain.
+  handle.flush(-1);
 }
 
 template <int Hidden>

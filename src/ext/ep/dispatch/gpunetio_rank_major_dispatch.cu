@@ -39,8 +39,13 @@ MSCCLPP_DEVICE_INLINE void gpuNetIoDispatchBody(void* output, void* outputScales
         for (int index = threadIdx.x; index < nRanks * nQp; index += blockDim.x) {
           const int peer = index / nQp, qpIndex = index % nQp;
           if (transport.isNvlinkPeer(peer)) continue;
-          network->waitTicket(peer, transport.gpuNetIoDispatchTickets_[peer * GpuNetIoMaxQpsPerPeer + qpIndex],
-                              qpIndex);
+          const auto ticket = transport.gpuNetIoDispatchTickets_[peer * GpuNetIoMaxQpsPerPeer + qpIndex];
+          auto channel = network->channel(peer, qpIndex);
+          if (!channel.gpuNetIo_.isTicketDone(ticket)) {
+            network->withChannelLock(peer, qpIndex, [&](EpGpuNetIoSignalState&) {
+              if (!channel.gpuNetIo_.isTicketDone(ticket)) channel.gpuNetIo_.waitTicket(ticket);
+            });
+          }
         }
       }
       __syncthreads();
@@ -73,7 +78,7 @@ MSCCLPP_DEVICE_INLINE void gpuNetIoDispatchBody(void* output, void* outputScales
             while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(&transport.gpuNetIoDispatchPeers_[peer].markersPosted,
                                                                   mscclpp::memoryOrderAcquire) == 0) {
             }
-            network->flush(peer, queue);
+            network->channel(peer, queue).flush(-1);
           }
         }
       } else {
@@ -98,9 +103,9 @@ MSCCLPP_DEVICE_INLINE void gpuNetIoDispatchBody(void* output, void* outputScales
             if (!transport.isNvlinkPeer(peer)) {
               if (transport.gpuNetIoDeferFlush_)
                 transport.gpuNetIoDispatchTickets_[peer * GpuNetIoMaxQpsPerPeer + qpIndex] =
-                    network->reservedTicket(peer, qpIndex);
+                    network->channel(peer, qpIndex).gpuNetIo_.reservedTicket();
               else
-                network->flush(peer, qpIndex);
+                network->channel(peer, qpIndex).flush(-1);
             }
           }
           __syncthreads();

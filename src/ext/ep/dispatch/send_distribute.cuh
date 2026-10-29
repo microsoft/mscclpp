@@ -170,7 +170,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, dstOffset, rows * stride);
     const auto src = handle.gpuNetIo_.memory(handle.src_, true, srcOffset, rows * stride);
     const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, flagOffset, sizeof(uint64_t));
-    network->withChannelLock(gateway, queue, [&](EpGpuNetIoSignalState& sequence) {
+    auto postChunks = [&](EpGpuNetIoSignalState& sequence) {
       if (queue == 0) {
         const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
         const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
@@ -198,7 +198,12 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
                                          count * stride, sig, flagOffset,
                                          network->nextSignalToken(sequence, flagOffset, 1));
       }
-    });
+    };
+    // Only QP 0 is shared with the forwarding ACK; every other QP has this single posting warp.
+    if (queue == 0)
+      network->withChannelLock(gateway, queue, postChunks);
+    else
+      postChunks(network->signalState(gateway, queue));
   }
   // Hand all posting QPs back to the coordinator before it drains them.
   __syncthreads();
@@ -216,7 +221,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     }
   }
   __syncthreads();
-  if (warp < qps && lane == 0) network->flush(gateway, warp);
+  if (warp < qps && lane == 0) network->channel(gateway, warp).flush(-1);
   __syncthreads();
   if (threadIdx.x != 0) return;
   if (context->gpuNetIoDistributeStats_) {
@@ -357,7 +362,13 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   // on each other. Publish the IB credit from a separate warp in parallel.
   if (threadIdx.x == configAlign(context->numRanks_, WARP_SIZE)) {
     // Writers already fenced before the acq_rel CTA join; this ACK is inline, not DMA source data.
-    transport.gpuNetIo_->atomicAdd(source, transport.symmetricOffset(&state->ack), 1, 0);
+    auto* network = transport.gpuNetIo_;
+    const auto offset = transport.symmetricOffset(&state->ack);
+    auto channel = network->channel(source, 0);
+    const auto destination = channel.gpuNetIo_.memory(channel.dst_, false, offset, sizeof(uint64_t));
+    network->withChannelLock(source, 0, [&](EpGpuNetIoSignalState& sequence) {
+      channel.gpuNetIo_.signalAt(destination, offset, network->nextSignalToken(sequence, offset, 1));
+    });
     mscclpp::atomicStore<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2, 1,
                                                     mscclpp::memoryOrderRelease);
   }

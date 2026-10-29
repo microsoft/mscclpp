@@ -345,26 +345,35 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePushOwner(const void* expertOutpu
   auto* landingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineLandingBuffer_);
   const int nQp = network->numQpsPerPeer;
   if (nQp < 1 || nQp > GpuNetIoMaxQpsPerPeer) __trap();
+  // The owner CTA assigns each stripe to one QP and drains it before returning.
+  auto postRows = [&](int rowBegin, int rowEnd, int qpIndex) {
+    auto channel = network->channel(owner, qpIndex);
+    const uint64_t sourceOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
+                                  (static_cast<size_t>(owner) * maxTokensPerRank + rowBegin) * HiddenBytes;
+    const uint64_t destinationOffset = transport.symmetricOffset(
+        landingBase + (static_cast<size_t>(transport.rank_) * maxTokensPerRank + rowBegin) * HiddenBytes);
+    const auto* flags = static_cast<uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
+                        static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
+    const uint64_t flagOffset = transport.symmetricOffset(flags + qpIndex);
+    const uint64_t bytes = static_cast<uint64_t>(rowEnd - rowBegin) * HiddenBytes;
+    const auto destination = channel.gpuNetIo_.memory(channel.dst_, false, destinationOffset, bytes);
+    const auto source = channel.gpuNetIo_.memory(channel.src_, true, sourceOffset, bytes);
+    const auto signal = channel.gpuNetIo_.memory(channel.dst_, false, flagOffset, sizeof(uint64_t));
+    auto& state = network->signalState(owner, qpIndex);
+    channel.gpuNetIo_.putWithSignalAt(destination, destinationOffset, source, sourceOffset, bytes, signal, flagOffset,
+                                      network->nextSignalToken(state, flagOffset, 1));
+  };
   if (transport.gpuNetIoCombineChunkRows_ > 0) {
     if (owner < nRanks && !transport.isSelf(owner) && !transport.isNvlinkPeer(owner) &&
         workspaceView.dispatchRecvCounts_[owner] > 0 && stripe < nQp) {
       const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];
       const int chunkRows = transport.gpuNetIoCombineChunkRows_;
       const int nChunks = (nRowsToOwner + chunkRows - 1) / chunkRows;
-      const size_t rowBytes = HiddenBytes;
-      auto* remoteFlag = static_cast<uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
-                         static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
       for (int chunk = stripe; chunk < nChunks; chunk += nQp) {
         const int rowBegin = chunk * chunkRows;
         const int rowEnd = rowBegin + chunkRows < nRowsToOwner ? rowBegin + chunkRows : nRowsToOwner;
         const int qpIndex = rankMajorCombineChunkQp(network, owner, chunk);
-        const uint64_t srcRowOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-                                      (static_cast<size_t>(owner) * maxTokensPerRank + rowBegin) * rowBytes;
-        auto* landingSlot =
-            landingBase + (static_cast<size_t>(transport.rank_) * maxTokensPerRank + rowBegin) * rowBytes;
-        network->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,
-                               static_cast<uint64_t>(rowEnd - rowBegin) * rowBytes,
-                               transport.symmetricOffset(remoteFlag + qpIndex), 1, qpIndex);
+        postRows(rowBegin, rowEnd, qpIndex);
       }
     }
     return;
@@ -375,15 +384,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePushOwner(const void* expertOutpu
     const int rowBegin = nRowsToOwner * stripe / network->numHcas;
     const int rowEnd = nRowsToOwner * (stripe + 1) / network->numHcas;
     const int qpIndex = rankMajorCombineStripeQp(network, owner, stripe);
-    const uint64_t srcRowOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-                                  (static_cast<size_t>(owner) * maxTokensPerRank + rowBegin) * HiddenBytes;
-    auto* landingSlot =
-        landingBase + (static_cast<size_t>(transport.rank_) * maxTokensPerRank + rowBegin) * HiddenBytes;
-    auto* remoteFlag = static_cast<uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
-                       static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer + qpIndex;
-    network->putWithSignal(owner, transport.symmetricOffset(landingSlot), srcRowOffset,
-                           static_cast<uint64_t>(rowEnd - rowBegin) * HiddenBytes,
-                           transport.symmetricOffset(remoteFlag), 1, qpIndex);
+    postRows(rowBegin, rowEnd, qpIndex);
   }
 }
 
@@ -405,13 +406,13 @@ MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePushOwner(int nRanks, const Tran
     const int nChunks = (workspaceView.dispatchRecvCounts_[owner] + transport.gpuNetIoCombineChunkRows_ - 1) /
                         transport.gpuNetIoCombineChunkRows_;
     if (stripe < network->numQpsPerPeer && stripe < nChunks)
-      network->flush(owner, rankMajorCombineChunkQp(network, owner, stripe));
+      network->channel(owner, rankMajorCombineChunkQp(network, owner, stripe)).flush(-1);
     return;
   }
   if (owner >= nRanks || transport.isNvlinkPeer(owner) || workspaceView.dispatchRecvCounts_[owner] <= 0 ||
       stripe >= network->numHcas)
     return;
-  network->flush(owner, rankMajorCombineStripeQp(network, owner, stripe));
+  network->channel(owner, rankMajorCombineStripeQp(network, owner, stripe)).flush(-1);
 }
 
 MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePush(int nRanks, const TransportView& transport,

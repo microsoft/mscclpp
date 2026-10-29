@@ -100,7 +100,8 @@ existing behavior.
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
 `MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS` controls their size (1–128 rows, default eight).
-Each QP has an independent posting warp that preserves chunk order while holding one posting-phase queue lease.
+Each QP has an independent posting warp that preserves chunk order. Only QP 0 shares submission with the forwarding
+ACK, so it takes a posting-phase lock; the other QPs need no lock.
 A self-validating LL header carries fresh destination counts, which the gateway publishes locally before completion.
 The row count and every destination count each carry their own epoch in an `LL8Packet`; only the active
 `(1 + world_size) * sizeof(LL8Packet)` bytes are sent by one plain RDMA write. Every consumed word validates its own
@@ -116,7 +117,7 @@ Separate registered send and gateway landing allocations are reserved at
 runtime construction. Chunk flags are cumulative; consumers use dedicated per-original-source readiness epochs,
 and an explicit gateway acknowledgment protects staging reuse even when no route targets the gateway itself.
 After all forwarding writers join, separate warps publish the acknowledgment and local readiness concurrently.
-Every posting lease ends before waiting for the acknowledgment; all outgoing QPs are then drained independently
+The shared-QP lease ends before waiting for the acknowledgment; all outgoing QPs are then drained independently
 before dispatch returns. Empty rounds participate in the same protocol.
 
 This specialization replaces direct dispatch batching and its receive/flush schedule; by default it does not change
@@ -151,6 +152,10 @@ chunk on each QP before later chunks, and completes before independent local-dom
 FP32 reductions overlap the posted IB transfers. The final result adds the two FP32 domain partials and casts to
 BF16 once; there is no intermediate BF16 group rounding. **FP32 addition grouping changes**, so this mode is numerically distinct from direct Combine
 and must be explicitly opted into.
+
+Combine assigns one submitter to each outgoing QP, so it uses the existing PortChannel GPUNetIO operations without
+an extra EP lock. The EP device context only indexes channels and notification state and provides a device-scoped
+acquire/release lock for genuinely shared QPs. It does not implement a separate put, signal, batching, or flush API.
 
 Gateway row writers join at a CTA barrier before thread zero updates the device-scoped release counter, so they do
 not need an additional per-writer fence. Each QP poster acquires its completed chunk and retains the cumulative
