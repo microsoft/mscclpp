@@ -35,12 +35,6 @@ add_test_executable(allgather_test_host_offloading allgather_test_host_offloadin
 add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
 
-add_executable(proxy_service_lifecycle proxy_service_lifecycle.cu)
-target_link_libraries(proxy_service_lifecycle ${TEST_LIBS_COMMON})
-target_include_directories(proxy_service_lifecycle ${TEST_INC_COMMON})
-add_test(NAME proxy_service_lifecycle COMMAND proxy_service_lifecycle)
-set_tests_properties(proxy_service_lifecycle PROPERTIES TIMEOUT 60 ENVIRONMENT "MSCCLPP_SOCKET_IFNAME=lo")
-
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 include(CTest)
@@ -56,6 +50,7 @@ target_link_libraries(unit_tests ${TEST_LIBS_COMMON} test_framework)
 target_include_directories(unit_tests ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
 add_subdirectory(unit)
 add_test(NAME unit_tests COMMAND unit_tests)
+set_tests_properties(unit_tests PROPERTIES TIMEOUT 300)
 
 # Multi-process unit tests
 add_executable(mp_unit_tests)

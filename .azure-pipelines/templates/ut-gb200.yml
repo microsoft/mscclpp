@@ -59,7 +59,7 @@ steps:
       displayName: Run mscclpp unit tests
       runRemoteArgs: '--host ${{ parameters.headNode }} --user ${{ parameters.user }}'
       remoteScript: |
-        ./build/bin/unit_tests
+        timeout -k 10 300 ./build/bin/unit_tests
 
 # Run mp_unit_tests single-node on the head node across the rank ladder. No
 # hostfile / ip_port needed: all ranks are local, so loopback bootstrap works and
