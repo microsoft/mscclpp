@@ -150,11 +150,11 @@ struct WorkspaceView {
   }
 };
 
-MSCCLPP_DEVICE_INLINE uint32_t beginDispatchFlag(const WorkspaceView& workspaceView) {
-  return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)] + 1;
+MSCCLPP_DEVICE_INLINE uint32_t getDispatchFlag(const WorkspaceView& workspaceView) {
+  return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
 }
 
-MSCCLPP_DEVICE_INLINE void finishDispatchFlag(WorkspaceView& workspaceView, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void updateDispatchFlag(WorkspaceView& workspaceView, uint32_t flag) {
   // Every thread snapshots its block's slot before reaching this barrier, so
   // thread 0 cannot publish the next value while a late warp is still loading.
   __syncthreads();
@@ -167,10 +167,6 @@ MSCCLPP_DEVICE_INLINE void finishDispatchFlag(WorkspaceView& workspaceView, uint
   if (block == 0 && thread >= static_cast<int>(gridDim.x) && thread < DispatchFlagSlots) {
     workspaceView.dispatchFlags_[thread] = flag;
   }
-}
-
-MSCCLPP_DEVICE_INLINE uint32_t loadDispatchFlag(const WorkspaceView& workspaceView) {
-  return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {

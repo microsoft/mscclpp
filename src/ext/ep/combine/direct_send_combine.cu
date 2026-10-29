@@ -144,7 +144,7 @@ __global__ __launch_bounds__(CombineNThreads,
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    const uint32_t flag = loadDispatchFlag(workspaceView);
+    const uint32_t flag = getDispatchFlag(workspaceView);
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, flag, workspaceView);
     } else {

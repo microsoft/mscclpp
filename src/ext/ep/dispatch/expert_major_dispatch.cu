@@ -529,7 +529,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(context);
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
-  const uint32_t flag = beginDispatchFlag(workspaceView);
+  const uint32_t flag = getDispatchFlag(workspaceView) + 1;
 
   dispatchSend<Hidden, DataType, ScaleBlockSize>(inputTokens, transport, nExperts, nRanks, topkIndices, topkWeights,
                                                  nTokens, nTopk, maxTokensPerRank, recvBuffer, context->workspace_,
@@ -543,7 +543,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                          context->rank_, nRanks, nTopk, maxTokensPerRank, recvBuffer,
                                                          context->workspace_, flag, sharedMem);
   }
-  finishDispatchFlag(workspaceView, flag);
+  updateDispatchFlag(workspaceView, flag);
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
