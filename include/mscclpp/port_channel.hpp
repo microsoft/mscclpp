@@ -115,13 +115,8 @@ struct BasePortChannel {
                   std::shared_ptr<Proxy> proxy);
 
   /// Constructor.
-  /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The device-to-device semaphore used to synchronize the communication.
-  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
-
-  /// Constructor for a device-initiated channel.
-  /// @param semaphore The semaphore used to synchronize the communication.
-  explicit BasePortChannel(const Semaphore& semaphore);
+  explicit BasePortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -142,8 +137,10 @@ struct BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the BasePortChannel is not released when using the returned handle.
+  /// @tparam Backend The backend to use on the device (default: PortChannelBackend::Host).
   /// @return The device-side handle.
-  DeviceHandle deviceHandle() const;
+  template <PortChannelBackend Backend = PortChannelBackend::Host>
+  BasePortChannelDeviceHandleT<Backend> deviceHandle() const;
 };
 
 /// Port channel.
@@ -173,12 +170,6 @@ struct PortChannel : public BasePortChannel {
   /// @param src The source registered memory.
   PortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
 
-  /// Constructor for a device-initiated channel.
-  /// @param semaphore The semaphore.
-  /// @param dst The destination registered memory.
-  /// @param src The source registered memory.
-  PortChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src);
-
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
@@ -201,8 +192,10 @@ struct PortChannel : public BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the PortChannel is not released when using the returned handle.
+  /// @tparam Backend The backend to use on the device (default: PortChannelBackend::Host).
   /// @return The device-side handle.
-  DeviceHandle deviceHandle() const;
+  template <PortChannelBackend Backend = PortChannelBackend::Host>
+  PortChannelDeviceHandleT<Backend> deviceHandle() const;
 };
 
 /// @deprecated Use BasePortChannel instead.

@@ -21,16 +21,6 @@
 
 namespace mscclpp {
 
-/// Resource sharing mode for a PortChannel's device-initiated queue pair.
-enum class PortChannelSharingMode : uint8_t {
-  /// The queue pair is accessed by a single thread at a time (serialized by the caller).
-  Exclusive = 0,
-  /// The queue pair is shared among threads within a CTA.
-  Cta = 1,
-  /// The queue pair is shared among threads across the GPU.
-  Gpu = 2,
-};
-
 /// Caller-owned shared-memory storage for two BlueFlame work requests.
 /// Concurrent submitters must use separate instances unless guarded by a lock. A posting operation waits until
 /// BlueFlame has consumed this storage before returning, so sequential operations may reuse it even across different
@@ -62,22 +52,22 @@ struct GpuNetIoDeviceHandle {
   uint64_t signalAddr;
   /// Remote key of the semaphore token, in network byte order.
   uint32_t signalKey;
-  /// Local key of the connection's atomic fetch-result scratch, in network byte order.
-  uint32_t atomicScratchKey;
-  /// Connection-owned 8-byte buffer that receives atomic fetch results.
-  uint64_t atomicScratchAddr;
+  /// Local key of the connection's atomic fetch-result buffer, in network byte order.
+  uint32_t atomicFetchKey;
+  /// Connection-owned 8-byte buffer that receives RDMA atomic fetch results.
+  uint64_t atomicFetchAddr;
   /// Device-resident outbound semaphore counter for inline signal writes.
   uint64_t* outboundToken;
   /// Maximum payload size (in bytes) submitted via BlueFlame; larger payloads use regular doorbell submission
   /// without shared-memory WQE staging. Zero disables BlueFlame.
   uint32_t blueFlameLimit;
   /// Caller-owned shared-memory WQE scratch for BlueFlame submissions.
-  /// Host-created handles leave this null. When `wqeScratch` is null or a payload exceeds `blueFlameLimit`,
+  /// Host-created handles leave this null. When `wqeScratchShm` is null or a payload exceeds `blueFlameLimit`,
   /// work requests are prepared in global memory and submitted via regular doorbell (`submit_db`).
-  GpuNetIoWqeScratch* wqeScratch;
+  GpuNetIoWqeScratch* wqeScratchShm;
   /// Optional caller-provided device or shared-memory spinlock (`0` = unlocked) used when `reuseSharedWqe` is true.
   uint32_t* wqeScratchLock;
-  /// Whether `wqeScratch` is shared among concurrent submitters and should be guarded by `wqeScratchLock`.
+  /// Whether `wqeScratchShm` is shared among concurrent submitters and should be guarded by `wqeScratchLock`.
   bool reuseSharedWqe;
 
   /// Default BlueFlame payload size limit (inline threshold, 28 bytes).
@@ -202,8 +192,8 @@ struct GpuNetIoDeviceHandle {
     } else {
       auto* wqePtr = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
       doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqePtr, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
-                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicScratchAddr,
-                                            atomicScratchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
+                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicFetchAddr,
+                                            atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
       doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
       submitDb<sharing>(q, index + 1);
     }
@@ -259,7 +249,7 @@ struct GpuNetIoDeviceHandle {
 
   MSCCLPP_DEVICE_INLINE bool useBlueFlame(uint64_t size) const {
 #if MSCCLPP_BULK_AVAILABLE
-    return wqeScratch != nullptr && size <= blueFlameLimit;
+    return wqeScratchShm != nullptr && size <= blueFlameLimit;
 #else
     (void)size;
     return false;
@@ -328,8 +318,8 @@ struct GpuNetIoDeviceHandle {
                                                    uint32_t key, int64_t value) {
     withWqeScratch([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
       doca_gpu_dev_verbs_wqe_prepare_atomic(q, sharedWqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
-                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicScratchAddr,
-                                            atomicScratchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
+                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicFetchAddr,
+                                            atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
       submitPreparedFromShared<Sharing>(q, index, sharedWqe);
@@ -491,10 +481,10 @@ struct GpuNetIoDeviceHandle {
   template <typename Fn>
   MSCCLPP_DEVICE_INLINE void withWqeScratch(Fn&& fn) const {
     static_assert(sizeof(GpuNetIoWqeScratch) == 2 * sizeof(doca_gpu_dev_verbs_wqe));
-    require(wqeScratch != nullptr && reinterpret_cast<uintptr_t>(wqeScratch) % alignof(GpuNetIoWqeScratch) == 0 &&
-            __isShared(wqeScratch));
+    require(wqeScratchShm != nullptr && reinterpret_cast<uintptr_t>(wqeScratchShm) % alignof(GpuNetIoWqeScratch) == 0 &&
+            __isShared(wqeScratchShm));
     if (reuseSharedWqe) lockWqeScratch();
-    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeScratch->storage));
+    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeScratchShm->storage));
     if (reuseSharedWqe) unlockWqeScratch();
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)

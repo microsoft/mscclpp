@@ -43,9 +43,9 @@ auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB
 communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
-auto semaphore = communicator->buildSemaphore(connection, remoteRank).get();
+auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connection);
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
-auto deviceHandle = channel.deviceHandle();
+auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
 Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
@@ -53,11 +53,11 @@ default without requiring shared memory. To enable BlueFlame submission for tran
 (default: 28 bytes), bind caller-owned shared-memory scratch on a **local copy** of the handle:
 
 ```cpp
-__global__ void send(mscclpp::DeviceHandle<mscclpp::PortChannel> channel, size_t bytes) {
+__global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
   __shared__ mscclpp::GpuNetIoWqeScratch scratch;
   if (threadIdx.x != 0) return;
   auto portChan = channel;
-  portChan.device_.wqeScratch = &scratch;
+  portChan.device_.wqeScratchShm = &scratch;
   portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
   portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
 }
@@ -66,9 +66,9 @@ __global__ void send(mscclpp::DeviceHandle<mscclpp::PortChannel> channel, size_t
 send<<<1, 32>>>(deviceHandle, bytes);
 ```
 
-Never write a block-shared pointer into a constant-memory or globally shared channel handle. When `wqeScratch` is null
-or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory staging.
-The proxy backend ignores the `device_` fields, so the same kernel can support either backend.
+Never write a block-shared pointer into a constant-memory or globally shared channel handle. When `wqeScratchShm` is
+null or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory
+staging. The proxy backend ignores the `device_` fields, so the same kernel can support either backend.
 
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
 behave as for proxy-backed channels. The signal of `putWithSignal` is posted on the same queue pair after the payload, so
@@ -89,15 +89,16 @@ By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when
 Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `PortChannelSharingMode::Exclusive`
 (operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
-`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when `wqeScratch` is
-bound (default: `kDefaultBlueFlameLimit = 28`, matching inline payloads; set to `0` to disable BlueFlame or increase to
-use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when `wqeScratch == nullptr`—write
-their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
+`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when `wqeScratchShm`
+is bound (default: `kDefaultBlueFlameLimit = 28`, matching inline payloads; set to `0` to disable BlueFlame or increase
+to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when
+`wqeScratchShm == nullptr`—write their WQEs directly to the GPU-resident send queue and ring the regular doorbell,
+matching NCCL GIN's `submit_db` path.
 
 ### Caller-owned WQE scratch and optional lock
 
 `mscclpp::GpuNetIoWqeScratch` is an opaque 128-byte, 16-byte-aligned shared-memory buffer for two WQEs. When BlueFlame
-is enabled (`wqeScratch != nullptr` and `size <= blueFlameLimit`), each scratch entry must either:
+is enabled (`wqeScratchShm != nullptr` and `size <= blueFlameLimit`), each scratch entry must either:
 - Be owned exclusively by one posting thread at a time (`reuseSharedWqe == false`), or
 - Be shared across concurrent submitters by setting `device_.reuseSharedWqe = true` and binding `device_.wqeScratchLock`
   to a zero-initialized `uint32_t` spinlock in shared or device memory.
@@ -106,20 +107,9 @@ BlueFlame submission waits for async consumption of the scratch source before ea
 therefore reuse one entry for sequential operations across different QPs without locking. There is no internal shared
 memory allocation or fixed connection-slot cap in MSCCL++.
 
-## Using the device API from another project
-
-Targets that link `mscclpp` inside the MSCCL++ build tree inherit the required compile definition and include paths.
-Kernels compiled against an installed MSCCL++ must add:
-
-```bash
--DMSCCLPP_USE_GPUNETIO -I<install-prefix>/include/mscclpp/gpunetio
-```
-
 ## Limitations
 
 - Host-side `Connection` operations (`write`, `updateAndSync`, `accumulate`, `flush`) and `Host2DeviceSemaphore::signal`
   are not supported on GPUNetIO connections and throw `InvalidUsage`.
-- Memory IDs are resolved through the memories registered with the channel's proxy (`ProxyService::addMemory()`)
-  when `deviceHandle()` is called; memories added later are only addressable by device handles obtained afterwards.
 - On RoCE devices only port 1 is supported (the pinned DOCA GPUNetIO resolves the destination MAC on port 1).
 - `accumulate` requires an 8-byte-aligned destination offset.

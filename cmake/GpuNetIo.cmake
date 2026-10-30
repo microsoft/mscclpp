@@ -84,5 +84,5 @@ target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
 target_compile_definitions(mscclpp_gpunetio_obj PRIVATE DOCA_VERBS_USE_NET_WRAPPER)
 set_target_properties(mscclpp_gpunetio_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1)
 
-install(DIRECTORY ${GPUNETIO_HOME}/include/ DESTINATION include/mscclpp/gpunetio)
+install(DIRECTORY ${GPUNETIO_HOME}/include/ DESTINATION include)
 install(FILES ${GPUNETIO_HOME}/LICENSE.txt DESTINATION share/licenses/mscclpp/gpunetio)

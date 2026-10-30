@@ -285,8 +285,8 @@ GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const E
   }
   qp_->connect(getImpl(remoteEndpoint).ibQpInfo_);
   CudaDeviceGuard deviceGuard(localEndpoint.device().id);
-  atomicScratch_ = detail::gpuCallocShared<uint64_t>();
-  atomicScratchMem_ = context->registerMemory(atomicScratch_.get(), sizeof(uint64_t), transport_);
+  atomicFetchBuff_ = detail::gpuCallocShared<uint64_t>();
+  atomicFetchMem_ = context->registerMemory(atomicFetchBuff_.get(), sizeof(uint64_t), transport_);
 }
 
 GpuNetIoConnection::~GpuNetIoConnection() = default;
@@ -323,14 +323,14 @@ DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo(const RegisteredMem
   if (signalInfo.ibLocal || signalImpl.size < sizeof(uint64_t) || signalInfo.ibMrInfo.addr % sizeof(uint64_t) != 0) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "invalid GPUNetIO semaphore token");
   }
-  const auto& scratchInfo = getImpl(atomicScratchMem_).getTransportInfo(transport_);
+  const auto& fetchInfo = getImpl(atomicFetchMem_).getTransportInfo(transport_);
 
   DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
-  handle.atomicScratchAddr = scratchInfo.ibMrInfo.addr;
-  handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
+  handle.atomicFetchAddr = fetchInfo.ibMrInfo.addr;
+  handle.atomicFetchKey = htobe32(fetchInfo.ibMr->getLkey());
   handle.outboundToken = outboundToken;
   handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
   return handle;

@@ -76,8 +76,8 @@ class GpuNetIoConnection : public BaseConnection {
   uint64_t remoteHostHash_;
   uint64_t remotePidHash_;
   std::shared_ptr<GpuNetIoQp> qp_;
-  std::shared_ptr<uint64_t> atomicScratch_;
-  RegisteredMemory atomicScratchMem_;
+  std::shared_ptr<uint64_t> atomicFetchBuff_;
+  RegisteredMemory atomicFetchMem_;
 };
 
 /// Create an InfiniBand connection for the given endpoints (either host-stack or device-initiated).

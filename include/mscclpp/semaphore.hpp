@@ -43,10 +43,6 @@ class Host2DeviceSemaphore {
   /// @return The connection associated with this semaphore.
   Connection& connection();
 
-  /// Returns the underlying Semaphore.
-  /// @return The underlying Semaphore.
-  const Semaphore& semaphore() const { return semaphore_; }
-
   /// Signal the device.
   void signal();
 

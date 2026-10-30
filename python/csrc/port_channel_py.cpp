@@ -35,7 +35,7 @@ void register_port_channel(nb::module_& m) {
       .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
            nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"))
-      .def("device_handle", &BasePortChannel::deviceHandle);
+      .def("device_handle", &BasePortChannel::deviceHandle<>);
 
   nb::class_<BasePortChannel::DeviceHandle>(m, "CppBasePortChannelDeviceHandle")
       .def(nb::init<>())
@@ -50,7 +50,7 @@ void register_port_channel(nb::module_& m) {
       .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId, MemoryId>(),
            nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
-      .def("device_handle", &PortChannel::deviceHandle);
+      .def("device_handle", &PortChannel::deviceHandle<>);
 
   nb::class_<PortChannel::DeviceHandle>(m, "CppPortChannelDeviceHandle")
       .def(nb::init<>())
