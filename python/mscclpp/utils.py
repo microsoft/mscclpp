@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 import ctypes
 import os
@@ -8,10 +8,10 @@ import subprocess
 import tempfile
 from typing import Any, Type, Union
 
-import cupy as cp
 import numpy as np
 
 from mscclpp._mscclpp import CppDataType as DataType
+from mscclpp._mscclpp import is_hip
 
 try:
     import torch
@@ -33,20 +33,53 @@ __all__ = [
 
 
 def get_device_arch() -> str:
-    if cp.cuda.runtime.is_hip:
-        return cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8")
-    else:
-        return f"sm_{cp.cuda.Device().compute_capability}"
+    from mscclpp import gpu
+
+    (props,) = gpu.get_device_properties(gpu.current_device())
+    if is_hip:
+        arch = props.gcnArchName
+        return arch.decode("utf-8") if isinstance(arch, bytes) else arch
+    return f"sm_{props.major}{props.minor}"
 
 
 class Kernel:
     CU_LAUNCH_PARAM_BUFFER_POINTER = 0x01
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
-    CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
+    CU_LAUNCH_PARAM_END = 0x00 if not is_hip else 0x03
 
     def __init__(self, cubin: bytes, kernel_name: str):
-        self._module = cp.cuda.driver.moduleLoadData(cubin)
-        self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
+        self._module = None
+        name = kernel_name.encode("utf-8")
+        if is_hip:
+            from hip import hip
+
+            load_module = hip.hipModuleLoadData
+            get_function = hip.hipModuleGetFunction
+            self._launch_kernel = hip.hipModuleLaunchKernel
+            self._unload_module = hip.hipModuleUnload
+        else:
+            from cuda.bindings import driver, runtime
+
+            load_module = driver.cuModuleLoadData
+            get_function = driver.cuModuleGetFunction
+            self._launch_kernel = driver.cuLaunchKernel
+            self._unload_module = driver.cuModuleUnload
+            # Driver module loading needs the runtime's current device context.
+            self._call(runtime.cudaFree, 0)
+
+        (self._module,) = self._call(load_module, cubin)
+        try:
+            (self._kernel,) = self._call(get_function, self._module, name)
+        except RuntimeError:
+            self.__del__()
+            raise
+
+    @staticmethod
+    def _call(func, *args):
+        error, *values = func(*args)
+        if int(error) != 0:
+            raise RuntimeError(f"{func.__name__} failed with error {int(error)}")
+        return values
 
     def launch_kernel(
         self,
@@ -54,29 +87,43 @@ class Kernel:
         nblocks: int,
         nthreads: int,
         shared: int,
-        stream: Union[cp.cuda.Stream, None],
+        stream: Union[int, "torch.cuda.Stream", None],
     ):
+        """Launch on a native stream pointer, a PyTorch stream, or the default stream (None)."""
         buffer = (ctypes.c_byte * len(params)).from_buffer_copy(params)
         buffer_size = ctypes.c_size_t(len(params))
-        config = np.array(
-            [
-                Kernel.CU_LAUNCH_PARAM_BUFFER_POINTER,
-                ctypes.addressof(buffer),
-                Kernel.CU_LAUNCH_PARAM_BUFFER_SIZE,
-                ctypes.addressof(buffer_size),
-                Kernel.CU_LAUNCH_PARAM_END,
-            ],
-            dtype=np.uint64,
+        config = (ctypes.c_void_p * 5)(
+            Kernel.CU_LAUNCH_PARAM_BUFFER_POINTER,
+            ctypes.addressof(buffer),
+            Kernel.CU_LAUNCH_PARAM_BUFFER_SIZE,
+            ctypes.addressof(buffer_size),
+            Kernel.CU_LAUNCH_PARAM_END,
         )
         cuda_stream = 0
-        if stream:
-            cuda_stream = stream.ptr if isinstance(stream, cp.cuda.Stream) else stream.cuda_stream
-        cp.cuda.driver.launchKernel(
-            self._kernel, nblocks, 1, 1, nthreads, 1, 1, shared, cuda_stream, 0, config.ctypes.data
+        if isinstance(stream, int):
+            cuda_stream = stream
+        elif stream is not None:
+            cuda_stream = stream.cuda_stream
+        self._call(
+            self._launch_kernel,
+            self._kernel,
+            nblocks,
+            1,
+            1,
+            nthreads,
+            1,
+            1,
+            shared,
+            cuda_stream,
+            0,
+            ctypes.addressof(config),
         )
 
     def __del__(self):
-        cp.cuda.driver.moduleUnload(self._module)
+        if self._module is not None:
+            module = self._module
+            self._module = None
+            self._call(self._unload_module, module)
 
 
 class KernelBuilder:
@@ -102,7 +149,7 @@ class KernelBuilder:
     def _compile_cuda(self, source_file, output_file, std_version="c++20"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
-        if not cp.cuda.runtime.is_hip:
+        if not is_hip:
             arch = get_device_arch()
             compute_capability = arch.replace("sm_", "")
             cuda_home = os.environ.get("CUDA_HOME")
@@ -154,6 +201,20 @@ class KernelBuilder:
             self._tempdir.cleanup()
 
 
+def _get_data_ptr(array: Any) -> int:
+    if isinstance(array, np.ndarray):
+        ptr = array.ctypes.data
+    elif is_torch_tensor(array):
+        ptr = array.data_ptr()
+    else:
+        ptr = getattr(getattr(array, "data", None), "ptr", None)
+        if ptr is None:
+            raise RuntimeError(f"Unsupported type: {type(array)}")
+    if not isinstance(ptr, int) or isinstance(ptr, bool) or not 0 <= ptr < (1 << (8 * struct.calcsize("P"))):
+        raise RuntimeError(f"Invalid data pointer for {type(array)}: {ptr!r}")
+    return ptr
+
+
 def pack(*args):
     res = b""
     for arg in list(args):
@@ -161,19 +222,13 @@ def pack(*args):
             res += struct.pack("i", arg)
         elif isinstance(arg, ctypes.c_size_t):
             res += struct.pack("N", arg.value)
-        elif isinstance(arg, np.ndarray):
-            res += struct.pack("P", arg.ctypes.data)
-        elif isinstance(arg, cp.ndarray):
-            res += struct.pack("P", arg.data.ptr)
-        elif is_torch_tensor(arg):
-            res += struct.pack("P", arg.data_ptr())
         # use int to represent bool, which can avoid CUDA_ERROR_LAUNCH_OUT_OF_RESOURCES error
         elif isinstance(arg, bool):
             res += struct.pack("i", arg)
         elif isinstance(arg, bytes):
             res += struct.pack(f"{len(arg)}s", arg)
         else:
-            raise RuntimeError(f"Unsupported type: {type(arg)}")
+            res += struct.pack("P", _get_data_ptr(arg))
     return res
 
 

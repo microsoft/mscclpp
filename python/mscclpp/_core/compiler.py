@@ -18,7 +18,6 @@ import sys
 import sysconfig
 
 from blake3 import blake3
-import cupy as cp
 
 from mscclpp._version import __version__
 from .algorithm import Algorithm
@@ -26,7 +25,7 @@ from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.utils import get_device_arch
 
-from mscclpp._mscclpp import CppExecutionPlan, env
+from mscclpp._mscclpp import CppExecutionPlan, env, is_hip
 
 logging.basicConfig(level=logging.INFO)
 
@@ -195,7 +194,7 @@ class NativeCodeCompiler:
         self._initialized = False
 
     def _do_init(self):
-        self._is_hip = cp.cuda.runtime.is_hip
+        self._is_hip = is_hip
         self._device_arch = get_device_arch()
         self._compiler = self._get_compiler()
         self._default_options = ["-std=c++20", "-O3", "--shared"]

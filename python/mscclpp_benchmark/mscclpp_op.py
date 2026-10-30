@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import os
-import cupy as cp
+import numpy as np
 import ctypes
 from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore
 from mscclpp import CommGroup, GpuBuffer
@@ -21,11 +21,11 @@ IB_TRANSPORTS = [
 
 
 def type_to_str(dtype):
-    if dtype == cp.float16:
+    if dtype == np.float16:
         return "__half"
-    elif dtype == cp.float32:
+    elif dtype == np.float32:
         return "float"
-    elif dtype == cp.int32:
+    elif dtype == np.int32:
         return "int"
     else:
         raise RuntimeError("Unknown data type")
@@ -35,7 +35,7 @@ class MscclppAllReduce1:
     def __init__(
         self,
         group: CommGroup,
-        memory: cp.ndarray,
+        memory: GpuBuffer,
         read_only: int = 1,
         block_size: int = 1024,
         nblocks: int = 24,
@@ -64,7 +64,7 @@ class MscclppAllReduce1:
             if rank != self.group.my_rank:
                 self.device_handles.append(self.memory_channels[rank].device_handle().raw)
 
-        self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
+        self.device_handles_gpu = GpuBuffer.from_numpy(memoryview(b"".join(self.device_handles)), dtype=np.uint8)
 
         self.set_params(nblocks, block_size, read_only)
 
@@ -78,7 +78,7 @@ class MscclppAllReduce1:
         self.read_only = read_only
         self.params = b""
         self.params += pack(
-            self.device_handles_cp,
+            self.device_handles_gpu,
             self.memory,
             self.group.my_rank,
             self.group.nranks,
@@ -101,8 +101,8 @@ class MscclppAllReduce2:
     def __init__(
         self,
         group: CommGroup,
-        memory: cp.ndarray,
-        memory_out: cp.ndarray,
+        memory: GpuBuffer,
+        memory_out: GpuBuffer,
         block_size: int = 512,
         nblocks: int = 21,
     ):
@@ -132,7 +132,7 @@ class MscclppAllReduce2:
             if rank != self.group.my_rank:
                 self.device_handles.append(self.memory_channels[rank].device_handle().raw)
 
-        self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
+        self.device_handles_gpu = GpuBuffer.from_numpy(memoryview(b"".join(self.device_handles)), dtype=np.uint8)
 
         self.set_params(nblocks, block_size)
 
@@ -146,7 +146,7 @@ class MscclppAllReduce2:
 
         self.params = b""
         self.params += pack(
-            self.device_handles_cp,
+            self.device_handles_gpu,
             self.memory,
             self.scratch,
             self.memory_out,
@@ -168,7 +168,7 @@ class MscclppAllReduce3:
     def __init__(
         self,
         group: CommGroup,
-        memory: cp.ndarray,
+        memory: GpuBuffer,
         proxy_service: ProxyService,
         block_size: int = 1024,
         nblocks: int = 24,
@@ -202,8 +202,12 @@ class MscclppAllReduce3:
             if rank != self.group.my_rank:
                 self.fst_device_handles.append(self.fst_round_port_chans[rank].device_handle().raw)
                 self.snd_device_handles.append(self.snd_round_port_chans[rank].device_handle().raw)
-        self.fst_device_handles_cp = cp.asarray(memoryview(b"".join(self.fst_device_handles)), dtype=cp.uint8)
-        self.snd_device_handles_cp = cp.asarray(memoryview(b"".join(self.snd_device_handles)), dtype=cp.uint8)
+        self.fst_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.fst_device_handles)), dtype=np.uint8
+        )
+        self.snd_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.snd_device_handles)), dtype=np.uint8
+        )
 
         self.set_params(nblocks, block_size)
 
@@ -216,8 +220,8 @@ class MscclppAllReduce3:
         self.block_size = block_size
         self.params = b""
         self.params += pack(
-            self.fst_device_handles_cp,
-            self.snd_device_handles_cp,
+            self.fst_device_handles_gpu,
+            self.snd_device_handles_gpu,
             self.memory,
             self.scratch,
             self.group.my_rank,
@@ -238,7 +242,7 @@ class MscclppAllReduce4:
     def __init__(
         self,
         group: CommGroup,
-        memory: cp.ndarray,
+        memory: GpuBuffer,
         nranks_per_node: int,
         proxy_service: ProxyService,
         nblocks: int = 45,
@@ -290,12 +294,14 @@ class MscclppAllReduce4:
                 )
                 self.all_gather_proxy_device_handles.append(self.all_gather_port_channels[rank].device_handle().raw)
 
-        self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
-        self.reduce_sactter_proxy_device_handles_cp = cp.asarray(
-            memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=cp.uint8
+        self.mem_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.mem_device_handles)), dtype=np.uint8
         )
-        self.all_gather_proxy_device_handles_cp = cp.asarray(
-            memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=cp.uint8
+        self.reduce_sactter_proxy_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.reduce_sactter_proxy_device_handles)), dtype=np.uint8
+        )
+        self.all_gather_proxy_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.all_gather_proxy_device_handles)), dtype=np.uint8
         )
 
         self.set_params(nblocks, block_size, pipeline_depth)
@@ -311,9 +317,9 @@ class MscclppAllReduce4:
 
         self.params = b""
         self.params += pack(
-            self.mem_device_handles_cp,
-            self.reduce_sactter_proxy_device_handles_cp,
-            self.all_gather_proxy_device_handles_cp,
+            self.mem_device_handles_gpu,
+            self.reduce_sactter_proxy_device_handles_gpu,
+            self.all_gather_proxy_device_handles_gpu,
             self.memory,
             self.scratch,
             self.group.my_rank,
@@ -339,8 +345,8 @@ class MscclppAllReduce5:
     def __init__(
         self,
         group: CommGroup,
-        memory: cp.ndarray,
-        memory_out: cp.ndarray,
+        memory: GpuBuffer,
+        memory_out: GpuBuffer,
         nranks_per_node: int,
         proxy_service: ProxyService,
         nblocks: int = 21,
@@ -391,8 +397,12 @@ class MscclppAllReduce5:
             if rank != self.group.my_rank and not in_same_node(rank):
                 self.proxy_device_handles.append(self.port_channels[rank].device_handle().raw)
 
-        self.mem_device_handles_cp = cp.asarray(memoryview(b"".join(self.mem_device_handles)), dtype=cp.uint8)
-        self.proxy_device_handles_cp = cp.asarray(memoryview(b"".join(self.proxy_device_handles)), dtype=cp.uint8)
+        self.mem_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.mem_device_handles)), dtype=np.uint8
+        )
+        self.proxy_device_handles_gpu = GpuBuffer.from_numpy(
+            memoryview(b"".join(self.proxy_device_handles)), dtype=np.uint8
+        )
 
         self.set_params(nblocks, block_size)
 
@@ -406,8 +416,8 @@ class MscclppAllReduce5:
 
         self.params = b""
         self.params += pack(
-            self.mem_device_handles_cp,
-            self.proxy_device_handles_cp,
+            self.mem_device_handles_gpu,
+            self.proxy_device_handles_gpu,
             self.memory,
             self.scratch,
             self.put_buff,
@@ -433,7 +443,7 @@ class MscclppAllReduce6:
         self,
         group: CommGroup,
         nelem: int,
-        memory_dtype: cp.dtype,
+        memory_dtype: np.dtype,
         block_size: int = 1024,
         nblocks: int = 32,
     ):
@@ -451,7 +461,7 @@ class MscclppAllReduce6:
         self.nvls_connection = group.make_connection(all_ranks, Transport.CudaIpc, use_switch=True)
         self.memory = GpuBuffer(nelem, memory_dtype)
         self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
-            self.memory.data.ptr, self.memory.data.mem.size
+            self.memory.data.ptr, self.memory.allocation_size
         )
 
         # create a memory_channel for each remote neighbor
@@ -471,15 +481,15 @@ class MscclppAllReduce6:
             if rank != self.group.my_rank:
                 self.device_handles.append(self.semaphores[rank].device_handle().raw)
 
-        self.device_handles_cp = cp.asarray(memoryview(b"".join(self.device_handles)), dtype=cp.uint8)
+        self.device_handles_gpu = GpuBuffer.from_numpy(memoryview(b"".join(self.device_handles)), dtype=np.uint8)
         self.nvls_handle = self.nvls_mem_handle.device_handle().raw
 
-        if self.memory.dtype != cp.float16 and self.memory.dtype != cp.float32:
+        if self.memory.dtype != np.float16 and self.memory.dtype != np.float32:
             raise RuntimeError("Unsupported data type")
 
-        if self.memory.dtype == cp.float16:
+        if self.memory.dtype == np.float16:
             vector_size = 8
-        elif self.memory.dtype == cp.float32:
+        elif self.memory.dtype == np.float32:
             vector_size = 4
         else:
             vector_size = 1
@@ -498,7 +508,7 @@ class MscclppAllReduce6:
         self.vector_size = vector_size
         self.params = b""
         self.params += pack(
-            self.device_handles_cp,
+            self.device_handles_gpu,
             self.nvls_handle,
             self.group.my_rank,
             self.group.nranks,
@@ -509,9 +519,9 @@ class MscclppAllReduce6:
     def auto_tune(self):
         nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
         block_size_to_try = [256, 512, 1024]
-        if self.memory.dtype == cp.float16:
+        if self.memory.dtype == np.float16:
             vector_size_to_try = [8, 4, 2]
-        elif self.memory.dtype == cp.float32:
+        elif self.memory.dtype == np.float32:
             vector_size_to_try = [4, 2, 1]
         else:
             vector_size_to_try = [1]

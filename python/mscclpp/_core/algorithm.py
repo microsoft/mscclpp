@@ -4,8 +4,10 @@
 from __future__ import annotations
 from typing import Optional, Tuple, Dict
 from functools import cached_property
-import cupy as cp
 
+import numpy as np
+
+from mscclpp._core.buffer import GpuBuffer
 
 from mscclpp._mscclpp import (
     CppAlgorithm,
@@ -260,22 +262,21 @@ class AlgorithmCollection:
         self._algorithms.append(algorithm)
 
 
-_flag_buffer_cache = None
+_flag_buffer_cache: Optional[GpuBuffer] = None
 
 
-def get_flag_buffer() -> cp.ndarray:
+def get_flag_buffer() -> GpuBuffer:
     """Get the default flag buffer for algorithm selection.
 
     This buffer is used internally by default algorithms to store selection flags.
-    It is allocated as a shared GPU buffer and can be accessed from Python.
-    The result is cached so all callers share the same buffer.
+    The cached GpuBuffer wraps the native allocation without allocating or copying
+    GPU memory and retains its shared owner.
 
     Returns:
-        A CuPy array representing the flag buffer on the GPU.
+        A one-dimensional uint32 GpuBuffer sharing the native flag storage.
     """
     global _flag_buffer_cache
     if _flag_buffer_cache is None:
         buffer_ptr, buffer_size, owner = cpp_get_flag_buffer()
-        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
-        _flag_buffer_cache = cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+        _flag_buffer_cache = GpuBuffer.from_ptr(buffer_ptr, buffer_size, owner, dtype=np.uint32)
     return _flag_buffer_cache

@@ -6,13 +6,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from mscclpp._mscclpp import is_hip
+
 _API_NAMES = {
     "get_device_count": ("hipGetDeviceCount", "cudaGetDeviceCount"),
     "get_device": ("hipGetDevice", "cudaGetDevice"),
     "get_device_properties": ("hipGetDeviceProperties", "cudaGetDeviceProperties"),
     "set_device": ("hipSetDevice", "cudaSetDevice"),
+    "device_synchronize": ("hipDeviceSynchronize", "cudaDeviceSynchronize"),
+    "stream_create_with_flags": ("hipStreamCreateWithFlags", "cudaStreamCreateWithFlags"),
+    "stream_synchronize": ("hipStreamSynchronize", "cudaStreamSynchronize"),
+    "stream_destroy": ("hipStreamDestroy", "cudaStreamDestroy"),
     "stream_begin_capture": ("hipStreamBeginCapture", "cudaStreamBeginCapture"),
     "stream_end_capture": ("hipStreamEndCapture", "cudaStreamEndCapture"),
+    "event_create": ("hipEventCreate", "cudaEventCreate"),
+    "event_record": ("hipEventRecord", "cudaEventRecord"),
+    "event_synchronize": ("hipEventSynchronize", "cudaEventSynchronize"),
+    "event_elapsed_time": ("hipEventElapsedTime", "cudaEventElapsedTime"),
+    "event_destroy": ("hipEventDestroy", "cudaEventDestroy"),
     "graph_instantiate": ("hipGraphInstantiate", "cudaGraphInstantiate"),
     "graph_launch": ("hipGraphLaunch", "cudaGraphLaunch"),
     "graph_destroy": ("hipGraphDestroy", "cudaGraphDestroy"),
@@ -21,12 +32,25 @@ _API_NAMES = {
     "runtime_get_version": ("hipRuntimeGetVersion", "cudaRuntimeGetVersion"),
 }
 
+__all__ = [
+    "Graph",
+    "init_runtime",
+    "runtime_name",
+    "version",
+    "create_stream",
+    "capture_graph",
+    "current_device",
+    "device_name",
+    *_API_NAMES,
+]
+
 
 @dataclass(frozen=True)
 class _Runtime:
     name: str
     success: Any
     capture_mode_relaxed: Any
+    stream_non_blocking: Any
     funcs: dict[str, Callable[..., Any] | None]
 
     @classmethod
@@ -36,7 +60,14 @@ class _Runtime:
             attr: (None if names[index] is None else getattr(module, names[index]))
             for attr, names in _API_NAMES.items()
         }
-        return cls(name=name, success=success, capture_mode_relaxed=capture_mode_relaxed, funcs=funcs)
+        stream_non_blocking = module.hipStreamNonBlocking if name == "hip" else module.cudaStreamNonBlocking
+        return cls(
+            name=name,
+            success=success,
+            capture_mode_relaxed=capture_mode_relaxed,
+            stream_non_blocking=stream_non_blocking,
+            funcs=funcs,
+        )
 
     def call(self, name: str, *args: Any) -> tuple[Any, ...]:
         fn = self.funcs[name]
@@ -62,9 +93,7 @@ class _Runtime:
 
 
 def _load_runtime() -> _Runtime:
-    errors: list[str] = []
-
-    try:
+    if is_hip:
         from hip import hip
 
         runtime = _Runtime.create(
@@ -73,14 +102,7 @@ def _load_runtime() -> _Runtime:
             success=hip.hipError_t.hipSuccess,
             capture_mode_relaxed=hip.hipStreamCaptureMode.hipStreamCaptureModeRelaxed,
         )
-        count = runtime.call("get_device_count")[0]
-        if count and count > 0:
-            return runtime
-        errors.append(f"hipGetDeviceCount returned count={count}")
-    except ImportError as exc:
-        errors.append(f"hip-python unavailable: {exc}")
-
-    try:
+    else:
         from cuda.bindings import runtime as cuda_runtime
 
         runtime = _Runtime.create(
@@ -89,17 +111,21 @@ def _load_runtime() -> _Runtime:
             success=cuda_runtime.cudaError_t.cudaSuccess,
             capture_mode_relaxed=cuda_runtime.cudaStreamCaptureMode.cudaStreamCaptureModeRelaxed,
         )
-        count = runtime.call("get_device_count")[0]
-        if count and count > 0:
-            return runtime
-        errors.append(f"cudaGetDeviceCount returned count={count}")
-    except ImportError as exc:
-        errors.append(f"cuda-bindings unavailable: {exc}")
 
-    raise RuntimeError("No usable CUDA/HIP Python runtime found: " + "; ".join(errors))
+    count = runtime.call("get_device_count")[0]
+    if not count or count <= 0:
+        raise RuntimeError(f"No usable {runtime.name} devices found: get_device_count returned count={count}")
+    return runtime
 
 
-_RUNTIME = _load_runtime()
+_RUNTIME: _Runtime | None = None
+
+
+def _get_runtime() -> _Runtime:
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = _load_runtime()
+    return _RUNTIME
 
 
 class Graph:
@@ -116,11 +142,11 @@ class Graph:
 
 
 def init_runtime() -> None:
-    return None
+    _get_runtime()
 
 
 def runtime_name() -> str:
-    return _RUNTIME.name
+    return _get_runtime().name
 
 
 def _runtime_version_raw() -> int:
@@ -129,15 +155,21 @@ def _runtime_version_raw() -> int:
 
 def version() -> tuple[int, int, int]:
     version_value = _runtime_version_raw()
-    if _RUNTIME.name == "hip":
+    if runtime_name() == "hip":
         return version_value // 10_000_000, (version_value // 100_000) % 100, version_value % 100_000
     return version_value // 1000, (version_value % 1000) // 10, version_value % 10
+
+
+def create_stream(non_blocking: bool = False) -> Any:
+    """Create a stream on the current device; the caller must destroy it."""
+    flags = _get_runtime().stream_non_blocking if non_blocking else 0
+    return _api("stream_create_with_flags")(flags)[0]
 
 
 def capture_graph(stream: Any, capture_fn: Callable[[], None]) -> Graph:
     _api("set_device")(current_device())
     stream_ptr = _stream_ptr(stream)
-    _api("stream_begin_capture")(stream_ptr, _RUNTIME.capture_mode_relaxed)
+    _api("stream_begin_capture")(stream_ptr, _get_runtime().capture_mode_relaxed)
 
     graph = None
     try:
@@ -175,7 +207,7 @@ def _stream_ptr(stream: Any) -> int:
 
 
 def _instantiate_graph(graph: Any) -> Any:
-    if _RUNTIME.name == "hip":
+    if runtime_name() == "hip":
         return _api("graph_instantiate")(graph, None, 0)[0]
     return _api("graph_instantiate")(graph, 0)[0]
 
@@ -189,7 +221,7 @@ def _api(name: str) -> Callable[..., tuple[Any, ...]]:
 
 def _make_api(name: str) -> Callable[..., tuple[Any, ...]]:
     def api(*args: Any) -> tuple[Any, ...]:
-        return _RUNTIME.call(name, *args)
+        return _get_runtime().call(name, *args)
 
     api.__name__ = name
     return api
