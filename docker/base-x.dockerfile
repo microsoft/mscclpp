@@ -15,6 +15,7 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
+        libbrotli1 \
         libcap2 \
         libnuma-dev \
         lsb-release \
