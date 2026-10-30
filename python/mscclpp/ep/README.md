@@ -290,3 +290,89 @@ Runtime views are reused by later operations, not independent results.
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
+
+## Unified EP benchmark
+
+`python -m mscclpp_benchmark.ep.bench` compares MSCCL++ EP, NVIDIA NCCL-EP,
+and DeepEP V2.5 (`EPBuffer`) through their Python APIs using the same BF16
+tokens, routing IDs, and weights. Install PyTorch and `mpi4py`, plus the backends
+being compared: this project's EP extension, NCCL's `nccl4py` package exposing
+`nccl.core` and `nccl.ep`, and DeepEP V2.5 exposing `deep_ep.EPBuffer`.
+NCCL-EP also needs compatible `libnccl_ep.so`/`libnccl.so` libraries and its
+JIT kernel build environment. Follow each backend's installation instructions.
+The JIT compiler must also find NCCL-EP's public headers, including `ep_enums.h`;
+if necessary, add `-I<nccl-build>/include` through `NVCC_PREPEND_FLAGS`.
+After fixing a JIT configuration error, use a fresh `NCCL_EP_JIT_CACHE_DIR`
+to avoid reusing cached compilation failures.
+
+For a single-node run, use a loopback rendezvous address and one process per GPU:
+
+```bash
+export MASTER_ADDR=127.0.0.1
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
+    --backend all --mode latency --ep-layout rank_major \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
+    --backend all --mode latency --ep-layout expert_major --dispatch-dtype fp8_e4m3 \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
+    --backend mscclpp --mode throughput --ep-layout rank_major \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8 \
+    --cuda-graph --iters-per-graph 50 --validate
+```
+
+`--backend all` runs NCCL-EP, MSCCL++, then DeepEP, reporting missing optional
+packages explicitly; installed-backend setup or execution errors stop the run.
+Use `--backend nccl`, `mscclpp`, or `deepep` to run one backend. The benchmark
+uses MPI bootstrap and is launched only with `mpirun`.
+DeepEP and the NCCL profiling barrier require `MASTER_ADDR` on rank 0. For
+multi-node runs, set it to rank 0's IP or hostname reachable by every rank
+instead of a loopback address. `MASTER_PORT` defaults to `29700`.
+
+The MSCCL++ backend still requires SM90+ and one IPC domain; this benchmark
+does not add inter-domain transport support.
+
+Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
+`token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
+(`Layout.FLAT`, default) or `expert_major`. DeepEP accepts `rank_major` or
+`expert_major`, so omit `--ep-layout` for a three-backend throughput run.
+When `--ep-layout` is omitted in latency mode with `--backend all`, the
+benchmark defaults to `expert_major` so all three backends share the same
+layout and dtype; single-backend runs keep each backend's default.
+`--num-sms 0` keeps backend defaults; a positive value sets MSCCL++'s scalar
+dispatch/combine block configuration or DeepEP's communication SM budget.
+`--combine-mode` selects reduction for MSCCL++ latency (`rank_local_reduce` or
+`direct_send`) and DeepEP `EPBuffer` (`allow_multiple_reduction=1` vs `0`).
+`--dispatch-dtype` selects the dispatch wire format: `bf16` (default),
+`fp8_e4m3` (128-element FP32 block-scaled on `expert_major`/`token_major`, or
+mapped to static FP8 on `rank_major` for MSCCL++ latency and DeepEP),
+`fp8_e4m3_static` (`rank_major` static FP8 for MSCCL++ latency and DeepEP), or
+`mxfp8_e4m3` (`rank_major` MXFP8 for MSCCL++ latency and DeepEP). NCCL-EP
+supports `bf16` and `fp8_e4m3` (latency `expert_major`). For
+static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
+`--fp8-input-mode` selects MSCCL++ fused BF16 quantization (`quantize`,
+default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`
+selects MSCCL++ latency `rank_major` combine input (`bf16` default or
+`fp8_e4m3_static`). `--validate` checks MSCCL++'s identity-expert combine
+result before timing.
+
+CUDA events measure paired dispatch/combine, excluding input generation and
+synthetic expert-output construction. NCCL-EP uses a prebuilt routing handle;
+throughput MSCCL++ reuses a fixed-routing prepare handle. DeepEP eager dispatch
+recomputes layout with CPU count synchronization; its graph path uses cached
+routing. These API costs are part of the measured dispatch time. The first timed
+iteration is discarded when more than one is requested.
+Kineto adds kernel-only measurements with L2 flushing and GPU barriers.
+Bandwidth uses logical routed bytes (`tokens * topk * hidden * element_bytes`),
+not measured link traffic; kernel-only times are not end-to-end latency.
+
+MSCCL++ supports both latency and throughput graph replay.
+NCCL-EP graph timing is wired for latency, and DeepEP graph capture uses the
+NVLink path (`EP_DISABLE_GIN=1`). A captured graph contains
+`--iters-per-graph` pairs; event timing reports total D+C only, normalized per
+pair. The harness replays the graph directly as one operation during warmup,
+timing, and profiling, while Kineto attributes kernel times to each phase.
+Capture errors stop the benchmark rather than silently falling back.
