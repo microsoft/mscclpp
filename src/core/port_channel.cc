@@ -18,7 +18,7 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
     : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {
   if (semaphore_ && BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "Device-mode connections do not use host Proxy; use MemoryDevice2DeviceSemaphore or ProxyService");
+          "Device-mode connections do not use host Proxy; construct PortChannel without ProxyService");
   }
 }
 
@@ -30,6 +30,9 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
           "BasePortChannel with MemoryDevice2DeviceSemaphore requires an IB Device-mode connection");
   }
 }
+
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(const Semaphore& semaphore)
+    : BasePortChannel(0, std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore)) {}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
@@ -46,6 +49,9 @@ MSCCLPP_API_CPP PortChannel::PortChannel(std::shared_ptr<MemoryDevice2DeviceSema
       src_(0),
       dstMemory_(std::move(dst)),
       srcMemory_(std::move(src)) {}
+
+MSCCLPP_API_CPP PortChannel::PortChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src)
+    : PortChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore), std::move(dst), std::move(src)) {}
 
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
@@ -101,20 +107,11 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
-  auto& sema = semaphores_[id];
-  if (BaseConnection::getImpl(sema->connection())->isDeviceBackend()) {
-    return BasePortChannel(id, std::make_shared<MemoryDevice2DeviceSemaphore>(sema->semaphore()));
-  }
-  return BasePortChannel(id, sema, proxy_);
+  return BasePortChannel(id, semaphores_[id], proxy_);
 }
 
 MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
-  auto& sema = semaphores_[id];
-  if (BaseConnection::getImpl(sema->connection())->isDeviceBackend()) {
-    return PortChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(sema->semaphore()), memories_[dst],
-                       memories_[src]);
-  }
-  return PortChannel(id, sema, proxy_, dst, src);
+  return PortChannel(id, semaphores_[id], proxy_, dst, src);
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }

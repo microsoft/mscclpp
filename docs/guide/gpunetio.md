@@ -30,7 +30,8 @@ path; the fetched tree itself is not modified. The GPUNetIO license is installed
 
 ## Usage
 
-Create the connection with the GPUNetIO mode and build the channel with `ProxyService` exactly as for other IB modes:
+Create the connection with `EndpointConfig::Ib::Mode::Device` and construct the `PortChannel` directly from the
+semaphore and registered memories (no `ProxyService` is needed):
 
 ```cpp
 mscclpp::EndpointConfig cfg;
@@ -43,12 +44,7 @@ communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
 auto semaphore = communicator->buildSemaphore(connection, remoteRank).get();
-mscclpp::ProxyService proxyService;
-auto semaphoreId = proxyService.addSemaphore(semaphore);
-auto dst = proxyService.addMemory(remoteMem);
-auto src = proxyService.addMemory(localMem);
-// Add every memory the channel will address before creating it.
-auto channel = proxyService.portChannel(semaphoreId, dst, src);
+mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle();
 ```
 

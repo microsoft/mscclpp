@@ -119,6 +119,10 @@ struct BasePortChannel {
   /// @param semaphore The device-to-device semaphore used to synchronize the communication.
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
 
+  /// Constructor for a device-initiated channel.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  explicit BasePortChannel(const Semaphore& semaphore);
+
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
@@ -168,6 +172,12 @@ struct PortChannel : public BasePortChannel {
   /// @param dst The destination registered memory.
   /// @param src The source registered memory.
   PortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
+
+  /// Constructor for a device-initiated channel.
+  /// @param semaphore The semaphore.
+  /// @param dst The destination registered memory.
+  /// @param src The source registered memory.
+  PortChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
