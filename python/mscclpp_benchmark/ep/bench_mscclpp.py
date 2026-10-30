@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import torch
 
-from .ep_bench_common import (
+from .bench_common import (
     simulated_gemm_output,
     sum_matching_kernel_us,
     validate_combine_output_mpi,
@@ -135,8 +135,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     x, topk_idx, topk_weights, _ = inputs
     latency = args.mode == "latency"
-    if args.cuda_graph and latency and args.iters_per_graph < 2:
-        raise ValueError("MSCCL++ latency graph replay requires --iters-per-graph >= 2 to avoid reusing one epoch")
     mode = ep.MoEMode.LATENCY if latency else ep.MoEMode.THROUGHPUT
     layout = {
         "expert_major": ep.DispatchLayout.EXPERT_MAJOR,
@@ -220,7 +218,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             out,
             expected,
             comm,
-            exact=combine_mode == ep.CombineMode.DIRECT_SEND and quant is None,
+            exact=combine_mode == ep.CombineMode.DIRECT_SEND
+            or (layout == ep.DispatchLayout.RANK_MAJOR and mode == ep.MoEMode.LATENCY),
         )
         if rank == 0:
             print(f"[validate] mscclpp combine OK max|got-expected|={diff:.4e}", flush=True)
@@ -264,10 +263,31 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         captured.clear()
         preparation = dispatch_input = dispatch_quant = output_buffer = expert_output = out = moe = group = None
 
+    effective_layout = str(layout).rsplit(".", 1)[-1].lower()
+    if quant is None:
+        effective_disp = "BF16"
+    elif quant.format == ep.DispatchDataType.FP8_E4M3_STATIC:
+        mode_tag = "prequantized" if quant.input_mode == ep.QuantConfig.InputMode.PREQUANTIZED else "fused-quant"
+        effective_disp = f"FP8 E4M3 Static ({mode_tag})"
+    elif quant.format == ep.DispatchDataType.MXFP8_E4M3:
+        effective_disp = "MXFP8 E4M3 (fused-quant)"
+    else:
+        mode_tag = "fused-quant" if latency else "prequantized"
+        effective_disp = f"FP8 E4M3 ({mode_tag})"
+    effective_comb = "FP8 E4M3 Static" if args.combine_dtype == "fp8_e4m3_static" else "BF16"
+
     return {
         "dispatch": dispatch_fn,
         "combine": combine_fn,
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "summary_meta": {
+            "algorithm": args.mode.upper(),
+            "layout": effective_layout,
+            "dispatch_format": effective_disp,
+            "combine_format": effective_comb,
+            "combine_mode": str(combine_mode).rsplit(".", 1)[-1].lower(),
+            "execution": "cuda_graph" if graph_spec is not None else "eager",
+        },
     }

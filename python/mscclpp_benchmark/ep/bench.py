@@ -9,9 +9,8 @@ Input tensors and synthetic BF16 expert output are prepared outside the timed lo
 NCCL-EP runs first, matching the ordering in the feature/ep benchmark.
 
 Launch with mpirun and mpi4py. MSCCL++ requires CUDA
-SM90+ and a single IPC domain. Latency graph replay requires at least two paired
-operations per graph; throughput supports graph replay with reusable preparation.
-See python/mscclpp/ep/README.md for dependencies,
+SM90+ and a single IPC domain. Both latency and throughput support CUDA graph
+replay. See python/mscclpp/ep/README.md for dependencies,
 launch examples, layouts, and timing limitations.
 """
 
@@ -22,7 +21,7 @@ import importlib
 
 import torch
 
-from .ep_bench_common import (
+from .bench_common import (
     MPI,
     init_mpi,
     make_inputs,
@@ -30,9 +29,9 @@ from .ep_bench_common import (
     _mpi_stats,
     sum_matching_kernel_us,
 )
-from .ep_bench_mscclpp import setup_mscclpp, parse_kineto_kernels as mscclpp_parse_kineto
-from .ep_bench_nccl import setup_nccl, parse_kineto_kernels as nccl_parse_kineto
-from .ep_bench_deepep import setup_deepep, parse_kineto_kernels as deepep_parse_kineto
+from .bench_mscclpp import setup_mscclpp, parse_kineto_kernels as mscclpp_parse_kineto
+from .bench_nccl import setup_nccl, parse_kineto_kernels as nccl_parse_kineto
+from .bench_deepep import setup_deepep, parse_kineto_kernels as deepep_parse_kineto
 
 
 # ----------------------------------------------------------------------------
@@ -101,9 +100,11 @@ def parse_args() -> argparse.Namespace:
         "--combine-mode",
         "--optimized-combine-mode",
         choices=("rank_local_reduce", "direct_send"),
-        default="rank_local_reduce",
+        default=None,
         help="combine reduction mode for MSCCL++ latency and DeepEP EPBuffer "
-        "(direct_send / allow_multiple_reduction=0 vs rank_local_reduce / allow_multiple_reduction=1).",
+        "(direct_send / allow_multiple_reduction=0 vs rank_local_reduce / allow_multiple_reduction=1). "
+        "Defaults to direct_send for --backend all in latency expert_major mode (matching NCCL-EP), "
+        "and rank_local_reduce otherwise.",
     )
     p.add_argument(
         "--cuda-graph",
@@ -124,14 +125,12 @@ def parse_args() -> argparse.Namespace:
         "--ep-layout",
         choices=["token_major", "rank_major", "expert_major"],
         default=None,
-        help="received-token dispatch layout. When omitted, each backend uses its own default "
-        "layout (NCCL-EP latency=expert_major, NCCL-EP throughput=token_major, "
-        "MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, "
-        "DeepEP=rank_major). "
-        "The explicit value is applied where supported: NCCL-EP latency and DeepEP accept rank_major/expert_major; "
-        "NCCL-EP throughput accepts token_major/expert_major. "
-        "MSCCL++ latency accepts rank_major/expert_major and throughput accepts rank_major/token_major. "
-        "Unsupported layouts are rejected.",
+        help="received-token dispatch layout. When omitted, --backend all aligns latency mode "
+        "to expert_major across all three backends (in throughput mode, NCCL-EP and MSCCL++ "
+        "use token_major while DeepEP uses rank_major). Single-backend runs default to "
+        "NCCL-EP latency=expert_major, NCCL-EP throughput=token_major, "
+        "MSCCL++ latency=expert_major, MSCCL++ throughput=token_major, DeepEP=rank_major. "
+        "Explicit values are applied where supported and rejected otherwise.",
     )
     p.add_argument(
         "--validate",
@@ -155,6 +154,15 @@ def parse_args() -> argparse.Namespace:
         # Grouping only applies to graph capture; treat as 1 for eager runs so the
         # non-1 default does not error a plain (non-graph) benchmark.
         args.iters_per_graph = 1
+    if args.backend == "all" and args.ep_layout is None and args.mode == "latency":
+        # Align all three backends to the common latency layout (expert_major) by default.
+        args.ep_layout = "expert_major"
+    if args.combine_mode is None:
+        args.combine_mode = (
+            "direct_send"
+            if args.backend == "all" and args.mode == "latency" and args.ep_layout == "expert_major"
+            else "rank_local_reduce"
+        )
     if args.dispatch_dtype in ("fp8_e4m3_static", "mxfp8_e4m3"):
         if args.backend in ("nccl", "all"):
             raise SystemExit(
@@ -282,6 +290,7 @@ def run_backend(
     parse_kernels=None,
     graph_group_size=1,
     graph=None,
+    summary_meta=None,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -369,6 +378,12 @@ def run_backend(
 
     if rank == 0:
         print(f"\n=== Summary [{name}] ({args.mode.title()}, across {num_ranks} ranks) ===")
+        if summary_meta is not None:
+            print(
+                f"Resolved config: algorithm={summary_meta['algorithm']}, layout={summary_meta['layout']}, "
+                f"dispatch={summary_meta['dispatch_format']}, combine={summary_meta['combine_format']}, "
+                f"combine_mode={summary_meta['combine_mode']}, execution={summary_meta['execution']}"
+            )
         print("\n--- Host-observed performance ---")
         if graph is not None:
             print("Paired CUDA graph: event timing reports only total D+C; phase times come from kineto.")
@@ -480,13 +495,10 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
     # loads libnccl_ep.so, which some DeepEP versions mistake for another runtime.
     for name in reversed(backends):
         package = {"nccl": "nccl.ep", "mscclpp": "mscclpp.ep", "deepep": "deep_ep"}[name]
-        root_package = package.split(".", 1)[0]
         try:
             importlib.import_module(package)
             available = 1
-        except ModuleNotFoundError as exc:
-            if exc.name not in (package, root_package):
-                raise
+        except ModuleNotFoundError:
             available = 0
         if comm.allreduce(available, op=MPI.MIN) == 0:
             message = f"backend '{name}' requires the '{package}' Python package on every rank"
@@ -503,6 +515,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
     if rank == 0:
         print("[cfg] kineto barrier: torch NCCL all_reduce (GPU-side)", flush=True)
 
+    comparison_meta = {}
     for name in backends:
         if name not in available_backends:
             continue
@@ -511,6 +524,9 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         combine_fn = ops["combine"]
         teardown = ops["teardown"]
         backend_barrier = ops.get("barrier")
+        summary_meta = ops.get("summary_meta")
+        if summary_meta is not None:
+            comparison_meta[name] = summary_meta
         graph = None
         spec = ops.get("graph")
         effective_group_size = 1
@@ -542,6 +558,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 parse_kernels=_PARSE_KINETO[name],
                 graph_group_size=effective_group_size,
                 graph=graph,
+                summary_meta=summary_meta,
             )
         finally:
             torch.cuda.synchronize()
@@ -556,6 +573,25 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
             teardown()
             teardown = None
             comm.barrier()
+
+    if rank == 0 and len(comparison_meta) > 1:
+        print("\n=== Backend Configuration Comparison ===")
+        for bname, meta in comparison_meta.items():
+            print(
+                f"  {bname:8s}: algorithm={meta['algorithm']}, layout={meta['layout']}, "
+                f"dispatch={meta['dispatch_format']}, combine={meta['combine_format']}, "
+                f"combine_mode={meta['combine_mode']}, execution={meta['execution']}"
+            )
+        mismatches = [
+            key
+            for key in ("layout", "dispatch_format", "combine_format", "combine_mode", "execution")
+            if len({m[key] for m in comparison_meta.values()}) > 1
+        ]
+        if mismatches:
+            print(
+                f"  [note] Non-equivalent comparison across backends in: {', '.join(mismatches)} "
+                "(pass explicit --ep-layout / flags to align where supported)."
+            )
 
 
 if __name__ == "__main__":

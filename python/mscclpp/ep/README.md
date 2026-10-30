@@ -293,7 +293,7 @@ Runtime views are reused by later operations, not independent results.
 
 ## Unified EP benchmark
 
-`python -m mscclpp_benchmark.ep.run_ep_bench_python` compares MSCCL++ EP, NVIDIA NCCL-EP,
+`python -m mscclpp_benchmark.ep.bench` compares MSCCL++ EP, NVIDIA NCCL-EP,
 and DeepEP V2.5 (`EPBuffer`) through their Python APIs using the same BF16
 tokens, routing IDs, and weights. Install PyTorch and `mpi4py`, plus the backends
 being compared: this project's EP extension, NCCL's `nccl4py` package exposing
@@ -310,11 +310,15 @@ For a single-node run, use a loopback rendezvous address and one process per GPU
 ```bash
 export MASTER_ADDR=127.0.0.1
 
-mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.run_ep_bench_python \
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
     --backend all --mode latency --ep-layout rank_major \
     --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8
 
-mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.run_ep_bench_python \
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
+    --backend all --mode latency --ep-layout expert_major --dispatch-dtype fp8_e4m3 \
+    --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8
+
+mpirun -np 8 --bind-to none python -m mscclpp_benchmark.ep.bench \
     --backend mscclpp --mode throughput --ep-layout rank_major \
     --num-tokens 128 --hidden 7168 --num-experts 256 --num-topk 8 \
     --cuda-graph --iters-per-graph 50 --validate
@@ -335,7 +339,9 @@ Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
 `token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
 (`Layout.FLAT`, default) or `expert_major`. DeepEP accepts `rank_major` or
 `expert_major`, so omit `--ep-layout` for a three-backend throughput run.
-An omitted layout keeps each backend's default.
+When `--ep-layout` is omitted in latency mode with `--backend all`, the
+benchmark defaults to `expert_major` so all three backends share the same
+layout and dtype; single-backend runs keep each backend's default.
 `--num-sms 0` keeps backend defaults; a positive value sets MSCCL++'s scalar
 dispatch/combine block configuration or DeepEP's communication SM budget.
 `--combine-mode` selects reduction for MSCCL++ latency (`rank_local_reduce` or

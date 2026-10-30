@@ -159,5 +159,6 @@ def validate_combine_output_mpi(actual, expected, comm, *, exact):
         local_equal = int(torch.equal(actual, expected))
         assert comm.allreduce(local_equal, op=MPI.MIN) == 1, f"LL direct-send combine not bit-exact; diff={global_diff}"
     else:
-        assert global_diff <= 8.0, f"LL rank-local combine mismatch; max diff={global_diff}"
+        local_close = int(torch.allclose(actual.float(), expected.float(), rtol=1e-2, atol=1e-2))
+        assert comm.allreduce(local_close, op=MPI.MIN) == 1, f"LL combine mismatch; max diff={global_diff}"
     return global_diff

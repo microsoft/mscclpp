@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import torch
 
-from .ep_bench_common import sum_matching_kernel_us
+from .bench_common import sum_matching_kernel_us
 
 
 def parse_kineto_kernels(key_averages):
@@ -219,10 +219,25 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         ncomm.destroy()
         ep_handle = ep_group = ncomm = None
 
+    effective_layout = (
+        "token_major"
+        if nccl_layout == nccl_ep.Layout.FLAT
+        else ("rank_major" if nccl_layout == nccl_ep.Layout.RANK_MAJOR else "expert_major")
+    )
     return {
         "dispatch": dispatch_fn,
         "combine": combine_fn,
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "summary_meta": {
+            "algorithm": algorithm_name,
+            "layout": effective_layout,
+            "dispatch_format": "FP8 E4M3 (fused-quant)" if use_fp8 else "BF16",
+            "combine_format": "BF16",
+            "combine_mode": (
+                "direct_send" if args.mode == "latency" and effective_layout == "expert_major" else "rank_local_reduce"
+            ),
+            "execution": "cuda_graph" if graph_spec is not None else "eager",
+        },
     }

@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import torch
 
-from .ep_bench_common import _ensure_torch_dist, sum_matching_kernel_us
+from .bench_common import _ensure_torch_dist, sum_matching_kernel_us
 
 
 def parse_kineto_kernels(key_averages):
@@ -205,10 +205,28 @@ def setup_deepep(args, comm, rank, num_ranks, inputs):
         buffer = None
         deep_ep.destroy_all_managed_nccl_comm()
 
+    effective_layout = "expert_major" if do_expand else "rank_major"
+    if not use_fp8_dispatch:
+        effective_disp = "BF16"
+    elif raw_disp_dtype == "mxfp8_e4m3":
+        effective_disp = "MXFP8 E4M3 (prequantized)"
+    elif not do_expand:
+        effective_disp = "FP8 E4M3 Static (prequantized)"
+    else:
+        effective_disp = "FP8 E4M3 (prequantized)"
+
     return {
         "dispatch": dispatch_fn,
         "combine": combine_fn,
         "teardown": teardown,
         "barrier": deepep_barrier,
         "graph": graph_spec,
+        "summary_meta": {
+            "algorithm": "EPBuffer",
+            "layout": effective_layout,
+            "dispatch_format": effective_disp,
+            "combine_format": "BF16",
+            "combine_mode": "rank_local_reduce" if allow_multiple_reduction else "direct_send",
+            "execution": "cuda_graph" if graph_spec is not None else "eager",
+        },
     }
