@@ -47,7 +47,7 @@ steps:
     name: UnitTests
     displayName: Run mscclpp unit tests
     remoteScript: |
-      ./build/bin/unit_tests
+      timeout -k 10 300 ./build/bin/unit_tests
 
 - template: run-remote-task.yml
   parameters:

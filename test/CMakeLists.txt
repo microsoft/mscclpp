@@ -50,6 +50,7 @@ target_link_libraries(unit_tests ${TEST_LIBS_COMMON} test_framework)
 target_include_directories(unit_tests ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
 add_subdirectory(unit)
 add_test(NAME unit_tests COMMAND unit_tests)
+set_tests_properties(unit_tests PROPERTIES TIMEOUT 300)
 
 # Multi-process unit tests
 add_executable(mp_unit_tests)

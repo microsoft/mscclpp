@@ -30,6 +30,9 @@ class ProxyService : public BaseProxyService {
   /// @param fifoSize Size of the FIFO used by the proxy service (default: DEFAULT_FIFO_SIZE).
   ProxyService(int fifoSize = DEFAULT_FIFO_SIZE);
 
+  /// Destructor. Stops the proxy before releasing the service state.
+  ~ProxyService() override;
+
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.

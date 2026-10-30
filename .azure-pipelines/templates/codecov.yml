@@ -43,7 +43,7 @@ steps:
       fi
 
       echo "Running unit_tests..."
-      ./build/bin/unit_tests ${UNIT_TEST_ARGS}
+      timeout -k 10 300 ./build/bin/unit_tests ${UNIT_TEST_ARGS}
       echo "unit_tests: PASSED"
 
       echo "Running mp_unit_tests -np 2..."
