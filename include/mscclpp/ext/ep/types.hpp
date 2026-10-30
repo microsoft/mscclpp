@@ -145,7 +145,8 @@ class PrepareHandle {
 /// Arguments for latency-mode dispatch.
 ///
 /// The caller must keep all buffers referenced by this struct (inputs and
-/// outputs) valid until the corresponding combine operation has finished.
+/// outputs) valid until the corresponding combine GPU work and any graph
+/// replays using them have finished.
 struct LatencyDispatchRequest {
   /// Dispatch output buffer.
   void* output;
