@@ -3,8 +3,8 @@
 By default, `PortChannel` operations over InfiniBand are pushed by GPU threads into a FIFO and posted to the NIC by the
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
-the proxy from the data path. The setup flow and the `PortChannel` device API are unchanged; the backend is selected
-per endpoint with `EndpointConfig::Ib::Mode::Device`.
+the proxy from the data path. The host setup flow and `PortChannel` posting methods are unchanged; kernels provide
+shared-memory WQE scratch as shown below. The backend is selected per endpoint with `EndpointConfig::Ib::Mode::Device`.
 
 ## Build
 
@@ -52,6 +52,28 @@ auto channel = proxyService.portChannel(semaphoreId, dst, src);
 auto deviceHandle = channel.deviceHandle();
 ```
 
+Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
+default without requiring shared memory. To enable BlueFlame submission for transfers up to `device_.blueFlameLimit`
+(default: 28 bytes), bind caller-owned shared-memory scratch on a **local copy** of the handle:
+
+```cpp
+__global__ void send(mscclpp::DeviceHandle<mscclpp::PortChannel> channel, size_t bytes) {
+  __shared__ mscclpp::GpuNetIoWqeScratch scratch;
+  if (threadIdx.x != 0) return;
+  auto portChan = channel;
+  portChan.device_.wqeScratch = &scratch;
+  portChan.putWithSignal(0, bytes);
+  portChan.flush();
+}
+
+// One block exclusively owns this QP.
+send<<<1, 32>>>(deviceHandle, bytes);
+```
+
+Never write a block-shared pointer into a constant-memory or globally shared channel handle. When `wqeScratch` is null
+or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory staging.
+The proxy backend ignores the `device_` fields, so the same kernel can support either backend.
+
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
 behave as for proxy-backed channels. The signal of `putWithSignal` is posted on the same queue pair after the payload, so
 the remote side observes the data before the semaphore update. `flush` waits for the local completion of all work
@@ -65,21 +87,28 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
-### Exclusively accessed queue pairs
+### Queue pair sharing modes and BlueFlame configuration
 
-GPUNetIO always uses exclusive QPs. Callers must serialize **all** GPU operations on each connection, including
-`flush` and channels sharing that connection. A different thread may take over after a barrier or release/acquire
-handoff; the caller need not be thread zero. Different QPs can be used concurrently.
+By default, queue pairs are accessed in `GpuNetIoSharingMode::Exclusive` (operations on a QP are serialized by the
+caller). Callers may also pass `GpuNetIoSharingMode::Cta` or `GpuNetIoSharingMode::Gpu` as a template parameter to
+posting and `flush` methods when multiple threads within a CTA or across the GPU share a QP.
 
-All requests, including strong-ordered inline semaphore signals (`DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING`),
-atomics and non-inline transfers, are submitted through BlueFlame.
-GPU-resident recovery WQEs are retained. BF submission uses 8 KiB of per-block shared-memory WQE scratch (64 pairs of
-WQE slots) and waits for async source consumption before reusing a slot. Each connection gets one of 63 dedicated slot
-pairs, unique among the live GPUNetIO connections of the process, and uses it without locking; because operations on a
-connection are serialized, no two concurrent submissions share a dedicated slot. When all dedicated slots are in use,
-further connections share the last slot pair and serialize access to it with an internal lock, so different QPs never
-overwrite each other's WQEs.
-There is no regular-doorbell-only or CPU-proxy fallback.
+`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when `wqeScratch` is
+bound (default: `kDefaultBlueFlameLimit = 28`, matching inline payloads; set to `0` to disable BlueFlame or increase to
+use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when `wqeScratch == nullptr`—write
+their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
+
+### Caller-owned WQE scratch and optional lock
+
+`mscclpp::GpuNetIoWqeScratch` is an opaque 128-byte, 16-byte-aligned shared-memory buffer for two WQEs. When BlueFlame
+is enabled (`wqeScratch != nullptr` and `size <= blueFlameLimit`), each scratch entry must either:
+- Be owned exclusively by one posting thread at a time (`reuseSharedWqe == false`), or
+- Be shared across concurrent submitters by setting `device_.reuseSharedWqe = true` and binding `device_.wqeScratchLock`
+  to a zero-initialized `uint32_t` spinlock in shared or device memory.
+
+BlueFlame submission waits for async consumption of the scratch source before each posting call returns; one thread can
+therefore reuse one entry for sequential operations across different QPs without locking. There is no internal shared
+memory allocation or fixed connection-slot cap in MSCCL++.
 
 ## Using the device API from another project
 

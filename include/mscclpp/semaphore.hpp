@@ -17,13 +17,10 @@ struct BasePortChannel;
 /// A semaphore for sending signals from the host to the device.
 class Host2DeviceSemaphore {
  private:
-  friend struct BasePortChannel;
-
   Semaphore semaphore_;
   std::shared_ptr<uint64_t> inboundToken_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   std::unique_ptr<uint64_t> outboundToken_;
-  std::shared_ptr<uint64_t> deviceOutboundToken_;
 
  public:
   /// Constructor.
@@ -47,6 +44,10 @@ class Host2DeviceSemaphore {
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
   Connection& connection();
+
+  /// Returns the underlying Semaphore.
+  /// @return The underlying Semaphore.
+  const Semaphore& semaphore() const { return semaphore_; }
 
   /// Signal the device.
   void signal();
@@ -95,8 +96,11 @@ class Host2HostSemaphore {
 /// A semaphore for sending signals from the local device to a peer device via a GPU thread.
 class MemoryDevice2DeviceSemaphore {
  private:
+  friend struct BasePortChannel;
+
   Semaphore semaphore_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
+  detail::UniqueGpuPtr<uint64_t> outboundToken_;
 
  public:
   /// Constructor.
@@ -111,6 +115,10 @@ class MemoryDevice2DeviceSemaphore {
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
   Connection& connection();
+
+  /// Returns the underlying Semaphore.
+  /// @return The underlying Semaphore.
+  const Semaphore& semaphore() const { return semaphore_; }
 
   /// Device-side handle for MemoryDevice2DeviceSemaphore.
   using DeviceHandle = MemoryDevice2DeviceSemaphoreDeviceHandle;

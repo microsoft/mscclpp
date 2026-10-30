@@ -394,10 +394,6 @@ struct EndpointConfig {
       Host,          // Use the host stack with RDMA atomics.
       HostNoAtomic,  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
       Device         // GPU-initiated RDMA: PortChannel device operations post work requests directly from the GPU
-                     // using exclusive QPs (currently implemented with DOCA GPUNetIO and BlueFlame). Requires a GPU
-                     // endpoint, RDMA atomics, Hopper or newer and a library built with CUDA and IB. Callers must
-                     // serialize all operations on a QP; host-side Connection operations are not supported.
-                     // Only `port` and `gidIndex` are used from this configuration.
     };
 
     static constexpr int DefaultPort = -1;

@@ -5,7 +5,6 @@
 
 #include <endian.h>
 
-#include <bitset>
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 #include <mutex>
@@ -39,25 +38,17 @@ namespace mscclpp {
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 
-// DOCA device handles shared by all GPUNetIO QPs of a Context.
-struct GpuNetIoContext {
+// DOCA device handles shared by all GPUNetIO QPs of an IB transport.
+struct GpuNetIoContext::Impl {
   std::mutex mutex;
-  std::unordered_map<Transport, doca_dev_t*> devs;
+  doca_dev_t* dev = nullptr;
   std::unordered_map<int, doca_gpu_t*> gpus;
 
-  ~GpuNetIoContext() {
-    for (auto& [id, gpu] : gpus) (void)doca_gpu_destroy(gpu);
-    for (auto& [transport, dev] : devs) (void)doca_verbs_dev_close(dev);
-  }
+  explicit Impl(IbCtx& ibCtx) { MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev)); }
 
-  doca_dev_t* dev(IbCtx& ibCtx, Transport transport) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto it = devs.find(transport);
-    if (it != devs.end()) return it->second;
-    doca_dev_t* dev = nullptr;
-    MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev));
-    devs.emplace(transport, dev);
-    return dev;
+  ~Impl() {
+    for (auto& [id, gpu] : gpus) (void)doca_gpu_destroy(gpu);
+    if (dev) (void)doca_verbs_dev_close(dev);
   }
 
   doca_gpu_t* gpu(int gpuId) {
@@ -72,6 +63,10 @@ struct GpuNetIoContext {
     return gpu;
   }
 };
+
+GpuNetIoContext::GpuNetIoContext(IbCtx& ibCtx) : pimpl_(std::make_unique<Impl>(ibCtx)) {}
+
+GpuNetIoContext::~GpuNetIoContext() = default;
 
 namespace {
 
@@ -107,8 +102,7 @@ struct GpuNetIoQp::Impl {
   IbQpInfo info;
 };
 
-GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId,
-                       int port, int gidIndex)
+GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, int gpuId, int port, int gidIndex)
     : pimpl_(std::make_unique<Impl>()) {
   if (!ibCtx.supportsRdmaAtomics()) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires RDMA atomics, which device ",
@@ -130,12 +124,11 @@ GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext>& sharedCon
   }
   checkMtu(pimpl_->info.mtu);
 
-  if (!sharedContext) sharedContext = std::make_shared<GpuNetIoContext>();
-  pimpl_->context = sharedContext;
+  pimpl_->context = std::move(context);
 
   CudaDeviceGuard deviceGuard(gpuId);
-  pimpl_->dev = pimpl_->context->dev(ibCtx, transport);
-  doca_gpu_t* gpu = pimpl_->context->gpu(gpuId);
+  pimpl_->dev = pimpl_->context->pimpl_->dev;
+  doca_gpu_t* gpu = pimpl_->context->pimpl_->gpu(gpuId);
 
   doca_gpu_verbs_qp_init_attr_hl attr{};
   attr.gpu_dev = gpu;
@@ -250,13 +243,17 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
 
 #else  // !defined(MSCCLPP_USE_GPUNETIO)
 
-struct GpuNetIoContext {};
+struct GpuNetIoContext::Impl {};
+
+GpuNetIoContext::GpuNetIoContext(IbCtx&) : pimpl_(std::make_unique<Impl>()) {}
+
+GpuNetIoContext::~GpuNetIoContext() = default;
 
 struct GpuNetIoQp::Impl {
   IbQpInfo info;
 };
 
-GpuNetIoQp::GpuNetIoQp(IbCtx&, std::shared_ptr<GpuNetIoContext>&, Transport, int, int, int) {
+GpuNetIoQp::GpuNetIoQp(IbCtx&, std::shared_ptr<GpuNetIoContext>, int, int, int) {
   THROW(NET, Error, ErrorCode::InvalidUsage,
         "IB Device mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
 }
@@ -270,41 +267,6 @@ void* GpuNetIoQp::deviceQp() const { return nullptr; }
 void GpuNetIoQp::connect(const IbQpInfo&) {}
 
 #endif  // !defined(MSCCLPP_USE_GPUNETIO)
-
-namespace {
-
-// Hands out the shared-memory WQE slot pairs of GpuNetIoDeviceHandle. Each live connection of the process gets a
-// distinct dedicated slot while any is free, so concurrent submissions on different connections never share one.
-class WqeSlotAllocator {
- public:
-  static WqeSlotAllocator& instance() {
-    static WqeSlotAllocator allocator;
-    return allocator;
-  }
-
-  uint32_t acquire() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (uint32_t slot = 0; slot < GpuNetIoDeviceHandle::kNumDedicatedWqeSlots; ++slot) {
-      if (!used_[slot]) {
-        used_[slot] = true;
-        return slot;
-      }
-    }
-    return GpuNetIoDeviceHandle::kSharedWqeSlot;
-  }
-
-  void release(uint32_t slot) {
-    if (slot >= GpuNetIoDeviceHandle::kNumDedicatedWqeSlots) return;
-    std::lock_guard<std::mutex> lock(mutex_);
-    used_[slot] = false;
-  }
-
- private:
-  std::mutex mutex_;
-  std::bitset<GpuNetIoDeviceHandle::kNumDedicatedWqeSlots> used_;
-};
-
-}  // namespace
 
 GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint)
@@ -325,15 +287,9 @@ GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const E
   CudaDeviceGuard deviceGuard(localEndpoint.device().id);
   atomicScratch_ = detail::gpuCallocShared<uint64_t>();
   atomicScratchMem_ = context->registerMemory(atomicScratch_.get(), sizeof(uint64_t), transport_);
-  wqeSlot_ = WqeSlotAllocator::instance().acquire();
-  if (wqeSlot_ == GpuNetIoDeviceHandle::kSharedWqeSlot) {
-    INFO(CONN, "GPUNetIO connection created; all dedicated WQE slots are in use, so it uses the locked shared slot");
-  } else {
-    INFO(CONN, "GPUNetIO connection created with WQE slot ", wqeSlot_);
-  }
 }
 
-GpuNetIoConnection::~GpuNetIoConnection() { WqeSlotAllocator::instance().release(wqeSlot_); }
+GpuNetIoConnection::~GpuNetIoConnection() = default;
 
 Transport GpuNetIoConnection::transport() const { return transport_; }
 
@@ -357,9 +313,8 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
-                                                      std::vector<GpuNetIoMemoryDeviceHandle>& table,
-                                                      const std::vector<RegisteredMemory>& memories) const {
+bool GpuNetIoConnection::setDeviceBackendHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
+                                                DeviceBackendHandle& handle) const {
   const auto& signalImpl = getImpl(signal);
   if (!signalImpl.transports.has(remoteTransport_)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "GPUNetIO semaphore token is not registered for ", remoteTransport_);
@@ -370,31 +325,41 @@ GpuNetIoDeviceHandle GpuNetIoConnection::deviceHandle(const RegisteredMemory& si
   }
   const auto& scratchInfo = getImpl(atomicScratchMem_).getTransportInfo(transport_);
 
-  const uint64_t localHostHash = getImpl(localEndpoint_).hostHash_;
-  const uint64_t localPidHash = getImpl(localEndpoint_).pidHash_;
-  table.assign(memories.size(), GpuNetIoMemoryDeviceHandle{});
-  for (size_t i = 0; i < memories.size(); ++i) {
-    const auto& impl = getImpl(memories[i]);
-    if (impl.hostHash == localHostHash && impl.pidHash == localPidHash && impl.transports.has(transport_)) {
-      const auto& info = impl.getTransportInfo(transport_);
-      if (info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMr->getLkey()), 1};
-    }
-    if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ && impl.transports.has(remoteTransport_)) {
-      const auto& info = impl.getTransportInfo(remoteTransport_);
-      if (!info.ibLocal) table[i] = {info.ibMrInfo.addr, impl.size, htobe32(info.ibMrInfo.rkey), 0};
-    }
-  }
-
-  GpuNetIoDeviceHandle handle{};
+  handle = DeviceBackendHandle{};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
   handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
   handle.atomicScratchAddr = scratchInfo.ibMrInfo.addr;
   handle.outboundToken = outboundToken;
-  handle.numMemories = static_cast<uint32_t>(table.size());
-  handle.wqeSlot = wqeSlot_;
-  return handle;
+  handle.blueFlameLimit = GpuNetIoDeviceHandle::kDefaultBlueFlameLimit;
+  handle.wqeScratch = nullptr;
+  handle.wqeScratchLock = nullptr;
+  handle.reuseSharedWqe = false;
+  return true;
+}
+
+DeviceMemoryHandle GpuNetIoConnection::deviceMemoryHandle(const RegisteredMemory& memory) const {
+  const uint64_t localHostHash = getImpl(localEndpoint_).hostHash_;
+  const uint64_t localPidHash = getImpl(localEndpoint_).pidHash_;
+  const auto& impl = getImpl(memory);
+  if (impl.hostHash == localHostHash && impl.pidHash == localPidHash && impl.transports.has(transport_)) {
+    const auto& info = impl.getTransportInfo(transport_);
+    if (info.ibLocal) return {info.ibMrInfo.addr, impl.size, htobe32(info.ibMr->getLkey()), 1};
+  }
+  if (impl.hostHash == remoteHostHash_ && impl.pidHash == remotePidHash_ && impl.transports.has(remoteTransport_)) {
+    const auto& info = impl.getTransportInfo(remoteTransport_);
+    if (!info.ibLocal) return {info.ibMrInfo.addr, impl.size, htobe32(info.ibMrInfo.rkey), 0};
+  }
+  return {};
+}
+
+std::shared_ptr<BaseConnection> createIbConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
+                                                   const Endpoint& remoteEndpoint) {
+  if (localEndpoint.config().ib.mode == EndpointConfig::Ib::Mode::Device) {
+    return std::make_shared<GpuNetIoConnection>(std::move(context), localEndpoint, remoteEndpoint);
+  }
+  return std::make_shared<IBConnection>(std::move(context), localEndpoint, remoteEndpoint);
 }
 
 }  // namespace mscclpp

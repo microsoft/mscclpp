@@ -9,6 +9,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/port_channel_device.hpp>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -52,6 +53,18 @@ class BaseConnection {
   /// When true, the semaphore must allocate a separate inboundToken_ for the recv thread to write to.
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
   virtual bool isSignalForwarding() const { return false; }
+
+  /// Whether this connection executes PortChannel operations directly on the device rather than via the host proxy.
+  virtual bool isDeviceBackend() const { return false; }
+
+  /// Populate the device-initiated backend handle if supported by this connection.
+  virtual bool setDeviceBackendHandle(const RegisteredMemory& /*signal*/, uint64_t* /*outboundToken*/,
+                                      DeviceBackendHandle& /*handle*/) const {
+    return false;
+  }
+
+  /// Resolve a registered memory region into a device-side memory handle for this connection.
+  virtual DeviceMemoryHandle deviceMemoryHandle(const RegisteredMemory& /*memory*/) const { return {}; }
 
   /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
   /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.

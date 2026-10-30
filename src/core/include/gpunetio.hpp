@@ -16,16 +16,22 @@
 
 namespace mscclpp {
 
-struct GpuNetIoContext;
+/// DOCA device handles shared by the GPUNetIO QPs of an IB transport.
+struct GpuNetIoContext {
+  explicit GpuNetIoContext(IbCtx& ibCtx);
+  ~GpuNetIoContext();
+
+  struct Impl;
+  std::unique_ptr<Impl> pimpl_;
+};
 
 /// A GPU-initiated RC queue pair (DOCA GPUNetIO) created on a Context's IB device and protection domain, so memory
 /// registered through the same Context is directly addressable by it.
 class GpuNetIoQp {
  public:
   /// @param ibCtx The IB device context whose protection domain the QP is created on.
-  /// @param sharedContext DOCA device handles shared by the QPs of a Context; created on first use.
-  GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId, int port,
-             int gidIndex);
+  /// @param context DOCA device handles for this IB transport.
+  GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, int gpuId, int port, int gidIndex);
   ~GpuNetIoQp();
 
   /// Addressing info that the remote endpoint needs to connect to this QP.
@@ -53,20 +59,18 @@ class GpuNetIoConnection : public BaseConnection {
 
   Transport remoteTransport() const override;
 
+  bool isDeviceBackend() const override { return true; }
+
+  bool setDeviceBackendHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
+                              DeviceBackendHandle& handle) const override;
+
+  DeviceMemoryHandle deviceMemoryHandle(const RegisteredMemory& memory) const override;
+
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
   void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
   void flush(int64_t timeoutUsec) override;
-
-  /// Build the device-side state for a channel on this connection.
-  /// @param signal The remote semaphore token targeted by signals.
-  /// @param outboundToken The device-resident outbound counter of the channel's semaphore.
-  /// @param memories The memory table indexed by MemoryId. Entries that are neither local nor owned by the remote
-  /// peer of this connection, or are not registered for the corresponding IB transport, are marked unusable.
-  GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
-                                    std::vector<GpuNetIoMemoryDeviceHandle>& table,
-                                    const std::vector<RegisteredMemory>& memories) const;
 
  private:
   Transport transport_;
@@ -76,8 +80,11 @@ class GpuNetIoConnection : public BaseConnection {
   std::shared_ptr<GpuNetIoQp> qp_;
   std::shared_ptr<uint64_t> atomicScratch_;
   RegisteredMemory atomicScratchMem_;
-  uint32_t wqeSlot_;
 };
+
+/// Create an InfiniBand connection for the given endpoints (either host-stack or device-initiated).
+std::shared_ptr<BaseConnection> createIbConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
+                                                   const Endpoint& remoteEndpoint);
 
 }  // namespace mscclpp
 

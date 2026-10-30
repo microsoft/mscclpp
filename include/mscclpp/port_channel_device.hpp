@@ -59,7 +59,7 @@ struct BasePortChannelDeviceHandle {
   PortChannelBackend backend_;
 
   // State of the device-initiated backend; only used when backend_ == PortChannelBackend::Device.
-  GpuNetIoDeviceHandle device_;
+  DeviceBackendHandle device_;
 
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
@@ -82,11 +82,6 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                  uint64_t size) {
-    if (backend_ == PortChannelBackend::Device) {
-      device_.put(device_.memory(dstId, false, dstOffset, size), dstOffset,
-                  device_.memory(srcId, true, srcOffset, size), srcOffset, size);
-      return;
-    }
     fifo_.push({TriggerPut, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -100,9 +95,10 @@ struct BasePortChannelDeviceHandle {
   }
 
   /// Push a TriggerSignal to the FIFO.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void signal() {
     if (backend_ == PortChannelBackend::Device) {
-      device_.signal();
+      device_.signal<Mode>();
       return;
     }
     fifo_.push({TriggerSignal, 0, 0, 0, 0, 0, semaphoreId_});
@@ -116,11 +112,6 @@ struct BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
-    if (backend_ == PortChannelBackend::Device) {
-      device_.putWithSignal(device_.memory(dstId, false, dstOffset, size), dstOffset,
-                            device_.memory(srcId, true, srcOffset, size), srcOffset, size);
-      return;
-    }
     fifo_.push({TriggerPutWithSignal, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
@@ -142,11 +133,6 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    if (backend_ == PortChannelBackend::Device) {
-      putWithSignal(dstId, dstOffset, srcId, srcOffset, size);
-      device_.flush(maxSpinCount);
-      return;
-    }
     uint64_t pos = fifo_.push({TriggerPutWithSignalAndFlush, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
@@ -164,9 +150,10 @@ struct BasePortChannelDeviceHandle {
 
   /// Push a TriggerFlush to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     if (backend_ == PortChannelBackend::Device) {
-      device_.flush(maxSpinCount);
+      device_.flush<Mode>(maxSpinCount);
       return;
     }
     uint64_t pos = fifo_.push({TriggerFlush, 0, 0, 0, 0, 0, semaphoreId_});
@@ -179,12 +166,6 @@ struct BasePortChannelDeviceHandle {
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dstId, uint64_t dstOffset, int64_t value) {
-    if (backend_ == PortChannelBackend::Device) {
-      const auto dst = device_.memory(dstId, false, dstOffset, sizeof(uint64_t));
-      GpuNetIoDeviceHandle::require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
-      device_.atomicAdd(dst.addr + dstOffset, dst.key, value);
-      return;
-    }
     // The operand occupies fst, spanning the low size and high srcOffset fields.
     uint64_t operand = static_cast<uint64_t>(value);
     ProxyTrigger trigger(TriggerAccumulate, dstId, dstOffset, /*srcId=*/0, operand >> TriggerBitsSize,
@@ -206,62 +187,99 @@ struct BasePortChannelDeviceHandle {
 struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MemoryId dst_;
   MemoryId src_;
+  DeviceMemoryHandle dstMemory_;
+  DeviceMemoryHandle srcMemory_;
 
   MSCCLPP_INLINE PortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
                                                      MemoryId dst, MemoryId src, uint64_t* flushDonePos)
-      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
+      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos),
+        dst_(dst),
+        src_(src),
+        dstMemory_{},
+        srcMemory_{} {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    if (backend_ == PortChannelBackend::Device) {
+      device_.put<Mode>(DeviceBackendHandle::checkMemory(dstMemory_, false, dstOffset, size), dstOffset,
+                        DeviceBackendHandle::checkMemory(srcMemory_, true, srcOffset, size), srcOffset, size);
+      return;
+    }
     BasePortChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPut to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) {
+    put<Mode>(offset, offset, size);
+  }
 
   /// Push a TriggerPutWithSignal to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    if (backend_ == PortChannelBackend::Device) {
+      device_.putWithSignal<Mode>(DeviceBackendHandle::checkMemory(dstMemory_, false, dstOffset, size), dstOffset,
+                                  DeviceBackendHandle::checkMemory(srcMemory_, true, srcOffset, size), srcOffset, size);
+      return;
+    }
     BasePortChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPutWithSignal to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) {
+    putWithSignal<Mode>(offset, offset, size);
+  }
 
   /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
+    if (backend_ == PortChannelBackend::Device) {
+      putWithSignal<Mode>(dstOffset, srcOffset, size);
+      device_.flush<Mode>(maxSpinCount);
+      return;
+    }
     BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
   /// Push a TriggerPutWithSignalAndFlush to the FIFO.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
-    putWithSignalAndFlush(offset, offset, size);
+    putWithSignalAndFlush<Mode>(offset, offset, size);
   }
   /// Push an accumulate trigger to the FIFO: add a 64-bit value to the destination memory.
   /// See Connection::accumulate() for transport support.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
+  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
+    if (backend_ == PortChannelBackend::Device) {
+      const auto& dst = DeviceBackendHandle::checkMemory(dstMemory_, false, dstOffset, sizeof(uint64_t));
+      device_.atomicAdd<Mode>(dst.addr + dstOffset, dst.key, value);
+      return;
+    }
     BasePortChannelDeviceHandle::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
