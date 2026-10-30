@@ -86,18 +86,36 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
         return values.to(torch.bfloat16).float()
 
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
-        staged = stage(x_float) if quant is not None else x_float
-        for lane in range(config.topk):
-            weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0)
-            expected = torch.addcmul(expected, staged, weight[:, None])
+        if combine_fp8:
+            q = (x_float * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+            dequant_scale = float(torch.tensor(1.0 / static_scale, dtype=torch.float32).item())
+            for lane in range(config.topk):
+                weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0) * dequant_scale
+                expected = torch.addcmul(expected, q, weight[:, None])
+        else:
+            staged = stage(x_float) if quant is not None else x_float
+            for lane in range(config.topk):
+                weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0)
+                expected = torch.addcmul(expected, staged, weight[:, None])
     else:
-        for destination in range(num_ranks):
+        dequant_scale = float(torch.tensor(1.0 / static_scale, dtype=torch.float32).item()) if combine_fp8 else 1.0
+        dest_ranks = torch.where(topk_idx >= 0, topk_idx // config.num_local_experts, -1)
+        for stage_lane in range(config.topk):
+            dest = dest_ranks[:, stage_lane]
+            first_for_dest = dest >= 0
+            for prev_lane in range(stage_lane):
+                first_for_dest = first_for_dest & (dest_ranks[:, prev_lane] != dest)
             partial = torch.zeros_like(expected)
             for lane in range(config.topk):
-                selected = (topk_idx[:, lane] >= 0) & (topk_idx[:, lane] // config.num_local_experts == destination)
+                selected = first_for_dest & (dest_ranks[:, lane] == dest)
                 weight = topk_weights[:, lane].masked_fill(~selected, 0)
                 partial = torch.addcmul(partial, x_float, weight[:, None])
-            expected += stage(partial)
+            if combine_fp8:
+                q = (partial * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+                q = torch.where(first_for_dest[:, None], q, 0.0)
+                expected = torch.addcmul(expected, q, torch.full_like(q[:, :1], dequant_scale))
+            else:
+                expected += torch.where(first_for_dest[:, None], stage(partial), 0.0)
     return expected.to(torch.bfloat16)
 
 

@@ -498,7 +498,9 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         try:
             importlib.import_module(package)
             available = 1
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if exc.name not in (package, package.split(".", 1)[0]):
+                raise
             available = 0
         if comm.allreduce(available, op=MPI.MIN) == 0:
             message = f"backend '{name}' requires the '{package}' Python package on every rank"
