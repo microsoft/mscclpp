@@ -29,7 +29,7 @@ inline constexpr bool isSupportedHidden(int hidden, bool network = false) {
 }
 
 struct Workload {
-  /// Latency packet epoch; throughput kernels leave the default value unused.
+  /// Monotonic round epoch for packet validation.
   uint32_t epoch_ = 0;
   /// Number of local input or output tokens.
   int numTokens_;

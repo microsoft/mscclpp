@@ -54,6 +54,10 @@ steps:
       mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
       echo "mp_unit_tests -np 4: PASSED"
 
+      echo "Running mp_unit_tests -np 8..."
+      mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests ${MP_UNIT_TEST_ARGS}
+      echo "mp_unit_tests -np 8: PASSED"
+
 - template: run-remote-task.yml
   parameters:
     name: CaptureCoverage

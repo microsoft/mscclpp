@@ -7,7 +7,6 @@
 #include "api.h"
 #include "atomic.hpp"
 #include "connection.hpp"
-#include "gpunetio.hpp"
 #include "logger.hpp"
 #include "proxy_impl.hpp"
 
@@ -16,30 +15,36 @@ namespace mscclpp {
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                                  std::shared_ptr<Proxy> proxy)
-    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
+    : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {
+  if (semaphore_ && BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "Device-mode connections do not use host Proxy; construct PortChannel without ProxyService");
+  }
+}
+
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
+    : semaphoreId_(0), deviceSemaphore_(std::move(semaphore)) {
+  if (!deviceSemaphore_ || !BaseConnection::getImpl(deviceSemaphore_->connection())->isDeviceBackend()) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "BasePortChannel with MemoryDevice2DeviceSemaphore requires an IB Device-mode connection");
+  }
+}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
     : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
 
-BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                                 std::shared_ptr<Proxy> proxy, const std::vector<RegisteredMemory>& memories)
-    : BasePortChannel(semaphoreId, semaphore, proxy) {
-  gpuNetIo_ = GpuNetIoChannel::bind(*semaphore_, memories);
-}
-
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
 
+MSCCLPP_API_CPP PortChannel::PortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst,
+                                         RegisteredMemory src)
+    : BasePortChannel(std::move(semaphore)), dst_(0), src_(0), dstMemory_(std::move(dst)), srcMemory_(std::move(src)) {}
+
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
-
-PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                         std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src,
-                         const std::vector<RegisteredMemory>& memories)
-    : BasePortChannel(semaphoreId, semaphore, proxy, memories), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   int cudaDevice;
@@ -91,11 +96,11 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
 }
 
 MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
-  return BasePortChannel(id, semaphores_[id], proxy_, memories_);
+  return BasePortChannel(id, semaphores_[id], proxy_);
 }
 
 MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
-  return PortChannel(id, semaphores_[id], proxy_, dst, src, memories_);
+  return PortChannel(id, semaphores_[id], proxy_, dst, src);
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
@@ -198,31 +203,50 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   return ProxyHandlerResult::Continue;
 }
 
-MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  auto& conn = semaphore_->connection();
-  GpuNetIoChannel::requireBound(*semaphore_, gpuNetIo_);
-  BasePortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
-                                       conn.impl_->getFlushDonePtr());
-  if (gpuNetIo_) {
-    handle.backend_ = PortChannelBackend::GpuNetIo;
-    handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
-    handle.gpuNetIo_.channelId = semaphoreId_;
+template <PortChannelBackend Backend>
+MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel::deviceHandle() const {
+  if constexpr (Backend == PortChannelBackend::Device) {
+    if (!deviceSemaphore_) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage,
+            "BasePortChannel::deviceHandle<PortChannelBackend::Device>() requires a MemoryDevice2DeviceSemaphore");
+    }
+    auto& conn = BaseConnection::getImpl(deviceSemaphore_->connection());
+    auto d2dHandle = deviceSemaphore_->deviceHandle();
+    Host2DeviceSemaphoreDeviceHandle semaHandle{d2dHandle.inboundToken, d2dHandle.expectedInboundToken};
+    return BasePortChannelDeviceHandleT<Backend>(
+        semaHandle, conn->getDeviceBackendInfo(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken));
+  } else {
+    if (!semaphore_) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage,
+            "BasePortChannel::deviceHandle<PortChannelBackend::Host>() requires a Host2DeviceSemaphore");
+    }
+    auto& conn = BaseConnection::getImpl(semaphore_->connection());
+    return BasePortChannelDeviceHandleT<Backend>(semaphoreId_, semaphore_->deviceHandle(),
+                                                 proxy_->fifo()->deviceHandle(), conn->getFlushDonePtr());
   }
-  return handle;
 }
 
-MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
-  auto& conn = semaphore_->connection();
-  GpuNetIoChannel::requireBound(*semaphore_, gpuNetIo_);
-  PortChannel::DeviceHandle handle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
-                                   conn.impl_->getFlushDonePtr());
-  if (gpuNetIo_) {
-    handle.backend_ = PortChannelBackend::GpuNetIo;
-    handle.gpuNetIo_ = gpuNetIo_->deviceHandle;
-    handle.gpuNetIo_.channelId = semaphoreId_;
+template <PortChannelBackend Backend>
+MSCCLPP_API_CPP PortChannelDeviceHandleT<Backend> PortChannel::deviceHandle() const {
+  BasePortChannelDeviceHandleT<Backend> base = BasePortChannel::deviceHandle<Backend>();
+  if constexpr (Backend == PortChannelBackend::Device) {
+    auto& conn = BaseConnection::getImpl(deviceSemaphore_->connection());
+    return PortChannelDeviceHandleT<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
+                                             conn->getDeviceMemoryInfo(srcMemory_));
+  } else {
+    return PortChannelDeviceHandleT<Backend>(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_,
+                                             base.flushDonePos_);
   }
-  return handle;
 }
+
+template MSCCLPP_API_CPP BasePortChannelDeviceHandleT<PortChannelBackend::Host>
+BasePortChannel::deviceHandle<PortChannelBackend::Host>() const;
+template MSCCLPP_API_CPP BasePortChannelDeviceHandleT<PortChannelBackend::Device>
+BasePortChannel::deviceHandle<PortChannelBackend::Device>() const;
+template MSCCLPP_API_CPP PortChannelDeviceHandleT<PortChannelBackend::Host>
+PortChannel::deviceHandle<PortChannelBackend::Host>() const;
+template MSCCLPP_API_CPP PortChannelDeviceHandleT<PortChannelBackend::Device>
+PortChannel::deviceHandle<PortChannelBackend::Device>() const;
 
 void ProxyService::progressFlushes() {
   for (auto it = pendingFlushPos_.begin(); it != pendingFlushPos_.end();) {

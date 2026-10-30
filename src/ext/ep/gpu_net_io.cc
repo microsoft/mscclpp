@@ -58,9 +58,8 @@ struct EpGpuNetIoService::Impl {
   int device;
   bool initialized = false;
   std::shared_ptr<Communicator> communicator;
-  std::shared_ptr<ProxyService> proxyService;
   std::vector<PortChannel> channels;
-  std::shared_ptr<PortChannelDeviceHandle> handles;
+  std::shared_ptr<EpPortChannelDeviceHandle> handles;
   std::shared_ptr<EpGpuNetIoSignalState> signalStates;
   std::shared_ptr<EpGpuNetIoDeviceContext> context;
 
@@ -70,7 +69,6 @@ struct EpGpuNetIoService::Impl {
     signalStates.reset();
     handles.reset();
     channels.clear();
-    proxyService.reset();
     communicator.reset();
   }
 };
@@ -136,8 +134,8 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
                  "[EPGPUNETIO] rank=%d hcaSelection=explicit gpu=%s hcas=%s numHcas=%d qpsPerPeer=%d qpsPerHca=%d\n",
                  rank, pciBusId, names.c_str(), hcas, queues, queues / hcas);
   }
-  // One GpuNetIo-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
-  // selected HCA once and exchanged once per peer, then bound into each channel through ProxyService::portChannel().
+  // One Device-mode connection (QP) per (peer, queue); queue q uses HCA q % hcas. Memories are registered on every
+  // selected HCA once and exchanged once per peer, then bound directly into each PortChannel.
   constexpr int ConnectTagBase = 22000;
   constexpr int MemoryTag = 21999;
   std::vector<Transport> transports(hcas);
@@ -158,7 +156,6 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
     throw Error("EP GPUNetIO HCA resolution failed on a rank. " + localError, ErrorCode::InvalidUsage);
 
   state.communicator = std::make_shared<Communicator>(state.bootstrap);
-  state.proxyService = std::make_shared<ProxyService>();
   auto& communicator = *state.communicator;
   RegisteredMemory localMemory;
   try {
@@ -179,32 +176,24 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
       EndpointConfig config;
       config.transport = transports[queue % hcas];
       config.device = {DeviceType::GPU, state.device};
-      config.ib.mode = EndpointConfig::Ib::Mode::GpuNetIo;
+      config.ib.mode = EndpointConfig::Ib::Mode::Device;
       connections[peer].push_back(communicator.connect(config, peer, ConnectTagBase + queue));
     }
     communicator.sendMemory(localMemory, peer, MemoryTag);
     remoteMemories[peer] = communicator.recvMemory(peer, MemoryTag);
   }
-  auto& proxyService = *state.proxyService;
-  const MemoryId localMemoryId = proxyService.addMemory(localMemory);
-  std::vector<MemoryId> remoteMemoryIds(ranks, localMemoryId);
-  std::vector<std::vector<SemaphoreId>> semaphores(ranks);
+  std::vector<EpPortChannelDeviceHandle> handles(static_cast<size_t>(ranks) * queues);
   for (int peer = 0; peer < ranks; ++peer) {
     if (peer == rank) continue;
-    remoteMemoryIds[peer] = proxyService.addMemory(remoteMemories[peer].get());
+    RegisteredMemory remoteMemory = remoteMemories[peer].get();
     for (int queue = 0; queue < queues; ++queue) {
-      semaphores[peer].push_back(proxyService.buildAndAddSemaphore(communicator, connections[peer][queue].get()));
+      auto semaphore = std::make_shared<MemoryDevice2DeviceSemaphore>(communicator, connections[peer][queue].get());
+      state.channels.emplace_back(semaphore, remoteMemory, localMemory);
+      handles[static_cast<size_t>(peer) * queues + queue] =
+          state.channels.back().deviceHandle<PortChannelBackend::Device>();
     }
   }
-  std::vector<PortChannelDeviceHandle> handles(static_cast<size_t>(ranks) * queues);
-  for (int peer = 0; peer < ranks; ++peer) {
-    if (peer == rank) continue;
-    for (int queue = 0; queue < queues; ++queue) {
-      state.channels.push_back(proxyService.portChannel(semaphores[peer][queue], remoteMemoryIds[peer], localMemoryId));
-      handles[static_cast<size_t>(peer) * queues + queue] = state.channels.back().deviceHandle();
-    }
-  }
-  state.handles = GpuBuffer<PortChannelDeviceHandle>(handles.size()).memory();
+  state.handles = GpuBuffer<EpPortChannelDeviceHandle>(handles.size()).memory();
   MSCCLPP_CUDATHROW(
       cudaMemcpy(state.handles.get(), handles.data(), handles.size() * sizeof(handles[0]), cudaMemcpyHostToDevice));
   state.signalStates = detail::gpuCallocShared<EpGpuNetIoSignalState>(handles.size());

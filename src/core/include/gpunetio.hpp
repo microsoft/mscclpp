@@ -6,8 +6,8 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/semaphore.hpp>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -15,32 +15,58 @@
 #include "context.hpp"
 #include "ib.hpp"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+extern "C" {
+#include "host/doca_gpunetio.h"
+#include "host/doca_gpunetio_high_level.h"
+#include "host/doca_verbs.h"
+}
+#endif
+
 namespace mscclpp {
 
-struct GpuNetIoContext;
+/// DOCA device handles shared by the GPUNetIO QPs of an IB transport.
+struct GpuNetIoContext {
+  explicit GpuNetIoContext(IbCtx& ibCtx);
+  ~GpuNetIoContext();
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  doca_gpu_t* gpu(int gpuId);
+
+  std::mutex mutex_;
+  doca_dev_t* dev_ = nullptr;
+  std::unordered_map<int, doca_gpu_t*> gpus_;
+#endif
+};
 
 /// A GPU-initiated RC queue pair (DOCA GPUNetIO) created on a Context's IB device and protection domain, so memory
 /// registered through the same Context is directly addressable by it.
 class GpuNetIoQp {
  public:
   /// @param ibCtx The IB device context whose protection domain the QP is created on.
-  /// @param sharedContext DOCA device handles shared by the QPs of a Context; created on first use.
-  GpuNetIoQp(IbCtx* ibCtx, std::shared_ptr<GpuNetIoContext>& sharedContext, Transport transport, int gpuId, int port,
-             int gidIndex);
+  /// @param context DOCA device handles for this IB transport.
+  GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, int gpuId, int port, int gidIndex);
   ~GpuNetIoQp();
 
   /// Addressing info that the remote endpoint needs to connect to this QP.
-  const IbQpInfo& info() const;
+  const IbQpInfo& info() const { return info_; }
 
   /// Transition the QP to RTS, connected to the given remote QP.
   void connect(const IbQpInfo& remote);
 
   /// The GPU-resident QP (`doca_gpu_dev_verbs_qp*`) used by device code.
-  void* deviceQp() const;
+  void* deviceQp() const { return deviceQp_; }
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> pimpl_;
+  std::shared_ptr<GpuNetIoContext> context_;
+#if defined(MSCCLPP_USE_GPUNETIO)
+  doca_gpu_verbs_qp_hl* qp_ = nullptr;
+#endif
+  void* deviceQp_ = nullptr;
+  int gpuId_ = 0;
+  int port_ = 0;
+  int gidIndex_ = 0;
+  IbQpInfo info_{};
 };
 
 /// A connection whose operations are posted directly by GPU threads through PortChannel device handles.
@@ -48,10 +74,17 @@ class GpuNetIoQp {
 class GpuNetIoConnection : public BaseConnection {
  public:
   GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  ~GpuNetIoConnection() = default;
 
-  Transport transport() const override;
+  Transport transport() const override { return transport_; }
 
-  Transport remoteTransport() const override;
+  Transport remoteTransport() const override { return remoteTransport_; }
+
+  bool isDeviceBackend() const override { return true; }
+
+  DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& signal, uint64_t* outboundToken) const override;
+
+  DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& memory) const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
@@ -59,38 +92,12 @@ class GpuNetIoConnection : public BaseConnection {
   void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
   void flush(int64_t timeoutUsec) override;
 
-  /// Build the device-side state for a channel on this connection.
-  /// @param signal The remote semaphore token targeted by signals.
-  /// @param memories The memory table indexed by MemoryId. Entries that are neither local nor owned by the remote
-  /// peer of this connection, or are not registered for the corresponding IB transport, are marked unusable.
-  GpuNetIoDeviceHandle deviceHandle(const RegisteredMemory& signal, std::vector<GpuNetIoMemoryDeviceHandle>& table,
-                                    const std::vector<RegisteredMemory>& memories) const;
-
  private:
   Transport transport_;
   Transport remoteTransport_;
-  uint64_t remoteHostHash_;
-  uint64_t remotePidHash_;
   std::shared_ptr<GpuNetIoQp> qp_;
-  std::shared_ptr<uint64_t> atomicScratch_;
-  RegisteredMemory atomicScratchMem_;
-  mutable std::unordered_map<uint64_t, std::shared_ptr<uint64_t>> outboundTokens_;
-};
-
-/// Host-side state of a PortChannel bound to a GpuNetIoConnection.
-struct GpuNetIoChannel {
-  /// Returns nullptr if the semaphore's connection is not a GpuNetIoConnection.
-  static std::shared_ptr<GpuNetIoChannel> bind(Host2DeviceSemaphore& semaphore,
-                                               const std::vector<RegisteredMemory>& memories);
-
-  /// Throws if the semaphore's connection is a GpuNetIoConnection but no channel was bound to it, i.e. the PortChannel
-  /// was constructed directly instead of through ProxyService::portChannel()/basePortChannel().
-  static void requireBound(Host2DeviceSemaphore& semaphore, const std::shared_ptr<GpuNetIoChannel>& channel);
-
-  std::shared_ptr<BaseConnection> connection;
-  std::vector<RegisteredMemory> memories;
-  std::shared_ptr<GpuNetIoMemoryDeviceHandle> table;
-  GpuNetIoDeviceHandle deviceHandle;
+  std::shared_ptr<uint64_t> atomicFetchBuff_;
+  RegisteredMemory atomicFetchMem_;
 };
 
 }  // namespace mscclpp

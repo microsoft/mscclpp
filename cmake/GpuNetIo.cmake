@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 #
 # Fetches and builds the third-party DOCA GPUNetIO (GDAKI) sources used by the GPU-initiated IB endpoint mode
-# (EndpointConfig::Ib::Mode::GpuNetIo). See docs/guide/gpunetio.md.
+# (EndpointConfig::Ib::Mode::Device). See docs/guide/gpunetio.md.
 #
 # Defines:
 #   mscclpp_gpunetio_headers  INTERFACE target with the GPUNetIO include directories.
@@ -11,7 +11,7 @@
 include(FetchContent)
 FetchContent_Declare(gpunetio
     GIT_REPOSITORY https://github.com/NVIDIA-DOCA/gpunetio.git
-    GIT_TAG b2b7a291ec70fdeeb1b27ba4b0ab8c8e260a729b  # v5.0.0-rc1
+    GIT_TAG c5d97fd52346763bcfeaff593dd1d84215156218
     GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(gpunetio)
@@ -84,5 +84,5 @@ target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
 target_compile_definitions(mscclpp_gpunetio_obj PRIVATE DOCA_VERBS_USE_NET_WRAPPER)
 set_target_properties(mscclpp_gpunetio_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1)
 
-install(DIRECTORY ${GPUNETIO_HOME}/include/ DESTINATION include/mscclpp/gpunetio)
+install(DIRECTORY ${GPUNETIO_HOME}/include/ DESTINATION include)
 install(FILES ${GPUNETIO_HOME}/LICENSE.txt DESTINATION share/licenses/mscclpp/gpunetio)

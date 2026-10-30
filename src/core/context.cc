@@ -62,6 +62,16 @@ IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   return it->second.get();
 }
 
+std::shared_ptr<GpuNetIoContext> Context::Impl::getGpuNetIoContext(Transport ibTransport) {
+  auto it = gpuNetIoContexts_.find(ibTransport);
+  if (it == gpuNetIoContexts_.end()) {
+    auto ctx = std::make_shared<GpuNetIoContext>(*getIbContext(ibTransport));
+    gpuNetIoContexts_[ibTransport] = ctx;
+    return ctx;
+  }
+  return it->second;
+}
+
 std::shared_ptr<uint64_t> Context::Impl::getToken() {
   if (!tokenPool_) {
     tokenPool_ = std::make_shared<TokenPool>(maxNumTokens_);
@@ -98,11 +108,12 @@ MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const
   std::shared_ptr<BaseConnection> conn;
   if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (AllIBTransports.has(localTransport) &&
-             localEndpoint.config().ib.mode == EndpointConfig::Ib::Mode::GpuNetIo) {
-    conn = std::make_shared<GpuNetIoConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (AllIBTransports.has(localTransport)) {
-    conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    if (localEndpoint.config().ib.mode == EndpointConfig::Ib::Mode::Device) {
+      conn = std::make_shared<GpuNetIoConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    } else {
+      conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    }
   } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {

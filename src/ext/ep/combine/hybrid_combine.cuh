@@ -45,7 +45,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
     bool pending = active;
     while (__any_sync(0xffffffff, pending)) {
       if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                         workspace.combineRankReadyEpochs_ + peer, mscclpp::memoryOrderAcquire) == workload.epoch_) {
+                         workspace.combineRankReadyFlags_ + peer, mscclpp::memoryOrderAcquire) == workload.epoch_) {
         EP_DEVICE_ASSERT(slot >= 0 && slot < workload.maxTokensPerRank_);
         const auto* peerOutput =
             static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peer));
@@ -101,12 +101,14 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
   const int ranks = context->numRanks_;
   auto* network = transport.gpuNetIo_;
   const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(ranks, WARP_SIZE);
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[GpuNetIoMaxQpsPerPeer];
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   if (peer < ranks && transport.isNvlinkPeer(peer)) {
     if (!transport.isSelf(peer)) {
       transport.baseMemoryChannels_[peer].signal();
       transport.baseMemoryChannels_[peer].wait(-1);
     }
-    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyEpochs_ + peer, workload.epoch_,
+    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peer, workload.epoch_,
                                                          mscclpp::memoryOrderRelease);
     // Dispatch leaves its forward-complete word at one. During Combine it counts
     // worker CTAs that have finished every NVLink read; FP32 IB consumption is
@@ -125,12 +127,10 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
   constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(float);
   const int gateway = context->gpuNetIoGateway_;
   auto handle = network->channel(gateway, queue);
+  handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
   const uint64_t dstOffset = transport.symmetricOffset(context->gpuNetIoAggregateRecv_);
   const uint64_t srcOffset = transport.symmetricOffset(context->gpuNetIoAggregateSend_);
   const uint64_t flagOffset = transport.symmetricOffset(context->gpuNetIoAggregateControl_->chunks + queue);
-  const auto dst = handle.gpuNetIo_.memory(handle.dst_, false, dstOffset, rows * RowBytes);
-  const auto src = handle.gpuNetIo_.memory(handle.src_, true, srcOffset, rows * RowBytes);
-  const auto sig = handle.gpuNetIo_.memory(handle.dst_, false, flagOffset, sizeof(uint64_t));
   // Dispatch has drained its QPs, and this warp is the only Combine submitter for this QP.
   auto& state = network->signalState(gateway, queue);
   for (int chunk = queue, begin = queue * chunkRows; begin < rows;
@@ -141,11 +141,12 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const Workload& workload, const Devi
     }
     // These DMA sources were written by other CTAs; DOCA's queue-release fence is GPU-scoped.
     __threadfence_system();
-    handle.gpuNetIo_.putWithSignalAt(dst, dstOffset + begin * RowBytes, src, srcOffset + begin * RowBytes,
-                                     count * RowBytes, sig, flagOffset, network->nextSignalToken(state, flagOffset, 1));
+    handle.device_.putWithSignalAt<kExclusive>(handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_,
+                                               srcOffset + begin * RowBytes, count * RowBytes, handle.dstMemory_,
+                                               flagOffset, network->nextSignalToken(state, flagOffset, 1));
   }
   // The posting warp owns this QP until its final completion drain.
-  handle.flush(-1);
+  handle.flush<kExclusive>(-1);
 }
 
 template <int Hidden>
@@ -268,7 +269,7 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
     for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
       workspace.dispatchRankPayloadSlots_[peer] = 0;
       workspace.dispatchRankPayloadCompletions_[peer] = 0;
-      workspace.combineRankReadyEpochs_[peer] = 0;
+      workspace.combineRankReadyFlags_[peer] = 0;
     }
     const int dispatchCounters =
         3 + configCellDiv(context->gpuNetIoDistributeCapacity_, context->gpuNetIoPipelineChunkRows_);

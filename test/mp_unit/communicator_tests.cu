@@ -205,6 +205,54 @@ TEST(CommunicatorTest, BasicWrite) {
     }
   } while (!ready);
   communicator->bootstrap()->barrier();
+
+  // Verify the nonzero byte-offset update only on connections that actually use CudaIpc.
+  // The capacity decision is uniform; when it fits, all ranks enter every barrier and IB edges skip work.
+  constexpr uint64_t offsetStrideBytes = 128;
+  constexpr uint64_t guardValue = 0xBAD00BADDEADBEEFULL;
+  constexpr uint64_t updateValueBase = 0xD15EA5E000000000ULL;
+  // The stride separates sender slots; the former byte-plus-word offset lands at 9 * offset.
+  auto offsetForSender = [offsetStrideBytes](int sender) {
+    return sizeof(uint64_t) + static_cast<uint64_t>(sender) * offsetStrideBytes;
+  };
+  const uint64_t largestFormerWrongEnd = 9 * offsetForSender(gEnv->worldSize - 1) + sizeof(uint64_t);
+  // All ranks see the same world size, so an undersized fixture skips this extra phase uniformly.
+  if (largestFormerWrongEnd > static_cast<uint64_t>(deviceBufferSize)) return;
+
+  auto* localWords = reinterpret_cast<uint64_t*>(devicePtr[0].get());
+
+  for (auto& [peer, conn] : connections) {
+    if (conn.transport() != mscclpp::Transport::CudaIpc) continue;
+    const uint64_t offset = offsetForSender(peer);
+    const uint64_t formerWrongOffset = 9 * offset;
+    mscclpp::gpuMemcpy<uint64_t>(localWords + offset / sizeof(uint64_t), &guardValue, 1, cudaMemcpyHostToDevice);
+    mscclpp::gpuMemcpy<uint64_t>(localWords + formerWrongOffset / sizeof(uint64_t), &guardValue, 1,
+                                 cudaMemcpyHostToDevice);
+  }
+  communicator->bootstrap()->barrier();
+
+  for (auto& [peer, conn] : connections) {
+    if (conn.transport() != mscclpp::Transport::CudaIpc) continue;
+    const uint64_t offset = offsetForSender(gEnv->rank);
+    uint64_t source = 0;
+    conn.updateAndSync(remoteMemory[0].at(peer), offset, &source, updateValueBase + gEnv->rank);
+    conn.flush();  // Keep the host source word alive until the asynchronous copy completes.
+  }
+  communicator->bootstrap()->barrier();
+
+  for (const auto& [peer, conn] : connections) {
+    if (conn.transport() != mscclpp::Transport::CudaIpc) continue;
+    const uint64_t offset = offsetForSender(peer);
+    const uint64_t formerWrongOffset = 9 * offset;
+    uint64_t observed = 0;
+    uint64_t formerWrong = 0;
+    mscclpp::gpuMemcpy<uint64_t>(&observed, localWords + offset / sizeof(uint64_t), 1, cudaMemcpyDeviceToHost);
+    mscclpp::gpuMemcpy<uint64_t>(&formerWrong, localWords + formerWrongOffset / sizeof(uint64_t), 1,
+                                 cudaMemcpyDeviceToHost);
+    EXPECT_EQ(observed, updateValueBase + static_cast<uint64_t>(peer));
+    EXPECT_EQ(formerWrong, guardValue);
+  }
+  communicator->bootstrap()->barrier();
 }
 
 __global__ void kernelWaitSemaphores(mscclpp::Host2DeviceSemaphore::DeviceHandle* deviceSemaphores, int rank,

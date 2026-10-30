@@ -132,6 +132,9 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 
   /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
   uint64_t* expectedInboundToken;
+
+  /// A local memory space where the local device tracks the outbound semaphore value.
+  uint64_t* outboundToken;
 };
 
 /// Device-side handle for a switch (NVLS multicast) cross-rank group barrier semaphore.

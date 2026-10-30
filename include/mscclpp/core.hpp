@@ -393,11 +393,7 @@ struct EndpointConfig {
       Default,       // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
       Host,          // Use the host stack with RDMA atomics.
       HostNoAtomic,  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
-      GpuNetIo       // GPU-initiated RDMA via DOCA GPUNetIO. Requires a GPU endpoint, RDMA atomics and a library
-                     // built with MSCCLPP_USE_GPUNETIO. PortChannel device operations post work requests directly
-                     // from the GPU using exclusive QPs and BlueFlame. Callers must serialize all operations on
-                     // a QP. Requires Hopper or newer; host-side Connection operations are not supported.
-                     // Only `port` and `gidIndex` are used from this configuration.
+      Device         // GPU-initiated RDMA: PortChannel device operations post work requests directly from the GPU
     };
 
     static constexpr int DefaultPort = -1;
@@ -718,8 +714,6 @@ class Connection {
   friend class Semaphore;
   friend class ProxyService;
   friend class BaseConnection;
-  friend struct BasePortChannel;
-  friend struct PortChannel;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
