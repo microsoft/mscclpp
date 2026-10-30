@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import wraps
 import math
+import os
 from numbers import Real
 from typing import Any, Iterable, Optional, Tuple, Union
 
@@ -25,6 +26,14 @@ def requires_initialized(method):
         return method(self, *args, **kwargs)
 
     return wrapped
+
+
+def gpunetio_requested() -> bool:
+    """Return whether ``MSCCLPP_EP_ENABLE_GPUNETIO`` asks for GPUNetIO between CUDA IPC domains."""
+    try:
+        return int(os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0")) != 0
+    except ValueError:
+        return False
 
 
 def resolve_num_blocks(
@@ -157,6 +166,8 @@ def dispatch_shape(config: MoECommunicatorConfig, num_ranks: int, active: int) -
         return config.num_local_experts, num_ranks * active, config.hidden_size
     if config.output_layout == DispatchLayout.RANK_MAJOR:
         return num_ranks, active, config.hidden_size
+    if config.output_layout == DispatchLayout.RANK_MAJOR_TOPK_EXPANDED:
+        return num_ranks, active, config.topk, config.hidden_size
     return num_ranks * active, config.hidden_size
 
 

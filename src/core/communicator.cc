@@ -47,15 +47,22 @@ Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<C
 }
 
 void Communicator::Impl::setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item) {
-  lastRecvItems_[{remoteRank, tag}] = item;
+  std::shared_ptr<BaseRecvItem> previous;
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto& slot = lastRecvItems_[{remoteRank, tag}];
+  previous = std::move(slot);
+  slot = std::move(item);
 }
 
 std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank, int tag) {
+  std::shared_ptr<BaseRecvItem> released;
+  std::lock_guard<std::mutex> lock(mutex_);
   auto it = lastRecvItems_.find({remoteRank, tag});
   if (it == lastRecvItems_.end()) {
     return nullptr;
   }
   if (it->second->isReady()) {
+    released = std::move(it->second);
     lastRecvItems_.erase(it);
     return nullptr;
   }
@@ -64,10 +71,24 @@ std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank
 
 void Communicator::Impl::clearLastRecvItemIfMatches(int remoteRank, int tag,
                                                     const std::shared_ptr<BaseRecvItem>& expectedItem) {
+  // Release the erased item after unlocking so its future is never destroyed under the lock.
+  std::shared_ptr<BaseRecvItem> released;
+  std::lock_guard<std::mutex> lock(mutex_);
   auto it = lastRecvItems_.find({remoteRank, tag});
   if (it != lastRecvItems_.end() && it->second == expectedItem) {
+    released = std::move(it->second);
     lastRecvItems_.erase(it);
   }
+}
+
+void Communicator::Impl::setConnectionInfo(const BaseConnection* connection, int remoteRank, int tag) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  connectionInfos_[connection] = {remoteRank, tag};
+}
+
+ConnectionInfo Communicator::Impl::connectionInfo(const BaseConnection* connection) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return connectionInfos_.at(connection);
 }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
@@ -136,7 +157,7 @@ MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpo
     auto connection = context()->connect(localEndpoint, remoteEndpoint);
     std::promise<Connection> promise;
     promise.set_value(connection);
-    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
+    pimpl_->setConnectionInfo(connection.impl_.get(), remoteRank, tag);
     return std::shared_future<Connection>(promise.get_future());
   }
 
@@ -148,7 +169,7 @@ MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpo
                                              bootstrap()->recv(data, remoteRank, tag);
                                              auto remoteEndpoint = Endpoint::deserialize(data);
                                              auto connection = context()->connect(localEndpoint, remoteEndpoint);
-                                             pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
+                                             pimpl_->setConnectionInfo(connection.impl_.get(), remoteRank, tag);
                                              return connection;
                                            });
 }
@@ -173,11 +194,11 @@ MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const
 }
 
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(connection.impl_.get()).remoteRank;
+  return pimpl_->connectionInfo(connection.impl_.get()).remoteRank;
 }
 
 MSCCLPP_API_CPP int Communicator::tagOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(connection.impl_.get()).tag;
+  return pimpl_->connectionInfo(connection.impl_.get()).tag;
 }
 
 }  // namespace mscclpp

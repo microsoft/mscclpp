@@ -197,7 +197,13 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
               IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
           if (sourceWeight == 0.0f) continue;
           const float accumulationScale = IsDirectSend ? dequantScale * sourceWeight : dequantScale;
-          dequantizeAndAccumulateFp8E4M3(values, accumulationScale, reduced);
+          if (!IsDirectSend || isfinite(accumulationScale)) {
+            dequantizeAndAccumulateFp8E4M3(values, accumulationScale, reduced);
+          } else {
+            // The fused scale overflowed, so |sourceWeight| > 1 (or it is not finite). Scaling the payload
+            // first is then exact up to rounding: if payload * dequantScale overflows, so does the true result.
+            dequantizeWeightAndAccumulateFp8E4M3(values, dequantScale, sourceWeight, reduced);
+          }
         }
 #pragma unroll
         for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
