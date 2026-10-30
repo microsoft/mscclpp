@@ -213,33 +213,30 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel::deviceHan
     auto& conn = BaseConnection::getImpl(deviceSemaphore_->connection());
     auto d2dHandle = deviceSemaphore_->deviceHandle();
     Host2DeviceSemaphoreDeviceHandle semaHandle{d2dHandle.inboundToken, d2dHandle.expectedInboundToken};
-    BasePortChannelDeviceHandleT<Backend> handle(semaphoreId_, semaHandle, FifoDeviceHandle{}, conn->getFlushDonePtr());
-    handle.device_ = conn->getDeviceBackendInfo(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken);
-    return handle;
+    return BasePortChannelDeviceHandleT<Backend>(
+        semaHandle, conn->getDeviceBackendInfo(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken));
   } else {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage,
             "BasePortChannel::deviceHandle<PortChannelBackend::Host>() requires a Host2DeviceSemaphore");
     }
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
-    BasePortChannelDeviceHandleT<Backend> handle(semaphoreId_, semaphore_->deviceHandle(),
+    return BasePortChannelDeviceHandleT<Backend>(semaphoreId_, semaphore_->deviceHandle(),
                                                  proxy_->fifo()->deviceHandle(), conn->getFlushDonePtr());
-    return handle;
   }
 }
 
 template <PortChannelBackend Backend>
 MSCCLPP_API_CPP PortChannelDeviceHandleT<Backend> PortChannel::deviceHandle() const {
   BasePortChannelDeviceHandleT<Backend> base = BasePortChannel::deviceHandle<Backend>();
-  PortChannelDeviceHandleT<Backend> handle(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_,
-                                           base.flushDonePos_);
-  handle.device_ = base.device_;
   if constexpr (Backend == PortChannelBackend::Device) {
     auto& conn = BaseConnection::getImpl(deviceSemaphore_->connection());
-    handle.dstMemory_ = conn->getDeviceMemoryInfo(dstMemory_);
-    handle.srcMemory_ = conn->getDeviceMemoryInfo(srcMemory_);
+    return PortChannelDeviceHandleT<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
+                                             conn->getDeviceMemoryInfo(srcMemory_));
+  } else {
+    return PortChannelDeviceHandleT<Backend>(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_,
+                                             base.flushDonePos_);
   }
-  return handle;
 }
 
 template MSCCLPP_API_CPP BasePortChannelDeviceHandleT<PortChannelBackend::Host>

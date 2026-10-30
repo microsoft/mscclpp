@@ -11,7 +11,7 @@
 include(FetchContent)
 FetchContent_Declare(gpunetio
     GIT_REPOSITORY https://github.com/NVIDIA-DOCA/gpunetio.git
-    GIT_TAG b2b7a291ec70fdeeb1b27ba4b0ab8c8e260a729b  # v5.0.0-rc1
+    GIT_TAG c5d97fd52346763bcfeaff593dd1d84215156218
     GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(gpunetio)

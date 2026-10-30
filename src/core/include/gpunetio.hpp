@@ -7,11 +7,21 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/semaphore.hpp>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "connection.hpp"
 #include "context.hpp"
 #include "ib.hpp"
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+extern "C" {
+#include "host/doca_gpunetio.h"
+#include "host/doca_gpunetio_high_level.h"
+#include "host/doca_verbs.h"
+}
+#endif
 
 namespace mscclpp {
 
@@ -20,8 +30,13 @@ struct GpuNetIoContext {
   explicit GpuNetIoContext(IbCtx& ibCtx);
   ~GpuNetIoContext();
 
-  struct Impl;
-  std::unique_ptr<Impl> pimpl_;
+#if defined(MSCCLPP_USE_GPUNETIO)
+  doca_gpu_t* gpu(int gpuId);
+
+  std::mutex mutex_;
+  doca_dev_t* dev_ = nullptr;
+  std::unordered_map<int, doca_gpu_t*> gpus_;
+#endif
 };
 
 /// A GPU-initiated RC queue pair (DOCA GPUNetIO) created on a Context's IB device and protection domain, so memory
@@ -34,17 +49,24 @@ class GpuNetIoQp {
   ~GpuNetIoQp();
 
   /// Addressing info that the remote endpoint needs to connect to this QP.
-  const IbQpInfo& info() const;
+  const IbQpInfo& info() const { return info_; }
 
   /// Transition the QP to RTS, connected to the given remote QP.
   void connect(const IbQpInfo& remote);
 
   /// The GPU-resident QP (`doca_gpu_dev_verbs_qp*`) used by device code.
-  void* deviceQp() const;
+  void* deviceQp() const { return deviceQp_; }
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> pimpl_;
+  std::shared_ptr<GpuNetIoContext> context_;
+#if defined(MSCCLPP_USE_GPUNETIO)
+  doca_gpu_verbs_qp_hl* qp_ = nullptr;
+#endif
+  void* deviceQp_ = nullptr;
+  int gpuId_ = 0;
+  int port_ = 0;
+  int gidIndex_ = 0;
+  IbQpInfo info_{};
 };
 
 /// A connection whose operations are posted directly by GPU threads through PortChannel device handles.
@@ -52,11 +74,11 @@ class GpuNetIoQp {
 class GpuNetIoConnection : public BaseConnection {
  public:
   GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
-  ~GpuNetIoConnection();
+  ~GpuNetIoConnection() = default;
 
-  Transport transport() const override;
+  Transport transport() const override { return transport_; }
 
-  Transport remoteTransport() const override;
+  Transport remoteTransport() const override { return remoteTransport_; }
 
   bool isDeviceBackend() const override { return true; }
 
@@ -73,16 +95,10 @@ class GpuNetIoConnection : public BaseConnection {
  private:
   Transport transport_;
   Transport remoteTransport_;
-  uint64_t remoteHostHash_;
-  uint64_t remotePidHash_;
   std::shared_ptr<GpuNetIoQp> qp_;
   std::shared_ptr<uint64_t> atomicFetchBuff_;
   RegisteredMemory atomicFetchMem_;
 };
-
-/// Create an InfiniBand connection for the given endpoints (either host-stack or device-initiated).
-std::shared_ptr<BaseConnection> createIbConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
-                                                   const Endpoint& remoteEndpoint);
 
 }  // namespace mscclpp
 

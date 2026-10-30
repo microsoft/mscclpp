@@ -10,7 +10,7 @@ shared-memory WQE scratch as shown below. The backend is selected per endpoint w
 
 The backend is built automatically for CUDA builds with InfiniBand support (`MSCCLPP_USE_IB=ON`, the default); no
 extra CMake option is needed. ROCm builds and builds with `MSCCLPP_USE_IB=OFF` skip it. At configure time, CMake
-fetches the GPUNetIO sources (pinned to v5.0.0-rc1, see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`.
+fetches the GPUNetIO sources (see `cmake/GpuNetIo.cmake`) and compiles them into `libmscclpp`.
 To build without network access, point CMake to a local checkout of the same revision:
 
 ```bash
@@ -50,14 +50,14 @@ auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 
 Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
 default without requiring shared memory. To enable BlueFlame submission for transfers up to `device_.blueFlameLimit`
-(default: 28 bytes), bind caller-owned shared-memory scratch on a **local copy** of the handle:
+(default: 4096 bytes), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
-  __shared__ mscclpp::GpuNetIoWqeScratch scratch;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
   if (threadIdx.x != 0) return;
   auto portChan = channel;
-  portChan.device_.wqeScratchShm = &scratch;
+  portChan.setWqeSlot<mscclpp::PortChannelSharingMode::Exclusive>(&wqeSlot);
   portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
   portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
 }
@@ -66,9 +66,9 @@ __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBacke
 send<<<1, 32>>>(deviceHandle, bytes);
 ```
 
-Never write a block-shared pointer into a constant-memory or globally shared channel handle. When `wqeScratchShm` is
-null or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory
-staging. The proxy backend ignores the `device_` fields, so the same kernel can support either backend.
+Never bind a block-shared pointer on a constant-memory or globally shared channel handle. When no WQE slot is bound
+or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory
+staging.
 
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
 behave as for proxy-backed channels. The signal of `putWithSignal` is posted on the same queue pair after the payload, so
@@ -89,19 +89,20 @@ By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when
 Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `PortChannelSharingMode::Exclusive`
 (operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
-`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when `wqeScratchShm`
-is bound (default: `kDefaultBlueFlameLimit = 28`, matching inline payloads; set to `0` to disable BlueFlame or increase
-to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when
-`wqeScratchShm == nullptr`—write their WQEs directly to the GPU-resident send queue and ring the regular doorbell,
-matching NCCL GIN's `submit_db` path.
+`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
+is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 4096`; set to `0` to disable BlueFlame or increase
+to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
+their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
 
-### Caller-owned WQE scratch and optional lock
+### Caller-owned WQE slot and optional lock
 
-`mscclpp::GpuNetIoWqeScratch` is an opaque 128-byte, 16-byte-aligned shared-memory buffer for two WQEs. When BlueFlame
-is enabled (`wqeScratchShm != nullptr` and `size <= blueFlameLimit`), each scratch entry must either:
-- Be owned exclusively by one posting thread at a time (`reuseSharedWqe == false`), or
-- Be shared across concurrent submitters by setting `device_.reuseSharedWqe = true` and binding `device_.wqeScratchLock`
-  to a zero-initialized `uint32_t` spinlock in shared or device memory.
+`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Call
+`setWqeSlot<Mode>(&wqeSlot, &wqeSlotLock, reuseSharedWqe)` on a local copy of the handle:
+- In `PortChannelSharingMode::Exclusive` with `reuseSharedWqe == false`, each slot is owned exclusively by one posting
+  thread at a time without locking (`wqeSlotLock` may be omitted).
+- In `Cta`/`Gpu` sharing modes or when `reuseSharedWqe == true`, pass a zero-initialized `uint32_t` spinlock in shared
+  or device memory (`&wqeSlotLock`); if `wqeSlotLock` is null in those modes, `setWqeSlot` leaves BlueFlame disabled and
+  falls back to regular doorbell submission.
 
 BlueFlame submission waits for async consumption of the scratch source before each posting call returns; one thread can
 therefore reuse one entry for sequential operations across different QPs without locking. There is no internal shared
