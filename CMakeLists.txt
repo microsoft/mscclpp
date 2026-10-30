@@ -289,6 +289,16 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
+# The GPUNetIO backend is built whenever the platform supports it (CUDA with InfiniBand).
+if(MSCCLPP_USE_CUDA AND NOT MSCCLPP_USE_ROCM AND MSCCLPP_USE_IB)
+    set(MSCCLPP_USE_GPUNETIO ON)
+    message(STATUS "GPUNetIO backend enabled")
+    include(GpuNetIo)
+else()
+    set(MSCCLPP_USE_GPUNETIO OFF)
+    message(STATUS "GPUNetIO backend disabled (requires CUDA and InfiniBand)")
+endif()
+
 if("${INSTALL_PREFIX}" STREQUAL "")
     set(INSTALL_PREFIX "./")
 endif()

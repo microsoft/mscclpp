@@ -9,6 +9,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/port_channel_device.hpp>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -53,6 +54,18 @@ class BaseConnection {
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
   virtual bool isSignalForwarding() const { return false; }
 
+  /// Whether this connection executes PortChannel operations directly on the device rather than via the host proxy.
+  virtual bool isDeviceBackend() const { return false; }
+
+  /// Create the device backend handle for a PortChannel on this connection.
+  virtual DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& /*signal*/,
+                                                   uint64_t* /*outboundToken*/) const {
+    return {};
+  }
+
+  /// Create the device memory handle for a RegisteredMemory on this connection.
+  virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const { return {}; }
+
   /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
   /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.
   /// The default does a blocking flush(); progressFlush() then trivially returns true.
@@ -87,6 +100,7 @@ class BaseConnection {
   friend class CudaIpcConnection;
   friend class IBConnection;
   friend class EthernetConnection;
+  friend class GpuNetIoConnection;
 
   static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
   static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);

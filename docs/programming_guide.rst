@@ -10,6 +10,7 @@ This section provides advanced topics and best practices for using MSCCL++. It i
 
    guide/memory-management
    guide/advanced-connections
+   guide/gpunetio
    guide/cpp-examples
    guide/customized-algorithm-with-nccl-api
    guide/mscclpp-dsl-integration

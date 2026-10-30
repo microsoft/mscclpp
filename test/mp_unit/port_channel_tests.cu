@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <mscclpp/concurrency_device.hpp>
 #include <thread>
@@ -170,20 +171,109 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
       continue;
     }
     auto sema = communicator->buildSemaphore(connectionFutures[r].get(), r).get();
-
-    mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
-
-    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
-                                                        proxyService->addMemory(sendBufRegMem)));
+    if (ibMode == IbMode::Device) {
+      portChannels.emplace_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema),
+                                remoteMemFutures[r].get(), sendBufRegMem);
+    } else {
+      mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+      portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+                                                          proxyService->addMemory(sendBufRegMem)));
+    }
   }
   // Keep memory reference
   registeredMemories.push_back(recvBufRegMem);
 }
 
-__constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
+union ConstPortChannelStorage {
+  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Host> host;
+  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> device;
+  constexpr ConstPortChannelStorage() : host{} {}
+};
 
+template <mscclpp::PortChannelBackend Backend,
+          mscclpp::PortChannelSharingMode Mode = mscclpp::PortChannelSharingMode::Exclusive>
+struct TestPortChannelHandle {
+  mscclpp::PortChannelDeviceHandleT<Backend> chan;
+
+  __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template put<Mode>(dstOffset, srcOffset, size);
+    } else {
+      chan.put(dstOffset, srcOffset, size);
+    }
+  }
+  __device__ void put(uint64_t offset, uint64_t size) { put(offset, offset, size); }
+  __device__ void signal() {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template signal<Mode>();
+    } else {
+      chan.signal();
+    }
+  }
+  __device__ void flush() {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template flush<Mode>();
+    } else {
+      chan.flush();
+    }
+  }
+  __device__ void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template putWithSignal<Mode>(dstOffset, srcOffset, size);
+    } else {
+      chan.putWithSignal(dstOffset, srcOffset, size);
+    }
+  }
+  __device__ void putWithSignal(uint64_t offset, uint64_t size) { putWithSignal(offset, offset, size); }
+  __device__ void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template putWithSignalAndFlush<Mode>(dstOffset, srcOffset, size);
+    } else {
+      chan.putWithSignalAndFlush(dstOffset, srcOffset, size);
+    }
+  }
+  __device__ void putWithSignalAndFlush(uint64_t offset, uint64_t size) { putWithSignalAndFlush(offset, offset, size); }
+  __device__ void accumulate(uint64_t dstOffset, int64_t value) {
+    if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+      chan.template accumulate<Mode>(dstOffset, value);
+    } else {
+      chan.accumulate(dstOffset, value);
+    }
+  }
+  __device__ bool poll() { return chan.poll(); }
+  __device__ void wait() { chan.wait(); }
+};
+
+template <mscclpp::PortChannelBackend Backend,
+          mscclpp::PortChannelSharingMode Mode = mscclpp::PortChannelSharingMode::Exclusive>
+__device__ TestPortChannelHandle<Backend, Mode> loadPortChannel(const ConstPortChannelStorage& storage,
+                                                                mscclpp::GpuNetIoWqeSlot* wqeSlot = nullptr) {
+  if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+    auto chan = storage.device;
+    chan.setWqeSlot<Mode>(wqeSlot);
+    return {chan};
+  } else {
+    return {storage.host};
+  }
+}
+
+__constant__ ConstPortChannelStorage gChannelOneToOneTestConstPortChans;
+
+inline void copyChannelToSymbol(mscclpp::PortChannel& ch, IbMode ibMode,
+                                const ConstPortChannelStorage& symbol = gChannelOneToOneTestConstPortChans) {
+  if (ibMode == IbMode::Device) {
+    auto handle = ch.deviceHandle<mscclpp::PortChannelBackend::Device>();
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(symbol, &handle, sizeof(handle)));
+  } else {
+    auto handle = ch.deviceHandle();
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(symbol, &handle, sizeof(handle)));
+  }
+}
+
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -270,23 +360,24 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
                        nullptr, 0, params.ibMode);
 
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
-  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
-
   ASSERT_EQ(portChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyChannelToSymbol(portChannels[0], params.ibMode);
 
   proxyService->startProxy();
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
+  auto kernel = (params.ibMode == IbMode::Device) ? kernelProxyPingPong<mscclpp::PortChannelBackend::Device>
+                                                  : kernelProxyPingPong<>;
   for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
     *ret = 0;
-    kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
+    kernel<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaGetLastError());
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     EXPECT_EQ(*ret, 0);
+    // Rank 0's next launch writes to rank 1 without waiting; keep it from racing rank 1's final check.
+    communicator->bootstrap()->barrier();
   }
 
   proxyService->stopProxy();
@@ -302,12 +393,8 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
                        nullptr, 0, params.ibMode);
 
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
-  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
-
   ASSERT_EQ(portChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyChannelToSymbol(portChannels[0], params.ibMode);
 
   proxyService->startProxy();
 
@@ -315,16 +402,20 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000;
+  auto kernel = (params.ibMode == IbMode::Device) ? kernelProxyPingPong<mscclpp::PortChannelBackend::Device>
+                                                  : kernelProxyPingPong<>;
 
   // Warm-up
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  kernel<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
 
   // Measure latency
   mscclpp::Timer timer;
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  kernel<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
@@ -453,12 +544,13 @@ PERF_TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestPortChansSyncer;
 
-template <bool CheckCorrectness>
+template <bool CheckCorrectness, mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, mscclpp::LLPacket* getPktBuf, int rank,
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -533,14 +625,7 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
                        getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
-
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
-  for (auto& portChannel : portChannels) {
-    portChannelHandles.push_back(portChannel.deviceHandle());
-  }
-
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyChannelToSymbol(portChannels[0], ibMode);
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestPortChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -550,11 +635,12 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
+  auto kernel = (ibMode == IbMode::Device) ? kernelProxyLLPingPong<true, mscclpp::PortChannelBackend::Device>
+                                           : kernelProxyLLPingPong<true>;
   // The least nelem is 2 for packet ping pong
   for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
     *ret = 0;
-    kernelProxyLLPingPong<true>
-        <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    kernel<<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     EXPECT_EQ(*ret, 0);
   }
@@ -580,14 +666,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
                        getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
-
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
-  for (auto& portChannel : portChannels) {
-    portChannelHandles.push_back(portChannel.deviceHandle());
-  }
-
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyChannelToSymbol(portChannels[0], ibMode);
 
   mscclpp::DeviceSyncer syncer = {};
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestPortChansSyncer, &syncer, sizeof(mscclpp::DeviceSyncer)));
@@ -596,18 +675,18 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
 
   const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000000;
+  auto kernel = (ibMode == IbMode::Device) ? kernelProxyLLPingPong<false, mscclpp::PortChannelBackend::Device>
+                                           : kernelProxyLLPingPong<false>;
 
   // Warm-up
-  kernelProxyLLPingPong<false>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
+  kernel<<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
 
   // Measure latency
   mscclpp::Timer timer;
-  kernelProxyLLPingPong<false>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
+  kernel<<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, nullptr);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   communicator->bootstrap()->barrier();
@@ -662,8 +741,10 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
 
 // Bandwidth test: bidirectional bulk transfer matching the tutorial pattern.
 // Both ranks do signal+wait+putWithSignal+wait per iteration.
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   if (threadIdx.x != 0) return;
   const uint64_t srcOffset = rank * nElem * sizeof(int);
   const uint64_t dstOffset = srcOffset;
@@ -686,27 +767,25 @@ void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
   setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), bufElem * sizeof(int),
                        nullptr, 0, params.ibMode);
 
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
-  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
-
   ASSERT_EQ(portChannels.size(), 1);
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
-                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyChannelToSymbol(portChannels[0], params.ibMode);
 
   proxyService->startProxy();
 
   const std::string testName = ::mscclpp::test::currentTestName();
   const int nIters = 1000;
+  auto kernel = (params.ibMode == IbMode::Device) ? kernelBandwidthBidir<mscclpp::PortChannelBackend::Device>
+                                                  : kernelBandwidthBidir<>;
 
   for (int nElem : {256, 16 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024}) {
     // Warm-up
-    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, 10, gEnv->rank);
+    kernel<<<1, 1024>>>(buff.get(), nElem, 10, gEnv->rank);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
 
     // Measure
     mscclpp::Timer timer;
-    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, nIters, gEnv->rank);
+    kernel<<<1, 1024>>>(buff.get(), nElem, nIters, gEnv->rank);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     double elapsedUs = timer.elapsed();
     communicator->bootstrap()->barrier();
@@ -752,8 +831,10 @@ static constexpr int64_t kAccumulateNegative = -((int64_t{1} << 32) + 3);
 static constexpr int64_t kAccumulateNet = kAccumulatePositive + kAccumulateNegative;
 static_assert(kAccumulateNet > 0 && kAccumulateNet <= std::numeric_limits<int64_t>::max() / (32 * 20));
 
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer, int* ret) {
-  auto& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   const int numBlocks = gridDim.x;
 
   for (int iter = 0; iter < nTries; ++iter) {
@@ -782,8 +863,10 @@ __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscc
   }
 }
 
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelPortChannelAccumulateWrap(uint64_t* localBuff, int* ret) {
-  auto& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   portChan.accumulate(0, 1);
   portChan.signal();
   portChan.flush();
@@ -802,23 +885,27 @@ void PortChannelOneToOneTest::testAccumulate(bool useIPC, bool useIb, bool useEt
   setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t), nullptr,
                        0, ibMode);
   ASSERT_EQ(portChannels.size(), 1);
-
-  auto handle = portChannels[0].deviceHandle();
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, &handle, sizeof(handle)));
+  copyChannelToSymbol(portChannels[0], ibMode);
   auto syncer = mscclpp::detail::gpuCallocShared<mscclpp::DeviceSyncer>();
   auto ret = mscclpp::detail::gpuCallocHostShared<int>();
   *ret = 0;
 
   proxyService->startProxy();
-  kernelPortChannelAccumulate<<<32, 1>>>(buff.memory().get(), 20, syncer.get(), ret.get());
+  auto accumKernel = (ibMode == IbMode::Device) ? kernelPortChannelAccumulate<mscclpp::PortChannelBackend::Device>
+                                                : kernelPortChannelAccumulate<>;
+  accumKernel<<<ibMode == IbMode::Device ? 1 : 32, 1>>>(buff.memory().get(), 20, syncer.get(), ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   EXPECT_EQ(*ret, 0);
 
   // Every transport defines accumulation modulo 2^64.
   MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0xff, sizeof(uint64_t)));
+  // cudaMemset may still be pending; complete it before the peer's accumulate can arrive.
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   *ret = 0;
   communicator->bootstrap()->barrier();
-  kernelPortChannelAccumulateWrap<<<1, 1>>>(reinterpret_cast<uint64_t*>(buff.memory().get()), ret.get());
+  auto wrapKernel = (ibMode == IbMode::Device) ? kernelPortChannelAccumulateWrap<mscclpp::PortChannelBackend::Device>
+                                               : kernelPortChannelAccumulateWrap<>;
+  wrapKernel<<<1, 1>>>(reinterpret_cast<uint64_t*>(buff.memory().get()), ret.get());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   proxyService->stopProxy();
   EXPECT_EQ(*ret, 0);
@@ -934,19 +1021,49 @@ TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
 
 static constexpr int kMaxQps = 4;
 __constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
+__constant__ mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
+
+inline void copyMultiQpChannelsToSymbol(std::vector<mscclpp::PortChannel>& portChannels, IbMode ibMode) {
+  const int numQps = static_cast<int>(portChannels.size());
+  ASSERT_LE(numQps, kMaxQps);
+  if (ibMode == IbMode::Device) {
+    std::vector<mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>> handles;
+    for (auto& ch : portChannels) handles.push_back(ch.deviceHandle<mscclpp::PortChannelBackend::Device>());
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpDevicePortChans, handles.data(), numQps * sizeof(handles[0])));
+  } else {
+    std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
+    for (auto& ch : portChannels) handles.push_back(ch.deviceHandle());
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), numQps * sizeof(handles[0])));
+  }
+}
+
+template <mscclpp::PortChannelBackend Backend,
+          mscclpp::PortChannelSharingMode Mode = mscclpp::PortChannelSharingMode::Exclusive>
+__device__ TestPortChannelHandle<Backend, Mode> loadMultiQpPortChannel(int q, mscclpp::GpuNetIoWqeSlot* wqeSlot) {
+  if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
+    auto chan = gMultiQpDevicePortChans[q];
+    chan.setWqeSlot<Mode>(wqeSlot);
+    return {chan};
+  } else {
+    return {gMultiQpPortChans[q]};
+  }
+}
 
 // Multi-QP bandwidth kernel: one thread per QP, putWithSignal per QP, parallel waits.
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps) {
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[kMaxQps];
   int q = threadIdx.x;
   if (q >= numQps) return;
+  auto portChan = loadMultiQpPortChannel<Backend>(q, &wqeSlots[q]);
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      portChan.signal();
+      portChan.wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignal(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    portChan.putWithSignal(0, nElemPerChan * sizeof(int));
+    portChan.wait();
     __syncthreads();
   }
 }
@@ -986,9 +1103,14 @@ void PortChannelOneToOneTest::setupMultiQpChannels(int numQps, size_t elemsPerCh
     auto conn = connFutures[q].get();
     remoteMems[q] = remoteMemFutures[q].get();
     auto sema = communicator->buildSemaphore(conn, peer, tagBase + 2 * numQps + q).get();
-    mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
-    portChannels.emplace_back(
-        proxyService->portChannel(cid, proxyService->addMemory(remoteMems[q]), proxyService->addMemory(localMems[q])));
+    if (ibMode == IbMode::Device) {
+      portChannels.emplace_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema), remoteMems[q],
+                                localMems[q]);
+    } else {
+      mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+      portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMems[q]),
+                                                          proxyService->addMemory(localMems[q])));
+    }
   }
 }
 
@@ -1004,29 +1126,26 @@ void PortChannelOneToOneTest::testMultiQpBandwidth(IbMode ibMode, int numQps) {
   std::vector<mscclpp::PortChannel> portChannels;
   setupMultiQpChannels(numQps, maxElemPerChan, ibMode, /*tagBase=*/100, sendBuffs, localMems, remoteMems, portChannels);
 
-  std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
-  for (auto& ch : portChannels) handles.push_back(ch.deviceHandle());
-  ASSERT_EQ(handles.size(), static_cast<size_t>(numQps));
-  ASSERT_LE(numQps, kMaxQps);  // numQps must not exceed __constant__ array size (kMaxQps)
-  MSCCLPP_CUDATHROW(
-      cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), numQps * sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyMultiQpChannelsToSymbol(portChannels, ibMode);
 
   proxyService->startProxy();
 
   const std::string testName = ::mscclpp::test::currentTestName();
   const std::string qpLabel = std::to_string(numQps) + " QP" + (numQps > 1 ? "s" : "");
+  auto kernel = (ibMode == IbMode::Device) ? kernelMultiQpBandwidth<mscclpp::PortChannelBackend::Device>
+                                           : kernelMultiQpBandwidth<>;
 
   for (int nElemPerChan :
        {256, 16 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024}) {
     int nIters = 200;
     // Warm-up
-    kernelMultiQpBandwidth<<<1, numQps>>>(nElemPerChan, 10, numQps);
+    kernel<<<1, numQps>>>(nElemPerChan, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
 
     // Measure
     mscclpp::Timer timer;
-    kernelMultiQpBandwidth<<<1, numQps>>>(nElemPerChan, nIters, numQps);
+    kernel<<<1, numQps>>>(nElemPerChan, nIters, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     double elapsedUs = timer.elapsed();
     communicator->bootstrap()->barrier();
@@ -1096,17 +1215,20 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbHostNoAtomicMode) {
 // Multi-QP flush-stress kernel: one thread per QP, all calling putWithSignalAndFlush
 // concurrently so all N CQ drains are in flight on the proxy thread at once.
 // This is the concurrent-flush worst case the async-progress design protects against.
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelMultiQpFlushStress(int nElemPerChan, int nIters, int numQps) {
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[kMaxQps];
   int q = threadIdx.x;
   if (q >= numQps) return;
+  auto portChan = loadMultiQpPortChannel<Backend>(q, &wqeSlots[q]);
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      gMultiQpPortChans[0].signal();
-      gMultiQpPortChans[0].wait();
+      portChan.signal();
+      portChan.wait();
     }
     __syncthreads();
-    gMultiQpPortChans[q].putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
-    gMultiQpPortChans[q].wait();
+    portChan.putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
+    portChan.wait();
     __syncthreads();
   }
 }
@@ -1123,25 +1245,22 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
   std::vector<mscclpp::PortChannel> portChannels;
   setupMultiQpChannels(numQps, maxElemPerChan, ibMode, /*tagBase=*/400, sendBuffs, localMems, remoteMems, portChannels);
 
-  std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
-  for (auto& ch : portChannels) handles.push_back(ch.deviceHandle());
-  ASSERT_EQ(handles.size(), static_cast<size_t>(numQps));
-  ASSERT_LE(numQps, kMaxQps);
-  MSCCLPP_CUDATHROW(
-      cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), numQps * sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  copyMultiQpChannelsToSymbol(portChannels, ibMode);
 
   proxyService->startProxy();
 
   const std::string qpLabel = std::to_string(numQps) + " QP" + (numQps > 1 ? "s" : "");
+  auto kernel = (ibMode == IbMode::Device) ? kernelMultiQpFlushStress<mscclpp::PortChannelBackend::Device>
+                                           : kernelMultiQpFlushStress<>;
 
   for (int nElemPerChan : {256, 4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}) {
     int nIters = (nElemPerChan >= 256 * 1024) ? 200 : 2000;
-    kernelMultiQpFlushStress<<<1, numQps>>>(nElemPerChan, 10, numQps);
+    kernel<<<1, numQps>>>(nElemPerChan, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
 
     mscclpp::Timer timer;
-    kernelMultiQpFlushStress<<<1, numQps>>>(nElemPerChan, nIters, numQps);
+    kernel<<<1, numQps>>>(nElemPerChan, nIters, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     double elapsedUs = timer.elapsed();
     communicator->bootstrap()->barrier();
@@ -1205,18 +1324,24 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
 // each caller waits on its own TriggerFlush rather than on a globally-incrementing counter
 // that could be assigned out-of-order relative to the FIFO push order.
-__constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
+__constant__ ConstPortChannelStorage gSingleChanForConcurrentFlush;
 
+template <bool Serialize, mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelSameChanConcurrentFlush(int nIters) {
-  auto& chan = gSingleChanForConcurrentFlush;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  constexpr auto kMode = Serialize ? mscclpp::PortChannelSharingMode::Exclusive : mscclpp::PortChannelSharingMode::Gpu;
+  auto chan = loadPortChannel<Backend, kMode>(gSingleChanForConcurrentFlush, Serialize ? &wqeSlot : nullptr);
   int tid = threadIdx.x;
   for (int i = 0; i < nIters; i++) {
-    // Each thread writes to a distinct slot (so puts don't overlap on remote side),
-    // then concurrently flushes on the same channel.
-    uint64_t offset = tid * sizeof(int);
-    chan.putWithSignalAndFlush(offset, offset, sizeof(int));
-    // Each thread waits for one signal from the remote rank's symmetric putWithSignalAndFlush.
-    chan.wait();
+    for (int issuer = 0; issuer < (Serialize ? blockDim.x : 1); issuer++) {
+      if (!Serialize || tid == issuer) {
+        uint64_t offset = tid * sizeof(int);
+        chan.put(offset, offset, sizeof(int));
+        chan.putWithSignalAndFlush(offset, offset, sizeof(int));
+        chan.wait();
+      }
+      if constexpr (Serialize) __syncthreads();
+    }
   }
 }
 
@@ -1231,13 +1356,14 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   setupMultiQpChannels(/*numQps=*/1, /*elemsPerChan=*/nThreads, ibMode, /*tagBase=*/700, sendBuffs, localMems,
                        remoteMems, portChannels);
 
-  DeviceHandle<mscclpp::PortChannel> handle = portChannels[0].deviceHandle();
-  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gSingleChanForConcurrentFlush, &handle, sizeof(handle)));
+  copyChannelToSymbol(portChannels[0], ibMode, gSingleChanForConcurrentFlush);
 
   proxyService->startProxy();
+  auto kernel = (ibMode == IbMode::Device) ? kernelSameChanConcurrentFlush<true, mscclpp::PortChannelBackend::Device>
+                                           : kernelSameChanConcurrentFlush<false>;
 
   // Warm-up
-  kernelSameChanConcurrentFlush<<<1, nThreads>>>(10);
+  kernel<<<1, nThreads>>>(10);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
@@ -1245,7 +1371,7 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
   // concurrent-flush caller waited on its own TriggerFlush (not someone else's earlier one).
   const int nIters = 500;
   mscclpp::Timer timer;
-  kernelSameChanConcurrentFlush<<<1, nThreads>>>(nIters);
+  kernel<<<1, nThreads>>>(nIters);
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   double elapsedUs = timer.elapsed();
   communicator->bootstrap()->barrier();
@@ -1274,8 +1400,10 @@ void PortChannelFanInTest::SetUp() {
 void PortChannelFanInTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
 // Each rank other than 0 pushes nTries accumulates at rank 0's single counter.
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelFanInAccumulate(int nTries) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
   for (int i = 0; i < nTries; i++) {
     portChan.accumulate(0, kAccumulatePositive);
@@ -1333,27 +1461,36 @@ void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, 
   if (rank == 0) {
     for (int r = 1; r < worldSize; r++) {
       auto sema = communicator->buildSemaphore(connFutures[r].get(), r).get();
-      mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
-      portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
-                                                          proxyService->addMemory(localMem)));
+      if (ibMode == IbMode::Device) {
+        portChannels.emplace_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema),
+                                  remoteMemFutures[r].get(), localMem);
+      } else {
+        mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+        portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+                                                            proxyService->addMemory(localMem)));
+      }
       registeredMemories.push_back(remoteMemFutures[r].get());
     }
   } else {
     auto sema = communicator->buildSemaphore(connFutures[0].get(), 0).get();
-    mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
-    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[0].get()),
-                                                        proxyService->addMemory(localMem)));
+    if (ibMode == IbMode::Device) {
+      portChannels.emplace_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema),
+                                remoteMemFutures[0].get(), localMem);
+    } else {
+      mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
+      portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[0].get()),
+                                                          proxyService->addMemory(localMem)));
+    }
     registeredMemories.push_back(remoteMemFutures[0].get());
   }
 
   proxyService->startProxy();
 
   if (rank != 0) {
-    std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
-    handles.push_back(portChannels[0].deviceHandle());
-    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, handles.data(),
-                                         sizeof(DeviceHandle<mscclpp::PortChannel>)));
-    kernelFanInAccumulate<<<1, 1>>>(nTries);
+    copyChannelToSymbol(portChannels[0], ibMode);
+    auto kernel = (ibMode == IbMode::Device) ? kernelFanInAccumulate<mscclpp::PortChannelBackend::Device>
+                                             : kernelFanInAccumulate<>;
+    kernel<<<1, 1>>>(nTries);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   }
 
@@ -1400,3 +1537,154 @@ TEST(PortChannelFanInTest, AccumulateIb) {
 }
 
 TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }
+
+// GPUNetIO (IbMode::Device): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
+#if defined(MSCCLPP_USE_GPUNETIO)
+// GPUNetIO submits through BlueFlame, which requires Hopper or newer. Check every rank before any connection setup so
+// that an unsupported rank cannot leave a supported peer waiting for its endpoint.
+inline void requireGpuNetIoCapableGpus() {
+  int localSupport = 0;
+  try {
+    int gpuId = 0;
+    int major = 0;
+    MSCCLPP_CUDATHROW(cudaGetDevice(&gpuId));
+    MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, gpuId));
+    localSupport = major >= 9 ? 1 : 0;
+  } catch (...) {
+    // Treat a failed capability query as unsupported so that every rank still reaches the collective below.
+  }
+  int allSupport = 0;
+  MPI_Allreduce(&localSupport, &allSupport, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allSupport) {
+    SKIP_TEST() << "GPUNetIO BlueFlame submission requires SM90 or newer on every rank";
+  }
+}
+
+#define REQUIRE_GPUNETIO             \
+  REQUIRE_IBVERBS;                   \
+  requireIbRdmaAtomics(ibTransport); \
+  requireGpuNetIoCapableGpus()
+#else  // !defined(MSCCLPP_USE_GPUNETIO)
+#define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
+#endif  // !defined(MSCCLPP_USE_GPUNETIO)
+
+TEST(PortChannelOneToOneTest, PingPongIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
+}
+
+TEST(PortChannelOneToOneTest, PingPongIbDeviceModeWithPoll) {
+  REQUIRE_GPUNETIO;
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Device});
+}
+
+TEST(PortChannelOneToOneTest, PacketPingPongIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testPacketPingPong(true, IbMode::Device);
+}
+
+TEST(PortChannelOneToOneTest, AccumulateIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testAccumulate(false, true, false, IbMode::Device);
+}
+
+TEST(PortChannelOneToOneTest, SameChanSerializedFlushIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testSameChanConcurrentFlush(IbMode::Device);
+}
+
+TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
+  REQUIRE_GPUNETIO;
+  testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
+}
+
+__global__ void kernelGpuNetIoSharedWqeSlot(int numQps, int rank) {
+  __shared__ mscclpp::GpuNetIoWqeSlot sharedSlot;
+  __shared__ uint32_t wqeSlotLock;
+  const int q = threadIdx.x;
+  if (q == 0) wqeSlotLock = 0;
+  __syncthreads();
+  if (q >= numQps) return;
+
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  auto portChan = gMultiQpDevicePortChans[q];
+  portChan.setWqeSlot<kExclusive>(&sharedSlot, &wqeSlotLock, true);
+  const uint64_t offset = rank * sizeof(int);
+  portChan.putWithSignal<kExclusive>(offset, offset, sizeof(int));
+  portChan.wait();
+  portChan.flush<kExclusive>();
+}
+
+// Exercise multiple concurrent QPs sharing one WQE slot guarded by wqeSlotLock.
+TEST(PortChannelOneToOneTest, SharedWqeSlotIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int rank = communicator->bootstrap()->getRank();
+  const int peer = 1 - rank;
+  std::vector<std::shared_ptr<int>> buffs;
+  std::vector<mscclpp::RegisteredMemory> localMems;
+  std::vector<mscclpp::RegisteredMemory> remoteMems;
+  std::vector<mscclpp::PortChannel> portChannels;
+  setupMultiQpChannels(kMaxQps, /*elemsPerChan=*/2, IbMode::Device, /*tagBase=*/900, buffs, localMems, remoteMems,
+                       portChannels);
+  copyMultiQpChannelsToSymbol(portChannels, IbMode::Device);
+
+  for (int q = 0; q < kMaxQps; q++) {
+    int value = (rank + 1) * 1000 + q;
+    MSCCLPP_CUDATHROW(cudaMemcpy(buffs[q].get() + rank, &value, sizeof(int), cudaMemcpyHostToDevice));
+  }
+  communicator->bootstrap()->barrier();
+
+  kernelGpuNetIoSharedWqeSlot<<<1, kMaxQps>>>(kMaxQps, rank);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  for (int q = 0; q < kMaxQps; q++) {
+    int value = 0;
+    MSCCLPP_CUDATHROW(cudaMemcpy(&value, buffs[q].get() + peer, sizeof(int), cudaMemcpyDeviceToHost));
+    EXPECT_EQ(value, (peer + 1) * 1000 + q);
+  }
+  communicator->bootstrap()->barrier();
+  for (auto& m : localMems) registeredMemories.push_back(m);
+  for (auto& m : remoteMems) registeredMemories.push_back(m);
+}
+
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
+}
+
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testPacketPingPongPerf(true, IbMode::Device);
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Device});
+}
+
+PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpBandwidth(IbMode::Device, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpBandwidth(IbMode::Device, /*numQps=*/4);
+}
+
+PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testMultiQpFlushStress(IbMode::Device, /*numQps=*/4);
+}
+
+TEST(PortChannelFanInTest, AccumulateIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  testFanIn(false, true, false, IbMode::Device);
+}

@@ -390,9 +390,10 @@ struct EndpointConfig {
   struct Ib {
     /// IB mode for signaling, used to select between different implementations.
     enum class Mode {
-      Default,      // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
-      Host,         // Use the host stack with RDMA atomics.
-      HostNoAtomic  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
+      Default,       // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
+      Host,          // Use the host stack with RDMA atomics.
+      HostNoAtomic,  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
+      Device         // GPU-initiated RDMA: PortChannel device operations post work requests directly from the GPU
     };
 
     static constexpr int DefaultPort = -1;
@@ -713,8 +714,6 @@ class Connection {
   friend class Semaphore;
   friend class ProxyService;
   friend class BaseConnection;
-  friend struct BasePortChannel;
-  friend struct PortChannel;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.

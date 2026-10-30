@@ -5,9 +5,16 @@
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 
 #include "fifo_device.hpp"
+#include "gpunetio_device.hpp"
 #include "semaphore_device.hpp"
 
 namespace mscclpp {
+
+/// Backend that services a PortChannel's device-side operations.
+enum class PortChannelBackend : uint8_t {
+  Host = 0,    ///< The device pushes triggers to a FIFO that a host proxy thread consumes.
+  Device = 1,  ///< The device posts RDMA work requests to the connection's queue pair directly.
+};
 
 /// Numeric ID of Semaphore. ProxyService has an internal array indexed by these handles mapping to the
 /// actual semaphores.
@@ -30,7 +37,15 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 }  // namespace detail
 
-struct BasePortChannelDeviceHandle {
+/// Device-side handle template for BasePortChannel.
+/// A non-templated alias `BasePortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
+/// so existing code can use `BasePortChannelDeviceHandle` without `<>`.
+template <PortChannelBackend Backend = PortChannelBackend::Host>
+struct BasePortChannelDeviceHandleT;
+
+/// Host-backend specialization of BasePortChannelDeviceHandleT.
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
   SemaphoreId semaphoreId_;
 
   Host2DeviceSemaphoreDeviceHandle semaphore_;
@@ -43,11 +58,11 @@ struct BasePortChannelDeviceHandle {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
-  MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
+  MSCCLPP_INLINE BasePortChannelDeviceHandleT() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
-                                                         Host2DeviceSemaphoreDeviceHandle semaphore,
-                                                         FifoDeviceHandle fifo, uint64_t* flushDonePos)
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(SemaphoreId semaphoreId,
+                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                          FifoDeviceHandle fifo, uint64_t* flushDonePos)
       : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -149,16 +164,156 @@ struct BasePortChannelDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
+/// Device-backend specialization of BasePortChannelDeviceHandleT.
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+  Host2DeviceSemaphoreDeviceHandle semaphore_;
+
+  DeviceBackendHandle device_;
+
+  MSCCLPP_INLINE BasePortChannelDeviceHandleT() = default;
+
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                          DeviceBackendHandle device)
+      : semaphore_(semaphore), device_(device) {}
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlotShm, uint32_t* wqeSlotLock = nullptr,
+                                        bool reuseSharedWqe = false) {
+    device_.setWqeSlot<Mode>(wqeSlotShm, wqeSlotLock, reuseSharedWqe);
+  }
+
+  /// Put data to the destination memory region via the device backend.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, uint64_t dstOffset, const DeviceMemoryHandle& src,
+                                 uint64_t srcOffset, uint64_t size) {
+    device_.put<Mode>(dst, dstOffset, src, srcOffset, size);
+  }
+
+  /// Put data to the destination memory region via the device backend.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src, uint64_t offset,
+                                 uint64_t size) {
+    put<Mode>(dst, offset, src, offset, size);
+  }
+
+  /// Signal the remote peer via the device backend.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void signal() {
+    device_.signal<Mode>();
+  }
+
+  /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, uint64_t dstOffset,
+                                           const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size) {
+    device_.putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size);
+  }
+
+  /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
+                                           uint64_t offset, uint64_t size) {
+    putWithSignal<Mode>(dst, offset, src, offset, size);
+  }
+
+  /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, uint64_t dstOffset,
+                                                   const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    device_.putWithSignalAndFlush<Mode>(dst, dstOffset, src, srcOffset, size, maxSpinCount);
+  }
+
+  /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
+                                                   uint64_t offset, uint64_t size, int64_t maxSpinCount = 1000000) {
+    putWithSignalAndFlush<Mode>(dst, offset, src, offset, size, maxSpinCount);
+  }
+
+  /// Flush pending operations on the channel via the device backend.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    device_.flush<Mode>(maxSpinCount);
+  }
+
+  /// Add a 64-bit value to remote memory via the device backend.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void accumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset, int64_t value) {
+    device_.accumulate<Mode>(dst, dstOffset, value);
+  }
+
+  /// Check if the port channel has been signaled.
+  /// @return true if the port channel has been signaled.
+  MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
+
+  /// Wait for the port channel to be signaled.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) { semaphore_.wait(maxSpinCount); }
+
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+};
+
+/// Default Host-backend BasePortChannelDeviceHandle alias for backward compatibility without template brackets.
+using BasePortChannelDeviceHandle = BasePortChannelDeviceHandleT<PortChannelBackend::Host>;
+
+/// Device-side handle template for PortChannel.
+/// A non-templated alias `PortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
+/// so existing code can use `PortChannelDeviceHandle` without `<>`.
+template <PortChannelBackend Backend = PortChannelBackend::Host>
+struct PortChannelDeviceHandleT;
+
+/// Host-backend specialization of PortChannelDeviceHandleT.
+template <>
+struct PortChannelDeviceHandleT<PortChannelBackend::Host>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_INLINE PortChannelDeviceHandle() = default;
+  MSCCLPP_INLINE PortChannelDeviceHandleT() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
-                                                     Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
-                                                     MemoryId dst, MemoryId src, uint64_t* flushDonePos)
-      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(SemaphoreId semaphoreId,
+                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
+                                                      MemoryId dst, MemoryId src, uint64_t* flushDonePos)
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Host>(semaphoreId, semaphore, fifo, flushDonePos),
+        dst_(dst),
+        src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerPut to the FIFO.
@@ -166,7 +321,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandle::put(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPut to the FIFO.
@@ -179,7 +334,7 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandle::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPutWithSignal to the FIFO.
@@ -194,7 +349,8 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
-    BasePortChannelDeviceHandle::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset,
+                                                                                  size, maxSpinCount);
   }
 
   /// Push a TriggerPutWithSignalAndFlush to the FIFO.
@@ -203,15 +359,103 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
   }
+
   /// Push an accumulate trigger to the FIFO: add a 64-bit value to the destination memory.
   /// See Connection::accumulate() for transport support.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
-    BasePortChannelDeviceHandle::accumulate(dst_, dstOffset, value);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
+
+/// Device-backend specialization of PortChannelDeviceHandleT.
+template <>
+struct PortChannelDeviceHandleT<PortChannelBackend::Device>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+  DeviceMemoryHandle dstMemory_;
+  DeviceMemoryHandle srcMemory_;
+
+  MSCCLPP_INLINE PortChannelDeviceHandleT() = default;
+
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                      DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
+                                                      DeviceMemoryHandle srcMemory)
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Device>(semaphore, device),
+        dstMemory_(dstMemory),
+        srcMemory_(srcMemory) {}
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Put data to the destination memory region via the device backend.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::put<Mode>(dstMemory_, dstOffset, srcMemory_, srcOffset,
+                                                                        size);
+  }
+
+  /// Put data to the destination memory region via the device backend.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) {
+    put<Mode>(offset, offset, size);
+  }
+
+  /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignal<Mode>(dstMemory_, dstOffset, srcMemory_,
+                                                                                  srcOffset, size);
+  }
+
+  /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) {
+    putWithSignal<Mode>(offset, offset, size);
+  }
+
+  /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignalAndFlush<Mode>(
+        dstMemory_, dstOffset, srcMemory_, srcOffset, size, maxSpinCount);
+  }
+
+  /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @param offset The common offset into the destination and source memory regions.
+  /// @param size The size of the transfer.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
+    putWithSignalAndFlush<Mode>(offset, offset, size);
+  }
+
+  /// Add a 64-bit value to the destination memory via the device backend.
+  /// See Connection::accumulate() for transport support.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::accumulate<Mode>(dstMemory_, dstOffset, value);
+  }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+};
+
+/// Default Host-backend PortChannelDeviceHandle alias for backward compatibility without template brackets.
+using PortChannelDeviceHandle = PortChannelDeviceHandleT<PortChannelBackend::Host>;
 
 }  // namespace mscclpp
 
