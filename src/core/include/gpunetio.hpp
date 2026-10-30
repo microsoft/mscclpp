@@ -6,7 +6,6 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
-#include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <vector>
 
@@ -61,10 +60,9 @@ class GpuNetIoConnection : public BaseConnection {
 
   bool isDeviceBackend() const override { return true; }
 
-  bool setDeviceBackendHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
-                              DeviceBackendHandle& handle) const override;
+  DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& signal, uint64_t* outboundToken) const override;
 
-  DeviceMemoryHandle deviceMemoryHandle(const RegisteredMemory& memory) const override;
+  DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& memory) const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;

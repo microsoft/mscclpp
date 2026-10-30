@@ -21,6 +21,16 @@
 
 namespace mscclpp {
 
+/// Resource sharing mode for a PortChannel's device-initiated queue pair.
+enum class PortChannelSharingMode : uint8_t {
+  /// The queue pair is accessed by a single thread at a time (serialized by the caller).
+  Exclusive = 0,
+  /// The queue pair is shared among threads within a CTA.
+  Cta = 1,
+  /// The queue pair is shared among threads across the GPU.
+  Gpu = 2,
+};
+
 /// Caller-owned shared-memory storage for two BlueFlame work requests.
 /// Concurrent submitters must use separate instances unless guarded by a lock. A posting operation waits until
 /// BlueFlame has consumed this storage before returning, so sequential operations may reuse it even across different
@@ -28,16 +38,6 @@ namespace mscclpp {
 struct alignas(16) GpuNetIoWqeScratch {
   /// Opaque work-request storage; callers must not access its contents.
   uint64_t storage[16];
-};
-
-/// Resource sharing mode for a GPUNetIO queue pair.
-enum class GpuNetIoSharingMode : uint8_t {
-  /// The queue pair is accessed by a single thread at a time (serialized by the caller).
-  Exclusive = 0,
-  /// The queue pair is shared among threads within a CTA.
-  Cta = 1,
-  /// The queue pair is shared among threads across the GPU.
-  Gpu = 2,
 };
 
 /// A registered memory region that a GPUNetIO PortChannel can address.
@@ -93,10 +93,12 @@ struct GpuNetIoDeviceHandle {
   }
 
   /// RDMA write of `size` bytes from a local region to a remote region.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void put(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                  const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    checkMemory(dst, false, dstOffset, size);
+    checkMemory(src, true, srcOffset, size);
     putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
 #else
     require(false);
@@ -104,7 +106,7 @@ struct GpuNetIoDeviceHandle {
   }
 
   /// Increment the outbound semaphore counter and inline-write the new token value to the remote semaphore.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void signal() {
 #if defined(MSCCLPP_USE_GPUNETIO)
     const uint64_t token = atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
@@ -115,9 +117,10 @@ struct GpuNetIoDeviceHandle {
   }
 
   /// Write an 8-byte strong-ordered inline signal `token` to `dst` at `dstOffset`.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void signalAt(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset, uint64_t token) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    checkMemory(dst, false, dstOffset, sizeof(uint64_t));
     require((dst.addr + dstOffset) % sizeof(uint64_t) == 0);
     signalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, token);
 #else
@@ -126,10 +129,12 @@ struct GpuNetIoDeviceHandle {
   }
 
   /// RDMA write followed by an inline semaphore token write, ordered after the payload write.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                            const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    checkMemory(dst, false, dstOffset, size);
+    checkMemory(src, true, srcOffset, size);
     if (size > 0 && size <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
       const uint64_t token =
           atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
@@ -144,13 +149,25 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
+  /// RDMA write followed by an inline semaphore token write and local completion flush.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
+                                                   const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset,
+                                                   uint64_t size, int64_t maxSpinCount = 1000000) {
+    putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size);
+    flush<Mode>(maxSpinCount);
+  }
+
   /// RDMA write followed by an ordered inline signal `token` write to `sig` at `sigOffset`.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignalAt(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                              const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size,
                                              const GpuNetIoMemoryDeviceHandle& sig, uint64_t sigOffset,
                                              uint64_t token) {
 #if defined(MSCCLPP_USE_GPUNETIO)
+    checkMemory(dst, false, dstOffset, size);
+    checkMemory(src, true, srcOffset, size);
+    checkMemory(sig, false, sigOffset, sizeof(uint64_t));
     require((sig.addr + sigOffset) % sizeof(uint64_t) == 0);
     if (size > 0 && size <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
       putWithSignalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size,
@@ -164,8 +181,15 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
+  /// Remote 64-bit atomic add into `dst` at `dstOffset`.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void accumulate(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset, int64_t value) {
+    checkMemory(dst, false, dstOffset, sizeof(uint64_t));
+    atomicAdd<Mode>(dst.addr + dstOffset, dst.key, value);
+  }
+
   /// Remote 64-bit atomic add.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void atomicAdd(uint64_t addr, uint32_t key, int64_t value) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     require(addr % sizeof(uint64_t) == 0);
@@ -190,7 +214,7 @@ struct GpuNetIoDeviceHandle {
 
   /// Wait until every work request posted so far on the queue pair has completed.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  template <GpuNetIoSharingMode Mode = GpuNetIoSharingMode::Exclusive>
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void flush([[maybe_unused]] int64_t maxSpinCount) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
@@ -222,11 +246,11 @@ struct GpuNetIoDeviceHandle {
   }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-  template <GpuNetIoSharingMode Mode>
+  template <PortChannelSharingMode Mode>
   MSCCLPP_HOST_DEVICE_INLINE static constexpr doca_gpu_dev_verbs_resource_sharing_mode docaSharingMode() {
-    if constexpr (Mode == GpuNetIoSharingMode::Exclusive) {
+    if constexpr (Mode == PortChannelSharingMode::Exclusive) {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
-    } else if constexpr (Mode == GpuNetIoSharingMode::Cta) {
+    } else if constexpr (Mode == PortChannelSharingMode::Cta) {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA;
     } else {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU;

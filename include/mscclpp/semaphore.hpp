@@ -12,8 +12,6 @@
 
 namespace mscclpp {
 
-struct BasePortChannel;
-
 /// A semaphore for sending signals from the host to the device.
 class Host2DeviceSemaphore {
  private:
@@ -96,8 +94,6 @@ class Host2HostSemaphore {
 /// A semaphore for sending signals from the local device to a peer device via a GPU thread.
 class MemoryDevice2DeviceSemaphore {
  private:
-  friend struct BasePortChannel;
-
   Semaphore semaphore_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   detail::UniqueGpuPtr<uint64_t> outboundToken_;

@@ -62,8 +62,8 @@ __global__ void send(mscclpp::DeviceHandle<mscclpp::PortChannel> channel, size_t
   if (threadIdx.x != 0) return;
   auto portChan = channel;
   portChan.device_.wqeScratch = &scratch;
-  portChan.putWithSignal(0, bytes);
-  portChan.flush();
+  portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
+  portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
 }
 
 // One block exclusively owns this QP.
@@ -89,9 +89,9 @@ every submission. Keep non-inline source buffers unchanged until their transfers
 
 ### Queue pair sharing modes and BlueFlame configuration
 
-By default, queue pairs are accessed in `GpuNetIoSharingMode::Exclusive` (operations on a QP are serialized by the
-caller). Callers may also pass `GpuNetIoSharingMode::Cta` or `GpuNetIoSharingMode::Gpu` as a template parameter to
-posting and `flush` methods when multiple threads within a CTA or across the GPU share a QP.
+By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when threads across the GPU share a QP).
+Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `PortChannelSharingMode::Exclusive`
+(operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when `wqeScratch` is
 bound (default: `kDefaultBlueFlameLimit = 28`, matching inline payloads; set to `0` to disable BlueFlame or increase to

@@ -313,8 +313,8 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-bool GpuNetIoConnection::setDeviceBackendHandle(const RegisteredMemory& signal, uint64_t* outboundToken,
-                                                DeviceBackendHandle& handle) const {
+DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo(const RegisteredMemory& signal,
+                                                             uint64_t* outboundToken) const {
   const auto& signalImpl = getImpl(signal);
   if (!signalImpl.transports.has(remoteTransport_)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "GPUNetIO semaphore token is not registered for ", remoteTransport_);
@@ -325,21 +325,18 @@ bool GpuNetIoConnection::setDeviceBackendHandle(const RegisteredMemory& signal, 
   }
   const auto& scratchInfo = getImpl(atomicScratchMem_).getTransportInfo(transport_);
 
-  handle = DeviceBackendHandle{};
+  DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
   handle.signalAddr = signalInfo.ibMrInfo.addr;
   handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
-  handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
   handle.atomicScratchAddr = scratchInfo.ibMrInfo.addr;
+  handle.atomicScratchKey = htobe32(scratchInfo.ibMr->getLkey());
   handle.outboundToken = outboundToken;
-  handle.blueFlameLimit = GpuNetIoDeviceHandle::kDefaultBlueFlameLimit;
-  handle.wqeScratch = nullptr;
-  handle.wqeScratchLock = nullptr;
-  handle.reuseSharedWqe = false;
-  return true;
+  handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
+  return handle;
 }
 
-DeviceMemoryHandle GpuNetIoConnection::deviceMemoryHandle(const RegisteredMemory& memory) const {
+DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory) const {
   const uint64_t localHostHash = getImpl(localEndpoint_).hostHash_;
   const uint64_t localPidHash = getImpl(localEndpoint_).pidHash_;
   const auto& impl = getImpl(memory);

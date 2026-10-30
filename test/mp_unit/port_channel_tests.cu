@@ -184,7 +184,10 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
 __constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;
 
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  __shared__ mscclpp::GpuNetIoWqeScratch scratch;
+  auto portChan = gChannelOneToOneTestConstPortChans;
+  portChan.device_.wqeScratch = &scratch;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -219,7 +222,7 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
       }
       __syncthreads();
       // __threadfence_system(); // not necessary if we make sendBuff volatile
-      if (threadIdx.x == 0) portChan.putWithSignal(0, nElem * sizeof(int));
+      if (threadIdx.x == 0) portChan.putWithSignal<kExclusive>(0, nElem * sizeof(int));
     }
     if (rank == 1) {
       if (threadIdx.x == 0) {
@@ -250,12 +253,12 @@ __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWit
         }
         __syncthreads();
         // __threadfence_system(); // not necessary if we make sendBuff volatile
-        if (threadIdx.x == 0) portChan.putWithSignal(0, nElem * sizeof(int));
+        if (threadIdx.x == 0) portChan.putWithSignal<kExclusive>(0, nElem * sizeof(int));
       }
     }
     flusher++;
     if (flusher == 1) {
-      if (threadIdx.x == 0) portChan.flush();
+      if (threadIdx.x == 0) portChan.flush<kExclusive>();
       flusher = 0;
     }
   }
@@ -468,6 +471,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
   __shared__ mscclpp::GpuNetIoWqeScratch scratch;
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -494,11 +498,11 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       gChannelOneToOneTestPortChansSyncer.sync(gridDim.x);
       if (threadId == submitter) {
         // Send data from the local putPacketBuffer to the remote getPacketBuffer
-        portChan.put(0, nPkt * sizeof(mscclpp::LLPacket));
+        portChan.put<kExclusive>(0, nPkt * sizeof(mscclpp::LLPacket));
       }
       flusher++;
       if (flusher == 64) {
-        if (threadId == submitter) portChan.flush();
+        if (threadId == submitter) portChan.flush<kExclusive>();
         flusher = 0;
       }
     } else {
@@ -682,12 +686,13 @@ __global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank)
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
   if (threadIdx.x != 0) return;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   const uint64_t srcOffset = rank * nElem * sizeof(int);
   const uint64_t dstOffset = srcOffset;
   for (int i = 0; i < nIters; i++) {
-    portChan.signal();
+    portChan.signal<kExclusive>();
     portChan.wait();
-    portChan.putWithSignal(dstOffset, srcOffset, nElem * sizeof(int));
+    portChan.putWithSignal<kExclusive>(dstOffset, srcOffset, nElem * sizeof(int));
     portChan.wait();
   }
 }
@@ -773,18 +778,19 @@ __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscc
   __shared__ mscclpp::GpuNetIoWqeScratch scratch;
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   const int numBlocks = gridDim.x;
 
   for (int iter = 0; iter < nTries; ++iter) {
-    portChan.accumulate(0, 0);
-    portChan.accumulate(0, kAccumulatePositive);
-    portChan.accumulate(0, kAccumulateNegative);
+    portChan.accumulate<kExclusive>(0, 0);
+    portChan.accumulate<kExclusive>(0, kAccumulatePositive);
+    portChan.accumulate<kExclusive>(0, kAccumulateNegative);
     syncer->sync(numBlocks);
 
     if (blockIdx.x == 0) {
       // The signal/flush after every block's additions validates proxy ordering before the peer wait.
-      portChan.signal();
-      portChan.flush();
+      portChan.signal<kExclusive>();
+      portChan.flush<kExclusive>();
       portChan.wait();
 
       const int64_t perIter = static_cast<int64_t>(numBlocks) * kAccumulateNet;
@@ -805,9 +811,10 @@ __global__ void kernelPortChannelAccumulateWrap(uint64_t* localBuff, int* ret) {
   __shared__ mscclpp::GpuNetIoWqeScratch scratch;
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
-  portChan.accumulate(0, 1);
-  portChan.signal();
-  portChan.flush();
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  portChan.accumulate<kExclusive>(0, 1);
+  portChan.signal<kExclusive>();
+  portChan.flush<kExclusive>();
   portChan.wait();
   if (*(volatile uint64_t*)localBuff != 0) *ret = 1;
 }
@@ -966,13 +973,14 @@ __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps)
   if (q >= numQps) return;
   auto portChan = gMultiQpPortChans[q];
   portChan.device_.wqeScratch = &scratch[q];
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      portChan.signal();
+      portChan.signal<kExclusive>();
       portChan.wait();
     }
     __syncthreads();
-    portChan.putWithSignal(0, nElemPerChan * sizeof(int));
+    portChan.putWithSignal<kExclusive>(0, nElemPerChan * sizeof(int));
     portChan.wait();
     __syncthreads();
   }
@@ -1129,13 +1137,14 @@ __global__ void kernelMultiQpFlushStress(int nElemPerChan, int nIters, int numQp
   if (q >= numQps) return;
   auto portChan = gMultiQpPortChans[q];
   portChan.device_.wqeScratch = &scratch[q];
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   for (int i = 0; i < nIters; i++) {
     if (q == 0) {
-      portChan.signal();
+      portChan.signal<kExclusive>();
       portChan.wait();
     }
     __syncthreads();
-    portChan.putWithSignalAndFlush(0, nElemPerChan * sizeof(int));
+    portChan.putWithSignalAndFlush<kExclusive>(0, nElemPerChan * sizeof(int));
     portChan.wait();
     __syncthreads();
   }
@@ -1242,13 +1251,14 @@ __global__ void kernelSameChanConcurrentFlush(int nIters) {
   __shared__ mscclpp::GpuNetIoWqeScratch scratch;
   auto chan = gSingleChanForConcurrentFlush;
   if constexpr (Serialize) chan.device_.wqeScratch = &scratch;
+  constexpr auto kMode = Serialize ? mscclpp::PortChannelSharingMode::Exclusive : mscclpp::PortChannelSharingMode::Gpu;
   int tid = threadIdx.x;
   for (int i = 0; i < nIters; i++) {
     for (int issuer = 0; issuer < (Serialize ? blockDim.x : 1); issuer++) {
       if (!Serialize || tid == issuer) {
         uint64_t offset = tid * sizeof(int);
-        chan.put(offset, offset, sizeof(int));
-        chan.putWithSignalAndFlush(offset, offset, sizeof(int));
+        chan.put<kMode>(offset, offset, sizeof(int));
+        chan.putWithSignalAndFlush<kMode>(offset, offset, sizeof(int));
         chan.wait();
       }
       if constexpr (Serialize) __syncthreads();
@@ -1274,6 +1284,10 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
 
   // Warm-up
   if (ibMode == IbMode::Device) {
+    // Also exercise the default PortChannelSharingMode::Gpu path on IbMode::Device.
+    kernelSameChanConcurrentFlush<false><<<1, 1>>>(10);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
     kernelSameChanConcurrentFlush<true><<<1, nThreads>>>(10);
   } else {
     kernelSameChanConcurrentFlush<false><<<1, nThreads>>>(10);
@@ -1323,10 +1337,11 @@ __global__ void kernelFanInAccumulate(int nTries) {
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   for (int i = 0; i < nTries; i++) {
-    portChan.accumulate(0, kAccumulatePositive);
+    portChan.accumulate<kExclusive>(0, kAccumulatePositive);
   }
-  portChan.flush();
+  portChan.flush<kExclusive>();
 }
 
 void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
@@ -1514,9 +1529,10 @@ __global__ void kernelGpuNetIoSignalOrWaitOnce(bool sender) {
   auto portChan = gChannelOneToOneTestConstPortChans;
   portChan.device_.wqeScratch = &scratch;
   if (threadIdx.x != 0) return;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   if (sender) {
-    portChan.signal();
-    portChan.flush();
+    portChan.signal<kExclusive>();
+    portChan.flush<kExclusive>();
   } else {
     portChan.wait();
   }
@@ -1587,6 +1603,7 @@ __global__ void kernelGpuNetIoManyConnections(DeviceHandle<mscclpp::PortChannel>
     __syncthreads();
   }
   if (tid >= NumPosters) return;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   const uint64_t offset = rank * sizeof(int);
   for (int q = tid; q < numConns; q += NumPosters) {
     auto portChan = chans[q];
@@ -1595,9 +1612,9 @@ __global__ void kernelGpuNetIoManyConnections(DeviceHandle<mscclpp::PortChannel>
       portChan.device_.wqeScratchLock = &scratchLock;
       portChan.device_.reuseSharedWqe = true;
     }
-    portChan.putWithSignal(offset, offset, sizeof(int));
+    portChan.putWithSignal<kExclusive>(offset, offset, sizeof(int));
     portChan.wait();
-    portChan.flush();
+    portChan.flush<kExclusive>();
   }
 }
 

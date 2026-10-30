@@ -57,14 +57,14 @@ class BaseConnection {
   /// Whether this connection executes PortChannel operations directly on the device rather than via the host proxy.
   virtual bool isDeviceBackend() const { return false; }
 
-  /// Populate the device-initiated backend handle if supported by this connection.
-  virtual bool setDeviceBackendHandle(const RegisteredMemory& /*signal*/, uint64_t* /*outboundToken*/,
-                                      DeviceBackendHandle& /*handle*/) const {
-    return false;
+  /// Create the device backend handle for a PortChannel on this connection.
+  virtual DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& /*signal*/,
+                                                   uint64_t* /*outboundToken*/) const {
+    return {};
   }
 
-  /// Resolve a registered memory region into a device-side memory handle for this connection.
-  virtual DeviceMemoryHandle deviceMemoryHandle(const RegisteredMemory& /*memory*/) const { return {}; }
+  /// Create the device memory handle for a RegisteredMemory on this connection.
+  virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const { return {}; }
 
   /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
   /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.

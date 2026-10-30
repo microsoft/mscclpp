@@ -24,7 +24,12 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
-    : semaphoreId_(semaphoreId), deviceSemaphore_(semaphore) {}
+    : semaphoreId_(semaphoreId), deviceSemaphore_(semaphore) {
+  if (!deviceSemaphore_ || !BaseConnection::getImpl(deviceSemaphore_->connection())->isDeviceBackend()) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "BasePortChannel with MemoryDevice2DeviceSemaphore requires an IB Device-mode connection");
+  }
+}
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                  std::shared_ptr<Proxy> proxy)
@@ -218,10 +223,9 @@ MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() co
     auto d2dHandle = deviceSemaphore_->deviceHandle();
     Host2DeviceSemaphoreDeviceHandle semaHandle{d2dHandle.inboundToken, d2dHandle.expectedInboundToken};
     BasePortChannel::DeviceHandle handle(semaphoreId_, semaHandle, FifoDeviceHandle{}, conn.impl_->getFlushDonePtr());
-    if (conn.impl_->setDeviceBackendHandle(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken,
-                                           handle.device_)) {
-      handle.backend_ = PortChannelBackend::Device;
-    }
+    handle.backend_ = PortChannelBackend::Device;
+    handle.device_ =
+        conn.impl_->getDeviceBackendInfo(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken);
     return handle;
   }
   auto& conn = semaphore_->connection();
@@ -237,8 +241,8 @@ MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
   handle.device_ = base.device_;
   if (deviceSemaphore_) {
     auto& conn = deviceSemaphore_->connection();
-    handle.dstMemory_ = conn.impl_->deviceMemoryHandle(dstMemory_);
-    handle.srcMemory_ = conn.impl_->deviceMemoryHandle(srcMemory_);
+    handle.dstMemory_ = conn.impl_->getDeviceMemoryInfo(dstMemory_);
+    handle.srcMemory_ = conn.impl_->getDeviceMemoryInfo(srcMemory_);
   }
   return handle;
 }
