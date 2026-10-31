@@ -256,12 +256,6 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
     // without our next-Dispatch ACK, issued only after this Combine consumed its
     // landing rows. Thus its next Combine cannot overwrite them early, even for
     // empty dispatch rounds. Separate FP32 send storage is drained above.
-    if (threadIdx.x == 0 && context->gpuNetIoDistributeStats_) {
-      const int rows = *context->gpuNetIoAggregateIncomingRows_;
-      printf("[EP-AGGREGATE-COMBINE] rank=%d epoch=%u rows=%d payloadBytes=%llu chunkRows=%d qps=%d\n", context->rank_,
-             workload.epoch_, rows, static_cast<unsigned long long>(rows) * Hidden * sizeof(float),
-             context->gpuNetIoCombineChunkRows_, qps);
-    }
     // All workers/posters have joined, and this CTA must finish reading the
     // dispatch row count before retiring it. Allocations start zeroed; stream
     // order makes these resets visible to the next paired Dispatch/Combine.

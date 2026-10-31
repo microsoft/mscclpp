@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from functools import wraps
 import math
-import os
 from numbers import Real
 from typing import Any, Iterable, Optional, Tuple, Union
 
@@ -26,14 +25,6 @@ def requires_initialized(method):
         return method(self, *args, **kwargs)
 
     return wrapped
-
-
-def gpunetio_requested() -> bool:
-    """Return whether ``MSCCLPP_EP_ENABLE_GPUNETIO`` asks for GPUNetIO between CUDA IPC domains."""
-    try:
-        return int(os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0")) != 0
-    except ValueError:
-        return False
 
 
 def resolve_num_blocks(

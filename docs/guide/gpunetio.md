@@ -83,43 +83,24 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
-### EP NIC selection
+### EP NIC selection and queue pairs
 
-Cross-domain EP requires an explicit, nonempty `MSCCLPP_EP_GPUNETIO_HCAS` for each rank. Set it to one HCA name or
-a comma-separated list, for example:
+Cross-domain EP uses `MSCCLPP_HCA_DEVICES` to map each GPU to its IB transport (`IB0`–`IB7`), or discovers IB
+devices via `ibverbs` when `MSCCLPP_HCA_DEVICES` is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a
+single HCA name (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
 
-```bash
-export MSCCLPP_EP_GPUNETIO_HCAS=mlx5_0,mlx5_1
-```
-
-The launcher must select the appropriate HCAs for each GPU; EP does not discover or choose NICs from PCI or NUMA
-topology. Names must resolve to available IB transports, respecting `MSCCLPP_HCA_DEVICES` when configured.
-All ranks must select the same number of HCAs, though device names may differ. Missing, empty, duplicate, or
-unavailable HCA configurations fail collective initialization. IPC-only EP does not require this setting.
-
-### EP network queue pairs
-
-For latency `RANK_MAJOR` EP, `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` selects the number of QPs created per peer. It defaults
-to the number of selected HCAs and must be a multiple of that count. QP `q` uses HCA `q % numHcas`, so multiple QPs
-do not change the GPU-to-NIC mapping.
-
-Hybrid dispatch distributes its chunks over all configured QPs.
-Direct combine stripes peer payloads by selected HCA count and waits for those stripes before consuming their rows.
-With one selected HCA per GPU, it uses one payload QP per peer even when multiple QPs are configured.
-Aggregate combine distributes chunks over the configured gateway QPs.
+For latency `RANK_MAJOR` EP, `MSCCLPP_EP_GPUNETIO_QPS_PER_PEER` selects the number of QPs created per peer (1 or 4,
+default 1). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct combine uses one
+payload QP per peer.
 
 ### Hybrid dispatch
 
-Cross-domain EP enabled by `MSCCLPP_EP_ENABLE_GPUNETIO=1` uses the send-and-distribute hybrid BF16 `RANK_MAJOR`
-dispatch with `RANK_LOCAL_REDUCE`. It requires exactly two equal, fully IPC-mapped NVLink domains and one or four QPs per peer.
-Initialization collectively checks the actual IPC mapping matrix. Sorted members of the two domains are paired:
-each source sends to its corresponding gateway in the other domain, not to one central gateway.
-Incompatible domain mappings or QP counts fail initialization. Other layouts and IPC-only paths retain their
+Cross-domain EP automatically uses the send-and-distribute hybrid BF16 `RANK_MAJOR` dispatch with
+`RANK_LOCAL_REDUCE` when ranks span two CUDA IPC domains. It requires exactly two equal, fully IPC-mapped NVLink
+domains and one or four QPs per peer. Initialization collectively checks the actual IPC mapping matrix. Sorted members
+of the two domains are paired: each source sends to its corresponding gateway in the other domain, not to one central
+gateway. Incompatible domain mappings or QP counts fail initialization. Other layouts and IPC-only paths retain their
 existing behavior.
-
-The legacy multi-producer direct network dispatch is removed. `SEND_DISTRIBUTE`, `BATCHED_DISPATCH`, `ASYNC`,
-`DEFER_FLUSH`, `PARALLEL_STAGE`, and `TMA_STAGE` no longer select EP algorithms or pipeline modes.
-There is no fixed-capacity staging ring or fallback for other network topologies.
 
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
@@ -149,19 +130,12 @@ By default, Combine returns each rank's preweighted BF16 partials directly to th
 Without the aggregation option below, set `MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS=0` (the default).
 It requires more than `world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
 workspace resets are part of each dispatch without aggregate Combine: include them in end-to-end CUDA graph timing.
-`MSCCLPP_EP_GPUNETIO_ROW_FENCE` defaults to `gpu+poster`: row writers use device fences, and each QP poster
-acquires the completed chunk's release sequence before a system fence and the NIC post. `sys` fences every row
-writer instead, so the acquiring poster does not repeat that fence. The poster retains
-its system fence when `gpu` is selected. Headers larger than the inline-transfer limit retain system publication;
+Row writers use device fences, and each QP poster acquires the completed chunk's release sequence before a system
+fence and the NIC post. Headers larger than the inline-transfer limit retain system publication;
 inline headers are copied into the WQE after their writers join. Forwarding writers retain system fences before their
 completion join, covering ordinary NVLink metadata stores as well as completed TMA payloads. The joined writers already establish visibility for
 the inline acknowledgment, so its posting thread does not repeat the system fence. Standalone LL count packets
 validate their own epochs; nonempty payloads use a separate ready signal.
-`MSCCLPP_EP_GPUNETIO_SEND_DISTRIBUTE_STATS=1` prints actual unique rows, remote rows before domain deduplication, hidden payload
-bytes, row wire bytes (including routing metadata and alignment), and header bytes per rank/round for validation.
-These byte counts exclude transport framing and completion signals. Disable statistics for performance measurements.
-Payload reduction alone does not establish a latency improvement; compare measured complete dispatch/combine
-rounds on the same routing workload and topology.
 
 ### Hybrid combine
 
@@ -205,8 +179,6 @@ One fused `hybridAggregateCombineKernel` performs all reduction, posting, and fi
 Combine grid and its full-residency check. After the completion join and local end handshakes, it resets the private
 Dispatch/Combine counters and readiness epochs for the next round, eliminating the four separate workspace resets
 in a paired graph. Network counters, arrival baselines, and replay validation epochs remain persistent.
-With send-and-distribute statistics enabled, `[EP-AGGREGATE-COMBINE]` reports actual returned FP32
-rows and payload bytes. No latency gain is implied by the reduction in transferred rows.
 
 Both hybrid algorithms reuse `LatencyRuntimeContext`, including its symmetric allocation, workspace, IPC channels,
 and single device-context copy. The context also owns the network service and private pipeline state, and waits

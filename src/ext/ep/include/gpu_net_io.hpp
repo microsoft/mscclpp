@@ -26,7 +26,6 @@ struct EpGpuNetIoDeviceContext {
   EpGpuNetIoSignalState* signalStates;
   int numPeers;
   int numQpsPerPeer;
-  int numHcas;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   MSCCLPP_DEVICE_INLINE EpPortChannelDeviceHandle channel(int peer, int queue) const {
@@ -68,7 +67,7 @@ struct EpGpuNetIoDeviceContext {
 
 class EpGpuNetIoService {
  public:
-  EpGpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, const std::string& devices, int cudaDevice);
+  EpGpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, int cudaDevice);
   ~EpGpuNetIoService();
   EpGpuNetIoService(const EpGpuNetIoService&) = delete;
   EpGpuNetIoService& operator=(const EpGpuNetIoService&) = delete;

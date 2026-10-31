@@ -78,7 +78,7 @@ class MoECommunicatorConfig:
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
-        from .utils import gpunetio_requested, resolve_num_blocks, validate_quant
+        from .utils import resolve_num_blocks, validate_quant
 
         for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
             value = getattr(self, name)
@@ -124,10 +124,12 @@ class MoECommunicatorConfig:
         world_size = self.comm.nranks
         if not 1 <= world_size <= 64:
             raise ValueError("EP requires 1-64 ranks")
-        if self.comm.nranks_per_ipc_domain != world_size and not (latency and gpunetio_requested()):
+        if self.comm.nranks_per_ipc_domain != world_size and not (
+            latency and layout == DispatchLayout.RANK_MAJOR and self.combine_mode == CombineMode.RANK_LOCAL_REDUCE
+        ):
             raise ValueError(
-                "EP requires all ranks in one CUDA IPC domain unless latency mode enables GPUNetIO "
-                "(MSCCLPP_EP_ENABLE_GPUNETIO=1)"
+                "EP across multiple CUDA IPC domains requires LATENCY mode with RANK_MAJOR layout and "
+                "RANK_LOCAL_REDUCE combine"
             )
         if self.num_experts % world_size:
             raise ValueError("num_experts must be divisible by world_size")

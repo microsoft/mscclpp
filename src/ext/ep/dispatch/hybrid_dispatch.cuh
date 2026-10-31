@@ -87,7 +87,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
       }
       // Warp synchronization joins every writer into lane 0's release RMW.
       // GPU-fenced rows get their system publication from the acquiring QP poster.
-      fenceRankMajorStagedRow(transport);
+      __threadfence();
       __syncwarp();
       if (lane == 0) {
         (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
@@ -190,8 +190,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
                  context->gpuNetIoDistributeScratch_ + DistributeScratchCounters + chunk,
                  mscclpp::memoryOrderAcquire) != count) {
       }
-      // System-fenced writers already published the entire acquired chunk.
-      if (transport.gpuNetIoRowFence_ != GpuNetIoRowFenceSystem) __threadfence_system();
+      __threadfence_system();
       handle.device_.putWithSignalAt<kExclusive>(handle.dstMemory_, dstOffset + begin * stride, handle.srcMemory_,
                                                  srcOffset + begin * stride, count * stride, handle.dstMemory_,
                                                  flagOffset, network->nextSignalToken(sequence, flagOffset, 1));
@@ -220,19 +219,6 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   __syncthreads();
   if (warp < qps && lane == 0) network->channel(gateway, warp).flush<kExclusive>(-1);
   __syncthreads();
-  if (threadIdx.x != 0) return;
-  if (context->gpuNetIoDistributeStats_) {
-    int directRows = 0;
-    for (int peer = 0; peer < ranks; ++peer) {
-      if (!transport.isNvlinkPeer(peer)) directRows += shared[peer];
-    }
-    printf(
-        "[EP-SEND-DISTRIBUTE] rank=%d epoch=%u uniqueRows=%d directRemoteRows=%d payloadBytes=%llu "
-        "rowWireBytes=%llu headerBytes=%llu\n",
-        rank, workload.epoch_, rows, directRows, static_cast<unsigned long long>(rows) * Hidden * sizeof(Bf16),
-        static_cast<unsigned long long>(rows) * stride,
-        static_cast<unsigned long long>(GpuNetIoDistributeHeader::wireBytes(ranks)));
-  }
 }
 
 template <int Hidden>

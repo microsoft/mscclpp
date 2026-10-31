@@ -3,17 +3,16 @@
 
 """Correctness coverage for NVLink/IPC + GPUNetIO latency RANK_MAJOR.
 
-Covers RANK_LOCAL_REDUCE within an IPC domain and across domains when
-``MSCCLPP_EP_ENABLE_GPUNETIO=1``, including chunked dispatch, gateway distribution,
-and FP32 aggregate combine. Example (two nodes, four GPUs each)::
+Covers RANK_LOCAL_REDUCE within an IPC domain and across domains,
+including chunked dispatch, gateway distribution, and FP32 aggregate combine.
+Example (two nodes, four GPUs each)::
 
-    mpirun -np 8 --map-by ppr:4:node -x MSCCLPP_EP_ENABLE_GPUNETIO=1 \\
+    mpirun -np 8 --map-by ppr:4:node \\
         python3 -m pytest python/test/test_ep_hybrid.py -vx
 """
 
 from contextlib import contextmanager
 import importlib.util
-import os
 
 import cupy as cp
 from mpi4py import MPI
@@ -24,7 +23,6 @@ if importlib.util.find_spec("mscclpp.mscclpp_ep_cpp") is None:
     pytest.skip("The CUDA EP extension was not built", allow_module_level=True)
 
 from mscclpp import CommGroup
-from mscclpp._mscclpp import Error
 from mscclpp.ep import (
     CombineMode,
     DispatchLayout,
@@ -38,13 +36,6 @@ HIDDEN = 4096
 NUM_LOCAL_EXPERTS = 16
 
 
-def _gpunetio_requested():
-    try:
-        return int(os.environ.get("MSCCLPP_EP_ENABLE_GPUNETIO", "0")) != 0
-    except ValueError:
-        return False
-
-
 @pytest.fixture(scope="module")
 def ep_group():
     if not torch.cuda.is_available():
@@ -55,8 +46,6 @@ def ep_group():
     group = CommGroup(mpi_comm=MPI.COMM_WORLD)
     if not 1 <= group.nranks <= 64:
         pytest.skip("EP requires 1-64 ranks")
-    if group.nranks_per_ipc_domain < group.nranks and not _gpunetio_requested():
-        pytest.skip("Ranks span CUDA IPC domains; set MSCCLPP_EP_ENABLE_GPUNETIO=1")
     yield group
     torch.cuda.synchronize()
     group.barrier()
@@ -74,31 +63,6 @@ def initialized_runtime(group, **kwargs):
     finally:
         torch.cuda.synchronize()
         group.barrier()
-
-
-@pytest.mark.parametrize("devices", [None, "", "hca0,hca0", "nonexistent-ep-hca", "missing_rank0"])
-def test_latency_hybrid_requires_explicit_hcas(ep_group, devices, monkeypatch):
-    if not (_gpunetio_requested() and ep_group.nranks_per_ipc_domain < ep_group.nranks):
-        pytest.skip("HCA configuration is required only for inter-domain GPUNetIO")
-    if devices is None or (devices == "missing_rank0" and ep_group.my_rank == 0):
-        monkeypatch.delenv("MSCCLPP_EP_GPUNETIO_HCAS", raising=False)
-    elif devices != "missing_rank0":
-        monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_HCAS", devices)
-    runtime = MoECommunicator(
-        MoECommunicatorConfig(
-            comm=ep_group,
-            mode=MoEMode.LATENCY,
-            output_layout=DispatchLayout.RANK_MAJOR,
-            combine_mode=CombineMode.RANK_LOCAL_REDUCE,
-            num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
-            hidden_size=2048,
-            topk=NUM_TOPK,
-            max_tokens_per_rank=8,
-        )
-    )
-    with pytest.raises(Error, match="EP GPUNetIO"):
-        runtime.initialize()
-    ep_group.barrier()
 
 
 def token_routes(rank, world_size, token, num_tokens):
@@ -254,7 +218,7 @@ def _alternate_routes(rank, num_tokens):
 
 def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
     """A graph holding one dispatch/combine round must not reuse the previous replay's metadata."""
-    hybrid_rank_major = _gpunetio_requested() and ep_group.nranks_per_ipc_domain < ep_group.nranks
+    hybrid_rank_major = ep_group.nranks_per_ipc_domain < ep_group.nranks
     if not hybrid_rank_major:
         pytest.skip("Single-domain RANK_MAJOR uses the IPC path, whose graphs need two captured rounds")
     layout = DispatchLayout.RANK_MAJOR
@@ -316,7 +280,7 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
 def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, aggregate_combine, monkeypatch):
     """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
     domain = ep_group.nranks_per_ipc_domain
-    if not (_gpunetio_requested() and ep_group.nranks == 2 * domain and domain >= 2):
+    if not (ep_group.nranks == 2 * domain and domain >= 2):
         pytest.skip("Send-and-distribute coverage requires two equal NVLink domains with at least two ranks each")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1" if aggregate_combine else "0")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
@@ -497,7 +461,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
 def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, monkeypatch):
     """FP32 group sums, random BF16 partials, asymmetric tokens, and no intermediate BF16 rounding."""
     domain = ep_group.nranks_per_ipc_domain
-    if not (_gpunetio_requested() and ep_group.nranks == 2 * domain and domain >= 3):
+    if not (ep_group.nranks == 2 * domain and domain >= 3):
         pytest.skip("Aggregate partial coverage requires two NVLink domains with at least three ranks each")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1")
     monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)

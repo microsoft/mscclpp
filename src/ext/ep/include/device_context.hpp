@@ -12,10 +12,6 @@ struct EpGpuNetIoDeviceContext;
 struct GpuNetIoDistributeControl;
 struct GpuNetIoAggregateControl;
 
-constexpr int GpuNetIoRowFenceSystem = 0;
-constexpr int GpuNetIoRowFenceGpu = 1;
-constexpr int GpuNetIoRowFenceGpuPoster = 2;
-
 /// Persistent device resources shared by every dispatch and combine algorithm.
 struct DeviceContext {
   /// Local base used to translate local buffer addresses into peer mappings.
@@ -48,11 +44,8 @@ struct DeviceContext {
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Rows per hybrid dispatch chunk.
   int gpuNetIoPipelineChunkRows_ = 0;
-  /// Staged-row fence: GpuNetIoRowFenceSystem, GpuNetIoRowFenceGpu or GpuNetIoRowFenceGpuPoster.
-  int gpuNetIoRowFence_ = 0;
   /// Rows per aggregate Combine chunk, striped round-robin over the gateway QPs.
   int gpuNetIoCombineChunkRows_ = 0;
-  bool gpuNetIoDistributeStats_ = false;
   int gpuNetIoGateway_ = -1;
   int gpuNetIoDistributeCapacity_ = 0;
   void* gpuNetIoDistributeSend_ = nullptr;
@@ -87,7 +80,6 @@ struct TransportView {
   EpGpuNetIoDeviceContext* gpuNetIo_;
   void* gpuNetIoCombineFlagsBuffer_;
   void* gpuNetIoCombineLandingBuffer_;
-  int gpuNetIoRowFence_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
@@ -97,8 +89,7 @@ struct TransportView {
         numRanks_(context->numRanks_),
         gpuNetIo_(context->gpuNetIo_),
         gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
-        gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_),
-        gpuNetIoRowFence_(context->gpuNetIoRowFence_) {}
+        gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 

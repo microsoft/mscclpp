@@ -134,13 +134,6 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(
   }
   __syncwarp();
 }
-
-MSCCLPP_DEVICE_INLINE void fenceRankMajorStagedRow(const TransportView& transport) {
-  if (transport.gpuNetIoRowFence_ == GpuNetIoRowFenceSystem)
-    __threadfence_system();
-  else
-    __threadfence();
-}
 #endif
 
 MSCCLPP_DEVICE_INLINE void countRankMajorRoutes(int* rankTokenCounts, const int64_t* __restrict__ topkIndices,
