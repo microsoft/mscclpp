@@ -3,17 +3,47 @@
 
 #include <cuda.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
+#include <string>
 
 #include "exception.hpp"
 #include "kernels.hpp"
 #include "moe_runtime_context.hpp"
 
+#if defined(MSCCLPP_USE_GPUNETIO)
+#include "gpu_net_io.hpp"
+#endif
+
 namespace mscclpp {
 namespace ep {
+
+namespace {
+
+// Parse a 0/1 switch: unset keeps fallback, anything else is invalid (-1).
+int envSwitch(const char* name, int fallback) {
+  const char* requested = std::getenv(name);
+  if (requested == nullptr) return fallback;
+  const std::string value(requested);
+  return value == "0" ? 0 : value == "1" ? 1 : -1;
+}
+
+// Parse a small unsigned integer: unset keeps fallback, anything else is invalid (-1).
+int envCount(const char* name, int fallback, size_t maxDigits) {
+  const char* requested = std::getenv(name);
+  if (requested == nullptr) return fallback;
+  const std::string value(requested);
+  const bool numeric = !value.empty() && value.size() <= maxDigits &&
+                       std::all_of(value.begin(), value.end(), [](char digit) { return digit >= '0' && digit <= '9'; });
+  return numeric ? std::stoi(value) : -1;
+}
+
+}  // namespace
 
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
                                              int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
@@ -21,6 +51,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
+      numRanksPerNode_(std::min(numRanks, communicator.bootstrap()->getNranksPerNode())),
       maxTokensPerRank_(maxTokensPerRank),
       hidden_(hidden),
       numExperts_(numExperts),
@@ -30,30 +61,47 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
-  if (!isSupportedHidden(hidden)) {
-    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
-  }
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE || combineMode == CombineMode::DIRECT_SEND);
+  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
-  symmetricBufferBytes_ = static_cast<int64_t>(
-      latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode));
+#if defined(MSCCLPP_USE_GPUNETIO)
+  useGpuNetIo_ = numRanksPerIpcDomain_ < numRanks_ && outputLayout == DispatchLayout::RANK_MAJOR &&
+                 combineMode == CombineMode::RANK_LOCAL_REDUCE;
+#endif
+  if (useGpuNetIo_) {
+    const int aggregateCombine = envSwitch("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", 0);
+    // Retain syntax validity until collective initialization so every rank rejects bad configuration.
+    networkConfigValid_ = aggregateCombine >= 0;
+    deviceContext_.gpuNetIoAggregateCombine_ = aggregateCombine == 1;
+  }
+  if (!isSupportedHidden(hidden, useGpuNetIo_)) {
+    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
+  }
+  symmetricBufferBytes_ = static_cast<int64_t>(storageLayout().totalBytes_);
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
-  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
-  available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
+  available_ = isSupportedRanks(numRanks_) && (numRanksPerIpcDomain_ >= numRanks_ || useGpuNetIo_);
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   CudaDeviceGuard deviceGuard(deviceId_);
+  // Complete all network accesses before deregistering or freeing the symmetric buffer.
+  if (gpuNetIoService_ != nullptr) MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  gpuNetIoService_.reset();
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
   symmetricBuffer_.reset();
+}
+
+LatencyStorageLayout LatencyRuntimeContext::storageLayout() const {
+  return LatencyStorageLayout(symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
+                              outputLayout_, combineMode_, useGpuNetIo_, deviceContext_.gpuNetIoAggregateCombine_);
 }
 
 void LatencyRuntimeContext::initialize() {
@@ -112,17 +160,125 @@ void LatencyRuntimeContext::initialize() {
   MSCCLPP_CUDATHROW(
       cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
   MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
-  deviceContext_ = {.localBufferBase_ = symmetricBuffer_.get(),
-                    .peerBufferBases_ = peerMappedBufferBasesGpu_,
-                    .channels_ = baseMemoryChannelHandles_.get(),
-                    .workspace_ = workspace_,
-                    .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
-                    .numSms_ = numSms,
-                    .deviceId_ = deviceId_,
-                    .rank_ = rank_,
-                    .numRanks_ = numRanks_};
+  deviceContext_.localBufferBase_ = symmetricBuffer_.get();
+  deviceContext_.peerBufferBases_ = peerMappedBufferBasesGpu_;
+  deviceContext_.channels_ = baseMemoryChannelHandles_.get();
+  deviceContext_.workspace_ = workspace_;
+  deviceContext_.maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock;
+  deviceContext_.numSms_ = numSms;
+  deviceContext_.deviceId_ = deviceId_;
+  deviceContext_.rank_ = rank_;
+  deviceContext_.numRanks_ = numRanks_;
+  if (useGpuNetIo_) initializeNetwork();
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
+}
+
+void LatencyRuntimeContext::initializeNetwork() {
+  const bool aggregateCombine = deviceContext_.gpuNetIoAggregateCombine_;
+  const int domainSize = numRanksPerIpcDomain_;
+  const int pipelineChunkRows =
+      envCount("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", GpuNetIoDistributeDefaultChunkRows, 3);
+  const int combineChunkRows = envCount("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", aggregateCombine ? 8 : 0, 3);
+
+  // All ranks must agree before registering network buffers or exchanging protocol state.
+  struct StorageConfig {
+    uint64_t bytes;
+    int ipcDomainSize;
+    int pipelineChunkRows;
+    int combineChunkRows;
+    int aggregateCombine;
+    int valid;
+  };
+  std::vector<StorageConfig> configs(numRanks_);
+  configs[rank_] = {static_cast<uint64_t>(symmetricBufferBytes_),
+                    domainSize,
+                    pipelineChunkRows,
+                    combineChunkRows,
+                    aggregateCombine,
+                    networkConfigValid_};
+  communicator_.bootstrap()->allGather(configs.data(), sizeof(StorageConfig));
+  for (const auto& config : configs) {
+    EP_HOST_ASSERT(config.bytes == static_cast<uint64_t>(symmetricBufferBytes_) && config.ipcDomainSize == domainSize &&
+                   config.pipelineChunkRows == pipelineChunkRows && config.combineChunkRows == combineChunkRows &&
+                   config.aggregateCombine == aggregateCombine && config.valid);
+  }
+  if (aggregateCombine && (numTopk_ > 8 || combineChunkRows < 1 || combineChunkRows > 128)) {
+    EP_THROW("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE requires topk <= 8 and COMBINE_CHUNK_ROWS in [1,128]");
+  }
+  if (pipelineChunkRows < 1 || pipelineChunkRows > 128) {
+    EP_THROW("Hybrid dispatch requires DISPATCH_CHUNK_ROWS in [1,128]");
+  }
+  if (!aggregateCombine && combineChunkRows != 0) {
+    EP_THROW("Direct Combine requires COMBINE_CHUNK_ROWS=0; enable AGGREGATE_COMBINE for chunked returns");
+  }
+
+  deviceContext_.gpuNetIoPipelineChunkRows_ = pipelineChunkRows;
+  deviceContext_.gpuNetIoCombineChunkRows_ = combineChunkRows;
+  {
+    // Validate the actual IPC cliques, then pair their sorted members as gateways.
+    std::vector<uint64_t> mappings(numRanks_, 0);
+    if (numRanks_ <= 1 || numRanks_ > 64 || numRanks_ % 2 != 0 || numRanks_ != 2 * domainSize) {
+      EP_THROW("Hybrid dispatch requires exactly two equal, fully IPC-mapped domains");
+    }
+    for (int peer = 0; peer < numRanks_; ++peer) {
+      if (peer == rank_ || peerMappedBufferBases_[peer] != nullptr) mappings[rank_] |= uint64_t{1} << peer;
+    }
+    communicator_.bootstrap()->allGather(mappings.data(), sizeof(uint64_t));
+    const uint64_t all = ~uint64_t{0} >> (64 - numRanks_);
+    const uint64_t first = mappings[0];
+    const uint64_t second = all ^ first;
+    std::vector<int> domains[2];
+    bool valid = true;
+    for (int peer = 0; peer < numRanks_; ++peer) {
+      const int domain = (first & (uint64_t{1} << peer)) ? 0 : 1;
+      valid &= mappings[peer] == (domain == 0 ? first : second);
+      domains[domain].push_back(peer);
+    }
+    if (!valid || domains[0].size() != domains[1].size() || domains[0].size() != static_cast<size_t>(domainSize)) {
+      EP_THROW("Hybrid dispatch requires exactly two equal, fully IPC-mapped domains");
+    }
+    const int domain = (first & (uint64_t{1} << rank_)) ? 0 : 1;
+    const auto index = std::find(domains[domain].begin(), domains[domain].end(), rank_) - domains[domain].begin();
+    deviceContext_.gpuNetIoGateway_ = domains[1 - domain][index];
+    deviceContext_.gpuNetIoDistributeCapacity_ = maxTokensPerRank_;
+    distributeScratch_ = mscclpp::detail::gpuCallocShared<int>(3 + configCellDiv(maxTokensPerRank_, pipelineChunkRows));
+    deviceContext_.gpuNetIoDistributeScratch_ = distributeScratch_.get();
+    if (aggregateCombine) {
+      // Private caches survive remote reuse of the registered dispatch landing.
+      aggregateMetadata_ =
+          mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 2 * numTopk_));
+      deviceContext_.gpuNetIoAggregateIncomingRows_ = aggregateMetadata_.get();
+      deviceContext_.gpuNetIoAggregateTokenRows_ = aggregateMetadata_.get() + 1;
+      deviceContext_.gpuNetIoAggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
+      aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
+      deviceContext_.gpuNetIoAggregateLocal_ = aggregateLocal_.get();
+      aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, combineChunkRows));
+      deviceContext_.gpuNetIoAggregateChunkReady_ = aggregateChunkReady_.get();
+    }
+  }
+
+#if defined(MSCCLPP_USE_GPUNETIO)
+  gpuNetIoService_ = std::make_shared<EpGpuNetIoService>(communicator_.bootstrap(), deviceId_);
+  gpuNetIoService_->setup(symmetricBuffer_.get(), symmetricBufferBytes_);
+  deviceContext_.gpuNetIo_ = gpuNetIoService_->deviceContext();
+  const auto storage = storageLayout();
+  deviceContext_.gpuNetIoCombineFlagsBuffer_ = storage.gpuNetIoCombineFlagsBuffer_;
+  deviceContext_.gpuNetIoCombineLandingBuffer_ = storage.gpuNetIoCombineLandingBuffer_;
+  deviceContext_.gpuNetIoAggregateSend_ = storage.gpuNetIoAggregateSend_;
+  deviceContext_.gpuNetIoAggregateRecv_ = storage.gpuNetIoAggregateRecv_;
+  deviceContext_.gpuNetIoAggregateControl_ = storage.gpuNetIoAggregateControl_;
+  {
+    EpGpuNetIoDeviceContext network{};
+    mscclpp::gpuMemcpy<EpGpuNetIoDeviceContext>(&network, gpuNetIoService_->deviceContext(), 1, cudaMemcpyDeviceToHost);
+    if (network.numQpsPerPeer != 1 && network.numQpsPerPeer != 4) {
+      EP_THROW("Hybrid dispatch requires 1 or 4 QPs per peer");
+    }
+    deviceContext_.gpuNetIoDistributeSend_ = storage.gpuNetIoDistributeSend_;
+    deviceContext_.gpuNetIoDistributeRecv_ = storage.gpuNetIoDistributeRecv_;
+    deviceContext_.gpuNetIoDistributeControl_ = storage.gpuNetIoDistributeControl_;
+  }
+#endif
 }
 
 DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& request) {
@@ -172,6 +328,9 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
       EP_THROW("Latency RANK_MAJOR static FP8 requires a finite positive quantization scale");
     }
+    if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !std::isfinite(1.0f / dispatchScale)) {
+      EP_THROW("Latency RANK_MAJOR static FP8 combine requires a quantization scale with a finite reciprocal");
+    }
     EP_HOST_ASSERT(outputScales == nullptr);
     if (inputMode == QuantConfig::InputMode::QUANTIZE) {
       EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
@@ -197,22 +356,8 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
   }
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
-                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
-                                        context.combineMode_);
-  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
-  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
-    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
-      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
-      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
-    }
-  }
-
-  const Workload workload{.numTokens_ = numTokens,
+  const Workload workload{.epoch_ = context.epoch_,
+                          .numTokens_ = numTokens,
                           .hidden_ = hidden,
                           .numTopk_ = numTopk,
                           .numExperts_ = numExperts,
@@ -224,8 +369,37 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .dispatchScale_ = dispatchScale,
                           .emitLocalExpertIds_ = emitLocalExpertIds,
                           .inputMode_ = inputMode};
+  const auto allocationLayout = context.storageLayout();
+  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
+  if (context.useGpuNetIo_) {
+    if (dispatchDataType != DispatchDataType::BF16 || combineDataType != DispatchDataType::BF16) {
+      EP_THROW("GPUNetIO latency dispatch supports BF16 only");
+    }
+    if (emitLocalExpertIds) {
+      EP_THROW("Local expert IDs are unsupported by GPUNetIO latency dispatch");
+    }
+    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, workload.epoch_, request));
+    hybridDispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights, workload,
+                   allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
+    return handle;
+  }
+
+  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
+      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
+  }
+
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
@@ -296,10 +470,17 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
-                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
-                                        context.combineMode_);
+  const auto allocationLayout = context.storageLayout();
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
+  if (context.useGpuNetIo_) {
+    EP_HOST_ASSERT(numBlocks >= context.numRanks_);
+    EP_HOST_ASSERT(input == allocationLayout.combineBuffer_);
+    hybridCombine(output, input, topkIdx, workload, allocationLayout.combineBuffer_,
+                  allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
+    ++context.epoch_;
+    return;
+  }
+
   void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(input == combineBuffer);

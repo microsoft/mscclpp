@@ -108,11 +108,24 @@ struct WorkspaceView {
   uint32_t* dispatchTasksReadyFlag_;
   int* dispatchNumRecvTasks_;
   uint32_t* combineRankReadyFlags_;
+  // Device-side rank-major round epoch. Kernels derive their epoch from it so CUDA graph replays, which reuse the
+  // captured Workload, still see a fresh epoch every dispatch/combine round. Dispatch reads rankMajorLastEpoch_ and
+  // publishes the new epoch in rankMajorRoundEpoch_; combine reads that and retires it into rankMajorLastEpoch_.
+  uint32_t* rankMajorLastEpoch_;
+  uint32_t* rankMajorRoundEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
+  // Direct network Combine retains arrival baselines and the source counts from Dispatch.
+  uint64_t* combineArrivedBaseline_;
+  int* dispatchRecvCounts_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
+    // 8-byte-aligned field first (workspace base is allocation-aligned).
+    combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
+    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
+    dispatchRecvCounts_ = cursor;
+    cursor += nRanks;
     dispatchFlags_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += DispatchFlagSlots;
     dispatchRankPayloadSlots_ = cursor;
@@ -130,13 +143,17 @@ struct WorkspaceView {
     dispatchNumRecvTasks_ = cursor++;
     combineRankReadyFlags_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
+    rankMajorLastEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
+    rankMajorRoundEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
     rankMajorSendIndices_ = cursor;
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(DispatchFlagSlots) * sizeof(uint32_t) +  // dispatchFlags_
+    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +             // combineArrivedBaseline_
+           static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRecvCounts_
+           static_cast<size_t>(DispatchFlagSlots) * sizeof(uint32_t) +  // dispatchFlags_
            static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                           // dispatchLocalPayloadReady_
@@ -145,10 +162,30 @@ struct WorkspaceView {
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyFlag_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyFlags_
+           sizeof(uint32_t) +                                                            // rankMajorLastEpoch_
+           sizeof(uint32_t) +                                                            // rankMajorRoundEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
+
+// Epochs stay in [1, RankMajorEpochPeriod] so 0 never matches a live epoch and epoch * 2 + 1 cannot wrap.
+constexpr uint32_t RankMajorEpochPeriod = 1u << 30;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+// Each kernel reads one word and only block 0 writes the other, so no barrier or atomic is needed: stream order
+// makes the previous kernel's write visible, and no block of the same kernel reads the word it writes.
+MSCCLPP_DEVICE_INLINE uint32_t beginRankMajorDispatchEpoch(const WorkspaceView& workspace) {
+  const uint32_t epoch = *workspace.rankMajorLastEpoch_ % RankMajorEpochPeriod + 1;
+  if (blockIdx.x == 0 && threadIdx.x == 0) *workspace.rankMajorRoundEpoch_ = epoch;
+  return epoch;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t beginRankMajorCombineEpoch(const WorkspaceView& workspace) {
+  const uint32_t epoch = *workspace.rankMajorRoundEpoch_;
+  if (blockIdx.x == 0 && threadIdx.x == 0) *workspace.rankMajorLastEpoch_ = epoch;
+  return epoch;
+}
 
 MSCCLPP_DEVICE_INLINE uint32_t getDispatchFlag(const WorkspaceView& workspaceView) {
   return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
@@ -168,14 +205,21 @@ MSCCLPP_DEVICE_INLINE void updateDispatchFlag(WorkspaceView& workspaceView, uint
     workspaceView.dispatchFlags_[thread] = flag;
   }
 }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
   return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
+MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
+  return nRanks > NSendSlots ? nRanks : NSendSlots;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool network = false) {
+  constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
+  const int counts = nRanks + (network ? 1 : 0);
+  const int nSlots = counts > NSendSlots ? counts : NSendSlots;
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
 
@@ -201,11 +245,11 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Network = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
-  const size_t controlBytes = dispatchSharedControlBytes(nRanks);
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Network);
   const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t recvBytes = Network ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

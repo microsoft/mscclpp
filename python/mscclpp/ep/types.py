@@ -110,9 +110,10 @@ class MoECommunicatorConfig:
         if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
             raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
         if latency:
-            if self.hidden_size not in (1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216):
+            # The native runtime validates the hidden size against the selected transport.
+            if self.hidden_size not in (1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216):
                 raise ValueError(
-                    "latency hidden_size must be one of 1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216"
+                    "latency hidden_size must be one of 1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216"
                 )
         elif self.hidden_size % 8:
             raise ValueError("throughput combine requires 16-byte-aligned BF16 rows, even after FP8 dispatch")
@@ -121,8 +122,15 @@ class MoECommunicatorConfig:
         if not isinstance(self.comm, CommGroup):
             raise TypeError("comm must be an mscclpp.CommGroup")
         world_size = self.comm.nranks
-        if not 1 <= world_size <= 64 or self.comm.nranks_per_ipc_domain != world_size:
-            raise ValueError("EP requires 1-64 ranks in one CUDA IPC domain")
+        if not 1 <= world_size <= 64:
+            raise ValueError("EP requires 1-64 ranks")
+        if self.comm.nranks_per_ipc_domain != world_size and not (
+            latency and layout == DispatchLayout.RANK_MAJOR and self.combine_mode == CombineMode.RANK_LOCAL_REDUCE
+        ):
+            raise ValueError(
+                "EP across multiple CUDA IPC domains requires LATENCY mode with RANK_MAJOR layout and "
+                "RANK_LOCAL_REDUCE combine"
+            )
         if self.num_experts % world_size:
             raise ValueError("num_experts must be divisible by world_size")
         num_local = self.num_experts // world_size

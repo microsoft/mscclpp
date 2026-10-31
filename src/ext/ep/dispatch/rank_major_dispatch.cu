@@ -9,38 +9,12 @@ namespace ep {
 namespace {
 #if MSCCLPP_BULK_AVAILABLE
 
-struct Route {
-  int dstRank;
-  int destinationSlot;
-  bool isLeader;
-};
-
-MSCCLPP_DEVICE_INLINE Route prepareRoute(WorkspaceView& workspaceView, const int64_t* __restrict__ topkIndices,
-                                         int tokenIdx, int nTopk, int nLocalExperts, int maxTokensPerRank, int laneId) {
-  const int routedExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-  const int dstRank = routedExpertIdx >= 0 ? routedExpertIdx / nLocalExperts : -1;
-  const bool firstLaneForRank = isFirstLaneForRank(dstRank, laneId);
-  int destinationSlot = -1;
-  if (dstRank >= 0 && firstLaneForRank) {
-    destinationSlot = atomicAdd(workspaceView.dispatchRankPayloadSlots_ + dstRank, 1);
-    EP_DEVICE_ASSERT(destinationSlot < maxTokensPerRank);
-  }
-
-  const unsigned matchMask = __match_any_sync(0xffffffff, dstRank);
-  const int firstLane = __ffs(matchMask) - 1;
-  destinationSlot = __shfl_sync(0xffffffff, destinationSlot, firstLane);
-  if (laneId < nTopk) {
-    workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId] = dstRank >= 0 ? destinationSlot : -1;
-  }
-  return {dstRank, destinationSlot, firstLaneForRank};
-}
-
 // Each destination's leader lane writes the whole masked top-k row of that destination, so all destination rows of a
 // token are written concurrently instead of one destination after another.
 template <bool EmitLocalExpertIds>
 MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
                                         const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights,
-                                        const Route& route, int tokenIdx, int nTopk, int nLocalExperts,
+                                        const RankMajorRoute& route, int tokenIdx, int nTopk, int nLocalExperts,
                                         int maxTokensPerRank, int invalidTokenExpertId) {
   if (route.dstRank >= 0 && route.isLeader) {
     const size_t outputIdx = (static_cast<size_t>(transport.rank_) * maxTokensPerRank + route.destinationSlot) * nTopk;
@@ -77,43 +51,6 @@ MSCCLPP_DEVICE_INLINE void sendMetadata(const TransportView& transport, int* out
     }
   }
   __syncwarp();
-}
-
-template <int Hidden, DispatchDataType DataType>
-MSCCLPP_DEVICE_INLINE void issueTokenStore(void* output, const TransportView& transport, int destinationSlot,
-                                           int maxTokensPerRank, void* stagedToken, int destinationRank,
-                                           void* outputScales = nullptr) {
-  if (destinationSlot < 0) return;
-
-  using ElementType = DispatchElementType<DataType>;
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  const size_t row = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
-  void* destinationBuffer = transport.mappedBuffer(output, destinationRank);
-  auto* destinationRow = reinterpret_cast<uint8_t*>(destinationBuffer) + row * HiddenBytes;
-  mscclpp::bulkStore(destinationRow, stagedToken, static_cast<uint32_t>(HiddenBytes));
-  if constexpr (DataType == DispatchDataType::MXFP8_E4M3) {
-    constexpr int ScaleBytes = Hidden / 32;
-    auto* destinationScales =
-        static_cast<uint8_t*>(transport.mappedBuffer(outputScales, destinationRank)) + row * ScaleBytes;
-    auto* stagedScales = static_cast<uint8_t*>(stagedToken) + HiddenBytes;
-    if constexpr (ScaleBytes % 16 == 0) {
-      mscclpp::bulkStore(destinationScales, stagedScales, ScaleBytes);
-    } else {
-      // Preserve contiguous scales for widths such as 4352, whose rows are not TMA-aligned.
-      static_assert(ScaleBytes % sizeof(uint64_t) == 0);
-      for (int i = 0; i < ScaleBytes / sizeof(uint64_t); ++i) {
-        reinterpret_cast<uint64_t*>(destinationScales)[i] = reinterpret_cast<const uint64_t*>(stagedScales)[i];
-      }
-    }
-  }
-  mscclpp::bulkStoreCommit();
-}
-
-MSCCLPP_DEVICE_INLINE void completeTokenStore(WorkspaceView& workspaceView, int destinationRank) {
-  if (destinationRank < 0) return;
-  mscclpp::bulkStoreWait();
-  (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
-      workspaceView.dispatchRankPayloadCompletions_ + destinationRank, 1, mscclpp::memoryOrderRelease);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool EmitLocalExpertIds>
@@ -157,19 +94,19 @@ MSCCLPP_DEVICE_INLINE void dispatchSendTokens(void* output, int* outputTopkIdx, 
       bulkBarrier->arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
       mscclpp::bulkLoad(stagedToken, inputData, static_cast<uint32_t>(HiddenBytes), *bulkBarrier);
     }
-    const Route route =
-        prepareRoute(workspaceView, topkIndices, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
+    const RankMajorRoute route =
+        prepareRankMajorRoute(workspaceView, topkIndices, tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
     if (laneId == 0) bulkBarrier->wait(sendBulkPhase);
     __syncwarp();
     mscclpp::bulkFence();
     const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
     if (dstRank >= 0) {
-      issueTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
-                                        dstRank);
+      issueRankMajorTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank,
+                                                 stagedToken, dstRank);
     }
     sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
                                      tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
-    completeTokenStore(workspaceView, dstRank);
+    completeRankMajorTokenStore(workspaceView, dstRank);
     if (tokenIdx + tokenStride < nTokens) __syncwarp();
   }
 }
@@ -210,7 +147,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
   const int firstTokenIdx = (static_cast<int>(blockIdx.x) - 1) * nWarpGroups + warpGroupId;
   if (firstTokenIdx >= nTokens) return;
 
-  Route route{-1, -1, false};
+  RankMajorRoute route{-1, -1, false};
   mscclpp::f8_e4m3x8 quantized[MaxVectorsPerThread];
   [[maybe_unused]] uint8_t scales[MaxVectorsPerThread];
   auto quantizeToken = [&](int tokenIdx) {
@@ -237,7 +174,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
 
   // Prologue: Warp 0 reserves destination slots while the other warps quantize the first token into registers.
   if (subWarpId == 0) {
-    route = prepareRoute(workspaceView, topkIndices, firstTokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
+    route = prepareRankMajorRoute(workspaceView, topkIndices, firstTokenIdx, nTopk, nLocalExperts, maxTokensPerRank,
+                                  laneId);
   } else {
     quantizeToken(firstTokenIdx);
   }
@@ -263,15 +201,16 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
     if (subWarpId == 0) {
       const int dstRank = route.dstRank >= 0 && route.isLeader ? route.dstRank : -1;
       if (dstRank >= 0) {
-        issueTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank, stagedToken,
-                                          dstRank, outputScales);
+        issueRankMajorTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, maxTokensPerRank,
+                                                   stagedToken, dstRank, outputScales);
       }
       sendMetadata<EmitLocalExpertIds>(transport, outputTopkIdx, outputTopkWeights, topkIndices, topkWeights, route,
                                        tokenIdx, nTopk, nLocalExperts, maxTokensPerRank, invalidTokenExpertId);
       if (nextTokenIdx < nTokens) {
-        route = prepareRoute(workspaceView, topkIndices, nextTokenIdx, nTopk, nLocalExperts, maxTokensPerRank, laneId);
+        route = prepareRankMajorRoute(workspaceView, topkIndices, nextTokenIdx, nTopk, nLocalExperts, maxTokensPerRank,
+                                      laneId);
       }
-      completeTokenStore(workspaceView, dstRank);
+      completeRankMajorTokenStore(workspaceView, dstRank);
     } else if (nextTokenIdx < nTokens) {
       quantizeToken(nextTokenIdx);
     }
@@ -279,24 +218,6 @@ MSCCLPP_DEVICE_INLINE void dispatchSendQuantized(void* output, void* outputScale
       syncNamedBarrier(groupBarrierId, groupThreadCount);
     }
   }
-}
-
-MSCCLPP_DEVICE_INLINE void countRoutes(int* rankTokenCounts, const int64_t* __restrict__ topkIndices, int nTokens,
-                                       int nTopk, int nRanks, int nExperts) {
-  const int threadId = static_cast<int>(threadIdx.x);
-  const int warpId = threadId / WARP_SIZE;
-  const int laneId = getLaneId();
-  const int nLocalExperts = nExperts / nRanks;
-  for (int rankIdx = threadId; rankIdx < nRanks; rankIdx += blockDim.x) rankTokenCounts[rankIdx] = 0;
-  __syncthreads();
-  for (int tokenIdx = warpId; tokenIdx < nTokens; tokenIdx += DispatchNWarps) {
-    const int routedExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-    const int dstRank = routedExpertIdx >= 0 ? routedExpertIdx / nLocalExperts : -1;
-    if (isFirstLaneForRank(dstRank, laneId) && dstRank >= 0) {
-      atomicAdd_block(rankTokenCounts + dstRank, 1);
-    }
-  }
-  __syncthreads();
 }
 
 MSCCLPP_DEVICE_INLINE void writeCounts(const TransportView& transport, const int* rankTokenCounts, int nRanks,
@@ -313,7 +234,7 @@ MSCCLPP_DEVICE_INLINE void dispatchNotify(const TransportView& transport, int nE
                                           void* recvBuffer, void* workspace, uint32_t flag, int* sharedMem) {
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
   auto* rankTokenCounts = sharedMem;
-  countRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
+  countRankMajorRoutes(rankTokenCounts, topkIndices, nTokens, nTopk, nRanks, nExperts);
   writeCounts(transport, rankTokenCounts, nRanks, recvBuffer, flag);
   publishDispatchPayloads(transport, rankTokenCounts, nRanks, workspaceView);
 }

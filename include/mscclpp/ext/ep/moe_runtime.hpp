@@ -141,6 +141,8 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
+  /// @warning Hybrid aggregate combine requires a fresh dispatch before each
+  /// combine, including graph replays.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a
