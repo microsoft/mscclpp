@@ -78,7 +78,7 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   int queues = 1;
   try {
     transport = selectIbTransport(state.device);
-    if (const char* value = std::getenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER")) {
+    if (const char* value = std::getenv("MSCCLPP_EP_QPS_PER_PEER")) {
       const std::string text(value);
       const auto parsed = std::from_chars(text.data(), text.data() + text.size(), queues);
       if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) queues = 0;

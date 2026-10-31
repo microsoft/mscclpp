@@ -74,7 +74,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
                  combineMode == CombineMode::RANK_LOCAL_REDUCE;
 #endif
   if (useGpuNetIo_) {
-    const int aggregateCombine = envSwitch("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", 0);
+    const int aggregateCombine = envSwitch("MSCCLPP_EP_AGGREGATE_COMBINE", 0);
     // Retain syntax validity until collective initialization so every rank rejects bad configuration.
     networkConfigValid_ = aggregateCombine >= 0;
     deviceContext_.gpuNetIoAggregateCombine_ = aggregateCombine == 1;
@@ -177,9 +177,8 @@ void LatencyRuntimeContext::initialize() {
 void LatencyRuntimeContext::initializeNetwork() {
   const bool aggregateCombine = deviceContext_.gpuNetIoAggregateCombine_;
   const int domainSize = numRanksPerIpcDomain_;
-  const int pipelineChunkRows =
-      envCount("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", GpuNetIoDistributeDefaultChunkRows, 3);
-  const int combineChunkRows = envCount("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", aggregateCombine ? 8 : 0, 3);
+  const int pipelineChunkRows = envCount("MSCCLPP_EP_DISPATCH_CHUNK_ROWS", GpuNetIoDistributeDefaultChunkRows, 3);
+  const int combineChunkRows = envCount("MSCCLPP_EP_COMBINE_CHUNK_ROWS", aggregateCombine ? 8 : 0, 3);
 
   // All ranks must agree before registering network buffers or exchanging protocol state.
   struct StorageConfig {
@@ -204,13 +203,15 @@ void LatencyRuntimeContext::initializeNetwork() {
                    config.aggregateCombine == aggregateCombine && config.valid);
   }
   if (aggregateCombine && (numTopk_ > 8 || combineChunkRows < 1 || combineChunkRows > 128)) {
-    EP_THROW("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE requires topk <= 8 and COMBINE_CHUNK_ROWS in [1,128]");
+    EP_THROW("MSCCLPP_EP_AGGREGATE_COMBINE requires topk <= 8 and MSCCLPP_EP_COMBINE_CHUNK_ROWS in [1,128]");
   }
   if (pipelineChunkRows < 1 || pipelineChunkRows > 128) {
-    EP_THROW("Hybrid dispatch requires DISPATCH_CHUNK_ROWS in [1,128]");
+    EP_THROW("Hybrid dispatch requires MSCCLPP_EP_DISPATCH_CHUNK_ROWS in [1,128]");
   }
   if (!aggregateCombine && combineChunkRows != 0) {
-    EP_THROW("Direct Combine requires COMBINE_CHUNK_ROWS=0; enable AGGREGATE_COMBINE for chunked returns");
+    EP_THROW(
+        "Direct Combine requires MSCCLPP_EP_COMBINE_CHUNK_ROWS=0; enable MSCCLPP_EP_AGGREGATE_COMBINE for chunked "
+        "returns");
   }
 
   deviceContext_.gpuNetIoPipelineChunkRows_ = pipelineChunkRows;

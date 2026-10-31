@@ -282,10 +282,10 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 2):
         pytest.skip("Send-and-distribute coverage requires two equal NVLink domains with at least two ranks each")
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1" if aggregate_combine else "0")
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", str(chunk_rows))
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", str(chunk_rows) if aggregate_combine else "0")
+    monkeypatch.setenv("MSCCLPP_EP_AGGREGATE_COMBINE", "1" if aggregate_combine else "0")
+    monkeypatch.setenv("MSCCLPP_EP_QPS_PER_PEER", qps_per_peer)
+    monkeypatch.setenv("MSCCLPP_EP_DISPATCH_CHUNK_ROWS", str(chunk_rows))
+    monkeypatch.setenv("MSCCLPP_EP_COMBINE_CHUNK_ROWS", str(chunk_rows) if aggregate_combine else "0")
     layout = DispatchLayout.RANK_MAJOR
     capacity = 272
     invalid_expert = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -463,10 +463,10 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, monke
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 3):
         pytest.skip("Aggregate partial coverage requires two NVLink domains with at least three ranks each")
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_AGGREGATE_COMBINE", "1")
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_QPS_PER_PEER", qps_per_peer)
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_DISPATCH_CHUNK_ROWS", "8")
-    monkeypatch.setenv("MSCCLPP_EP_GPUNETIO_COMBINE_CHUNK_ROWS", "8")
+    monkeypatch.setenv("MSCCLPP_EP_AGGREGATE_COMBINE", "1")
+    monkeypatch.setenv("MSCCLPP_EP_QPS_PER_PEER", qps_per_peer)
+    monkeypatch.setenv("MSCCLPP_EP_DISPATCH_CHUNK_ROWS", "8")
+    monkeypatch.setenv("MSCCLPP_EP_COMBINE_CHUNK_ROWS", "8")
     hidden, capacity, tokens = 2048, 16, 9
     # Rank zero still has gateway rows to produce for its paired rank.
     own_tokens = 0 if ep_group.my_rank == 0 else tokens
