@@ -11,6 +11,7 @@
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -22,8 +23,6 @@ namespace mscclpp {
 namespace ep {
 
 struct Workload;
-
-class EpGpuNetIoService;
 
 struct PrepareHandle::Impl {
   Impl(std::weak_ptr<ThroughputRuntimeContext> owner, uint64_t routingEpoch, const PrepareRequest& request)
@@ -91,14 +90,14 @@ struct DispatchHandle::Impl {
 struct LatencyRuntimeContext {
   LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numRanksPerIpcDomain,
                         int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                        CombineMode combineMode, int qpsPerPeer = 1, int chunkSize = 8, bool aggregateCombine = false);
+                        CombineMode combineMode, int qpsPerPeer = 1, int nTokensPerChunk = 8,
+                        bool aggregateCombine = false);
   ~LatencyRuntimeContext() noexcept(false);
 
  private:
   friend class MoERuntime;
 
   void initialize();
-  void initializeNetwork();
   LatencyStorageLayout storageLayout() const;
 
   int rank_;
@@ -113,7 +112,7 @@ struct LatencyRuntimeContext {
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
   int qpsPerPeer_ = 1;
-  int chunkSize_ = 8;
+  int nTokensPerChunk_ = 8;
   bool aggregateCombine_ = false;
   bool isHybrid_ = false;
   int64_t symmetricBufferBytes_;
@@ -125,10 +124,14 @@ struct LatencyRuntimeContext {
   mscclpp::Communicator& communicator_;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
+  mscclpp::RegisteredMemory ibLocalMemory_;
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-  std::shared_ptr<EpGpuNetIoService> gpuNetIoService_;
+  std::vector<mscclpp::PortChannel> portChannels_;
+  std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
+  std::shared_ptr<PortChannelSignalState> portChannelSignalStates_;
+  std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
   std::shared_ptr<int> distributeScratch_;
   std::shared_ptr<int> aggregateMetadata_;
   std::shared_ptr<float> aggregateLocal_;

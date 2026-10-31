@@ -104,7 +104,7 @@ existing behavior.
 
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
-`chunkSize` (`chunk_size` in `MoECommunicatorConfig`) controls the number of tokens per chunk (1–128, default eight).
+`nTokensPerChunk` (`n_tokens_per_chunk` in `MoECommunicatorConfig`) controls the number of tokens per chunk (1–128, default eight).
 Each QP has one independent posting warp that preserves chunk order. QP 0's posting thread also sends the forwarding
 ACK after all chunk posters finish, so the hybrid dispatch requires no QP locks.
 A self-validating LL header carries fresh destination counts, which the gateway publishes locally before completion.
@@ -140,7 +140,7 @@ validate their own epochs; nonempty payloads use a separate ready signal.
 
 Setting `aggregateCombine = true` (`aggregate_combine=True` in `MoECommunicatorConfig`) enables reverse-gateway
 aggregation. It defaults off and requires BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated
-two-domain, one-or-four-QP topology. `chunkSize` (`chunk_size`) selects 1–128 tokens per chunk (default eight).
+two-domain, one-or-four-QP topology. `nTokensPerChunk` (`n_tokens_per_chunk`) selects 1–128 tokens per chunk (default eight).
 Incompatible rank-major requests fail collective initialization; other layouts and IPC-only runtimes retain their
 existing paths.
 

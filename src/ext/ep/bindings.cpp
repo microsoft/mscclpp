@@ -59,7 +59,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
         nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"),
         nb::arg("output_layout") = DispatchLayout::EXPERT_MAJOR,
         nb::arg("combine_mode") = CombineMode::RANK_LOCAL_REDUCE, nb::arg("qps_per_peer") = 1,
-        nb::arg("chunk_size") = 8, nb::arg("aggregate_combine") = false, nb::keep_alive<0, 1>());
+        nb::arg("n_tokens_per_chunk") = 8, nb::arg("aggregate_combine") = false, nb::keep_alive<0, 1>());
 
   nb::class_<MoERuntime>(m, "MoERuntime")
       .def_prop_ro("mode", &MoERuntime::mode)

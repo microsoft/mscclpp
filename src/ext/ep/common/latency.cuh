@@ -108,11 +108,6 @@ struct WorkspaceView {
   uint32_t* dispatchTasksReadyFlag_;
   int* dispatchNumRecvTasks_;
   uint32_t* combineRankReadyFlags_;
-  // Device-side rank-major round epoch. Kernels derive their epoch from it so CUDA graph replays, which reuse the
-  // captured Workload, still see a fresh epoch every dispatch/combine round. Dispatch reads rankMajorLastEpoch_ and
-  // publishes the new epoch in rankMajorRoundEpoch_; combine reads that and retires it into rankMajorLastEpoch_.
-  uint32_t* rankMajorLastEpoch_;
-  uint32_t* rankMajorRoundEpoch_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
   // Direct network Combine retains arrival baselines and the source counts from Dispatch.
@@ -143,8 +138,6 @@ struct WorkspaceView {
     dispatchNumRecvTasks_ = cursor++;
     combineRankReadyFlags_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += nRanks;
-    rankMajorLastEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
-    rankMajorRoundEpoch_ = reinterpret_cast<uint32_t*>(cursor++);
     combineSyncer_ = reinterpret_cast<mscclpp::DeviceSyncer*>(cursor);
     cursor += sizeof(mscclpp::DeviceSyncer) / sizeof(int);
     rankMajorSendIndices_ = cursor;
@@ -162,31 +155,12 @@ struct WorkspaceView {
            static_cast<size_t>(MaxWorkerBlocks) * sizeof(RecvTask) + sizeof(uint32_t) +  // dispatchTasksReadyFlag_
            sizeof(int) +                                                                 // dispatchNumRecvTasks_
            static_cast<size_t>(nRanks) * sizeof(uint32_t) +                              // combineRankReadyFlags_
-           sizeof(uint32_t) +                                                            // rankMajorLastEpoch_
-           sizeof(uint32_t) +                                                            // rankMajorRoundEpoch_
            sizeof(mscclpp::DeviceSyncer) +                                               // combineSyncer_
            static_cast<size_t>(maxTokensPerRank) * nTopk * sizeof(int);                  // rankMajorSendIndices_
   }
 };
 
-// Epochs stay in [1, RankMajorEpochPeriod] so 0 never matches a live epoch and epoch * 2 + 1 cannot wrap.
-constexpr uint32_t RankMajorEpochPeriod = 1u << 30;
-
 #if defined(MSCCLPP_DEVICE_COMPILE)
-// Each kernel reads one word and only block 0 writes the other, so no barrier or atomic is needed: stream order
-// makes the previous kernel's write visible, and no block of the same kernel reads the word it writes.
-MSCCLPP_DEVICE_INLINE uint32_t beginRankMajorDispatchEpoch(const WorkspaceView& workspace) {
-  const uint32_t epoch = *workspace.rankMajorLastEpoch_ % RankMajorEpochPeriod + 1;
-  if (blockIdx.x == 0 && threadIdx.x == 0) *workspace.rankMajorRoundEpoch_ = epoch;
-  return epoch;
-}
-
-MSCCLPP_DEVICE_INLINE uint32_t beginRankMajorCombineEpoch(const WorkspaceView& workspace) {
-  const uint32_t epoch = *workspace.rankMajorRoundEpoch_;
-  if (blockIdx.x == 0 && threadIdx.x == 0) *workspace.rankMajorLastEpoch_ = epoch;
-  return epoch;
-}
-
 MSCCLPP_DEVICE_INLINE uint32_t getDispatchFlag(const WorkspaceView& workspaceView) {
   return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
 }

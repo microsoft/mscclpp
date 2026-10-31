@@ -4,11 +4,52 @@
 #define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 
 namespace mscclpp {
 namespace ep {
 
-struct EpGpuNetIoDeviceContext;
+using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>;
+
+struct PortChannelSignalState {
+  uint64_t offsets[4];
+  uint64_t tokens[4];
+};
+
+struct PortChannelDeviceContext {
+  PortChannelDeviceHandle* channels;
+  PortChannelSignalState* signalStates;
+  int numPeers;
+  int numQpsPerPeer;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle channel(int peer, int queue) const {
+    MSCCLPP_ASSERT_DEVICE(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
+                          "Invalid PortChannel index");
+    return channels[static_cast<size_t>(peer) * numQpsPerPeer + queue];
+  }
+
+  MSCCLPP_DEVICE_INLINE PortChannelSignalState& signalState(int peer, int queue) const {
+    MSCCLPP_ASSERT_DEVICE(
+        signalStates != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
+        "Invalid PortChannel signal state index");
+    return signalStates[static_cast<size_t>(peer) * numQpsPerPeer + queue];
+  }
+
+  MSCCLPP_DEVICE_INLINE static uint64_t nextSignalToken(PortChannelSignalState& state, uint64_t signalOffset,
+                                                        uint64_t signalValue) {
+    for (int i = 0; i < 4; ++i) {
+      if (state.tokens[i] == 0 || state.offsets[i] == signalOffset) {
+        state.offsets[i] = signalOffset;
+        return state.tokens[i] += signalValue;
+      }
+    }
+    MSCCLPP_ASSERT_DEVICE(false, "Too many active PortChannel signal offsets");
+    return 0;
+  }
+#endif
+};
+
 struct GpuNetIoDistributeControl;
 struct GpuNetIoAggregateControl;
 
@@ -34,16 +75,15 @@ struct DeviceContext {
   int numRanks_;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
-  /// GPU-initiated networking (GPUNetIO/GDAKI) device context for peers outside
-  /// this rank's NVLink/IPC domain, or nullptr when every peer is NVLink-mapped
-  /// (single-domain) or the GPUNetIO backend is disabled.
-  EpGpuNetIoDeviceContext* gpuNetIo_ = nullptr;
+  /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
+  /// or nullptr when every peer is NVLink-mapped.
+  PortChannelDeviceContext* gpuNetIo_ = nullptr;
   /// Symmetric per-peer-rank completion flags for direct Combine.
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
   /// Symmetric payload-only combine landing rows, null unless active.
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
   /// Tokens per hybrid dispatch/combine IB chunk.
-  int gpuNetIoChunkSize_ = 0;
+  int nTokensPerChunk_ = 0;
   int gpuNetIoGateway_ = -1;
   int gpuNetIoDistributeCapacity_ = 0;
   void* gpuNetIoDistributeSend_ = nullptr;
@@ -72,10 +112,7 @@ struct TransportView {
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
   int numRanks_;
-  // GPU-initiated networking (GPUNetIO) cross-domain resources. gpuNetIo_ is null
-  // unless the backend is active for this rank; peers with a null mapped-buffer
-  // base (see isNvlinkPeer) are served over GPUNetIO instead of NVLink/IPC.
-  EpGpuNetIoDeviceContext* gpuNetIo_;
+  PortChannelDeviceContext* gpuNetIo_;
   void* gpuNetIoCombineFlagsBuffer_;
   void* gpuNetIoCombineLandingBuffer_;
 

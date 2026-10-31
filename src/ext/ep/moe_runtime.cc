@@ -12,7 +12,7 @@ namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
                        int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
-                       int qpsPerPeer, int chunkSize, bool aggregateCombine)
+                       int qpsPerPeer, int nTokensPerChunk, bool aggregateCombine)
     : communicator_(communicator),
       mode_(mode),
       rank_(communicator_.bootstrap()->getRank()),
@@ -25,7 +25,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     case MoEMode::LATENCY:
       latencyContext_ = std::make_shared<LatencyRuntimeContext>(
           communicator_, rank_, numRanks_, numRanksPerIpcDomain_, maxTokensPerRank, hidden, numExperts, numTopk,
-          outputLayout, combineMode, qpsPerPeer, chunkSize, aggregateCombine);
+          outputLayout, combineMode, qpsPerPeer, nTokensPerChunk, aggregateCombine);
       available_ = latencyContext_->available_;
       numRanksPerIpcDomain_ = latencyContext_->numRanksPerIpcDomain_;
       break;
@@ -182,10 +182,10 @@ void MoERuntime::combine(const CombineRequest& request) {
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                                             CombineMode combineMode, int qpsPerPeer, int chunkSize,
+                                             CombineMode combineMode, int qpsPerPeer, int nTokensPerChunk,
                                              bool aggregateCombine) {
   return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, outputLayout,
-                                      combineMode, qpsPerPeer, chunkSize, aggregateCombine);
+                                      combineMode, qpsPerPeer, nTokensPerChunk, aggregateCombine);
 }
 
 }  // namespace ep

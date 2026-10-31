@@ -60,7 +60,7 @@ class MoECommunicator:
                 output_layout=self.output_layout,
                 combine_mode=self.combine_mode,
                 qps_per_peer=self._config.qps_per_peer,
-                chunk_size=self._config.chunk_size,
+                n_tokens_per_chunk=self._config.n_tokens_per_chunk,
                 aggregate_combine=self._config.aggregate_combine,
             )
         self._request_builder = RequestBuilder(self._config, self._runtime)

@@ -76,14 +76,14 @@ class MoECommunicatorConfig:
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     emit_local_expert_ids: bool = False
     qps_per_peer: int = 1
-    chunk_size: int = 8
+    n_tokens_per_chunk: int = 8
     aggregate_combine: bool = False
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
         from .utils import resolve_num_blocks, validate_quant
 
-        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank", "qps_per_peer", "chunk_size"):
+        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank", "qps_per_peer", "n_tokens_per_chunk"):
             value = getattr(self, name)
             if type(value) is not int or not 0 < value < (1 << 31):
                 raise ValueError(f"{name} must be a positive int32")
@@ -91,8 +91,8 @@ class MoECommunicatorConfig:
             raise ValueError("topk must be in [1, 8]")
         if self.qps_per_peer not in (1, 4):
             raise ValueError("qps_per_peer must be 1 or 4")
-        if not 1 <= self.chunk_size <= 128:
-            raise ValueError("chunk_size must be in [1, 128]")
+        if not 1 <= self.n_tokens_per_chunk <= 128:
+            raise ValueError("n_tokens_per_chunk must be in [1, 128]")
         if not isinstance(self.mode, MoEMode):
             raise TypeError("mode must be a MoEMode")
         if not isinstance(self.combine_mode, CombineMode):

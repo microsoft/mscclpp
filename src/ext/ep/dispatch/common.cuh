@@ -9,9 +9,6 @@
 #include "common/latency.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
-#if defined(MSCCLPP_USE_GPUNETIO)
-#include "gpu_net_io.hpp"
-#endif
 
 namespace mscclpp {
 namespace ep {
@@ -322,14 +319,9 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 5120:
-      if constexpr (Hybrid) {
-        return dispatchHidden<5120, Layout, KernelSelector, true>(
-            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
-      } else {
-        EP_HOST_ASSERT(false && "unsupported latency dispatch hidden size");
-        return;
-      }
+      return dispatchHidden<5120, Layout, KernelSelector, Hybrid>(
+          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 6656:
       return dispatchHidden<6656, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,

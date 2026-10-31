@@ -23,14 +23,12 @@ inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks
 inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
 inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 
-inline constexpr bool isSupportedHidden(int hidden, bool hybrid = false) {
-  return hidden == (hybrid ? 5120 : 1024) || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 6656 ||
+inline constexpr bool isSupportedHidden(int hidden) {
+  return hidden == 1024 || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 5120 || hidden == 6656 ||
          hidden == 7168 || hidden == 8192 || hidden == 8704 || hidden == 9216;
 }
 
 struct Workload {
-  /// Monotonic round epoch for packet validation.
-  uint32_t epoch_ = 0;
   /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.

@@ -51,7 +51,6 @@ set(MSCCLPP_EP_SOURCES
     dispatch/throughput_prepare.cu
     combine/hybrid_combine.cu
     dispatch/hybrid_dispatch.cu
-    gpu_net_io.cc
     latency.cc
     moe_runtime.cc
     throughput.cc

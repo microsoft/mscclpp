@@ -334,7 +334,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
         max_tokens_per_rank=capacity,
         invalid_token_expert_id=invalid_expert,
         qps_per_peer=qps_per_peer,
-        chunk_size=chunk_rows,
+        n_tokens_per_chunk=chunk_rows,
         aggregate_combine=aggregate_combine,
     ) as runtime:
         stream = torch.cuda.Stream()
@@ -509,7 +509,7 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
         max_tokens_per_rank=capacity,
         invalid_token_expert_id=invalid_expert,
         qps_per_peer=qps_per_peer,
-        chunk_size=8,
+        n_tokens_per_chunk=8,
         aggregate_combine=True,
     ) as runtime:
         stream = torch.cuda.Stream()

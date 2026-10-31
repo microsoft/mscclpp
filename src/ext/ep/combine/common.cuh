@@ -11,9 +11,6 @@
 #include "common/quantization.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
-#if defined(MSCCLPP_USE_GPUNETIO)
-#include "gpu_net_io.hpp"
-#endif
 
 namespace mscclpp {
 namespace ep {
@@ -237,7 +234,7 @@ MSCCLPP_DEVICE_INLINE void signalRankMajorCombineLocalStart(const TransportView&
   }
 }
 
-MSCCLPP_DEVICE_INLINE int rankMajorCombineStripeQp(const EpGpuNetIoDeviceContext* network, int owner) {
+MSCCLPP_DEVICE_INLINE int rankMajorCombineStripeQp(const PortChannelDeviceContext* network, int owner) {
   return owner % network->numQpsPerPeer;
 }
 
@@ -515,14 +512,9 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                context, numBlocks, stream);
     case 5120:
-      if constexpr (Hybrid) {
-        return combineHidden<Mode, 5120, KernelSelector, true>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+      return combineHidden<Mode, 5120, KernelSelector, Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                context, numBlocks, stream);
-      } else {
-        EP_HOST_ASSERT(false && "unsupported latency combine hidden size");
-        return;
-      }
     case 6656:
       return combineHidden<Mode, 6656, KernelSelector, Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
