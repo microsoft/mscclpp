@@ -71,7 +71,7 @@ class EpGpuNetIoService {
   ~EpGpuNetIoService();
   EpGpuNetIoService(const EpGpuNetIoService&) = delete;
   EpGpuNetIoService& operator=(const EpGpuNetIoService&) = delete;
-  void setup(void* buffer, size_t bytes);
+  void setup(void* buffer, size_t bytes, int qpsPerPeer = 1);
   EpGpuNetIoDeviceContext* deviceContext() const;
 
  private:

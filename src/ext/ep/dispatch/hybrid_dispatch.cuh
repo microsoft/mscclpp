@@ -23,7 +23,8 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
                                              const int64_t* routes, const float* weights, const Workload& workload,
                                              const DeviceContext* context, const TransportView& transport,
                                              int* shared) {
-  const int firstProducer = context->numRanks_ + GpuNetIoDistributeForwardBlocks + 1;
+  const int receiveBlocks = distributeReceiveBlocks(context->numRanks_);
+  const int firstProducer = receiveBlocks + GpuNetIoDistributeForwardBlocks + 1;
   const int producer = static_cast<int>(blockIdx.x) - firstProducer;
   if (producer < 0) return;
   const int producers = static_cast<int>(gridDim.x) - firstProducer;
@@ -33,7 +34,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   if (warp >= DispatchMaxNWarpGroups) return;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   const int topk = workload.numTopk_;
-  const int chunkRows = context->gpuNetIoPipelineChunkRows_;
+  const int chunkRows = context->gpuNetIoChunkSize_;
   const int localExperts = workload.numExperts_ / context->numRanks_;
   const size_t stride = GpuNetIoDistributeRow::stride(Hidden, topk);
   auto* staged = reinterpret_cast<uint8_t*>(shared) + dispatchSharedControlBytes(context->numRanks_, true) +
@@ -118,7 +119,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   auto* network = transport.gpuNetIo_;
   const int gateway = context->gpuNetIoGateway_;
   const int qps = network->numQpsPerPeer;
-  const int chunkRows = context->gpuNetIoPipelineChunkRows_;
+  const int chunkRows = context->gpuNetIoChunkSize_;
   WorkspaceView workspace(context->workspace_, ranks, workload.numExperts_);
   for (int index = threadIdx.x; index <= ranks; index += blockDim.x) shared[index] = 0;
   __syncthreads();
@@ -225,13 +226,14 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float* outputWeights,
                                              const Workload& workload, void* recvBuffer, const DeviceContext* context,
                                              const TransportView& transport, int* shared) {
-  const int forward = static_cast<int>(blockIdx.x) - context->numRanks_ - 1;
-  const int forwarders = static_cast<int>(gridDim.x) - context->numRanks_ - 1;
+  const int receiveBlocks = distributeReceiveBlocks(context->numRanks_);
+  const int forward = static_cast<int>(blockIdx.x) - receiveBlocks - 1;
+  const int forwarders = static_cast<int>(gridDim.x) - receiveBlocks - 1;
   constexpr int ForwardWarps = DispatchMaxNWarpGroups;
   const int lane = getLaneId(), warp = threadIdx.x / WARP_SIZE;
   const int source = context->gpuNetIoGateway_;
   const int topk = workload.numTopk_;
-  const int chunkRows = context->gpuNetIoPipelineChunkRows_;
+  const int chunkRows = context->gpuNetIoChunkSize_;
   const int localExperts = workload.numExperts_ / context->numRanks_;
   const int qps = transport.gpuNetIo_->numQpsPerPeer;
   auto* state = context->gpuNetIoDistributeControl_;
@@ -359,31 +361,34 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
 MSCCLPP_DEVICE_INLINE void distributeReceive(int* outputIds, float* outputWeights, int* outputCount,
                                              const Workload& workload, void* recvBuffer, const DeviceContext* context,
                                              const TransportView& transport, int* shared) {
-  const int source = static_cast<int>(blockIdx.x) - 1;
-  if (threadIdx.x == 0) {
-    const auto* counts = static_cast<mscclpp::LL8Packet*>(recvBuffer) + context->numRanks_;
-    shared[0] = counts[source].read(workload.epoch_, -1);
-    outputCount[source] = shared[0];
-    WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
-    workspace.dispatchRecvCounts_[source] = shared[0];
-    if (!transport.isNvlinkPeer(source)) {
-      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(
-                 context->gpuNetIoDistributeControl_->forwardReady + source, mscclpp::memoryOrderAcquire) !=
-             workload.epoch_) {
+  const int receiveBlocks = distributeReceiveBlocks(context->numRanks_);
+  for (int source = static_cast<int>(blockIdx.x) - 1; source < context->numRanks_; source += receiveBlocks) {
+    if (threadIdx.x == 0) {
+      const auto* counts = static_cast<mscclpp::LL8Packet*>(recvBuffer) + context->numRanks_;
+      shared[0] = counts[source].read(workload.epoch_, -1);
+      outputCount[source] = shared[0];
+      WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
+      workspace.dispatchRecvCounts_[source] = shared[0];
+      if (!transport.isNvlinkPeer(source)) {
+        while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(
+                   context->gpuNetIoDistributeControl_->forwardReady + source, mscclpp::memoryOrderAcquire) !=
+               workload.epoch_) {
+        }
+      } else if (shared[0] > 0) {
+        if (source == context->rank_)
+          workspace.dispatchLocalPayloadReady_->acquire();
+        else
+          transport.baseMemoryChannels_[source].wait(-1);
       }
-    } else if (shared[0] > 0) {
-      if (source == context->rank_)
-        workspace.dispatchLocalPayloadReady_->acquire();
-      else
-        transport.baseMemoryChannels_[source].wait(-1);
     }
-  }
-  __syncthreads();
-  for (int entry = shared[0] * workload.numTopk_ + threadIdx.x; entry < workload.maxTokensPerRank_ * workload.numTopk_;
-       entry += blockDim.x) {
-    const size_t index = static_cast<size_t>(source) * workload.maxTokensPerRank_ * workload.numTopk_ + entry;
-    outputIds[index] = workload.invalidTokenExpertId_;
-    outputWeights[index] = 0.0f;
+    __syncthreads();
+    for (int entry = shared[0] * workload.numTopk_ + threadIdx.x;
+         entry < workload.maxTokensPerRank_ * workload.numTopk_; entry += blockDim.x) {
+      const size_t index = static_cast<size_t>(source) * workload.maxTokensPerRank_ * workload.numTopk_ + entry;
+      outputIds[index] = workload.invalidTokenExpertId_;
+      outputWeights[index] = 0.0f;
+    }
+    __syncthreads();
   }
 }
 
@@ -401,12 +406,13 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void hybridSendDistributeDispa
   workload.epoch_ =
       beginRankMajorDispatchEpoch(WorkspaceView(context->workspace_, context->numRanks_, workload.numExperts_));
   const TransportView transport(context);
+  const int receiveBlocks = distributeReceiveBlocks(context->numRanks_);
   if (blockIdx.x == 0) {
     distributeControl<Hidden>(routes, workload, recvBuffer, context, transport, shared);
-  } else if (blockIdx.x <= context->numRanks_) {
+  } else if (blockIdx.x <= receiveBlocks) {
     distributeReceive(outputIds, outputWeights, outputCount, workload, recvBuffer, context, transport, shared);
   } else {
-    if (blockIdx.x > context->numRanks_ + GpuNetIoDistributeForwardBlocks) {
+    if (blockIdx.x > receiveBlocks + GpuNetIoDistributeForwardBlocks) {
       distributeProduce<Hidden>(output, outputIds, outputWeights, input, routes, weights, workload, context, transport,
                                 shared);
       __syncthreads();

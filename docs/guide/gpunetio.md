@@ -89,9 +89,9 @@ Cross-domain EP uses `MSCCLPP_HCA_DEVICES` to map each GPU to its IB transport (
 devices via `ibverbs` when `MSCCLPP_HCA_DEVICES` is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a
 single HCA name (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
 
-For latency `RANK_MAJOR` EP, `MSCCLPP_EP_QPS_PER_PEER` selects the number of QPs created per peer (1 or 4,
-default 1). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct combine uses one
-payload QP per peer.
+For latency `RANK_MAJOR` EP, `qpsPerPeer` (`qps_per_peer` in `MoECommunicatorConfig`) selects the number of QPs created
+per peer (1 or 4, default 1). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct
+combine uses one payload QP per peer.
 
 ### Hybrid dispatch
 
@@ -104,7 +104,7 @@ existing behavior.
 
 Each input token with any cross-domain destination is sent once, carrying fresh top-k IDs, weights, and the
 source-allocated compact destination slots. IB chunks are striped round-robin over the gateway QPs.
-`MSCCLPP_EP_DISPATCH_CHUNK_ROWS` controls their size (1–128 rows, default eight).
+`chunkSize` (`chunk_size` in `MoECommunicatorConfig`) controls the number of tokens per chunk (1–128, default eight).
 Each QP has one independent posting warp that preserves chunk order. QP 0's posting thread also sends the forwarding
 ACK after all chunk posters finish, so the hybrid dispatch requires no QP locks.
 A self-validating LL header carries fresh destination counts, which the gateway publishes locally before completion.
@@ -127,8 +127,7 @@ then waits for the peer's acknowledgment. All outgoing QPs are drained independe
 Empty rounds participate in the same protocol.
 
 By default, Combine returns each rank's preweighted BF16 partials directly to the source.
-Without the aggregation option below, set `MSCCLPP_EP_COMBINE_CHUNK_ROWS=0` (the default).
-It requires more than `world_size + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
+It requires more than `min(world_size, 64) + 9` dispatch blocks, with the full grid resident as checked by the launcher. Two stream-ordered
 workspace resets are part of each dispatch without aggregate Combine: include them in end-to-end CUDA graph timing.
 Row writers use device fences, and each QP poster acquires the completed chunk's release sequence before a system
 fence and the NIC post. Headers larger than the inline-transfer limit retain system publication;
@@ -139,11 +138,11 @@ validate their own epochs; nonempty payloads use a separate ready signal.
 
 ### Hybrid combine
 
-`MSCCLPP_EP_AGGREGATE_COMBINE=1` additionally enables reverse-gateway aggregation. It defaults off and
-requires BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated two-domain,
-one-or-four-QP topology. `MSCCLPP_EP_COMBINE_CHUNK_ROWS` selects 1–128 rows per chunk (default eight when
-aggregation is enabled). Incompatible rank-major requests fail collective initialization; other layouts and
-IPC-only runtimes retain their existing paths.
+Setting `aggregateCombine = true` (`aggregate_combine=True` in `MoECommunicatorConfig`) enables reverse-gateway
+aggregation. It defaults off and requires BF16 `RANK_MAJOR`/`RANK_LOCAL_REDUCE`, `topk <= 8`, and the same validated
+two-domain, one-or-four-QP topology. `chunkSize` (`chunk_size`) selects 1–128 tokens per chunk (default eight).
+Incompatible rank-major requests fail collective initialization; other layouts and IPC-only runtimes retain their
+existing paths.
 
 The paired gateway reads the local-domain **BF16 preweighted rank partials**, sums them in FP32, and returns
 compact FP32 rows in independently posted, ordered per-QP IB chunks. Gateway production prioritizes the first

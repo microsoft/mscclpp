@@ -91,7 +91,7 @@ struct DispatchHandle::Impl {
 struct LatencyRuntimeContext {
   LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numRanksPerIpcDomain,
                         int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                        CombineMode combineMode);
+                        CombineMode combineMode, int qpsPerPeer = 1, int chunkSize = 8, bool aggregateCombine = false);
   ~LatencyRuntimeContext() noexcept(false);
 
  private:
@@ -104,7 +104,6 @@ struct LatencyRuntimeContext {
   int rank_;
   int numRanks_;
   int numRanksPerIpcDomain_;
-  int numRanksPerNode_;
   bool available_ = false;
   int deviceId_;
   int maxTokensPerRank_;
@@ -113,8 +112,10 @@ struct LatencyRuntimeContext {
   int numTopk_;
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
-  bool useGpuNetIo_ = false;
-  bool networkConfigValid_ = true;
+  int qpsPerPeer_ = 1;
+  int chunkSize_ = 8;
+  bool aggregateCombine_ = false;
+  bool isHybrid_ = false;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 1;

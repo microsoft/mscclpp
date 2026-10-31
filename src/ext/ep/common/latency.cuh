@@ -216,9 +216,9 @@ MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   return nRanks > NSendSlots ? nRanks : NSendSlots;
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool network = false) {
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool hybrid = false) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int counts = nRanks + (network ? 1 : 0);
+  const int counts = nRanks + (hybrid ? 1 : 0);
   const int nSlots = counts > NSendSlots ? counts : NSendSlots;
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
@@ -245,11 +245,11 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Network = false>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hybrid = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
-  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Network);
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hybrid);
   const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = Network ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t recvBytes = Hybrid ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

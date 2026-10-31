@@ -75,23 +75,32 @@ class MoECommunicatorConfig:
     num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     emit_local_expert_ids: bool = False
+    qps_per_peer: int = 1
+    chunk_size: int = 8
+    aggregate_combine: bool = False
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
         from .utils import resolve_num_blocks, validate_quant
 
-        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
+        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank", "qps_per_peer", "chunk_size"):
             value = getattr(self, name)
             if type(value) is not int or not 0 < value < (1 << 31):
                 raise ValueError(f"{name} must be a positive int32")
         if self.topk > 8:
             raise ValueError("topk must be in [1, 8]")
+        if self.qps_per_peer not in (1, 4):
+            raise ValueError("qps_per_peer must be 1 or 4")
+        if not 1 <= self.chunk_size <= 128:
+            raise ValueError("chunk_size must be in [1, 128]")
         if not isinstance(self.mode, MoEMode):
             raise TypeError("mode must be a MoEMode")
         if not isinstance(self.combine_mode, CombineMode):
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.emit_local_expert_ids) is not bool:
             raise TypeError("emit_local_expert_ids must be a bool")
+        if type(self.aggregate_combine) is not bool:
+            raise TypeError("aggregate_combine must be a bool")
         latency = self.mode == MoEMode.LATENCY
         layout = self.output_layout
         if layout is None:
@@ -122,9 +131,11 @@ class MoECommunicatorConfig:
         if not isinstance(self.comm, CommGroup):
             raise TypeError("comm must be an mscclpp.CommGroup")
         world_size = self.comm.nranks
-        if not 1 <= world_size <= 64:
-            raise ValueError("EP requires 1-64 ranks")
-        if self.comm.nranks_per_ipc_domain != world_size and not (
+        cross_domain = self.comm.nranks_per_ipc_domain != world_size
+        max_ranks = 128 if cross_domain else 64
+        if not 1 <= world_size <= max_ranks:
+            raise ValueError(f"EP requires 1-{max_ranks} ranks")
+        if cross_domain and not (
             latency and layout == DispatchLayout.RANK_MAJOR and self.combine_mode == CombineMode.RANK_LOCAL_REDUCE
         ):
             raise ValueError(

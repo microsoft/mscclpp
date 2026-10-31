@@ -23,8 +23,8 @@ inline constexpr int MaxDispatchBlocks = MaxWorkerBlocks + DispatchControlBlocks
 inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
 inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 
-inline constexpr bool isSupportedHidden(int hidden, bool network = false) {
-  return hidden == (network ? 5120 : 1024) || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 6656 ||
+inline constexpr bool isSupportedHidden(int hidden, bool hybrid = false) {
+  return hidden == (hybrid ? 5120 : 1024) || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 6656 ||
          hidden == 7168 || hidden == 8192 || hidden == 8704 || hidden == 9216;
 }
 

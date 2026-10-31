@@ -44,8 +44,8 @@ def ep_group():
     if torch.cuda.get_device_capability()[0] < 9:
         pytest.skip("EP requires SM90 or newer")
     group = CommGroup(mpi_comm=MPI.COMM_WORLD)
-    if not 1 <= group.nranks <= 64:
-        pytest.skip("EP requires 1-64 ranks")
+    if not 1 <= group.nranks <= 128:
+        pytest.skip("EP requires 1-128 ranks")
     yield group
     torch.cuda.synchronize()
     group.barrier()
@@ -274,18 +274,14 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
 
 @pytest.mark.parametrize(
     "qps_per_peer,chunk_rows,hidden",
-    [("1", 8, 7168), ("4", 8, 7168), ("4", 7, 7168), ("1", 7, 2048), ("4", 16, 4096)],
+    [(1, 8, 7168), (4, 8, 7168), (4, 7, 7168), (1, 7, 2048), (4, 16, 4096)],
 )
 @pytest.mark.parametrize("aggregate_combine", [False, True])
-def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, aggregate_combine, monkeypatch):
+def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, aggregate_combine):
     """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 2):
         pytest.skip("Send-and-distribute coverage requires two equal NVLink domains with at least two ranks each")
-    monkeypatch.setenv("MSCCLPP_EP_AGGREGATE_COMBINE", "1" if aggregate_combine else "0")
-    monkeypatch.setenv("MSCCLPP_EP_QPS_PER_PEER", qps_per_peer)
-    monkeypatch.setenv("MSCCLPP_EP_DISPATCH_CHUNK_ROWS", str(chunk_rows))
-    monkeypatch.setenv("MSCCLPP_EP_COMBINE_CHUNK_ROWS", str(chunk_rows) if aggregate_combine else "0")
     layout = DispatchLayout.RANK_MAJOR
     capacity = 272
     invalid_expert = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -337,6 +333,9 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
         invalid_token_expert_id=invalid_expert,
+        qps_per_peer=qps_per_peer,
+        chunk_size=chunk_rows,
+        aggregate_combine=aggregate_combine,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -457,16 +456,12 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
             collective_check(check_replays)
 
 
-@pytest.mark.parametrize("qps_per_peer", ["1", "4"])
-def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, monkeypatch):
+@pytest.mark.parametrize("qps_per_peer", [1, 4])
+def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
     """FP32 group sums, random BF16 partials, asymmetric tokens, and no intermediate BF16 rounding."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 3):
         pytest.skip("Aggregate partial coverage requires two NVLink domains with at least three ranks each")
-    monkeypatch.setenv("MSCCLPP_EP_AGGREGATE_COMBINE", "1")
-    monkeypatch.setenv("MSCCLPP_EP_QPS_PER_PEER", qps_per_peer)
-    monkeypatch.setenv("MSCCLPP_EP_DISPATCH_CHUNK_ROWS", "8")
-    monkeypatch.setenv("MSCCLPP_EP_COMBINE_CHUNK_ROWS", "8")
     hidden, capacity, tokens = 2048, 16, 9
     # Rank zero still has gateway rows to produce for its paired rank.
     own_tokens = 0 if ep_group.my_rank == 0 else tokens
@@ -513,6 +508,9 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, monke
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
         invalid_token_expert_id=invalid_expert,
+        qps_per_peer=qps_per_peer,
+        chunk_size=8,
+        aggregate_combine=True,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):

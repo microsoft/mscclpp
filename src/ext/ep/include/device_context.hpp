@@ -42,10 +42,8 @@ struct DeviceContext {
   void* gpuNetIoCombineFlagsBuffer_ = nullptr;
   /// Symmetric payload-only combine landing rows, null unless active.
   void* gpuNetIoCombineLandingBuffer_ = nullptr;
-  /// Rows per hybrid dispatch chunk.
-  int gpuNetIoPipelineChunkRows_ = 0;
-  /// Rows per aggregate Combine chunk, striped round-robin over the gateway QPs.
-  int gpuNetIoCombineChunkRows_ = 0;
+  /// Tokens per hybrid dispatch/combine IB chunk.
+  int gpuNetIoChunkSize_ = 0;
   int gpuNetIoGateway_ = -1;
   int gpuNetIoDistributeCapacity_ = 0;
   void* gpuNetIoDistributeSend_ = nullptr;

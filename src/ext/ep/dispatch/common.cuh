@@ -157,7 +157,7 @@ MSCCLPP_DEVICE_INLINE void countRankMajorRoutes(int* rankTokenCounts, const int6
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout, typename KernelSelector,
-          bool Network = false>
+          bool Hybrid = false>
 inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
@@ -171,8 +171,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   const int nRanks = context.numRanks_;
   const int nTopk = workload.numTopk_;
 
-  size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Network>(nRanks, nExperts, nTopk);
-  if constexpr (Network) {
+  size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Hybrid>(nRanks, nExperts, nTopk);
+  if constexpr (Hybrid) {
     const size_t forwardSharedBytes =
         dispatchSharedControlBytes(nRanks, true) +
         GpuNetIoDistributeForwardWarps *
@@ -189,12 +189,12 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-template <int Hidden, DispatchLayout Layout, typename KernelSelector, bool Network = false>
+template <int Hidden, DispatchLayout Layout, typename KernelSelector, bool Hybrid = false>
 inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                            const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  if constexpr (Network) {
+  if constexpr (Hybrid) {
     static_assert(Layout == DispatchLayout::RANK_MAJOR);
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
     return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector, true>(
@@ -254,7 +254,7 @@ inline void dispatchLayout(void* output, void* outputScales, int* outputSrcInfo,
   EP_HOST_ASSERT(false && "unsupported dispatch layout");
 }
 
-template <DispatchLayout Layout, typename KernelSelector, bool Network = false>
+template <DispatchLayout Layout, typename KernelSelector, bool Hybrid = false>
 inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                               float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                               const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
@@ -271,7 +271,9 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
+  EP_HOST_ASSERT(numWorkerBlocks >=
+                     (Hybrid ? distributeReceiveBlocks(nRanks) + GpuNetIoDistributeForwardBlocks : nRanks) &&
+                 numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
@@ -304,23 +306,23 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
 
   switch (workload.hidden_) {
     case 1024:
-      return dispatchHidden<1024, Layout, KernelSelector, Network>(
+      return dispatchHidden<1024, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 2048:
-      return dispatchHidden<2048, Layout, KernelSelector, Network>(
+      return dispatchHidden<2048, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4096:
-      return dispatchHidden<4096, Layout, KernelSelector, Network>(
+      return dispatchHidden<4096, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4352:
-      return dispatchHidden<4352, Layout, KernelSelector, Network>(
+      return dispatchHidden<4352, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 5120:
-      if constexpr (Network) {
+      if constexpr (Hybrid) {
         return dispatchHidden<5120, Layout, KernelSelector, true>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
@@ -329,23 +331,23 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
         return;
       }
     case 6656:
-      return dispatchHidden<6656, Layout, KernelSelector, Network>(
+      return dispatchHidden<6656, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 7168:
-      return dispatchHidden<7168, Layout, KernelSelector, Network>(
+      return dispatchHidden<7168, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8192:
-      return dispatchHidden<8192, Layout, KernelSelector, Network>(
+      return dispatchHidden<8192, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8704:
-      return dispatchHidden<8704, Layout, KernelSelector, Network>(
+      return dispatchHidden<8704, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 9216:
-      return dispatchHidden<9216, Layout, KernelSelector, Network>(
+      return dispatchHidden<9216, Layout, KernelSelector, Hybrid>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     default:

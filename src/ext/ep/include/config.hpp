@@ -20,13 +20,15 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
+inline constexpr int MaxNumRanks = 128;
 
 inline constexpr int GpuNetIoMaxQpsPerPeer = 64;
-inline constexpr int GpuNetIoDistributeDefaultChunkRows = 8;
 inline constexpr int GpuNetIoDistributeForwardBlocks = 8;
 inline constexpr int GpuNetIoDistributeForwardWarps = 8;
 
-inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
+MSCCLPP_HOST_DEVICE_INLINE constexpr int distributeReceiveBlocks(int numRanks) { return numRanks < 64 ? numRanks : 64; }
+
+inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -60,7 +62,7 @@ struct GpuNetIoDistributeRow {
 
 struct alignas(BufferAlignmentBytes) GpuNetIoDistributeHeader {
   mscclpp::LL8Packet rows;
-  mscclpp::LL8Packet counts[64];
+  mscclpp::LL8Packet counts[MaxNumRanks];
 
   MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int ranks) {
     return static_cast<size_t>(1 + ranks) * sizeof(mscclpp::LL8Packet);
@@ -73,7 +75,7 @@ struct alignas(BufferAlignmentBytes) GpuNetIoDistributeControl {
   uint64_t chunkBase[4];
   uint64_t ack;
   uint64_t ackBase;
-  uint32_t forwardReady[64];
+  uint32_t forwardReady[MaxNumRanks];
   GpuNetIoDistributeHeader sendHeader;
   GpuNetIoDistributeHeader recvHeader;
 };
@@ -255,7 +257,7 @@ struct LatencyStorageLayout {
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool useGpuNetIo = false,
+                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false,
                        bool aggregateCombine = false) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
@@ -281,12 +283,12 @@ struct LatencyStorageLayout {
     const size_t rankLocalReduceCombineRecvBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankMajorDispatchBufferBytes =
-        rankMajorScalesOffset + (rankMajor && !useGpuNetIo ? rankMajorScalesBytes : 0);
+        rankMajorScalesOffset + (rankMajor && !isHybrid ? rankMajorScalesBytes : 0);
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
     const size_t combineBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                      : rankMajorLocalReduce ? (useGpuNetIo ? 0 : rankMajorDispatchOutputBytes)
+                                      : rankMajorLocalReduce ? (isHybrid ? 0 : rankMajorDispatchOutputBytes)
                                       : combineMode == CombineMode::RANK_LOCAL_REDUCE ? rankLocalReduceCombineRecvBytes
                                                                                       : expertMajorDispatchOutputBytes;
     const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
@@ -294,7 +296,7 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
-    const bool directCombine = useGpuNetIo && !aggregateCombine;
+    const bool directCombine = isHybrid && !aggregateCombine;
     const size_t gpuNetIoCombineFlagsBytes =
         directCombine ? configAlign<size_t>(static_cast<size_t>(numRanks) * GpuNetIoMaxQpsPerPeer * sizeof(uint64_t),
                                             BufferAlignmentBytes)
@@ -305,8 +307,8 @@ struct LatencyStorageLayout {
     totalBytes_ += gpuNetIoCombineFlagsBytes + gpuNetIoCombineLandingBytes;
     const size_t distributeOffset = totalBytes_;
     const size_t distributeBytes =
-        useGpuNetIo ? static_cast<size_t>(maxTokensPerRank) * GpuNetIoDistributeRow::stride(hidden, numTopk) : 0;
-    if (useGpuNetIo) totalBytes_ += 2 * distributeBytes + sizeof(GpuNetIoDistributeControl);
+        isHybrid ? static_cast<size_t>(maxTokensPerRank) * GpuNetIoDistributeRow::stride(hidden, numTopk) : 0;
+    if (isHybrid) totalBytes_ += 2 * distributeBytes + sizeof(GpuNetIoDistributeControl);
     const size_t aggregateOffset = totalBytes_;
     const size_t aggregateBytes = aggregateCombine ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
     if (aggregateCombine) totalBytes_ += 2 * aggregateBytes + sizeof(GpuNetIoAggregateControl);
@@ -316,16 +318,15 @@ struct LatencyStorageLayout {
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      rankMajorScalesBuffer_ = rankMajor && !useGpuNetIo ? base + rankMajorScalesOffset : nullptr;
+      rankMajorScalesBuffer_ = rankMajor && !isHybrid ? base + rankMajorScalesOffset : nullptr;
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
-      combineBuffer_ =
-          useGpuNetIo && rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
+      combineBuffer_ = isHybrid && rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
       if (directCombine) {
         gpuNetIoCombineFlagsBuffer_ = base + baseBytes;
         gpuNetIoCombineLandingBuffer_ = base + baseBytes + gpuNetIoCombineFlagsBytes;
       }
-      if (useGpuNetIo) {
+      if (isHybrid) {
         gpuNetIoDistributeSend_ = base + distributeOffset;
         gpuNetIoDistributeRecv_ = base + distributeOffset + distributeBytes;
         gpuNetIoDistributeControl_ =
@@ -342,10 +343,10 @@ struct LatencyStorageLayout {
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode, bool useGpuNetIo = false,
+                                 DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false,
                                  bool aggregateCombine = false) {
   const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
-                                             outputLayout, combineMode, useGpuNetIo, aggregateCombine)
+                                             outputLayout, combineMode, isHybrid, aggregateCombine)
                             .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }

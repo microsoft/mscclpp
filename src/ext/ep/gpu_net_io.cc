@@ -5,8 +5,6 @@
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 #include <algorithm>
-#include <charconv>
-#include <cstdlib>
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
@@ -61,7 +59,7 @@ EpGpuNetIoService::EpGpuNetIoService(std::shared_ptr<Bootstrap> bootstrap, int c
 
 EpGpuNetIoService::~EpGpuNetIoService() = default;
 
-void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
+void EpGpuNetIoService::setup(void* buffer, size_t bytes, int qpsPerPeer) {
   auto& state = *impl_;
   CudaDeviceGuard guard(state.device);
   if (state.initialized) throw Error("EP GPUNetIO setup called twice", ErrorCode::InvalidUsage);
@@ -75,14 +73,9 @@ void EpGpuNetIoService::setup(void* buffer, size_t bytes) {
   };
   Transport transport = Transport::Unknown;
   std::string localError;
-  int queues = 1;
+  const int queues = qpsPerPeer;
   try {
     transport = selectIbTransport(state.device);
-    if (const char* value = std::getenv("MSCCLPP_EP_QPS_PER_PEER")) {
-      const std::string text(value);
-      const auto parsed = std::from_chars(text.data(), text.data() + text.size(), queues);
-      if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) queues = 0;
-    }
   } catch (const std::exception& error) {
     localError = error.what();
   }

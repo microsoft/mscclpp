@@ -79,7 +79,7 @@ def test_config_required_arguments(name):
 
 def test_local_id_flag_preserves_positional_config_compatibility():
     parameters = tuple(inspect.signature(MoECommunicatorConfig).parameters)
-    assert parameters[-1] == "emit_local_expert_ids"
+    assert parameters[10] == "emit_local_expert_ids"
 
 
 def test_config_validation_at_construction(ep_group):
