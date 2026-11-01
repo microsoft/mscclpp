@@ -232,6 +232,9 @@ class MoECommunicator:
         layouts require the view returned by ``get_dispatch_output_buffer``.
         Inputs must not overlap the output or runtime receive storage written
         by this operation. Aliasing is a caller precondition and is not checked.
+        A captured latency dispatch must include its matching expert work and
+        combine before another dispatch; one or more complete pairs are
+        supported per graph.
         """
         if prepare_handle is not None:
             if self.mode != MoEMode.THROUGHPUT:

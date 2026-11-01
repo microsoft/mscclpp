@@ -34,7 +34,7 @@ struct PrepareHandle::Impl {
         stream_(request.stream) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
-  // Snapshot of the routing workspace's generation; a new prepare invalidates this handle.
+  // Snapshot of the routing workspace epoch; a new prepare invalidates this handle.
   uint64_t routingEpoch_;
   const int64_t* topkIdx_;
   int numTokens_;
@@ -74,7 +74,7 @@ struct DispatchHandle::Impl {
         metadata_(ThroughputMetadata{routingEpoch}) {}
 
   std::weak_ptr<void> owner_;
-  // Latency packet/handle generation; throughput does not use this field.
+  // Latency handle epoch; packet flags are maintained on the device.
   uint32_t epoch_ = 0;
   int numTokens_;
   int maxTokensPerRank_;

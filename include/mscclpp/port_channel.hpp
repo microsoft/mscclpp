@@ -31,7 +31,7 @@ class ProxyService : public BaseProxyService {
   ProxyService(int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Destructor. Stops the proxy before releasing the service state.
-  ~ProxyService() override;
+  ~ProxyService() noexcept override;
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
@@ -93,6 +93,7 @@ class ProxyService : public BaseProxyService {
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
   void progressFlushes();
+  void drainPendingOperations();
 };
 
 /// Port channel without specifying source/destination memory regions.
