@@ -25,10 +25,12 @@ if importlib.util.find_spec("mscclpp.mscclpp_ep_cpp") is None:
 from mscclpp import CommGroup
 from mscclpp.ep import (
     CombineMode,
+    DispatchDataType,
     DispatchLayout,
     MoECommunicator,
     MoECommunicatorConfig,
     MoEMode,
+    QuantConfig,
 )
 
 NUM_TOPK = 8
@@ -577,3 +579,92 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
                     check(actual, expected, mode)
 
             collective_check(check_replays)
+
+
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize("combine_format", [DispatchDataType.BF16, DispatchDataType.FP8_E4M3_STATIC])
+@pytest.mark.parametrize("input_mode", [QuantConfig.InputMode.PREQUANTIZED, QuantConfig.InputMode.QUANTIZE])
+def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input_mode):
+    num_tokens, capacity, scale = 5, 8, 0.5
+    quant = QuantConfig(
+        format=DispatchDataType.FP8_E4M3_STATIC,
+        scale=scale,
+        input_mode=input_mode,
+        combine_format=combine_format,
+    )
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=combine_mode,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=2048,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+        quant=quant,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            routes = torch.tensor(
+                [token_routes(ep_group.my_rank, ep_group.nranks, t, num_tokens) for t in range(num_tokens)],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            bf16_input = token_values(ep_group.my_rank, num_tokens, 1.0)[:, None].expand(-1, 2048)
+            bf16_input = bf16_input.to(torch.bfloat16).contiguous()
+            fp8_input = (bf16_input.float() * scale).to(torch.float8_e4m3fn)
+            dispatch_input = fp8_input if input_mode == QuantConfig.InputMode.PREQUANTIZED else bf16_input
+            result, handle = runtime.dispatch(dispatch_input, routes, weights, stream=stream)
+
+            def check_dispatch():
+                assert result.tokens.dtype == torch.float8_e4m3fn
+                expected_combine_dtype = (
+                    torch.float8_e4m3fn if combine_format == DispatchDataType.FP8_E4M3_STATIC else torch.bfloat16
+                )
+                assert result.combine_input_buffer.dtype == expected_combine_dtype
+                stream.synchronize()
+                _check_dispatch_metadata(ep_group, result, num_tokens)
+
+            collective_check(check_dispatch)
+
+            counts = result.layout.num_tokens_per_rank
+            valid_rows = torch.arange(capacity, device="cuda")[None, :] < counts[:, None]
+            dequant_tokens = result.tokens.float() / scale
+            if combine_mode == CombineMode.DIRECT_SEND:
+                valid_slots = valid_rows[..., None] & (result.weights != 0)
+                expert_out = torch.where(valid_slots[..., None], dequant_tokens[:, :, None, :], 0)
+            else:
+                local_weights = torch.where(valid_rows[..., None], result.weights, 0).sum(dim=-1, keepdim=True)
+                expert_out = torch.where(valid_rows[..., None], dequant_tokens * local_weights, 0)
+            if combine_format == DispatchDataType.FP8_E4M3_STATIC:
+                result.combine_input_buffer.copy_((expert_out * scale).to(torch.float8_e4m3fn))
+            else:
+                result.combine_input_buffer.copy_(expert_out.to(torch.bfloat16))
+            combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
+            valid_routes = routes >= 0
+            real_input = fp8_input.float() / scale
+            combine_fp8 = combine_format == DispatchDataType.FP8_E4M3_STATIC
+
+            def stage(values):
+                if combine_fp8:
+                    return (values * scale).to(torch.float8_e4m3fn).float() / scale
+                return values.to(torch.bfloat16).float()
+
+            if combine_mode == CombineMode.DIRECT_SEND:
+                route_values = torch.where(valid_routes[..., None], real_input[:, None, :], 0)
+                expected = (stage(route_values) * weights[..., None]).sum(dim=1).to(torch.bfloat16).float()
+            else:
+                expected = torch.zeros_like(bf16_input, dtype=torch.float32)
+                for rank in range(ep_group.nranks):
+                    rank_routes = valid_routes & (routes // NUM_LOCAL_EXPERTS == rank)
+                    rank_weight = torch.where(rank_routes, weights, 0).sum(dim=-1, keepdim=True)
+                    expected += stage(real_input * rank_weight)
+                expected = expected.to(torch.bfloat16).float()
+
+            stream.synchronize()
+            collective_check(
+                lambda: torch.testing.assert_close(
+                    combined.float(), expected, rtol=1e-2 if combine_fp8 else 0, atol=1 if combine_fp8 else 0
+                )
+            )

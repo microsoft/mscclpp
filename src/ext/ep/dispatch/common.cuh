@@ -216,10 +216,20 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
                            const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if constexpr (Hybrid) {
     static_assert(Layout == DispatchLayout::RANK_MAJOR);
-    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
-    return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector, true>(
-        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    switch (workload.dispatchDataType_) {
+      case DispatchDataType::BF16:
+        return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector, true>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+      case DispatchDataType::FP8_E4M3_STATIC:
+        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, Layout, KernelSelector, true>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+      case DispatchDataType::FP8_E4M3:
+      case DispatchDataType::MXFP8_E4M3:
+        break;
+    }
+    EP_HOST_ASSERT(false && "unsupported hybrid dispatch data type");
   } else if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:

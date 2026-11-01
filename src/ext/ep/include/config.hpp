@@ -45,14 +45,14 @@ struct HybridDispatchRow {
   float* weights_;
   int* slots_;
 
-  MSCCLPP_HOST_DEVICE_INLINE static size_t stride(int hidden, int topk) {
-    return configAlign<size_t>(static_cast<size_t>(hidden) * sizeof(uint16_t) + topk * 3 * sizeof(int),
+  MSCCLPP_HOST_DEVICE_INLINE static size_t stride(int hidden, int topk, size_t elementBytes = sizeof(uint16_t)) {
+    return configAlign<size_t>(static_cast<size_t>(hidden) * elementBytes + topk * 3 * sizeof(int),
                                BufferAlignmentBytes);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE HybridDispatchRow(void* row, int hidden, int topk)
-      : stride_(stride(hidden, topk)),
-        ids_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * sizeof(uint16_t))),
+  MSCCLPP_HOST_DEVICE_INLINE HybridDispatchRow(void* row, int hidden, int topk, size_t elementBytes = sizeof(uint16_t))
+      : stride_(stride(hidden, topk, elementBytes)),
+        ids_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
         weights_(reinterpret_cast<float*>(ids_ + topk)),
         slots_(reinterpret_cast<int*>(weights_ + topk)) {}
 };

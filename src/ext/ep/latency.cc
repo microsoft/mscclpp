@@ -318,8 +318,8 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
   if (context.isHybrid_) {
-    if (dispatchDataType != DispatchDataType::BF16 || combineDataType != DispatchDataType::BF16) {
-      EP_THROW("Hybrid latency dispatch supports BF16 only");
+    if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC) {
+      EP_THROW("Hybrid latency dispatch supports BF16 and FP8_E4M3_STATIC only");
     }
     if (emitLocalExpertIds) {
       EP_THROW("Local expert IDs are unsupported by hybrid latency dispatch");

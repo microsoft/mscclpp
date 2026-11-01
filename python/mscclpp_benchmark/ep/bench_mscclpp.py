@@ -236,8 +236,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             out,
             expected,
             comm,
-            exact=combine_mode == ep.CombineMode.DIRECT_SEND
-            or (layout == ep.DispatchLayout.RANK_MAJOR and mode == ep.MoEMode.LATENCY),
+            exact=group.nranks_per_ipc_domain == num_ranks
+            and (
+                combine_mode == ep.CombineMode.DIRECT_SEND
+                or (layout == ep.DispatchLayout.RANK_MAJOR and mode == ep.MoEMode.LATENCY)
+            ),
         )
         if rank == 0:
             print(f"[validate] mscclpp combine OK max|got-expected|={diff:.4e}", flush=True)

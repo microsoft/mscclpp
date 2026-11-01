@@ -244,31 +244,23 @@ template <CombineMode Mode, int Hidden, typename KernelSelector, bool Hybrid = f
 inline void combineHidden(void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights,
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  if constexpr (Hybrid) {
-    EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 &&
-                   workload.combineDataType_ == DispatchDataType::BF16);
-    return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
-        output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
-        context, numBlocks, stream);
-  } else {
-    if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
-      switch (workload.combineDataType_) {
-        case DispatchDataType::BF16:
-          return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
-              output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-              dispatchRecvBuffer, context, numBlocks, stream);
-        case DispatchDataType::FP8_E4M3:
-        case DispatchDataType::MXFP8_E4M3:
-          break;
-        case DispatchDataType::FP8_E4M3_STATIC:
-          return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, DispatchLayout::RANK_MAJOR,
-                                   KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
-                                                   workload, recvBuffer, dispatchRecvBuffer, context, numBlocks,
-                                                   stream);
-      }
-      EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
+  if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
+    switch (workload.combineDataType_) {
+      case DispatchDataType::BF16:
+        return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
+            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+            dispatchRecvBuffer, context, numBlocks, stream);
+      case DispatchDataType::FP8_E4M3:
+      case DispatchDataType::MXFP8_E4M3:
+        break;
+      case DispatchDataType::FP8_E4M3_STATIC:
+        return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, DispatchLayout::RANK_MAJOR,
+                                 KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
+                                                 workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
     }
+    EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
+  }
+  if constexpr (!Hybrid) {
     if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
       switch (workload.dispatchDataType_) {
         case DispatchDataType::BF16:

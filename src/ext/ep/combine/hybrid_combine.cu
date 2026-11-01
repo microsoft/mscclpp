@@ -8,22 +8,22 @@ namespace ep {
 
 #if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
 
-template <CombineMode Mode, int Hidden>
-MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* expertOutput, const int64_t* topkIndices,
-                                              const float* topkWeights, int row, bool gateway, const Workload& workload,
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, bool Gateway>
+MSCCLPP_DEVICE_INLINE void aggregateReduceRow(void* destination, const void* expertOutput, const int64_t* topkIndices,
+                                              const float* topkWeights, int row, const Workload& workload,
                                               const DeviceContext* context, const TransportView& transport,
                                               const WorkspaceView& workspace, uint32_t flag, uint8_t* sharedMemory,
-                                              uint32_t& phase) {
+                                              uint32_t& phase, float dequantScale) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  constexpr int HiddenVectors = HiddenBytes / sizeof(int4);
+  using ElementType = DispatchElementType<DispatchType>;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
+  constexpr int HiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
   constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
   constexpr size_t RowsBytes = MaxNumTopk * HiddenBytes;
   const int lane = getLaneId();
   const int topk = workload.numTopk_;
   const int localExperts = workload.numExperts_ / context->numRanks_;
-  const int owner = gateway ? context->gatewayRank_ : context->rank_;
-  auto* tiles = reinterpret_cast<int4*>(sharedMemory);
+  const int owner = Gateway ? context->gatewayRank_ : context->rank_;
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
   auto* valid = reinterpret_cast<int*>(barriers + MaxNumTopk);
   auto* weights = reinterpret_cast<float*>(valid + MaxNumTopk);
@@ -32,7 +32,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
     int slot = -1;
     float weight = 1.0f;
     if (lane < topk) {
-      if (gateway) {
+      if constexpr (Gateway) {
         const auto* cached = context->aggregateRoutes_ + static_cast<size_t>(row) * 3 * topk;
         expert = cached[lane];
         slot = cached[topk + lane];
@@ -84,34 +84,53 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
     for (int route = 0; route < MaxNumTopk; ++route) {
       if (!valid[route]) continue;
       const float routeWeight = IsDirectSend ? weights[route] : 1.0f;
-      const int4 packed = tiles[route * HiddenVectors + vector];
-      const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
+      const auto* routeRow = sharedMemory + static_cast<size_t>(route) * HiddenBytes;
+      if constexpr (DispatchType == DispatchDataType::BF16) {
+        const int4 packed = reinterpret_cast<const int4*>(routeRow)[vector];
+        const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
-      for (int pair = 0; pair < PairsPerVector; ++pair) {
-        const auto value = mscclpp::to<mscclpp::f32x2>(pairs[pair]);
-        if constexpr (IsDirectSend) {
-          sum[pair].data[0] = fmaf(value.data[0], routeWeight, sum[pair].data[0]);
-          sum[pair].data[1] = fmaf(value.data[1], routeWeight, sum[pair].data[1]);
-        } else {
-          sum[pair].data[0] += value.data[0];
-          sum[pair].data[1] += value.data[1];
+        for (int pair = 0; pair < PairsPerVector; ++pair) {
+          const auto value = mscclpp::to<mscclpp::f32x2>(pairs[pair]);
+          if constexpr (IsDirectSend) {
+            sum[pair].data[0] = fmaf(value.data[0], routeWeight, sum[pair].data[0]);
+            sum[pair].data[1] = fmaf(value.data[1], routeWeight, sum[pair].data[1]);
+          } else {
+            sum[pair].data[0] += value.data[0];
+            sum[pair].data[1] += value.data[1];
+          }
+        }
+      } else {
+        const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeRow)[vector];
+        const float scale = IsDirectSend ? dequantScale * routeWeight : dequantScale;
+        if (scale != 0.0f) {
+          dequantizeAndAccumulateFp8E4M3(values, scale, sum);
         }
       }
     }
+    if constexpr (Gateway && DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
+      int4 packedOut;
+      auto* outPairs = reinterpret_cast<mscclpp::bf16x2*>(&packedOut);
 #pragma unroll
-    for (int pair = 0; pair < PairsPerVector; ++pair) {
-      reinterpret_cast<mscclpp::f32x2*>(destination)[vector * PairsPerVector + pair] = sum[pair];
+      for (int pair = 0; pair < PairsPerVector; ++pair) {
+        outPairs[pair] = mscclpp::to<mscclpp::bf16x2>(sum[pair]);
+      }
+      reinterpret_cast<int4*>(destination)[vector] = packedOut;
+    } else {
+#pragma unroll
+      for (int pair = 0; pair < PairsPerVector; ++pair) {
+        reinterpret_cast<mscclpp::f32x2*>(destination)[vector * PairsPerVector + pair] = sum[pair];
+      }
     }
   }
   // The CTA barrier joins every writer into thread 0's release counter.
   __syncthreads();
-  if (gateway && threadIdx.x == 0) {
+  if (Gateway && threadIdx.x == 0) {
     (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
         context->aggregateChunkReady_ + row / context->nTokensPerChunk_, 1, mscclpp::memoryOrderRelease);
   }
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const TransportView& transport,
                                             const WorkspaceView& workspace, uint32_t flag) {
   const int peer = threadIdx.x;
@@ -131,7 +150,8 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   if (queue < 0 || queue >= network->numQpsPerPeer || getLaneId() != 0) return;
   const int rows = *context->aggregateIncomingRows_;
   const int nTokensPerChunk = context->nTokensPerChunk_;
-  constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(float);
+  using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
+  constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
   const int gateway = context->gatewayRank_;
   auto handle = network->channel(gateway, queue);
   handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
@@ -151,7 +171,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   }
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const DeviceContext* context) {
   constexpr int HiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
   constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
@@ -172,15 +192,29 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
   for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
     int4 packed;
     auto* pairs = reinterpret_cast<mscclpp::bf16x2*>(&packed);
+    int4 remotePacked{};
+    if constexpr (DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
+      if (row >= 0) {
+        remotePacked = reinterpret_cast<const int4*>(reinterpret_cast<const Bf16*>(context->aggregateRecvBuffer_) +
+                                                     static_cast<size_t>(row) * Hidden)[vector];
+      }
+    }
 #pragma unroll
     for (int pair = 0; pair < PairsPerVector; ++pair) {
       auto value = local[vector * PairsPerVector + pair];
       if (row >= 0) {
-        const auto* remote =
-            reinterpret_cast<const mscclpp::f32x2*>(context->aggregateRecvBuffer_ + static_cast<size_t>(row) * Hidden);
-        const auto partial = remote[vector * PairsPerVector + pair];
-        value.data[0] += partial.data[0];
-        value.data[1] += partial.data[1];
+        if constexpr (DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
+          const auto partial =
+              mscclpp::to<mscclpp::f32x2>(reinterpret_cast<const mscclpp::bf16x2*>(&remotePacked)[pair]);
+          value.data[0] += partial.data[0];
+          value.data[1] += partial.data[1];
+        } else {
+          const auto* remote = reinterpret_cast<const mscclpp::f32x2*>(context->aggregateRecvBuffer_ +
+                                                                       static_cast<size_t>(row) * Hidden);
+          const auto partial = remote[vector * PairsPerVector + pair];
+          value.data[0] += partial.data[0];
+          value.data[1] += partial.data[1];
+        }
       }
       pairs[pair] = mscclpp::to<mscclpp::bf16x2>(value);
     }
@@ -188,7 +222,7 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
   }
 }
 
-template <CombineMode Mode, int Hidden>
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, const int64_t* topkIndices,
                                        const float* topkWeights, Workload workload, const DeviceContext* context,
                                        uint32_t flag) {
@@ -196,9 +230,11 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
   const TransportView transport(context);
   const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
   if (blockIdx.x == 0) {
-    aggregateControl<Hidden>(context, transport, workspace, flag);
+    aggregateControl<Hidden, DispatchType>(context, transport, workspace, flag);
   } else {
-    constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(Bf16);
+    using ElementType = DispatchElementType<DispatchType>;
+    using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
+    constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(ElementType);
     auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
     if (threadIdx.x < MaxNumTopk) barriers[threadIdx.x].init();
     __syncthreads();
@@ -208,11 +244,10 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     const int incoming = *context->aggregateIncomingRows_;
     const int nTokensPerChunk = context->nTokensPerChunk_;
     const int qps = transport.portChannels_->numQpsPerPeer;
-    // Publish gateway partials first so their IB transfer overlaps the independent
-    // local-domain reduction. Each partial retains its original FP32 route order.
+    const float dequantScale =
+        DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
+    auto* sendBase = reinterpret_cast<WireElement*>(context->aggregateSendBuffer_);
     for (int row = worker; row < incoming; row += workers) {
-      // Prioritize each QP's first chunk rather than contending with every later
-      // row for NVLink. Dependencies point strictly to an earlier chunk.
       if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {
         const int previous = row / nTokensPerChunk - qps;
         while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + previous,
@@ -220,12 +255,10 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
         }
       }
       __syncthreads();
-      aggregateReduceRow<Mode, Hidden>(context->aggregateSendBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput,
-                                       topkIndices, topkWeights, row, true, workload, context, transport, workspace,
-                                       flag, sharedMemory, phase);
+      aggregateReduceRow<Mode, Hidden, DispatchType, true>(sendBase + static_cast<size_t>(row) * Hidden, expertOutput,
+                                                           topkIndices, topkWeights, row, workload, context, transport,
+                                                           workspace, flag, sharedMemory, phase, dequantScale);
     }
-    // Keep local-only reads off the critical gateway production path. All CTAs
-    // finish their own gateway rows before entering this wait, avoiding cycles.
     if (threadIdx.x == 0) {
       for (int begin = 0; begin < incoming; begin += nTokensPerChunk) {
         const int count = min(nTokensPerChunk, incoming - begin);
@@ -236,14 +269,12 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     }
     __syncthreads();
     for (int row = worker; row < workload.numTokens_; row += workers) {
-      aggregateReduceRow<Mode, Hidden>(context->aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput,
-                                       topkIndices, topkWeights, row, false, workload, context, transport, workspace,
-                                       flag, sharedMemory, phase);
+      aggregateReduceRow<Mode, Hidden, DispatchType, false>(
+          context->aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput, topkIndices, topkWeights,
+          row, workload, context, transport, workspace, flag, sharedMemory, phase, dequantScale);
     }
-    // A CTA must produce ALL of its gateway rows before waiting for any remote
-    // result, including when it owns zero input tokens. Otherwise peers can cycle.
     for (int token = worker; token < workload.numTokens_; token += workers) {
-      aggregateFinalize<Hidden>(output, token, context);
+      aggregateFinalize<Hidden, DispatchType>(output, token, context);
     }
   }
   workspace.combineSyncer_->sync(gridDim.x);
@@ -280,7 +311,8 @@ __global__ __launch_bounds__(CombineNThreads,
                                                          Workload workload, void* combineRecvBuffer,
                                                          const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
-  if constexpr (Layout == DispatchLayout::RANK_MAJOR && DispatchType == DispatchDataType::BF16) {
+  if constexpr (Layout == DispatchLayout::RANK_MAJOR &&
+                (DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC)) {
     WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
     if (blockIdx.x == 0) {
@@ -297,7 +329,7 @@ __global__ __launch_bounds__(CombineNThreads,
       }
       __syncthreads();
     }
-    combineBody<Mode, Hidden>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
+    combineBody<Mode, Hidden, DispatchType>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
   }
 #endif
 }
@@ -314,8 +346,9 @@ void hybridCombine(void* output, const void* input, const int64_t* topkIdx, cons
                    const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
                    const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(context.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR &&
-                 workload.dispatchDataType_ == DispatchDataType::BF16);
+  EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                 workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC);
   if (combineMode == CombineMode::DIRECT_SEND) {
     combineAlgorithm<CombineMode::DIRECT_SEND, HybridCombineKernelSelector<CombineMode::DIRECT_SEND>, true>(
         output, input, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context,
