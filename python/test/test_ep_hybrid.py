@@ -97,10 +97,13 @@ def token_values(rank, num_tokens, scale):
     return values * scale
 
 
-def _expert_output(result, active_capacity):
-    """Identity experts return weighted local sums for RANK_MAJOR."""
+def _expert_output(result, active_capacity, combine_mode=CombineMode.RANK_LOCAL_REDUCE):
+    """Identity experts return weighted local sums for RANK_LOCAL_REDUCE or per-slot tokens for DIRECT_SEND."""
     counts = result.layout.num_tokens_per_rank
     valid_rows = torch.arange(active_capacity, device="cuda")[None, :] < counts[:, None]
+    if combine_mode == CombineMode.DIRECT_SEND:
+        valid_slots = valid_rows[..., None] & (result.weights != 0)
+        return torch.where(valid_slots[..., None], result.tokens[:, :, None, :], 0).to(torch.bfloat16)
     local_weights = torch.where(valid_rows[..., None], result.weights, 0).sum(dim=-1, keepdim=True)
     return torch.where(valid_rows[..., None], result.tokens.float() * local_weights, 0).to(torch.bfloat16)
 
@@ -114,15 +117,16 @@ def _check_dispatch_metadata(ep_group, result, num_tokens):
     assert result.layout.num_tokens_per_rank.cpu().tolist() == expected_counts
 
 
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("hidden", [HIDDEN, 2048])
-def test_latency_hybrid_dispatch_combine(ep_group, hidden):
+def test_latency_hybrid_dispatch_combine(ep_group, hidden, combine_mode):
     num_tokens, capacity = 5, 8
     layout = DispatchLayout.RANK_MAJOR
     with initialized_runtime(
         ep_group,
         mode=MoEMode.LATENCY,
         output_layout=layout,
-        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        combine_mode=combine_mode,
         num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
         hidden_size=hidden,
         topk=NUM_TOPK,
@@ -142,8 +146,11 @@ def test_latency_hybrid_dispatch_combine(ep_group, hidden):
 
             def check_dispatch():
                 shape = (ep_group.nranks, capacity, hidden)
+                combine_shape = (
+                    (ep_group.nranks, capacity, NUM_TOPK, hidden) if combine_mode == CombineMode.DIRECT_SEND else shape
+                )
                 assert tuple(result.tokens.shape) == shape
-                assert tuple(result.combine_input_buffer.shape) == shape
+                assert tuple(result.combine_input_buffer.shape) == combine_shape
                 assert tuple(result.topk_ids.shape) == shape[:-1] + (NUM_TOPK,)
                 assert result.layout.kind == layout
                 assert result.quant is None
@@ -152,7 +159,7 @@ def test_latency_hybrid_dispatch_combine(ep_group, hidden):
 
             collective_check(check_dispatch)
 
-            result.combine_input_buffer.copy_(_expert_output(result, capacity))
+            result.combine_input_buffer.copy_(_expert_output(result, capacity, combine_mode))
             combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
             expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
             stream.synchronize()
@@ -276,8 +283,8 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
     "qps_per_peer,chunk_rows,hidden",
     [(1, 8, 7168), (4, 8, 7168), (4, 7, 7168), (1, 7, 2048), (4, 16, 4096)],
 )
-@pytest.mark.parametrize("aggregate_combine", [False, True])
-def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, aggregate_combine):
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, combine_mode):
     """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 2):
@@ -327,7 +334,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
         ep_group,
         mode=MoEMode.LATENCY,
         output_layout=layout,
-        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
+        combine_mode=combine_mode,
         num_experts=invalid_expert,
         hidden_size=hidden,
         topk=NUM_TOPK,
@@ -335,7 +342,6 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
         invalid_token_expert_id=invalid_expert,
         qps_per_peer=qps_per_peer,
         n_tokens_per_chunk=chunk_rows,
-        aggregate_combine=aggregate_combine,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -385,7 +391,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
                         assert (actual_weights[count:] == 0).all()
 
                 collective_check(check_dispatch)
-                result.combine_input_buffer.copy_(_expert_output(result, active_capacity))
+                result.combine_input_buffer.copy_(_expert_output(result, active_capacity, combine_mode))
                 output = runtime.combine(result.combine_input_buffer, handle)
                 expected = input.float() * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
                 stream.synchronize()
@@ -403,7 +409,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
 
             def operation():
                 result, handle = runtime.dispatch(input, routes, weights)
-                result.combine_input_buffer.copy_(_expert_output(result, capacity))
+                result.combine_input_buffer.copy_(_expert_output(result, capacity, combine_mode))
                 return runtime.combine(result.combine_input_buffer, handle, out=out)
 
             operation()
@@ -510,7 +516,6 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
         invalid_token_expert_id=invalid_expert,
         qps_per_peer=qps_per_peer,
         n_tokens_per_chunk=8,
-        aggregate_combine=True,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):

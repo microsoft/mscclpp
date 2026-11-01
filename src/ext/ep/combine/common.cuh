@@ -43,8 +43,8 @@ MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(DispatchElementType<DispatchType>);
     constexpr size_t BarrierBytes = static_cast<size_t>(MaxNumTopk) * sizeof(mscclpp::BulkBarrier);
-    constexpr size_t ValidBytes = static_cast<size_t>(MaxNumTopk) * sizeof(int);
-    constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + BarrierBytes + ValidBytes, 128);
+    constexpr size_t MetadataBytes = static_cast<size_t>(MaxNumTopk) * (sizeof(int) + sizeof(float));
+    constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + BarrierBytes + MetadataBytes, 128);
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
     return SharedBytes;
   }
@@ -82,7 +82,7 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
   }
 }
 
-template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, bool Hybrid = false>
+template <int Hidden, CombineMode Mode, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
                                                           const int64_t* __restrict__ topkIndices,
                                                           const float* __restrict__ topkWeights, int nTokens, int nTopk,
@@ -108,8 +108,8 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   auto* bulkBarriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
   auto* validRows = reinterpret_cast<int*>(bulkBarriers + MaxNumTopk);
 
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - (Hybrid ? 0 : 1);
-  const int firstTokenIdx = Hybrid && blockIdx.x == 0 ? nWorkerBlocks - 1 : static_cast<int>(blockIdx.x) - 1;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - 1;
+  const int firstTokenIdx = static_cast<int>(blockIdx.x) - 1;
   // Reuse each mbarrier by advancing its parity instead of reinitializing it.
   uint32_t bulkPhase = 0;
   if (warpId == 0) {
@@ -137,30 +137,15 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
 
       bool pending = validRow;
       while (__any_sync(0xffffffff, pending)) {
-        bool ready = false;
-        if (pending) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-          if constexpr (Hybrid) {
-            ready = mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                        workspaceView.combineRankReadyFlags_ + destinationRank, mscclpp::memoryOrderAcquire) == flag;
-          } else
-#endif
-            ready = mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                        workspaceView.combineRankReadyFlags_ + destinationRank, mscclpp::memoryOrderRelaxed) == flag;
-        }
-        if (pending && ready) {
-          const uint8_t* source;
-          if (Hybrid && !transport.isNvlinkPeer(destinationRank)) {
-            const auto* landing = static_cast<const uint8_t*>(transport.combineLandingBuffer_);
-            source =
-                landing + (static_cast<size_t>(destinationRank) * maxTokensPerRank + destinationSlot) * HiddenBytes;
-          } else {
-            const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
-                transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));
-            const size_t sourceRow = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
-            const size_t inputRow = IsDirectSend ? sourceRow * nTopk + laneId : sourceRow;
-            source = remoteExpertOutput + inputRow * HiddenBytes;
-          }
+        const bool ready =
+            pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
+                           workspaceView.combineRankReadyFlags_ + destinationRank, mscclpp::memoryOrderRelaxed) == flag;
+        if (ready) {
+          const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
+              transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));
+          const size_t sourceRow = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
+          const size_t inputRow = IsDirectSend ? sourceRow * nTopk + laneId : sourceRow;
+          const uint8_t* source = remoteExpertOutput + inputRow * HiddenBytes;
           auto* sharedRow = sharedRows + static_cast<size_t>(laneId) * HiddenBytes;
           bulkBarriers[laneId].arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
           mscclpp::bulkLoad(sharedRow, source, static_cast<uint32_t>(HiddenBytes), bulkBarriers[laneId]);
@@ -225,137 +210,10 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   }
 }
 
-#if defined(MSCCLPP_USE_GPUNETIO)
-MSCCLPP_DEVICE_INLINE void signalRankMajorCombineLocalStart(const TransportView& transport, int nRanks) {
-  if (blockIdx.x != 0) return;
-  const int peerRank = static_cast<int>(threadIdx.x);
-  if (peerRank < nRanks && !transport.isSelf(peerRank) && transport.isNvlinkPeer(peerRank)) {
-    transport.baseMemoryChannels_[peerRank].relaxedSignal();
-  }
-}
-
-MSCCLPP_DEVICE_INLINE int rankMajorCombineStripeQp(const PortChannelDeviceContext* network, int owner) {
-  return owner % network->numQpsPerPeer;
-}
-
-MSCCLPP_DEVICE_INLINE void publishRankMajorCombinePushReady(const int64_t* __restrict__ /*topkIndices*/,
-                                                            int /*nTokens*/, int /*nTopk*/, int /*nLocalExperts*/,
-                                                            int nRanks, uint32_t epoch, const TransportView& transport,
-                                                            WorkspaceView& workspaceView) {
-  const int laneId = getLaneId();
-  for (int destinationRank = laneId; destinationRank < nRanks; destinationRank += WARP_SIZE) {
-    if (transport.isSelf(destinationRank)) {
-      mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyFlags_ + destinationRank,
-                                                           epoch, mscclpp::memoryOrderRelease);
-    } else if (transport.isNvlinkPeer(destinationRank)) {
-      transport.baseMemoryChannels_[destinationRank].relaxedWait(-1);
-      mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyFlags_ + destinationRank,
-                                                           epoch, mscclpp::memoryOrderRelease);
-    }
-  }
-
-  auto* network = transport.portChannels_;
-  auto* flags = reinterpret_cast<volatile uint64_t*>(transport.combineFlagsBuffer_);
-  for (int baseRank = 0; baseRank < nRanks; baseRank += WARP_SIZE) {
-    const int destinationRank = baseRank + laneId;
-    bool pending = false;
-    uint64_t target = 0;
-    if (destinationRank < nRanks && !transport.isSelf(destinationRank) && !transport.isNvlinkPeer(destinationRank)) {
-      const int sentRows = workspaceView.dispatchRankPayloadCompletions_[destinationRank];
-      if (sentRows > 0) {
-        pending = true;
-        target = workspaceView.combineArrivedBaseline_[destinationRank] + 1;
-      } else {
-        mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyFlags_ + destinationRank,
-                                                             epoch, mscclpp::memoryOrderRelease);
-      }
-    }
-    while (__any_sync(0xffffffff, pending)) {
-      if (pending) {
-        const int qpIndex = rankMajorCombineStripeQp(network, transport.rank_);
-        const size_t flagIndex = static_cast<size_t>(destinationRank) * MaxQpsPerPeer + qpIndex;
-        if (flags[flagIndex] >= target) {
-          workspaceView.combineArrivedBaseline_[destinationRank] = target;
-          mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyFlags_ + destinationRank,
-                                                               epoch, mscclpp::memoryOrderRelease);
-          pending = false;
-        }
-      }
-    }
-  }
-}
-
-template <int Hidden>
-MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePushOwner(const void* expertOutput, int nRanks, int maxTokensPerRank,
-                                                         const TransportView& transport, WorkspaceView& workspaceView,
-                                                         int owner, int stripe) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
-  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  auto* network = transport.portChannels_;
-  auto* landingBase = reinterpret_cast<uint8_t*>(transport.combineLandingBuffer_);
-  const int nQp = network->numQpsPerPeer;
-  if (nQp < 1 || nQp > MaxQpsPerPeer) __trap();
-  // The owner CTA assigns the owner payload to one QP and drains it before returning.
-  if (owner < nRanks && !transport.isSelf(owner) && !transport.isNvlinkPeer(owner) &&
-      workspaceView.dispatchRecvCounts_[owner] > 0 && stripe == 0) {
-    const int nRowsToOwner = workspaceView.dispatchRecvCounts_[owner];
-    const int qpIndex = rankMajorCombineStripeQp(network, owner);
-    auto channel = network->channel(owner, qpIndex);
-    channel.setWqeSlot<kExclusive>(&wqeSlots[qpIndex]);
-    const uint64_t sourceOffset = transport.symmetricOffset(const_cast<void*>(expertOutput)) +
-                                  static_cast<size_t>(owner) * maxTokensPerRank * HiddenBytes;
-    const uint64_t destinationOffset =
-        transport.symmetricOffset(landingBase + static_cast<size_t>(transport.rank_) * maxTokensPerRank * HiddenBytes);
-    const auto* flags =
-        static_cast<uint64_t*>(transport.combineFlagsBuffer_) + static_cast<size_t>(transport.rank_) * MaxQpsPerPeer;
-    const uint64_t flagOffset = transport.symmetricOffset(flags + qpIndex);
-    const uint64_t bytes = static_cast<uint64_t>(nRowsToOwner) * HiddenBytes;
-    auto& state = network->signalState(owner, qpIndex);
-    channel.device_.putWithSignalAt<kExclusive>(channel.dstMemory_, destinationOffset, channel.srcMemory_, sourceOffset,
-                                                bytes, channel.dstMemory_, flagOffset,
-                                                network->nextSignalToken(state, flagOffset, 1));
-  }
-}
-
-template <int Hidden>
-MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, int nRanks, int maxTokensPerRank,
-                                                    const TransportView& transport, WorkspaceView& workspaceView,
-                                                    [[maybe_unused]] uint32_t epoch) {
-  for (int owner = static_cast<int>(gridDim.x) - 1 - static_cast<int>(blockIdx.x); owner >= 0;
-       owner -= static_cast<int>(gridDim.x)) {
-    if (owner < nRanks) {
-      sendRankMajorCombinePushOwner<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView, owner,
-                                            static_cast<int>(threadIdx.x));
-    }
-  }
-}
-
-MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePushOwner(int nRanks, const TransportView& transport,
-                                                          WorkspaceView& workspaceView, int owner, int stripe) {
-  auto* network = transport.portChannels_;
-  if (owner >= nRanks || transport.isNvlinkPeer(owner) || workspaceView.dispatchRecvCounts_[owner] <= 0 || stripe != 0)
-    return;
-  network->channel(owner, rankMajorCombineStripeQp(network, owner))
-      .flush<mscclpp::PortChannelSharingMode::Exclusive>(-1);
-}
-
-MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePush(int nRanks, const TransportView& transport,
-                                                     WorkspaceView& workspaceView, [[maybe_unused]] uint32_t epoch) {
-  for (int owner = static_cast<int>(gridDim.x) - 1 - static_cast<int>(blockIdx.x); owner >= 0;
-       owner -= static_cast<int>(gridDim.x)) {
-    if (owner < nRanks) {
-      drainRankMajorCombinePushOwner(nRanks, transport, workspaceView, owner, static_cast<int>(threadIdx.x));
-    }
-  }
-}
-
-#endif
-
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          typename KernelSelector, bool Hybrid = false>
+          typename KernelSelector>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
@@ -376,14 +234,6 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
 
-  if constexpr (Hybrid) {
-    if (!context.aggregateCombine_) {
-      const WorkspaceView workspace(context.workspace_, nRanks, nExperts);
-      MSCCLPP_CUDATHROW(
-          cudaMemsetAsync(workspace.combineRankReadyFlags_, 0, static_cast<size_t>(nRanks) * sizeof(uint32_t), stream));
-    }
-  }
-
   combineFunc<<<dim3(numBlocks), dim3(CombineNThreads), sharedBytes, stream>>>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context.devicePtr_);
@@ -398,7 +248,7 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
     EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 &&
                    workload.combineDataType_ == DispatchDataType::BF16);
-    return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector, true>(
+    return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
         output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
         context, numBlocks, stream);
   } else {

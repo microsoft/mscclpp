@@ -62,7 +62,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     int row = -1;
     if (lane == 0 && hasRemote) row = atomicAdd(context->distributeScratch_, 1);
     row = __shfl_sync(0xffffffff, row, 0);
-    if (context->aggregateCombine_ && lane == 0) context->aggregateTokenRows_[token] = row;
+    if (lane == 0) context->aggregateTokenRows_[token] = row;
 
     if (lane == 0) barrier.wait(phase);
     __syncwarp();
@@ -142,9 +142,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   if (threadIdx.x >= firstPublisher && threadIdx.x < firstPublisher + ranks) {
     const int destination = threadIdx.x - firstPublisher;
     const int count = shared[destination];
-    if (!transport.isNvlinkPeer(destination)) {
-      workspace.dispatchRankPayloadCompletions_[destination] = count;
-    } else {
+    if (transport.isNvlinkPeer(destination)) {
       auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, destination));
       counts[rank].write(count, flag);
       if (count > 0) {
@@ -204,9 +202,6 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     }
     state->ackBase = ack;
   }
-  __syncthreads();
-  if (warp < qps && lane == 0) network->channel(gateway, warp).flush<kExclusive>(-1);
-  __syncthreads();
 }
 
 // Forward CTAs: wait for incoming RDMA chunks from the paired gateway rank and forward them over
@@ -228,7 +223,7 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
 
   if (threadIdx.x == 0) {
     shared[0] = state->recvHeader.rows.read(flag, -1);
-    if (context->aggregateCombine_ && forward == 0) {
+    if (forward == 0) {
       *context->aggregateIncomingRows_ = shared[0];
     }
   }
@@ -277,10 +272,11 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
       const int destination = expert >= 0 ? expert / localExperts : -1;
       const int slot = lane < topk ? wire.slots_[lane] : -1;
       const float weight = lane < topk ? wire.weights_[lane] : 0.0f;
-      if (context->aggregateCombine_ && lane < topk) {
-        auto* cached = context->aggregateRoutes_ + static_cast<size_t>(row) * 2 * topk;
+      if (lane < topk) {
+        auto* cached = context->aggregateRoutes_ + static_cast<size_t>(row) * 3 * topk;
         cached[lane] = expert;
         cached[topk + lane] = slot;
+        reinterpret_cast<float*>(cached + 2 * topk)[lane] = weight;
       }
       const bool leader = isFirstLaneForRank(destination, lane);
       const bool localLeader = destination >= 0 && transport.isNvlinkPeer(destination) && leader;
@@ -376,14 +372,6 @@ void hybridDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, 
                     const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(context.portChannels_ != nullptr);
   EP_HOST_ASSERT(numBlocks > HybridForwardBlocks + 1);
-  if (!context.aggregateCombine_) {
-    const WorkspaceView workspace(context.workspace_, context.numRanks_, workload.numExperts_);
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(workspace.dispatchRankPayloadSlots_, 0,
-                                      static_cast<size_t>(context.numRanks_) * 2 * sizeof(int), stream));
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(
-        context.distributeScratch_, 0,
-        (3 + configCellDiv(context.distributeCapacity_, context.nTokensPerChunk_)) * sizeof(int), stream));
-  }
   dispatchAlgorithm<DispatchLayout::RANK_MAJOR, HybridDispatchKernelSelector, true>(
       output, nullptr, nullptr, outputTopkIdx, outputTopkWeights, nullptr, outputCount, input, topkIdx, topkWeights,
       workload, recvBuffer, context, numBlocks, stream);

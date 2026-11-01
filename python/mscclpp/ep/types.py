@@ -77,7 +77,6 @@ class MoECommunicatorConfig:
     emit_local_expert_ids: bool = False
     qps_per_peer: int = 1
     n_tokens_per_chunk: int = 8
-    aggregate_combine: bool = False
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
@@ -99,8 +98,6 @@ class MoECommunicatorConfig:
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.emit_local_expert_ids) is not bool:
             raise TypeError("emit_local_expert_ids must be a bool")
-        if type(self.aggregate_combine) is not bool:
-            raise TypeError("aggregate_combine must be a bool")
         latency = self.mode == MoEMode.LATENCY
         layout = self.output_layout
         if layout is None:
@@ -135,13 +132,8 @@ class MoECommunicatorConfig:
         max_ranks = 128 if cross_domain else 64
         if not 1 <= world_size <= max_ranks:
             raise ValueError(f"EP requires 1-{max_ranks} ranks")
-        if cross_domain and not (
-            latency and layout == DispatchLayout.RANK_MAJOR and self.combine_mode == CombineMode.RANK_LOCAL_REDUCE
-        ):
-            raise ValueError(
-                "EP across multiple CUDA IPC domains requires LATENCY mode with RANK_MAJOR layout and "
-                "RANK_LOCAL_REDUCE combine"
-            )
+        if cross_domain and not (latency and layout == DispatchLayout.RANK_MAJOR):
+            raise ValueError("EP across multiple CUDA IPC domains requires LATENCY mode with RANK_MAJOR layout")
         if self.num_experts % world_size:
             raise ValueError("num_experts must be divisible by world_size")
         num_local = self.num_experts // world_size

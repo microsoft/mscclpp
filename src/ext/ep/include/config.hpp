@@ -237,8 +237,6 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
-  void* combineFlagsBuffer_ = nullptr;
-  void* combineLandingBuffer_ = nullptr;
   void* distributeSendBuffer_ = nullptr;
   void* distributeRecvBuffer_ = nullptr;
   HybridDispatchControl* distributeControl_ = nullptr;
@@ -254,8 +252,7 @@ struct LatencyStorageLayout {
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false,
-                       bool aggregateCombine = false) {
+                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
@@ -285,7 +282,7 @@ struct LatencyStorageLayout {
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
     const size_t combineBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                      : rankMajorLocalReduce ? (isHybrid ? 0 : rankMajorDispatchOutputBytes)
+                                      : rankMajorLocalReduce ? rankMajorDispatchOutputBytes
                                       : combineMode == CombineMode::RANK_LOCAL_REDUCE ? rankLocalReduceCombineRecvBytes
                                                                                       : expertMajorDispatchOutputBytes;
     const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
@@ -293,22 +290,13 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
-    const bool directCombine = isHybrid && !aggregateCombine;
-    const size_t combineFlagsBytes =
-        directCombine ? configAlign<size_t>(static_cast<size_t>(numRanks) * MaxQpsPerPeer * sizeof(uint64_t),
-                                            BufferAlignmentBytes)
-                      : 0;
-    const size_t combineLandingBytes =
-        directCombine ? configAlign<size_t>(rankMajorDispatchOutputBytes, BufferAlignmentBytes) : 0;
-    const size_t baseBytes = totalBytes_;
-    totalBytes_ += combineFlagsBytes + combineLandingBytes;
     const size_t distributeOffset = totalBytes_;
     const size_t distributeBytes =
         isHybrid ? static_cast<size_t>(maxTokensPerRank) * HybridDispatchRow::stride(hidden, numTopk) : 0;
     if (isHybrid) totalBytes_ += 2 * distributeBytes + sizeof(HybridDispatchControl);
     const size_t aggregateOffset = totalBytes_;
-    const size_t aggregateBytes = aggregateCombine ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
-    if (aggregateCombine) totalBytes_ += 2 * aggregateBytes + sizeof(HybridAggregateControl);
+    const size_t aggregateBytes = isHybrid ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
+    if (isHybrid) totalBytes_ += 2 * aggregateBytes + sizeof(HybridAggregateControl);
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -318,17 +306,11 @@ struct LatencyStorageLayout {
       rankMajorScalesBuffer_ = rankMajor && !isHybrid ? base + rankMajorScalesOffset : nullptr;
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
-      combineBuffer_ = isHybrid && rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
-      if (directCombine) {
-        combineFlagsBuffer_ = base + baseBytes;
-        combineLandingBuffer_ = base + baseBytes + combineFlagsBytes;
-      }
+      combineBuffer_ = base + alignedDispatchRecvBufferBytes;
       if (isHybrid) {
         distributeSendBuffer_ = base + distributeOffset;
         distributeRecvBuffer_ = base + distributeOffset + distributeBytes;
         distributeControl_ = reinterpret_cast<HybridDispatchControl*>(base + distributeOffset + 2 * distributeBytes);
-      }
-      if (aggregateCombine) {
         aggregateSendBuffer_ = reinterpret_cast<float*>(base + aggregateOffset);
         aggregateRecvBuffer_ = reinterpret_cast<float*>(base + aggregateOffset + aggregateBytes);
         aggregateControl_ = reinterpret_cast<HybridAggregateControl*>(base + aggregateOffset + 2 * aggregateBytes);
@@ -338,10 +320,9 @@ struct LatencyStorageLayout {
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false,
-                                 bool aggregateCombine = false) {
+                                 DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false) {
   const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
-                                             outputLayout, combineMode, isHybrid, aggregateCombine)
+                                             outputLayout, combineMode, isHybrid)
                             .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }

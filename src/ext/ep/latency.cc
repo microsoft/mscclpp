@@ -22,7 +22,7 @@ namespace ep {
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
                                              int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
                                              int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
-                                             int qpsPerPeer, int nTokensPerChunk, bool aggregateCombine)
+                                             int qpsPerPeer, int nTokensPerChunk)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -34,7 +34,6 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       combineMode_(combineMode),
       qpsPerPeer_(qpsPerPeer),
       nTokensPerChunk_(nTokensPerChunk),
-      aggregateCombine_(aggregateCombine),
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
@@ -47,10 +46,8 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-  isHybrid_ = numRanksPerIpcDomain_ < numRanks_ && outputLayout == DispatchLayout::RANK_MAJOR &&
-              combineMode == CombineMode::RANK_LOCAL_REDUCE;
+  isHybrid_ = numRanksPerIpcDomain_ < numRanks_ && outputLayout == DispatchLayout::RANK_MAJOR;
 #endif
-  deviceContext_.aggregateCombine_ = isHybrid_ && aggregateCombine_;
   if (!isSupportedHidden(hidden)) {
     EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
   }
@@ -74,7 +71,7 @@ LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
 
 LatencyStorageLayout LatencyRuntimeContext::storageLayout() const {
   return LatencyStorageLayout(symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                              outputLayout_, combineMode_, isHybrid_, deviceContext_.aggregateCombine_);
+                              outputLayout_, combineMode_, isHybrid_);
 }
 
 void LatencyRuntimeContext::initialize() {
@@ -92,8 +89,8 @@ void LatencyRuntimeContext::initialize() {
     if (nTokensPerChunk_ < 1 || nTokensPerChunk_ > 128) {
       EP_THROW("Hybrid EP requires nTokensPerChunk in [1, 128]");
     }
-    if (aggregateCombine_ && numTopk_ > 8) {
-      EP_THROW("Hybrid aggregate combine requires topk <= 8");
+    if (numTopk_ > 8) {
+      EP_THROW("Hybrid combine requires topk <= 8");
     }
   }
 
@@ -123,6 +120,7 @@ void LatencyRuntimeContext::initialize() {
                       : static_cast<mscclpp::Transport>(static_cast<int>(mscclpp::Transport::IB0) + deviceId_);
     ibLocalMemory_ = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ibTransport);
   }
+  const int gatewayRank = isHybrid_ ? (rank_ + ipcDomainSize) % numRanks_ : -1;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> ipcConnectionFutures(numRanks_);
   std::vector<std::vector<std::shared_future<mscclpp::Connection>>> ibConnectionFutures(numRanks_);
@@ -132,7 +130,7 @@ void LatencyRuntimeContext::initialize() {
       communicator_.sendMemory(peerBufferMemories_[rank_], r, MemoryTag);
       remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
       ipcConnectionFutures[r] = communicator_.connect(ipcConfig, r, ConnectTagBase);
-    } else if (isHybrid_) {
+    } else if (r == gatewayRank) {
       communicator_.sendMemory(ibLocalMemory_, r, MemoryTag);
       remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
       for (int q = 0; q < qpsPerPeer_; ++q) {
@@ -156,7 +154,7 @@ void LatencyRuntimeContext::initialize() {
           std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, ipcConnectionFutures[r].get());
       baseMemoryChannels_.emplace_back(semaphore);
       baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
-    } else if (isHybrid_) {
+    } else if (r == gatewayRank) {
       peerBufferMemories_[r] = remoteFutures[r].get();
       for (int q = 0; q < qpsPerPeer_; ++q) {
         auto semaphore =
@@ -191,9 +189,8 @@ void LatencyRuntimeContext::initialize() {
                     .rank_ = rank_,
                     .numRanks_ = numRanks_,
                     .nTokensPerChunk_ = isHybrid_ ? nTokensPerChunk_ : 0,
-                    .gatewayRank_ = isHybrid_ ? (rank_ + ipcDomainSize) % numRanks_ : -1,
-                    .distributeCapacity_ = isHybrid_ ? maxTokensPerRank_ : 0,
-                    .aggregateCombine_ = isHybrid_ && aggregateCombine_};
+                    .gatewayRank_ = gatewayRank,
+                    .distributeCapacity_ = isHybrid_ ? maxTokensPerRank_ : 0};
   if (isHybrid_) {
     portChannelHandles_ = mscclpp::GpuBuffer<PortChannelDeviceHandle>(portChannelHandles.size()).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceHandle>(portChannelHandles_.get(), portChannelHandles.data(),
@@ -207,8 +204,6 @@ void LatencyRuntimeContext::initialize() {
     distributeScratch_ = mscclpp::detail::gpuCallocShared<int>(3 + configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
     deviceContext_.portChannels_ = portChannelContext_.get();
-    deviceContext_.combineFlagsBuffer_ = storage.combineFlagsBuffer_;
-    deviceContext_.combineLandingBuffer_ = storage.combineLandingBuffer_;
     deviceContext_.distributeSendBuffer_ = storage.distributeSendBuffer_;
     deviceContext_.distributeRecvBuffer_ = storage.distributeRecvBuffer_;
     deviceContext_.distributeControl_ = storage.distributeControl_;
@@ -216,17 +211,15 @@ void LatencyRuntimeContext::initialize() {
     deviceContext_.aggregateSendBuffer_ = storage.aggregateSendBuffer_;
     deviceContext_.aggregateRecvBuffer_ = storage.aggregateRecvBuffer_;
     deviceContext_.aggregateControl_ = storage.aggregateControl_;
-    if (aggregateCombine_) {
-      aggregateMetadata_ =
-          mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 2 * numTopk_));
-      deviceContext_.aggregateIncomingRows_ = aggregateMetadata_.get();
-      deviceContext_.aggregateTokenRows_ = aggregateMetadata_.get() + 1;
-      deviceContext_.aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
-      aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
-      deviceContext_.aggregateLocalBuffer_ = aggregateLocal_.get();
-      aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
-      deviceContext_.aggregateChunkReady_ = aggregateChunkReady_.get();
-    }
+    aggregateMetadata_ =
+        mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
+    deviceContext_.aggregateIncomingRows_ = aggregateMetadata_.get();
+    deviceContext_.aggregateTokenRows_ = aggregateMetadata_.get() + 1;
+    deviceContext_.aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
+    aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
+    deviceContext_.aggregateLocalBuffer_ = aggregateLocal_.get();
+    aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
+    deviceContext_.aggregateChunkReady_ = aggregateChunkReady_.get();
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
@@ -418,6 +411,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .combineDataType_ = combineDataType,
                           .dispatchScale_ = dispatchScale,
                           .emitLocalExpertIds_ = false,
+                          .applyRouterWeights_ = request.applyRouterWeights,
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
 
@@ -426,7 +420,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   if (context.isHybrid_) {
     EP_HOST_ASSERT(numBlocks >= context.numRanks_);
     EP_HOST_ASSERT(input == allocationLayout.combineBuffer_);
-    hybridCombine(output, input, topkIdx, workload, allocationLayout.combineBuffer_,
+    hybridCombine(output, input, topkIdx, topkWeights, workload, mode, allocationLayout.combineBuffer_,
                   allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
     ++context.epoch_;
     return;

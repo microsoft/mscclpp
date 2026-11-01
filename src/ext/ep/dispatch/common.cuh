@@ -135,19 +135,6 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
     const int nRankTokens = static_cast<int>(rankTokenCounts[sourceRank].read(flag, -1));
     outputCount[sourceRank] = nRankTokens;
     sharedMem[0] = nRankTokens;
-    if (forwardReady != nullptr) {
-      workspaceView.dispatchRecvCounts_[sourceRank] = nRankTokens;
-      if (!transport.isNvlinkPeer(sourceRank)) {
-        while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(forwardReady + sourceRank,
-                                                                   mscclpp::memoryOrderAcquire) != flag) {
-        }
-      } else if (nRankTokens > 0) {
-        if (transport.isSelf(sourceRank))
-          workspaceView.dispatchLocalPayloadReady_->acquire();
-        else
-          transport.baseMemoryChannels_[sourceRank].wait(-1);
-      }
-    }
   }
   __syncthreads();
 
@@ -160,11 +147,17 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
     outputTopkWeights[outputIdx] = 0.0f;
   }
 
-  if (forwardReady == nullptr && threadIdx.x == 0 && nRankTokens > 0) {
-    if (transport.isSelf(sourceRank)) {
-      workspaceView.dispatchLocalPayloadReady_->acquire();
-    } else {
-      transport.baseMemoryChannels_[sourceRank].wait(-1);
+  if (threadIdx.x == 0) {
+    if (forwardReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(forwardReady + sourceRank,
+                                                                 mscclpp::memoryOrderAcquire) != flag) {
+      }
+    } else if (nRankTokens > 0) {
+      if (transport.isSelf(sourceRank)) {
+        workspaceView.dispatchLocalPayloadReady_->acquire();
+      } else {
+        transport.baseMemoryChannels_[sourceRank].wait(-1);
+      }
     }
   }
 }

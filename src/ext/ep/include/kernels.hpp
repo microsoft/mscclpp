@@ -51,6 +51,8 @@ struct Workload {
   float dispatchScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
+  /// Whether direct-send combine scales each route by its router weight.
+  bool applyRouterWeights_ = true;
   /// Input representation for latency rank-major static FP8.
   QuantConfig::InputMode inputMode_ = QuantConfig::InputMode::PREQUANTIZED;
 };
@@ -112,8 +114,9 @@ void hybridDispatch(void* output, int* outputTopkIdx, float* outputTopkWeights, 
                     const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                     const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
-void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload, void* recvBuffer,
-                   void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream);
+void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                   const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
+                   const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,

@@ -110,17 +110,9 @@ struct WorkspaceView {
   uint32_t* combineRankReadyFlags_;
   mscclpp::DeviceSyncer* combineSyncer_;
   int* rankMajorSendIndices_;
-  // Direct network Combine retains arrival baselines and the source counts from Dispatch.
-  uint64_t* combineArrivedBaseline_;
-  int* dispatchRecvCounts_;
 
   MSCCLPP_HOST_DEVICE_INLINE WorkspaceView(void* workspace, int nRanks, int nExperts) {
     auto* cursor = reinterpret_cast<int*>(workspace);
-    // 8-byte-aligned field first (workspace base is allocation-aligned).
-    combineArrivedBaseline_ = reinterpret_cast<uint64_t*>(cursor);
-    cursor += static_cast<size_t>(nRanks) * (sizeof(uint64_t) / sizeof(int));
-    dispatchRecvCounts_ = cursor;
-    cursor += nRanks;
     dispatchFlags_ = reinterpret_cast<uint32_t*>(cursor);
     cursor += DispatchFlagSlots;
     dispatchRankPayloadSlots_ = cursor;
@@ -144,9 +136,7 @@ struct WorkspaceView {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
-    return static_cast<size_t>(nRanks) * sizeof(uint64_t) +             // combineArrivedBaseline_
-           static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRecvCounts_
-           static_cast<size_t>(DispatchFlagSlots) * sizeof(uint32_t) +  // dispatchFlags_
+    return static_cast<size_t>(DispatchFlagSlots) * sizeof(uint32_t) +  // dispatchFlags_
            static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRankPayloadSlots_
            static_cast<size_t>(nRanks) * sizeof(int) +                  // dispatchRankPayloadCompletions_
            sizeof(mscclpp::DeviceSemaphore) +                           // dispatchLocalPayloadReady_

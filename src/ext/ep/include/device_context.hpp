@@ -78,10 +78,6 @@ struct DeviceContext {
   /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
   /// or nullptr when every peer is NVLink-mapped.
   PortChannelDeviceContext* portChannels_ = nullptr;
-  /// Symmetric per-peer-rank completion flags for direct Combine.
-  void* combineFlagsBuffer_ = nullptr;
-  /// Symmetric payload-only combine landing rows, null unless active.
-  void* combineLandingBuffer_ = nullptr;
   /// Tokens per hybrid dispatch/combine IB chunk.
   int nTokensPerChunk_ = 0;
   int gatewayRank_ = -1;
@@ -91,11 +87,9 @@ struct DeviceContext {
   HybridDispatchControl* distributeControl_ = nullptr;
   /// Local [compact row allocator, completed forward CTAs, forward-complete/Combine credits, per-chunk staged rows].
   int* distributeScratch_ = nullptr;
-  /// Optional reverse-gateway FP32 aggregation; dispatch caches live until the next local dispatch.
-  bool aggregateCombine_ = false;
   int* aggregateTokenRows_ = nullptr;
   int* aggregateIncomingRows_ = nullptr;
-  /// Private [compact row, IDs then destination slots] cache, never exposed to remote writes.
+  /// Private [compact row, IDs then destination slots then weights] cache, never exposed to remote writes.
   int* aggregateRoutes_ = nullptr;
   float* aggregateLocalBuffer_ = nullptr;
   /// Independent registered FP32 send/landing rows, indexed by compact remote row.
@@ -113,8 +107,6 @@ struct TransportView {
   int rank_;
   int numRanks_;
   PortChannelDeviceContext* portChannels_;
-  void* combineFlagsBuffer_;
-  void* combineLandingBuffer_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
@@ -122,9 +114,7 @@ struct TransportView {
         baseMemoryChannels_(context->channels_),
         rank_(context->rank_),
         numRanks_(context->numRanks_),
-        portChannels_(context->portChannels_),
-        combineFlagsBuffer_(context->combineFlagsBuffer_),
-        combineLandingBuffer_(context->combineLandingBuffer_) {}
+        portChannels_(context->portChannels_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 
