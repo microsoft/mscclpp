@@ -27,6 +27,9 @@ jobs:
       run: |
         CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
 
+    - name: Check synchronization diagnostic scenarios
+      run: python3 python/mscclpp/language/tests/synchronization_scenarios.py
+
     # - name: Copy test script/config to temp directory
     #   run: |
     #     cp python/test/test_generate_mscclpp_lang_result.py $RUNNER_TEMP/
