@@ -191,26 +191,29 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
          chunk += qps, begin += qps * nTokensPerChunk) {
       const int count = min(nTokensPerChunk, rows - begin);
-      while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
-                 context->distributeScratch_ + DistributeScratchCounters + chunk, mscclpp::memoryOrderAcquire) !=
-             count) {
-      }
-      handle.device_.putWithSignalAt<kExclusive>(handle.dstMemory_, dstOffset + begin * stride, handle.srcMemory_,
-                                                 srcOffset + begin * stride, count * stride, handle.dstMemory_,
-                                                 flagOffset, network->nextSignalToken(sequence, flagOffset, 1));
+      handle.device_.putWithSignalAtAfter<kExclusive>(
+          handle.dstMemory_, dstOffset + begin * stride, handle.srcMemory_, srcOffset + begin * stride, count * stride,
+          handle.dstMemory_, flagOffset, network->nextSignalToken(sequence, flagOffset, 1), [&] {
+            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
+                       context->distributeScratch_ + DistributeScratchCounters + chunk, mscclpp::memoryOrderAcquire) !=
+                   count) {
+            }
+          });
     }
   }
   __syncthreads();
 
   if (threadIdx.x == 0) {
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
-                                                          mscclpp::memoryOrderAcquire) != 1) {
-    }
     const auto offset = transport.symmetricOffset(&state->ack);
     auto channel = network->channel(gateway, 0);
     channel.setWqeSlot<kExclusive>(&wqeSlots[0]);
     auto& sequence = network->signalState(gateway, 0);
-    channel.device_.signalAt<kExclusive>(channel.dstMemory_, offset, network->nextSignalToken(sequence, offset, 1));
+    channel.device_.signalAtAfter<kExclusive>(
+        channel.dstMemory_, offset, network->nextSignalToken(sequence, offset, 1), [&] {
+          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
+                                                                mscclpp::memoryOrderAcquire) != 1) {
+          }
+        });
     const uint64_t ack = state->ackBase + 1;
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) < ack) {
     }

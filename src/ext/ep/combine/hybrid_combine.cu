@@ -162,12 +162,13 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
        chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
     const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
-                                                          mscclpp::memoryOrderAcquire) != count) {
-    }
-    handle.device_.putWithSignalAt<kExclusive>(handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_,
-                                               srcOffset + begin * RowBytes, count * RowBytes, handle.dstMemory_,
-                                               flagOffset, network->nextSignalToken(state, flagOffset, 1));
+    handle.device_.putWithSignalAtAfter<kExclusive>(
+        handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
+        count * RowBytes, handle.dstMemory_, flagOffset, network->nextSignalToken(state, flagOffset, 1), [&] {
+          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
+                                                                mscclpp::memoryOrderAcquire) != count) {
+          }
+        });
   }
 }
 
