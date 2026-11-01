@@ -190,7 +190,7 @@ Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `Po
 (operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
-is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 4096`; set to `0` to disable BlueFlame or increase
+is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or increase
 to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
 their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
 
