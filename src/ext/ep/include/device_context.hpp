@@ -50,8 +50,8 @@ struct PortChannelDeviceContext {
 #endif
 };
 
-struct GpuNetIoDistributeControl;
-struct GpuNetIoAggregateControl;
+struct HybridDispatchControl;
+struct HybridAggregateControl;
 
 /// Persistent device resources shared by every dispatch and combine algorithm.
 struct DeviceContext {
@@ -77,33 +77,33 @@ struct DeviceContext {
   DeviceContext* devicePtr_ = nullptr;
   /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
   /// or nullptr when every peer is NVLink-mapped.
-  PortChannelDeviceContext* gpuNetIo_ = nullptr;
+  PortChannelDeviceContext* portChannels_ = nullptr;
   /// Symmetric per-peer-rank completion flags for direct Combine.
-  void* gpuNetIoCombineFlagsBuffer_ = nullptr;
+  void* combineFlagsBuffer_ = nullptr;
   /// Symmetric payload-only combine landing rows, null unless active.
-  void* gpuNetIoCombineLandingBuffer_ = nullptr;
+  void* combineLandingBuffer_ = nullptr;
   /// Tokens per hybrid dispatch/combine IB chunk.
   int nTokensPerChunk_ = 0;
-  int gpuNetIoGateway_ = -1;
-  int gpuNetIoDistributeCapacity_ = 0;
-  void* gpuNetIoDistributeSend_ = nullptr;
-  void* gpuNetIoDistributeRecv_ = nullptr;
-  GpuNetIoDistributeControl* gpuNetIoDistributeControl_ = nullptr;
+  int gatewayRank_ = -1;
+  int distributeCapacity_ = 0;
+  void* distributeSendBuffer_ = nullptr;
+  void* distributeRecvBuffer_ = nullptr;
+  HybridDispatchControl* distributeControl_ = nullptr;
   /// Local [compact row allocator, completed forward CTAs, forward-complete/Combine credits, per-chunk staged rows].
-  int* gpuNetIoDistributeScratch_ = nullptr;
+  int* distributeScratch_ = nullptr;
   /// Optional reverse-gateway FP32 aggregation; dispatch caches live until the next local dispatch.
-  bool gpuNetIoAggregateCombine_ = false;
-  int* gpuNetIoAggregateTokenRows_ = nullptr;
-  int* gpuNetIoAggregateIncomingRows_ = nullptr;
+  bool aggregateCombine_ = false;
+  int* aggregateTokenRows_ = nullptr;
+  int* aggregateIncomingRows_ = nullptr;
   /// Private [compact row, IDs then destination slots] cache, never exposed to remote writes.
-  int* gpuNetIoAggregateRoutes_ = nullptr;
-  float* gpuNetIoAggregateLocal_ = nullptr;
+  int* aggregateRoutes_ = nullptr;
+  float* aggregateLocalBuffer_ = nullptr;
   /// Independent registered FP32 send/landing rows, indexed by compact remote row.
-  float* gpuNetIoAggregateSend_ = nullptr;
-  float* gpuNetIoAggregateRecv_ = nullptr;
-  GpuNetIoAggregateControl* gpuNetIoAggregateControl_ = nullptr;
+  float* aggregateSendBuffer_ = nullptr;
+  float* aggregateRecvBuffer_ = nullptr;
+  HybridAggregateControl* aggregateControl_ = nullptr;
   /// Private completed-row counters, reset on the caller stream before each aggregate combine.
-  int* gpuNetIoAggregateChunkReady_ = nullptr;
+  int* aggregateChunkReady_ = nullptr;
 };
 
 struct TransportView {
@@ -112,9 +112,9 @@ struct TransportView {
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
   int numRanks_;
-  PortChannelDeviceContext* gpuNetIo_;
-  void* gpuNetIoCombineFlagsBuffer_;
-  void* gpuNetIoCombineLandingBuffer_;
+  PortChannelDeviceContext* portChannels_;
+  void* combineFlagsBuffer_;
+  void* combineLandingBuffer_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
@@ -122,21 +122,21 @@ struct TransportView {
         baseMemoryChannels_(context->channels_),
         rank_(context->rank_),
         numRanks_(context->numRanks_),
-        gpuNetIo_(context->gpuNetIo_),
-        gpuNetIoCombineFlagsBuffer_(context->gpuNetIoCombineFlagsBuffer_),
-        gpuNetIoCombineLandingBuffer_(context->gpuNetIoCombineLandingBuffer_) {}
+        portChannels_(context->portChannels_),
+        combineFlagsBuffer_(context->combineFlagsBuffer_),
+        combineLandingBuffer_(context->combineLandingBuffer_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 
   // Byte offset of a symmetric-buffer pointer from this rank's base; the same
-  // offset addresses the identical region on any peer (used by GPUNetIO puts).
+  // offset addresses the identical region on any peer.
   MSCCLPP_HOST_DEVICE_INLINE uint64_t symmetricOffset(const void* ptr) const {
     return static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(ptr) -
                                  reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
   }
 
   // A peer is NVLink/IPC-reachable if it is self or its symmetric buffer is
-  // directly mapped; otherwise it is a cross-domain peer served over GPUNetIO.
+  // directly mapped; otherwise it is a cross-domain peer served over PortChannel.
   MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
     return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
   }

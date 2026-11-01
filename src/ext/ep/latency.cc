@@ -50,7 +50,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   isHybrid_ = numRanksPerIpcDomain_ < numRanks_ && outputLayout == DispatchLayout::RANK_MAJOR &&
               combineMode == CombineMode::RANK_LOCAL_REDUCE;
 #endif
-  deviceContext_.gpuNetIoAggregateCombine_ = isHybrid_ && aggregateCombine_;
+  deviceContext_.aggregateCombine_ = isHybrid_ && aggregateCombine_;
   if (!isSupportedHidden(hidden)) {
     EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
   }
@@ -74,7 +74,7 @@ LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
 
 LatencyStorageLayout LatencyRuntimeContext::storageLayout() const {
   return LatencyStorageLayout(symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numExperts_, numTopk_,
-                              outputLayout_, combineMode_, isHybrid_, deviceContext_.gpuNetIoAggregateCombine_);
+                              outputLayout_, combineMode_, isHybrid_, deviceContext_.aggregateCombine_);
 }
 
 void LatencyRuntimeContext::initialize() {
@@ -191,9 +191,9 @@ void LatencyRuntimeContext::initialize() {
                     .rank_ = rank_,
                     .numRanks_ = numRanks_,
                     .nTokensPerChunk_ = isHybrid_ ? nTokensPerChunk_ : 0,
-                    .gpuNetIoGateway_ = isHybrid_ ? (rank_ + ipcDomainSize) % numRanks_ : -1,
-                    .gpuNetIoDistributeCapacity_ = isHybrid_ ? maxTokensPerRank_ : 0,
-                    .gpuNetIoAggregateCombine_ = isHybrid_ && aggregateCombine_};
+                    .gatewayRank_ = isHybrid_ ? (rank_ + ipcDomainSize) % numRanks_ : -1,
+                    .distributeCapacity_ = isHybrid_ ? maxTokensPerRank_ : 0,
+                    .aggregateCombine_ = isHybrid_ && aggregateCombine_};
   if (isHybrid_) {
     portChannelHandles_ = mscclpp::GpuBuffer<PortChannelDeviceHandle>(portChannelHandles.size()).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceHandle>(portChannelHandles_.get(), portChannelHandles.data(),
@@ -206,26 +206,26 @@ void LatencyRuntimeContext::initialize() {
                                                  cudaMemcpyHostToDevice);
     distributeScratch_ = mscclpp::detail::gpuCallocShared<int>(3 + configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
-    deviceContext_.gpuNetIo_ = portChannelContext_.get();
-    deviceContext_.gpuNetIoCombineFlagsBuffer_ = storage.gpuNetIoCombineFlagsBuffer_;
-    deviceContext_.gpuNetIoCombineLandingBuffer_ = storage.gpuNetIoCombineLandingBuffer_;
-    deviceContext_.gpuNetIoDistributeSend_ = storage.gpuNetIoDistributeSend_;
-    deviceContext_.gpuNetIoDistributeRecv_ = storage.gpuNetIoDistributeRecv_;
-    deviceContext_.gpuNetIoDistributeControl_ = storage.gpuNetIoDistributeControl_;
-    deviceContext_.gpuNetIoDistributeScratch_ = distributeScratch_.get();
-    deviceContext_.gpuNetIoAggregateSend_ = storage.gpuNetIoAggregateSend_;
-    deviceContext_.gpuNetIoAggregateRecv_ = storage.gpuNetIoAggregateRecv_;
-    deviceContext_.gpuNetIoAggregateControl_ = storage.gpuNetIoAggregateControl_;
+    deviceContext_.portChannels_ = portChannelContext_.get();
+    deviceContext_.combineFlagsBuffer_ = storage.combineFlagsBuffer_;
+    deviceContext_.combineLandingBuffer_ = storage.combineLandingBuffer_;
+    deviceContext_.distributeSendBuffer_ = storage.distributeSendBuffer_;
+    deviceContext_.distributeRecvBuffer_ = storage.distributeRecvBuffer_;
+    deviceContext_.distributeControl_ = storage.distributeControl_;
+    deviceContext_.distributeScratch_ = distributeScratch_.get();
+    deviceContext_.aggregateSendBuffer_ = storage.aggregateSendBuffer_;
+    deviceContext_.aggregateRecvBuffer_ = storage.aggregateRecvBuffer_;
+    deviceContext_.aggregateControl_ = storage.aggregateControl_;
     if (aggregateCombine_) {
       aggregateMetadata_ =
           mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 2 * numTopk_));
-      deviceContext_.gpuNetIoAggregateIncomingRows_ = aggregateMetadata_.get();
-      deviceContext_.gpuNetIoAggregateTokenRows_ = aggregateMetadata_.get() + 1;
-      deviceContext_.gpuNetIoAggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
+      deviceContext_.aggregateIncomingRows_ = aggregateMetadata_.get();
+      deviceContext_.aggregateTokenRows_ = aggregateMetadata_.get() + 1;
+      deviceContext_.aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
       aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
-      deviceContext_.gpuNetIoAggregateLocal_ = aggregateLocal_.get();
+      deviceContext_.aggregateLocalBuffer_ = aggregateLocal_.get();
       aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
-      deviceContext_.gpuNetIoAggregateChunkReady_ = aggregateChunkReady_.get();
+      deviceContext_.aggregateChunkReady_ = aggregateChunkReady_.get();
     }
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
@@ -269,10 +269,8 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   if (emitLocalExpertIds && dispatchLayout != DispatchLayout::RANK_MAJOR) {
     EP_THROW("Local expert IDs are supported only by latency RANK_MAJOR dispatch");
   }
-  EP_HOST_ASSERT(
-      numBlocks - DispatchControlBlocks >=
-          (context.isHybrid_ ? distributeReceiveBlocks(numRanks_) + GpuNetIoDistributeForwardBlocks : numRanks_) &&
-      numBlocks <= MaxDispatchBlocks);
+  EP_HOST_ASSERT(numBlocks - DispatchControlBlocks >= (context.isHybrid_ ? HybridForwardBlocks : numRanks_) &&
+                 numBlocks <= MaxDispatchBlocks);
   const bool staticFp8RankMajor =
       dispatchLayout == DispatchLayout::RANK_MAJOR && dispatchDataType == DispatchDataType::FP8_E4M3_STATIC;
   if (inputMode != QuantConfig::InputMode::PREQUANTIZED && inputMode != QuantConfig::InputMode::QUANTIZE) {

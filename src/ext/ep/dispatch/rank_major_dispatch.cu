@@ -270,31 +270,9 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(int* outputTopkIdx, float* outputTopkWei
                                         void* workspace, uint32_t flag, int* sharedMem) {
   const int sourceRank = static_cast<int>(blockIdx.x);
   if (sourceRank >= nRanks) return;
-  auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
-  if (threadIdx.x == 0) {
-    const int nRankTokens = static_cast<int>(rankTokenCounts[sourceRank].read(flag, -1));
-    outputCount[sourceRank] = nRankTokens;
-    sharedMem[0] = nRankTokens;
-  }
-  __syncthreads();
-
-  const int nRankTokens = sharedMem[0];
-  const int nMetadataEntries = maxTokensPerRank * nTopk;
-  for (int metadataIdx = nRankTokens * nTopk + static_cast<int>(threadIdx.x); metadataIdx < nMetadataEntries;
-       metadataIdx += static_cast<int>(blockDim.x)) {
-    const size_t outputIdx = static_cast<size_t>(sourceRank) * nMetadataEntries + metadataIdx;
-    outputTopkIdx[outputIdx] = invalidTokenExpertId;
-    outputTopkWeights[outputIdx] = 0.0f;
-  }
-
   WorkspaceView workspaceView(workspace, nRanks, nExperts);
-  if (threadIdx.x == 0 && nRankTokens > 0) {
-    if (transport.isSelf(sourceRank)) {
-      workspaceView.dispatchLocalPayloadReady_->acquire();
-    } else {
-      transport.baseMemoryChannels_[sourceRank].wait(-1);
-    }
-  }
+  dispatchRankMajorRecvSource(outputTopkIdx, outputTopkWeights, outputCount, transport, workspaceView, sourceRank,
+                              nTopk, maxTokensPerRank, invalidTokenExpertId, recvBuffer, flag, sharedMem);
 }
 
 #endif  // MSCCLPP_BULK_AVAILABLE

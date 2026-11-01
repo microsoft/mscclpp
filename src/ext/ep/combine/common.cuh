@@ -151,7 +151,7 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
         if (pending && ready) {
           const uint8_t* source;
           if (Hybrid && !transport.isNvlinkPeer(destinationRank)) {
-            const auto* landing = static_cast<const uint8_t*>(transport.gpuNetIoCombineLandingBuffer_);
+            const auto* landing = static_cast<const uint8_t*>(transport.combineLandingBuffer_);
             source =
                 landing + (static_cast<size_t>(destinationRank) * maxTokensPerRank + destinationSlot) * HiddenBytes;
           } else {
@@ -254,8 +254,8 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombinePushReady(const int64_t* __res
     }
   }
 
-  auto* network = transport.gpuNetIo_;
-  auto* flags = reinterpret_cast<volatile uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_);
+  auto* network = transport.portChannels_;
+  auto* flags = reinterpret_cast<volatile uint64_t*>(transport.combineFlagsBuffer_);
   for (int baseRank = 0; baseRank < nRanks; baseRank += WARP_SIZE) {
     const int destinationRank = baseRank + laneId;
     bool pending = false;
@@ -273,7 +273,7 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombinePushReady(const int64_t* __res
     while (__any_sync(0xffffffff, pending)) {
       if (pending) {
         const int qpIndex = rankMajorCombineStripeQp(network, transport.rank_);
-        const size_t flagIndex = static_cast<size_t>(destinationRank) * GpuNetIoMaxQpsPerPeer + qpIndex;
+        const size_t flagIndex = static_cast<size_t>(destinationRank) * MaxQpsPerPeer + qpIndex;
         if (flags[flagIndex] >= target) {
           workspaceView.combineArrivedBaseline_[destinationRank] = target;
           mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.combineRankReadyFlags_ + destinationRank,
@@ -289,13 +289,13 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePushOwner(const void* expertOutput, int nRanks, int maxTokensPerRank,
                                                          const TransportView& transport, WorkspaceView& workspaceView,
                                                          int owner, int stripe) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[GpuNetIoMaxQpsPerPeer];
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
-  auto* network = transport.gpuNetIo_;
-  auto* landingBase = reinterpret_cast<uint8_t*>(transport.gpuNetIoCombineLandingBuffer_);
+  auto* network = transport.portChannels_;
+  auto* landingBase = reinterpret_cast<uint8_t*>(transport.combineLandingBuffer_);
   const int nQp = network->numQpsPerPeer;
-  if (nQp < 1 || nQp > GpuNetIoMaxQpsPerPeer) __trap();
+  if (nQp < 1 || nQp > MaxQpsPerPeer) __trap();
   // The owner CTA assigns the owner payload to one QP and drains it before returning.
   if (owner < nRanks && !transport.isSelf(owner) && !transport.isNvlinkPeer(owner) &&
       workspaceView.dispatchRecvCounts_[owner] > 0 && stripe == 0) {
@@ -307,8 +307,8 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePushOwner(const void* expertOutpu
                                   static_cast<size_t>(owner) * maxTokensPerRank * HiddenBytes;
     const uint64_t destinationOffset =
         transport.symmetricOffset(landingBase + static_cast<size_t>(transport.rank_) * maxTokensPerRank * HiddenBytes);
-    const auto* flags = static_cast<uint64_t*>(transport.gpuNetIoCombineFlagsBuffer_) +
-                        static_cast<size_t>(transport.rank_) * GpuNetIoMaxQpsPerPeer;
+    const auto* flags =
+        static_cast<uint64_t*>(transport.combineFlagsBuffer_) + static_cast<size_t>(transport.rank_) * MaxQpsPerPeer;
     const uint64_t flagOffset = transport.symmetricOffset(flags + qpIndex);
     const uint64_t bytes = static_cast<uint64_t>(nRowsToOwner) * HiddenBytes;
     auto& state = network->signalState(owner, qpIndex);
@@ -333,7 +333,7 @@ MSCCLPP_DEVICE_INLINE void sendRankMajorCombinePush(const void* expertOutput, in
 
 MSCCLPP_DEVICE_INLINE void drainRankMajorCombinePushOwner(int nRanks, const TransportView& transport,
                                                           WorkspaceView& workspaceView, int owner, int stripe) {
-  auto* network = transport.gpuNetIo_;
+  auto* network = transport.portChannels_;
   if (owner >= nRanks || transport.isNvlinkPeer(owner) || workspaceView.dispatchRecvCounts_[owner] <= 0 || stripe != 0)
     return;
   network->channel(owner, rankMajorCombineStripeQp(network, owner))
@@ -377,7 +377,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   EP_HOST_ASSERT(residentBlocks >= numBlocks);
 
   if constexpr (Hybrid) {
-    if (!context.gpuNetIoAggregateCombine_) {
+    if (!context.aggregateCombine_) {
       const WorkspaceView workspace(context.workspace_, nRanks, nExperts);
       MSCCLPP_CUDATHROW(
           cudaMemsetAsync(workspace.combineRankReadyFlags_, 0, static_cast<size_t>(nRanks) * sizeof(uint32_t), stream));

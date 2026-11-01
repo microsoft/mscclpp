@@ -24,8 +24,9 @@ struct RankMajorRoute {
 MSCCLPP_DEVICE_INLINE RankMajorRoute prepareRankMajorRoute(WorkspaceView& workspaceView,
                                                            const int64_t* __restrict__ topkIndices, int tokenIdx,
                                                            int nTopk, int nLocalExperts, int maxTokensPerRank,
-                                                           int laneId) {
-  const int routedExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
+                                                           int laneId, int nExperts = (1 << 30)) {
+  const int64_t rawExpertIdx = laneId < nTopk ? topkIndices[tokenIdx * nTopk + laneId] : -1;
+  const int routedExpertIdx = rawExpertIdx >= 0 && rawExpertIdx < nExperts ? static_cast<int>(rawExpertIdx) : -1;
   const int dstRank = routedExpertIdx >= 0 ? routedExpertIdx / nLocalExperts : -1;
   const bool firstLaneForRank = isFirstLaneForRank(dstRank, laneId);
   int destinationSlot = -1;
@@ -101,37 +102,72 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
 }
 
 #if defined(MSCCLPP_USE_GPUNETIO)
-// Cross-domain metadata travels with the network payload, not the mapped stores.
-MSCCLPP_DEVICE_INLINE void sendRankMajorMetadataNvlink(
-    const TransportView& transport, int* outputTopkIdx, float* outputTopkWeights,
-    const int64_t* __restrict__ topkIndices, const float* __restrict__ topkWeights, const RankMajorRoute& route,
-    int tokenIdx, int nTopk, int nLocalExperts, int maxTokensPerRank, int invalidTokenExpertId) {
+// Write per-token top-k IDs and weights for all NVLink-reachable leader lanes in leaderMask.
+MSCCLPP_DEVICE_INLINE void writeRankMajorMetadataNvlink(const TransportView& transport, int* outputTopkIdx,
+                                                        float* outputTopkWeights, int sourceRank, int dstRank,
+                                                        int destinationSlot, int candidateExpert, float candidateWeight,
+                                                        unsigned int leaderMask, int nTopk, int maxTokensPerRank,
+                                                        int invalidTokenExpertId) {
   const int laneId = getLaneId();
-  const int candidateExpert =
-      laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : invalidTokenExpertId;
-  const float candidateWeight =
-      laneId < nTopk ? (topkWeights == nullptr ? 1.0f : topkWeights[tokenIdx * nTopk + laneId]) : 0.0f;
-  unsigned int leaderMask = __ballot_sync(0xffffffff, route.dstRank >= 0 && route.isLeader);
   while (leaderMask != 0) {
     const int leaderLane = __ffs(leaderMask) - 1;
-    const int destinationRank = __shfl_sync(0xffffffff, route.dstRank, leaderLane);
-    const int destinationSlot = __shfl_sync(0xffffffff, route.destinationSlot, leaderLane);
+    const int peerRank = __shfl_sync(0xffffffff, dstRank, leaderLane);
+    const int peerSlot = __shfl_sync(0xffffffff, destinationSlot, leaderLane);
     leaderMask &= leaderMask - 1;
-    if (!transport.isNvlinkPeer(destinationRank)) continue;
     if (laneId < nTopk) {
-      auto* destinationTopkIdx = reinterpret_cast<int*>(transport.mappedBuffer(outputTopkIdx, destinationRank));
-      auto* destinationTopkWeights =
-          reinterpret_cast<float*>(transport.mappedBuffer(outputTopkWeights, destinationRank));
-      const size_t outputIdx =
-          (static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot) * nTopk + laneId;
-      const bool isLocal = candidateExpert >= 0 && candidateExpert / nLocalExperts == destinationRank;
-      destinationTopkIdx[outputIdx] = isLocal ? candidateExpert : invalidTokenExpertId;
-      destinationTopkWeights[outputIdx] = isLocal ? candidateWeight : 0.0f;
+      const size_t outputIdx = (static_cast<size_t>(sourceRank) * maxTokensPerRank + peerSlot) * nTopk + laneId;
+      static_cast<int*>(transport.mappedBuffer(outputTopkIdx, peerRank))[outputIdx] =
+          dstRank == peerRank ? candidateExpert : invalidTokenExpertId;
+      static_cast<float*>(transport.mappedBuffer(outputTopkWeights, peerRank))[outputIdx] =
+          dstRank == peerRank ? candidateWeight : 0.0f;
     }
   }
-  __syncwarp();
 }
 #endif
+
+MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float* outputTopkWeights, int* outputCount,
+                                                       const TransportView& transport, WorkspaceView& workspaceView,
+                                                       int sourceRank, int nTopk, int maxTokensPerRank,
+                                                       int invalidTokenExpertId, void* recvBuffer, uint32_t flag,
+                                                       int* sharedMem, uint32_t* forwardReady = nullptr) {
+  if (threadIdx.x == 0) {
+    auto* rankTokenCounts = static_cast<mscclpp::LL8Packet*>(recvBuffer);
+    const int nRankTokens = static_cast<int>(rankTokenCounts[sourceRank].read(flag, -1));
+    outputCount[sourceRank] = nRankTokens;
+    sharedMem[0] = nRankTokens;
+    if (forwardReady != nullptr) {
+      workspaceView.dispatchRecvCounts_[sourceRank] = nRankTokens;
+      if (!transport.isNvlinkPeer(sourceRank)) {
+        while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(forwardReady + sourceRank,
+                                                                   mscclpp::memoryOrderAcquire) != flag) {
+        }
+      } else if (nRankTokens > 0) {
+        if (transport.isSelf(sourceRank))
+          workspaceView.dispatchLocalPayloadReady_->acquire();
+        else
+          transport.baseMemoryChannels_[sourceRank].wait(-1);
+      }
+    }
+  }
+  __syncthreads();
+
+  const int nRankTokens = sharedMem[0];
+  const int nMetadataEntries = maxTokensPerRank * nTopk;
+  for (int metadataIdx = nRankTokens * nTopk + static_cast<int>(threadIdx.x); metadataIdx < nMetadataEntries;
+       metadataIdx += static_cast<int>(blockDim.x)) {
+    const size_t outputIdx = static_cast<size_t>(sourceRank) * nMetadataEntries + metadataIdx;
+    outputTopkIdx[outputIdx] = invalidTokenExpertId;
+    outputTopkWeights[outputIdx] = 0.0f;
+  }
+
+  if (forwardReady == nullptr && threadIdx.x == 0 && nRankTokens > 0) {
+    if (transport.isSelf(sourceRank)) {
+      workspaceView.dispatchLocalPayloadReady_->acquire();
+    } else {
+      transport.baseMemoryChannels_[sourceRank].wait(-1);
+    }
+  }
+}
 
 MSCCLPP_DEVICE_INLINE void countRankMajorRoutes(int* rankTokenCounts, const int64_t* __restrict__ topkIndices,
                                                 int nTokens, int nTopk, int nRanks, int nExperts) {
@@ -168,14 +204,8 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   const int nRanks = context.numRanks_;
   const int nTopk = workload.numTopk_;
 
-  size_t dynamicSharedBytes = dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Hybrid>(nRanks, nExperts, nTopk);
-  if constexpr (Hybrid) {
-    const size_t forwardSharedBytes =
-        dispatchSharedControlBytes(nRanks, true) +
-        GpuNetIoDistributeForwardWarps *
-            (dispatchPayloadStride<DispatchDataType::BF16>(Hidden, nTopk, 0) + sizeof(mscclpp::BulkBarrier));
-    dynamicSharedBytes = std::max(dynamicSharedBytes, forwardSharedBytes);
-  }
+  const size_t dynamicSharedBytes =
+      dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Hybrid>(nRanks, nExperts, nTopk);
   static thread_local KernelConfigCache kernelConfig;
   auto kernel = KernelSelector::template get<Hidden, DataType, ScaleBlockSize>();
   const int residentBlocks = configureKernel(kernel, DispatchNThreads, dynamicSharedBytes, context, kernelConfig);
@@ -268,9 +298,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(numWorkerBlocks >=
-                     (Hybrid ? distributeReceiveBlocks(nRanks) + GpuNetIoDistributeForwardBlocks : nRanks) &&
-                 numWorkerBlocks <= MaxWorkerBlocks);
+  EP_HOST_ASSERT(numWorkerBlocks >= (Hybrid ? HybridForwardBlocks : nRanks) && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));

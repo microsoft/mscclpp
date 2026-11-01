@@ -21,7 +21,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
   const int lane = getLaneId();
   const int topk = workload.numTopk_;
   const int localExperts = workload.numExperts_ / context->numRanks_;
-  const int owner = gateway ? context->gpuNetIoGateway_ : context->rank_;
+  const int owner = gateway ? context->gatewayRank_ : context->rank_;
   auto* tiles = reinterpret_cast<int4*>(sharedMemory);
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
   auto* valid = reinterpret_cast<int*>(barriers + MaxNumTopk);
@@ -30,7 +30,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
     int slot = -1;
     if (lane < topk) {
       if (gateway) {
-        const auto* cached = context->gpuNetIoAggregateRoutes_ + static_cast<size_t>(row) * 2 * topk;
+        const auto* cached = context->aggregateRoutes_ + static_cast<size_t>(row) * 2 * topk;
         expert = cached[lane];
         slot = cached[topk + lane];
       } else {
@@ -84,12 +84,11 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(float* destination, const void* ex
       reinterpret_cast<mscclpp::f32x2*>(destination)[vector * PairsPerVector + pair] = sum[pair];
     }
   }
-  // The CTA barrier joins every writer into thread 0's release counter. The
-  // acquiring poster system-fences the complete chunk before NIC DMA.
+  // The CTA barrier joins every writer into thread 0's release counter.
   __syncthreads();
   if (gateway && threadIdx.x == 0) {
     (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
-        context->gpuNetIoAggregateChunkReady_ + row / context->nTokensPerChunk_, 1, mscclpp::memoryOrderRelease);
+        context->aggregateChunkReady_ + row / context->nTokensPerChunk_, 1, mscclpp::memoryOrderRelease);
   }
 }
 
@@ -98,9 +97,9 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
                                             const WorkspaceView& workspace, uint32_t flag) {
   const int peer = threadIdx.x;
   const int ranks = context->numRanks_;
-  auto* network = transport.gpuNetIo_;
+  auto* network = transport.portChannels_;
   const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(ranks, WARP_SIZE);
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[GpuNetIoMaxQpsPerPeer];
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   if (peer < ranks && transport.isNvlinkPeer(peer)) {
     if (!transport.isSelf(peer)) {
@@ -112,7 +111,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     // Dispatch leaves its forward-complete word at one. During Combine it counts
     // worker CTAs that have finished every NVLink read; FP32 IB consumption is
     // independent, so the end handshake can overlap that remaining work.
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2,
+    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
                                                           mscclpp::memoryOrderAcquire) != gridDim.x) {
     }
     if (!transport.isSelf(peer)) {
@@ -121,25 +120,23 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     }
   }
   if (queue < 0 || queue >= network->numQpsPerPeer || getLaneId() != 0) return;
-  const int rows = *context->gpuNetIoAggregateIncomingRows_;
+  const int rows = *context->aggregateIncomingRows_;
   const int nTokensPerChunk = context->nTokensPerChunk_;
   constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(float);
-  const int gateway = context->gpuNetIoGateway_;
+  const int gateway = context->gatewayRank_;
   auto handle = network->channel(gateway, queue);
   handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
-  const uint64_t dstOffset = transport.symmetricOffset(context->gpuNetIoAggregateRecv_);
-  const uint64_t srcOffset = transport.symmetricOffset(context->gpuNetIoAggregateSend_);
-  const uint64_t flagOffset = transport.symmetricOffset(context->gpuNetIoAggregateControl_->chunks + queue);
+  const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
+  const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
+  const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
   // Dispatch has drained its QPs, and this warp is the only Combine submitter for this QP.
   auto& state = network->signalState(gateway, queue);
   for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
        chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
     const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoAggregateChunkReady_ + chunk,
+    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
                                                           mscclpp::memoryOrderAcquire) != count) {
     }
-    // These DMA sources were written by other CTAs; DOCA's queue-release fence is GPU-scoped.
-    __threadfence_system();
     handle.device_.putWithSignalAt<kExclusive>(handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_,
                                                srcOffset + begin * RowBytes, count * RowBytes, handle.dstMemory_,
                                                flagOffset, network->nextSignalToken(state, flagOffset, 1));
@@ -152,12 +149,12 @@ template <int Hidden>
 MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const DeviceContext* context) {
   constexpr int HiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
   constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  const int row = context->gpuNetIoAggregateTokenRows_[token];
+  const int row = context->aggregateTokenRows_[token];
   if (threadIdx.x == 0 && row >= 0) {
     const int chunk = row / context->nTokensPerChunk_;
-    const int qps = context->gpuNetIo_->numQpsPerPeer;
+    const int qps = context->portChannels_->numQpsPerPeer;
     const int queue = chunk % qps;
-    auto* control = context->gpuNetIoAggregateControl_;
+    auto* control = context->aggregateControl_;
     const uint64_t target = control->chunkBase[queue] + chunk / qps + 1;
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(control->chunks + queue, mscclpp::memoryOrderAcquire) <
            target) {
@@ -165,7 +162,7 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
   }
   __syncthreads();
   const auto* local =
-      reinterpret_cast<const mscclpp::f32x2*>(context->gpuNetIoAggregateLocal_ + static_cast<size_t>(token) * Hidden);
+      reinterpret_cast<const mscclpp::f32x2*>(context->aggregateLocalBuffer_ + static_cast<size_t>(token) * Hidden);
   for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
     int4 packed;
     auto* pairs = reinterpret_cast<mscclpp::bf16x2*>(&packed);
@@ -173,8 +170,8 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
     for (int pair = 0; pair < PairsPerVector; ++pair) {
       auto value = local[vector * PairsPerVector + pair];
       if (row >= 0) {
-        const auto* remote = reinterpret_cast<const mscclpp::f32x2*>(context->gpuNetIoAggregateRecv_ +
-                                                                     static_cast<size_t>(row) * Hidden);
+        const auto* remote =
+            reinterpret_cast<const mscclpp::f32x2*>(context->aggregateRecvBuffer_ + static_cast<size_t>(row) * Hidden);
         const auto partial = remote[vector * PairsPerVector + pair];
         value.data[0] += partial.data[0];
         value.data[1] += partial.data[1];
@@ -201,9 +198,9 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
     uint32_t phase = 0;
     const int worker = static_cast<int>(blockIdx.x) - 1;
     const int workers = static_cast<int>(gridDim.x) - 1;
-    const int incoming = *context->gpuNetIoAggregateIncomingRows_;
+    const int incoming = *context->aggregateIncomingRows_;
     const int nTokensPerChunk = context->nTokensPerChunk_;
-    const int qps = transport.gpuNetIo_->numQpsPerPeer;
+    const int qps = transport.portChannels_->numQpsPerPeer;
     // Publish gateway partials first so their IB transfer overlaps the independent
     // local-domain reduction. Each partial retains its original FP32 route order.
     for (int row = worker; row < incoming; row += workers) {
@@ -211,12 +208,12 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
       // row for NVLink. Dependencies point strictly to an earlier chunk.
       if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {
         const int previous = row / nTokensPerChunk - qps;
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->gpuNetIoAggregateChunkReady_ + previous,
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + previous,
                                                               mscclpp::memoryOrderAcquire) != nTokensPerChunk) {
         }
       }
       __syncthreads();
-      aggregateReduceRow<Hidden>(context->gpuNetIoAggregateSend_ + static_cast<size_t>(row) * Hidden, expertOutput,
+      aggregateReduceRow<Hidden>(context->aggregateSendBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput,
                                  topkIndices, row, true, workload, context, transport, workspace, flag, sharedMemory,
                                  phase);
     }
@@ -225,20 +222,19 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
     if (threadIdx.x == 0) {
       for (int begin = 0; begin < incoming; begin += nTokensPerChunk) {
         const int count = min(nTokensPerChunk, incoming - begin);
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
-                   context->gpuNetIoAggregateChunkReady_ + begin / nTokensPerChunk, mscclpp::memoryOrderAcquire) !=
-               count) {
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + begin / nTokensPerChunk,
+                                                              mscclpp::memoryOrderAcquire) != count) {
         }
       }
     }
     __syncthreads();
     for (int row = worker; row < workload.numTokens_; row += workers) {
-      aggregateReduceRow<Hidden>(context->gpuNetIoAggregateLocal_ + static_cast<size_t>(row) * Hidden, expertOutput,
+      aggregateReduceRow<Hidden>(context->aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput,
                                  topkIndices, row, false, workload, context, transport, workspace, flag, sharedMemory,
                                  phase);
     }
     if (threadIdx.x == 0) {
-      (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(context->gpuNetIoDistributeScratch_ + 2, 1,
+      (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2, 1,
                                                                mscclpp::memoryOrderRelease);
     }
     // A CTA must produce ALL of its gateway rows before waiting for any remote
@@ -249,10 +245,10 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
   }
   workspace.combineSyncer_->sync(gridDim.x);
   if (blockIdx.x == 0) {
-    const int chunks = configCellDiv(context->gpuNetIoDistributeScratch_[0], context->nTokensPerChunk_);
-    const int qps = transport.gpuNetIo_->numQpsPerPeer;
+    const int chunks = configCellDiv(context->distributeScratch_[0], context->nTokensPerChunk_);
+    const int qps = transport.portChannels_->numQpsPerPeer;
     for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
-      context->gpuNetIoAggregateControl_->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
+      context->aggregateControl_->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
     }
     // No additional IB ACK offset: the gateway's NEXT Dispatch cannot finish
     // without our next-Dispatch ACK, issued only after this Combine consumed its
@@ -267,13 +263,13 @@ MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expert
       workspace.dispatchRankPayloadCompletions_[peer] = 0;
       workspace.combineRankReadyFlags_[peer] = 0;
     }
-    const int dispatchCounters = 3 + configCellDiv(context->gpuNetIoDistributeCapacity_, context->nTokensPerChunk_);
+    const int dispatchCounters = 3 + configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
     for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
-      context->gpuNetIoDistributeScratch_[index] = 0;
+      context->distributeScratch_[index] = 0;
     }
-    const int combineCounters = configCellDiv(context->gpuNetIoDistributeCapacity_, context->nTokensPerChunk_);
+    const int combineCounters = configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
     for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
-      context->gpuNetIoAggregateChunkReady_[index] = 0;
+      context->aggregateChunkReady_[index] = 0;
     }
   }
 }
@@ -291,10 +287,10 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hybridAggregateCombineKern
     const uint32_t flag = getDispatchFlag(workspace);
     if (blockIdx.x == 0) {
       if (threadIdx.x == 0) {
-        auto* control = context->gpuNetIoAggregateControl_;
+        auto* control = context->aggregateControl_;
         if (flag == 0 || control->lastCombineEpoch == flag) {
           printf(
-              "[EPGPUNETIO] aggregate Combine requires one fresh Dispatch per Combine, including graph replays "
+              "[EP] aggregate Combine requires one fresh Dispatch per Combine, including graph replays "
               "(rank=%d epoch=%u last=%u)\n",
               context->rank_, flag, control->lastCombineEpoch);
           __trap();
@@ -337,9 +333,7 @@ MSCCLPP_DEVICE_INLINE void hybridCombineBody(void* output, const void* expertOut
     static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE || Mode == CombineMode::DIRECT_SEND);
     static_assert(DispatchType == DispatchDataType::BF16);
 #if defined(MSCCLPP_USE_GPUNETIO)
-    // Cross-domain active: use the GPUNetIO PUSH combine (NVLink peers via mapped
-    // read, cross-domain peers via landing region) instead of the pull/gather.
-    if (transport.gpuNetIo_ != nullptr) {
+    if (transport.portChannels_ != nullptr) {
       signalRankMajorCombineLocalStart(transport, nRanks);
       sendRankMajorCombinePush<Hidden>(expertOutput, nRanks, maxTokensPerRank, transport, workspaceView, flag);
       if (blockIdx.x == 0) {
@@ -394,8 +388,8 @@ struct HybridCombineKernelSelector {
 void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const Workload& workload, void* recvBuffer,
                    void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
-  if (context.gpuNetIoAggregateCombine_) {
-    EP_HOST_ASSERT(context.gpuNetIo_ != nullptr && workload.numTopk_ <= MaxNumTopk);
+  if (context.aggregateCombine_) {
+    EP_HOST_ASSERT(context.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
     EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR &&
                    workload.dispatchDataType_ == DispatchDataType::BF16);
     return combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, HybridAggregateCombineKernelSelector, true>(
