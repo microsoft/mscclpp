@@ -189,9 +189,9 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
 }
 
 template <CombineMode Mode, int Hidden>
-MSCCLPP_DEVICE_INLINE void aggregateCombineBody(void* output, const void* expertOutput, const int64_t* topkIndices,
-                                                const float* topkWeights, Workload workload,
-                                                const DeviceContext* context, uint32_t flag) {
+MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, const int64_t* topkIndices,
+                                       const float* topkWeights, Workload workload, const DeviceContext* context,
+                                       uint32_t flag) {
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   const TransportView transport(context);
   const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
@@ -297,7 +297,7 @@ __global__ __launch_bounds__(CombineNThreads,
       }
       __syncthreads();
     }
-    aggregateCombineBody<Mode, Hidden>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
+    combineBody<Mode, Hidden>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
   }
 #endif
 }
