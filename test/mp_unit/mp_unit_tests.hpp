@@ -189,6 +189,7 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testMultiQpBandwidth(IbMode ibMode, int numQps);
   void testMultiQpFlushStress(IbMode ibMode, int numQps);
   void testSameChanConcurrentFlush(IbMode ibMode);
+  void testDeferredSubmission(bool inlinePayload, bool blueFlame);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
