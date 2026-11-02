@@ -249,6 +249,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const float dispatchScale = request.quant.dispatchScale;
   const QuantConfig::InputMode inputMode = request.quant.inputMode;
   const DispatchDataType combineDataType = request.quant.combineDataType;
+  const float combineScale = request.quant.combineScale.value_or(dispatchScale);
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
@@ -272,9 +273,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   if (staticFp8RankMajor) {
     if (!std::isfinite(dispatchScale) || dispatchScale <= 0.0f) {
       EP_THROW("Latency RANK_MAJOR static FP8 requires a finite positive quantization scale");
-    }
-    if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !std::isfinite(1.0f / dispatchScale)) {
-      EP_THROW("Latency RANK_MAJOR static FP8 combine requires a quantization scale with a finite reciprocal");
     }
     EP_HOST_ASSERT(outputScales == nullptr);
     if (inputMode == QuantConfig::InputMode::QUANTIZE) {
@@ -300,6 +298,13 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !staticFp8RankMajor) {
     EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
   }
+  if (combineDataType == DispatchDataType::FP8_E4M3_STATIC) {
+    if (!std::isfinite(combineScale) || combineScale <= 0.0f || !std::isfinite(1.0f / combineScale)) {
+      EP_THROW("Static FP8 combine requires a finite positive quantization scale with a finite reciprocal");
+    }
+  } else if (request.quant.combineScale.has_value()) {
+    EP_THROW("A combine scale is supported only by FP8_E4M3_STATIC combine input");
+  }
 
   const Workload workload{.numTokens_ = numTokens,
                           .hidden_ = hidden,
@@ -311,6 +316,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .dispatchDataType_ = dispatchDataType,
                           .combineDataType_ = combineDataType,
                           .dispatchScale_ = dispatchScale,
+                          .combineScale_ = combineScale,
                           .emitLocalExpertIds_ = emitLocalExpertIds,
                           .inputMode_ = inputMode};
   const auto allocationLayout = context.storageLayout();
@@ -394,6 +400,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
   const DispatchDataType combineDataType = handle.combineDataType_;
   const float dispatchScale = handle.dispatchScale_;
+  const float combineScale = handle.combineScale_;
   const CombineMode mode = context.combineMode_;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
@@ -410,6 +417,7 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .dispatchDataType_ = dispatchDataType,
                           .combineDataType_ = combineDataType,
                           .dispatchScale_ = dispatchScale,
+                          .combineScale_ = combineScale,
                           .emitLocalExpertIds_ = false,
                           .applyRouterWeights_ = request.applyRouterWeights,
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};

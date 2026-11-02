@@ -245,8 +245,7 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     const int incoming = *context->aggregateIncomingRows_;
     const int nTokensPerChunk = context->nTokensPerChunk_;
     const int qps = transport.portChannels_->numQpsPerPeer;
-    const float dequantScale =
-        DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
+    const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
     auto* sendBase = reinterpret_cast<WireElement*>(context->aggregateSendBuffer_);
     for (int row = worker; row < incoming; row += workers) {
       if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {

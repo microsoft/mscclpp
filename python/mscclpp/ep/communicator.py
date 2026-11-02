@@ -167,7 +167,7 @@ class MoECommunicator:
         subsequent operations; a view does not reserve a separate output slot.
         """
         active = verify_active_capacity(runtime_max_tokens_per_rank, self.max_tokens_per_rank)
-        data_type, _, _, _, _ = resolve_dispatch_format(self._config, quant)
+        data_type, _, _, _, _, _ = resolve_dispatch_format(self._config, quant)
         with torch.cuda.device(self.device):
             return tensor_from_pointer(
                 self._runtime.dispatch_output_buffer_ptr(),
@@ -294,8 +294,8 @@ class MoECommunicator:
         inputs must use ``DispatchOutput.combine_input_buffer``.
         Latency RANK_MAJOR input dtype follows ``QuantConfig.combine_format``:
         BF16 by default, or ``FP8_E4M3_STATIC`` with matching static-FP8
-        dispatch. Static E4M3 input is dequantized with the dispatch scale
-        retained by the handle.
+        dispatch. Static E4M3 input is dequantized with ``QuantConfig.combine_scale``,
+        defaulting to the dispatch scale. Both scales are retained by the handle.
         For latency DIRECT_SEND, set ``apply_router_weights=False`` for
         preweighted expert outputs. By default it is enabled only for
         DIRECT_SEND; other modes ignore this option.
