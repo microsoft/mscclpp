@@ -154,8 +154,8 @@ contents and ownership rather than creating a separate Python allocation.
 `buffer.to_torch()` returns a zero-copy PyTorch tensor sharing the same GPU
 memory. It preserves shape, dtype, device, and strides, including slices and
 Fortran layouts. The tensor retains the allocation (or external owner), so it
-remains valid after the `GpuBuffer` wrapper is released. PyTorch is optional and
-is imported only when this method is called; unsupported dtypes raise `ValueError`.
+remains valid after the `GpuBuffer` wrapper is released. PyTorch is optional;
+`to_torch()` raises `RuntimeError` if it is unavailable. Unsupported dtypes raise `ValueError`.
 Empty buffers and scalars keep their shapes.
 
 ```python

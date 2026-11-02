@@ -104,6 +104,7 @@ class CudaBufferTests(unittest.TestCase):
                 is_hip=self.is_hip,
             ),
             "cupy": None,
+            "torch": None,
             "cuda": SimpleNamespace(),
             "cuda.bindings": SimpleNamespace(runtime=self.runtime),
             "hip": SimpleNamespace(hip=self.runtime),
@@ -223,6 +224,10 @@ class CudaBufferTests(unittest.TestCase):
             float32=TorchDtype(),
             utils=SimpleNamespace(dlpack=SimpleNamespace(from_dlpack=consume)),
         )
+        with patch.dict(sys.modules, {"torch": torch}):
+            module = load_module("_torch_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
+        self.assertTrue(module._use_torch)
+        self.GpuBuffer = module.GpuBuffer
         native = sys.modules["mscclpp._mscclpp"]
         buffers = [
             self.GpuBuffer((2, 3), np.float32),
@@ -235,10 +240,7 @@ class CudaBufferTests(unittest.TestCase):
         buffers.append(self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, np.float32)[2:5])
         allocations = self.allocate.call_count
         self.device = 6
-        with (
-            patch.object(native, "cpp_gpu_buffer_to_dlpack", export, create=True),
-            patch.dict(sys.modules, {"torch": torch}),
-        ):
+        with patch.object(native, "cpp_gpu_buffer_to_dlpack", export, create=True):
             for buffer in buffers:
                 with self.subTest(shape=buffer.shape, strides=buffer.strides):
                     self.assertIs(buffer.to_torch(), tensor)
@@ -268,16 +270,18 @@ class CudaBufferTests(unittest.TestCase):
 
     def test_to_torch_requires_optional_torch_and_rejects_unsupported_dtype(self):
         buffer = self.GpuBuffer(4, np.float32)
-        with patch.dict(sys.modules, {"torch": None}):
-            with self.assertRaises(ImportError):
-                buffer.to_torch()
+        self.assertFalse(self.buffer_module._use_torch)
+        with self.assertRaisesRegex(RuntimeError, "PyTorch is not available"):
+            buffer.to_torch()
         export = Mock()
         with (
             patch.object(sys.modules["mscclpp._mscclpp"], "cpp_gpu_buffer_to_dlpack", export, create=True),
             patch.dict(sys.modules, {"torch": SimpleNamespace(dtype=type("TorchDtype", (), {}))}),
         ):
+            module = load_module("_torch_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
+            self.assertTrue(module._use_torch)
             with self.assertRaisesRegex(ValueError, "Unsupported PyTorch dtype"):
-                buffer.to_torch()
+                module.GpuBuffer(4, np.float32).to_torch()
         export.assert_not_called()
 
     def test_views_alias_and_retain_allocation(self):

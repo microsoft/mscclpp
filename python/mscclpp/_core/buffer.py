@@ -6,15 +6,18 @@ from contextlib import contextmanager
 import math
 import operator
 import sys
-from typing import TYPE_CHECKING
 
 import numpy as np
 from mscclpp import gpu
 from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity, is_hip
 from mscclpp._mscclpp import CppDataType as DataType
 
-if TYPE_CHECKING:
+try:
     import torch
+
+    _use_torch = True
+except ImportError:
+    _use_torch = False
 
 __all__ = ["GpuBuffer", "GpuBufferGranularity"]
 
@@ -240,7 +243,8 @@ class GpuBuffer:
         performed: callers must order accesses on different GPU streams explicitly.
         PyTorch is required only when this method is called.
         """
-        import torch
+        if not _use_torch:
+            raise RuntimeError("PyTorch is not available.")
         from mscclpp._mscclpp import cpp_gpu_buffer_to_dlpack
 
         dtype = getattr(torch, self.dtype.name, None)
