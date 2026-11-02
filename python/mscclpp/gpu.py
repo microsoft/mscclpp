@@ -12,10 +12,13 @@ _API_NAMES = {
     "get_device_count": ("hipGetDeviceCount", "cudaGetDeviceCount"),
     "get_device": ("hipGetDevice", "cudaGetDevice"),
     "get_device_properties": ("hipGetDeviceProperties", "cudaGetDeviceProperties"),
+    "pointer_get_attributes": ("hipPointerGetAttributes", "cudaPointerGetAttributes"),
     "set_device": ("hipSetDevice", "cudaSetDevice"),
     "device_synchronize": ("hipDeviceSynchronize", "cudaDeviceSynchronize"),
+    "memcpy_async": ("hipMemcpyAsync", "cudaMemcpyAsync"),
     "stream_create_with_flags": ("hipStreamCreateWithFlags", "cudaStreamCreateWithFlags"),
     "stream_synchronize": ("hipStreamSynchronize", "cudaStreamSynchronize"),
+    "stream_is_capturing": ("hipStreamIsCapturing", "cudaStreamIsCapturing"),
     "stream_destroy": ("hipStreamDestroy", "cudaStreamDestroy"),
     "stream_begin_capture": ("hipStreamBeginCapture", "cudaStreamBeginCapture"),
     "stream_end_capture": ("hipStreamEndCapture", "cudaStreamEndCapture"),
@@ -51,6 +54,7 @@ class _Runtime:
     success: Any
     capture_mode_relaxed: Any
     stream_non_blocking: Any
+    memcpy_kinds: dict[str, Any]
     funcs: dict[str, Callable[..., Any] | None]
 
     @classmethod
@@ -61,11 +65,16 @@ class _Runtime:
             for attr, names in _API_NAMES.items()
         }
         stream_non_blocking = module.hipStreamNonBlocking if name == "hip" else module.cudaStreamNonBlocking
+        memcpy_kind = getattr(module, name + "MemcpyKind")
         return cls(
             name=name,
             success=success,
             capture_mode_relaxed=capture_mode_relaxed,
             stream_non_blocking=stream_non_blocking,
+            memcpy_kinds={
+                direction: getattr(memcpy_kind, name + "Memcpy" + direction)
+                for direction in ("HostToDevice", "DeviceToHost")
+            },
             funcs=funcs,
         )
 
@@ -164,6 +173,16 @@ def create_stream(non_blocking: bool = False) -> Any:
     """Create a stream on the current device; the caller must destroy it."""
     flags = _get_runtime().stream_non_blocking if non_blocking else 0
     return _api("stream_create_with_flags")(flags)[0]
+
+
+def memcpy_async(dst: int, src: int, nbytes: int, direction: str, stream: Any = 0) -> tuple[Any, ...]:
+    """Enqueue a HostToDevice or DeviceToHost copy; retain both buffers until the stream completes."""
+    runtime = _get_runtime()
+    try:
+        kind = runtime.memcpy_kinds[direction]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported host transfer direction: {direction}") from exc
+    return runtime.call("memcpy_async", dst, src, nbytes, kind, _stream_ptr(stream))
 
 
 def capture_graph(stream: Any, capture_fn: Callable[[], None]) -> Graph:

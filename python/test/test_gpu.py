@@ -29,11 +29,13 @@ class CudaGpuTests(unittest.TestCase):
             cudaError_t=SimpleNamespace(cudaSuccess=0),
             cudaStreamCaptureMode=SimpleNamespace(cudaStreamCaptureModeRelaxed=2),
             cudaStreamNonBlocking=1,
+            cudaMemcpyKind=SimpleNamespace(cudaMemcpyHostToDevice=1, cudaMemcpyDeviceToHost=2),
         )
         self.hip = SimpleNamespace(
             hipError_t=SimpleNamespace(hipSuccess=0),
             hipStreamCaptureMode=SimpleNamespace(hipStreamCaptureModeRelaxed=2),
             hipStreamNonBlocking=1,
+            hipMemcpyKind=SimpleNamespace(hipMemcpyHostToDevice=11, hipMemcpyDeviceToHost=12),
         )
         modules = {
             "mscclpp": package,
@@ -155,6 +157,28 @@ class CudaGpuTests(unittest.TestCase):
     def test_version_decoding(self):
         self.api("RuntimeGetVersion").return_value = (0, 60_400_000 if self.is_hip else 12040)
         self.assertEqual(self.gpu.version(), (6, 4, 0) if self.is_hip else (12, 4, 0))
+
+    def test_pointer_attributes_and_capture_status_use_shared_runtime(self):
+        attributes = SimpleNamespace(device=1)
+        self.api("PointerGetAttributes").return_value = (0, attributes)
+        self.api("StreamIsCapturing").return_value = (0, 1)
+        self.assertEqual(self.gpu.pointer_get_attributes(1234), (attributes,))
+        self.assertEqual(self.gpu.stream_is_capturing(123), (1,))
+        self.api("PointerGetAttributes").assert_called_once_with(1234)
+        self.api("StreamIsCapturing").assert_called_once_with(123)
+
+    def test_memcpy_async_resolves_backend_direction_and_stream(self):
+        for direction, kind in (("HostToDevice", 11 if self.is_hip else 1), ("DeviceToHost", 12 if self.is_hip else 2)):
+            with self.subTest(direction=direction):
+                self.assertEqual(self.gpu.memcpy_async(4096, 8192, 64, direction), ())
+                self.api("MemcpyAsync").assert_called_with(4096, 8192, 64, kind, 0)
+                self.gpu.memcpy_async(4096, 8192, 64, direction, 123)
+                self.api("MemcpyAsync").assert_called_with(4096, 8192, 64, kind, 123)
+
+    def test_memcpy_async_rejects_unknown_direction(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported host transfer direction"):
+            self.gpu.memcpy_async(4096, 8192, 64, "invalid")
+        self.api("MemcpyAsync").assert_not_called()
 
     def test_graph_capture_uses_backend_specific_instantiate_signature(self):
         self.api("StreamEndCapture").return_value = (0, 42)

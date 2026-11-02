@@ -9,7 +9,7 @@ import sys
 
 import numpy as np
 from mscclpp import gpu
-from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity, is_hip
+from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity
 from mscclpp._mscclpp import CppDataType as DataType
 
 try:
@@ -22,23 +22,6 @@ except ImportError:
 __all__ = ["GpuBuffer", "GpuBufferGranularity"]
 
 GpuBufferGranularity = CppGpuBufferGranularity
-
-
-def _runtime():
-    if is_hip:
-        from hip import hip
-
-        return hip, "hip"
-    from cuda.bindings import runtime
-
-    return runtime, "cuda"
-
-
-def _call(func, *args):
-    error, *values = func(*args)
-    if int(error) != 0:
-        raise RuntimeError(f"{func.__name__} failed with error {int(error)}")
-    return values
 
 
 class _ExternalGpuAllocation:
@@ -59,8 +42,7 @@ class _ExternalGpuAllocation:
             if self._ptr == 0:
                 self._device_id = gpu.current_device()
             else:
-                runtime, prefix = _runtime()
-                (attributes,) = _call(getattr(runtime, prefix + "PointerGetAttributes"), self._ptr)
+                (attributes,) = gpu.pointer_get_attributes(self._ptr)
                 self._device_id = int(attributes.device)
         return self._device_id
 
@@ -209,12 +191,11 @@ class GpuBuffer:
 
     @contextmanager
     def _on_device(self):
-        runtime, prefix = _runtime()
         previous = gpu.current_device()
         if previous != self.device_id:
             gpu.set_device(self.device_id)
         try:
-            yield runtime, prefix
+            yield
         finally:
             if previous != self.device_id:
                 gpu.set_device(previous)
@@ -222,12 +203,11 @@ class GpuBuffer:
     def _copy(self, dst: int, src: int, direction: str) -> None:
         if self.nbytes == 0:
             return
-        with self._on_device() as (runtime, prefix):
-            (capture_status,) = _call(getattr(runtime, prefix + "StreamIsCapturing"), 0)
+        with self._on_device():
+            (capture_status,) = gpu.stream_is_capturing(0)
             if int(capture_status) != 0:
                 raise RuntimeError("Host transfers are not supported during GPU graph capture.")
-            kind = getattr(getattr(runtime, prefix + "MemcpyKind"), prefix + "Memcpy" + direction)
-            _call(getattr(runtime, prefix + "MemcpyAsync"), dst, src, self.nbytes, kind, 0)
+            gpu.memcpy_async(dst, src, self.nbytes, direction, 0)
             gpu.stream_synchronize(0)
 
     def to_numpy(self) -> np.ndarray:

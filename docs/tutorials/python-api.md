@@ -12,7 +12,8 @@ queries, synchronization, streams, events, and graph capture. They use the backe
 selected by the native build and initialize the Python runtime on first use.
 The benchmarks use these helpers directly, as does `mscclpp.utils.get_device_arch()`
 when querying the current device.
-`GpuBuffer` also uses them for device selection and stream synchronization.
+`GpuBuffer` also uses them for device selection, pointer queries, transfers, and
+stream synchronization.
 
 ## Setup Channel with Python API
 

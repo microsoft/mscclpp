@@ -198,7 +198,7 @@ class CudaBufferTests(unittest.TestCase):
         for error, status, message in (
             (0, 1, "graph capture"),
             (0, 2, "graph capture"),
-            (20, None, "StreamIsCapturing failed"),
+            (20, None, "stream_is_capturing failed"),
         ):
             self.api("StreamIsCapturing").side_effect = lambda stream: (error, status)
             for transfer in (
@@ -346,7 +346,7 @@ class CudaBufferTests(unittest.TestCase):
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("PointerGetAttributes").assert_called_once_with(host.ctypes.data)
         self.api("MemcpyAsync").side_effect = lambda *args: (17,)
-        with self.assertRaisesRegex(RuntimeError, "MemcpyAsync failed with error 17"):
+        with self.assertRaisesRegex(RuntimeError, r"memcpy_async failed: native error \(17\)"):
             buffer.to_numpy()
         self.assertEqual(self.device, 6)
 
@@ -354,7 +354,7 @@ class CudaBufferTests(unittest.TestCase):
         host = np.arange(4, dtype=np.int32)
         buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
         self.api("PointerGetAttributes").side_effect = lambda ptr: (18, None)
-        with self.assertRaisesRegex(RuntimeError, "PointerGetAttributes failed with error 18"):
+        with self.assertRaisesRegex(RuntimeError, r"pointer_get_attributes failed: native error \(18\)"):
             buffer.to_numpy()
         self.api("MemcpyAsync").assert_not_called()
         self.api("SetDevice").assert_not_called()
@@ -417,7 +417,7 @@ class CudaBufferTests(unittest.TestCase):
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("MemcpyAsync").side_effect = lambda *args: (17,)
         self.api("StreamSynchronize").reset_mock()
-        with self.assertRaisesRegex(RuntimeError, self.prefix + "MemcpyAsync failed with error 17"):
+        with self.assertRaisesRegex(RuntimeError, r"memcpy_async failed: native error \(17\)"):
             buffer.to_numpy()
         self.api("StreamSynchronize").assert_not_called()
         self.assertEqual(self.device, 6)
