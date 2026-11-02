@@ -117,6 +117,19 @@ def test_gpu_buffer_to_torch(mpi_group: MpiGroup, shape, order, dtype):
 
 
 @parametrize_mpi_groups(1)
+def test_gpu_buffer_copies_follow_current_torch_stream(mpi_group: MpiGroup):
+    torch = pytest.importorskip("torch")
+    buffer = GpuBuffer(8, np.float32)
+    stream = torch.cuda.Stream(device=buffer.device_id)
+    expected = np.arange(8, dtype=np.float32)
+    tensor = buffer.to_torch()
+    with torch.cuda.stream(stream):
+        buffer.copy_from_numpy(expected)
+        tensor.add_(10)
+        np.testing.assert_array_equal(buffer.to_numpy(), expected + 10)
+
+
+@parametrize_mpi_groups(1)
 def test_gpu_buffer_to_torch_null_backed_empty_storage(mpi_group: MpiGroup):
     torch = pytest.importorskip("torch")
     buffer = GpuBuffer.from_ptr(0, 0, object())

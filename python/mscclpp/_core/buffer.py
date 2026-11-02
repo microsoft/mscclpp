@@ -204,11 +204,14 @@ class GpuBuffer:
         if self.nbytes == 0:
             return
         with self._on_device():
-            (capture_status,) = gpu.stream_is_capturing(0)
+            stream = 0
+            if _use_torch and torch.cuda.is_initialized():
+                stream = torch.cuda.current_stream(self.device_id).cuda_stream
+            (capture_status,) = gpu.stream_is_capturing(stream)
             if int(capture_status) != 0:
                 raise RuntimeError("Host transfers are not supported during GPU graph capture.")
-            gpu.memcpy_async(dst, src, self.nbytes, direction, 0)
-            gpu.stream_synchronize(0)
+            gpu.memcpy_async(dst, src, self.nbytes, direction, stream)
+            gpu.stream_synchronize(stream)
 
     def to_numpy(self) -> np.ndarray:
         """Synchronously copy this buffer to a new NumPy array."""

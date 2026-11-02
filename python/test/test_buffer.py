@@ -211,6 +211,44 @@ class CudaBufferTests(unittest.TestCase):
         self.api("MemcpyAsync").assert_not_called()
         self.api("StreamSynchronize").assert_not_called()
 
+    def test_copy_selects_buffer_device_current_stream_only_when_torch_initialized(self):
+        buffer = self.GpuBuffer(4, np.int32)
+        self.device = 6
+        source = np.arange(4, dtype=np.int32)
+        updated = source + 10
+        for initialized in (False, True):
+            stream = 123 if initialized else 0
+            torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_initialized=Mock(return_value=initialized),
+                    current_stream=Mock(return_value=SimpleNamespace(cuda_stream=123)),
+                )
+            )
+            with (
+                self.subTest(initialized=initialized),
+                patch.object(self.buffer_module, "_use_torch", True),
+                patch.object(self.buffer_module, "torch", torch, create=True),
+            ):
+                buffer.copy_from_numpy(source)
+                self.api("MemcpyAsync").assert_called_with(buffer.ptr, source.ctypes.data, source.nbytes, 1, stream)
+                self.pending_copies[stream] = [(buffer.ptr, updated.ctypes.data, updated.nbytes)]
+                np.testing.assert_array_equal(buffer.to_numpy(), updated)
+                self.api("StreamIsCapturing").assert_called_with(stream)
+                self.api("StreamSynchronize").assert_called_with(stream)
+                self.assertEqual(self.device, 6)
+                if initialized:
+                    torch.cuda.current_stream.assert_called_with(buffer.device_id)
+                else:
+                    torch.cuda.current_stream.assert_not_called()
+                self.api("MemcpyAsync").reset_mock()
+                self.api("StreamIsCapturing").side_effect = lambda _: (0, 1)
+                with self.assertRaisesRegex(RuntimeError, "graph capture"):
+                    buffer.to_numpy()
+                self.api("StreamIsCapturing").assert_called_with(stream)
+                self.api("MemcpyAsync").assert_not_called()
+                self.assertEqual(self.device, 6)
+                self.api("StreamIsCapturing").side_effect = lambda _: (0, 0)
+
     def test_to_torch_exports_exact_view_metadata_without_copying(self):
         class TorchDtype:
             def __str__(self):
