@@ -1,0 +1,172 @@
+# Unified EP benchmark on GB200: compares MSCCL++ EP with the latest NCCL-EP and DeepEP.
+# The node image provides PyTorch only; NCCL-EP and DeepEP are installed at their latest
+# versions at the start of every run (test/deploy/install-ep-backends.sh).
+
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    include:
+    - .azure-pipelines/ep-benchmark.yml
+    - docker/base-dev-torch-x.dockerfile
+    - python/mscclpp/ep/**
+    - python/mscclpp_benchmark/ep/**
+    - src/ext/ep/**
+    - test/deploy/install-ep-backends.sh
+    - test/deploy/run-ep-benchmark.sh
+    - test/deploy/summarize_ep_benchmark.py
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: true
+  paths:
+    include:
+    - .azure-pipelines/ep-benchmark.yml
+    - docker/base-dev-torch-x.dockerfile
+    - python/mscclpp/ep/**
+    - python/mscclpp_benchmark/ep/**
+    - src/ext/ep/**
+    - test/deploy/install-ep-backends.sh
+    - test/deploy/run-ep-benchmark.sh
+    - test/deploy/summarize_ep_benchmark.py
+
+parameters:
+- name: vmssName
+  type: string
+  default: 'mnnvl'   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+- name: nodeCount
+  displayName: GB200 nodes (4 GPUs each)
+  type: number
+  default: 1
+  values:
+  - 1
+  - 2
+  - 4
+
+variables:
+  - group: mscclpp
+  - name: Codeql.Enabled
+    value: false
+
+jobs:
+- job: EpBenchmark
+  displayName: Unified EP benchmark (MSCCL++ vs NCCL-EP vs DeepEP)
+  timeoutInMinutes: 120
+  strategy:
+    matrix:
+      cuda13:
+        # The agent is x86_64, while the GB200 nodes are aarch64 and the torch image is
+        # aarch64-only, so the agent and the nodes use different images. deploy.sh pulls
+        # containerImage onto the nodes.
+        agentImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3-torch2.x
+  pool:
+    name: msccl-ci-gb200
+  container:
+    image: $[ variables['agentImage'] ]
+
+  steps:
+  - task: Bash@3
+    displayName: Generate deploy files
+    env:
+      NODE_IP1: $(GB200-IP1)
+      NODE_IP2: $(GB200-IP2)
+      NODE_IP3: $(GB200-IP3)
+      NODE_IP4: $(GB200-IP4)
+      NODE_COUNT: ${{ parameters.nodeCount }}
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -eu
+        DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
+        ALL_NODES=("${NODE_IP1}" "${NODE_IP2}" "${NODE_IP3}" "${NODE_IP4}")
+        NODES=("${ALL_NODES[@]:0:${NODE_COUNT}}")
+
+        : > "${DEPLOY_DIR}/config"
+        : > "${DEPLOY_DIR}/hostfile"
+        : > "${DEPLOY_DIR}/hostfile_mpi"
+        for node in "${NODES[@]}"; do
+          if [ -z "${node}" ]; then
+            echo "Missing GB200 node IP for nodeCount=${NODE_COUNT}" >&2
+            exit 1
+          fi
+          timeout 10 bash -c "cat < /dev/null > /dev/tcp/${node}/22" \
+            && echo "${node}:22 OPEN" || echo "${node}:22 UNREACHABLE"
+          printf 'Host %s\n  Port 22345\n  IdentityFile /root/mscclpp/sshkey\n  StrictHostKeyChecking no\n' \
+            "${node}" >> "${DEPLOY_DIR}/config"
+          echo "azhpcuser@${node}" >> "${DEPLOY_DIR}/hostfile"
+          echo "${node}" >> "${DEPLOY_DIR}/hostfile_mpi"
+        done
+
+        echo "##vso[task.setvariable variable=headNode]${NODES[0]}"
+
+  - template: templates/deploy.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+      pilot: true
+      resourceGroup: mscclpp
+      gpuArch: '100a'
+      buildTests: 'false'
+      cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
+      deployArgs: 'multi-node-test false cuda'
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: InstallEpBackends
+      displayName: Install latest NCCL-EP and DeepEP
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azhpcuser'
+      remoteScript: |
+        bash test/deploy/install-ep-backends.sh
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunEpBenchmark
+      displayName: Run unified EP benchmark
+      runRemoteArgs: '--host $(headNode) --user azhpcuser'
+      remoteScript: |
+        # /root/mscclpp in the container is /tmp/mscclpp on the node, where the next step fetches it.
+        export EP_BENCH_LOG_DIR=/root/mscclpp/ep-benchmark-results
+        if [ "${{ parameters.nodeCount }}" -gt 1 ]; then
+          export EP_BENCH_HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
+          export EP_BENCH_NP=$(( ${{ parameters.nodeCount }} * 4 ))
+          export EP_BENCH_PPN=4
+          export EP_BENCH_TCP_IF=$(GB200-MPI-TCP-IF-INCLUDE)
+          export MASTER_ADDR=$(headNode)
+        fi
+        bash test/deploy/run-ep-benchmark.sh
+
+  # Runs even if the benchmark failed, so partial results and logs are kept.
+  - task: Bash@3
+    name: CollectEpResults
+    displayName: Collect EP benchmark results
+    condition: and(succeededOrFailed(), ne(variables['headNode'], ''))
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -eu
+        DEST="$(Build.ArtifactStagingDirectory)/ep-benchmark-results"
+        rm -rf "${DEST}"
+        if ! scp -r -i "${SSHKEYFILE_SECUREFILEPATH}" -o StrictHostKeyChecking=no \
+            "azhpcuser@$(headNode):/tmp/mscclpp/ep-benchmark-results" "$(Build.ArtifactStagingDirectory)/"; then
+          echo "##vso[task.logissue type=warning]No EP benchmark results found on $(headNode)"
+          exit 0
+        fi
+        ls -la "${DEST}"
+        if [ -f "${DEST}/summary.md" ]; then
+          echo "##vso[task.uploadsummary]${DEST}/summary.md"
+        fi
+        echo "##vso[task.setvariable variable=epResultsCollected]true"
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish EP benchmark results
+    condition: and(succeededOrFailed(), eq(variables['epResultsCollected'], 'true'))
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/ep-benchmark-results
+      artifact: ep-benchmark-results-$(System.JobAttempt)
+      publishLocation: pipeline
