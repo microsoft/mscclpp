@@ -1,14 +1,9 @@
 #!/bin/bash
-# Install the latest NCCL-EP and DeepEP so the unified EP benchmark
-# (python/mscclpp_benchmark/ep) compares MSCCL++ EP against current releases.
-# Intended to run inside the base-dev-cuda13.x-torch2.x container after MSCCL++ is installed.
+# Install the latest NCCL-EP and DeepEP for the unified EP benchmark. Run after MSCCL++ is installed.
 #
-# NCCL-EP pins the NCCL release it is validated with, and its throughput mode fails on newer
-# NCCL. Recent DeepEP requires a newer NCCL than that. Each backend therefore gets the NCCL it
-# requires: NCCL-EP's pinned NCCL stays in the Python environment (also used by PyTorch and
-# MSCCL++), and DeepEP is built against the latest NCCL installed in a separate directory.
-# run-ep-benchmark.sh puts that directory first on PYTHONPATH only for the DeepEP run, so
-# PyTorch and DeepEP both load the newer NCCL (DeepEP rejects two NCCL copies in one process).
+# NCCL-EP requires the NCCL version it is validated with, while DeepEP requires a newer one.
+# NCCL-EP's NCCL stays in the Python environment. DeepEP is built against the latest NCCL,
+# installed into DEEPEP_NCCL_DIR, which run-ep-benchmark.sh adds to PYTHONPATH for DeepEP only.
 #
 # Environment overrides:
 #   NCCL_EP_SPEC          pip requirement for NCCL-EP  (default: nccl-extensions[cu13])

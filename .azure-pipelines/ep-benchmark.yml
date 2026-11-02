@@ -1,6 +1,4 @@
 # Unified EP benchmark on GB200: compares MSCCL++ EP with the latest NCCL-EP and DeepEP.
-# The node image provides PyTorch only; NCCL-EP and DeepEP are installed at their latest
-# versions at the start of every run (test/deploy/install-ep-backends.sh).
 
 trigger:
   branches:
@@ -60,9 +58,7 @@ jobs:
   strategy:
     matrix:
       cuda13:
-        # The agent is x86_64, while the GB200 nodes are aarch64 and the torch image is
-        # aarch64-only, so the agent and the nodes use different images. deploy.sh pulls
-        # containerImage onto the nodes.
+        # agentImage runs on the x86_64 agent; containerImage runs on the aarch64 GB200 nodes.
         agentImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3-torch2.x
   pool:
@@ -130,7 +126,7 @@ jobs:
       displayName: Run unified EP benchmark
       runRemoteArgs: '--host $(headNode) --user azhpcuser'
       remoteScript: |
-        # /root/mscclpp in the container is /tmp/mscclpp on the node, where the next step fetches it.
+        # Collected from /tmp/mscclpp/ep-benchmark-results on the node by the next step.
         export EP_BENCH_LOG_DIR=/root/mscclpp/ep-benchmark-results
         if [ "${{ parameters.nodeCount }}" -gt 1 ]; then
           export EP_BENCH_HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
@@ -141,7 +137,7 @@ jobs:
         fi
         bash test/deploy/run-ep-benchmark.sh
 
-  # Runs even if the benchmark failed, so partial results and logs are kept.
+  # Runs even if the benchmark failed, so partial results are kept.
   - task: Bash@3
     name: CollectEpResults
     displayName: Collect EP benchmark results

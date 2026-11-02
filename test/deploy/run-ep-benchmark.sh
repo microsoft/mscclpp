@@ -1,12 +1,10 @@
 #!/bin/bash
-# Run the unified EP benchmark (MSCCL++ EP vs NCCL-EP vs DeepEP), then write results.json,
-# results.csv and summary.md (a comparison table) to EP_BENCH_LOG_DIR. Every backend runs even
-# if an earlier one fails, so partial results are still reported; the script exits non-zero if
-# any backend failed. Run install-ep-backends.sh first.
+# Run the unified EP benchmark for each backend and mode, then write results.json, results.csv
+# and summary.md to EP_BENCH_LOG_DIR. All backends run even if one fails; the script exits
+# non-zero if any failed. Run install-ep-backends.sh first.
 #
-# Each backend runs in its own mpirun so it can load the NCCL it requires (see
-# install-ep-backends.sh). The arguments match what `--backend all` applies to every backend,
-# so the results are directly comparable.
+# Each backend runs in a separate mpirun so it can load its own NCCL, using the same options
+# that `--backend all` applies.
 #
 # Environment overrides:
 #   EP_BENCH_BACKENDS     backends to run (default: "nccl mscclpp deepep")
@@ -21,8 +19,7 @@
 #   EP_VERSIONS_FILE      versions JSON written by install-ep-backends.sh
 #                         (default: /tmp/ep-backend-versions.json)
 #   MASTER_ADDR / MASTER_PORT  torch.distributed rendezvous (default: 127.0.0.1 / 51703)
-#   NCCL_IB_DISABLE       default 1; NCCL crashes probing GB200 Data Direct RoCE devices
-#                         with this image's OFED userspace, and single-node runs use NVLink
+#   NCCL_IB_DISABLE       default 1; single-node runs use NVLink
 
 set -euo pipefail
 
@@ -57,8 +54,7 @@ for var in MASTER_ADDR MASTER_PORT NCCL_IB_DISABLE PATH LD_LIBRARY_PATH CUDA_HOM
     MPI_ARGS+=(-x "${var}")
 done
 
-# Settings `--backend all` applies to every backend: a shared expert_major layout with
-# direct-send combine in latency mode; each backend's default layout in throughput mode.
+# Options `--backend all` applies to every backend.
 mode_args() {
     case "$1" in
         latency) echo "--ep-layout expert_major --combine-mode direct_send" ;;
