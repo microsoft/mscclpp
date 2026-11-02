@@ -9,6 +9,8 @@ from .bench_common import (
     simulated_gemm_output,
     sum_matching_kernel_us,
     validate_combine_output_mpi,
+    rank_major_unit_output,
+    validate_rank_major_counts,
 )
 
 
@@ -166,6 +168,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     )
     quant = _build_quant_config(args, mode, layout)
     group = CommGroup(mpi_comm=comm)
+    hybrid_options = {}
+    if args.qps_per_peer is not None:
+        hybrid_options["qps_per_peer"] = args.qps_per_peer
+    if args.n_tokens_per_chunk is not None:
+        hybrid_options["n_tokens_per_chunk"] = args.n_tokens_per_chunk
     config = ep.MoECommunicatorConfig(
         comm=group,
         num_experts=args.num_experts,
@@ -177,6 +184,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         combine_mode=combine_mode,
         output_layout=layout,
         quant=quant,
+        **hybrid_options,
     )
     moe = ep.MoECommunicator(config)
     if not moe.is_available():
@@ -231,6 +239,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     moe.combine(expert_output, handle, out=out)
     if args.validate:
         torch.cuda.synchronize()
+        if latency and layout == ep.DispatchLayout.RANK_MAJOR:
+            validate_rank_major_counts(
+                dispatch_out.layout.num_tokens_per_rank, topk_idx, config.num_local_experts, comm
+            )
         expected = _expected_output(x, topk_idx, topk_weights, config, num_ranks)
         diff = validate_combine_output_mpi(
             out,
@@ -245,7 +257,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         if rank == 0:
             print(f"[validate] mscclpp combine OK max|got-expected|={diff:.4e}", flush=True)
     # Fixed routing lets communication-only timing reuse synthetic expert output.
-    if expert_output.dtype == torch.float8_e4m3fn:
+    unit_aggregation = latency and layout == ep.DispatchLayout.RANK_MAJOR and quant is None
+    if unit_aggregation:
+        expert_output.fill_(1)
+    elif expert_output.dtype == torch.float8_e4m3fn:
         expert_output.copy_(
             torch.empty(expert_output.shape, dtype=torch.bfloat16, device=expert_output.device)
             .normal_(0.0, 0.1)
@@ -257,6 +272,24 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(dout):
         moe.combine(expert_output, dout[1], out=out)
+
+    def validate_timed(replay):
+        torch.cuda.synchronize()
+        if combine_mode == ep.CombineMode.DIRECT_SEND:
+            expected = _expected_output(torch.ones_like(x), topk_idx, topk_weights, config, num_ranks)
+        else:
+            expected = rank_major_unit_output(topk_idx, config.num_local_experts, args.hidden)
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        expert_output.fill_(2)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected * 2, comm, exact=True)
+        expert_output.fill_(1)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        if rank == 0:
+            print("[validate] mscclpp timed output and alternating expert-output replay OK", flush=True)
 
     graph_spec = None
     captured = {}
@@ -275,7 +308,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"[cfg] backend=mscclpp algorithm={args.mode.upper()} layout={layout} "
             f"combine_mode={combine_mode} num_ranks={num_ranks} tokens/rank={args.num_tokens} "
             f"hidden={args.hidden} num_experts={args.num_experts} top_k={args.num_topk} "
-            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype}",
+            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype} "
+            f"ipc_domain={group.nranks_per_ipc_domain} qps_per_peer={config.qps_per_peer} "
+            f"n_tokens_per_chunk={config.n_tokens_per_chunk}",
             flush=True,
         )
 
@@ -303,6 +338,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "validate": validate_timed if unit_aggregation else None,
         "summary_meta": {
             "algorithm": args.mode.upper(),
             "layout": effective_layout,
@@ -310,5 +346,9 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             "combine_format": effective_comb,
             "combine_mode": str(combine_mode).rsplit(".", 1)[-1].lower(),
             "execution": "cuda_graph" if graph_spec is not None else "eager",
+            "ipc_domain": group.nranks_per_ipc_domain,
+            "qps_per_peer": config.qps_per_peer,
+            "n_tokens_per_chunk": config.n_tokens_per_chunk,
+            "expert_input": "unit-valued, prepared outside timing" if unit_aggregation else "fixed synthetic",
         },
     }
