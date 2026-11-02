@@ -131,12 +131,6 @@ view.copy_from_numpy(np.zeros(view.shape, dtype=view.dtype))
 result = buffer.to_numpy()
 ```
 
-NumPy transfers enqueue a copy on native stream `0` and wait for that stream,
-restoring the previous device. They do not select PyTorch's current stream;
-synchronize nondefault producer streams before calling these methods.
-Default-stream ordering and pageable-memory staging may still block, but no
-device-wide synchronization is requested.
-Nonempty transfers reject graph capture. Keep transfers outside timed operations.
 To initialize existing storage, upload `np.zeros(...)` or `np.full(...)` with
 the buffer's shape and dtype using `copy_from_numpy()`.
 Use NumPy on downloaded arrays for arithmetic, comparisons, or advanced indexing.
