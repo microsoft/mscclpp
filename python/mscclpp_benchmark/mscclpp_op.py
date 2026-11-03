@@ -5,7 +5,7 @@ import os
 import numpy as np
 import ctypes
 from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore
-from mscclpp import CommGroup, GpuBuffer
+from mscclpp import CommGroup, DataType, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
 
 IB_TRANSPORTS = [
@@ -21,11 +21,11 @@ IB_TRANSPORTS = [
 
 
 def type_to_str(dtype):
-    if dtype == np.float16:
+    if dtype == DataType.float16:
         return "__half"
-    elif dtype == np.float32:
+    elif dtype == DataType.float32:
         return "float"
-    elif dtype == np.int32:
+    elif dtype == DataType.int32:
         return "int"
     else:
         raise RuntimeError("Unknown data type")
@@ -448,9 +448,8 @@ class MscclppAllReduce6:
         nblocks: int = 32,
     ):
         self.group = group
-        datatype_size = memory_dtype().itemsize
-        buffer_size = nelem * datatype_size
-        type_str = type_to_str(memory_dtype)
+        self.memory = GpuBuffer(nelem, memory_dtype)
+        type_str = type_to_str(self.memory.dtype)
         all_ranks = list(range(group.nranks))
         remote_nghrs = all_ranks.copy()
         remote_nghrs.remove(self.group.my_rank)
@@ -459,7 +458,6 @@ class MscclppAllReduce6:
         # create a connection for each remote neighbor
         self.nvlink_connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
         self.nvls_connection = group.make_connection(all_ranks, Transport.CudaIpc, use_switch=True)
-        self.memory = GpuBuffer(nelem, memory_dtype)
         self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
             self.memory.data.ptr, self.memory.allocation_size
         )
@@ -484,12 +482,12 @@ class MscclppAllReduce6:
         self.device_handles_gpu = GpuBuffer.from_numpy(memoryview(b"".join(self.device_handles)), dtype=np.uint8)
         self.nvls_handle = self.nvls_mem_handle.device_handle().raw
 
-        if self.memory.dtype != np.float16 and self.memory.dtype != np.float32:
+        if self.memory.dtype != DataType.float16 and self.memory.dtype != DataType.float32:
             raise RuntimeError("Unsupported data type")
 
-        if self.memory.dtype == np.float16:
+        if self.memory.dtype == DataType.float16:
             vector_size = 8
-        elif self.memory.dtype == np.float32:
+        elif self.memory.dtype == DataType.float32:
             vector_size = 4
         else:
             vector_size = 1
@@ -519,9 +517,9 @@ class MscclppAllReduce6:
     def auto_tune(self):
         nblocks_to_try = [8, 12, 16, 24, 32, 48, 64, 72, 96, 108]
         block_size_to_try = [256, 512, 1024]
-        if self.memory.dtype == np.float16:
+        if self.memory.dtype == DataType.float16:
             vector_size_to_try = [8, 4, 2]
-        elif self.memory.dtype == np.float32:
+        elif self.memory.dtype == DataType.float32:
             vector_size_to_try = [4, 2, 1]
         else:
             vector_size_to_try = [1]

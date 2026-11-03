@@ -46,7 +46,7 @@ def fill_case_for_benchmark(case: Any, rank: int) -> None:
     if case.collective == "allreduce":
         case.input.copy_from_numpy(encoded)
         return
-    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.output.dtype))
+    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
     case.input.copy_from_numpy(encoded)
 
 
@@ -112,7 +112,7 @@ def _fill_case_for_correctness(case: Any, rank: int, iteration: int) -> None:
     if case.collective == "allreduce":
         case.input.copy_from_numpy(encoded)
         return
-    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.output.dtype))
+    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
     case.input.copy_from_numpy(encoded)
 
 
@@ -219,7 +219,7 @@ def _expected_outputs(case: Any, nranks: int, iteration: int, rank: int = 0):
         reduced = sum(values.astype(np.float32).reshape(-1)[start : start + chunk] for values in encoded_inputs)
         return _encode_reduced_output(case, reduced), None
 
-    expected = np.empty(case.output.shape, dtype=case.output.dtype)
+    expected = np.empty(case.output.shape, dtype=case.dtype_spec.storage_dtype)
     chunk = case.input.size
     for src_rank, values in enumerate(_encoded_rank_inputs(case, nranks, iteration)):
         expected[src_rank * chunk : (src_rank + 1) * chunk] = values.reshape(-1)
@@ -259,7 +259,7 @@ def _encode_reduced_output(case: Any, values):
         return _encode_fp8_values(case.dtype_spec.fp8_format, values)
     if case.dtype_spec.name == "bfloat16":
         return _encode_bfloat16_values(values)
-    return values.astype(case.output.dtype)
+    return values.astype(case.dtype_spec.storage_dtype)
 
 
 def _compare_output(case: Any, output, expected, nranks: int) -> bool:

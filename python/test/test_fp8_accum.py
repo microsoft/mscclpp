@@ -301,7 +301,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         pytest.skip(f"{algo_name} requires NVLS which is not supported on this platform")
     algo = algo_map[algo_name]
 
-    buf = GpuBuffer(size, dtype=np.uint8)
+    buf = GpuBuffer(size, dtype=fp8_native_dtype)
 
     # rsag_zero_copy and fullmesh need explicit block/thread counts
     if "rsag" in algo_name:
@@ -401,7 +401,7 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         pytest.skip(f"{algo_name} requires NVLS which is not supported on this platform")
 
     algo = algo_map[algo_name]
-    buf = GpuBuffer(size, dtype=np.uint8)
+    buf = GpuBuffer(size, dtype=DataType.float8_e4m3b15)
 
     accum_configs = [
         ("e4m3b15_native", DataType.float8_e4m3b15),

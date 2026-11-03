@@ -117,25 +117,29 @@ implementation does not import CuPy.
 `allocation_size` is the actual allocation extent (which may exceed `nbytes` for
 NVLS alignment); bind an unsliced buffer's pointer and allocation size to NVLS.
 
-The constructor defaults to `mscclpp.DataType.float32` (four bytes per element),
-instead of the previous `float`/float64 default. It accepts `DataType` values with
-NumPy equivalents (`float32`, `float16`, `int32`, `uint32`, and `uint8`), while
-existing NumPy dtype inputs and the NumPy `.dtype` property remain unchanged.
-BF16/FP8 enum values are not supported by this NumPy-backed constructor.
+`.dtype` returns `mscclpp.DataType`; the constructor defaults to `DataType.float32`.
+Matching NumPy types (`float32`, `float16`, `int32`, `uint32`, `uint8`) are accepted;
+unmapped types are rejected. Use a `uint8` view for opaque payloads.
+BF16/FP8 require explicit enum dtypes and pre-encoded `uint16`/`uint8` NumPy storage,
+without numeric conversion. `to_torch()` retains the logical format, except
+`float8_e4m3b15`, which has no PyTorch equivalent.
 
 ```python
+from mscclpp import DataType
+
 host = np.arange(1024, dtype=np.float32)
 buffer = GpuBuffer.from_numpy(host)
+assert buffer.dtype == DataType.float32
 buffer.copy_from_numpy(host * 2)
 view = buffer[256:512]
-view.copy_from_numpy(np.zeros(view.shape, dtype=view.dtype))
+view.copy_from_numpy(np.zeros(view.shape, dtype=host.dtype))
 result = buffer.to_numpy()
 ```
 
 To initialize existing storage, upload `np.zeros(...)` or `np.full(...)` with
-the buffer's shape and dtype using `copy_from_numpy()`.
+the buffer's shape and matching NumPy storage dtype using `copy_from_numpy()`.
 Use NumPy on downloaded arrays for arithmetic, comparisons, or advanced indexing.
-Buffers support C- or F-contiguous layouts with native-endian numeric/boolean dtypes;
+Buffers support C- or F-contiguous layouts;
 explicit strides must match that layout. Dimensions may be zero. One-dimensional
 unit-step slices alias GPU storage and retain the native allocation even after the
 parent wrapper is released. Multidimensional slicing, strided views, implicit array

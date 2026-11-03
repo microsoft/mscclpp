@@ -5,8 +5,7 @@ import ctypes
 from functools import lru_cache
 import os
 
-import numpy as np
-from mscclpp import GpuBuffer
+from mscclpp import DataType, GpuBuffer
 from mscclpp._mscclpp import is_hip
 
 
@@ -113,11 +112,11 @@ class NcclAllReduce:
     def __init__(self, nccl_comm: NcclCommunicator, memory: GpuBuffer):
         self.nccl_comm = nccl_comm
         self.memory = memory
-        if memory.dtype == np.float32:
+        if memory.dtype == DataType.float32:
             self.nccl_dtype = 7  # ncclFloat32
-        elif memory.dtype == np.float16:
+        elif memory.dtype == DataType.float16:
             self.nccl_dtype = 6  # ncclFloat16
-        elif memory.dtype == np.int32:
+        elif memory.dtype == DataType.int32:
             self.nccl_dtype = 2  # ncclInt32
         else:
             raise RuntimeError("Make sure that the data type is mapped to the correct NCCL data type")

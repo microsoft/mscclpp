@@ -24,12 +24,12 @@ from mpi4py import MPI
 
 
 def parse_dtype(dtype_str):
-    """Convert a human-readable data type string to a numpy data type."""
+    """Return the NumPy storage dtype for a human-readable data type."""
     dtype_str = dtype_str.strip().lower()
     if dtype_str == "float16":
         return np.float16
     elif dtype_str in ("bfloat16", "bf16"):
-        return np.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
+        return np.uint16
     elif dtype_str == "float32":
         return np.float32
     elif dtype_str == "int32":
@@ -172,13 +172,14 @@ def build_bufs(
     collective: str,
     size: int,
     in_place: bool,
-    dtype: np.dtype,
+    dtype: DataType,
     rank: int,
     num_ranks: int,
 ):
     """Allocate input/result/test buffers. Returns parallel lists (length 2 for sendrecv double-buffering,
     length 1 otherwise) so callers can iterate uniformly."""
-    type_size = np.dtype(dtype).itemsize
+    storage_dtype = parse_dtype(dtype.name)
+    type_size = np.dtype(storage_dtype).itemsize
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
 
@@ -189,7 +190,7 @@ def build_bufs(
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         for buffer in test_bufs:
-            buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
+            buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=storage_dtype))
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -219,7 +220,7 @@ def build_bufs(
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
     test_buf = GpuBuffer(nelems, dtype=dtype)
-    test_buf.copy_from_numpy(np.zeros(test_buf.shape, dtype=test_buf.dtype))
+    test_buf.copy_from_numpy(np.zeros(test_buf.shape, dtype=storage_dtype))
 
     return [input_buf], [result_buf], [test_buf], nelems
 
@@ -248,7 +249,7 @@ def main(
     execution_plan = ExecutionPlan(execution_plan_path, mscclpp_group.my_rank)
     collective = execution_plan.collective
 
-    dtype = parse_dtype(dtype_str)
+    dtype = dtype_to_mscclpp_dtype(dtype_str)
     input_bufs, result_bufs, test_bufs, nelem = build_bufs(
         collective,
         size,

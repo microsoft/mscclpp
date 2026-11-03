@@ -16,7 +16,10 @@ import weakref
 
 import numpy as np
 
-DataType = Enum("DataType", "float32 float16 int32 uint32 uint8 bfloat16 float8_e4m3fn")
+DataType = Enum(
+    "DataType",
+    "float32 float16 int32 uint32 uint8 bfloat16 float8_e4m3fn float8_e4m3fnuz float8_e5m2 float8_e5m2fnuz float8_e4m3b15",
+)
 
 
 def load_module(name, path):
@@ -124,21 +127,66 @@ class CudaBufferTests(unittest.TestCase):
     def api(self, name):
         return getattr(self.runtime, self.prefix + name)
 
-    def test_constructor_default_and_enum_inputs_keep_numpy_metadata(self):
+    def test_constructor_default_and_numpy_inputs_return_datatype(self):
         buffer = self.GpuBuffer(4)
-        self.assertEqual((buffer.dtype, buffer.itemsize, buffer.nbytes), (np.dtype(np.float32), 4, 16))
+        self.assertEqual((buffer.dtype, buffer.itemsize, buffer.nbytes), (DataType.float32, 4, 16))
         for dtype in (DataType.float32, DataType.float16, DataType.int32, DataType.uint32, DataType.uint8):
             with self.subTest(dtype=dtype):
                 host = np.arange(4, dtype=dtype.name)
-                buffer = self.GpuBuffer(4, dtype=dtype)
-                self.assertEqual((buffer.dtype, buffer.nbytes), (host.dtype, host.nbytes))
-                buffer.copy_from_numpy(host)
-                np.testing.assert_array_equal(buffer.to_numpy(), host)
-        self.assertEqual(self.GpuBuffer(4, dtype=float).dtype, np.dtype(float))
-        for dtype in (DataType.bfloat16, DataType.float8_e4m3fn):
-            with self.subTest(dtype=dtype), self.assertRaises(TypeError):
-                self.GpuBuffer(4, dtype=dtype)
-        self.assertEqual(self.allocate.call_count, 7)
+                for supplied in (dtype, host.dtype, host.dtype.type, host.dtype.name):
+                    buffer = self.GpuBuffer(4, dtype=supplied)
+                    self.assertEqual((buffer.dtype, buffer.nbytes), (dtype, host.nbytes))
+                    buffer.copy_from_numpy(host)
+                    np.testing.assert_array_equal(buffer.to_numpy(), host)
+                self.assertIs(self.GpuBuffer.from_numpy(host).dtype, dtype)
+
+    def test_unmapped_dtypes_are_rejected_before_allocation(self):
+        for dtype in (
+            float,
+            np.float64,
+            np.int8,
+            np.int16,
+            np.int64,
+            np.uint16,
+            np.uint64,
+            np.complex64,
+            np.complex128,
+            bool,
+            np.dtype(np.float32).newbyteorder("S"),
+        ):
+            with self.subTest(dtype=dtype):
+                with self.assertRaisesRegex(ValueError, "no supported mscclpp.DataType"):
+                    self.GpuBuffer(4, dtype)
+                host = np.zeros(4, dtype=dtype)
+                with self.assertRaises(ValueError):
+                    self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype)
+                with self.assertRaises(ValueError):
+                    self.GpuBuffer.from_numpy(host)
+        self.allocate.assert_not_called()
+
+    def test_low_precision_dtypes_preserve_raw_bits_and_view_metadata(self):
+        for dtype in (
+            DataType.bfloat16,
+            DataType.float8_e4m3fn,
+            DataType.float8_e4m3fnuz,
+            DataType.float8_e5m2,
+            DataType.float8_e5m2fnuz,
+            DataType.float8_e4m3b15,
+        ):
+            with self.subTest(dtype=dtype):
+                storage = np.uint16 if dtype == DataType.bfloat16 else np.uint8
+                bits = np.arange(1 << (8 * np.dtype(storage).itemsize), dtype=storage)
+                buffer = self.GpuBuffer.from_numpy(bits, dtype=dtype)
+                self.assertIs(buffer.dtype, dtype)
+                self.assertEqual(buffer.nbytes, bits.nbytes)
+                np.testing.assert_array_equal(buffer.to_numpy(), bits)
+                wrapped = self.GpuBuffer.from_ptr(buffer.ptr, buffer.nbytes, buffer, dtype)
+                view = wrapped[1:5][1:3]
+                self.assertIs(view.dtype, dtype)
+                self.assertEqual((view.ptr, view.nbytes), (buffer.ptr + 2 * bits.itemsize, 2 * bits.itemsize))
+                np.testing.assert_array_equal(view.to_numpy(), bits[2:4])
+                with self.assertRaisesRegex(ValueError, "pre-encoded"):
+                    self.GpuBuffer.from_numpy(np.ones(4, dtype=np.float32), dtype=dtype)
 
     def test_allocation_metadata_and_granularity(self):
         buffer = self.GpuBuffer((2, 3), dtype=np.int32, granularity=7)
@@ -174,8 +222,8 @@ class CudaBufferTests(unittest.TestCase):
         buffer = self.GpuBuffer.from_numpy(host, dtype=np.uint8)
         np.testing.assert_array_equal(buffer.to_numpy(), np.asarray(host))
         matrix = np.asfortranarray(np.arange(6, dtype=np.int16).reshape(2, 3))
-        buffer = self.GpuBuffer.from_numpy(matrix)
-        self.assertEqual(buffer.strides, matrix.strides)
+        buffer = self.GpuBuffer.from_numpy(matrix, dtype=np.int32)
+        self.assertEqual(buffer.strides, (4, 8))
         np.testing.assert_array_equal(buffer.to_numpy(), matrix)
 
     def test_default_stream_orders_copies_and_leaves_other_streams_pending(self):
@@ -251,15 +299,18 @@ class CudaBufferTests(unittest.TestCase):
 
     def test_to_torch_exports_exact_view_metadata_without_copying(self):
         class TorchDtype:
+            def __init__(self, name):
+                self.name = name
+
             def __str__(self):
-                return "torch.float32"
+                return "torch." + self.name
 
         capsule, tensor = object(), object()
         export = Mock(return_value=capsule)
         consume = Mock(return_value=tensor)
         torch = SimpleNamespace(
             dtype=TorchDtype,
-            float32=TorchDtype(),
+            float32=TorchDtype("float32"),
             utils=SimpleNamespace(dlpack=SimpleNamespace(from_dlpack=consume)),
         )
         with patch.dict(sys.modules, {"torch": torch}):
@@ -274,6 +325,15 @@ class CudaBufferTests(unittest.TestCase):
             self.GpuBuffer((0, 3), np.float32),
             self.GpuBuffer(8, np.float32)[1:7][2:4],
         ]
+        for dtype in (
+            DataType.bfloat16,
+            DataType.float8_e4m3fn,
+            DataType.float8_e4m3fnuz,
+            DataType.float8_e5m2,
+            DataType.float8_e5m2fnuz,
+        ):
+            setattr(torch, dtype.name, TorchDtype(dtype.name))
+            buffers.append(self.GpuBuffer(4, dtype))
         host = np.arange(8, dtype=np.float32)
         buffers.append(self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, np.float32)[2:5])
         allocations = self.allocate.call_count
@@ -284,7 +344,7 @@ class CudaBufferTests(unittest.TestCase):
                     self.assertIs(buffer.to_torch(), tensor)
                     export.assert_called_with(
                         buffer.ptr,
-                        "torch.float32",
+                        "torch." + buffer.dtype.name,
                         buffer.shape,
                         tuple(s // buffer.itemsize for s in buffer.strides),
                         2,
@@ -328,7 +388,7 @@ class CudaBufferTests(unittest.TestCase):
         view = buffer[2:7][1:3]
         self.assertEqual(view.ptr, buffer.ptr + 3 * host.itemsize)
         self.assertEqual(view.nbytes, 2 * host.itemsize)
-        view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=np.int32))
         host[3:5] = 19
         np.testing.assert_array_equal(buffer.to_numpy(), host)
         owner = weakref.ref(buffer._allocation)
@@ -345,7 +405,7 @@ class CudaBufferTests(unittest.TestCase):
         host = np.arange(8, dtype=np.uint32)
         buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
         self.assertEqual(buffer.data.ptr, host.ctypes.data)
-        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((8,), np.dtype(np.uint32), (4,)))
+        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((8,), DataType.uint32, (4,)))
         self.assertEqual((buffer.size, buffer.nbytes, buffer.allocation_size), (8, host.nbytes, host.nbytes))
         self.allocate.assert_not_called()
         for func in vars(self.runtime).values():
@@ -354,9 +414,9 @@ class CudaBufferTests(unittest.TestCase):
         np.testing.assert_array_equal(buffer.to_numpy(), host)
         view = buffer[2:6][1:3]
         self.assertEqual(view.ptr, host.ctypes.data + 3 * host.itemsize)
-        view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=np.uint32))
         np.testing.assert_array_equal(host, [0, 1, 2, 19, 19, 5, 6, 7])
-        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=np.uint32))
         np.testing.assert_array_equal(host, np.zeros(8, dtype=np.uint32))
         self.allocate.assert_not_called()
 
@@ -424,7 +484,7 @@ class CudaBufferTests(unittest.TestCase):
     def test_from_ptr_defaults_to_bytes_and_supports_empty_storage(self):
         host = np.arange(4, dtype=np.int32)
         buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host)
-        self.assertEqual((buffer.shape, buffer.dtype), ((host.nbytes,), np.dtype(np.uint8)))
+        self.assertEqual((buffer.shape, buffer.dtype), ((host.nbytes,), DataType.uint8))
         np.testing.assert_array_equal(buffer.to_numpy(), host.view(np.uint8))
         self.api("MemcpyAsync").reset_mock()
         self.api("PointerGetAttributes").reset_mock()
@@ -433,7 +493,7 @@ class CudaBufferTests(unittest.TestCase):
         empty = self.GpuBuffer.from_ptr(0, 0, object())
         self.assertEqual((empty.ptr, empty.nbytes, empty.allocation_size), (0, 0, 0))
         self.assertEqual(empty.to_numpy().shape, (0,))
-        empty.copy_from_numpy(np.zeros(empty.shape, dtype=empty.dtype))
+        empty.copy_from_numpy(np.zeros(empty.shape, dtype=np.uint8))
         self.api("MemcpyAsync").assert_not_called()
         self.api("PointerGetAttributes").assert_not_called()
         self.api("StreamSynchronize").assert_not_called()
@@ -450,7 +510,7 @@ class CudaBufferTests(unittest.TestCase):
     def test_transfers_restore_device_even_on_failure(self):
         buffer = self.GpuBuffer(4, dtype=np.int32)
         self.device = 6
-        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=buffer.dtype))
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=np.int32))
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
         self.api("MemcpyAsync").side_effect = lambda *args: (17,)
@@ -525,7 +585,7 @@ class CudaBufferTests(unittest.TestCase):
         mscclpp = SimpleNamespace(
             gpu=self.buffer_module.gpu,
             GpuBuffer=self.GpuBuffer,
-            DataType=object,
+            DataType=DataType,
             Executor=object,
             ExecutionPlan=object,
             PacketType=SimpleNamespace(LL16=1),
@@ -545,7 +605,7 @@ class CudaBufferTests(unittest.TestCase):
         for collective in ("allreduce", "allgather", "reducescatter", "sendrecv"):
             for in_place in (False, True):
                 with self.subTest(collective=collective, in_place=in_place):
-                    inputs, outputs, tests, _ = executor.build_bufs(collective, 128, in_place, np.int32, 1, 4)
+                    inputs, outputs, tests, _ = executor.build_bufs(collective, 128, in_place, DataType.int32, 1, 4)
                     for buffer in inputs + outputs + tests:
                         self.assertIsInstance(buffer, self.GpuBuffer)
                     for buffer in tests:
@@ -554,6 +614,33 @@ class CudaBufferTests(unittest.TestCase):
                         self.assertEqual(inputs[0].ptr, outputs[0].ptr + 32)
                     if in_place and collective == "reducescatter":
                         self.assertEqual(outputs[0].ptr, inputs[0].ptr + 32)
+        inputs, outputs, tests, _ = executor.build_bufs("allreduce", 128, True, DataType.bfloat16, 1, 4)
+        for buffer in inputs + outputs + tests:
+            self.assertIs(buffer.dtype, DataType.bfloat16)
+            self.assertEqual(buffer.nbytes, 128)
+        np.testing.assert_array_equal(tests[0].to_numpy(), np.zeros(64, dtype=np.uint16))
+
+    def test_benchmark_uses_logical_dtype_for_allocations_and_execution(self):
+        package = ModuleType("mscclpp_benchmark")
+        package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
+        with patch.dict(sys.modules, {"mscclpp_benchmark": package, "mpi4py": SimpleNamespace(MPI=object)}):
+            comm = load_module("mscclpp_benchmark.comm", self.python_dir / "mscclpp_benchmark" / "comm.py")
+            bench = load_module("_dtype_benchmark", self.python_dir / "mscclpp_benchmark" / "bench_collective.py")
+        comm._mscclpp_module = bench._mscclpp_module = SimpleNamespace(GpuBuffer=self.GpuBuffer, DataType=DataType)
+        group = SimpleNamespace(nranks=4, my_rank=1)
+        for name in ("float32", "bfloat16", "float8_e4m3fn"):
+            spec = bench._parse_dtype(name)
+            for collective in ("allreduce", "allgather", "reducescatter"):
+                for mode in ("in-place", "out-of-place"):
+                    with self.subTest(dtype=name, collective=collective, mode=mode):
+                        case = bench._make_case(
+                            collective=collective, nelems=8, dtype_spec=spec, comm_group=group, buffer_mode=mode
+                        )
+                        self.assertIs(case.input.dtype, spec.mscclpp_dtype)
+                        self.assertIs(case.output.dtype, spec.mscclpp_dtype)
+                        self.assertIs(comm._dtype_to_mscclpp(case.input.dtype), spec.mscclpp_dtype)
+                        self.assertEqual(case.input.itemsize, np.dtype(spec.storage_dtype).itemsize)
+                        self.assertEqual(comm._dtype_size(case.input.dtype), case.input.itemsize)
 
     def test_benchmark_reference_downloads_once_and_uploads_input(self):
         mpi = SimpleNamespace(

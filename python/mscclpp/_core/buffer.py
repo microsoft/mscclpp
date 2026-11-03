@@ -24,6 +24,18 @@ __all__ = ["GpuBuffer", "GpuBufferGranularity"]
 GpuBufferGranularity = CppGpuBufferGranularity
 
 
+def _resolve_dtype(dtype) -> tuple[DataType, np.dtype]:
+    if isinstance(dtype, DataType):
+        name = dtype.name
+        storage = "uint16" if name == "bfloat16" else "uint8" if name.startswith("float8_") else name
+        return dtype, np.dtype(storage)
+    storage = np.dtype(dtype)
+    data_type = getattr(DataType, storage.name, None)
+    if data_type is None or not storage.isnative:
+        raise ValueError(f"NumPy dtype {storage} has no supported mscclpp.DataType.")
+    return data_type, storage
+
+
 class _ExternalGpuAllocation:
     def __init__(self, ptr: int, nbytes: int, owner: object):
         self._ptr = ptr
@@ -76,9 +88,7 @@ class GpuBuffer:
             raise ValueError("Shape must be an integer or a sequence of integers.") from exc
         if any(s < 0 for s in self.shape):
             raise ValueError("Shape dimensions must be non-negative.")
-        self._dtype = np.dtype(dtype.name if isinstance(dtype, DataType) else dtype)
-        if self.dtype.kind not in "biufc" or not self.dtype.isnative:
-            raise ValueError("GpuBuffer requires a native-endian numeric or boolean dtype.")
+        self._data_type, self._dtype = _resolve_dtype(dtype)
         if order not in ("C", "F"):
             raise ValueError("Order must be 'C' or 'F'.")
         self._order = order
@@ -115,11 +125,11 @@ class GpuBuffer:
             raise ValueError("Invalid GPU memory pointer or address range.")
         if owner is None:
             raise ValueError("An owner is required to keep GPU memory alive.")
-        dtype = np.dtype(dtype)
-        if dtype.itemsize == 0 or nbytes % dtype.itemsize:
+        data_type, storage = _resolve_dtype(dtype)
+        if nbytes % storage.itemsize:
             raise ValueError("Buffer byte size must be a multiple of the dtype item size.")
         result = cls.__new__(cls)
-        result._set_layout(nbytes // dtype.itemsize, dtype, None, "C")
+        result._set_layout(nbytes // storage.itemsize, data_type, None, "C")
         result._allocation = _ExternalGpuAllocation(ptr, nbytes, owner)
         result._offset = 0
         return result
@@ -129,8 +139,8 @@ class GpuBuffer:
         return self._shape
 
     @property
-    def dtype(self) -> np.dtype:
-        return self._dtype
+    def dtype(self) -> DataType:
+        return self._data_type
 
     @property
     def ndim(self) -> int:
@@ -142,7 +152,7 @@ class GpuBuffer:
 
     @property
     def itemsize(self) -> int:
-        return self.dtype.itemsize
+        return self._dtype.itemsize
 
     @property
     def nbytes(self) -> int:
@@ -181,7 +191,8 @@ class GpuBuffer:
         view._offset = self._offset + start * self.itemsize
         view._shape = (max(0, stop - start),)
         view._size = view._shape[0]
-        view._dtype = self.dtype
+        view._dtype = self._dtype
+        view._data_type = self.dtype
         view._order = self._order
         view._strides = (self.itemsize,)
         return view
@@ -214,8 +225,8 @@ class GpuBuffer:
             gpu.stream_synchronize(stream)
 
     def to_numpy(self) -> np.ndarray:
-        """Synchronously copy this buffer to a new NumPy array."""
-        result = np.empty(self.shape, dtype=self.dtype, order=self._order)
+        """Copy to NumPy; BF16/FP8 return raw uint16/uint8 bits without numeric conversion."""
+        result = np.empty(self.shape, dtype=self._dtype, order=self._order)
         self._copy(result.ctypes.data, self.ptr, "DeviceToHost")
         return result
 
@@ -244,16 +255,26 @@ class GpuBuffer:
         return torch.utils.dlpack.from_dlpack(capsule)
 
     def copy_from_numpy(self, values) -> None:
-        """Synchronously upload host values with the same shape and dtype."""
+        """Upload matching NumPy storage; BF16/FP8 require pre-encoded uint16/uint8 bits."""
         array = np.asarray(values, order=self._order)
-        if array.shape != self.shape or array.dtype != self.dtype:
-            raise ValueError("Source shape and dtype must match the GPU buffer.")
+        if array.shape != self.shape or array.dtype != self._dtype:
+            raise ValueError("Source shape and dtype must match the GPU buffer's NumPy storage.")
         self._copy(self.ptr, array.ctypes.data, "HostToDevice")
 
     @classmethod
     def from_numpy(cls, values, dtype=None) -> "GpuBuffer":
-        """Allocate GPU storage and synchronously upload host values."""
-        array = np.asarray(values, dtype=dtype)
-        result = cls(array.shape, dtype=array.dtype, order="F" if np.isfortran(array) else "C")
+        """Upload host values, inferring a supported dtype when omitted.
+
+        Explicit BF16/FP8 dtypes require pre-encoded uint16/uint8 arrays.
+        Other explicit dtypes perform the usual NumPy numeric conversion.
+        """
+        array = np.asarray(values)
+        data_type, storage = _resolve_dtype(array.dtype if dtype is None else dtype)
+        if data_type.name != storage.name:
+            if array.dtype != storage:
+                raise ValueError(f"{data_type} requires pre-encoded NumPy {storage} storage.")
+        else:
+            array = np.asarray(array, dtype=storage)
+        result = cls(array.shape, dtype=data_type, order="F" if np.isfortran(array) else "C")
         result.copy_from_numpy(array)
         return result

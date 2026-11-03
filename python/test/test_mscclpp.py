@@ -64,7 +64,7 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     assert wrapped.device_id == original.device_id
     np.testing.assert_array_equal(wrapped.to_numpy(), expected)
     view = wrapped[2:4]
-    view.copy_from_numpy(np.full(view.shape, 19, dtype=view.dtype))
+    view.copy_from_numpy(np.full(view.shape, 19, dtype=np.uint32))
     expected[2:4] = 19
     np.testing.assert_array_equal(original.to_numpy(), expected)
     del original, wrapped
@@ -78,18 +78,9 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     [
         np.float16,
         np.float32,
-        np.float64,
-        np.int8,
-        np.int16,
         np.int32,
-        np.int64,
         np.uint8,
-        np.uint16,
         np.uint32,
-        np.uint64,
-        np.bool_,
-        np.complex64,
-        np.complex128,
     ],
 )
 def test_gpu_buffer_to_torch(mpi_group: MpiGroup, shape, order, dtype):
@@ -114,6 +105,33 @@ def test_gpu_buffer_to_torch(mpi_group: MpiGroup, shape, order, dtype):
     del buffer
     gc.collect()
     np.testing.assert_array_equal(tensor.cpu().numpy(), np.zeros(shape, dtype=dtype))
+
+
+@parametrize_mpi_groups(1)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        DataType.bfloat16,
+        DataType.float8_e4m3fn,
+        DataType.float8_e4m3fnuz,
+        DataType.float8_e5m2,
+        DataType.float8_e5m2fnuz,
+    ],
+)
+def test_gpu_buffer_low_precision_to_torch(mpi_group: MpiGroup, dtype):
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, dtype.name):
+        pytest.skip("This PyTorch version does not support the dtype")
+    bits = np.array([0, 1, 0x7F, 0xFF], dtype=np.uint16 if dtype == DataType.bfloat16 else np.uint8)
+    buffer = GpuBuffer.from_numpy(bits, dtype=dtype)
+    tensor = buffer.to_torch()
+    assert buffer.dtype == dtype
+    assert tensor.dtype == getattr(torch, dtype.name)
+    assert tensor.data_ptr() == buffer.ptr
+    np.testing.assert_array_equal(buffer.to_numpy(), bits)
+    raw_dtype = torch.int16 if dtype == DataType.bfloat16 else torch.uint8
+    expected = bits.view(np.int16) if dtype == DataType.bfloat16 else bits
+    np.testing.assert_array_equal(tensor.view(raw_dtype).cpu().numpy(), expected)
 
 
 @parametrize_mpi_groups(1)
@@ -197,7 +215,7 @@ def test_flag_buffer_wraps_native_storage(mpi_group: MpiGroup):
     assert isinstance(flags, GpuBuffer)
     assert flags is get_flag_buffer()
     assert (flags.data.ptr, flags.nbytes) == (ptr, nbytes)
-    assert flags.dtype == np.dtype(np.uint32)
+    assert flags.dtype == DataType.uint32
     native_view = GpuBuffer.from_ptr(ptr, nbytes, owner, dtype=np.uint32)
     np.testing.assert_array_equal(flags.to_numpy(), native_view.to_numpy())
 
@@ -341,11 +359,11 @@ def test_group_with_connections(mpi_group: MpiGroup, transport: str):
 
 @parametrize_mpi_groups(1)
 @pytest.mark.parametrize("nelem", [2**i for i in [0, 10, 15, 20]])
-@pytest.mark.parametrize("dtype", [np.float32, np.float16])
-def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: np.dtype):
+@pytest.mark.parametrize("dtype, expected_dtype", [(np.float32, DataType.float32), (np.float16, DataType.float16)])
+def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: np.dtype, expected_dtype: DataType):
     memory = GpuBuffer(nelem, dtype=dtype)
     assert memory.shape == (nelem,)
-    assert memory.dtype == dtype
+    assert memory.dtype == expected_dtype
     assert memory.itemsize == np.dtype(dtype).itemsize
     assert memory.nbytes == nelem * np.dtype(dtype).itemsize
     assert memory.data.ptr != 0
@@ -355,7 +373,7 @@ def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: np.dtype):
     memory.copy_from_numpy(host)
     np.testing.assert_array_equal(memory.to_numpy(), host)
     view = memory[: nelem // 2]
-    view.copy_from_numpy(np.full(view.shape, 3, dtype=view.dtype))
+    view.copy_from_numpy(np.full(view.shape, 3, dtype=dtype))
     host[: nelem // 2] = 3
     np.testing.assert_array_equal(memory.to_numpy(), host)
 
@@ -369,8 +387,8 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
-    memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = np.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -415,7 +433,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     signal_memory = np.zeros(1, dtype=np.int64)
     if device == "cuda":
         memory = GpuBuffer.from_numpy(memory)
-        signal_memory = GpuBuffer.from_numpy(signal_memory)
+        signal_memory = GpuBuffer.from_numpy(signal_memory.view(np.uint8))
 
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
     all_signal_memories = group.register_tensor_with_connections(signal_memory, connections)
@@ -426,13 +444,13 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
 
     signal_val = 123
     if group.my_rank != 0:
-        while (signal_memory.to_numpy()[0] if device == "cuda" else signal_memory[0]) != signal_val:
+        while (signal_memory.to_numpy().view(np.int64)[0] if device == "cuda" else signal_memory[0]) != signal_val:
             time.sleep(0.1)
     connections[next_rank].write(all_reg_memories[next_rank], 0, all_reg_memories[group.my_rank], 0, bufferSize)
     connections[next_rank].flush()
     if group.my_rank == 0:
         if device == "cuda":
-            memory.copy_from_numpy(np.zeros(memory.shape, dtype=memory.dtype))
+            memory.copy_from_numpy(np.zeros(memory.shape, dtype=np.float32))
             device_synchronize()
         else:
             memory.fill(0)
@@ -441,7 +459,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     )
     all_correct = False
     if group.my_rank == 0:
-        while (signal_memory.to_numpy()[0] if device == "cuda" else signal_memory[0]) != signal_val:
+        while (signal_memory.to_numpy().view(np.int64)[0] if device == "cuda" else signal_memory[0]) != signal_val:
             time.sleep(0.1)
         all_correct = np.array_equal(memory.to_numpy() if device == "cuda" else memory, memory_expected)
     group.barrier()
@@ -515,9 +533,9 @@ def test_nvls_connection(mpi_group: MpiGroup):
     group = CommGroup(mpi_group.comm)
     all_ranks = list(range(group.nranks))
     nvls_connection = group.make_connection(all_ranks, Transport.CudaIpc, use_switch=True)
-    memory1 = GpuBuffer(2**29, np.int8)
-    memory2 = GpuBuffer(2**29, np.int8)
-    memory3 = GpuBuffer(2**29, np.int8)
+    memory1 = GpuBuffer(2**29, np.uint8)
+    memory2 = GpuBuffer(2**29, np.uint8)
+    memory3 = GpuBuffer(2**29, np.uint8)
     mem_handle1 = nvls_connection.bind_allocated_memory(memory1.data.ptr, memory1.allocation_size)
     mem_handle2 = nvls_connection.bind_allocated_memory(memory2.data.ptr, memory2.allocation_size)
     with pytest.raises(Exception):
@@ -671,8 +689,8 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         scratch = None
     nelemPerRank = nelem // group.nranks
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
-    memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = np.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
@@ -717,8 +735,8 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
-    memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = np.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -772,8 +790,8 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=view.dtype))
-    memory_expected = np.zeros(memory.shape, dtype=memory.dtype)
+    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = np.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -807,7 +825,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
 @pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
-    memory = GpuBuffer(2**21, dtype=np.int8)
+    memory = GpuBuffer(2**21, dtype=np.uint8)
     nbytes = 2**21
     mem_handle = nvls_connection.bind_allocated_memory(memory.data.ptr, memory.allocation_size)
 

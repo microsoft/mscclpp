@@ -483,12 +483,12 @@ def _make_case(
 
     if collective == _ALLREDUCE:
         if buffer_mode == "in-place":
-            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.mscclpp_dtype)
             input_buffer = memory
             output = memory
         else:
-            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
-            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
+            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.mscclpp_dtype)
+            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.mscclpp_dtype)
         return BenchmarkCase(
             collective=collective,
             message_size=input_buffer.nbytes,
@@ -503,7 +503,7 @@ def _make_case(
     if collective == _REDUCESCATTER:
         # The DSL reducescatter is compiled in-place, so the per-rank output chunk always aliases the
         # matching slice of the full input buffer (mirrors python/test/executor_test.py build_bufs).
-        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
+        input_buffer = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.mscclpp_dtype)
         start = comm_group.my_rank * nelems
         output = input_buffer[start : start + nelems]
         return BenchmarkCase(
@@ -520,12 +520,12 @@ def _make_case(
     if collective != _ALLGATHER:
         raise ValueError(f"Unsupported collective: {collective}")
     if buffer_mode == "in-place":
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.mscclpp_dtype)
         start = comm_group.my_rank * nelems
         input_buffer = output[start : start + nelems]
     else:
-        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.storage_dtype)
-        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.storage_dtype)
+        input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.mscclpp_dtype)
+        output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.mscclpp_dtype)
 
     return BenchmarkCase(
         collective=collective,

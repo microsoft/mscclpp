@@ -13,8 +13,6 @@ import unittest
 from unittest.mock import Mock, call, patch
 import weakref
 
-import numpy as np
-
 
 class _Owner:
     pass
@@ -69,7 +67,7 @@ class FlagBufferTests(unittest.TestCase):
             CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
             is_hip=False,
         )
-        native.CppDataType = Enum("DataType", "float32")
+        self.DataType = native.CppDataType = Enum("DataType", "float32 uint32")
         root = Path(__file__).resolve().parents[1] / "mscclpp"
         with patch.dict(
             sys.modules, {"mscclpp": SimpleNamespace(gpu=object()), "mscclpp._mscclpp": native, "cupy": None}
@@ -86,7 +84,7 @@ class FlagBufferTests(unittest.TestCase):
         buffer = self.algorithm.get_flag_buffer()
         self.assertIsInstance(buffer, self.buffer_module.GpuBuffer)
         self.assertEqual((buffer.data.ptr, buffer.nbytes, buffer.allocation_size), (self.ptr, self.nbytes, self.nbytes))
-        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((128,), np.dtype(np.uint32), (4,)))
+        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((128,), self.DataType.uint32, (4,)))
         self.assertIs(self.algorithm.get_flag_buffer(), buffer)
         self.get_native_buffer.assert_called_once_with()
         self.allocate.assert_not_called()

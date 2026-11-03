@@ -95,12 +95,12 @@ def human_readable_size(size, decimal_places=1):
 def check_correctness(memory, func, niter=100):
     ac = True
     for p in range(niter):
-        memory.copy_from_numpy(np.full(memory.shape, p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank, dtype=memory.dtype))
+        memory.copy_from_numpy(np.full(memory.shape, p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank, dtype=data_type))
         device_synchronize()
         output_memory = func(None)
         device_synchronize()
         output = output_memory.to_numpy()
-        expected = np.zeros(memory.shape, dtype=memory.dtype)
+        expected = np.zeros(memory.shape, dtype=data_type)
         for i in range(MPI.COMM_WORLD.size):
             expected += np.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
 
