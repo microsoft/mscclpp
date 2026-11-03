@@ -241,6 +241,7 @@ class DispatchHandle:
 
     Retains the native runtime and all tensors borrowed by the operation through
     combine. A successful later dispatch or preparation invalidates this handle.
+    Host freshness checks run when combine is called or captured, not on replay.
     Retention is not synchronization: finish local and peer GPU use before
     releasing the last runtime/handle/view, including CUDA graph replays.
     """
