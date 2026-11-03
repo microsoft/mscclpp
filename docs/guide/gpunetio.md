@@ -71,13 +71,18 @@ or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular 
 staging.
 
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
-behave as for proxy-backed channels. The signal of `putWithSignal` is posted on the same queue pair after the payload, so
-the remote side observes the data before the semaphore update. `flush` waits for the local completion of all work
-requests posted on the queue pair.
+behave as for proxy-backed channels. `flush` waits for the local completion of all work requests posted on the queue
+pair.
+
+`signal` and `accumulate` use an RDMA atomic fetch-and-add, which allows any number of writers to the same word.
+Device-mode channels also provide `putWithAccumulate`, a put followed by an accumulate, posted together;
+`putWithSignal` is `putWithAccumulate` on the semaphore. The responder applies an atomic only after placing the data
+of earlier RDMA writes on the same queue pair, so observing the updated word guarantees that those writes are visible.
+A plain RDMA write gives no such guarantee, even with strong ordering, because packets may be placed out of order at
+the responder.
 
 Only `port` and `gidIndex` of `EndpointConfig::Ib` are used in this mode; queue sizes are chosen by the backend.
-Small `put` and `putWithSignal` payloads, as well as semaphore signals, are embedded in the work request rather than
-read separately by the NIC.
+Small `put` and `putWithSignal` payloads are embedded in the work request rather than read separately by the NIC.
 
 Callers must make source data ready before `put` or `putWithSignal`, synchronizing with its producers as needed.
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for

@@ -179,9 +179,6 @@ struct PortDevice2DeviceSemaphoreDeviceHandle {
   /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
   uint64_t* expectedInboundToken;
 
-  /// A local memory space where the local device tracks the outbound semaphore value.
-  uint64_t* outboundToken;
-
   /// The inboundToken of the remote device, as a memory handle for PortChannel device-mode operations.
   DeviceMemoryHandle remoteInboundToken;
 };

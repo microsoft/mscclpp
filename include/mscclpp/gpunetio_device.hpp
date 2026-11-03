@@ -93,84 +93,12 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
-  /// Increment `*outboundToken` in queue order and inline-write the new value to the 8-byte token `dst`.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void signal([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
-                                    [[maybe_unused]] uint64_t* outboundToken) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    signalAddrKey<docaSharingMode<Mode>()>(dst.addr, dst.key, 0, outboundToken);
-#else
-    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
-#endif
-  }
-
-  /// Write an 8-byte strong-ordered inline signal `token` to `dst` at `dstOffset`.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void signalAt([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
-                                      [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] uint64_t token) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    MSCCLPP_ASSERT_DEVICE((dst.addr + dstOffset) % sizeof(uint64_t) == 0, "signalAt address must be 8-byte aligned");
-    signalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, token);
-#else
-    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
-#endif
-  }
-
-  /// RDMA write followed by a signal to the token `sig`, ordered after the payload write. See signal().
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void putWithSignal([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
-                                           [[maybe_unused]] uint64_t dstOffset,
-                                           [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
-                                           [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
-                                           [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& sig,
-                                           [[maybe_unused]] uint64_t* outboundToken) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    if (size > 0 && size <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
-      putWithSignalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size,
-                                                    sig.addr, sig.key, 0, outboundToken);
-      return;
-    }
-    putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
-    signal<Mode>(sig, outboundToken);
-#else
-    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
-#endif
-  }
-
-  /// RDMA write followed by a signal to the token `sig` and local completion flush. See signal().
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
-                                                   const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset,
-                                                   uint64_t size, const GpuNetIoMemoryDeviceHandle& sig,
-                                                   uint64_t* outboundToken, int64_t maxSpinCount = 1000000) {
-    putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size, sig, outboundToken);
-    flush<Mode>(maxSpinCount);
-  }
-
-  /// RDMA write followed by an ordered inline signal `token` write to `sig` at `sigOffset`.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void putWithSignalAt([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
-                                             [[maybe_unused]] uint64_t dstOffset,
-                                             [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
-                                             [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
-                                             [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& sig,
-                                             [[maybe_unused]] uint64_t sigOffset, [[maybe_unused]] uint64_t token) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    MSCCLPP_ASSERT_DEVICE((sig.addr + sigOffset) % sizeof(uint64_t) == 0,
-                          "putWithSignalAt signal address must be 8-byte aligned");
-    if (size > 0 && size <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
-      putWithSignalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size,
-                                                    sig.addr + sigOffset, sig.key, token);
-      return;
-    }
-    putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
-    signalAddrKey<docaSharingMode<Mode>()>(sig.addr + sigOffset, sig.key, token);
-#else
-    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
-#endif
-  }
-
-  /// Remote 64-bit atomic add into `dst` at `dstOffset`.
+  /// Atomically add `value` to the 64-bit word at `dst` + `dstOffset` (8-byte aligned) with an RDMA fetch-and-add.
+  /// Any number of writers may update the same word. The peer applies the addition only after placing the data of
+  /// earlier RDMA writes on this queue pair, so observing the new value publishes those writes.
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit signed value to add.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void accumulate([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                         [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value) {
@@ -180,16 +108,59 @@ struct GpuNetIoDeviceHandle {
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = docaSharingMode<Mode>();
     if (useBlueFlame(sizeof(uint64_t))) {
-      submitAtomicBlueFlame<sharing>(q, addr, dst.key, value);
+      withWqeSlot<sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+        prepareAtomicWqe(q, sharedWqe, index, addr, dst.key, value);
+        copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
+        doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
+        submitPreparedFromShared<sharing>(q, index, sharedWqe);
+      });
     } else {
       const auto index =
           doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
-      auto* wqePtr = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
-      doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqePtr, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
-                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, dst.key, atomicFetchAddr,
-                                            atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
+      prepareAtomicWqe(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index), index, addr, dst.key, value);
       doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
       submitDb<sharing>(q, index + 1);
+    }
+#else
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
+#endif
+  }
+
+  /// RDMA write followed by an accumulate to `acc` at `accOffset`, posted together with the write. Observing the
+  /// accumulated value publishes the written data. See accumulate().
+  /// @param dst The destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param src The source memory region.
+  /// @param srcOffset The offset into the source memory region.
+  /// @param size The size of the transfer.
+  /// @param acc The memory region of the accumulated word.
+  /// @param accOffset The offset of the accumulated word in `acc`.
+  /// @param value The 64-bit signed value to add.
+  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  MSCCLPP_DEVICE_INLINE void putWithAccumulate([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
+                                               [[maybe_unused]] uint64_t dstOffset,
+                                               [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
+                                               [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
+                                               [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& acc,
+                                               [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value) {
+#if defined(MSCCLPP_USE_GPUNETIO)
+    const uint64_t accAddr = acc.addr + accOffset;
+    MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
+    if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
+      putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
+      accumulate<Mode>(acc, accOffset, value);
+      return;
+    }
+    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
+    constexpr auto sharing = docaSharingMode<Mode>();
+    const uint64_t dstAddr = dst.addr + dstOffset;
+    const uint64_t srcAddr = src.addr + srcOffset;
+    if (useBlueFlame(size)) {
+      submitPutWithAccumulateBlueFlame<sharing>(q, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value);
+    } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
+      submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value);
     }
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
@@ -269,38 +240,6 @@ struct GpuNetIoDeviceHandle {
   };
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void signalAddrKey(uint64_t addr, uint32_t key, uint64_t token,
-                                           uint64_t* outboundToken = nullptr) {
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    if (useBlueFlame(sizeof(uint64_t))) {
-      submitSignalBlueFlame<Sharing>(q, addr, key, token, outboundToken);
-    } else {
-      const auto index =
-          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
-      auto* wqePtr = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
-      prepareSignalWqeAt<Sharing>(q, wqePtr, index, index, addr, key, token, outboundToken);
-      doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
-      submitDb<Sharing>(q, index + 1);
-    }
-  }
-
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void putWithSignalAddrKey(uint64_t dstAddr, uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                  uint64_t size, uint64_t sigAddr, uint32_t sigKey, uint64_t token,
-                                                  uint64_t* outboundToken = nullptr) {
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    if (useBlueFlame(size)) {
-      submitPutWithSignalBlueFlame<Sharing>(q, dstAddr, dstKey, srcAddr, srcKey, size, sigAddr, sigKey, token,
-                                            outboundToken);
-    } else {
-      const auto index =
-          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
-      submitPutWithSignalDb<Sharing>(q, index, dstAddr, dstKey, srcAddr, srcKey, size, sigAddr, sigKey, token,
-                                     outboundToken);
-    }
-  }
-
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
   MSCCLPP_DEVICE_INLINE void putImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                      const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
@@ -319,30 +258,6 @@ struct GpuNetIoDeviceHandle {
           doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
       submitPutDb<Sharing>(q, index, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
     }
-  }
-
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitAtomicBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t addr, uint32_t key,
-                                                   int64_t value) {
-    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
-      doca_gpu_dev_verbs_wqe_prepare_atomic(q, sharedWqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
-                                            DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicFetchAddr,
-                                            atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
-      copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
-      doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
-      submitPreparedFromShared<Sharing>(q, index, sharedWqe);
-    });
-  }
-
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t addr, uint32_t key,
-                                                   uint64_t token, uint64_t* outboundToken) {
-    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
-      prepareSignalWqeAt<Sharing>(q, sharedWqe, index, index, addr, key, token, outboundToken);
-      copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
-      doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
-      submitPreparedFromShared<Sharing>(q, index, sharedWqe);
-    });
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
@@ -366,10 +281,10 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitPutWithSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr, uint32_t dstKey,
-                                                          uint64_t srcAddr, uint32_t srcKey, uint64_t size,
-                                                          uint64_t sigAddr, uint32_t sigKey, uint64_t token,
-                                                          uint64_t* outboundToken) {
+  MSCCLPP_DEVICE_INLINE void submitPutWithAccumulateBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr,
+                                                              uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
+                                                              uint64_t size, uint64_t accAddr, uint32_t accKey,
+                                                              int64_t value) {
     withWqeSlot<Sharing>(q, 2, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
@@ -381,7 +296,7 @@ struct GpuNetIoDeviceHandle {
         bulkStoreWaitSource();
 #endif
       }
-      prepareSignalWqeAt<Sharing>(q, sharedWqe, index, index + 1, sigAddr, sigKey, token, outboundToken);
+      prepareAtomicWqe(q, sharedWqe, index + 1, accAddr, accKey, value);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
       submitPreparedFromShared<Sharing>(q, index + 1, sharedWqe);
@@ -389,41 +304,25 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  __device__ __noinline__ static void submitPutWithSignalDb(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
-                                                            uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                            uint64_t size, uint64_t sigAddr, uint32_t sigKey,
-                                                            uint64_t token, uint64_t* outboundToken) {
+  __device__ __noinline__ void submitPutWithAccumulateDb(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
+                                                         uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
+                                                         uint64_t size, uint64_t accAddr, uint32_t accKey,
+                                                         int64_t value) {
     auto* wqe0 = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
     prepareWriteWqe(q, wqe0, index, dstAddr, dstKey, srcAddr, srcKey, size);
     auto* wqe1 = doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1);
-    prepareSignalWqeAt<Sharing>(q, wqe1, index, index + 1, sigAddr, sigKey, token, outboundToken);
+    prepareAtomicWqe(q, wqe1, index + 1, accAddr, accKey, value);
     doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
     submitDb<Sharing>(q, index + 2);
   }
 
-  // When `outboundToken` is non-null, the token is taken from it after all earlier WQEs from `fromWqeIdx` on are
-  // ready, so concurrent signals reach the peer in increasing order.
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE static void prepareSignalWqeAt(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqePtr,
-                                                       [[maybe_unused]] uint64_t fromWqeIdx, uint16_t wqeIdx,
-                                                       uint64_t addr, uint32_t key, uint64_t token,
-                                                       uint64_t* outboundToken) {
-    if (outboundToken != nullptr) {
-      if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA) {
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_block> readyIndex(q->sq_ready_index);
-        while (readyIndex.load(cuda::memory_order_acquire) != fromWqeIdx) {
-        }
-      } else if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU) {
-        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> readyIndex(q->sq_ready_index);
-        while (readyIndex.load(cuda::memory_order_acquire) != fromWqeIdx) {
-        }
-      }
-      token = atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
-    }
-    constexpr auto ctrlFlags = static_cast<doca_gpu_dev_verbs_wqe_ctrl_flags>(
-        DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE | DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING);
-    doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_header(q, wqePtr, wqeIdx, ctrlFlags, addr, key, sizeof(uint64_t));
-    doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_data<uint64_t>(q, wqePtr, token);
+  // An RDMA atomic, unlike an RDMA write, is applied by the peer only after earlier writes on the queue pair are
+  // placed, so it can publish them even when packets arrive out of order.
+  MSCCLPP_DEVICE_INLINE void prepareAtomicWqe(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqePtr, uint16_t wqeIdx,
+                                              uint64_t addr, uint32_t key, int64_t value) const {
+    doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqePtr, wqeIdx, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
+                                          DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicFetchAddr,
+                                          atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
   }
 
   MSCCLPP_DEVICE_INLINE static void prepareWriteWqe(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqePtr,

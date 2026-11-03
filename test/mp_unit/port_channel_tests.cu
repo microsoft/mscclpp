@@ -1665,6 +1665,72 @@ TEST(PortChannelOneToOneTest, SharedWqeSlotIbDeviceMode) {
   for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
+// Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
+static constexpr int kPutWithAccumulateFlagInts = 2;
+static constexpr int kPutWithAccumulateElems = kPutWithAccumulateFlagInts + 4 * sizeof(uint64_t) / sizeof(int);
+
+// Each rank adds to its own flag word in the peer with putWithAccumulate and a standalone accumulate. The peer checks
+// that every addition is counted and that the payload is no older than the flag.
+template <bool BlueFlame>
+__global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, int nIters, int* ret) {
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  if (threadIdx.x != 0) return;
+  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  auto chan = gMultiQpDevicePortChans[0];
+  chan.setWqeSlot<kExclusive>(&wqeSlot);
+  if constexpr (!BlueFlame) chan.device_.blueFlameLimit = 0;
+  const int peer = 1 - rank;
+  auto* flags = reinterpret_cast<uint64_t*>(buff + kPutWithAccumulateFlagInts);
+  const uint64_t flagOffset = kPutWithAccumulateFlagInts * sizeof(int) + (2 * run + rank) * sizeof(uint64_t);
+  volatile int* payload = buff;
+  for (int i = 1; i <= nIters; ++i) {
+    payload[rank] = (rank + 1) * 1000000 + run * 10000 + i;
+    chan.putWithAccumulate<kExclusive>(rank * sizeof(int), rank * sizeof(int), sizeof(int), flagOffset, 2);
+    chan.accumulate<kExclusive>(flagOffset, 1);
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + 2 * run + peer, mscclpp::memoryOrderAcquire) <
+           3ULL * i) {
+    }
+    if (payload[peer] < (peer + 1) * 1000000 + run * 10000 + i) *ret = 1;
+  }
+  if (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + 2 * run + peer, mscclpp::memoryOrderAcquire) !=
+      3ULL * nIters) {
+    *ret = 1;
+  }
+  chan.flush<kExclusive>();
+}
+
+TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int rank = communicator->bootstrap()->getRank();
+  std::vector<std::shared_ptr<int>> buffs;
+  std::vector<mscclpp::RegisteredMemory> localMems;
+  std::vector<mscclpp::RegisteredMemory> remoteMems;
+  std::vector<mscclpp::PortChannel> portChannels;
+  setupMultiQpChannels(/*numQps=*/1, kPutWithAccumulateElems, IbMode::Device, /*tagBase=*/960, buffs, localMems,
+                       remoteMems, portChannels);
+  copyMultiQpChannelsToSymbol(portChannels, IbMode::Device);
+  MSCCLPP_CUDATHROW(cudaMemset(buffs[0].get(), 0, kPutWithAccumulateElems * sizeof(int)));
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  kernelGpuNetIoPutWithAccumulate<true><<<1, 32>>>(buffs[0].get(), rank, 0, 256, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  kernelGpuNetIoPutWithAccumulate<false><<<1, 32>>>(buffs[0].get(), rank, 1, 256, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  EXPECT_EQ(*ret, 0);
+
+  communicator->bootstrap()->barrier();
+  for (auto& m : localMems) registeredMemories.push_back(m);
+  for (auto& m : remoteMems) registeredMemories.push_back(m);
+}
+
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {
   REQUIRE_GPUNETIO;
   testPingPongPerf(PingPongTestParams{

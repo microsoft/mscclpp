@@ -236,9 +236,7 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSe
 };
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Semaphore& semaphore)
-    : semaphore_(semaphore),
-      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
-      outboundToken_(detail::gpuCallocUnique<uint64_t>()) {
+    : semaphore_(semaphore), expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()) {
   auto& conn = BaseConnection::getImpl(connection());
   if (!conn->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -260,7 +258,6 @@ MSCCLPP_API_CPP PortDevice2DeviceSemaphore::DeviceHandle PortDevice2DeviceSemaph
   PortDevice2DeviceSemaphore::DeviceHandle device;
   device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
   device.expectedInboundToken = expectedInboundToken_.get();
-  device.outboundToken = outboundToken_.get();
   device.remoteInboundToken = remoteInboundToken_;
   return device;
 }
