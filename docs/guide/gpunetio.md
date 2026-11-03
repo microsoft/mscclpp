@@ -50,7 +50,7 @@ auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 
 Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
 default without requiring shared memory. To enable BlueFlame submission for transfers up to `device_.blueFlameLimit`
-(default: 4096 bytes), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
+(default: 512 KiB), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
@@ -90,8 +90,8 @@ Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `Po
 (operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
-is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 4096`; set to `0` to disable BlueFlame or increase
-to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
+is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust
+it to change which transfer sizes use BlueFlame). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
 their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
 
 ### Caller-owned WQE slot and optional lock

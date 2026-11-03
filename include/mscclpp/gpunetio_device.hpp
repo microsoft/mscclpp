@@ -52,8 +52,8 @@ struct GpuNetIoDeviceHandle {
   /// without shared-memory WQE staging. Zero disables BlueFlame.
   uint32_t blueFlameLimit;
 
-  /// Default BlueFlame payload size limit (4 KiB).
-  static constexpr uint32_t kDefaultBlueFlameLimit = 4096;
+  /// Default BlueFlame payload size limit (512 KiB).
+  static constexpr uint32_t kDefaultBlueFlameLimit = 512 * 1024;
 
  private:
   GpuNetIoWqeSlot* wqeSlotShm_;
