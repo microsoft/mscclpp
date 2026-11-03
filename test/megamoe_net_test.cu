@@ -9,11 +9,11 @@
 // the source's deterministic data, and writes a deterministic result row per route. Sources then check every partial
 // output row. Ranks and token counts vary per launch, including empty launches, to exercise epochs and buffer reuse.
 //
-// Launch one process per GPU on one node, e.g.:
+// Launch one process per GPU, e.g.:
 //   mpirun -np 8 ./megamoe_net_test --ranks-per-rack 2 --iterations 30
 // Options: --ranks-per-rack, --iterations, --max-tokens, --hidden, --top-k, --experts-per-rank, --static-fp8.
-// Environment: OMPI_COMM_WORLD_{RANK,SIZE,LOCAL_RANK} (or RANK/WORLD_SIZE/LOCAL_RANK) and MEGAMOE_NET_TEST_PORT
-// (bootstrap port on 127.0.0.1).
+// Environment: OMPI_COMM_WORLD_{RANK,SIZE,LOCAL_RANK} (or RANK/WORLD_SIZE/LOCAL_RANK), MEGAMOE_NET_TEST_HOST
+// (bootstrap address of rank 0, default 127.0.0.1; set it for multi-node runs) and MEGAMOE_NET_TEST_PORT.
 
 #include <cstdio>
 #include <cstdlib>
@@ -211,8 +211,9 @@ int main(int argc, char** argv) {
   const int port = envInt("MEGAMOE_NET_TEST_PORT", "MEGAMOE_NET_TEST_PORT", 50531);
   MSCCLPP_CUDATHROW(cudaSetDevice(localRank));
 
+  const char* host = getenv("MEGAMOE_NET_TEST_HOST");
   auto bootstrap = std::make_shared<TcpBootstrap>(rank, worldSize);
-  bootstrap->initialize("127.0.0.1:" + std::to_string(port));
+  bootstrap->initialize(std::string(host ? host : "127.0.0.1") + ":" + std::to_string(port));
   auto comm = std::make_shared<Communicator>(bootstrap);
 
   NativeConfig c{};
