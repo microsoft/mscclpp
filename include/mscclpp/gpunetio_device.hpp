@@ -103,8 +103,7 @@ struct GpuNetIoDeviceHandle {
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void signal() {
 #if defined(MSCCLPP_USE_GPUNETIO)
-    const uint64_t token = atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
-    signalAddrKey<docaSharingMode<Mode>()>(signalAddr, signalKey, token);
+    signalAddrKey<docaSharingMode<Mode>()>(signalAddr, signalKey);
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -130,10 +129,8 @@ struct GpuNetIoDeviceHandle {
                                            [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size) {
 #if defined(MSCCLPP_USE_GPUNETIO)
     if (size > 0 && size <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
-      const uint64_t token =
-          atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
       putWithSignalAddrKey<docaSharingMode<Mode>()>(dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size,
-                                                    signalAddr, signalKey, token);
+                                                    signalAddr, signalKey);
       return;
     }
     putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
@@ -184,11 +181,11 @@ struct GpuNetIoDeviceHandle {
     MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = docaSharingMode<Mode>();
-    const auto index =
-        doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
     if (useBlueFlame(sizeof(uint64_t))) {
-      submitAtomicBlueFlame<sharing>(q, index, addr, dst.key, value);
+      submitAtomicBlueFlame<sharing>(q, addr, dst.key, value);
     } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
       auto* wqePtr = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
       doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqePtr, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
                                             DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, dst.key, atomicFetchAddr,
@@ -252,16 +249,37 @@ struct GpuNetIoDeviceHandle {
     doca_gpu_dev_verbs_submit_db<Sharing, syncScope, DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
   }
 
+  struct WqeSlotLockGuard {
+    uint32_t* lock;
+
+    MSCCLPP_DEVICE_INLINE explicit WqeSlotLockGuard(const GpuNetIoDeviceHandle& handle)
+        : lock(handle.reuseSharedWqe_ ? handle.wqeSlotLock_ : nullptr) {
+      if (!lock) return;
+      uint32_t expected = 0;
+      while (!cuda::atomic_ref<uint32_t, cuda::thread_scope_block>{*lock}.compare_exchange_weak(
+          expected, 1u, memoryOrderAcquire, memoryOrderRelaxed)) {
+        expected = 0;
+      }
+    }
+
+    MSCCLPP_DEVICE_INLINE ~WqeSlotLockGuard() {
+      if (lock) cuda::atomic_ref<uint32_t, cuda::thread_scope_block>{*lock}.store(0u, memoryOrderRelease);
+    }
+
+    WqeSlotLockGuard(const WqeSlotLockGuard&) = delete;
+    WqeSlotLockGuard& operator=(const WqeSlotLockGuard&) = delete;
+  };
+
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void signalAddrKey(uint64_t addr, uint32_t key, uint64_t token) {
+  MSCCLPP_DEVICE_INLINE void signalAddrKey(uint64_t addr, uint32_t key, uint64_t token = static_cast<uint64_t>(-1)) {
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    const auto index =
-        doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
     if (useBlueFlame(sizeof(uint64_t))) {
-      submitSignalBlueFlame<Sharing>(q, index, addr, key, token);
+      submitSignalBlueFlame<Sharing>(q, addr, key, token);
     } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
       auto* wqePtr = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
-      prepareSignalWqeAt(q, wqePtr, index, addr, key, token);
+      prepareSignalWqeAt<Sharing>(q, wqePtr, index, index, addr, key, token);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
       submitDb<Sharing>(q, index + 1);
     }
@@ -269,13 +287,14 @@ struct GpuNetIoDeviceHandle {
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
   MSCCLPP_DEVICE_INLINE void putWithSignalAddrKey(uint64_t dstAddr, uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                  uint64_t size, uint64_t sigAddr, uint32_t sigKey, uint64_t token) {
+                                                  uint64_t size, uint64_t sigAddr, uint32_t sigKey,
+                                                  uint64_t token = static_cast<uint64_t>(-1)) {
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    const auto index =
-        doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
     if (useBlueFlame(size)) {
-      submitPutWithSignalBlueFlame<Sharing>(q, index, dstAddr, dstKey, srcAddr, srcKey, size, sigAddr, sigKey, token);
+      submitPutWithSignalBlueFlame<Sharing>(q, dstAddr, dstKey, srcAddr, srcKey, size, sigAddr, sigKey, token);
     } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
       submitPutWithSignalDb<Sharing>(q, index, dstAddr, dstKey, srcAddr, srcKey, size, sigAddr, sigKey, token);
     }
   }
@@ -292,19 +311,19 @@ struct GpuNetIoDeviceHandle {
       return;
     }
 
-    const auto index =
-        doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
     if (useBlueFlame(size)) {
-      submitPutBlueFlame<Sharing>(q, index, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
+      submitPutBlueFlame<Sharing>(q, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
     } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
       submitPutDb<Sharing>(q, index, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
     }
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitAtomicBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t addr,
-                                                   uint32_t key, int64_t value) {
-    withWqeSlot([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
+  MSCCLPP_DEVICE_INLINE void submitAtomicBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t addr, uint32_t key,
+                                                   int64_t value) {
+    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       doca_gpu_dev_verbs_wqe_prepare_atomic(q, sharedWqe, index, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
                                             DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, addr, key, atomicFetchAddr,
                                             atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
@@ -315,10 +334,10 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t addr,
-                                                   uint32_t key, uint64_t token) {
-    withWqeSlot([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
-      prepareSignalWqeAt(q, sharedWqe, index, addr, key, token);
+  MSCCLPP_DEVICE_INLINE void submitSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t addr, uint32_t key,
+                                                   uint64_t token) {
+    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+      prepareSignalWqeAt<Sharing>(q, sharedWqe, index, index, addr, key, token);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
       submitPreparedFromShared<Sharing>(q, index, sharedWqe);
@@ -326,9 +345,9 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitPutBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
-                                                uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey, uint64_t size) {
-    withWqeSlot([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
+  MSCCLPP_DEVICE_INLINE void submitPutBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr, uint32_t dstKey,
+                                                uint64_t srcAddr, uint32_t srcKey, uint64_t size) {
+    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
@@ -346,11 +365,10 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE void submitPutWithSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
-                                                          uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                          uint64_t size, uint64_t sigAddr, uint32_t sigKey,
-                                                          uint64_t token) {
-    withWqeSlot([&](doca_gpu_dev_verbs_wqe* sharedWqe) {
+  MSCCLPP_DEVICE_INLINE void submitPutWithSignalBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr, uint32_t dstKey,
+                                                          uint64_t srcAddr, uint32_t srcKey, uint64_t size,
+                                                          uint64_t sigAddr, uint32_t sigKey, uint64_t token) {
+    withWqeSlot<Sharing>(q, 2, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
       if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE) {
@@ -361,7 +379,7 @@ struct GpuNetIoDeviceHandle {
         bulkStoreWaitSource();
 #endif
       }
-      prepareSignalWqeAt(q, sharedWqe, index + 1, sigAddr, sigKey, token);
+      prepareSignalWqeAt<Sharing>(q, sharedWqe, index, index + 1, sigAddr, sigKey, token);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
       submitPreparedFromShared<Sharing>(q, index + 1, sharedWqe);
@@ -369,20 +387,33 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  __device__ __noinline__ static void submitPutWithSignalDb(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
-                                                            uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                            uint64_t size, uint64_t sigAddr, uint32_t sigKey,
-                                                            uint64_t token) {
+  __device__ __noinline__ void submitPutWithSignalDb(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
+                                                     uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey, uint64_t size,
+                                                     uint64_t sigAddr, uint32_t sigKey, uint64_t token) {
     auto* wqe0 = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
     prepareWriteWqe(q, wqe0, index, dstAddr, dstKey, srcAddr, srcKey, size);
     auto* wqe1 = doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1);
-    prepareSignalWqeAt(q, wqe1, index + 1, sigAddr, sigKey, token);
+    prepareSignalWqeAt<Sharing>(q, wqe1, index, index + 1, sigAddr, sigKey, token);
     doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
     submitDb<Sharing>(q, index + 2);
   }
 
-  MSCCLPP_DEVICE_INLINE static void prepareSignalWqeAt(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqePtr,
-                                                       uint16_t wqeIdx, uint64_t addr, uint32_t key, uint64_t token) {
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
+  MSCCLPP_DEVICE_INLINE void prepareSignalWqeAt(doca_gpu_dev_verbs_qp* q, doca_gpu_dev_verbs_wqe* wqePtr,
+                                                [[maybe_unused]] uint64_t fromWqeIdx, uint16_t wqeIdx, uint64_t addr,
+                                                uint32_t key, uint64_t token) {
+    if (token == static_cast<uint64_t>(-1)) {
+      if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA) {
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_block> readyIndex(q->sq_ready_index);
+        while (readyIndex.load(cuda::memory_order_acquire) != fromWqeIdx) {
+        }
+      } else if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU) {
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_device> readyIndex(q->sq_ready_index);
+        while (readyIndex.load(cuda::memory_order_acquire) != fromWqeIdx) {
+        }
+      }
+      token = atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, uint64_t{1}, memoryOrderRelaxed) + 1ULL;
+    }
     constexpr auto ctrlFlags = static_cast<doca_gpu_dev_verbs_wqe_ctrl_flags>(
         DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE | DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_STRONG_ORDERING);
     doca_gpu_dev_verbs_prepare_inl_rdma_write_wqe_header(q, wqePtr, wqeIdx, ctrlFlags, addr, key, sizeof(uint64_t));
@@ -427,36 +458,17 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
-  MSCCLPP_DEVICE_INLINE void lockWqeSlot() const {
-    MSCCLPP_ASSERT_DEVICE(wqeSlotLock_ != nullptr, "wqeSlotLock is null");
-#if defined(MSCCLPP_DEVICE_CUDA)
-    uint32_t expected = 0;
-    while (!cuda::atomic_ref<uint32_t, scopeDevice>{*wqeSlotLock_}.compare_exchange_weak(
-        expected, 1u, memoryOrderAcquire, memoryOrderRelaxed)) {
-      expected = 0;
-    }
-#else
-    uint32_t expected = 0;
-    while (!__atomic_compare_exchange_n(wqeSlotLock_, &expected, 1u, true, memoryOrderAcquire, memoryOrderRelaxed)) {
-      expected = 0;
-    }
-#endif
-  }
-
-  MSCCLPP_DEVICE_INLINE void unlockWqeSlot() const {
-    atomicStore<uint32_t, scopeDevice>(wqeSlotLock_, 0u, memoryOrderRelease);
-  }
-
-  template <typename Fn>
-  MSCCLPP_DEVICE_INLINE void withWqeSlot(Fn&& fn) const {
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, typename Fn>
+  MSCCLPP_DEVICE_INLINE void withWqeSlot(doca_gpu_dev_verbs_qp* q, uint32_t count, Fn&& fn) const {
     static_assert(sizeof(GpuNetIoWqeSlot) == sizeof(doca_gpu_dev_verbs_wqe));
     MSCCLPP_ASSERT_DEVICE(wqeSlotShm_ != nullptr &&
                               reinterpret_cast<uintptr_t>(wqeSlotShm_) % alignof(GpuNetIoWqeSlot) == 0 &&
                               __isShared(wqeSlotShm_),
                           "wqeSlotShm must be a 16-byte-aligned shared-memory pointer");
-    if (reuseSharedWqe_) lockWqeSlot();
-    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeSlotShm_->storage));
-    if (reuseSharedWqe_) unlockWqeSlot();
+    WqeSlotLockGuard lockGuard(*this);
+    const auto index =
+        doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, count);
+    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeSlotShm_->storage), index);
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)

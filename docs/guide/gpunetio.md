@@ -105,8 +105,7 @@ their WQEs directly to the GPU-resident send queue and ring the regular doorbell
   falls back to regular doorbell submission.
 
 BlueFlame submission waits for async consumption of the scratch source before each posting call returns; one thread can
-therefore reuse one entry for sequential operations across different QPs without locking. There is no internal shared
-memory allocation or fixed connection-slot cap in MSCCL++.
+therefore reuse one entry for sequential operations across different QPs without locking.
 
 ## Limitations
 

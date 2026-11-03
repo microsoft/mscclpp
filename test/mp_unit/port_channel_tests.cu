@@ -1603,9 +1603,10 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
 __global__ void kernelGpuNetIoSharedWqeSlot(int numQps, int rank) {
   __shared__ mscclpp::GpuNetIoWqeSlot sharedSlot;
   __shared__ uint32_t wqeSlotLock;
-  const int q = threadIdx.x;
-  if (q == 0) wqeSlotLock = 0;
+  if (threadIdx.x == 0) wqeSlotLock = 0;
   __syncthreads();
+  if ((threadIdx.x & 31) != 0) return;
+  const int q = threadIdx.x >> 5;
   if (q >= numQps) return;
 
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
@@ -1615,9 +1616,21 @@ __global__ void kernelGpuNetIoSharedWqeSlot(int numQps, int rank) {
   portChan.putWithSignal<kExclusive>(offset, offset, sizeof(int));
   portChan.wait();
   portChan.flush<kExclusive>();
+  __syncthreads();
+
+  // Exercise multiple threads concurrently sharing the same QP and locked WQE slot in Gpu mode.
+  auto sharedQpChan = gMultiQpDevicePortChans[0];
+  sharedQpChan.setWqeSlot(&sharedSlot, &wqeSlotLock);
+  for (int iter = 0; iter < 16; ++iter) {
+    sharedQpChan.putWithSignal(offset, offset, sizeof(int));
+    sharedQpChan.wait();
+    sharedQpChan.signal();
+    sharedQpChan.wait();
+  }
+  sharedQpChan.flush();
 }
 
-// Exercise multiple concurrent QPs sharing one WQE slot guarded by wqeSlotLock.
+// Exercise multiple concurrent QPs and concurrent same-QP threads sharing one WQE slot guarded by wqeSlotLock.
 TEST(PortChannelOneToOneTest, SharedWqeSlotIbDeviceMode) {
   REQUIRE_GPUNETIO;
   if (gEnv->rank >= numRanksToUse) return;
@@ -1638,7 +1651,7 @@ TEST(PortChannelOneToOneTest, SharedWqeSlotIbDeviceMode) {
   }
   communicator->bootstrap()->barrier();
 
-  kernelGpuNetIoSharedWqeSlot<<<1, kMaxQps>>>(kMaxQps, rank);
+  kernelGpuNetIoSharedWqeSlot<<<1, kMaxQps * 32>>>(kMaxQps, rank);
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
