@@ -15,7 +15,8 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
-        libbrotli1 # Required in order to update for Brotli CVE, in the future this can be removed with base image updates \
+        # Required for the Brotli CVE update; remove after base image updates.
+        libbrotli1 \
         libcap2 \
         libnuma-dev \
         lsb-release \
