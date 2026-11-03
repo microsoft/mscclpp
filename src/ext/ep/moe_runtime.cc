@@ -93,10 +93,19 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
 }
 
 void* MoERuntime::outputScalesBuffer() const {
-  requireMode(MoEMode::THROUGHPUT);
-  const auto& context = *throughputContext_;
-  EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
-  return context.storageLayout().outputScalesBuffer_;
+  if (mode_ == MoEMode::THROUGHPUT) {
+    const auto& context = *throughputContext_;
+    EP_HOST_ASSERT(context.deviceContext_.devicePtr_ != nullptr);
+    return context.storageLayout().outputScalesBuffer_;
+  }
+  requireMode(MoEMode::LATENCY);
+  const auto& context = *latencyContext_;
+  EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
+  EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
+  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
+                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
+                              context.combineMode_)
+      .rankMajorScalesBuffer_;
 }
 
 void* MoERuntime::dispatchOutputBuffer() const {

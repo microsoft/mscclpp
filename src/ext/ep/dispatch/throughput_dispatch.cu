@@ -163,7 +163,8 @@ void throughputDispatch(const void* input, const int64_t* topkIdx, const float* 
   EP_HOST_ASSERT(workspace.numRecvTokens_ != nullptr && workspace.recvCounts_ != nullptr);
   EP_HOST_ASSERT(workspace.syncer_ != nullptr);
   EP_HOST_ASSERT(numBlocks > 0);
-  EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
+  EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                 workload.dispatchDataType_ == DispatchDataType::FP8_E4M3);
 
   const bool rankMajor = workload.outputLayout_ == DispatchLayout::RANK_MAJOR;
   const bool fp8 = workload.dispatchDataType_ == DispatchDataType::FP8_E4M3;

@@ -42,15 +42,23 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementBytes(DispatchDataType d
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchElementsPerScale(DispatchDataType dispatchDataType) {
-  return dispatchDataType == DispatchDataType::FP8_E4M3 ? 128 : 0;
+  return dispatchDataType == DispatchDataType::MXFP8_E4M3 ? 32
+         : dispatchDataType == DispatchDataType::FP8_E4M3 ? 128
+                                                          : 0;
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNumScales(DispatchDataType dispatchDataType, int hidden) {
-  return dispatchDataType == DispatchDataType::FP8_E4M3 ? hidden / dispatchElementsPerScale(dispatchDataType) : 0;
+  const int blockSize = dispatchElementsPerScale(dispatchDataType);
+  return blockSize == 0 ? 0 : hidden / blockSize;
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
-  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3 ||
+         dataType == DispatchDataType::MXFP8_E4M3 || dataType == DispatchDataType::FP8_E4M3_STATIC;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedCombineDataType(DispatchDataType dataType) {
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3_STATIC;
 }
 
 // Latency rank-deduplicated dispatch payload layout:
@@ -184,6 +192,7 @@ struct LatencyStorageLayout {
   void* combineBuffer_ = nullptr;
   void* rankMajorTopkIdsBuffer_ = nullptr;
   void* rankMajorTopkWeightsBuffer_ = nullptr;
+  void* rankMajorScalesBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
@@ -202,17 +211,21 @@ struct LatencyStorageLayout {
     const size_t rankMajorTokenOffsetBytes = rankMajorTokenOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
     const size_t rankMajorDispatchOutputBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
+    const size_t rankMajorScalesOffset =
+        configAlign<size_t>(rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes, BufferAlignmentBytes);
+    const size_t rankMajorScalesBytes =
+        static_cast<size_t>(numRanks) * maxTokensPerRank * dispatchNumScales(DispatchDataType::MXFP8_E4M3, hidden);
     const size_t rankMajorDirectSendCombineInputBytes = rankMajorDispatchOutputBytes * numTopk;
     const size_t expertMajorDispatchOutputBytes =
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankLocalReduceCombineRecvBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorDispatchBufferBytes = rankMajorTokenOffsetBytes + rankMajorDispatchOutputBytes;
+    const size_t rankMajorDispatchBufferBytes = rankMajorScalesOffset + (rankMajor ? rankMajorScalesBytes : 0);
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
     const size_t combineBufferBytes = rankMajorDirectSend    ? rankMajorDirectSendCombineInputBytes
-                                      : rankMajorLocalReduce ? 0
+                                      : rankMajorLocalReduce ? rankMajorDispatchOutputBytes
                                       : combineMode == CombineMode::RANK_LOCAL_REDUCE ? rankLocalReduceCombineRecvBytes
                                                                                       : expertMajorDispatchOutputBytes;
     const size_t alignedDispatchRecvBufferBytes = configAlign<size_t>(dispatchRecvBufferBytes, BufferAlignmentBytes);
@@ -225,9 +238,10 @@ struct LatencyStorageLayout {
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
+      rankMajorScalesBuffer_ = rankMajor ? base + rankMajorScalesOffset : nullptr;
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
-      combineBuffer_ = rankMajorLocalReduce ? dispatchOutputBuffer_ : base + alignedDispatchRecvBufferBytes;
+      combineBuffer_ = base + alignedDispatchRecvBufferBytes;
     }
   }
 };

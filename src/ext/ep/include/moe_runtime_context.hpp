@@ -34,7 +34,7 @@ struct PrepareHandle::Impl {
         stream_(request.stream) {}
 
   std::weak_ptr<ThroughputRuntimeContext> owner_;
-  // Snapshot of the routing workspace's generation; a new prepare invalidates this handle.
+  // Snapshot of the routing workspace epoch; a new prepare invalidates this handle.
   uint64_t routingEpoch_;
   const int64_t* topkIdx_;
   int numTokens_;
@@ -60,7 +60,9 @@ struct DispatchHandle::Impl {
         epoch_(epoch),
         numTokens_(request.numTokens),
         maxTokensPerRank_(request.maxTokensPerRank),
-        dispatchDataType_(request.dispatchDataType),
+        dispatchDataType_(request.quant.dispatchDataType),
+        combineDataType_(request.quant.combineDataType),
+        dispatchScale_(request.quant.dispatchScale),
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
@@ -72,11 +74,13 @@ struct DispatchHandle::Impl {
         metadata_(ThroughputMetadata{routingEpoch}) {}
 
   std::weak_ptr<void> owner_;
-  // Latency packet/handle generation; throughput does not use this field.
+  // Latency handle epoch; packet flags are maintained on the device.
   uint32_t epoch_ = 0;
   int numTokens_;
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
+  DispatchDataType combineDataType_ = DispatchDataType::BF16;
+  float dispatchScale_ = 1.0f;
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
   std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };

@@ -29,8 +29,6 @@ inline constexpr bool isSupportedHidden(int hidden) {
 }
 
 struct Workload {
-  /// Latency packet epoch; throughput kernels leave the default value unused.
-  uint32_t epoch_ = 0;
   /// Number of local input or output tokens.
   int numTokens_;
   /// Hidden dimension size.
@@ -47,6 +45,14 @@ struct Workload {
   DispatchLayout outputLayout_;
   /// Dispatch payload data format.
   DispatchDataType dispatchDataType_;
+  /// Rank-major combine input format.
+  DispatchDataType combineDataType_ = DispatchDataType::BF16;
+  /// FP8_E4M3_STATIC dispatch multiplier; one for other formats.
+  float dispatchScale_ = 1.0f;
+  /// Whether rank-major dispatch emits destination-rank-local expert IDs.
+  bool emitLocalExpertIds_ = false;
+  /// Input representation for latency rank-major static FP8.
+  QuantConfig::InputMode inputMode_ = QuantConfig::InputMode::PREQUANTIZED;
 };
 
 struct KernelConfigCache {
