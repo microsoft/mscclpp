@@ -83,15 +83,16 @@ void register_megamoe(nb::module_& m) {
           "create",
           [](std::shared_ptr<mscclpp::Communicator> comm, const NativeConfig& config, uintptr_t fc1, uintptr_t fc1Scale,
              uintptr_t fc2, uintptr_t fc2Scale, uintptr_t stream, int tag, const std::string& kernelPath,
-             const std::string& kernelId) {
+             const std::string& kernelId, std::shared_ptr<MegaMoeContext> sharedWorkspace) {
             PackedWeights weights{reinterpret_cast<uint8_t*>(fc1), reinterpret_cast<uint8_t*>(fc1Scale),
                                   reinterpret_cast<uint8_t*>(fc2), reinterpret_cast<uint8_t*>(fc2Scale)};
             return std::make_shared<MegaMoeContext>(std::move(comm), config, weights,
-                                                    reinterpret_cast<cudaStream_t>(stream), tag, kernelPath, kernelId);
+                                                    reinterpret_cast<cudaStream_t>(stream), tag, kernelPath, kernelId,
+                                                    std::move(sharedWorkspace));
           },
           nb::arg("communicator"), nb::arg("config"), nb::arg("fc1"), nb::arg("fc1_scale"), nb::arg("fc2"),
           nb::arg("fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920, nb::arg("kernel_path") = "",
-          nb::arg("kernel_id") = "", nb::call_guard<nb::gil_scoped_release>())
+          nb::arg("kernel_id") = "", nb::arg("shared_workspace") = nullptr, nb::call_guard<nb::gil_scoped_release>())
       .def("input_ptr", [](const MegaMoeContext& self) { return reinterpret_cast<uintptr_t>(self.input()); })
       .def("input_dlpack", &inputDlpack, nb::arg("num_tokens"))
       .def_prop_ro("device", &MegaMoeContext::device)
@@ -99,6 +100,12 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("shared_bytes", &MegaMoeContext::sharedBytes)
       .def_prop_ro("symmetric_bytes", &MegaMoeContext::symmetricBytes)
       .def_prop_ro("private_bytes", &MegaMoeContext::privateBytes)
+      .def_prop_ro("workspace_id", &MegaMoeContext::workspaceId)
+      .def_prop_ro("packed_weight_pointers",
+                   [](const MegaMoeContext& self) {
+                     const auto pointers = self.packedWeightPointers();
+                     return nb::make_tuple(pointers[0], pointers[1], pointers[2], pointers[3]);
+                   })
       .def_prop_ro("kernel_id", &MegaMoeContext::kernelId)
       .def_prop_ro("kernel_tile_m", &MegaMoeContext::kernelTileM)
       .def_prop_ro("kernel_cluster_size", &MegaMoeContext::kernelClusterSize)

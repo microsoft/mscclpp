@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -204,11 +206,14 @@ size_t product(std::initializer_list<size_t> factors) {
 struct RankInfo {
   std::array<int, 10> config;
   int tag = 0;
-  std::array<int, 19> specialization;
+  std::array<int, 20> specialization;
+  uint64_t sharedOwner = 0;
+  uint64_t newOwner = 0;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
   size_t symmetricBytes = 0;
   size_t privateBytes = 0;
   float gateUpClamp;
+  float activationScale;
   char gpuUuid[NVML_DEVICE_UUID_BUFFER_SIZE]{};
   unsigned char fabricUuid[NVML_GPU_FABRIC_UUID_LEN]{};
   unsigned int cliqueId = 0;
@@ -220,6 +225,7 @@ RankInfo rankInfo(const NativeConfig& c, int device) {
   info.config = {c.worldSize, c.maxTokens, c.hidden,           c.intermediate,         c.numExperts,
                  c.topK,      c.smMargin,  int(c.weightDtype), int(c.activationDtype), int(c.combineRouteWeights)};
   info.gateUpClamp = c.gateUpClamp;
+  info.activationScale = c.activationScale;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)
     throw std::runtime_error("MegaMoE requires NVML to verify that all peers share an NVLink fabric");
@@ -249,15 +255,19 @@ RankInfo rankInfo(const NativeConfig& c, int device) {
   return info;
 }
 
-void validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig& c, const RankInfo& info) {
+uint64_t validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig& c, const RankInfo& info) {
   std::vector<RankInfo> peers(c.worldSize);
   peers[c.rank] = info;
   comm->bootstrap()->allGather(peers.data(), sizeof(RankInfo));
   const auto& local = peers[c.rank];
   for (int rank = 0; rank < c.worldSize; ++rank) {
     const auto& peer = peers[rank];
-    if (peer.config != local.config || peer.gateUpClamp != local.gateUpClamp || peer.tag != local.tag)
+    if (peer.config != local.config || peer.gateUpClamp != local.gateUpClamp ||
+        peer.activationScale != local.activationScale || peer.tag != local.tag)
       throw std::invalid_argument("MegaMoE configurations and bootstrap tags must match on every rank (except rank)");
+    if (peer.sharedOwner != local.sharedOwner)
+      throw std::invalid_argument(
+          "MegaMoE shared_workspace mode and original workspace owner must match on every rank");
     if (peer.specialization != local.specialization ||
         std::memcmp(peer.kernelId, local.kernelId, sizeof(local.kernelId)) ||
         peer.symmetricBytes != local.symmetricBytes || peer.privateBytes != local.privateBytes)
@@ -271,6 +281,41 @@ void validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig
       if (!std::strcmp(peer.gpuUuid, peers[previous].gpuUuid))
         throw std::invalid_argument("MegaMoE requires exactly one rank per GPU");
   }
+  return peers[0].newOwner;
+}
+
+auto configSignature(const NativeConfig& c) {
+  return std::tie(c.rank, c.worldSize, c.maxTokens, c.hidden, c.intermediate, c.numExperts, c.topK, c.smMargin,
+                  c.gateUpClamp, c.weightDtype, c.activationDtype, c.activationScale, c.combineRouteWeights);
+}
+
+auto layoutSignature(const SymmetricLayout& l) {
+  return std::tie(l.bytes, l.input, l.topkIds, l.topkWeights, l.partialOutput, l.epoch, l.peerSignals,
+                  l.expectedPeerSignals, l.tokenCount, l.quantizedInput, l.quantizedInputScale, l.quantizedInputReady,
+                  l.routedInputReady, l.routingHeaders, l.routingPackets);
+}
+
+std::array<int, 20> specialization(const MegaMoeContext& c) {
+  return {c.kernelTileM(),
+          c.kernelTileN(),
+          c.kernelTileK(),
+          c.kernelLoadStages(),
+          c.kernelTransformStages(),
+          c.kernelNumWarps(),
+          c.kernelTransferRegisters(),
+          c.kernelLoadWarps(),
+          int(c.kernelSplitPipelines()),
+          c.kernelEpilogueTokens(),
+          c.kernelEpilogueWarps(),
+          c.kernelEpilogueRegisters(),
+          c.kernelDispatchChunk(),
+          c.kernelDispatchWarps(),
+          c.kernelDispatchStages(),
+          int(c.kernelExpertMajorTasks()),
+          int(c.kernelCacheWeights()),
+          int(c.kernelAdaptiveCacheWeights()),
+          c.kernelClusterSize(),
+          int(c.kernelFixedTokenCount())};
 }
 
 bool overlaps(const void* a, size_t aBytes, const void* b, size_t bBytes) {
@@ -291,6 +336,40 @@ void stage(void* destination, const void* source, size_t bytes, cudaStream_t str
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(destination, source, bytes, cudaMemcpyDeviceToDevice, stream));
 }
 
+struct RuntimeWorkspace {
+  int device = -1;
+  uint64_t owner = 0;
+  std::shared_ptr<Communicator> communicator;
+  std::unique_ptr<GpuBuffer<char>> symmetric;
+  std::shared_ptr<char> workspace;
+  std::shared_ptr<uint64_t> peerBases;
+  std::shared_ptr<uint32_t> kernelEntrySignal;
+  cudaEvent_t startResetEvent = nullptr;
+  bool startRecorded = false;
+  RegisteredMemory localMemory;
+  std::vector<RegisteredMemory> peerMemories;
+  std::vector<Connection> connections;
+
+  ~RuntimeWorkspace() {
+    if (device < 0) return;
+    // Keep mappings alive until pending work completes, including when the last
+    // alias (rather than the original context) releases this runtime.
+    int original = -1;
+    (void)cudaGetDevice(&original);
+    (void)cudaSetDevice(device);
+    (void)cudaDeviceSynchronize();
+    if (startResetEvent) (void)cudaEventDestroy(startResetEvent);
+    connections.clear();
+    peerMemories.clear();
+    localMemory = RegisteredMemory{};
+    kernelEntrySignal.reset();
+    peerBases.reset();
+    workspace.reset();
+    symmetric.reset();
+    if (original >= 0) (void)cudaSetDevice(original);
+  }
+};
+
 }  // namespace
 
 struct MegaMoeContext::Impl {
@@ -300,17 +379,8 @@ struct MegaMoeContext::Impl {
   int device = -1;
   SymmetricLayout layout;
   size_t workspaceBytes = 0;
-  std::shared_ptr<Communicator> communicator;
-  std::unique_ptr<GpuBuffer<char>> symmetric;
-  std::shared_ptr<char> workspace;
-  std::shared_ptr<uint64_t> peerBases;
-  std::shared_ptr<uint32_t> kernelEntrySignal;
-  cudaEvent_t startResetEvent = nullptr;
-  bool startRecorded = false;
+  std::shared_ptr<RuntimeWorkspace> runtime;
   std::array<std::shared_ptr<uint8_t>, 4> weightBuffers;
-  RegisteredMemory localMemory;
-  std::vector<RegisteredMemory> peerMemories;
-  std::vector<Connection> connections;
   std::shared_ptr<KernelPlan> plan;
   std::shared_ptr<JitModule> module;
   std::unique_ptr<JitPlan> jitPlan;
@@ -323,24 +393,18 @@ struct MegaMoeContext::Impl {
     (void)cudaGetDevice(&original);
     (void)cudaSetDevice(device);
     (void)cudaDeviceSynchronize();
-    if (startResetEvent) (void)cudaEventDestroy(startResetEvent);
     plan.reset();
     jitPlan.reset();
     module.reset();
-    connections.clear();
-    peerMemories.clear();
-    localMemory = RegisteredMemory{};
     weightBuffers = {};
-    kernelEntrySignal.reset();
-    peerBases.reset();
-    workspace.reset();
-    symmetric.reset();
+    runtime.reset();
     if (original >= 0) (void)cudaSetDevice(original);
   }
 };
 
 MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeConfig& c, const PackedWeights& weights,
-                               cudaStream_t stream, int tag, const std::string& kernelPath, const std::string& kernelId)
+                               cudaStream_t stream, int tag, const std::string& kernelPath, const std::string& kernelId,
+                               std::shared_ptr<MegaMoeContext> sharedWorkspace)
     : impl_(std::make_unique<Impl>()) {
   if (!comm || !comm->bootstrap()) throw std::invalid_argument("MegaMoE requires a communicator with a bootstrap");
   auto& p = *impl_;
@@ -401,39 +465,46 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     }
     info = rankInfo(c, p.device);
     info.tag = tag;
-    info.specialization = {kernelTileM(),
-                           kernelTileN(),
-                           kernelTileK(),
-                           kernelLoadStages(),
-                           kernelTransformStages(),
-                           kernelNumWarps(),
-                           kernelTransferRegisters(),
-                           kernelLoadWarps(),
-                           int(kernelSplitPipelines()),
-                           kernelEpilogueTokens(),
-                           kernelEpilogueWarps(),
-                           kernelEpilogueRegisters(),
-                           kernelDispatchChunk(),
-                           kernelDispatchWarps(),
-                           kernelDispatchStages(),
-                           int(kernelExpertMajorTasks()),
-                           int(kernelCacheWeights()),
-                           int(kernelAdaptiveCacheWeights()),
-                           kernelClusterSize()};
+    info.specialization = specialization(*this);
+    if (sharedWorkspace) {
+      const auto& owner = *sharedWorkspace->impl_;
+      if (owner.device != p.device || owner.runtime->communicator.get() != comm.get())
+        throw std::invalid_argument("MegaMoE shared_workspace must use the same CUDA device and communicator");
+      if (configSignature(owner.config) != configSignature(c))
+        throw std::invalid_argument("MegaMoE shared_workspace must use the same native configuration");
+      if (owner.kernelId != p.kernelId || specialization(*sharedWorkspace) != info.specialization ||
+          layoutSignature(owner.layout) != layoutSignature(p.layout) || owner.workspaceBytes != p.workspaceBytes ||
+          owner.resources.ctas != p.resources.ctas || owner.resources.sharedBytes != p.resources.sharedBytes)
+        throw std::invalid_argument("MegaMoE shared_workspace must use the same kernel specialization and layout");
+      info.sharedOwner = owner.runtime->owner;
+    } else if (c.rank == 0) {
+      // Tags may be reused after construction. A root-issued identity also
+      // distinguishes independent workspaces created with the same tag/config.
+      static std::atomic<uint64_t> nextOwner{1};
+      info.newOwner = nextOwner.fetch_add(1, std::memory_order_relaxed);
+    }
     std::memcpy(info.kernelId, p.kernelId.c_str(), p.kernelId.size() + 1);
     info.symmetricBytes = p.layout.bytes;
     info.privateBytes = p.workspaceBytes;
   });
-  validatePeers(comm, c, info);
-  p.communicator = comm;
+  const uint64_t newOwner = validatePeers(comm, c, info);
   PackedWeights packed{};
   collectiveCheck(comm, "allocation and weight packing", [&] {
-    p.symmetric = std::make_unique<GpuBuffer<char>>(p.layout.bytes);
-    p.workspace = mscclpp::detail::gpuCallocShared<char>(p.workspaceBytes);
-    p.peerBases = mscclpp::detail::gpuCallocShared<uint64_t>(c.worldSize);
-    p.kernelEntrySignal = mscclpp::detail::gpuCallocShared<uint32_t>(1);
-    MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&p.startResetEvent, cudaEventDisableTiming));
-    p.localMemory = p.communicator->registerMemory(p.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
+    if (sharedWorkspace) {
+      p.runtime = sharedWorkspace->impl_->runtime;
+    } else {
+      p.runtime = std::make_shared<RuntimeWorkspace>();
+      auto& r = *p.runtime;
+      r.device = p.device;
+      r.owner = newOwner;
+      r.communicator = comm;
+      r.symmetric = std::make_unique<GpuBuffer<char>>(p.layout.bytes);
+      r.workspace = mscclpp::detail::gpuCallocShared<char>(p.workspaceBytes);
+      r.peerBases = mscclpp::detail::gpuCallocShared<uint64_t>(c.worldSize);
+      r.kernelEntrySignal = mscclpp::detail::gpuCallocShared<uint32_t>(1);
+      MSCCLPP_CUDATHROW(cudaEventCreateWithFlags(&r.startResetEvent, cudaEventDisableTiming));
+      r.localMemory = comm->registerMemory(r.symmetric->data(), p.layout.bytes, Transport::CudaIpc);
+    }
     size_t localExperts = c.numExperts / c.worldSize;
     const size_t valuesPerByte = c.weightDtype == WeightDtype::Mxfp4 ? 2 : 1;
     const std::array<size_t, 4> sizes{
@@ -456,48 +527,55 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     }
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   });
-  std::vector<std::shared_future<RegisteredMemory>> memoryFutures;
-  std::vector<std::shared_future<Connection>> connectionFutures;
-  std::vector<uint64_t> peerPointers;
-  collectiveCheck(comm, "peer exchange setup", [&] {
-    p.peerMemories.resize(c.worldSize);
-    p.peerMemories[c.rank] = p.localMemory;
-    memoryFutures.resize(c.worldSize);
-    connectionFutures.resize(c.worldSize);
-    peerPointers.resize(c.worldSize);
-    for (int rank = 0; rank < c.worldSize; ++rank) {
-      if (rank == c.rank) continue;
-      connectionFutures[rank] = p.communicator->connect(Transport::CudaIpc, rank, tag);
-      p.communicator->sendMemory(p.localMemory, rank, tag + 1);
-      memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 1);
-    }
-  });
-  collectiveCheck(comm, "peer mapping", [&] {
-    for (int rank = 0; rank < c.worldSize; ++rank) {
-      if (rank != c.rank) {
-        p.connections.push_back(connectionFutures[rank].get());
-        p.peerMemories[rank] = memoryFutures[rank].get();
+  auto& r = *p.runtime;
+  if (!sharedWorkspace) {
+    std::vector<std::shared_future<RegisteredMemory>> memoryFutures;
+    std::vector<std::shared_future<Connection>> connectionFutures;
+    std::vector<uint64_t> peerPointers;
+    collectiveCheck(comm, "peer exchange setup", [&] {
+      r.peerMemories.resize(c.worldSize);
+      r.peerMemories[c.rank] = r.localMemory;
+      memoryFutures.resize(c.worldSize);
+      connectionFutures.resize(c.worldSize);
+      peerPointers.resize(c.worldSize);
+      for (int rank = 0; rank < c.worldSize; ++rank) {
+        if (rank == c.rank) continue;
+        connectionFutures[rank] = comm->connect(Transport::CudaIpc, rank, tag);
+        comm->sendMemory(r.localMemory, rank, tag + 1);
+        memoryFutures[rank] = comm->recvMemory(rank, tag + 1);
       }
-      if (!p.peerMemories[rank].data() || p.peerMemories[rank].size() != p.layout.bytes)
-        throw std::runtime_error("MegaMoE could not map a matching CudaIpc peer workspace");
-      peerPointers[rank] = reinterpret_cast<uint64_t>(p.peerMemories[rank].data());
-    }
-  });
+    });
+    collectiveCheck(comm, "peer mapping", [&] {
+      for (int rank = 0; rank < c.worldSize; ++rank) {
+        if (rank != c.rank) {
+          r.connections.push_back(connectionFutures[rank].get());
+          r.peerMemories[rank] = memoryFutures[rank].get();
+        }
+        if (!r.peerMemories[rank].data() || r.peerMemories[rank].size() != p.layout.bytes)
+          throw std::runtime_error("MegaMoE could not map a matching CudaIpc peer workspace");
+        peerPointers[rank] = reinterpret_cast<uint64_t>(r.peerMemories[rank].data());
+      }
+    });
+    collectiveCheck(comm, "peer address upload", [&] {
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(r.peerBases.get(), peerPointers.data(), c.worldSize * sizeof(uint64_t),
+                                        cudaMemcpyHostToDevice, stream));
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    });
+  }
   collectiveCheck(comm, "plan creation", [&] {
-    MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.peerBases.get(), peerPointers.data(), c.worldSize * sizeof(uint64_t),
-                                      cudaMemcpyHostToDevice, stream));
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    // Plan creation builds only host-side, weight-specific descriptors. It must
+    // not reset workspace counters or the device-resident epoch of an alias.
     if (p.module) {
       p.jitPlan = std::make_unique<JitPlan>(p.module);
       const auto config = jitConfig(c);
       const auto weights = jitWeights(packed);
       char error[ErrorCapacity]{};
-      checkJit(p.module->api->createPlan(&config, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), &weights,
+      checkJit(p.module->api->createPlan(&config, r.symmetric->data(), r.peerBases.get(), r.workspace.get(), &weights,
                                          &p.jitPlan->handle, error, sizeof(error)),
                error, "plan creation");
       if (!p.jitPlan->handle) throw std::runtime_error("MegaMoE JIT module returned a null plan");
     } else {
-      p.plan = createKernelPlan(c, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), packed);
+      p.plan = createKernelPlan(c, r.symmetric->data(), r.peerBases.get(), r.workspace.get(), packed);
       p.resources.ctas = kernelPlanCtaCount(*p.plan);
       p.resources.sharedBytes = kernelPlanSharedBytes(*p.plan);
     }
@@ -507,13 +585,19 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
 MegaMoeContext::~MegaMoeContext() = default;
 const NativeConfig& MegaMoeContext::config() const { return impl_->config; }
 int MegaMoeContext::device() const { return impl_->device; }
-void* MegaMoeContext::input() const { return impl_->symmetric->data() + impl_->layout.input; }
-void* MegaMoeContext::topkIds() const { return impl_->symmetric->data() + impl_->layout.topkIds; }
-void* MegaMoeContext::topkWeights() const { return impl_->symmetric->data() + impl_->layout.topkWeights; }
+void* MegaMoeContext::input() const { return impl_->runtime->symmetric->data() + impl_->layout.input; }
+void* MegaMoeContext::topkIds() const { return impl_->runtime->symmetric->data() + impl_->layout.topkIds; }
+void* MegaMoeContext::topkWeights() const { return impl_->runtime->symmetric->data() + impl_->layout.topkWeights; }
 int MegaMoeContext::ctaCount() const { return impl_->resources.ctas; }
 size_t MegaMoeContext::sharedBytes() const { return impl_->resources.sharedBytes; }
 size_t MegaMoeContext::symmetricBytes() const { return impl_->layout.bytes; }
 size_t MegaMoeContext::privateBytes() const { return impl_->workspaceBytes; }
+uintptr_t MegaMoeContext::workspaceId() const { return reinterpret_cast<uintptr_t>(impl_->runtime->workspace.get()); }
+std::array<uintptr_t, 4> MegaMoeContext::packedWeightPointers() const {
+  std::array<uintptr_t, 4> pointers{};
+  for (size_t i = 0; i < pointers.size(); ++i) pointers[i] = reinterpret_cast<uintptr_t>(impl_->weightBuffers[i].get());
+  return pointers;
+}
 const std::string& MegaMoeContext::kernelId() const { return impl_->kernelId; }
 int MegaMoeContext::kernelTileM() const {
   if (impl_->module) return impl_->module->api->tileM;
@@ -602,7 +686,8 @@ size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) 
   if (tokens < 0 || tokens > config().maxTokens)
     throw std::invalid_argument("MegaMoE numTokens exceeds the configured capacity");
   size_t inputBytes = size_t(tokens) * config().hidden * 2;
-  if ((tokens && (!x || !output)) || overlaps(output, inputBytes, impl_->symmetric->data(), impl_->layout.bytes))
+  if ((tokens && (!x || !output)) ||
+      overlaps(output, inputBytes, impl_->runtime->symmetric->data(), impl_->layout.bytes))
     throw std::invalid_argument("MegaMoE requires non-null arrays and output disjoint from the registered workspace");
   return inputBytes;
 }
@@ -641,12 +726,13 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     stage(topkIds(), ids, routingBytes, stream);
     stage(topkWeights(), scores, routingBytes, stream);
   }
-  impl_->startRecorded = false;
+  auto& r = *impl_->runtime;
+  r.startRecorded = false;
   if (signalStart) {
-    MSCCLPP_CUDATHROW(cudaMemsetAsync(impl_->kernelEntrySignal.get(), 0, sizeof(uint32_t), stream));
-    MSCCLPP_CUDATHROW(cudaEventRecord(impl_->startResetEvent, stream));
+    MSCCLPP_CUDATHROW(cudaMemsetAsync(r.kernelEntrySignal.get(), 0, sizeof(uint32_t), stream));
+    MSCCLPP_CUDATHROW(cudaEventRecord(r.startResetEvent, stream));
   }
-  auto* signal = signalStart ? impl_->kernelEntrySignal.get() : nullptr;
+  auto* signal = signalStart ? r.kernelEntrySignal.get() : nullptr;
   // Fused staging hands the caller arrays to the kernels; ordered copies leave them on the staged workspace.
   const void* launchInput = fusedStage ? x : nullptr;
   const int32_t* launchIds = fusedStage ? ids : nullptr;
@@ -661,7 +747,7 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
   } else {
     launchNativeW8A16(impl_->plan, launchIds, launchScores, tokens, output, stream, signal);
   }
-  impl_->startRecorded = signalStart;
+  r.startRecorded = signalStart;
 }
 
 void MegaMoeContext::forwardShared(const void* x, void* output, int tokens, cudaStream_t stream) {
@@ -671,7 +757,7 @@ void MegaMoeContext::forwardShared(const void* x, void* output, int tokens, cuda
         "MegaMoE forwardShared requires weightDtype=Mxfp8, worldSize=1, numExperts=1, and topK=1");
   const size_t inputBytes = validateForward(x, output, tokens);
   stage(input(), x, inputBytes, stream);
-  impl_->startRecorded = false;
+  impl_->runtime->startRecorded = false;
   launchNativeSharedExpert(impl_->plan, tokens, output, stream);
 }
 
@@ -679,10 +765,11 @@ void MegaMoeContext::waitUntilStarted(cudaStream_t stream) {
   int device;
   MSCCLPP_CUDATHROW(cudaGetDevice(&device));
   if (device != impl_->device) throw std::invalid_argument("MegaMoE start wait must use the context's CUDA device");
-  if (!impl_->startRecorded)
+  auto& r = *impl_->runtime;
+  if (!r.startRecorded)
     throw std::invalid_argument("MegaMoE waitUntilStarted requires a preceding signalStart forward");
-  MSCCLPP_CUDATHROW(cudaStreamWaitEvent(stream, impl_->startResetEvent, 0));
-  MSCCLPP_CUTHROW(cuStreamWaitValue32(stream, reinterpret_cast<CUdeviceptr>(impl_->kernelEntrySignal.get()), 1,
+  MSCCLPP_CUDATHROW(cudaStreamWaitEvent(stream, r.startResetEvent, 0));
+  MSCCLPP_CUTHROW(cuStreamWaitValue32(stream, reinterpret_cast<CUdeviceptr>(r.kernelEntrySignal.get()), 1,
                                       CU_STREAM_WAIT_VALUE_EQ));
 }
 

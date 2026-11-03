@@ -545,11 +545,18 @@ def test_native_w4a8_chunk_readiness_graph_reuse(routing_runtime, capacity, dire
 
 
 @pytest.mark.parametrize("use_jit", [False, pytest.param(True, marks=_JIT_ONLY)], ids=["native", "jit-split-two-stage"])
-def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_jit):
+@pytest.mark.parametrize("hidden,intermediate", [(8192, 4096), (4096, 4352)])
+@pytest.mark.parametrize("activation_dtype", ["mxfp8", "fp8_static"])
+def test_native_w4a8_runtime_geometry_ragged_graph_reuse(
+    routing_runtime, use_jit, hidden, intermediate, activation_dtype
+):
     from mscclpp.ext.megamoe import W4A8KernelConfig, compile_kernel
 
     runtime, torch = routing_runtime, routing_runtime.torch
-    config = runtime.config(128, local_experts=2, top_k=2, hidden=8192, intermediate=4096)
+    config = replace(
+        runtime.config(128, local_experts=2, top_k=2, hidden=hidden, intermediate=intermediate),
+        activation_dtype=activation_dtype,
+    )
     kernel = None
     if use_jit:
         policy = W4A8KernelConfig(load_stages=5, split_pipelines=True, dispatch_chunk=2048, dispatch_stages=2)
@@ -581,7 +588,7 @@ def test_native_w4a8_runtime_geometry_ragged_graph_reuse(routing_runtime, use_ji
                 for event in profiler.events()
                 if event.device_type == torch.autograd.DeviceType.CUDA and "megaMoeW4A8" in event.name
             ]
-            assert len(kernels) == 1 and "megaMoeW4A8<8192,4096,false>" in kernels[0], kernels
+            assert len(kernels) == 1 and f"megaMoeW4A8<{hidden},{intermediate},false," in kernels[0], kernels
             copies = [
                 event.name
                 for event in profiler.events()

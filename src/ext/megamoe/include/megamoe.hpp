@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_HPP_
 #define MSCCLPP_EXT_MEGAMOE_HPP_
 
+#include <array>
 #include <mscclpp/core.hpp>
 #include <string>
 
@@ -16,7 +17,9 @@ namespace mscclpp::megamoe {
 /// Construction is collective and must take place outside CUDA Graph capture on
 /// the rank's current CUDA device. All ranks must keep their contexts alive until
 /// all collective launches have completed. A context is not concurrently reusable:
-/// launches (including graph replays) must be ordered on a single CUDA stream.
+/// launches (including graph replays) must be ordered on a single CUDA stream,
+/// or explicitly ordered with CUDA events. Contexts sharing a workspace form one
+/// nonconcurrent execution domain and must be used in the same order on all ranks.
 class MegaMoeContext {
  public:
   /// Collectively create a context and pack canonical MXFP4 weights.
@@ -28,9 +31,14 @@ class MegaMoeContext {
   /// @param tag Bootstrap tag reserved for this collective context construction.
   /// @param kernelPath Absolute path to an optional native JIT module; empty selects the builtin kernel.
   /// @param kernelId Expected 64-character specialization digest; empty for the builtin kernel.
+  /// @param sharedWorkspace Optional context whose runtime workspace and peer mappings are reused.
+  /// Must use the same communicator, device, configuration, and kernel specialization.
+  /// Sharing mode and the original workspace owner must agree on every rank.
+  /// Packed weights and weight-specific plans remain independently owned. The
+  /// original context may be destroyed while aliases remain alive.
   MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
                  cudaStream_t stream = nullptr, int tag = 17920, const std::string& kernelPath = "",
-                 const std::string& kernelId = "");
+                 const std::string& kernelId = "", std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr);
   ~MegaMoeContext();
   MegaMoeContext(const MegaMoeContext&) = delete;
   MegaMoeContext& operator=(const MegaMoeContext&) = delete;
@@ -53,6 +61,10 @@ class MegaMoeContext {
   size_t symmetricBytes() const;
   /// Return the private workspace size in bytes, excluding weights.
   size_t privateBytes() const;
+  /// Return the private workspace address; equal for live contexts iff their runtime is shared.
+  uintptr_t workspaceId() const;
+  /// Return this context's distinct packed FC1, FC1-scale, FC2, and FC2-scale addresses.
+  std::array<uintptr_t, 4> packedWeightPointers() const;
   /// Return the specialization digest, or "builtin" for the builtin module.
   const std::string& kernelId() const;
   /// Return the routed output-feature tile width.
@@ -117,6 +129,8 @@ class MegaMoeContext {
   /// reset event prevents reading a prior replay's signal. The stream memory wait
   /// uses no resident CTA and is CUDA Graph capturable. Join the consumer stream
   /// before reusing the context, including before the next graph replay.
+  /// Workspace aliases share the latest signal/reset event and this ordering
+  /// obligation; any alias's next forward replaces or invalidates that signal.
   /// @param stream Consumer stream on the context's device.
   void waitUntilStarted(cudaStream_t stream);
 

@@ -67,15 +67,12 @@ def _scale_counts(weights, total_routes, max_per_expert):
     return counts
 
 
-def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_sigma=0.85):
+def build_expert_popularity(config, pattern, zipf_alpha, seed, *, lognormal_sigma=0.85):
+    """Return unrounded expert popularity for traffic generators."""
     import random
 
     world = config.world_size
     local_e = config.local_experts
-    total_tokens = world * config.max_tokens
-    total_routes = total_tokens * config.top_k
-    # Allow hot experts to exceed single-rank token count (simulating multi-rank aggregation even on EP1).
-    max_per_expert = total_routes
     rng = random.Random(seed)
 
     if pattern == "zipf":
@@ -87,7 +84,7 @@ def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_
             ]
             rng.shuffle(rank_w)
             weights.extend(rank_w)
-        return _scale_counts(weights, total_routes, max_per_expert)
+        return weights
 
     if pattern == "zipf_skewed":
         # Both cross-rank and intra-rank Zipfian skew: rank 0 receives the heaviest load.
@@ -100,7 +97,7 @@ def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_
             ]
             rng.shuffle(rank_w)
             weights.extend(rank_w)
-        return _scale_counts(weights, total_routes, max_per_expert)
+        return weights
 
     if pattern == "hot_experts":
         # Bimodal: ~2 hot experts per rank absorb ~65% of routes; ~25% experts empty; rest small partial tiles.
@@ -118,16 +115,24 @@ def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_
                     rank_w.append(1.0 + (j % 4) * 0.5)
             rng.shuffle(rank_w)
             weights.extend(rank_w)
-        return _scale_counts(weights, total_routes, max_per_expert)
+        return weights
 
     if pattern == "lognormal":
         # Global i.i.d. LogNormal(0, sigma) expert popularity across all ranks (sigma=0.85 matches c1024-decode-p50).
         if not math.isfinite(lognormal_sigma) or lognormal_sigma < 0:
             raise ValueError("lognormal_sigma must be a finite nonnegative number")
         weights = [math.exp(rng.gauss(0.0, lognormal_sigma)) for _ in range(world * local_e)]
-        return _scale_counts(weights, total_routes, max_per_expert)
+        return weights
 
     raise ValueError(f"Unsupported routing pattern: {pattern}")
+
+
+def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_sigma=0.85):
+    total_routes = config.world_size * config.max_tokens * config.top_k
+    weights = build_expert_popularity(
+        config, pattern, zipf_alpha, seed, lognormal_sigma=lognormal_sigma,
+    )
+    return _scale_counts(weights, total_routes, total_routes)
 
 
 def _generate_routing(config, pattern, zipf_alpha, seed, device, *, lognormal_sigma=0.85):
@@ -424,13 +429,14 @@ def main():
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     is_w8a16 = args.weight_dtype == "mxfp8" or args.activation_dtype == "bf16"
     if not is_w8a16 and (args.hidden, args.intermediate) not in (
+        (4096, 4352),
         (4096, 5120),
         (4096, 6656),
         (8192, 4096),
         (9216, 4096),
         (9216, 4608),
     ):
-        parser.error("W4A8 H/I must be 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
+        parser.error("W4A8 H/I must be 4096/4352, 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:

@@ -3,6 +3,12 @@
 
 """Host-side W4A8 MegaMoE API and quantization tests."""
 
+from contextlib import nullcontext
+from dataclasses import replace
+import gc
+from types import SimpleNamespace
+import weakref
+
 import pytest
 
 from mscclpp.ext.megamoe import (
@@ -34,6 +40,90 @@ def test_config_dimensions_and_policy():
 def test_config_preserves_positional_gate_clamp():
     config = MegaMoEConfig(0, 4, 32, 4096, 4352, 64, 7, 32, 0.125)
     assert config.gate_up_clamp == 0.125
+
+
+@pytest.fixture
+def mocked_workspace_api(monkeypatch):
+    import mscclpp
+    from mscclpp.ext.megamoe import api
+
+    torch = pytest.importorskip("torch")
+    calls = []
+
+    def create(*args):
+        calls.append(args)
+        owner = args[-1]
+        return SimpleNamespace(
+            workspace_id=owner.workspace_id if owner is not None else len(calls) * 4096,
+            packed_weight_pointers=tuple(len(calls) * 256 + i * 32 for i in range(4)),
+            symmetric_bytes=8192,
+            private_bytes=4096,
+        )
+
+    native = SimpleNamespace(
+        CppMegaMoeConfig=SimpleNamespace,
+        CppMegaMoeContext=SimpleNamespace(create=create),
+        CppMegaMoeWeightDtype=SimpleNamespace(Mxfp4=0, Mxfp8=1),
+        CppMegaMoeActivationDtype=SimpleNamespace(Mxfp8=0, Fp8Static=1, Bf16=2),
+    )
+    monkeypatch.setattr(mscclpp, "_mscclpp", native, raising=False)
+    monkeypatch.setattr(api, "is_available", lambda: True)
+    monkeypatch.setattr(api, "_tensor", lambda *args: None)
+    stream = SimpleNamespace(cuda_stream=7)
+    monkeypatch.setattr(api.MegaMoE, "_stream", lambda self, requested: stream)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (10, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda device: SimpleNamespace(multi_processor_count=152))
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
+    monkeypatch.setattr(torch.cuda, "stream", lambda stream: nullcontext())
+    weights = [SimpleNamespace(data_ptr=lambda pointer=pointer: pointer) for pointer in range(1, 5)]
+    return api, native, calls, weights
+
+
+def test_shared_workspace_constructor_and_readonly_identity(mocked_workspace_api):
+    api, _, calls, weights = mocked_workspace_api
+    communicator = object()
+    owner = api.MegaMoE(_config(), communicator, *weights)
+    alias = api.MegaMoE(_config(), communicator, *weights, shared_workspace=owner)
+    independent = api.MegaMoE(_config(), communicator, *weights)
+    chained = api.MegaMoE(_config(), communicator, *weights, shared_workspace=alias)
+    assert calls[0][-1] is None and calls[2][-1] is None
+    assert calls[1][-1] is owner._native and calls[3][-1] is alias._native
+    assert calls[1][0] is communicator
+    assert owner.workspace_id == alias.workspace_id == chained.workspace_id != independent.workspace_id
+    assert owner.workspace_bytes == alias.workspace_bytes == {"symmetric": 8192, "private": 4096}
+    pointers = [p for context in (owner, alias, independent, chained) for p in context.packed_weight_pointers]
+    assert len(set(pointers)) == 16
+    with pytest.raises(AttributeError):
+        alias.workspace_id = 0
+    with pytest.raises(AttributeError):
+        alias.packed_weight_pointers = ()
+    owner_ref = weakref.ref(owner)
+    del owner
+    gc.collect()
+    assert owner_ref() is None
+    assert chained.workspace_id == alias.workspace_id
+
+
+def test_shared_workspace_type_validation(mocked_workspace_api):
+    api, _, calls, weights = mocked_workspace_api
+    with pytest.raises(TypeError, match="shared_workspace must be a MegaMoE or None"):
+        api.MegaMoE(_config(), object(), *weights, shared_workspace=object())
+    assert not calls
+
+
+def test_shared_workspace_native_validation_is_not_silenced(mocked_workspace_api, monkeypatch):
+    api, native, _, weights = mocked_workspace_api
+    owner = api.MegaMoE(_config(), object(), *weights)
+
+    def reject(*args):
+        assert args[-1] is owner._native
+        raise ValueError("MegaMoE shared_workspace must use the same native configuration")
+
+    monkeypatch.setattr(native.CppMegaMoeContext, "create", reject)
+    with pytest.raises(ValueError, match="same native configuration"):
+        api.MegaMoE(_config(max_tokens=64), object(), *weights, shared_workspace=owner)
 
 
 @pytest.mark.parametrize(
@@ -377,3 +467,168 @@ def test_native_w4a8_combine_route_weights(activation_dtype, activation_scale):
     expected = _reference(config, inputs, ids, torch.where(ids >= 0, scores, 0.0), weights)
     torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
     del context
+
+
+@pytest.mark.parametrize("weight_dtype,local_expert", [("mxfp4", False), ("mxfp8", False), ("mxfp8", True)])
+def test_native_shared_workspace_weights_lifetime_and_graph(weight_dtype, local_expert):
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+    from mscclpp.ext.megamoe.benchmark import _reference, _weights
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    config = _config(
+        world_size=1,
+        max_tokens=17,
+        hidden=4096 if weight_dtype == "mxfp4" else 128,
+        intermediate=4352 if weight_dtype == "mxfp4" else 128,
+        num_experts=1 if local_expert else 2,
+        top_k=1 if local_expert else 2,
+        sm_margin=torch.cuda.get_device_properties(device).multi_processor_count - 8,
+        weight_dtype=weight_dtype,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    communicator = Communicator(bootstrap)
+    torch.manual_seed(2718)
+    weights = [_weights(config, device) for _ in range(2)]
+    assert not torch.equal(weights[0][0].view(torch.uint8), weights[1][0].view(torch.uint8))
+    owner = MegaMoE(config, communicator, *weights[0])
+    alias = MegaMoE(config, communicator, *weights[1], shared_workspace=owner)
+    chained = MegaMoE(config, communicator, *weights[0], shared_workspace=alias)
+    independent = MegaMoE(config, communicator, *weights[1])
+    assert owner.workspace_id == alias.workspace_id == chained.workspace_id != independent.workspace_id
+    pointers = [p for context in (owner, alias, chained, independent) for p in context.packed_weight_pointers]
+    assert len(set(pointers)) == len(pointers)
+    assert owner.input_view().data_ptr() == alias.input_view().data_ptr() == chained.input_view().data_ptr()
+    with pytest.raises(ValueError, match="same native configuration"):
+        MegaMoE(replace(config, max_tokens=18), communicator, *weights[0], shared_workspace=owner)
+    with pytest.raises(ValueError, match="same CUDA device and communicator"):
+        MegaMoE(config, Communicator(bootstrap), *weights[0], shared_workspace=owner)
+
+    inputs = torch.randn((17, config.hidden), device=device, dtype=torch.bfloat16).mul_(0.5)
+    ids = torch.arange(config.top_k, device=device, dtype=torch.int32).repeat(17, 1)
+    scores = torch.full((17, config.top_k), 1.0 / config.top_k, device=device)
+    outputs = [torch.empty_like(inputs) for _ in range(2)]
+    expected = [_reference(config, inputs, ids, scores, bank) for bank in weights]
+    assert not torch.allclose(expected[0], expected[1], rtol=0.05, atol=0.02)
+    owner(inputs, ids, scores, output=outputs[0])
+    torch.cuda.synchronize()
+    torch.testing.assert_close(outputs[0], expected[0], rtol=0.05, atol=0.02)
+    owner_ref = weakref.ref(owner)
+    del owner
+    gc.collect()
+    assert owner_ref() is None
+
+    stream = torch.cuda.Stream(device=device)
+    consumer = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    alias(inputs, ids, scores, output=outputs[1], stream=stream, signal_start=True)
+    chained.wait_until_started(consumer)
+    stream.wait_stream(consumer)
+    chained(inputs, ids, scores, output=outputs[0], stream=stream)
+    with pytest.raises(ValueError, match="preceding signalStart"):
+        alias.wait_until_started(consumer)
+    stream.synchronize()
+    for output, reference in zip(outputs, expected):
+        torch.testing.assert_close(output, reference, rtol=0.05, atol=0.02)
+
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=stream):
+        alias(inputs, ids, scores, output=outputs[1], stream=stream, signal_start=True)
+        chained.wait_until_started(stream)
+        if local_expert:
+            chained.forward_shared(inputs, output=outputs[0], stream=stream)
+        else:
+            chained(inputs, ids, scores, output=outputs[0], stream=stream)
+    with torch.cuda.stream(stream):
+        for _ in range(5):
+            graph.replay()
+            stream.synchronize()
+            for output, reference in zip(outputs, expected):
+                torch.testing.assert_close(output, reference, rtol=0.05, atol=0.02)
+            chained(inputs, ids, scores, output=outputs[0], stream=stream)
+            alias(inputs, ids, scores, output=outputs[1], stream=stream)
+            stream.synchronize()
+            for output, reference in zip(outputs, expected):
+                torch.testing.assert_close(output, reference, rtol=0.05, atol=0.02)
+    del graph, alias, chained, independent
+
+
+@pytest.mark.nranks(2)
+def test_native_shared_workspace_collective_owner_validation():
+    from mpi4py import MPI
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+    from mscclpp.ext.megamoe.benchmark import _weights
+
+    torch = pytest.importorskip("torch")
+    group = MPI.COMM_WORLD
+    if group.size != 2:
+        pytest.skip("requires exactly two MPI ranks")
+    supported = (
+        is_available()
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability() in ((10, 0), (10, 3), (10, 7))
+    )
+    if not all(group.allgather(supported)):
+        pytest.skip("requires native MegaMoE on two NVLink-connected SM100-family GPUs")
+    device = torch.device("cuda", torch.cuda.current_device())
+    config = _config(
+        rank=group.rank,
+        world_size=2,
+        max_tokens=17,
+        hidden=128,
+        intermediate=128,
+        num_experts=4,
+        top_k=2,
+        sm_margin=torch.cuda.get_device_properties(device).multi_processor_count - 8,
+        weight_dtype="mxfp8",
+    )
+    bootstrap = TcpBootstrap.create(group.rank, group.size)
+    unique_id = TcpBootstrap.create_unique_id() if group.rank == 0 else None
+    bootstrap.initialize(group.bcast(unique_id, root=0))
+    communicator = Communicator(bootstrap)
+    torch.manual_seed(3141 + group.rank)
+    weights = [_weights(config, device) for _ in range(2)]
+    # Deliberately reuse the tag: independent owners must still be distinguishable.
+    first = MegaMoE(config, communicator, *weights[0])
+    second = MegaMoE(config, communicator, *weights[1])
+    for owner in (None if group.rank == 0 else first, first if group.rank == 0 else second):
+        with pytest.raises(ValueError, match="mode and original workspace owner"):
+            MegaMoE(config, communicator, *weights[1], shared_workspace=owner)
+    del owner
+    alias = MegaMoE(config, communicator, *weights[1], shared_workspace=first)
+    assert alias.workspace_id == first.workspace_id != second.workspace_id
+    inputs = torch.randn((17, 128), device=device, dtype=torch.bfloat16).mul_(0.125)
+    ids = torch.arange(34, device=device, dtype=torch.int32).reshape(17, 2).remainder(4)
+    scores = torch.full((17, 2), 0.5, device=device)
+    expected = second(inputs, ids, scores)
+    outputs = [torch.empty_like(inputs) for _ in range(2)]
+    first(inputs, ids, scores, output=outputs[0])
+    alias(inputs, ids, scores, output=outputs[1])
+    torch.cuda.synchronize()
+    bootstrap.barrier()
+    torch.testing.assert_close(outputs[1], expected, rtol=0, atol=0)
+    del first
+    gc.collect()
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    with torch.cuda.graph(graph, stream=stream):
+        alias(inputs, ids, scores, output=outputs[1], stream=stream)
+    with torch.cuda.stream(stream):
+        for _ in range(5):
+            graph.replay()
+    stream.synchronize()
+    bootstrap.barrier()
+    torch.testing.assert_close(outputs[1], expected, rtol=0, atol=0)
+    del graph, alias, second
+    gc.collect()
+    bootstrap.barrier()

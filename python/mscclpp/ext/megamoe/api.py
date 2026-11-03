@@ -154,6 +154,17 @@ class MegaMoE:
     Preparing modules before collective construction is recommended; neither
     forward nor graph replay compiles or tunes. The default uses the builtin
     kernel without a compiler dependency. Local shared experts remain unchanged.
+
+    ``shared_workspace=other`` reuses another context's symmetric/private GPU
+    workspace, peer mappings, counters, input views, and execution-start signal,
+    but allocates separate packed weights and weight-specific kernel plans.
+    Device, communicator, config, and kernel specialization must match. Sharing
+    mode and the original workspace owner must agree across ranks. All aliases
+    must execute serially in the same global context-use order across ranks,
+    including graph replays and writes to input views. Use one stream or explicit
+    CUDA-event ordering; join start-signal consumers before any alias runs again.
+    A context need only outlive its own graphs/launches: aliases retain the runtime
+    even if the original Python context is deleted. The default remains independent.
     """
 
     def __init__(
@@ -168,9 +179,12 @@ class MegaMoE:
         stream=None,
         tag=17920,
         kernel=None,
+        shared_workspace: "MegaMoE | None" = None,
     ):
         if not isinstance(config, MegaMoEConfig):
             raise TypeError("config must be a MegaMoEConfig")
+        if shared_workspace is not None and not isinstance(shared_workspace, MegaMoE):
+            raise TypeError("shared_workspace must be a MegaMoE or None")
         if not is_available():
             raise RuntimeError(
                 "MSCCL++ was built without native MegaMoE. Rebuild with "
@@ -249,6 +263,7 @@ class MegaMoE:
             tag,
             kernel.path,
             "" if kernel.key == "builtin" else kernel.key,
+            None if shared_workspace is None else shared_workspace._native,
         )
 
     @property
@@ -310,8 +325,18 @@ class MegaMoE:
 
     @property
     def workspace_bytes(self) -> dict:
-        """Symmetric/private byte sizes (packed weights are not included)."""
+        """Symmetric/private runtime sizes, not incremental bytes for workspace aliases."""
         return {"symmetric": self._native.symmetric_bytes, "private": self._native.private_bytes}
+
+    @property
+    def workspace_id(self) -> int:
+        """Private workspace pointer, equal exactly for live contexts sharing their runtime."""
+        return self._native.workspace_id
+
+    @property
+    def packed_weight_pointers(self) -> tuple[int, int, int, int]:
+        """Context-owned packed FC1, FC1-scale, FC2, and FC2-scale pointers."""
+        return tuple(self._native.packed_weight_pointers)
 
     def input_view(self, num_tokens=None):
         """Return a zero-copy BF16 [T,H] Torch view that owns the native context.
@@ -319,6 +344,8 @@ class MegaMoE:
         A squash/projection kernel may write directly here before ``forward`` on
         the same stream. Passing this exact view skips the input staging copy.
         Taking slices preserves the underlying DLPack storage owner.
+        Workspace aliases return views of the same storage; order all writes and
+        launches across those contexts explicitly.
         """
         import torch
 
@@ -335,6 +362,8 @@ class MegaMoE:
         not output readiness, and uses a non-resident CUDA stream memory wait.
         It is graph-capturable. Join this consumer before another forward/replay
         reuses the context; ordinary producer-input ordering remains caller-owned.
+        For workspace aliases, the latest forward/signal and consumer-join rule
+        apply to the entire shared runtime, not to an individual weight bank.
         """
         import torch
 
