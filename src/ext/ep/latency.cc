@@ -321,9 +321,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC) {
       EP_THROW("Hybrid latency dispatch supports BF16 and FP8_E4M3_STATIC only");
     }
-    if (emitLocalExpertIds) {
-      EP_THROW("Local expert IDs are unsupported by hybrid latency dispatch");
-    }
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
     EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);

@@ -285,8 +285,11 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
     "qps_per_peer,chunk_rows,hidden",
     [(1, 8, 7168), (4, 8, 7168), (4, 7, 7168), (1, 7, 2048), (4, 16, 4096)],
 )
+@pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
-def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidden, combine_mode):
+def test_latency_hybrid_send_distribute(
+    ep_group, qps_per_peer, chunk_rows, hidden, combine_mode, emit_local_expert_ids
+):
     """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 2):
@@ -342,6 +345,7 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
         invalid_token_expert_id=invalid_expert,
+        emit_local_expert_ids=emit_local_expert_ids,
         qps_per_peer=qps_per_peer,
         n_tokens_per_chunk=chunk_rows,
     ) as runtime:
@@ -387,7 +391,8 @@ def test_latency_hybrid_send_distribute(ep_group, qps_per_peer, chunk_rows, hidd
                         for index, token in enumerate(rows):
                             for slot, expert in enumerate(expected_routes[token]):
                                 local = expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank
-                                assert ids[index, slot].item() == (expert if local else invalid_expert)
+                                expected_id = expert % NUM_LOCAL_EXPERTS if emit_local_expert_ids else expert
+                                assert ids[index, slot].item() == (expected_id if local else invalid_expert)
                                 assert actual_weights[index, slot].item() == (1.0 / NUM_TOPK if local else 0)
                         assert (ids[count:] == invalid_expert).all()
                         assert (actual_weights[count:] == 0).all()
@@ -582,9 +587,10 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
 
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("combine_format", [DispatchDataType.BF16, DispatchDataType.FP8_E4M3_STATIC])
 @pytest.mark.parametrize("input_mode", [QuantConfig.InputMode.PREQUANTIZED, QuantConfig.InputMode.QUANTIZE])
-def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input_mode):
+def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input_mode, emit_local_expert_ids):
     num_tokens, capacity, scale = 5, 8, 0.5
     quant = QuantConfig(
         format=DispatchDataType.FP8_E4M3_STATIC,
@@ -597,6 +603,7 @@ def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input
         mode=MoEMode.LATENCY,
         output_layout=DispatchLayout.RANK_MAJOR,
         combine_mode=combine_mode,
+        emit_local_expert_ids=emit_local_expert_ids,
         num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
         hidden_size=2048,
         topk=NUM_TOPK,
@@ -625,6 +632,15 @@ def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
                 stream.synchronize()
                 _check_dispatch_metadata(ep_group, result, num_tokens)
+                valid_rows = torch.arange(capacity, device="cuda")[None, :] < result.layout.num_tokens_per_rank[:, None]
+                valid = valid_rows[..., None] & (result.weights != 0)
+                ids = result.topk_ids
+                if emit_local_expert_ids:
+                    assert ((ids[valid] >= 0) & (ids[valid] < NUM_LOCAL_EXPERTS)).all().item()
+                    assert (ids[~valid] == -1).all().item()
+                else:
+                    assert (ids[valid] // NUM_LOCAL_EXPERTS == ep_group.my_rank).all().item()
+                    assert (ids[~valid] == NUM_LOCAL_EXPERTS * ep_group.nranks).all().item()
 
             collective_check(check_dispatch)
 

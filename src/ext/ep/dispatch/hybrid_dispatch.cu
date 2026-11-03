@@ -108,9 +108,10 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
                                                  staged, localDst);
     }
     const unsigned int localLeaders = __ballot_sync(0xffffffff, localDst >= 0);
+    const int outputExpert = workload.emitLocalExpertIds_ && expert >= 0 ? expert % localExperts : expert;
     writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, transport.rank_, route.dstRank,
-                                 route.destinationSlot, expert, weight, localLeaders, topk, workload.maxTokensPerRank_,
-                                 workload.invalidTokenExpertId_);
+                                 route.destinationSlot, outputExpert, weight, localLeaders, topk,
+                                 workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
     completeRankMajorTokenStore(workspace, localDst);
     __syncwarp();
   }
@@ -310,7 +311,8 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
         mscclpp::bulkStore(destinationBuffer + index * HiddenBytes, staged, HiddenBytes);
         mscclpp::bulkStoreCommit();
       }
-      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, source, destination, slot, expert, weight,
+      const int outputExpert = workload.emitLocalExpertIds_ && expert >= 0 ? expert % localExperts : expert;
+      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, source, destination, slot, outputExpert, weight,
                                    leaders, topk, workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
       if (localLeader) mscclpp::bulkStoreWait();
       __syncwarp();
