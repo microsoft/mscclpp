@@ -53,6 +53,10 @@ doca_gpu_t* GpuNetIoContext::gpu(int gpuId) {
 
 namespace {
 
+// Outstanding RDMA atomics per queue pair. Signals are atomics, so a limit of 1 would serialize back-to-back signals
+// on a queue pair to one per round trip.
+constexpr uint8_t kMaxRdAtomic = 8;
+
 doca_verbs_mtu_size docaMtu(int mtu) {
   switch (mtu) {
     case IBV_MTU_256:
@@ -153,7 +157,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, docaMtu(std::min(info_.mtu, remote.mtu))));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ah_attr(attr, ah));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_min_rnr_timer(attr, 12));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, 1));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, kMaxRdAtomic));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_RQ_PSN |
                                               DOCA_VERBS_QP_ATTR_DEST_QP_NUM | DOCA_VERBS_QP_ATTR_PATH_MTU |
@@ -165,7 +169,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ack_timeout(attr, 18));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_retry_cnt(attr, 7));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_rnr_retry(attr, 7));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, 1));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, kMaxRdAtomic));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_SQ_PSN |
                                               DOCA_VERBS_QP_ATTR_ACK_TIMEOUT | DOCA_VERBS_QP_ATTR_RETRY_CNT |
