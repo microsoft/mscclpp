@@ -82,7 +82,7 @@ class GpuNetIoConnection : public BaseConnection {
 
   bool isDeviceBackend() const override { return true; }
 
-  DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& signal, uint64_t* outboundToken) const override;
+  DeviceBackendHandle getDeviceBackendInfo() const override;
 
   DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& memory) const override;
 

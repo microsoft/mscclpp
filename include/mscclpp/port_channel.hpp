@@ -99,7 +99,7 @@ struct BasePortChannel {
 
   std::shared_ptr<Host2DeviceSemaphore> semaphore_;
 
-  std::shared_ptr<MemoryDevice2DeviceSemaphore> deviceSemaphore_;
+  std::shared_ptr<PortDevice2DeviceSemaphore> deviceSemaphore_;
 
   std::shared_ptr<Proxy> proxy_;
 
@@ -114,9 +114,9 @@ struct BasePortChannel {
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                   std::shared_ptr<Proxy> proxy);
 
-  /// Constructor.
-  /// @param semaphore The device-to-device semaphore used to synchronize the communication.
-  explicit BasePortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
+  explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -164,11 +164,11 @@ struct PortChannel : public BasePortChannel {
   PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
               MemoryId dst, MemoryId src);
 
-  /// Constructor.
-  /// @param semaphore The device-to-device semaphore.
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
   /// @param dst The destination registered memory.
   /// @param src The source registered memory.
-  PortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
+  PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.

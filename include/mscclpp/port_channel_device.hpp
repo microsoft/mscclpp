@@ -167,13 +167,13 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
 /// Device-backend specialization of BasePortChannelDeviceHandleT.
 template <>
 struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
-  Host2DeviceSemaphoreDeviceHandle semaphore_;
+  PortDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
   DeviceBackendHandle device_;
 
   MSCCLPP_INLINE BasePortChannelDeviceHandleT() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(Host2DeviceSemaphoreDeviceHandle semaphore,
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                           DeviceBackendHandle device)
       : semaphore_(semaphore), device_(device) {}
 
@@ -211,7 +211,7 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// Signal the remote peer via the device backend.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void signal() {
-    device_.signal<Mode>();
+    device_.signal<Mode>(semaphore_.remoteInboundToken, semaphore_.outboundToken);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
@@ -223,7 +223,8 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                            const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size) {
-    device_.putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size);
+    device_.putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size, semaphore_.remoteInboundToken,
+                                semaphore_.outboundToken);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
@@ -248,7 +249,8 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                                    const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
-    device_.putWithSignalAndFlush<Mode>(dst, dstOffset, src, srcOffset, size, maxSpinCount);
+    device_.putWithSignalAndFlush<Mode>(dst, dstOffset, src, srcOffset, size, semaphore_.remoteInboundToken,
+                                        semaphore_.outboundToken, maxSpinCount);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
@@ -379,7 +381,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
 
   MSCCLPP_INLINE PortChannelDeviceHandleT() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(Host2DeviceSemaphoreDeviceHandle semaphore,
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                       DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
                                                       DeviceMemoryHandle srcMemory)
       : BasePortChannelDeviceHandleT<PortChannelBackend::Device>(semaphore, device),

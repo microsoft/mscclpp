@@ -5,6 +5,7 @@
 #define MSCCLPP_SEMAPHORE_DEVICE_HPP_
 
 #include "device.hpp"
+#include "gpunetio_device.hpp"
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include "atomic_device.hpp"
@@ -132,9 +133,57 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 
   /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
   uint64_t* expectedInboundToken;
+};
+
+/// Device-side handle for PortDevice2DeviceSemaphore.
+/// Used by a PortChannel in device mode, which posts the signals; this handle holds the token state on both sides.
+struct PortDevice2DeviceSemaphoreDeviceHandle {
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Poll if the remote device has signaled.
+  /// @return true if the remote device has signaled.
+  MSCCLPP_DEVICE_INLINE bool poll() {
+    bool signaled = (loadInbound() > loadExpectedInbound());
+    if (signaled) incExpectedInbound();
+    return signaled;
+  }
+
+  /// Wait for the remote device to signal.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
+    auto expected = incExpectedInbound();
+    POLL_MAYBE_JAILBREAK((loadInbound() < expected), maxSpinCount);
+  }
+
+  /// Thread-safe read of expected inbound value.
+  /// @return The expected inbound value.
+  MSCCLPP_DEVICE_INLINE uint64_t loadExpectedInbound() {
+    return atomicLoad<uint64_t, scopeDevice>(expectedInboundToken, memoryOrderRelaxed);
+  }
+
+  /// Thread-safe increment of expected inbound value.
+  /// @return The incremented expected inbound value.
+  MSCCLPP_DEVICE_INLINE uint64_t incExpectedInbound() {
+    return atomicFetchAdd<uint64_t, scopeDevice>(expectedInboundToken, 1, memoryOrderRelaxed) + 1;
+  }
+
+  /// Thread-safe read of inbound value.
+  /// @return The inbound value.
+  MSCCLPP_DEVICE_INLINE uint64_t loadInbound() {
+    return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderAcquire);
+  }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
+  /// A local memory space where the remote device's signals are written and the local device reads them.
+  uint64_t* inboundToken;
+
+  /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
+  uint64_t* expectedInboundToken;
 
   /// A local memory space where the local device tracks the outbound semaphore value.
   uint64_t* outboundToken;
+
+  /// The inboundToken of the remote device, as a memory handle for PortChannel device-mode operations.
+  DeviceMemoryHandle remoteInboundToken;
 };
 
 /// Device-side handle for a switch (NVLS multicast) cross-rank group barrier semaphore.

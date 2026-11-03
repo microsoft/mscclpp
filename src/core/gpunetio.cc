@@ -232,25 +232,13 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo(const RegisteredMemory& signal,
-                                                             uint64_t* outboundToken) const {
-  const auto& signalImpl = getImpl(signal);
-  if (!signalImpl.transports.has(remoteTransport_)) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage, "GPUNetIO semaphore token is not registered for ", remoteTransport_);
-  }
-  const auto& signalInfo = signalImpl.getTransportInfo(remoteTransport_);
-  if (signalInfo.ibLocal || signalImpl.size < sizeof(uint64_t) || signalInfo.ibMrInfo.addr % sizeof(uint64_t) != 0) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage, "invalid GPUNetIO semaphore token");
-  }
+DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
   const auto& fetchInfo = getImpl(atomicFetchMem_).getTransportInfo(transport_);
 
   DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
-  handle.signalAddr = signalInfo.ibMrInfo.addr;
-  handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
   handle.atomicFetchAddr = fetchInfo.ibMrInfo.addr;
   handle.atomicFetchKey = htobe32(fetchInfo.ibMr->getLkey());
-  handle.outboundToken = outboundToken;
   handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
   return handle;
 }

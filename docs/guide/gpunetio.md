@@ -43,7 +43,7 @@ auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB
 communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
-auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connection);
+auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
