@@ -11,14 +11,8 @@ namespace ep {
 
 using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>;
 
-struct PortChannelSignalState {
-  uint64_t offsets[4];
-  uint64_t tokens[4];
-};
-
 struct PortChannelDeviceContext {
   PortChannelDeviceHandle* channels;
-  PortChannelSignalState* signalStates;
   int numPeers;
   int numQpsPerPeer;
 
@@ -27,25 +21,6 @@ struct PortChannelDeviceContext {
     MSCCLPP_ASSERT_DEVICE(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
                           "Invalid PortChannel index");
     return channels[static_cast<size_t>(peer) * numQpsPerPeer + queue];
-  }
-
-  MSCCLPP_DEVICE_INLINE PortChannelSignalState& signalState(int peer, int queue) const {
-    MSCCLPP_ASSERT_DEVICE(
-        signalStates != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
-        "Invalid PortChannel signal state index");
-    return signalStates[static_cast<size_t>(peer) * numQpsPerPeer + queue];
-  }
-
-  MSCCLPP_DEVICE_INLINE static uint64_t nextSignalToken(PortChannelSignalState& state, uint64_t signalOffset,
-                                                        uint64_t signalValue) {
-    for (int i = 0; i < 4; ++i) {
-      if (state.tokens[i] == 0 || state.offsets[i] == signalOffset) {
-        state.offsets[i] = signalOffset;
-        return state.tokens[i] += signalValue;
-      }
-    }
-    MSCCLPP_ASSERT_DEVICE(false, "Too many active PortChannel signal offsets");
-    return 0;
   }
 #endif
 };

@@ -58,10 +58,7 @@ class BaseConnection {
   virtual bool isDeviceBackend() const { return false; }
 
   /// Create the device backend handle for a PortChannel on this connection.
-  virtual DeviceBackendHandle getDeviceBackendInfo(const RegisteredMemory& /*signal*/,
-                                                   uint64_t* /*outboundToken*/) const {
-    return {};
-  }
+  virtual DeviceBackendHandle getDeviceBackendInfo() const { return {}; }
 
   /// Create the device memory handle for a RegisteredMemory on this connection.
   virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const { return {}; }

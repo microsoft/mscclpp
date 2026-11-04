@@ -32,14 +32,14 @@ namespace mscclpp {
 
 #if defined(MSCCLPP_USE_GPUNETIO)
 
-GpuNetIoContext::GpuNetIoContext(IbCtx& ibCtx) { MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev_)); }
+GpuNetIoDevice::GpuNetIoDevice(IbCtx& ibCtx) { MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev_)); }
 
-GpuNetIoContext::~GpuNetIoContext() {
+GpuNetIoDevice::~GpuNetIoDevice() {
   for (auto& [id, gpu] : gpus_) (void)doca_gpu_destroy(gpu);
   if (dev_) (void)doca_verbs_dev_close(dev_);
 }
 
-doca_gpu_t* GpuNetIoContext::gpu(int gpuId) {
+doca_gpu_t* GpuNetIoDevice::gpu(int gpuId) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = gpus_.find(gpuId);
   if (it != gpus_.end()) return it->second;
@@ -52,6 +52,10 @@ doca_gpu_t* GpuNetIoContext::gpu(int gpuId) {
 }
 
 namespace {
+
+// Outstanding RDMA atomics per queue pair. Signals are atomics, so a limit of 1 would serialize back-to-back signals
+// on a queue pair to one per round trip.
+constexpr uint8_t kMaxRdAtomic = 8;
 
 doca_verbs_mtu_size docaMtu(int mtu) {
   switch (mtu) {
@@ -72,8 +76,13 @@ doca_verbs_mtu_size docaMtu(int mtu) {
 
 }  // namespace
 
-GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, int gpuId, int port, int gidIndex)
-    : context_(std::move(context)), gpuId_(gpuId), gidIndex_(gidIndex < 0 ? 0 : gidIndex) {
+GpuNetIoDevice& IbCtx::gpuNetIoDevice() {
+  if (!gpuNetIoDevice_) gpuNetIoDevice_ = std::make_unique<GpuNetIoDevice>(*this);
+  return *gpuNetIoDevice_;
+}
+
+GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, int gpuId, int port, int gidIndex)
+    : gpuId_(gpuId), gidIndex_(gidIndex < 0 ? 0 : gidIndex) {
   if (!ibCtx.supportsRdmaAtomics()) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires RDMA atomics, which device ",
           ibCtx.getDevName(), " does not support");
@@ -88,9 +97,10 @@ GpuNetIoQp::GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, i
   }
 
   CudaDeviceGuard deviceGuard(gpuId_);
+  device_ = &ibCtx.gpuNetIoDevice();
   doca_gpu_verbs_qp_init_attr_hl attr{};
-  attr.gpu_dev = context_->gpu(gpuId_);
-  attr.net_dev = context_->dev_;
+  attr.gpu_dev = device_->gpu(gpuId_);
+  attr.net_dev = device_->dev_;
   attr.ibpd = ibCtx.getPd();
   attr.sq_nwqe = 1024;
   attr.nic_handler = DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_BF;
@@ -113,7 +123,7 @@ GpuNetIoQp::~GpuNetIoQp() {
 
 void GpuNetIoQp::connect(const IbQpInfo& remote) {
   doca_verbs_ah_attr_t* ah = nullptr;
-  MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_create(context_->dev_, &ah));
+  MSCCLPP_DOCA_THROW(doca_verbs_ah_attr_create(device_->dev_, &ah));
   std::unique_ptr<doca_verbs_ah_attr_t, decltype(&doca_verbs_ah_attr_destroy)> ahGuard(ah, doca_verbs_ah_attr_destroy);
   doca_verbs_gid gid;
   std::memcpy(gid.raw, &remote.spn, sizeof(remote.spn));
@@ -153,7 +163,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, docaMtu(std::min(info_.mtu, remote.mtu))));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ah_attr(attr, ah));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_min_rnr_timer(attr, 12));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, 1));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, kMaxRdAtomic));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_RQ_PSN |
                                               DOCA_VERBS_QP_ATTR_DEST_QP_NUM | DOCA_VERBS_QP_ATTR_PATH_MTU |
@@ -165,7 +175,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ack_timeout(attr, 18));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_retry_cnt(attr, 7));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_rnr_retry(attr, 7));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, 1));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, kMaxRdAtomic));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_SQ_PSN |
                                               DOCA_VERBS_QP_ATTR_ACK_TIMEOUT | DOCA_VERBS_QP_ATTR_RETRY_CNT |
@@ -180,11 +190,11 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
 
 #else  // !defined(MSCCLPP_USE_GPUNETIO)
 
-GpuNetIoContext::GpuNetIoContext(IbCtx&) {}
+GpuNetIoDevice::GpuNetIoDevice(IbCtx&) {}
 
-GpuNetIoContext::~GpuNetIoContext() = default;
+GpuNetIoDevice::~GpuNetIoDevice() = default;
 
-GpuNetIoQp::GpuNetIoQp(IbCtx&, std::shared_ptr<GpuNetIoContext>, int, int, int) {
+GpuNetIoQp::GpuNetIoQp(IbCtx&, int, int, int) {
   THROW(NET, Error, ErrorCode::InvalidUsage,
         "IB Device mode is unavailable: MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)");
 }
@@ -232,25 +242,13 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo(const RegisteredMemory& signal,
-                                                             uint64_t* outboundToken) const {
-  const auto& signalImpl = getImpl(signal);
-  if (!signalImpl.transports.has(remoteTransport_)) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage, "GPUNetIO semaphore token is not registered for ", remoteTransport_);
-  }
-  const auto& signalInfo = signalImpl.getTransportInfo(remoteTransport_);
-  if (signalInfo.ibLocal || signalImpl.size < sizeof(uint64_t) || signalInfo.ibMrInfo.addr % sizeof(uint64_t) != 0) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage, "invalid GPUNetIO semaphore token");
-  }
+DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
   const auto& fetchInfo = getImpl(atomicFetchMem_).getTransportInfo(transport_);
 
   DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
-  handle.signalAddr = signalInfo.ibMrInfo.addr;
-  handle.signalKey = htobe32(signalInfo.ibMrInfo.rkey);
   handle.atomicFetchAddr = fetchInfo.ibMrInfo.addr;
   handle.atomicFetchKey = htobe32(fetchInfo.ibMr->getLkey());
-  handle.outboundToken = outboundToken;
   handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
   return handle;
 }

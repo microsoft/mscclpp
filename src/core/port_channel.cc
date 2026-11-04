@@ -3,6 +3,7 @@
 
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <utility>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -12,21 +13,30 @@
 
 namespace mscclpp {
 
+namespace {
+template <typename... Args>
+void warnNoexcept(Args&&... args) noexcept {
+  try {
+    WARN(CONN, std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+}  // namespace
+
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
                                                  std::shared_ptr<Proxy> proxy)
     : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {
   if (semaphore_ && BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "Device-mode connections do not use host Proxy; construct PortChannel without ProxyService");
+          "PortChannel device-mode connections do not use the host proxy; construct PortChannel without ProxyService");
   }
 }
 
-MSCCLPP_API_CPP BasePortChannel::BasePortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore)
     : semaphoreId_(0), deviceSemaphore_(std::move(semaphore)) {
-  if (!deviceSemaphore_ || !BaseConnection::getImpl(deviceSemaphore_->connection())->isDeviceBackend()) {
-    THROW(CONN, Error, ErrorCode::InvalidUsage,
-          "BasePortChannel with MemoryDevice2DeviceSemaphore requires an IB Device-mode connection");
+  if (!deviceSemaphore_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel requires a non-null PortDevice2DeviceSemaphore");
   }
 }
 
@@ -38,7 +48,7 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
 
-MSCCLPP_API_CPP PortChannel::PortChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst,
+MSCCLPP_API_CPP PortChannel::PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst,
                                          RegisteredMemory src)
     : BasePortChannel(std::move(semaphore)), dst_(0), src_(0), dstMemory_(std::move(dst)), srcMemory_(std::move(src)) {}
 
@@ -60,6 +70,18 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   auto handlerFunc = [&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
   proxy_ = std::make_shared<Proxy>(handlerFunc, initFunc, fifoSize);
   proxy_->pimpl_->setProgressHandler([this]() { progressFlushes(); });
+}
+
+MSCCLPP_API_CPP ProxyService::~ProxyService() noexcept {
+  // Joining must succeed before any callback state can be destroyed.
+  proxy_->stop();
+  try {
+    drainPendingOperations();
+  } catch (const std::exception& e) {
+    warnNoexcept("ProxyService teardown could not drain pending operations: ", e.what());
+  } catch (...) {
+    warnNoexcept("ProxyService teardown could not drain pending operations: unknown error");
+  }
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -107,6 +129,10 @@ MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blo
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() {
   proxy_->stop();
+  drainPendingOperations();
+}
+
+void ProxyService::drainPendingOperations() {
   // Drain pending TriggerFlush operations. After a bounded loop, force-unblock any still-pending
   // GPU waiters with a sentinel write (UINT64_MAX > any FIFO position).
   for (int i = 0; i < 1000 && !pendingFlushPos_.empty(); ++i) {
@@ -208,13 +234,10 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel::deviceHan
   if constexpr (Backend == PortChannelBackend::Device) {
     if (!deviceSemaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage,
-            "BasePortChannel::deviceHandle<PortChannelBackend::Device>() requires a MemoryDevice2DeviceSemaphore");
+            "BasePortChannel::deviceHandle<PortChannelBackend::Device>() requires a PortDevice2DeviceSemaphore");
     }
     auto& conn = BaseConnection::getImpl(deviceSemaphore_->connection());
-    auto d2dHandle = deviceSemaphore_->deviceHandle();
-    Host2DeviceSemaphoreDeviceHandle semaHandle{d2dHandle.inboundToken, d2dHandle.expectedInboundToken};
-    return BasePortChannelDeviceHandleT<Backend>(
-        semaHandle, conn->getDeviceBackendInfo(deviceSemaphore_->semaphore().remoteMemory(), d2dHandle.outboundToken));
+    return BasePortChannelDeviceHandleT<Backend>(deviceSemaphore_->deviceHandle(), conn->getDeviceBackendInfo());
   } else {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage,

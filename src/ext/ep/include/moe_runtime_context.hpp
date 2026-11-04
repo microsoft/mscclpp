@@ -128,7 +128,6 @@ struct LatencyRuntimeContext {
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
   std::vector<mscclpp::PortChannel> portChannels_;
   std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
-  std::shared_ptr<PortChannelSignalState> portChannelSignalStates_;
   std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
   std::shared_ptr<int> distributeScratch_;
   std::shared_ptr<int> aggregateMetadata_;

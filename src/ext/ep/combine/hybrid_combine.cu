@@ -154,17 +154,16 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
   const int gateway = context->gatewayRank_;
   auto handle = network->channel(gateway, queue);
-  handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
+  handle.setWqeSlot(&wqeSlots[queue]);
   const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
   const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
   const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
-  auto& state = network->signalState(gateway, queue);
   for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
        chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
     const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
-    handle.device_.putWithSignalAtAfter<kExclusive>(
+    handle.device_.putWithAccumulateAfter<kExclusive>(
         handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
-        count * RowBytes, handle.dstMemory_, flagOffset, network->nextSignalToken(state, flagOffset, 1), [&] {
+        count * RowBytes, handle.dstMemory_, flagOffset, 1, [&] {
           while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
                                                                 mscclpp::memoryOrderAcquire) != count) {
           }
