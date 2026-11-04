@@ -87,16 +87,20 @@ than a fabric routes the remaining fabric peers over InfiniBand, which is useful
 for testing. `MegaMoE.ranks_per_rack` reports the value in effect.
 
 Per forward, every rank sends each network peer one message before the routed
-kernel: the routes that peer owns and each needed token once, as FP8 activations
+kernel: the routes that peer owns, then each needed token once, as FP8 activations
 and E8M0 scales. The owner relays the routes into the same routing slots NVLink
-sources write, computes them with the NVLink-routed tokens, and returns the
-weighted rows in one transfer per source after FC2. Each (source, owner) pair
-therefore uses at most three RDMA writes and two RDMA atomic signals per forward,
-and the forward stays CUDA Graph capturable. GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
+sources write while the token rows are still in flight, computes them with the
+NVLink-routed tokens, and returns its results in one transfer per source after FC2.
+Without `combine_route_weights`, the owner first sums each token's weighted rows,
+so it returns one BF16 row per token instead of one per routed expert (about 1.5x
+fewer bytes for top-8 over 32 experts per GPU); this adds one BF16 rounding of the
+owner's partial sum. Each (source, owner) pair uses three RDMA writes and three
+RDMA atomic signals per forward, and the forward stays CUDA Graph capturable.
+GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
 
 The registered network workspace (`workspace_bytes["network"]`) grows with the
 number of network peers `P`, about
-`2 * P * max_tokens * (hidden + hidden/32) + P * max_tokens * top_k * hidden * 2`
+`2 * P * max_tokens * (hidden + hidden/32) + P * max_tokens * (top_k + 1) * hidden * 2`
 bytes for MXFP8, and is registered as one IB memory region. JIT modules built
 before inter-rack support must be recompiled; the content-addressed cache does
 this automatically.

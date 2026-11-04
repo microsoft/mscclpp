@@ -501,7 +501,7 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
   int warps = gridDim.x * (KernelParams::ThreadCount / WarpSize);
   int tasks = tokens * tokenTasks;
   // Route ids of the first slot batch are loaded one task ahead, so partial loads never wait on them.
-  auto loadIds = [&](int task, int(&ids)[Slots]) {
+  auto loadIds = [&](int task, int (&ids)[Slots]) {
 #pragma unroll
     for (int slot = 0; slot < Slots; ++slot)
       ids[slot] = task < tasks && slot < topK ? routeIds[task / tokenTasks * topK + slot] : -1;
@@ -640,13 +640,12 @@ __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* 
     if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
   }
   traceKernel(KernelTracePhase::OutputJoin, true);
+  if (p.net.nNet && blockIdx.x == 0) netSnapshotHeaders(p.net, p.workspace.control->epoch);
   syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   if (p.net.nNet) {
     // Every FC2 store has completed: return network sources' rows, then collect this rank's rows from network owners.
     const uint64_t epoch = p.workspace.control->epoch;
-    if (blockIdx.x == 0) {
-      for (int index = threadIdx.x; index < p.net.nNet; index += blockDim.x) netReturnResults(p.net, index, epoch);
-    }
+    netReturnResults(p.net);
     netCollectResults(p.net, at<uint8_t>(p.local, p.symmetric.partialOutput), tokens * p.config.topK, epoch);
     syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   }

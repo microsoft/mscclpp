@@ -246,7 +246,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     // computeOnly gathers already-delivered rows locally, so it never reads network staging.
     const bool netRow = !LocalGather && hasRow && p.net.isNet(route.rank);
     if (netRow) {
-      // Network sources' rows and weights arrived before routing relayed their routes.
+      // Network sources' entries and rows arrived before routing completed.
       NetEntry entry = netRouteEntry(p.net, route.rank, route.token, route.slot, p.config.topK,
                                      size_t(p.config.maxTokens) * p.config.topK);
       source = netRecvRow(p.net, route.rank, entry.row, p.config.maxTokens);

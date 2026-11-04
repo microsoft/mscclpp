@@ -560,7 +560,8 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
                                        scores ? scores : detail::at<float>(params.local, params.symmetric.topkWeights),
                                        detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
                                        detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale)};
-    detail::netSendKernel<<<params.net.nNet, detail::NetSendThreads, 0, stream>>>(params.net, arguments);
+    detail::netSendKernel<<<params.net.nNet * netSendParts(params.net.nNet), detail::NetSendThreads, 0, stream>>>(
+        params.net, arguments);
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
   std::array<cudaLaunchAttribute, 2> launchAttributes{};

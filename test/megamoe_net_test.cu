@@ -4,10 +4,11 @@
 // Multi-process test of the MegaMoE inter-rack (IB) exchange in megamoe_net.cuh on any GPUNetIO-capable GPU (SM90+).
 //
 // It runs the production send kernel, relay, result return, and result collection over real IB device-mode (GPUNetIO)
-// port channels set up like MegaMoeContext, and replaces the SM100 routed GEMM with a kernel that consumes the relayed LL8 routing packets
-// exactly as the routed kernel's received-route path does, checks every received token row, entry, and weight against
-// the source's deterministic data, and writes a deterministic result row per route. Sources then check every partial
-// output row. Ranks and token counts vary per launch, including empty launches, to exercise epochs and buffer reuse.
+// port channels set up like MegaMoeContext, and replaces the SM100 routed GEMM with a kernel that consumes the relayed
+// LL8 routing packets exactly as the routed kernel's received-route path does, checks every received token row, entry,
+// and weight against the source's deterministic data, and writes a deterministic result row per route. Sources then
+// check every partial output row. Ranks and token counts vary per launch, including empty launches, to exercise epochs
+// and buffer reuse.
 //
 // Launch one process per GPU, e.g.:
 //   mpirun -np 8 ./megamoe_net_test --ranks-per-rack 2 --iterations 30
@@ -90,6 +91,11 @@ __host__ __device__ uint8_t resultByte(const Problem& p, int owner, int iteratio
   return uint8_t(key(p, 6, owner * 1024 + source, iteration, route) + uint32_t(byte) * 7U);
 }
 
+// Small integers, so BF16 sums over a token's routes are exact.
+__host__ __device__ float resultValue(const Problem& p, int owner, int iteration, int route, int source, int element) {
+  return float(int((key(p, 6, owner * 1024 + source, iteration, route) + uint32_t(element) * 7U) % 17) - 8);
+}
+
 __global__ void fillSource(Problem p, int rank, int iteration, int nTokens, int32_t* ids, float* weights,
                            uint8_t* input, uint8_t* scales) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < p.maxTokens * p.topK; i += gridDim.x * blockDim.x) {
@@ -140,7 +146,13 @@ __global__ void ownerKernel(NetDevice net, NetRouting routing, Problem p, int ra
         for (int b = 0; b < p.hidden; ++b) bad += row[b] != inputByte(p, source, iteration, token, b);
         for (int b = 0; b < p.scaleStride; ++b) bad += row[p.hidden + b] != scaleByte(p, source, iteration, token, b);
         uint8_t* out = netCombineRow(net, source, token, slot, p.topK, routesPerRank);
-        for (int b = 0; b < p.outBytes; ++b) out[b] = resultByte(p, rank, iteration, route, source, b);
+        if (net.reduce) {
+          for (int e = 0; e < p.outBytes / 2; ++e)
+            reinterpret_cast<__nv_bfloat16*>(out)[e] =
+                __float2bfloat16(resultValue(p, rank, iteration, route, source, e));
+        } else {
+          for (int b = 0; b < p.outBytes; ++b) out[b] = resultByte(p, rank, iteration, route, source, b);
+        }
         if (bad) atomicAdd(errors, 1);
         atomicAdd(routeCounts + index, 1);
       }
@@ -148,9 +160,9 @@ __global__ void ownerKernel(NetDevice net, NetRouting routing, Problem p, int ra
   }
 }
 
-__global__ void returnKernel(NetDevice net, uint64_t epoch) {
-  for (int index = threadIdx.x; index < net.nNet; index += blockDim.x) netReturnResults(net, index, epoch);
-}
+__global__ void snapshotKernel(NetDevice net, uint64_t epoch) { netSnapshotHeaders(net, epoch); }
+
+__global__ void returnKernel(NetDevice net) { netReturnResults(net); }
 
 __global__ void collectKernel(NetDevice net, uint8_t* partial, int nRoutes, uint64_t epoch) {
   netCollectResults(net, partial, nRoutes, epoch);
@@ -159,13 +171,33 @@ __global__ void collectKernel(NetDevice net, uint8_t* partial, int nRoutes, uint
 __global__ void verifySource(NetDevice net, Problem p, int rank, int iteration, int nTokens, const uint8_t* partial,
                              int* errors) {
   for (int route = blockIdx.x; route < nTokens * p.topK; route += gridDim.x) {
-    int id = idOf(p, rank, iteration, route / p.topK, route % p.topK);
+    const int token = route / p.topK;
+    int id = idOf(p, rank, iteration, token, route % p.topK);
     int owner = id >= 0 ? id / p.localExperts : -1;
     bool networked = owner >= 0 && net.isNet(owner);
     int bad = 0;
-    for (int b = threadIdx.x; b < p.outBytes; b += blockDim.x) {
-      uint8_t expected = networked ? resultByte(p, owner, iteration, route, rank, b) : uint8_t(Sentinel);
-      bad += partial[size_t(route) * p.outBytes + b] != expected;
+    if (networked && net.reduce) {
+      // The first route of the token to `owner` holds the sum of all of them; the others hold zeros.
+      int first = -1;
+      for (int slot = 0; slot < p.topK && first < 0; ++slot) {
+        int other = idOf(p, rank, iteration, token, slot);
+        if (other >= 0 && other / p.localExperts == owner) first = slot;
+      }
+      const auto* row = reinterpret_cast<const __nv_bfloat16*>(partial + size_t(route) * p.outBytes);
+      for (int e = threadIdx.x; e < p.outBytes / 2; e += blockDim.x) {
+        float expected = 0.0f;
+        for (int slot = 0; first == route % p.topK && slot < p.topK; ++slot) {
+          int other = idOf(p, rank, iteration, token, slot);
+          if (other >= 0 && other / p.localExperts == owner)
+            expected += resultValue(p, owner, iteration, token * p.topK + slot, rank, e);
+        }
+        bad += __bfloat162float(row[e]) != expected;
+      }
+    } else {
+      for (int b = threadIdx.x; b < p.outBytes; b += blockDim.x) {
+        uint8_t expected = networked ? resultByte(p, owner, iteration, route, rank, b) : uint8_t(Sentinel);
+        bad += partial[size_t(route) * p.outBytes + b] != expected;
+      }
     }
     if (bad) atomicAdd(errors, 1);
   }
@@ -308,10 +340,11 @@ int main(int argc, char** argv) {
                                        scales.get());
     NetSendArguments arguments{rank,    maxTokens, topK,          expertsPerRank, hidden,      p.scaleStride,
                                nTokens, ids.get(), weights.get(), input.get(),    scales.get()};
-    netSendKernel<<<net.nNet, NetSendThreads, 0, stream>>>(net, arguments);
+    netSendKernel<<<net.nNet * netSendParts(net.nNet), NetSendThreads, 0, stream>>>(net, arguments);
     relayKernel<<<std::min(net.nNet, 3), RouteChunk, 0, stream>>>(net, routing, epoch);
     ownerKernel<<<net.nNet, 128, 0, stream>>>(net, routing, p, rank, iteration, epoch, routeCounts.get(), errors.get());
-    returnKernel<<<1, 64, 0, stream>>>(net, epoch);
+    snapshotKernel<<<1, 64, 0, stream>>>(net, epoch);
+    returnKernel<<<4, 256, 0, stream>>>(net);
     collectKernel<<<5, 256, 0, stream>>>(net, partial.get(), nTokens * topK, epoch);
     verifySource<<<64, 256, 0, stream>>>(net, p, rank, iteration, nTokens, partial.get(), errors.get() + 1);
     MSCCLPP_CUDATHROW(cudaGetLastError());
