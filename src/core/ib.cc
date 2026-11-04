@@ -19,6 +19,7 @@
 
 #include "api.h"
 #include "context.hpp"
+#include "gpunetio.hpp"
 #if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
 #if defined(MSCCLPP_USE_MLX5DV)
@@ -543,6 +544,8 @@ IbCtx::IbCtx(const std::string& devName)
 }
 
 IbCtx::~IbCtx() {
+  // Opened on pd_.
+  gpuNetIoDevice_.reset();
   if (pd_ != nullptr) {
     IBVerbs::ibv_dealloc_pd(pd_);
   }

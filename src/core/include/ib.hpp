@@ -22,6 +22,8 @@ struct ibv_sge;
 
 namespace mscclpp {
 
+struct GpuNetIoDevice;
+
 struct IbMrInfo {
   uint64_t addr;
   uint32_t rkey;
@@ -152,6 +154,9 @@ class IbCtx {
   /// remote QP needs to connect to a QP on this port. `qpn` is left as 0.
   IbQpInfo getPortInfo(int& port, int gidIndex) const;
   ibv_pd* getPd() const { return pd_; }
+
+  /// DOCA GPUNetIO handles opened on this device's protection domain, created on first use. Requires GPUNetIO.
+  GpuNetIoDevice& gpuNetIoDevice();
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -181,6 +186,9 @@ class IbCtx {
   bool isMlx5_;
   bool isDataDirect_;
   bool isVF_;
+#if defined(USE_IBVERBS)
+  std::unique_ptr<GpuNetIoDevice> gpuNetIoDevice_;
+#endif
 };
 
 }  // namespace mscclpp

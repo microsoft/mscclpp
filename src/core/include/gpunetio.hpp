@@ -25,10 +25,11 @@ extern "C" {
 
 namespace mscclpp {
 
-/// DOCA device handles shared by the GPUNetIO QPs of an IB transport.
-struct GpuNetIoContext {
-  explicit GpuNetIoContext(IbCtx& ibCtx);
-  ~GpuNetIoContext();
+/// DOCA GPUNetIO handles opened on the protection domain of an IB device and shared by the GPUNetIO QPs created on
+/// it. Owned by the IbCtx; see IbCtx::gpuNetIoDevice().
+struct GpuNetIoDevice {
+  explicit GpuNetIoDevice(IbCtx& ibCtx);
+  ~GpuNetIoDevice();
 
 #if defined(MSCCLPP_USE_GPUNETIO)
   doca_gpu_t* gpu(int gpuId);
@@ -43,9 +44,8 @@ struct GpuNetIoContext {
 /// registered through the same Context is directly addressable by it.
 class GpuNetIoQp {
  public:
-  /// @param ibCtx The IB device context whose protection domain the QP is created on.
-  /// @param context DOCA device handles for this IB transport.
-  GpuNetIoQp(IbCtx& ibCtx, std::shared_ptr<GpuNetIoContext> context, int gpuId, int port, int gidIndex);
+  /// @param ibCtx The IB device context whose protection domain the QP is created on. It must outlive the QP.
+  GpuNetIoQp(IbCtx& ibCtx, int gpuId, int port, int gidIndex);
   ~GpuNetIoQp();
 
   /// Addressing info that the remote endpoint needs to connect to this QP.
@@ -58,7 +58,7 @@ class GpuNetIoQp {
   void* deviceQp() const { return deviceQp_; }
 
  private:
-  std::shared_ptr<GpuNetIoContext> context_;
+  GpuNetIoDevice* device_ = nullptr;
 #if defined(MSCCLPP_USE_GPUNETIO)
   doca_gpu_verbs_qp_hl* qp_ = nullptr;
 #endif
