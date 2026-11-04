@@ -1,4 +1,4 @@
-# Image for the unified EP benchmark pipeline (.azure-pipelines/ep-benchmark.yml).
+# Image for the unified EP benchmark job in .azure-pipelines/mnnvl-test.yml.
 # Adds PyTorch to a base-dev image. NCCL-EP and DeepEP are installed by the pipeline
 # on every run so that it always benchmarks their latest releases.
 ARG BASE_IMAGE=ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3

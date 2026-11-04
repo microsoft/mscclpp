@@ -11,13 +11,36 @@ trigger:
     - docs/**
     - '**/*.md'
 
-# Do not run multi-nodes-test for PR, we can trigger it manually
-pr: none
+# Run on PRs only for EP benchmark changes; other PRs do not use the GB200 nodes.
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: true
+  paths:
+    include:
+    - .azure-pipelines/mnnvl-test.yml
+    - docker/base-dev-torch-x.dockerfile
+    - python/mscclpp/ep/**
+    - python/mscclpp_benchmark/ep/**
+    - src/ext/ep/**
+    - test/deploy/install-ep-backends.sh
+    - test/deploy/run-ep-benchmark.sh
+    - test/deploy/summarize_ep_benchmark.py
 
 parameters:
 - name: vmssName
   type: string
   default: 'mnnvl'   # unused on pilot (StartVMSS gated off); kept only to satisfy deploy.yml
+- name: epBenchmarkNodes
+  displayName: GB200 nodes for the EP benchmark (4 GPUs each)
+  type: number
+  default: 1
+  values:
+  - 1
+  - 2
+  - 4
 
 variables:
   - group: mscclpp
@@ -118,3 +141,121 @@ jobs:
         mpirun --allow-run-as-root --bind-to numa -hostfile /root/mscclpp/test/deploy/hostfile_mpi -mca btl_tcp_if_include $(GB200-MPI-TCP-IF-INCLUDE) -np 8 -npernode 4 \
           -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp \
           /root/venv/bin/python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float16 --symmetric-memory --buffer-mode out-of-place
+
+- job: EpBenchmark
+  displayName: Unified EP benchmark (MSCCL++ vs NCCL-EP vs DeepEP)
+  timeoutInMinutes: 120
+  # Shares the GB200 nodes, container name and deploy directory with MultiNodesTest.
+  dependsOn: MultiNodesTest
+  condition: succeededOrFailed()
+  strategy:
+    matrix:
+      cuda13:
+        # agentImage runs on the x86_64 agent; containerImage runs on the aarch64 GB200 nodes.
+        agentImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3-torch2.x
+  pool:
+    name: msccl-ci-gb200
+  container:
+    image: $[ variables['agentImage'] ]
+
+  steps:
+  - task: Bash@3
+    displayName: Generate deploy files
+    env:
+      NODE_IP1: $(GB200-IP1)
+      NODE_IP2: $(GB200-IP2)
+      NODE_IP3: $(GB200-IP3)
+      NODE_IP4: $(GB200-IP4)
+      NODE_COUNT: ${{ parameters.epBenchmarkNodes }}
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -eu
+        DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
+        ALL_NODES=("${NODE_IP1}" "${NODE_IP2}" "${NODE_IP3}" "${NODE_IP4}")
+        NODES=("${ALL_NODES[@]:0:${NODE_COUNT}}")
+
+        : > "${DEPLOY_DIR}/config"
+        : > "${DEPLOY_DIR}/hostfile"
+        : > "${DEPLOY_DIR}/hostfile_mpi"
+        for node in "${NODES[@]}"; do
+          if [ -z "${node}" ]; then
+            echo "Missing GB200 node IP for epBenchmarkNodes=${NODE_COUNT}" >&2
+            exit 1
+          fi
+          timeout 10 bash -c "cat < /dev/null > /dev/tcp/${node}/22" \
+            && echo "${node}:22 OPEN" || echo "${node}:22 UNREACHABLE"
+          printf 'Host %s\n  Port 22345\n  IdentityFile /root/mscclpp/sshkey\n  StrictHostKeyChecking no\n' \
+            "${node}" >> "${DEPLOY_DIR}/config"
+          echo "azhpcuser@${node}" >> "${DEPLOY_DIR}/hostfile"
+          echo "${node}" >> "${DEPLOY_DIR}/hostfile_mpi"
+        done
+
+        echo "##vso[task.setvariable variable=headNode]${NODES[0]}"
+
+  - template: templates/deploy.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+      pilot: true
+      resourceGroup: mscclpp
+      gpuArch: '100a'
+      buildTests: 'false'
+      cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
+      deployArgs: 'multi-node-test false cuda'
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: InstallEpBackends
+      displayName: Install latest NCCL-EP and DeepEP
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azhpcuser'
+      remoteScript: |
+        bash test/deploy/install-ep-backends.sh
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunEpBenchmark
+      displayName: Run unified EP benchmark
+      runRemoteArgs: '--host $(headNode) --user azhpcuser'
+      remoteScript: |
+        # Collected from /tmp/mscclpp/ep-benchmark-results on the node by the next step.
+        export EP_BENCH_LOG_DIR=/root/mscclpp/ep-benchmark-results
+        if [ "${{ parameters.epBenchmarkNodes }}" -gt 1 ]; then
+          export EP_BENCH_HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
+          export EP_BENCH_NP=$(( ${{ parameters.epBenchmarkNodes }} * 4 ))
+          export EP_BENCH_PPN=4
+          export EP_BENCH_TCP_IF=$(GB200-MPI-TCP-IF-INCLUDE)
+          export MASTER_ADDR=$(headNode)
+        fi
+        bash test/deploy/run-ep-benchmark.sh
+
+  # Runs even if the benchmark failed, so partial results are kept.
+  - task: Bash@3
+    name: CollectEpResults
+    displayName: Collect EP benchmark results
+    condition: and(succeededOrFailed(), ne(variables['headNode'], ''))
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -eu
+        DEST="$(Build.ArtifactStagingDirectory)/ep-benchmark-results"
+        rm -rf "${DEST}"
+        if ! scp -r -i "${SSHKEYFILE_SECUREFILEPATH}" -o StrictHostKeyChecking=no \
+            "azhpcuser@$(headNode):/tmp/mscclpp/ep-benchmark-results" "$(Build.ArtifactStagingDirectory)/"; then
+          echo "##vso[task.logissue type=warning]No EP benchmark results found on $(headNode)"
+          exit 0
+        fi
+        ls -la "${DEST}"
+        if [ -f "${DEST}/summary.md" ]; then
+          echo "##vso[task.uploadsummary]${DEST}/summary.md"
+        fi
+        echo "##vso[task.setvariable variable=epResultsCollected]true"
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish EP benchmark results
+    condition: and(succeededOrFailed(), eq(variables['epResultsCollected'], 'true'))
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/ep-benchmark-results
+      artifact: ep-benchmark-results-$(System.JobAttempt)
+      publishLocation: pipeline
