@@ -178,12 +178,9 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
       : semaphore_(semaphore), device_(device) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlotShm, uint32_t* wqeSlotLock = nullptr,
-                                        bool reuseSharedWqe = false) {
-    device_.setWqeSlot<Mode>(wqeSlotShm, wqeSlotLock, reuseSharedWqe);
-  }
+  /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions. See GpuNetIoDeviceHandle::setWqeSlot().
+  /// @param wqeSlot The shared-memory WQE slot.
+  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlot) { device_.setWqeSlot(wqeSlot); }
 
   /// Put data to the destination memory region via the device backend.
   /// @param dst The destination memory region.

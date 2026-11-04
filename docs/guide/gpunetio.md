@@ -57,7 +57,7 @@ __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBacke
   __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
   if (threadIdx.x != 0) return;
   auto portChan = channel;
-  portChan.setWqeSlot<mscclpp::PortChannelSharingMode::Exclusive>(&wqeSlot);
+  portChan.setWqeSlot(&wqeSlot);
   portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
   portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
 }
@@ -96,21 +96,19 @@ Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `Po
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
 is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust
-it to change which transfer sizes use BlueFlame). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
-their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
+it to change which transfer sizes use BlueFlame). Payloads above `blueFlameLimit`, or any request when no WQE slot is
+bound, write their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's
+`submit_db` path.
+Only `PortChannelSharingMode::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work
+request directly only if all earlier ones were already submitted, which threads sharing a queue pair cannot ensure
+without serializing each other, so `Cta` and `Gpu` operations always ring the regular doorbell.
 
-### Caller-owned WQE slot and optional lock
+### Caller-owned WQE slot
 
-`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Call
-`setWqeSlot<Mode>(&wqeSlot, &wqeSlotLock, reuseSharedWqe)` on a local copy of the handle:
-- In `PortChannelSharingMode::Exclusive` with `reuseSharedWqe == false`, each slot is owned exclusively by one posting
-  thread at a time without locking (`wqeSlotLock` may be omitted).
-- In `Cta`/`Gpu` sharing modes or when `reuseSharedWqe == true`, pass a zero-initialized `uint32_t` spinlock in shared
-  or device memory (`&wqeSlotLock`); if `wqeSlotLock` is null in those modes, `setWqeSlot` leaves BlueFlame disabled and
-  falls back to regular doorbell submission.
-
-BlueFlame submission waits for async consumption of the scratch source before each posting call returns; one thread can
-therefore reuse one entry for sequential operations across different QPs without locking.
+`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Bind it with
+`setWqeSlot(&wqeSlot)` on a local copy of the handle. Only one thread may post through a slot at a time.
+BlueFlame submission waits for async consumption of the slot before each posting call returns; one thread can
+therefore reuse one slot for sequential operations across different QPs.
 
 ## Limitations
 

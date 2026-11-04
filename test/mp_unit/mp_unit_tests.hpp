@@ -140,6 +140,7 @@ template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
+using SharingMode = mscclpp::PortChannelSharingMode;
 
 // Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
 // concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one
@@ -165,6 +166,8 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useEthernet;
     bool waitWithPoll;
     IbMode ibMode;
+    // Queue pair sharing mode of device-mode channels.
+    SharingMode sharingMode = SharingMode::Exclusive;
   };
 
   void SetUp() override;
@@ -175,9 +178,12 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
-  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
-  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
-  void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
+  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default,
+                          SharingMode sharingMode = SharingMode::Exclusive);
+  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default,
+                              SharingMode sharingMode = SharingMode::Exclusive);
+  void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default,
+                      SharingMode sharingMode = SharingMode::Exclusive);
   void testAccumulateRejected(mscclpp::Transport transport, IbMode ibMode, int tag, const char* backendMessage,
                               bool checkHugeOffset);
   void testBandwidth(PingPongTestParams params);
@@ -186,9 +192,11 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             std::vector<mscclpp::RegisteredMemory>& localMems,
                             std::vector<mscclpp::RegisteredMemory>& remoteMems,
                             std::vector<mscclpp::PortChannel>& portChannels);
-  void testMultiQpBandwidth(IbMode ibMode, int numQps);
-  void testMultiQpFlushStress(IbMode ibMode, int numQps);
-  void testSameChanConcurrentFlush(IbMode ibMode);
+  void testMultiQpBandwidth(IbMode ibMode, int numQps, SharingMode sharingMode = SharingMode::Exclusive,
+                            int threadsPerQp = 1);
+  void testMultiQpFlushStress(IbMode ibMode, int numQps, SharingMode sharingMode = SharingMode::Exclusive,
+                              int threadsPerQp = 1);
+  void testSameChanConcurrentFlush(IbMode ibMode, SharingMode sharingMode = SharingMode::Exclusive);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

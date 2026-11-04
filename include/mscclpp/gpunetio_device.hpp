@@ -22,9 +22,8 @@
 namespace mscclpp {
 
 /// Caller-owned shared-memory storage for a single 64-byte BlueFlame work request (WQE).
-/// Concurrent submitters must use separate instances unless guarded by a lock. A posting operation waits until
-/// BlueFlame has consumed this storage before returning, so sequential operations may reuse it even across different
-/// queue pairs.
+/// Only one thread may post through it at a time. A posting operation waits until BlueFlame has consumed this storage
+/// before returning, so sequential operations may reuse it even across different queue pairs.
 struct alignas(16) GpuNetIoWqeSlot {
   /// Opaque work-request storage; callers must not access its contents.
   uint64_t storage[8];
@@ -56,29 +55,15 @@ struct GpuNetIoDeviceHandle {
   static constexpr uint32_t kDefaultBlueFlameLimit = 512 * 1024;
 
  private:
-  GpuNetIoWqeSlot* wqeSlotShm_;
-  uint32_t* wqeSlotLock_;
-  bool reuseSharedWqe_;
+  GpuNetIoWqeSlot* wqeSlot_;
 
  public:
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions.
-  /// In non-Exclusive sharing modes or when `reuseSharedWqe` is true, `wqeSlotLock` must be non-null; otherwise
-  /// BlueFlame is disabled and operations fall back to regular doorbell submission.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlotShm, uint32_t* wqeSlotLock = nullptr,
-                                        bool reuseSharedWqe = false) {
-    const bool needLock = (Mode != PortChannelSharingMode::Exclusive) || reuseSharedWqe;
-    if (needLock && wqeSlotLock == nullptr) {
-      wqeSlotShm_ = nullptr;
-      wqeSlotLock_ = nullptr;
-      reuseSharedWqe_ = false;
-    } else {
-      wqeSlotShm_ = wqeSlotShm;
-      wqeSlotLock_ = wqeSlotLock;
-      reuseSharedWqe_ = needLock;
-    }
-  }
+  /// Only PortChannelSharingMode::Exclusive operations submit through BlueFlame; shared queue pairs ring the regular
+  /// doorbell and do not use the slot.
+  /// @param wqeSlot The shared-memory WQE slot.
+  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlot) { wqeSlot_ = wqeSlot; }
 
   /// RDMA write of `size` bytes from a local region to a remote region.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
@@ -107,7 +92,7 @@ struct GpuNetIoDeviceHandle {
     MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = docaSharingMode<Mode>();
-    if (useBlueFlame(sizeof(uint64_t))) {
+    if (useBlueFlame<sharing>(sizeof(uint64_t))) {
       withWqeSlot<sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
         prepareAtomicWqe(q, sharedWqe, index, addr, dst.key, value);
         copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
@@ -155,7 +140,7 @@ struct GpuNetIoDeviceHandle {
     constexpr auto sharing = docaSharingMode<Mode>();
     const uint64_t dstAddr = dst.addr + dstOffset;
     const uint64_t srcAddr = src.addr + srcOffset;
-    if (useBlueFlame(size)) {
+    if (useBlueFlame<sharing>(size)) {
       submitPutWithAccumulateBlueFlame<sharing>(q, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value);
     } else {
       const auto index =
@@ -201,9 +186,13 @@ struct GpuNetIoDeviceHandle {
     }
   }
 
+  // Only an exclusively owned queue pair submits through BlueFlame, staging each WQE in the caller's slot. On a shared
+  // queue pair, the NIC would take a BlueFlame WQE directly only if every earlier WQE were already submitted.
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
   MSCCLPP_DEVICE_INLINE bool useBlueFlame(uint64_t size) const {
 #if MSCCLPP_BULK_AVAILABLE
-    return wqeSlotShm_ != nullptr && size <= blueFlameLimit;
+    return Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE && wqeSlot_ != nullptr &&
+           size <= blueFlameLimit;
 #else
     (void)size;
     return false;
@@ -218,27 +207,6 @@ struct GpuNetIoDeviceHandle {
     doca_gpu_dev_verbs_submit_db<Sharing, syncScope, DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
   }
 
-  struct WqeSlotLockGuard {
-    uint32_t* lock;
-
-    MSCCLPP_DEVICE_INLINE explicit WqeSlotLockGuard(const GpuNetIoDeviceHandle& handle)
-        : lock(handle.reuseSharedWqe_ ? handle.wqeSlotLock_ : nullptr) {
-      if (!lock) return;
-      uint32_t expected = 0;
-      while (!cuda::atomic_ref<uint32_t, cuda::thread_scope_block>{*lock}.compare_exchange_weak(
-          expected, 1u, memoryOrderAcquire, memoryOrderRelaxed)) {
-        expected = 0;
-      }
-    }
-
-    MSCCLPP_DEVICE_INLINE ~WqeSlotLockGuard() {
-      if (lock) cuda::atomic_ref<uint32_t, cuda::thread_scope_block>{*lock}.store(0u, memoryOrderRelease);
-    }
-
-    WqeSlotLockGuard(const WqeSlotLockGuard&) = delete;
-    WqeSlotLockGuard& operator=(const WqeSlotLockGuard&) = delete;
-  };
-
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
   MSCCLPP_DEVICE_INLINE void putImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                      const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
@@ -251,7 +219,7 @@ struct GpuNetIoDeviceHandle {
       return;
     }
 
-    if (useBlueFlame(size)) {
+    if (useBlueFlame<Sharing>(size)) {
       submitPutBlueFlame<Sharing>(q, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
     } else {
       const auto index =
@@ -288,14 +256,13 @@ struct GpuNetIoDeviceHandle {
     withWqeSlot<Sharing>(q, 2, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
-      if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE) {
+      // Ring the write by itself so that the NIC takes both WQEs through BlueFlame.
 #if MSCCLPP_BULK_AVAILABLE
-        bulkFence();
-        doca_gpu_dev_verbs_ring_bf<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, sharedWqe);
-        bulkStoreCommit();
-        bulkStoreWaitSource();
+      bulkFence();
+      doca_gpu_dev_verbs_ring_bf<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>(q, sharedWqe);
+      bulkStoreCommit();
+      bulkStoreWaitSource();
 #endif
-      }
       prepareAtomicWqe(q, sharedWqe, index + 1, accAddr, accKey, value);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
@@ -366,14 +333,13 @@ struct GpuNetIoDeviceHandle {
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, typename Fn>
   MSCCLPP_DEVICE_INLINE void withWqeSlot(doca_gpu_dev_verbs_qp* q, uint32_t count, Fn&& fn) const {
     static_assert(sizeof(GpuNetIoWqeSlot) == sizeof(doca_gpu_dev_verbs_wqe));
-    MSCCLPP_ASSERT_DEVICE(wqeSlotShm_ != nullptr &&
-                              reinterpret_cast<uintptr_t>(wqeSlotShm_) % alignof(GpuNetIoWqeSlot) == 0 &&
-                              __isShared(wqeSlotShm_),
-                          "wqeSlotShm must be a 16-byte-aligned shared-memory pointer");
-    WqeSlotLockGuard lockGuard(*this);
+    MSCCLPP_ASSERT_DEVICE(wqeSlot_ != nullptr &&
+                              reinterpret_cast<uintptr_t>(wqeSlot_) % alignof(GpuNetIoWqeSlot) == 0 &&
+                              __isShared(wqeSlot_),
+                          "wqeSlot must be a 16-byte-aligned shared-memory pointer");
     const auto index =
         doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, count);
-    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeSlotShm_->storage), index);
+    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeSlot_->storage), index);
   }
 #endif  // defined(MSCCLPP_USE_GPUNETIO)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
