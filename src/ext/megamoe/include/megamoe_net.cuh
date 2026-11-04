@@ -110,6 +110,7 @@ struct NetSendArguments {
 // input quantization and before the routed kernel, every launch, including empty ones.
 template <int Threads = NetSendThreads>
 __global__ void __launch_bounds__(Threads) netSendKernel(NetDevice net, NetSendArguments a) {
+  __shared__ GpuNetIoWqeSlot wqeSlot;
   __shared__ int sums[Threads / 32];
   __shared__ int tileTokens[Threads];
   const int index = blockIdx.x;
@@ -182,17 +183,22 @@ __global__ void __launch_bounds__(Threads) netSendKernel(NetDevice net, NetSendA
   if (threadIdx.x == 0) *header = NetHeader{a.nTokens, nEntries, outBase, nRows};
   __syncthreads();
   if (threadIdx.x == 0) {
+    // The NIC reads the message written by every thread of this CTA.
     __threadfence_system();
-    PortChannelDeviceHandle channel = net.channels[owner];
+    NetChannel channel = net.channels[owner];
+    channel.setWqeSlot(&wqeSlot);
     const int sourceIndex = net.indexFrom(owner, a.rank);
-    channel.put(net.layout.recvMeta + size_t(sourceIndex) * net.layout.metaBytes,
-                net.layout.sendMeta + size_t(index) * net.layout.metaBytes,
-                sizeof(NetHeader) + size_t(nEntries) * sizeof(NetEntry));
-    if (nRows)
-      channel.put(net.layout.recvRows + size_t(sourceIndex) * a.maxTokens * net.layout.rowBytes,
-                  net.layout.sendRows + size_t(index) * a.maxTokens * net.layout.rowBytes,
-                  size_t(nRows) * net.layout.rowBytes);
-    channel.signal();
+    const uint64_t metaDst = net.layout.recvMeta + size_t(sourceIndex) * net.layout.metaBytes;
+    const uint64_t metaSrc = net.layout.sendMeta + size_t(index) * net.layout.metaBytes;
+    const uint64_t metaBytes = sizeof(NetHeader) + size_t(nEntries) * sizeof(NetEntry);
+    if (nRows) {
+      channel.put<PortChannelSharingMode::Exclusive>(metaDst, metaSrc, metaBytes);
+      channel.putWithSignal<PortChannelSharingMode::Exclusive>(
+          net.layout.recvRows + size_t(sourceIndex) * a.maxTokens * net.layout.rowBytes,
+          net.layout.sendRows + size_t(index) * a.maxTokens * net.layout.rowBytes, size_t(nRows) * net.layout.rowBytes);
+    } else {
+      channel.putWithSignal<PortChannelSharingMode::Exclusive>(metaDst, metaSrc, metaBytes);
+    }
   }
 }
 
@@ -263,12 +269,13 @@ MSCCLPP_DEVICE_INLINE void netReturnResults(const NetDevice& net, int index, uin
   const int nEntries = __ldcg(&header->nEntries);
   const int outBase = __ldcg(&header->outBase);
   __threadfence_system();
-  PortChannelDeviceHandle channel = net.channels[net.worldSize + source];
-  // The channel's source memory is this source's combineOut slot.
+  NetChannel channel = net.channels[source];
   if (nEntries)
-    channel.put(net.layout.combineIn + size_t(outBase) * net.layout.outBytes, 0,
-                size_t(nEntries) * net.layout.outBytes);
-  channel.signal();
+    channel.putWithSignal<PortChannelSharingMode::Exclusive>(
+        net.layout.combineIn + size_t(outBase) * net.layout.outBytes,
+        net.layout.combineOut + size_t(index) * net.layout.slotBytes, size_t(nEntries) * net.layout.outBytes);
+  else
+    channel.signal<PortChannelSharingMode::Exclusive>();
 }
 
 /// Called by every thread of every CTA: wait for every network owner's results, then copy this CTA's share of them

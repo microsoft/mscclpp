@@ -520,8 +520,8 @@ def main():
     kernel = None if config.is_w8a16 else compile_kernel(kernel_config, cache_dir=args.cache_dir)
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
-    # All timed expert communication uses native MSCCL++ CudaIpc mappings within a rack and IB port channels across
-    # racks.
+    # All timed expert communication uses native MSCCL++ CudaIpc mappings within a rack and GPU-initiated (GPUNetIO)
+    # IB port channels across racks.
     dist.init_process_group("gloo", rank=rank, world_size=world)
     bootstrap = TcpBootstrap.create(rank, world)
     port = args.bootstrap_port or int(os.environ["MASTER_PORT"]) + 1

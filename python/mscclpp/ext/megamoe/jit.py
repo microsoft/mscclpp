@@ -480,6 +480,8 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
                 "-Xcompiler=-fPIC,-fvisibility=hidden",
                 "-Xptxas=-v",
                 "-DMSCCLPP_USE_CUDA",
+                # Installed DOCA GPUNetIO headers mean libmscclpp has the device-mode PortChannel backend.
+                *(["-DMSCCLPP_USE_GPUNETIO"] if (include_root / "doca_gpunetio_device.h").is_file() else []),
                 "-DMSCCLPP_MEGAMOE_JIT_MODULE=1",
                 f'-DMSCCLPP_MEGAMOE_JIT_ID="{key}"',
                 *definitions,

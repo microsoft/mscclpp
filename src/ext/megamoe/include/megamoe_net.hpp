@@ -6,19 +6,18 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <mscclpp/device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 #include <stdexcept>
-#include <string>
 
 #include "megamoe_kernel.hpp"
 
 // Inter-rack (network) exchange.
 //
 // Ranks form contiguous racks of rackSize ranks; ranks of one rack share an NVLink domain and keep the direct CUDA IPC
-// path. A rank outside the local rack is a network peer, reached through MSCCL++ PortChannels (CPU proxy, RDMA over
-// IB) on a registered network workspace. Network peers of a rank are numbered by their rank order with the local rack
+// path. A rank outside the local rack is a network peer, reached through MSCCL++ PortChannels in device mode
+// (GPUNetIO: GPU threads post the RDMA work requests and ring the NIC doorbell themselves, with no host proxy) on a
+// registered network workspace. Network peers of a rank are numbered by their rank order with the local rack
 // skipped: the network index of rank q seen from a rack starting at b is q < b ? q : q - rackSize.
 //
 // Per launch and ordered pair (source, owner) of network peers:
@@ -29,16 +28,17 @@
 //     route headers, and route packets an NVLink source would have written, so the NVLink routing code is unchanged.
 //  3. Dispatch loads the token rows from recvRows, and FC2 stores each routed output row to the combineOut slot of its
 //     source, in entry order.
-//  4. After FC2, the owner puts the source's slot to the source's combineIn rows starting at NetHeader::outBase and
-//     signals the source. The source waits for every network owner and scatters combineIn rows into its
+//  4. After FC2, the owner puts the source's combineOut slot to the source's combineIn rows starting at
+//     NetHeader::outBase and signals the source. The source waits for every network owner and scatters combineIn rows into its
 //     partial outputs before the NVLink join and combine.
-// Each ordered pair shares one semaphore. A rank's signals to a peer strictly alternate through one proxy FIFO and
-// queue pair: its launch-N message (count 2N - 1), then its launch-N results (count 2N). Waits compare against these
-// counts without consuming them. A source reuses its buffers only after every owner has returned the previous
-// launch's rows, which orders all buffer reuse without extra flushes.
+// Each ordered pair shares one channel, so one queue pair and one semaphore. A rank's signals to a peer strictly
+// alternate: its launch-N message (count 2N - 1), then its launch-N results (count 2N). Each signal is an RDMA atomic
+// posted after the pair's writes on the same queue pair, so observing a count publishes the data it covers. Waits
+// compare against these counts without consuming them. A source reuses its buffers only after every owner has
+// returned the previous launch's rows, which orders all buffer reuse without flushes.
 //
-// Port-channel triggers carry 32-bit offsets, so every put endpoint except the owner-side result slots lies in a
-// leading main region; each result slot is registered as its own memory and put from offset 0.
+// Each queue pair is posted to by one thread at a time: one CTA per owner in netSendKernel, one thread per source in
+// netReturnResults, and the kernels are stream-ordered. Posts therefore use PortChannelSharingMode::Exclusive.
 namespace mscclpp::megamoe {
 
 constexpr int MaxWorldSize = 256;
@@ -58,10 +58,12 @@ struct alignas(16) NetEntry {
   int32_t row;     // token row in the destination's received rows
 };
 
+/// Device-mode (GPUNetIO) PortChannel handle used for every network peer.
+using NetChannel = PortChannelDeviceHandleT<PortChannelBackend::Device>;
+
 struct NetLayout {
-  size_t bytes = 0;
-  size_t mainBytes = 0;   // registered region holding every put endpoint except combineOut
-  size_t slotBytes = 0;   // stride of the separately registered combineOut slots
+  size_t bytes = 0;       // registered for IB as one memory region
+  size_t slotBytes = 0;   // stride of the combineOut slots
   size_t metaBytes = 0;   // message stride: header and up to maxTokens * topK entries
   size_t rowBytes = 0;    // token row: FP8 activations, then E8M0 scales for MXFP8
   size_t outBytes = 0;    // partial output row
@@ -81,10 +83,9 @@ struct NetPlan {
   int rackSize = 0;
   /// Zero-initialized local network workspace of getNetLayout(config, rackSize).bytes, registered for IB.
   void* buffer = nullptr;
-  /// Device array of 2 * worldSize PortChannel handles indexed by peer rank, both on the peer's semaphore and with the
-  /// peer's main region as destination: first with the local main region as source, then with the combineOut slot of
-  /// the peer as source. Only network peers are valid.
-  const PortChannelDeviceHandle* channels = nullptr;
+  /// Device array of worldSize device-mode PortChannel handles indexed by peer rank, from the local workspace to the
+  /// peer's workspace. Only network peers are valid.
+  const NetChannel* channels = nullptr;
 };
 
 /// Kernel view of the network path.
@@ -95,7 +96,7 @@ struct NetDevice {
   int worldSize = 1;
   NetLayout layout;
   uint8_t* base = nullptr;
-  const PortChannelDeviceHandle* channels = nullptr;
+  const NetChannel* channels = nullptr;
 
   MSCCLPP_HOST_DEVICE_INLINE bool isNet(int rank) const {
     return nNet && (rank < rackBegin || rank >= rackBegin + rackSize);
@@ -132,17 +133,11 @@ inline NetLayout getNetLayout(const NativeConfig& c, int rackSize) {
   layout.combineIn = append(routes * layout.outBytes);
   layout.sendRows = append(nNet * c.maxTokens * layout.rowBytes);
   layout.recvRows = append(nNet * c.maxTokens * layout.rowBytes);
-  layout.mainBytes = netAligned(layout.bytes);
   layout.slotBytes = netAligned(routes * layout.outBytes);
   layout.combineOut = append(nNet * layout.slotBytes);
   layout.routeMap = append(nNet * routes * sizeof(int32_t));
   layout.routeRows = append(routes * sizeof(int32_t));
   layout.bytes = netAligned(layout.bytes);
-  constexpr size_t TriggerLimit = size_t(std::numeric_limits<uint32_t>::max());
-  if (layout.mainBytes > TriggerLimit || layout.slotBytes > TriggerLimit)
-    throw std::invalid_argument("MegaMoE inter-rack transfers exceed 32-bit port-channel offsets (" +
-                                std::to_string(layout.mainBytes) +
-                                " registered bytes); reduce maxTokens or use larger racks");
   return layout;
 }
 
@@ -155,6 +150,10 @@ inline NetDevice makeNetDevice(const NativeConfig& c, const NetPlan& plan) {
   net.rackBegin = c.rank / net.rackSize * net.rackSize;
   net.nNet = c.worldSize - net.rackSize;
   if (!net.nNet) return net;
+#if !defined(MSCCLPP_USE_GPUNETIO)
+  throw std::invalid_argument(
+      "MegaMoE inter-rack execution requires MSCCL++ built with the GPUNetIO backend (CUDA with InfiniBand)");
+#endif
   if (!plan.buffer || !plan.channels)
     throw std::invalid_argument("MegaMoE inter-rack execution requires a network workspace and port channels");
   net.layout = getNetLayout(c, net.rackSize);

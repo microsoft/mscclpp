@@ -319,10 +319,6 @@ int validatePeers(const std::shared_ptr<Communicator>& comm, const NativeConfig&
   return rackSize;
 }
 
-// The proxy holds the main region, one remote region per network peer, and one result slot per network peer.
-static_assert(1 + 2 * (MaxWorldSize - 1) <= (1 << TriggerBitsMemoryId), "port-channel memory IDs are exhausted");
-static_assert(MaxWorldSize - 1 <= (1 << TriggerBitsSemaphoreId), "port-channel semaphore IDs are exhausted");
-
 Transport netTransport(int device) {
   static constexpr Transport IBs[] = {Transport::IB0, Transport::IB1, Transport::IB2, Transport::IB3,
                                       Transport::IB4, Transport::IB5, Transport::IB6, Transport::IB7};
@@ -378,13 +374,11 @@ struct MegaMoeContext::Impl {
   NetLayout netLayout;
   std::unique_ptr<GpuBuffer<char>> netBuffer;
   RegisteredMemory netMemory;
-  // Owner-side result slots, one registered memory per network source to keep put offsets within 32 bits.
-  std::vector<RegisteredMemory> netSlotMemories;
   std::vector<RegisteredMemory> netPeerMemories;
   std::vector<Connection> netConnections;
-  std::shared_ptr<ProxyService> proxy;
-  bool proxyStarted = false;
-  std::shared_ptr<PortChannelDeviceHandle> netChannels;
+  // Device-mode (GPUNetIO) port channels; they own the semaphores and keep the memories alive for their handles.
+  std::vector<PortChannel> netPortChannels;
+  std::shared_ptr<NetChannel> netChannels;
 
   ~Impl() {
     if (device < 0) return;
@@ -395,16 +389,13 @@ struct MegaMoeContext::Impl {
     (void)cudaSetDevice(device);
     (void)cudaDeviceSynchronize();
     if (startResetEvent) (void)cudaEventDestroy(startResetEvent);
-    // The proxy may still reference the network memories and connections.
-    if (proxyStarted) proxy->stopProxy();
     plan.reset();
     jitPlan.reset();
     module.reset();
-    proxy.reset();
     netChannels.reset();
+    netPortChannels.clear();
     netConnections.clear();
     netPeerMemories.clear();
-    netSlotMemories.clear();
     netMemory = RegisteredMemory{};
     netBuffer.reset();
     connections.clear();
@@ -520,11 +511,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     if (p.netLayout.bytes) {
       p.netBuffer = std::make_unique<GpuBuffer<char>>(p.netLayout.bytes);
       const Transport transport = netTransport(p.device);
-      p.netMemory = p.communicator->registerMemory(p.netBuffer->data(), p.netLayout.mainBytes, transport);
-      for (int index = 0; index < c.worldSize - p.rackSize; ++index)
-        p.netSlotMemories.push_back(p.communicator->registerMemory(
-            p.netBuffer->data() + p.netLayout.combineOut + size_t(index) * p.netLayout.slotBytes, p.netLayout.slotBytes,
-            transport));
+      p.netMemory = p.communicator->registerMemory(p.netBuffer->data(), p.netLayout.bytes, transport);
     }
     size_t localExperts = c.numExperts / c.worldSize;
     const size_t valuesPerByte = c.weightDtype == WeightDtype::Mxfp4 ? 2 : 1;
@@ -564,6 +551,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       if (isNet(rank)) {
         EndpointConfig endpoint;
         endpoint.transport = netTransport(p.device);
+        endpoint.ib.mode = EndpointConfig::Ib::Mode::Device;
         connectionFutures[rank] = p.communicator->connect(endpoint, rank, tag + 2);
         p.communicator->sendMemory(p.netMemory, rank, tag + 3);
         memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 3);
@@ -580,9 +568,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       if (isNet(rank)) {
         p.netConnections.push_back(connectionFutures[rank].get());
         p.netPeerMemories[rank] = memoryFutures[rank].get();
-        if (p.netPeerMemories[rank].size() != p.netLayout.mainBytes)
+        if (p.netPeerMemories[rank].size() != p.netLayout.bytes)
           throw std::runtime_error("MegaMoE could not register a matching network peer workspace");
-        // One semaphore per connection: IB modes without RDMA atomics forward a single signal address per connection.
         semaphoreFutures[rank] = p.communicator->buildSemaphore(p.netConnections.back(), rank, tag + 4);
         peerPointers[rank] = 0;
         continue;
@@ -598,24 +585,17 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   });
   if (p.netLayout.bytes) {
     collectiveCheck(comm, "network channel setup", [&] {
-      p.proxy = std::make_shared<ProxyService>();
-      const MemoryId local = p.proxy->addMemory(p.netMemory);
-      std::vector<PortChannelDeviceHandle> channels(2 * c.worldSize);
+      std::vector<NetChannel> channels(c.worldSize);
       for (int rank = 0; rank < c.worldSize; ++rank) {
         if (!isNet(rank)) continue;
-        const MemoryId remote = p.proxy->addMemory(p.netPeerMemories[rank]);
-        const MemoryId slot = p.proxy->addMemory(p.netSlotMemories[rank < rackBegin ? rank : rank - p.rackSize]);
-        const SemaphoreId semaphore = p.proxy->addSemaphore(semaphoreFutures[rank].get());
-        channels[rank] = p.proxy->portChannel(semaphore, remote, local).deviceHandle();
-        channels[c.worldSize + rank] = p.proxy->portChannel(semaphore, remote, slot).deviceHandle();
+        auto semaphore = std::make_shared<PortDevice2DeviceSemaphore>(semaphoreFutures[rank].get());
+        p.netPortChannels.emplace_back(semaphore, p.netPeerMemories[rank], p.netMemory);
+        channels[rank] = p.netPortChannels.back().deviceHandle<PortChannelBackend::Device>();
       }
-      p.netChannels = mscclpp::detail::gpuCallocShared<PortChannelDeviceHandle>(channels.size());
-      MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.netChannels.get(), channels.data(),
-                                        channels.size() * sizeof(PortChannelDeviceHandle), cudaMemcpyHostToDevice,
-                                        stream));
+      p.netChannels = mscclpp::detail::gpuCallocShared<NetChannel>(channels.size());
+      MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.netChannels.get(), channels.data(), channels.size() * sizeof(NetChannel),
+                                        cudaMemcpyHostToDevice, stream));
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-      p.proxy->startProxy();
-      p.proxyStarted = true;
     });
   }
   collectiveCheck(comm, "plan creation", [&] {

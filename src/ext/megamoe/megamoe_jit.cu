@@ -123,8 +123,7 @@ int jitCreateNet(const MegaMoeJitConfigV1* config, void* symmetric, const uint64
     NetPlan netPlan{};
     if (net) {
       if (net->reserved) throw std::invalid_argument("MegaMoE JIT network descriptor has nonzero reserved fields");
-      netPlan =
-          NetPlan{net->rackSize, net->buffer, static_cast<const mscclpp::PortChannelDeviceHandle*>(net->channels)};
+      netPlan = NetPlan{net->rackSize, net->buffer, static_cast<const NetChannel*>(net->channels)};
       if (net->bufferBytes != getNetLayout(c, net->rackSize).bytes)
         throw std::invalid_argument("MegaMoE JIT network workspace size does not match the module layout");
     }

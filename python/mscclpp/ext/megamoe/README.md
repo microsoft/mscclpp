@@ -67,8 +67,11 @@ Routing weights are float32.
 
 Ranks are grouped into contiguous racks of `ranks_per_rack` ranks (at most 72).
 Peers in the local rack keep the direct CUDA IPC path; peers in other racks are
-reached over InfiniBand through MSCCL++ port channels served by a proxy thread
-that the context owns. Up to 256 ranks are supported.
+reached over InfiniBand through device-mode MSCCL++ port channels backed by DOCA
+GPUNetIO: GPU threads post the RDMA writes and atomics and ring the NIC doorbell
+themselves, so no host proxy thread is involved. This requires MSCCL++ built with
+the GPUNetIO backend (the default for CUDA builds with InfiniBand; see
+`docs/guide/gpunetio.md`). Up to 256 ranks are supported.
 
 ```python
 config = MegaMoEConfig(
@@ -88,15 +91,13 @@ kernel: the routes that peer owns and each needed token once, as FP8 activations
 and E8M0 scales. The owner relays the routes into the same routing slots NVLink
 sources write, computes them with the NVLink-routed tokens, and returns the
 weighted rows in one transfer per source after FC2. Each (source, owner) pair
-therefore uses at most three RDMA writes and two signals per forward, and the
-forward stays CUDA Graph capturable. GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
+therefore uses at most three RDMA writes and two RDMA atomic signals per forward,
+and the forward stays CUDA Graph capturable. GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
 
 The registered network workspace (`workspace_bytes["network"]`) grows with the
 number of network peers `P`, about
 `2 * P * max_tokens * (hidden + hidden/32) + P * max_tokens * top_k * hidden * 2`
-bytes for MXFP8. Port-channel offsets are 32-bit, so construction rejects shapes
-whose transferred regions (`2 * P * max_tokens * (hidden + hidden/32)` plus one
-`max_tokens * top_k` block of result rows) exceed 4 GiB. JIT modules built
+bytes for MXFP8, and is registered as one IB memory region. JIT modules built
 before inter-rack support must be recompiled; the content-addressed cache does
 this automatically.
 

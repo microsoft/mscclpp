@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Multi-process test of the MegaMoE inter-rack (IB) exchange in megamoe_net.cuh on any CUDA GPU.
+// Multi-process test of the MegaMoE inter-rack (IB) exchange in megamoe_net.cuh on any GPUNetIO-capable GPU (SM90+).
 //
-// It runs the production send kernel, relay, result return, and result collection over real IB port channels set up
-// like MegaMoeContext, and replaces the SM100 routed GEMM with a kernel that consumes the relayed LL8 routing packets
+// It runs the production send kernel, relay, result return, and result collection over real IB device-mode (GPUNetIO)
+// port channels set up like MegaMoeContext, and replaces the SM100 routed GEMM with a kernel that consumes the relayed LL8 routing packets
 // exactly as the routed kernel's received-route path does, checks every received token row, entry, and weight against
 // the source's deterministic data, and writes a deterministic result row per route. Sources then check every partial
 // output row. Ranks and token counts vary per launch, including empty launches, to exercise epochs and buffer reuse.
@@ -235,17 +235,14 @@ int main(int argc, char** argv) {
                                       Transport::IB4, Transport::IB5, Transport::IB6, Transport::IB7};
   const Transport ib = IBs[localRank % std::min(getIBDeviceCount(), 8)];
   GpuBuffer<char> buffer(layout.bytes);
-  RegisteredMemory local = comm->registerMemory(buffer.data(), layout.mainBytes, ib);
-  std::vector<RegisteredMemory> slots;
-  for (int index = 0; index < worldSize - ranksPerRack; ++index)
-    slots.push_back(comm->registerMemory(buffer.data() + layout.combineOut + size_t(index) * layout.slotBytes,
-                                         layout.slotBytes, ib));
+  RegisteredMemory local = comm->registerMemory(buffer.data(), layout.bytes, ib);
   std::vector<std::shared_future<Connection>> connectionFutures(worldSize);
   std::vector<std::shared_future<RegisteredMemory>> memoryFutures(worldSize);
   for (int peer = 0; peer < worldSize; ++peer) {
     if (!isNet(peer)) continue;
     EndpointConfig endpoint;
     endpoint.transport = ib;
+    endpoint.ib.mode = EndpointConfig::Ib::Mode::Device;
     connectionFutures[peer] = comm->connect(endpoint, peer, tag + 2);
     comm->sendMemory(local, peer, tag + 3);
     memoryFutures[peer] = comm->recvMemory(peer, tag + 3);
@@ -259,21 +256,17 @@ int main(int argc, char** argv) {
     remotes[peer] = memoryFutures[peer].get();
     semaphoreFutures[peer] = comm->buildSemaphore(connections.back(), peer, tag + 4);
   }
-  auto proxy = std::make_shared<ProxyService>();
-  const MemoryId localId = proxy->addMemory(local);
-  std::vector<PortChannelDeviceHandle> handles(2 * worldSize);
+  std::vector<PortChannel> portChannels;
+  std::vector<NetChannel> handles(worldSize);
   for (int peer = 0; peer < worldSize; ++peer) {
     if (!isNet(peer)) continue;
-    const MemoryId remoteId = proxy->addMemory(remotes[peer]);
-    const MemoryId slotId = proxy->addMemory(slots[peer < rackBegin ? peer : peer - ranksPerRack]);
-    const SemaphoreId semaphore = proxy->addSemaphore(semaphoreFutures[peer].get());
-    handles[peer] = proxy->portChannel(semaphore, remoteId, localId).deviceHandle();
-    handles[worldSize + peer] = proxy->portChannel(semaphore, remoteId, slotId).deviceHandle();
+    auto semaphore = std::make_shared<PortDevice2DeviceSemaphore>(semaphoreFutures[peer].get());
+    portChannels.emplace_back(semaphore, remotes[peer], local);
+    handles[peer] = portChannels.back().deviceHandle<PortChannelBackend::Device>();
   }
-  auto channels = mscclpp::detail::gpuCallocShared<PortChannelDeviceHandle>(handles.size());
-  MSCCLPP_CUDATHROW(cudaMemcpy(channels.get(), handles.data(), handles.size() * sizeof(PortChannelDeviceHandle),
-                               cudaMemcpyHostToDevice));
-  proxy->startProxy();
+  auto channels = mscclpp::detail::gpuCallocShared<NetChannel>(handles.size());
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(channels.get(), handles.data(), handles.size() * sizeof(NetChannel), cudaMemcpyHostToDevice));
   const NetDevice net = makeNetDevice(c, NetPlan{ranksPerRack, buffer.data(), channels.get()});
 
   // Routing slots of the symmetric workspace.
@@ -348,7 +341,6 @@ int main(int argc, char** argv) {
     }
   }
   bootstrap->barrier();
-  proxy->stopProxy();
   printf(
       "rank %d/%d rack %d (%d per rack, %d network peers, %s, %.2f GB workspace): %d/%d iterations passed, %lld "
       "routes received\n",

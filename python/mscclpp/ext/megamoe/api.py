@@ -149,8 +149,8 @@ class MegaMoE:
 
     Construction is collective, outside graph capture, on one SM100-family GPU per rank.
     Ranks of a rack share an active NVLink fabric; racks communicate over InfiniBand
-    through an MSCCL++ proxy thread owned by the context. ``fc1`` and ``fc2`` are packed uint8
-    [local_experts, 2*I, H//2] and
+    through GPU-initiated (GPUNetIO) MSCCL++ port channels, without a host proxy thread.
+    ``fc1`` and ``fc2`` are packed uint8 [local_experts, 2*I, H//2] and
     [local_experts, H, I//2], with the even K element in the lower nibble. The
     first I FC1 rows are gate and the second I rows are up. Scales are canonical
     uint8 E8M0 tensors [local_experts, M, K//32]. Weights are packed into
