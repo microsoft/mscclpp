@@ -196,7 +196,7 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             int threadsPerQp = 1);
   void testMultiQpFlushStress(IbMode ibMode, int numQps, SharingMode sharingMode = SharingMode::Exclusive,
                               int threadsPerQp = 1);
-  void testSameChanConcurrentFlush(IbMode ibMode, SharingMode sharingMode = SharingMode::Exclusive);
+  void testSameChanConcurrentFlush(IbMode ibMode, SharingMode sharingMode = SharingMode::Gpu);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

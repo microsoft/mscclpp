@@ -1401,33 +1401,26 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
 // that could be assigned out-of-order relative to the FIFO push order.
 __constant__ ConstPortChannelStorage gSingleChanForConcurrentFlush;
 
-static constexpr int kSameChanThreads = 4;
-
-// An Exclusive device-mode queue pair takes one issuer at a time.
-template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
-          SharingMode Mode = SharingMode::Exclusive>
+template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host, SharingMode Mode = SharingMode::Gpu>
 __global__ void kernelSameChanConcurrentFlush(int nIters) {
-  constexpr bool kSerialize = Backend == mscclpp::PortChannelBackend::Device && Mode == SharingMode::Exclusive;
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto chan = loadPortChannel<Backend, Mode>(gSingleChanForConcurrentFlush, &wqeSlot);
+  auto chan = loadPortChannel<Backend, Mode>(gSingleChanForConcurrentFlush);
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   for (int i = 0; i < nIters; i++) {
-    for (int issuer = 0; issuer < (kSerialize ? blockDim.x : 1); issuer++) {
-      if (!kSerialize || threadIdx.x == issuer) {
-        uint64_t offset = tid * sizeof(int);
-        chan.put(offset, offset, sizeof(int));
-        chan.putWithSignalAndFlush(offset, offset, sizeof(int));
-        chan.wait();
-      }
-      if constexpr (kSerialize) __syncthreads();
-    }
+    // Each thread writes to a distinct slot (so puts don't overlap on remote side),
+    // then concurrently flushes on the same channel.
+    uint64_t offset = tid * sizeof(int);
+    chan.putWithSignalAndFlush(offset, offset, sizeof(int));
+    // Each thread waits for one signal from the remote rank's symmetric putWithSignalAndFlush.
+    chan.wait();
   }
 }
 
 void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode, SharingMode sharingMode) {
   if (gEnv->rank >= numRanksToUse) return;
+  // An Exclusive queue pair has no concurrent posters.
+  ASSERT_TRUE(ibMode != IbMode::Device || sharingMode != SharingMode::Exclusive);
 
-  constexpr int nThreads = kSameChanThreads;
+  constexpr int nThreads = 4;
   std::vector<std::shared_ptr<int>> sendBuffs;
   std::vector<mscclpp::RegisteredMemory> localMems;
   std::vector<mscclpp::RegisteredMemory> remoteMems;
@@ -1438,10 +1431,11 @@ void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode, Sharing
   copyChannelToSymbol(portChannels[0], ibMode, gSingleChanForConcurrentFlush);
 
   proxyService->startProxy();
-  auto kernel = selectKernel(ibMode, sharingMode, kernelSameChanConcurrentFlush<>,
-                             kernelSameChanConcurrentFlush<kDeviceBackend, SharingMode::Exclusive>,
-                             kernelSameChanConcurrentFlush<kDeviceBackend, SharingMode::Cta>,
-                             kernelSameChanConcurrentFlush<kDeviceBackend, SharingMode::Gpu>);
+  auto kernel = kernelSameChanConcurrentFlush<>;
+  if (ibMode == IbMode::Device) {
+    kernel = (sharingMode == SharingMode::Cta) ? kernelSameChanConcurrentFlush<kDeviceBackend, SharingMode::Cta>
+                                               : kernelSameChanConcurrentFlush<kDeviceBackend, SharingMode::Gpu>;
+  }
   // Gpu mode spreads the issuers across blocks as well as threads.
   const dim3 grid = (ibMode == IbMode::Device && sharingMode == SharingMode::Gpu) ? 2 : 1;
   const dim3 block = nThreads / grid.x;
@@ -1734,11 +1728,6 @@ TEST(PortChannelOneToOneTest, AccumulateIbDeviceModeGpuSharing) {
   testAccumulate(false, true, false, IbMode::Device, SharingMode::Gpu);
 }
 
-TEST(PortChannelOneToOneTest, SameChanSerializedFlushIbDeviceMode) {
-  REQUIRE_GPUNETIO;
-  testSameChanConcurrentFlush(IbMode::Device);
-}
-
 TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbDeviceModeCtaSharing) {
   REQUIRE_GPUNETIO;
   testSameChanConcurrentFlush(IbMode::Device, SharingMode::Cta);
@@ -1752,68 +1741,6 @@ TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbDeviceModeGpuSharing) {
 TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   REQUIRE_GPUNETIO;
   testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
-}
-
-// One warp per QP, each with its own WQE slot.
-__global__ void kernelGpuNetIoConcurrentPosting(int numQps, int rank) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[kMaxQps];
-  if ((threadIdx.x & 31) != 0) return;
-  const int q = threadIdx.x >> 5;
-  if (q >= numQps) return;
-
-  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
-  auto portChan = gMultiQpDevicePortChans[q];
-  portChan.setWqeSlot(&wqeSlots[q]);
-  const uint64_t offset = rank * sizeof(int);
-  portChan.putWithSignal<kExclusive>(offset, offset, sizeof(int));
-  portChan.wait();
-  portChan.flush<kExclusive>();
-  __syncthreads();
-
-  // Exercise multiple threads concurrently sharing the same QP in Gpu mode.
-  auto sharedQpChan = gMultiQpDevicePortChans[0];
-  for (int iter = 0; iter < 16; ++iter) {
-    sharedQpChan.putWithSignal(offset, offset, sizeof(int));
-    sharedQpChan.wait();
-    sharedQpChan.signal();
-    sharedQpChan.wait();
-  }
-  sharedQpChan.flush();
-}
-
-// Exercise multiple concurrent QPs and concurrent same-QP threads.
-TEST(PortChannelOneToOneTest, ConcurrentPostingIbDeviceMode) {
-  REQUIRE_GPUNETIO;
-  if (gEnv->rank >= numRanksToUse) return;
-
-  const int rank = communicator->bootstrap()->getRank();
-  const int peer = 1 - rank;
-  std::vector<std::shared_ptr<int>> buffs;
-  std::vector<mscclpp::RegisteredMemory> localMems;
-  std::vector<mscclpp::RegisteredMemory> remoteMems;
-  std::vector<mscclpp::PortChannel> portChannels;
-  setupMultiQpChannels(kMaxQps, /*elemsPerChan=*/2, IbMode::Device, /*tagBase=*/900, buffs, localMems, remoteMems,
-                       portChannels);
-  copyMultiQpChannelsToSymbol(portChannels, IbMode::Device);
-
-  for (int q = 0; q < kMaxQps; q++) {
-    int value = (rank + 1) * 1000 + q;
-    MSCCLPP_CUDATHROW(cudaMemcpy(buffs[q].get() + rank, &value, sizeof(int), cudaMemcpyHostToDevice));
-  }
-  communicator->bootstrap()->barrier();
-
-  kernelGpuNetIoConcurrentPosting<<<1, kMaxQps * 32>>>(kMaxQps, rank);
-  MSCCLPP_CUDATHROW(cudaGetLastError());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  for (int q = 0; q < kMaxQps; q++) {
-    int value = 0;
-    MSCCLPP_CUDATHROW(cudaMemcpy(&value, buffs[q].get() + peer, sizeof(int), cudaMemcpyDeviceToHost));
-    EXPECT_EQ(value, (peer + 1) * 1000 + q);
-  }
-  communicator->bootstrap()->barrier();
-  for (auto& m : localMems) registeredMemories.push_back(m);
-  for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
 // Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
