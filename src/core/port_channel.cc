@@ -3,6 +3,7 @@
 
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <utility>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -11,6 +12,16 @@
 #include "proxy_impl.hpp"
 
 namespace mscclpp {
+
+namespace {
+template <typename... Args>
+void warnNoexcept(Args&&... args) noexcept {
+  try {
+    WARN(CONN, std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+}  // namespace
 
 MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
@@ -43,6 +54,18 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   auto handlerFunc = [&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
   proxy_ = std::make_shared<Proxy>(handlerFunc, initFunc, fifoSize);
   proxy_->pimpl_->setProgressHandler([this]() { progressFlushes(); });
+}
+
+MSCCLPP_API_CPP ProxyService::~ProxyService() noexcept {
+  // Joining must succeed before any callback state can be destroyed.
+  proxy_->stop();
+  try {
+    drainPendingOperations();
+  } catch (const std::exception& e) {
+    warnNoexcept("ProxyService teardown could not drain pending operations: ", e.what());
+  } catch (...) {
+    warnNoexcept("ProxyService teardown could not drain pending operations: unknown error");
+  }
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -90,6 +113,10 @@ MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blo
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() {
   proxy_->stop();
+  drainPendingOperations();
+}
+
+void ProxyService::drainPendingOperations() {
   // Drain pending TriggerFlush operations. After a bounded loop, force-unblock any still-pending
   // GPU waiters with a sentinel write (UINT64_MAX > any FIFO position).
   for (int i = 0; i < 1000 && !pendingFlushPos_.empty(); ++i) {
