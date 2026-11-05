@@ -123,17 +123,17 @@ template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Workload& workload, void* recvBuffer,
                                              const DeviceContext* context, const TransportView& transport,
                                              uint32_t flag, int* shared) {
-  const int rank = context->rank_, ranks = context->numRanks_;
+  const int rank = context->rank_, nRanks = context->numRanks_;
   const int lane = getLaneId(), warp = threadIdx.x / WARP_SIZE;
-  const int localExperts = workload.numExperts_ / ranks;
+  const int localExperts = workload.numExperts_ / nRanks;
   auto* state = context->distributeControl_;
   auto* network = transport.portChannels_;
   const int gateway = context->gatewayRank_;
   const int qps = network->numQpsPerPeer;
   const int nTokensPerChunk = context->nTokensPerChunk_;
-  WorkspaceView workspace(context->workspace_, ranks, workload.numExperts_);
+  WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
 
-  for (int index = threadIdx.x; index <= ranks; index += blockDim.x) shared[index] = 0;
+  for (int index = threadIdx.x; index <= nRanks; index += blockDim.x) shared[index] = 0;
   __syncthreads();
   for (int token = warp; token < workload.numTokens_; token += DispatchNWarps) {
     const int expert = distributeExpert(routes, token, lane, workload);
@@ -141,20 +141,20 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     const bool leader = isFirstLaneForRank(destination, lane);
     if (destination >= 0 && leader) atomicAdd_block(shared + destination, 1);
     const bool remote = __any_sync(0xffffffff, destination >= 0 && !transport.isNvlinkPeer(destination));
-    if (lane == 0 && remote) atomicAdd_block(shared + ranks, 1);
+    if (lane == 0 && remote) atomicAdd_block(shared + nRanks, 1);
   }
   __syncthreads();
 
-  for (int peer = threadIdx.x; peer < ranks; peer += blockDim.x) {
+  for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
     state->sendHeader.counts[peer].write(shared[peer], flag);
   }
-  const int rows = shared[ranks];
+  const int rows = shared[nRanks];
   if (threadIdx.x == 0) state->sendHeader.rows.write(rows, flag);
   __syncthreads();
 
   // Warps after the QP posters publish NVLink counts and signals.
   const int firstPublisher = qps * WARP_SIZE;
-  if (threadIdx.x >= firstPublisher && threadIdx.x < firstPublisher + ranks) {
+  if (threadIdx.x >= firstPublisher && threadIdx.x < firstPublisher + nRanks) {
     const int destination = threadIdx.x - firstPublisher;
     const int count = shared[destination];
     if (transport.isNvlinkPeer(destination)) {
@@ -185,7 +185,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     if (queue == 0) {
       const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
       const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
-      const size_t headerBytes = HybridDispatchHeader::wireBytes(ranks);
+      const size_t headerBytes = HybridDispatchHeader::wireBytes(nRanks);
       handle.put<kExclusive>(recvHeader, sendHeader, headerBytes);
     }
     for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;

@@ -61,8 +61,8 @@ struct alignas(BufferAlignmentBytes) HybridDispatchHeader {
   mscclpp::LL8Packet rows;
   mscclpp::LL8Packet counts[MaxNumRanks];
 
-  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int ranks) {
-    return static_cast<size_t>(1 + ranks) * sizeof(mscclpp::LL8Packet);
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
+    return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
   }
 };
 static_assert(offsetof(HybridDispatchHeader, counts) == sizeof(mscclpp::LL8Packet));

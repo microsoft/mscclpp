@@ -134,12 +134,12 @@ template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const TransportView& transport,
                                             const WorkspaceView& workspace, uint32_t flag) {
   const int peer = threadIdx.x;
-  const int ranks = context->numRanks_;
+  const int nRanks = context->numRanks_;
   auto* network = transport.portChannels_;
-  const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(ranks, WARP_SIZE);
+  const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(nRanks, WARP_SIZE);
   __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
-  if (peer < ranks && transport.isNvlinkPeer(peer)) {
+  if (peer < nRanks && transport.isNvlinkPeer(peer)) {
     if (!transport.isSelf(peer)) {
       transport.baseMemoryChannels_[peer].signal();
       transport.baseMemoryChannels_[peer].wait(-1);
@@ -242,32 +242,14 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     const int worker = static_cast<int>(blockIdx.x) - 1;
     const int workers = static_cast<int>(gridDim.x) - 1;
     const int incoming = *context->aggregateIncomingRows_;
-    const int nTokensPerChunk = context->nTokensPerChunk_;
-    const int qps = transport.portChannels_->numQpsPerPeer;
     const float dequantScale =
         DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
     auto* sendBase = reinterpret_cast<WireElement*>(context->aggregateSendBuffer_);
     for (int row = worker; row < incoming; row += workers) {
-      if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {
-        const int previous = row / nTokensPerChunk - qps;
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + previous,
-                                                              mscclpp::memoryOrderAcquire) != nTokensPerChunk) {
-        }
-      }
-      __syncthreads();
       aggregateReduceRow<Mode, Hidden, DispatchType, true>(sendBase + static_cast<size_t>(row) * Hidden, expertOutput,
                                                            topkIndices, topkWeights, row, workload, context, transport,
                                                            workspace, flag, sharedMemory, phase, dequantScale);
     }
-    if (threadIdx.x == 0) {
-      for (int begin = 0; begin < incoming; begin += nTokensPerChunk) {
-        const int count = min(nTokensPerChunk, incoming - begin);
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + begin / nTokensPerChunk,
-                                                              mscclpp::memoryOrderAcquire) != count) {
-        }
-      }
-    }
-    __syncthreads();
     for (int row = worker; row < workload.numTokens_; row += workers) {
       aggregateReduceRow<Mode, Hidden, DispatchType, false>(
           context->aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput, topkIndices, topkWeights,
