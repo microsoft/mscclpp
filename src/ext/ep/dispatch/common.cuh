@@ -19,6 +19,7 @@ struct RankMajorRoute {
   int dstRank;
   int destinationSlot;
   bool isLeader;
+  int expertIdx = -1;
 };
 
 MSCCLPP_DEVICE_INLINE RankMajorRoute prepareRankMajorRoute(WorkspaceView& workspaceView,
@@ -28,20 +29,19 @@ MSCCLPP_DEVICE_INLINE RankMajorRoute prepareRankMajorRoute(WorkspaceView& worksp
   const int64_t rawExpertIdx = laneId < nTopk ? topkIndices[tokenIdx * nTopk + laneId] : -1;
   const int routedExpertIdx = rawExpertIdx >= 0 && rawExpertIdx < nExperts ? static_cast<int>(rawExpertIdx) : -1;
   const int dstRank = routedExpertIdx >= 0 ? routedExpertIdx / nLocalExperts : -1;
-  const bool firstLaneForRank = isFirstLaneForRank(dstRank, laneId);
+  const int firstLane = __ffs(__match_any_sync(0xffffffff, dstRank)) - 1;
+  const bool firstLaneForRank = firstLane == laneId;
   int destinationSlot = -1;
   if (dstRank >= 0 && firstLaneForRank) {
     destinationSlot = atomicAdd(workspaceView.dispatchRankPayloadSlots_ + dstRank, 1);
     EP_DEVICE_ASSERT(destinationSlot < maxTokensPerRank);
   }
 
-  const unsigned matchMask = __match_any_sync(0xffffffff, dstRank);
-  const int firstLane = __ffs(matchMask) - 1;
   destinationSlot = __shfl_sync(0xffffffff, destinationSlot, firstLane);
   if (laneId < nTopk) {
     workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId] = dstRank >= 0 ? destinationSlot : -1;
   }
-  return {dstRank, destinationSlot, firstLaneForRank};
+  return {dstRank, destinationSlot, firstLaneForRank, routedExpertIdx};
 }
 
 template <int Hidden, DispatchDataType DataType>
@@ -131,7 +131,6 @@ MSCCLPP_DEVICE_INLINE void writeRankMajorMetadataNvlink(const TransportView& tra
           routeRank == peerRank ? routeWeight : 0.0f;
     }
   }
-  __syncwarp();
 }
 #endif
 

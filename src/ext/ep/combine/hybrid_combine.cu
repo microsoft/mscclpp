@@ -134,12 +134,12 @@ template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const TransportView& transport,
                                             const WorkspaceView& workspace, uint32_t flag) {
   const int peer = threadIdx.x;
-  const int ranks = context->numRanks_;
+  const int nRanks = context->numRanks_;
   auto* network = transport.portChannels_;
-  const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(ranks, WARP_SIZE);
+  const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(nRanks, WARP_SIZE);
   __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
-  if (peer < ranks && transport.isNvlinkPeer(peer)) {
+  if (peer < nRanks && transport.isNvlinkPeer(peer)) {
     if (!transport.isSelf(peer)) {
       transport.baseMemoryChannels_[peer].signal();
       transport.baseMemoryChannels_[peer].wait(-1);
@@ -147,28 +147,42 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peer, flag,
                                                          mscclpp::memoryOrderRelease);
   }
-  if (queue < 0 || queue >= network->numQpsPerPeer || getLaneId() != 0) return;
-  const int rows = *context->aggregateIncomingRows_;
-  const int nTokensPerChunk = context->nTokensPerChunk_;
-  using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
-  constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
-  const int gateway = context->gatewayRank_;
-  auto handle = network->channel(gateway, queue);
-  handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
-  const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
-  const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
-  const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
-  auto& state = network->signalState(gateway, queue);
-  for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
-       chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
-    const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
-    handle.device_.putWithSignalAtAfter<kExclusive>(
-        handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
-        count * RowBytes, handle.dstMemory_, flagOffset, network->nextSignalToken(state, flagOffset, 1), [&] {
-          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
-                                                                mscclpp::memoryOrderAcquire) != count) {
-          }
-        });
+  if (queue >= 0 && queue < network->numQpsPerPeer && getLaneId() == 0) {
+    const int rows = *context->aggregateIncomingRows_;
+    const int nTokensPerChunk = context->nTokensPerChunk_;
+    using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
+    constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
+    const int gateway = context->gatewayRank_;
+    auto handle = network->channel(gateway, queue);
+    handle.setWqeSlot(&wqeSlots[queue]);
+    const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
+    const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
+    const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
+    for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
+         chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
+      const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
+      handle.device_.putWithAccumulateAfter<kExclusive>(
+          handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
+          count * RowBytes, handle.dstMemory_, flagOffset, 1, [&] {
+            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
+                                                                  mscclpp::memoryOrderAcquire) != count) {
+            }
+          });
+    }
+  }
+  for (int index = threadIdx.x; index < nRanks; index += blockDim.x) {
+    workspace.dispatchRankPayloadSlots_[index] = 0;
+    workspace.dispatchRankPayloadCompletions_[index] = 0;
+  }
+  const int dispatchCounters = 3 + configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
+  for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
+    context->distributeScratch_[index] = 0;
+  }
+  if (threadIdx.x == 0) {
+    auto* state = context->distributeControl_;
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) <
+           state->ackBase) {
+    }
   }
 }
 
@@ -277,28 +291,6 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
       aggregateFinalize<Hidden, DispatchType>(output, token, context);
     }
   }
-  workspace.combineSyncer_->sync(gridDim.x);
-  if (blockIdx.x == 0) {
-    const int chunks = configCellDiv(context->distributeScratch_[0], context->nTokensPerChunk_);
-    const int qps = transport.portChannels_->numQpsPerPeer;
-    for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
-      context->aggregateControl_->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
-    }
-    __syncthreads();
-    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
-      workspace.dispatchRankPayloadSlots_[peer] = 0;
-      workspace.dispatchRankPayloadCompletions_[peer] = 0;
-      workspace.combineRankReadyFlags_[peer] = 0;
-    }
-    const int dispatchCounters = 3 + configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
-    for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
-      context->distributeScratch_[index] = 0;
-    }
-    const int combineCounters = configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
-    for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
-      context->aggregateChunkReady_[index] = 0;
-    }
-  }
 }
 
 #endif
@@ -315,20 +307,6 @@ __global__ __launch_bounds__(CombineNThreads,
                 (DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC)) {
     WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
-    if (blockIdx.x == 0) {
-      if (threadIdx.x == 0) {
-        auto* control = context->aggregateControl_;
-        if (flag == 0 || control->lastCombineEpoch == flag) {
-          printf(
-              "[EP] hybrid Combine requires one fresh Dispatch per Combine, including graph replays "
-              "(rank=%d epoch=%u last=%u)\n",
-              context->rank_, flag, control->lastCombineEpoch);
-          __trap();
-        }
-        control->lastCombineEpoch = flag;
-      }
-      __syncthreads();
-    }
     combineBody<Mode, Hidden, DispatchType>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
   }
 #endif

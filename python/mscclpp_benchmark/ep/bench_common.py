@@ -162,3 +162,24 @@ def validate_combine_output_mpi(actual, expected, comm, *, exact):
         local_close = int(torch.allclose(actual.float(), expected.float(), rtol=1e-2, atol=1e-2))
         assert comm.allreduce(local_close, op=MPI.MIN) == 1, f"LL combine mismatch; max diff={global_diff}"
     return global_diff
+
+
+def rank_major_unit_output(topk_idx, num_local_experts, hidden):
+    """Reference for fixed unit-valued, already-reduced rank-local expert outputs."""
+    peers = torch.where(topk_idx >= 0, topk_idx // num_local_experts, -1)
+    count = torch.zeros(topk_idx.shape[0], dtype=torch.float32, device=topk_idx.device)
+    for lane in range(topk_idx.shape[1]):
+        first = peers[:, lane] >= 0
+        for previous in range(lane):
+            first &= peers[:, previous] != peers[:, lane]
+        count += first
+    return count[:, None].expand(-1, hidden).to(torch.bfloat16)
+
+
+def validate_rank_major_counts(counts, topk_idx, num_local_experts, comm):
+    """Check all source-rank counts against independently gathered original routes."""
+    routes = comm.allgather(topk_idx.cpu())
+    expected = [int(((ids >= 0) & (ids // num_local_experts == comm.rank)).any(dim=-1).sum()) for ids in routes]
+    valid = counts.cpu().tolist() == expected
+    if comm.allreduce(int(valid), op=MPI.MIN) != 1:
+        raise RuntimeError("Rank-major dispatch source counts do not match the original routes")

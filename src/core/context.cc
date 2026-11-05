@@ -62,16 +62,6 @@ IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   return it->second.get();
 }
 
-std::shared_ptr<GpuNetIoContext> Context::Impl::getGpuNetIoContext(Transport ibTransport) {
-  auto it = gpuNetIoContexts_.find(ibTransport);
-  if (it == gpuNetIoContexts_.end()) {
-    auto ctx = std::make_shared<GpuNetIoContext>(*getIbContext(ibTransport));
-    gpuNetIoContexts_[ibTransport] = ctx;
-    return ctx;
-  }
-  return it->second;
-}
-
 std::shared_ptr<uint64_t> Context::Impl::getToken() {
   if (!tokenPool_) {
     tokenPool_ = std::make_shared<TokenPool>(maxNumTokens_);

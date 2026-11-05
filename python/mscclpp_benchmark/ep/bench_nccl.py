@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import torch
 
-from .bench_common import sum_matching_kernel_us
+from .bench_common import (
+    sum_matching_kernel_us,
+    rank_major_unit_output,
+    validate_combine_output_mpi,
+    validate_rank_major_counts,
+)
 
 
 def parse_kineto_kernels(key_averages):
@@ -29,6 +34,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     import nccl.ep as nccl_ep
 
     x, topk_idx, topk_weights, _ = inputs
+    if args.combine_mode == "direct_send" and args.ep_layout == "rank_major":
+        raise ValueError("NCCL-EP rank_major combines pre-reduced rank-local outputs; use rank_local_reduce")
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
@@ -83,9 +90,19 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         # HT expert-major counts expanded expert slots; HT flat counts unique received tokens.
         max_recv_tokens_per_rank=max_recv_tokens,
         max_token_bytes=hidden * 2,  # BF16
+        num_qp_per_rank=args.qps_per_peer or 0,
+        max_num_sms=args.num_sms,
         alloc=nccl_ep.AllocConfig(),  # default cudaMalloc/cudaFree
     )
     ep_group = nccl_ep.Group.create(ncomm, config)
+    lsa_teams = ncomm.n_lsa_teams
+    gin_type = ncomm.gin_type
+    if rank == 0:
+        print(
+            f"[cfg] nccl lsa_teams={lsa_teams} gin_type={gin_type} "
+            f"ranks_per_lsa={num_ranks // lsa_teams} qps_per_rank={config.num_qp_per_rank or 'AUTO'}",
+            flush=True,
+        )
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
@@ -121,7 +138,12 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     else:
         recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
-    combine_in = torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda").normal_(0.0, 0.1)
+    unit_aggregation = args.mode == "latency" and nccl_layout == nccl_ep.Layout.RANK_MAJOR and not use_fp8
+    combine_in = torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda")
+    if unit_aggregation:
+        combine_in.fill_(1)
+    else:
+        combine_in.normal_(0.0, 0.1)
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     dispatch_x = x
@@ -171,7 +193,10 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
     dispatch_config = nccl_ep.DispatchConfig()
     combine_inputs = nccl_ep.CombineInputs(tokens=combine_in_t)
-    combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
+    combine_outputs = nccl_ep.CombineOutputs(
+        tokens=out_t,
+        topk_weights=topk_weights_t if args.mode == "latency" and nccl_layout == nccl_ep.Layout.EXPERT_MAJOR else None,
+    )
     combine_config = nccl_ep.CombineConfig()
 
     def _dispatch(stream):
@@ -199,6 +224,27 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(_dout):
         _combine(torch.cuda.current_stream().cuda_stream)
+
+    def validate_timed(replay):
+        torch.cuda.synchronize()
+        validate_rank_major_counts(recv_count, topk_idx, num_local_experts, comm)
+        expected = rank_major_unit_output(topk_idx, num_local_experts, hidden)
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        combine_in.fill_(2)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected * 2, comm, exact=True)
+        combine_in.fill_(1)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        if rank == 0:
+            print("[validate] nccl timed output and alternating expert-output replay OK", flush=True)
+
+    if args.validate and unit_aggregation:
+        dispatch_fn()
+        combine_fn(None)
+        validate_timed(lambda: combine_fn(dispatch_fn()))
 
     # Capturable at any scale; hand the same capture-safe ops to the harness, which
     # owns the single-graph capture. When captured, main() times the paired kineto
@@ -230,6 +276,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "validate": validate_timed if unit_aggregation else None,
         "summary_meta": {
             "algorithm": algorithm_name,
             "layout": effective_layout,
@@ -239,5 +286,10 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
                 "direct_send" if args.mode == "latency" and effective_layout == "expert_major" else "rank_local_reduce"
             ),
             "execution": "cuda_graph" if graph_spec is not None else "eager",
+            "lsa_teams": lsa_teams,
+            "ranks_per_lsa": num_ranks // lsa_teams,
+            "gin_type": int(gin_type),
+            "qps_per_rank": config.num_qp_per_rank,
+            "expert_input": "unit-valued, prepared outside timing" if unit_aggregation else "fixed synthetic",
         },
     }

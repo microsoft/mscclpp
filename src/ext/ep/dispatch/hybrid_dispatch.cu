@@ -29,7 +29,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   const int producers = static_cast<int>(gridDim.x) - firstProducer;
   const int warp = threadIdx.x / WARP_SIZE;
   const int lane = getLaneId();
-  if (producer < 0 || warp >= DispatchMaxNWarpGroups) return;
+  if (warp >= DispatchMaxNWarpGroups) return;
 
   using ElementType = DispatchElementType<DataType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
@@ -69,7 +69,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     }
     const RankMajorRoute route = prepareRankMajorRoute(workspace, routes, token, topk, localExperts,
                                                        workload.maxTokensPerRank_, lane, workload.numExperts_);
-    const int expert = distributeExpert(routes, token, lane, workload);
+    const int expert = route.expertIdx;
     const float weight = expert >= 0 ? (weights == nullptr ? 1.0f : weights[token * topk + lane]) : 0.0f;
     const bool remote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
     const bool hasRemote = __any_sync(0xffffffff, remote);
@@ -108,12 +108,14 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
                                                  staged, localDst);
     }
     const unsigned int localLeaders = __ballot_sync(0xffffffff, localDst >= 0);
+    const int outputExpert = workload.emitLocalExpertIds_ && expert >= 0 ? expert % localExperts : expert;
     writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, transport.rank_, route.dstRank,
-                                 route.destinationSlot, expert, weight, localLeaders, topk, workload.maxTokensPerRank_,
-                                 workload.invalidTokenExpertId_);
+                                 route.destinationSlot, outputExpert, weight, localLeaders, topk,
+                                 workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
     completeRankMajorTokenStore(workspace, localDst);
     __syncwarp();
   }
+  if (!quantizeInput && lane == 0) barrier.invalidate();
 }
 
 // Control CTA (block 0): count routes, publish NVLink signals, post RDMA header + chunks to the
@@ -122,17 +124,17 @@ template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Workload& workload, void* recvBuffer,
                                              const DeviceContext* context, const TransportView& transport,
                                              uint32_t flag, int* shared) {
-  const int rank = context->rank_, ranks = context->numRanks_;
+  const int rank = context->rank_, nRanks = context->numRanks_;
   const int lane = getLaneId(), warp = threadIdx.x / WARP_SIZE;
-  const int localExperts = workload.numExperts_ / ranks;
+  const int localExperts = workload.numExperts_ / nRanks;
   auto* state = context->distributeControl_;
   auto* network = transport.portChannels_;
   const int gateway = context->gatewayRank_;
   const int qps = network->numQpsPerPeer;
   const int nTokensPerChunk = context->nTokensPerChunk_;
-  WorkspaceView workspace(context->workspace_, ranks, workload.numExperts_);
+  WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
 
-  for (int index = threadIdx.x; index <= ranks; index += blockDim.x) shared[index] = 0;
+  for (int index = threadIdx.x; index <= nRanks; index += blockDim.x) shared[index] = 0;
   __syncthreads();
   for (int token = warp; token < workload.numTokens_; token += DispatchNWarps) {
     const int expert = distributeExpert(routes, token, lane, workload);
@@ -140,20 +142,20 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     const bool leader = isFirstLaneForRank(destination, lane);
     if (destination >= 0 && leader) atomicAdd_block(shared + destination, 1);
     const bool remote = __any_sync(0xffffffff, destination >= 0 && !transport.isNvlinkPeer(destination));
-    if (lane == 0 && remote) atomicAdd_block(shared + ranks, 1);
+    if (lane == 0 && remote) atomicAdd_block(shared + nRanks, 1);
   }
   __syncthreads();
 
-  for (int peer = threadIdx.x; peer < ranks; peer += blockDim.x) {
+  for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
     state->sendHeader.counts[peer].write(shared[peer], flag);
   }
-  const int rows = shared[ranks];
+  const int rows = shared[nRanks];
   if (threadIdx.x == 0) state->sendHeader.rows.write(rows, flag);
   __syncthreads();
 
   // Warps after the QP posters publish NVLink counts and signals.
   const int firstPublisher = qps * WARP_SIZE;
-  if (threadIdx.x >= firstPublisher && threadIdx.x < firstPublisher + ranks) {
+  if (threadIdx.x >= firstPublisher && threadIdx.x < firstPublisher + nRanks) {
     const int destination = threadIdx.x - firstPublisher;
     const int count = shared[destination];
     if (transport.isNvlinkPeer(destination)) {
@@ -177,47 +179,48 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   if (warp < qps && lane == 0) {
     const int queue = warp;
     auto handle = network->channel(gateway, queue);
-    handle.setWqeSlot<kExclusive>(&wqeSlots[queue]);
+    handle.setWqeSlot(&wqeSlots[queue]);
     const uint64_t dstOffset = transport.symmetricOffset(context->distributeRecvBuffer_);
     const uint64_t srcOffset = transport.symmetricOffset(context->distributeSendBuffer_);
     const uint64_t flagOffset = transport.symmetricOffset(state->chunks + queue);
-    auto& sequence = network->signalState(gateway, queue);
     if (queue == 0) {
       const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
       const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
-      const size_t headerBytes = HybridDispatchHeader::wireBytes(ranks);
+      const size_t headerBytes = HybridDispatchHeader::wireBytes(nRanks);
       handle.put<kExclusive>(recvHeader, sendHeader, headerBytes);
     }
     for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
          chunk += qps, begin += qps * nTokensPerChunk) {
       const int count = min(nTokensPerChunk, rows - begin);
-      handle.device_.putWithSignalAtAfter<kExclusive>(
+      handle.device_.putWithAccumulateAfter<kExclusive>(
           handle.dstMemory_, dstOffset + begin * stride, handle.srcMemory_, srcOffset + begin * stride, count * stride,
-          handle.dstMemory_, flagOffset, network->nextSignalToken(sequence, flagOffset, 1), [&] {
+          handle.dstMemory_, flagOffset, 1, [&] {
             while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
                        context->distributeScratch_ + DistributeScratchCounters + chunk, mscclpp::memoryOrderAcquire) !=
                    count) {
             }
           });
     }
-  }
-  __syncthreads();
-
-  if (threadIdx.x == 0) {
-    const auto offset = transport.symmetricOffset(&state->ack);
-    auto channel = network->channel(gateway, 0);
-    channel.setWqeSlot<kExclusive>(&wqeSlots[0]);
-    auto& sequence = network->signalState(gateway, 0);
-    channel.device_.signalAtAfter<kExclusive>(
-        channel.dstMemory_, offset, network->nextSignalToken(sequence, offset, 1), [&] {
-          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
-                                                                mscclpp::memoryOrderAcquire) != 1) {
-          }
-        });
-    const uint64_t ack = state->ackBase + 1;
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) < ack) {
+    if (queue == 0) {
+      const auto ackOffset = transport.symmetricOffset(&state->ack);
+      handle.device_.accumulateAfter<kExclusive>(handle.dstMemory_, ackOffset, 1, [&] {
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
+                                                              mscclpp::memoryOrderAcquire) != 1) {
+        }
+      });
+      ++state->ackBase;
     }
-    state->ackBase = ack;
+  }
+  const int sentChunks = configCellDiv(rows, nTokensPerChunk);
+  for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
+    auto* aggregateControl = context->aggregateControl_;
+    const uint64_t base = aggregateControl->nextChunkBase[queue];
+    aggregateControl->chunkBase[queue] = base;
+    aggregateControl->nextChunkBase[queue] = base + (sentChunks + qps - 1 - queue) / qps;
+  }
+  const int combineCounters = configCellDiv(context->distributeCapacity_, nTokensPerChunk);
+  for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
+    context->aggregateChunkReady_[index] = 0;
   }
 }
 
@@ -238,25 +241,7 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   const int qps = transport.portChannels_->numQpsPerPeer;
   auto* state = context->distributeControl_;
 
-  if (threadIdx.x == 0) {
-    shared[0] = state->recvHeader.rows.read(flag, -1);
-    if (forward == 0) {
-      *context->aggregateIncomingRows_ = shared[0];
-    }
-  }
-  __syncthreads();
-  const int rows = shared[0];
-  if (forward == 0) {
-    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
-      if (transport.isNvlinkPeer(peer)) {
-        auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, peer));
-        counts[source].write(state->recvHeader.counts[peer].read(flag, -1), flag);
-      }
-    }
-  }
-
   using ElementType = DispatchElementType<DataType>;
-  const int chunks = configCellDiv(rows, nTokensPerChunk);
   const size_t stride = HybridDispatchRow::stride(Hidden, topk, sizeof(ElementType));
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
@@ -265,7 +250,23 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
                                                            ForwardWarps * payloadStride);
   if (warp < ForwardWarps && lane == 0) barriers[warp].init();
+  if (threadIdx.x == 0) {
+    shared[0] = state->recvHeader.rows.read(flag, -1);
+    if (forward == 0) {
+      *context->aggregateIncomingRows_ = shared[0];
+    }
+  }
+  if (forward == 0) {
+    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
+      if (transport.isNvlinkPeer(peer)) {
+        auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, peer));
+        counts[source].write(state->recvHeader.counts[peer].read(flag, -1), flag);
+      }
+    }
+  }
   __syncthreads();
+  const int rows = shared[0];
+  const int chunks = configCellDiv(rows, nTokensPerChunk);
 
   uint32_t phase = 0;
   if (warp < ForwardWarps) {
@@ -310,7 +311,8 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
         mscclpp::bulkStore(destinationBuffer + index * HiddenBytes, staged, HiddenBytes);
         mscclpp::bulkStoreCommit();
       }
-      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, source, destination, slot, expert, weight,
+      const int outputExpert = workload.emitLocalExpertIds_ && expert >= 0 ? expert % localExperts : expert;
+      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, source, destination, slot, outputExpert, weight,
                                    leaders, topk, workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
       if (localLeader) mscclpp::bulkStoreWait();
       __syncwarp();
@@ -328,7 +330,6 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
     for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
       state->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
     }
-    __syncthreads();
     if (threadIdx.x == configAlign(context->numRanks_, WARP_SIZE)) {
       mscclpp::atomicStore<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2, 1, mscclpp::memoryOrderRelease);
     }
@@ -361,7 +362,8 @@ __global__ __launch_bounds__(DispatchNThreads,
   if (blockIdx.x == 0) {
     distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, flag, shared);
   } else {
-    if (blockIdx.x > HybridForwardBlocks) {
+    const int producer = static_cast<int>(blockIdx.x) - (HybridForwardBlocks + 1);
+    if (producer >= 0 && producer * DispatchMaxNWarpGroups < workload.numTokens_) {
       distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
                                           transport, shared);
       __syncthreads();

@@ -43,21 +43,21 @@ auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB
 communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
-auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connection);
+auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
 Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
 default without requiring shared memory. To enable BlueFlame submission for transfers up to `device_.blueFlameLimit`
-(default: 4096 bytes), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
+(default: 512 KiB), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
   __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
   if (threadIdx.x != 0) return;
   auto portChan = channel;
-  portChan.setWqeSlot<mscclpp::PortChannelSharingMode::Exclusive>(&wqeSlot);
+  portChan.setWqeSlot(&wqeSlot);
   portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
   portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
 }
@@ -71,13 +71,18 @@ or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular 
 staging.
 
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
-behave as for proxy-backed channels. The signal of `putWithSignal` is posted on the same queue pair after the payload, so
-the remote side observes the data before the semaphore update. `flush` waits for the local completion of all work
-requests posted on the queue pair.
+behave as for proxy-backed channels. `flush` waits for the local completion of all work requests posted on the queue
+pair.
+
+`signal` and `accumulate` use an RDMA atomic fetch-and-add, which allows any number of writers to the same word.
+Device-mode channels also provide `putWithAccumulate`, a put followed by an accumulate, posted together;
+`putWithSignal` is `putWithAccumulate` on the semaphore. The responder applies an atomic only after placing the data
+of earlier RDMA writes on the same queue pair, so observing the updated word guarantees that those writes are visible.
+A plain RDMA write gives no such guarantee, even with strong ordering, because packets may be placed out of order at
+the responder.
 
 Only `port` and `gidIndex` of `EndpointConfig::Ib` are used in this mode; queue sizes are chosen by the backend.
-Small `put` and `putWithSignal` payloads, as well as semaphore signals, are embedded in the work request rather than
-read separately by the NIC.
+Small `put` and `putWithSignal` payloads are embedded in the work request rather than read separately by the NIC.
 
 Callers must make source data ready before `put` or `putWithSignal`, synchronizing with its producers as needed.
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
@@ -90,7 +95,7 @@ devices via `ibverbs` when `MSCCLPP_HCA_DEVICES` is unset. If a rank's process s
 single HCA name (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
 
 For latency `RANK_MAJOR` EP, `qpsPerPeer` (`qps_per_peer` in `MoECommunicatorConfig`) selects the number of QPs created
-per peer (1 or 4, default 1). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct
+per peer (1 or 4, default 4). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct
 combine uses one payload QP per peer.
 
 ### Hybrid dispatch
@@ -111,7 +116,7 @@ A self-validating LL header carries fresh destination counts, which the gateway 
 The row count and every destination count each carry their own epoch in an `LL8Packet`; only the active
 `(1 + world_size) * sizeof(LL8Packet)` bytes are sent by one plain RDMA write. Every consumed word validates its own
 epoch, so no separate header-ready signal is needed under the existing LL eight-byte IB/RDMA atomicity contract.
-Header arrival does **not** establish payload readiness: every payload chunk still has its strong-ordered signal,
+Header arrival does **not** establish payload readiness: every payload chunk still has its RDMA atomic signal,
 including on relaxed-ordering registered memory.
 Dedicated gateway CTAs and completed producer CTAs forward arrived rows over NVLink while later chunks are still
 transferring. Reused producer CTAs retain two independent warp/TMA row slots and join the same completion counter
@@ -190,23 +195,20 @@ Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `Po
 (operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
-is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or increase
-to use BlueFlame for larger transfers). Payloads above `blueFlameLimit`—or any request when no WQE slot is bound—write
-their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's `submit_db` path.
+is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust
+it to change which transfer sizes use BlueFlame). Payloads above `blueFlameLimit`, or any request when no WQE slot is
+bound, write their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's
+`submit_db` path.
+Only `PortChannelSharingMode::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work
+request directly only if all earlier ones were already submitted, which threads sharing a queue pair cannot ensure
+without serializing each other, so `Cta` and `Gpu` operations always ring the regular doorbell.
 
-### Caller-owned WQE slot and optional lock
+### Caller-owned WQE slot
 
-`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Call
-`setWqeSlot<Mode>(&wqeSlot, &wqeSlotLock, reuseSharedWqe)` on a local copy of the handle:
-- In `PortChannelSharingMode::Exclusive` with `reuseSharedWqe == false`, each slot is owned exclusively by one posting
-  thread at a time without locking (`wqeSlotLock` may be omitted).
-- In `Cta`/`Gpu` sharing modes or when `reuseSharedWqe == true`, pass a zero-initialized `uint32_t` spinlock in shared
-  or device memory (`&wqeSlotLock`); if `wqeSlotLock` is null in those modes, `setWqeSlot` leaves BlueFlame disabled and
-  falls back to regular doorbell submission.
-
-BlueFlame submission waits for async consumption of the scratch source before each posting call returns; one thread can
-therefore reuse one entry for sequential operations across different QPs without locking. There is no internal shared
-memory allocation or fixed connection-slot cap in MSCCL++.
+`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Bind it with
+`setWqeSlot(&wqeSlot)` on a local copy of the handle. Only one thread may post through a slot at a time.
+BlueFlame submission waits for async consumption of the slot before each posting call returns; one thread can
+therefore reuse one slot for sequential operations across different QPs.
 
 ## Limitations
 

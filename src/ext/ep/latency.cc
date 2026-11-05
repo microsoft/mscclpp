@@ -60,7 +60,6 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   CudaDeviceGuard deviceGuard(deviceId_);
   portChannelContext_.reset();
-  portChannelSignalStates_.reset();
   portChannelHandles_.reset();
   portChannels_.clear();
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
@@ -158,7 +157,7 @@ void LatencyRuntimeContext::initialize() {
       peerBufferMemories_[r] = remoteFutures[r].get();
       for (int q = 0; q < qpsPerPeer_; ++q) {
         auto semaphore =
-            std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, ibConnectionFutures[r][q].get());
+            std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, ibConnectionFutures[r][q].get());
         portChannels_.emplace_back(semaphore, peerBufferMemories_[r], ibLocalMemory_);
         portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] =
             portChannels_.back().deviceHandle<mscclpp::PortChannelBackend::Device>();
@@ -195,9 +194,7 @@ void LatencyRuntimeContext::initialize() {
     portChannelHandles_ = mscclpp::GpuBuffer<PortChannelDeviceHandle>(portChannelHandles.size()).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceHandle>(portChannelHandles_.get(), portChannelHandles.data(),
                                                 portChannelHandles.size(), cudaMemcpyHostToDevice);
-    portChannelSignalStates_ = mscclpp::detail::gpuCallocShared<PortChannelSignalState>(portChannelHandles.size());
-    const PortChannelDeviceContext portChannelContext{portChannelHandles_.get(), portChannelSignalStates_.get(),
-                                                      numRanks_, qpsPerPeer_};
+    const PortChannelDeviceContext portChannelContext{portChannelHandles_.get(), numRanks_, qpsPerPeer_};
     portChannelContext_ = mscclpp::GpuBuffer<PortChannelDeviceContext>(1).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceContext>(portChannelContext_.get(), &portChannelContext, 1,
                                                  cudaMemcpyHostToDevice);
@@ -326,9 +323,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   if (context.isHybrid_) {
     if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC) {
       EP_THROW("Hybrid latency dispatch supports BF16 and FP8_E4M3_STATIC only");
-    }
-    if (emitLocalExpertIds) {
-      EP_THROW("Local expert IDs are unsupported by hybrid latency dispatch");
     }
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);

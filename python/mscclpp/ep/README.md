@@ -140,9 +140,10 @@ means one per valid route. Routing values are not read or validated on the host.
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
 `weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global by
 default, with `invalid_token_expert_id` (default `num_experts`) marking dropped
-or non-local entries. Latency RANK_MAJOR can set `emit_local_expert_ids=True`
-to emit valid IDs in `[0, num_local_experts)` instead; its default invalid ID is
-`-1`. Throughput IDs are local to the destination rank, with `-1` marking
+or non-local entries. Latency RANK_MAJOR, including hybrid inter-domain dispatch,
+can set `emit_local_expert_ids=True` to emit valid IDs in
+`[0, num_local_experts)` instead; its default invalid ID is `-1`.
+Input routing IDs remain global. Throughput IDs are local to the destination rank, with `-1` marking
 invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
@@ -335,8 +336,28 @@ DeepEP and the NCCL profiling barrier require `MASTER_ADDR` on rank 0. For
 multi-node runs, set it to rank 0's IP or hostname reachable by every rank
 instead of a loopback address. `MASTER_PORT` defaults to `29700`.
 
-The MSCCL++ backend still requires SM90+ and one IPC domain; this benchmark
-does not add inter-domain transport support.
+The MSCCL++ backend requires SM90+. Hybrid latency `rank_major` also supports
+two equal NVLink/IPC domains connected by GPUNetIO. Set `MSCCLPP_HCA_DEVICES`
+to the GPU-index-ordered HCA list for the hosts; NCCL-EP uses its own
+`NCCL_IB_HCA`/GIN configuration. The benchmark reports the discovered IPC
+domain size for MSCCL++ and the LSA-team count and GIN type for NCCL.
+It does not emulate topology or override the NIC mapping automatically.
+
+For example, on 32 ranks split into two physical NVL16 domains, compare BF16
+rank-local aggregation with 16 experts per rank:
+
+```bash
+mpirun -np 32 python -m mscclpp_benchmark.ep.bench \
+    --backend mscclpp --mode latency --ep-layout rank_major \
+    --combine-mode rank_local_reduce --dispatch-dtype bf16 --combine-dtype bf16 \
+    -t 64 -d 4096 -k 8 -e 512 --qps-per-peer 4 --n-tokens-per-chunk 16 \
+    --cuda-graph --iters-per-graph 50 --validate
+```
+
+Run the same command with `--backend nccl` for NCCL-EP. `--qps-per-peer` also
+sets NCCL-EP's QPs per rank; `--n-tokens-per-chunk` is MSCCL++-specific.
+Omitting these options preserves each backend's defaults. NCCL-EP rank-major
+supports rank-local reduction, not MSCCL++'s per-top-k direct-send input layout.
 
 Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
 `token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
@@ -360,10 +381,16 @@ static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
 default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`
 selects MSCCL++ latency `rank_major` combine input (`bf16` default or
 `fp8_e4m3_static`). `--validate` checks MSCCL++'s identity-expert combine
-result before timing.
+result before timing. BF16 latency rank-major runs additionally check source
+counts and the timed synthetic aggregation on both NCCL-EP and MSCCL++,
+including graph replay after changing the expert-output buffer.
 
 CUDA events measure paired dispatch/combine, excluding input generation and
-synthetic expert-output construction. NCCL-EP uses a prebuilt routing handle;
+synthetic expert-output construction. BF16 latency rank-major timings reuse
+fixed unit-valued expert-output rows: local-reduce sums one partial per distinct
+destination rank, while direct-send applies the original per-slot routing weights.
+This is communication-only timing, not an end-to-end weighted MoE computation.
+NCCL-EP uses a prebuilt routing handle;
 throughput MSCCL++ reuses a fixed-routing prepare handle. DeepEP eager dispatch
 recomputes layout with CPU count synchronization; its graph path uses cached
 routing. These API costs are part of the measured dispatch time. The first timed
