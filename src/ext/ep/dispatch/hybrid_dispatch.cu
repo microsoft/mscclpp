@@ -115,6 +115,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     completeRankMajorTokenStore(workspace, localDst);
     __syncwarp();
   }
+  if (!quantizeInput && lane == 0) barrier.invalidate();
 }
 
 // Control CTA (block 0): count routes, publish NVLink signals, post RDMA header + chunks to the
@@ -361,7 +362,8 @@ __global__ __launch_bounds__(DispatchNThreads,
   if (blockIdx.x == 0) {
     distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, flag, shared);
   } else {
-    if (blockIdx.x > HybridForwardBlocks) {
+    const int producer = static_cast<int>(blockIdx.x) - (HybridForwardBlocks + 1);
+    if (producer >= 0 && producer * DispatchMaxNWarpGroups < workload.numTokens_) {
       distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
                                           transport, shared);
       __syncthreads();
