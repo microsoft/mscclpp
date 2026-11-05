@@ -91,8 +91,7 @@ def launch_kernel(my_rank: int, nranks: int, simple_channels: dict[int, PortChan
 ```
 
 The final argument to `Kernel.launch_kernel()` accepts an integer CUDA/HIP stream
-pointer, a PyTorch stream, or `None` for the default stream. CuPy stream objects
-must be passed as their integer `.ptr` value instead.
+pointer, a PyTorch stream, or `None` for the default stream.
 
 Kernel loading and launching use `cuda-bindings` on CUDA and `hip-python` on ROCm,
 selected by `mscclpp._mscclpp.is_hip`. CUDA initializes the current device's runtime
@@ -107,12 +106,32 @@ to upload data before passing it to a kernel that expects device memory.
 
 `CommGroup` memory registration uses the same pointer extraction. NumPy and
 GPU arrays must also expose `size` and `itemsize` for calculating the byte count;
-PyTorch tensors use `numel()` and `element_size()`. The communication wrapper's
-implementation does not import CuPy.
+PyTorch tensors use `numel()` and `element_size()`.
+
+The test kernel is defined in `test.cu` as follows:
+```cuda
+#include <mscclpp/packet_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
+
+// be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
+extern "C" __global__ void __launch_bounds__(1024, 1)
+    port_channel(mscclpp::PortChannelDeviceHandle* channels, int my_rank, int nranks,
+                         int num_elements) {
+    int tid = threadIdx.x;
+    int nthreads = blockDim.x;
+    uint64_t size_per_rank = (num_elements * sizeof(int)) / nranks;
+    uint64_t my_offset = size_per_rank * my_rank;
+    __syncthreads();
+    if (tid < nranks && tid != my_rank) {
+      channels[tid].putWithSignalAndFlush(my_offset, my_offset, size_per_rank);
+      channels[tid].wait();
+    }
+}
+```
 
 ### Native GPU buffers
 
-`GpuBuffer` owns a native MSCCL++ allocation rather than a CuPy array. It exposes
+`GpuBuffer` owns a native MSCCL++ allocation. It exposes
 `shape`, `dtype`, `size`, `itemsize`, `nbytes`, `strides`, `device_id`, and `data.ptr`.
 `allocation_size` is the actual allocation extent (which may exceed `nbytes` for
 NVLS alignment); bind an unsliced buffer's pointer and allocation size to NVLS.
@@ -174,23 +193,3 @@ for dependent operations, or establish ordering with events/synchronization.
 Keep the tensor or buffer alive until asynchronous operations using its pointer
 have completed.
 
-The test kernel is defined in `test.cu` as follows:
-```cuda
-#include <mscclpp/packet_device.hpp>
-#include <mscclpp/port_channel_device.hpp>
-
-// be careful about using channels[my_rank] as it is inavlie and it is there just for simplicity of indexing
-extern "C" __global__ void __launch_bounds__(1024, 1)
-    port_channel(mscclpp::PortChannelDeviceHandle* channels, int my_rank, int nranks,
-                         int num_elements) {
-    int tid = threadIdx.x;
-    int nthreads = blockDim.x;
-    uint64_t size_per_rank = (num_elements * sizeof(int)) / nranks;
-    uint64_t my_offset = size_per_rank * my_rank;
-    __syncthreads();
-    if (tid < nranks && tid != my_rank) {
-      channels[tid].putWithSignalAndFlush(my_offset, my_offset, size_per_rank);
-      channels[tid].wait();
-    }
-}
-```
