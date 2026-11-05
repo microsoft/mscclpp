@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Routed-only N128 native MegaMoE benchmark; launch with torchrun (see README)."""
+"""Native routed and optional overlapped-shared MegaMoE benchmark; launch with torchrun."""
 
 import argparse
 from dataclasses import replace
@@ -18,6 +18,16 @@ ROUTING_PATTERNS = (
     "hot_experts",
     "lognormal",
 )
+
+
+def _latency_summary(reports, key, iterations):
+    slowest = [max(report[key][sample] for report in reports) for sample in range(iterations)]
+    return {
+        "median": statistics.median(slowest),
+        "mean": statistics.mean(slowest),
+        "minimum": min(slowest),
+        "maximum": max(slowest),
+    }
 
 
 def _scale_counts(weights, total_routes, max_per_expert):
@@ -130,7 +140,11 @@ def build_expert_popularity(config, pattern, zipf_alpha, seed, *, lognormal_sigm
 def _build_global_expert_counts(config, pattern, zipf_alpha, seed, *, lognormal_sigma=0.85):
     total_routes = config.world_size * config.max_tokens * config.top_k
     weights = build_expert_popularity(
-        config, pattern, zipf_alpha, seed, lognormal_sigma=lognormal_sigma,
+        config,
+        pattern,
+        zipf_alpha,
+        seed,
+        lognormal_sigma=lognormal_sigma,
     )
     return _scale_counts(weights, total_routes, total_routes)
 
@@ -206,6 +220,39 @@ def _routing_summary(config, ids, tile_n):
         "padded_slots": blocks * tile_n,
         "padding_overhead_pct": ((blocks * tile_n - received) / max(1, received) * 100.0) if received else 0.0,
         "local_expert_counts": local_counts,
+    }
+
+
+def _trace_kernel_summary(path):
+    """Median kernel durations (us) per profiled graph from a Chrome trace; replay 0 absorbs rank skew."""
+    with open(path) as handle:
+        events = [event for event in json.load(handle)["traceEvents"] if event.get("ph") == "X"]
+    replays = sorted(
+        (event["ts"], event["name"])
+        for event in events
+        if event.get("cat") == "user_annotation" and "-replay" in event["name"]
+    )
+    durations = {}
+    for event in sorted((event for event in events if event.get("cat") == "kernel"), key=lambda event: event["ts"]):
+        # GPU work follows its replay's launch and every replay is synchronized before the next one.
+        label = None
+        for start, name in replays:
+            if start <= event["ts"]:
+                label = name
+        if label is None or label.endswith("-replay0"):
+            continue
+        name = event["name"]
+        if "megaMoeW8A16<1" in name or "megaMoeW8A16<2" in name:
+            kind = "shared_kernel"
+        elif "megaMoeW" in name:
+            kind = "routed_kernel"
+        elif "quantize" in name:
+            kind = "quantize"
+        else:
+            continue
+        durations.setdefault(label.rsplit("-", 1)[0], {}).setdefault(kind, []).append(event["dur"])
+    return {
+        label: {kind: statistics.median(values) for kind, values in kinds.items()} for label, kinds in durations.items()
     }
 
 
@@ -320,6 +367,41 @@ def main():
     parser.add_argument("--top-k", type=int, default=7)
     parser.add_argument("--sm-margin", type=int, default=32)
     parser.add_argument("--gate-up-clamp", type=float, default=-1.0)
+    parser.add_argument(
+        "--overlap-shared-expert",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="overlap one local W8A16 shared expert with routed MegaMoE",
+    )
+    parser.add_argument("--shared-hidden", type=int, default=8704)
+    parser.add_argument("--shared-intermediate", type=int, default=2048)
+    parser.add_argument(
+        "--shared-sm-count",
+        type=int,
+        default=16,
+        help="persistent CTAs reserved for the W8A16 shared expert",
+    )
+    parser.add_argument("--shared-gate-up-clamp", type=float, default=-1.0)
+    parser.add_argument(
+        "--shared-weight-banks",
+        type=int,
+        default=1,
+        help="separately packed equal-valued shared weight copies rotated per call (one aliased workspace); "
+        "use >1 so shared weights are not L2-resident across calls as they would be in a multi-layer model",
+    )
+    parser.add_argument(
+        "--shared-wait-for-routed-start",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="admit shared work only after the routed kernel signals entry",
+    )
+    parser.add_argument(
+        "--shared-join",
+        choices=("iteration", "batch"),
+        default="iteration",
+        help="join the shared branch before every routed call (model-like) or only at the end of each graph batch "
+        "(diagnostic: routed calls stay rank-aligned, isolating SM/memory contention from cross-rank skew)",
+    )
     parser.add_argument("--input-mode", choices=("staged", "direct"), default="staged")
     parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--graph-batch", type=int, default=10, help="collectives captured per replay")
@@ -332,6 +414,11 @@ def main():
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument("--cache-dir", default=None, help="local native kernel JIT cache")
+    parser.add_argument(
+        "--kernel-key",
+        default=None,
+        help="load an already-prepared W4A8 module by content-addressed cache key",
+    )
     parser.add_argument(
         "--w4-profile",
         nargs="?",
@@ -424,6 +511,12 @@ def main():
         help="apply routing weights in combine instead of FC1/FC2",
     )
     parser.add_argument("--json-output", default=None, help="optional output path")
+    parser.add_argument(
+        "--trace-dir",
+        default=None,
+        help="after timing, profile a few graph replays, write each rank's Chrome trace to this (host-local) "
+        "directory, and report per-graph median kernel durations",
+    )
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
@@ -441,12 +534,21 @@ def main():
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:
         parser.error("--lognormal-sigma must be nonnegative and finite")
+    if args.overlap_shared_expert and (
+        min(args.shared_hidden, args.shared_intermediate, args.shared_sm_count, args.shared_weight_banks) < 1
+        or args.shared_sm_count % 2
+    ):
+        parser.error(
+            "shared hidden/intermediate/weight-banks must be positive and shared-sm-count must be positive and even"
+        )
+    if not math.isfinite(args.shared_gate_up_clamp):
+        parser.error("--shared-gate-up-clamp must be finite")
 
     import torch
     import torch.distributed as dist
     from mscclpp import Communicator, TcpBootstrap
     from .api import MegaMoE, MegaMoEConfig, is_available
-    from .jit import W4A8KernelConfig, compile_kernel
+    from .jit import W4A8KernelConfig, compile_kernel, load_cached_kernel
     from .w4a8 import resolve_w4a8_kernel_config
 
     if not is_available():
@@ -458,6 +560,10 @@ def main():
     if not torch.cuda.is_available():
         parser.error("native MegaMoE requires SM100-family CUDA GPUs")
     torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    if args.overlap_shared_expert and args.shared_sm_count > sm_count - 2:
+        parser.error("--shared-sm-count must leave at least one two-SM cluster available")
     config = MegaMoEConfig(
         rank=rank,
         world_size=world,
@@ -501,7 +607,28 @@ def main():
     }
     if policy_overrides:
         kernel_config = replace(kernel_config, **policy_overrides)
-    kernel = None if config.is_w8a16 else compile_kernel(kernel_config, cache_dir=args.cache_dir)
+    if args.kernel_key is not None and (args.w4_profile is not None or policy_overrides):
+        parser.error("--kernel-key cannot be combined with --w4-profile or kernel policy overrides")
+    if config.is_w8a16:
+        if args.kernel_key is not None:
+            parser.error("--kernel-key is only supported for W4A8")
+        kernel = None
+    elif args.kernel_key is not None:
+        kernel = load_cached_kernel(args.kernel_key, cache_dir=args.cache_dir)
+        kernel_config = kernel.config
+    else:
+        kernel = compile_kernel(kernel_config, cache_dir=args.cache_dir)
+    if args.overlap_shared_expert:
+        # Both kernels are cooperative persistent launches. If their CTAs cannot be co-resident,
+        # the shared kernel only runs on SMs the routed kernel leaves free and effectively serializes.
+        routed_cluster = 2 if config.is_w8a16 else kernel_config.cluster_size
+        routed_cta_bound = (sm_count - args.sm_margin) // routed_cluster * routed_cluster
+        if routed_cta_bound + args.shared_sm_count > sm_count:
+            parser.error(
+                f"routed MegaMoE may keep {routed_cta_bound} CTAs resident (--sm-margin {args.sm_margin}) and the "
+                f"shared expert needs {args.shared_sm_count}, exceeding {sm_count} SMs; the cooperative launches "
+                "could not overlap. Use --sm-margin >= --shared-sm-count"
+            )
     torch.manual_seed(args.seed + rank)
     # Gloo is used only for rendezvous, reporting, and the untimed reference.
     # All timed expert communication uses the native MSCCL++ CudaIpc mappings.
@@ -510,11 +637,57 @@ def main():
     port = args.bootstrap_port or int(os.environ["MASTER_PORT"]) + 1
     bootstrap.initialize(f"{os.environ['MASTER_ADDR']}:{port}")
     communicator = Communicator(bootstrap)
-    device = torch.device("cuda", local_rank)
     weights = _weights(config, device)
     start = time.perf_counter()
     context = MegaMoE(config, communicator, *weights, kernel=kernel)
     initialization_ms = (time.perf_counter() - start) * 1000
+    shared_bootstrap = None
+    shared_communicator = None
+    shared_context = None
+    shared_contexts = []
+    shared_config = None
+    shared_weights = None
+    shared_initialization_ms = None
+    if args.overlap_shared_expert:
+        shared_config = MegaMoEConfig(
+            rank=0,
+            world_size=1,
+            max_tokens=args.tokens,
+            hidden=args.shared_hidden,
+            intermediate=args.shared_intermediate,
+            num_experts=1,
+            top_k=1,
+            sm_margin=sm_count - args.shared_sm_count,
+            gate_up_clamp=args.shared_gate_up_clamp,
+            combine_route_weights=False,
+            weight_dtype="mxfp8",
+            activation_dtype="bf16",
+        )
+        shared_bootstrap = TcpBootstrap.create(0, 1)
+        shared_bootstrap.initialize(TcpBootstrap.create_unique_id())
+        shared_communicator = Communicator(shared_bootstrap)
+        shared_weights = _weights(shared_config, device)
+        start = time.perf_counter()
+        # Extra banks alias the first workspace and only add separately packed copies of the same weight values.
+        for _ in range(args.shared_weight_banks):
+            shared_contexts.append(
+                MegaMoE(
+                    shared_config,
+                    shared_communicator,
+                    *shared_weights,
+                    shared_workspace=shared_contexts[0] if shared_contexts else None,
+                )
+            )
+        shared_context = shared_contexts[0]
+        shared_initialization_ms = (time.perf_counter() - start) * 1000
+        if shared_context.cta_count != args.shared_sm_count:
+            raise RuntimeError(
+                f"shared CTA cap mismatch: requested {args.shared_sm_count}, got {shared_context.cta_count}"
+            )
+        if context.cta_count + shared_context.cta_count > sm_count:
+            raise RuntimeError(
+                f"routed ({context.cta_count}) and shared ({shared_context.cta_count}) CTAs exceed {sm_count} SMs"
+            )
     inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
     ids, scores = _generate_routing(
         config, args.routing_pattern, args.zipf_alpha, args.seed, device, lognormal_sigma=args.lognormal_sigma
@@ -526,14 +699,74 @@ def main():
         inputs = direct
     output = torch.empty_like(inputs)
     stream = torch.cuda.Stream(device=device)
-    stream.wait_stream(torch.cuda.current_stream(device))
+    shared_inputs = None
+    shared_output = None
+    shared_stream = None
+    if shared_context is not None:
+        shared_inputs = torch.randn(
+            (args.tokens, args.shared_hidden),
+            device=device,
+            dtype=torch.bfloat16,
+        )
+        if args.input_mode == "direct":
+            direct = shared_context.input_view(args.tokens)
+            direct.copy_(shared_inputs)
+            shared_inputs = direct
+        shared_output = torch.empty_like(shared_inputs)
+        shared_stream = torch.cuda.Stream(device=device)
+    current_stream = torch.cuda.current_stream(device)
+    stream.wait_stream(current_stream)
+    if shared_stream is not None:
+        shared_stream.wait_stream(current_stream)
 
-    def launch():
-        context(inputs, ids, scores, output=output, stream=stream)
+    def launch_routed(*, signal_start=False, timing=None):
+        if timing is not None:
+            timing["routed_begin"].record(stream)
+        context(
+            inputs,
+            ids,
+            scores,
+            output=output,
+            stream=stream,
+            signal_start=signal_start,
+        )
+        if timing is not None:
+            timing["routed_end"].record(stream)
+
+    def launch_shared(index, target_stream):
+        shared_contexts[index % len(shared_contexts)].forward_shared(
+            shared_inputs,
+            output=shared_output,
+            stream=target_stream,
+        )
+
+    def launch_overlap(timing=None, index=0, join=True):
+        assert shared_context is not None
+        assert shared_inputs is not None
+        assert shared_output is not None
+        assert shared_stream is not None
+        shared_stream.wait_stream(stream)
+        launch_routed(
+            signal_start=args.shared_wait_for_routed_start,
+            timing=timing,
+        )
+        if args.shared_wait_for_routed_start:
+            context.wait_until_started(shared_stream)
+        if timing is not None:
+            timing["shared_begin"].record(shared_stream)
+        launch_shared(index, shared_stream)
+        if timing is not None:
+            timing["shared_end"].record(shared_stream)
+        if join:
+            stream.wait_stream(shared_stream)
 
     for _ in range(args.warmup):
-        launch()
+        launch_routed()
     stream.synchronize()
+    if shared_context is not None:
+        for index in range(args.warmup):
+            launch_overlap(index=index)
+        stream.synchronize()
     rtol = args.rtol if args.rtol is not None else (0.125 if config.is_static_fp8 else 0.05)
     atol = (
         args.atol
@@ -541,37 +774,214 @@ def main():
         else (max(0.02, 2.5 * config.activation_scale) if config.is_static_fp8 else 0.01)
     )
     correctness = None
+    shared_correctness = None
     if args.check:
         reference = _reference(config, inputs, ids, scores, weights)
         error = (output.float() - reference.float()).abs()
         correctness = {"max_abs_error": error.max().item(), "mean_abs_error": error.mean().item()}
         torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
+        if shared_context is not None:
+            assert shared_config is not None
+            assert shared_inputs is not None
+            assert shared_output is not None
+            assert shared_weights is not None
+            shared_ids = torch.zeros((args.tokens, 1), dtype=torch.int32, device=device)
+            shared_scores = torch.ones((args.tokens, 1), dtype=torch.float32, device=device)
+            shared_reference = _reference(
+                shared_config,
+                shared_inputs,
+                shared_ids,
+                shared_scores,
+                shared_weights,
+            )
+            shared_error = (shared_output.float() - shared_reference.float()).abs()
+            shared_correctness = {
+                "max_abs_error": shared_error.max().item(),
+                "mean_abs_error": shared_error.mean().item(),
+            }
+            torch.testing.assert_close(
+                shared_output,
+                shared_reference,
+                rtol=args.rtol if args.rtol is not None else 0.03,
+                atol=args.atol if args.atol is not None else 0.01,
+            )
     del weights
-    graph = None
+    del shared_weights
+    routed_graph = None
+    shared_graph = None
+    overlap_graph = None
+    overlap_timed_graph = None
+    overlap_timing = None
     if args.graph:
-        graph = torch.cuda.CUDAGraph()
+        routed_graph = torch.cuda.CUDAGraph()
         dist.barrier()
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(routed_graph, stream=stream):
             for _ in range(args.graph_batch):
-                launch()
-        graph.replay()
+                launch_routed()
+        routed_graph.replay()
         torch.cuda.synchronize(device)
         if args.check:
             torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
-    samples = []
-    repetitions = args.graph_batch if graph else 1
+        if shared_context is not None:
+            shared_graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(shared_graph, stream=shared_stream):
+                for index in range(args.graph_batch):
+                    launch_shared(index, shared_stream)
+            shared_graph.replay()
+            torch.cuda.synchronize(device)
+            overlap_timing = [
+                {
+                    name: torch.cuda.Event(enable_timing=True, external=True)
+                    for name in (
+                        "routed_begin",
+                        "routed_end",
+                        "shared_begin",
+                        "shared_end",
+                    )
+                }
+                for _ in range(args.graph_batch)
+            ]
+            # The untimed graph gives the end-to-end cost; branch event nodes add graph latency, so the
+            # per-branch breakdown comes from a separately captured graph.
+            overlap_graph = torch.cuda.CUDAGraph()
+            overlap_timed_graph = torch.cuda.CUDAGraph()
+            for graph, timings in (
+                (overlap_graph, [None] * args.graph_batch),
+                (overlap_timed_graph, overlap_timing),
+            ):
+                dist.barrier()
+                with torch.cuda.graph(graph, stream=stream):
+                    for index, timing in enumerate(timings):
+                        launch_overlap(
+                            timing,
+                            index,
+                            join=args.shared_join == "iteration" or index == len(timings) - 1,
+                        )
+                graph.replay()
+                torch.cuda.synchronize(device)
+            if args.check:
+                torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
+                torch.testing.assert_close(
+                    shared_output,
+                    shared_reference,
+                    rtol=args.rtol if args.rtol is not None else 0.03,
+                    atol=args.atol if args.atol is not None else 0.01,
+                )
+    routed_control_samples = []
+    repetitions = args.graph_batch if routed_graph else 1
     begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     for _ in range(args.iterations):
         dist.barrier()
         with torch.cuda.stream(stream):
-            if graph and args.graph_timing == "steady-state":
-                graph.replay()
+            if routed_graph and args.graph_timing == "steady-state":
+                routed_graph.replay()
             begin.record()
-            graph.replay() if graph else launch()
+            routed_graph.replay() if routed_graph else launch_routed()
             end.record()
         end.synchronize()
-        samples.append(begin.elapsed_time(end) * 1000 / repetitions)
+        routed_control_samples.append(begin.elapsed_time(end) * 1000 / repetitions)
+    shared_control_samples = None
+    if shared_context is not None:
+        # The shared expert alone on its capped CTAs; no peers are involved.
+        shared_control_samples = []
+        repetitions = args.graph_batch if shared_graph else 1
+        for _ in range(args.iterations):
+            dist.barrier()
+            with torch.cuda.stream(shared_stream):
+                if shared_graph and args.graph_timing == "steady-state":
+                    shared_graph.replay()
+                begin.record()
+                shared_graph.replay() if shared_graph else launch_shared(0, shared_stream)
+                end.record()
+            end.synchronize()
+            shared_control_samples.append(begin.elapsed_time(end) * 1000 / repetitions)
+    overlap_samples = None
+    overlap_timed_samples = None
+    routed_overlap_samples = None
+    shared_overlap_samples = None
+    shared_start_delay_samples = None
+    shared_tail_samples = None
+    if shared_context is not None:
+        overlap_samples = []
+        overlap_timed_samples = []
+        routed_overlap_samples = []
+        shared_overlap_samples = []
+        shared_start_delay_samples = []
+        shared_tail_samples = []
+        eager_timing = None
+        if overlap_graph is None:
+            eager_timing = {
+                name: torch.cuda.Event(enable_timing=True, external=True)
+                for name in (
+                    "routed_begin",
+                    "routed_end",
+                    "shared_begin",
+                    "shared_end",
+                )
+            }
+            overlap_timing = [eager_timing]
+        assert overlap_timing is not None
+        repetitions = args.graph_batch if overlap_graph else 1
+        for _ in range(args.iterations):
+            for graph, timing, samples in (
+                (overlap_graph, None, overlap_samples),
+                (overlap_timed_graph, eager_timing, overlap_timed_samples),
+            ):
+                dist.barrier()
+                with torch.cuda.stream(stream):
+                    if graph and args.graph_timing == "steady-state":
+                        graph.replay()
+                    begin.record()
+                    graph.replay() if graph else launch_overlap(timing)
+                    end.record()
+                end.synchronize()
+                samples.append(begin.elapsed_time(end) * 1000 / repetitions)
+            routed_overlap_samples.append(
+                sum(timing["routed_begin"].elapsed_time(timing["routed_end"]) for timing in overlap_timing)
+                * 1000
+                / repetitions
+            )
+            shared_overlap_samples.append(
+                sum(timing["shared_begin"].elapsed_time(timing["shared_end"]) for timing in overlap_timing)
+                * 1000
+                / repetitions
+            )
+            # Branch alignment: routed start -> shared start, and routed end -> shared end
+            # (a positive tail is shared work left exposed after the routed branch).
+            shared_start_delay_samples.append(
+                sum(timing["routed_begin"].elapsed_time(timing["shared_begin"]) for timing in overlap_timing)
+                * 1000
+                / repetitions
+            )
+            shared_tail_samples.append(
+                sum(timing["routed_end"].elapsed_time(timing["shared_end"]) for timing in overlap_timing)
+                * 1000
+                / repetitions
+            )
+    kernel_trace = None
+    if args.trace_dir and routed_graph is not None:
+        from torch.profiler import ProfilerActivity, profile
+
+        profiled = [("routed", routed_graph)]
+        if overlap_graph is not None:
+            profiled += [("shared", shared_graph), ("overlap", overlap_graph)]
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as profiler:
+            for label, graph in profiled:
+                # The first replay absorbs profiler-start rank skew; inspect the later ones.
+                for replay in range(3):
+                    dist.barrier()
+                    with (
+                        torch.profiler.record_function(f"{label}-replay{replay}"),
+                        torch.cuda.stream(shared_stream if label == "shared" else stream),
+                    ):
+                        graph.replay()
+                    torch.cuda.synchronize(device)
+        os.makedirs(args.trace_dir, exist_ok=True)
+        trace_path = os.path.join(args.trace_dir, f"rank-{rank}.json")
+        profiler.export_chrome_trace(trace_path)
+        kernel_trace = _trace_kernel_summary(trace_path)
     reports = [None] * world
+    primary_samples = overlap_samples if overlap_samples is not None else routed_control_samples
     dist.all_gather_object(
         reports,
         {
@@ -582,33 +992,103 @@ def main():
             "kernel_id": context.kernel_id,
             "kernel_config": context.effective_kernel_config,
             "routing": routing_summary,
-            "samples_us": samples,
+            "samples_us": primary_samples,
+            "routed_control_samples_us": routed_control_samples,
+            "overlap_timed_samples_us": overlap_timed_samples,
+            "routed_overlap_samples_us": routed_overlap_samples,
+            "shared_overlap_samples_us": shared_overlap_samples,
+            "shared_control_samples_us": shared_control_samples,
+            "shared_start_delay_samples_us": shared_start_delay_samples,
+            "shared_tail_samples_us": shared_tail_samples,
+            "kernel_trace_us": kernel_trace,
             "correctness": correctness,
+            "shared": (
+                None
+                if shared_context is None
+                else {
+                    "cta_count": shared_context.cta_count,
+                    "weight_banks": len(shared_contexts),
+                    "workspace_bytes": shared_context.workspace_bytes,
+                    "initialization_ms": shared_initialization_ms,
+                    "kernel_id": shared_context.kernel_id,
+                    "kernel_config": shared_context.effective_kernel_config,
+                    "correctness": shared_correctness,
+                }
+            ),
         },
     )
     if rank == 0:
-        slowest = [max(report["samples_us"][sample] for report in reports) for sample in range(args.iterations)]
         result = {
             "implementation": "mscclpp-native-cuda-megamoe",
-            "scope": "routed_experts_only",
-            "excluded": ["shared_expert", "squash", "unsquash", "router", "residual"],
+            "scope": ("routed_and_overlapped_shared_expert" if shared_context is not None else "routed_experts_only"),
+            "excluded": (
+                ["squash", "unsquash", "router", "residual", "routed_shared_add"]
+                if shared_context is not None
+                else ["shared_expert", "squash", "unsquash", "router", "residual"]
+            ),
             "configuration": {**vars(args), "world_size": world},
             "timing": {
                 "method": "CUDA events; slowest rank per sample",
-                "graph_timing": args.graph_timing if graph else None,
-                "untimed_graph_replays_per_sample": int(bool(graph) and args.graph_timing == "steady-state"),
+                "graph_timing": args.graph_timing if routed_graph else None,
+                "untimed_graph_replays_per_sample": int(bool(routed_graph) and args.graph_timing == "steady-state"),
+                "branch_events": "separate overlap graph" if shared_context is not None else None,
             },
             "hardware": torch.cuda.get_device_name(device),
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
-            "latency_us_max_across_ranks": {
-                "median": statistics.median(slowest),
-                "mean": statistics.mean(slowest),
-                "minimum": min(slowest),
-                "maximum": max(slowest),
-            },
+            "latency_us_max_across_ranks": _latency_summary(
+                reports,
+                "samples_us",
+                args.iterations,
+            ),
+            "routed_control_latency_us_max_across_ranks": _latency_summary(
+                reports,
+                "routed_control_samples_us",
+                args.iterations,
+            ),
             "ranks": reports,
         }
+        if kernel_trace is not None:
+            result["kernel_trace_us_max_across_ranks"] = {
+                label: {kind: max(report["kernel_trace_us"][label][kind] for report in reports) for kind in kinds}
+                for label, kinds in kernel_trace.items()
+            }
+        if shared_context is not None:
+            result["overlap_timed_latency_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "overlap_timed_samples_us",
+                args.iterations,
+            )
+            result["routed_overlap_latency_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "routed_overlap_samples_us",
+                args.iterations,
+            )
+            result["shared_overlap_latency_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "shared_overlap_samples_us",
+                args.iterations,
+            )
+            result["shared_control_latency_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "shared_control_samples_us",
+                args.iterations,
+            )
+            result["shared_start_delay_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "shared_start_delay_samples_us",
+                args.iterations,
+            )
+            result["shared_tail_after_routed_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "shared_tail_samples_us",
+                args.iterations,
+            )
+            result["sm_partition"] = {
+                "sm_count": sm_count,
+                "routed_ctas": context.cta_count,
+                "shared_ctas": shared_context.cta_count,
+            }
         text = json.dumps(result, indent=2)
         print(text, flush=True)
         if args.json_output:
@@ -617,7 +1097,11 @@ def main():
     # Release only after every GPU has completed every peer access.
     torch.cuda.synchronize(device)
     bootstrap.barrier()
-    del graph, context, inputs
+    if shared_bootstrap is not None:
+        shared_bootstrap.barrier()
+    del routed_graph, shared_graph, overlap_graph, overlap_timed_graph
+    del context, shared_context, shared_contexts, inputs, shared_inputs
+    del shared_communicator, shared_bootstrap
     dist.destroy_process_group()
 
 
