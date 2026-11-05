@@ -106,10 +106,11 @@ typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
 
 // Inter-rack network path of a plan (mscclpp::megamoe::NetPlan). rackSize 0 or worldSize disables it.
 // bufferBytes must equal the module's network layout size; channels is a device array of
-// worldSize mscclpp::megamoe::NetChannel (device-mode GPUNetIO PortChannel handles).
+// qps * worldSize mscclpp::megamoe::NetChannel (device-mode GPUNetIO PortChannel handles), by queue pair then rank.
+// qps 0 means 1.
 typedef struct MegaMoeJitNetV1 {
   int32_t rackSize;
-  int32_t reserved;
+  int32_t qps;
   uint64_t bufferBytes;
   void* buffer;
   const void* channels;

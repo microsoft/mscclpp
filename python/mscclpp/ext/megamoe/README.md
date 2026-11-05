@@ -94,9 +94,14 @@ NVLink-routed tokens, and returns its results in one transfer per source after F
 Without `combine_route_weights`, the owner first sums each token's weighted rows,
 so it returns one BF16 row per token instead of one per routed expert (about 1.5x
 fewer bytes for top-8 over 32 experts per GPU); this adds one BF16 rounding of the
-owner's partial sum. Each (source, owner) pair uses three RDMA writes and three
-RDMA atomic signals per forward, and the forward stays CUDA Graph capturable.
-GPU *i* uses IB device *i* (`MSCCLPP_HCA_DEVICES` remaps devices).
+owner's partial sum. Each (source, owner) pair uses `MSCCLPP_MEGAMOE_NET_QPS`
+queue pairs (default 4, at most 8; set it identically on every rank): the routes
+go on the first, and the token rows and results are striped by row over all of
+them, each queue pair signaling its share with an RDMA atomic. The forward stays
+CUDA Graph capturable. GPU *i* uses IB device *i*; `MSCCLPP_HCA_DEVICES` remaps
+devices, which matters when NICs use Data Direct: a GPU must use the NIC whose
+Data Direct engine shares its PCIe switch, or registration falls back to the
+slower non-Data-Direct path.
 
 The registered network workspace (`workspace_bytes["network"]`) grows with the
 number of network peers `P`, about

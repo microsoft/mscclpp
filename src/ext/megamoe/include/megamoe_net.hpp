@@ -37,9 +37,11 @@
 //     the source places it in the token's first route to that owner and zeros in its other routes to that owner.
 //     Otherwise the owner returns the per-route combineOut rows. The source waits for every network owner and
 //     scatters combineIn rows into its partial outputs before the NVLink join and combine.
-// Each ordered pair shares one channel, so one queue pair and one semaphore. A rank's signals to a peer follow a fixed
-// order: its launch-N routes (count 3N - 2), rows (3N - 1), then results (3N). Each signal is an RDMA atomic posted
-// after the pair's writes on the same queue pair, so observing a count publishes the data it covers. Waits compare
+// Each ordered pair uses NetPlan::qps channels, each its own queue pair and semaphore. Routes travel on queue pair 0;
+// rows and results are striped by row over every queue pair, and each queue pair signals its share, even when empty.
+// So queue pair 0 counts 3 signals per launch (routes 3N - 2, rows 3N - 1, results 3N) and the others 2 (rows 2N - 1,
+// results 2N). Each signal is an RDMA atomic posted after the writes on the same queue pair, so observing a count
+// publishes the data it covers. Waits compare
 // against these counts without consuming them. A source reuses its buffers only after every owner has returned the
 // previous launch's results, which orders all buffer reuse without flushes. Once a source has its results it may send
 // its next message, so after posting results an owner reads only local copies of the received header (recvInfo) and
@@ -52,6 +54,9 @@ namespace mscclpp::megamoe {
 
 constexpr int MaxWorldSize = 256;
 constexpr int MaxRackSize = 72;
+/// Queue pairs per network peer: default and maximum (MSCCLPP_MEGAMOE_NET_QPS overrides the default).
+constexpr int DefaultNetQps = 4;
+constexpr int MaxNetQps = 8;
 
 struct alignas(16) NetHeader {
   int32_t nTokens;   // source tokens in this launch
@@ -98,9 +103,11 @@ struct NetPlan {
   int rackSize = 0;
   /// Zero-initialized local network workspace of getNetLayout(config, rackSize).bytes, registered for IB.
   void* buffer = nullptr;
-  /// Device array of worldSize device-mode PortChannel handles indexed by peer rank, from the local workspace to the
-  /// peer's workspace. Only network peers are valid.
+  /// Device array of qps * worldSize device-mode PortChannel handles indexed by queue pair, then peer rank, from the
+  /// local workspace to the peer's workspace. Only network peers are valid.
   const NetChannel* channels = nullptr;
+  /// Queue pairs (channels) per network peer.
+  int qps = 1;
 };
 
 /// Kernel view of the network path.
@@ -115,6 +122,11 @@ struct NetDevice {
   NetLayout layout;
   uint8_t* base = nullptr;
   const NetChannel* channels = nullptr;
+  int qps = 1;
+
+  MSCCLPP_HOST_DEVICE_INLINE const NetChannel& channel(int qp, int rank) const {
+    return channels[size_t(qp) * worldSize + rank];
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE bool isNet(int rank) const {
     return nNet && (rank < rackBegin || rank >= rackBegin + rackSize);
@@ -189,6 +201,9 @@ inline NetDevice makeNetDevice(const NativeConfig& c, const NetPlan& plan) {
   net.reduce = !c.combineRouteWeights && c.activationDtype != ActivationDtype::Fp8Static;
   net.base = static_cast<uint8_t*>(plan.buffer);
   net.channels = plan.channels;
+  if (plan.qps < 1 || plan.qps > MaxNetQps)
+    throw std::invalid_argument("MegaMoE network queue pairs must be in [1, 8]");
+  net.qps = plan.qps;
   return net;
 }
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -328,6 +329,17 @@ Transport netTransport(int device) {
   return IBs[device % count];
 }
 
+// Queue pairs per network peer; every rank must use the same value.
+int netQueuePairs() {
+  const char* value = std::getenv("MSCCLPP_MEGAMOE_NET_QPS");
+  if (!value || !*value) return DefaultNetQps;
+  char* end = nullptr;
+  long qps = std::strtol(value, &end, 10);
+  if (*end || qps < 1 || qps > MaxNetQps)
+    throw std::invalid_argument("MSCCLPP_MEGAMOE_NET_QPS must be an integer in [1, 8]");
+  return int(qps);
+}
+
 bool overlaps(const void* a, size_t aBytes, const void* b, size_t bBytes) {
   auto x = reinterpret_cast<uintptr_t>(a);
   auto y = reinterpret_cast<uintptr_t>(b);
@@ -371,6 +383,7 @@ struct MegaMoeContext::Impl {
   std::unique_ptr<JitPlan> jitPlan;
   // Inter-rack network path; empty when every peer shares the local rack.
   int rackSize = 1;
+  int netQps = 1;
   NetLayout netLayout;
   std::unique_ptr<GpuBuffer<char>> netBuffer;
   RegisteredMemory netMemory;
@@ -497,6 +510,7 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   });
   p.rackSize = validatePeers(comm, c, info);
   p.netLayout = getNetLayout(c, p.rackSize);
+  p.netQps = netQueuePairs();
   const int rackBegin = c.rank / p.rackSize * p.rackSize;
   auto isNet = [&](int rank) { return rank < rackBegin || rank >= rackBegin + p.rackSize; };
   p.communicator = comm;
@@ -537,6 +551,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   });
   std::vector<std::shared_future<RegisteredMemory>> memoryFutures;
   std::vector<std::shared_future<Connection>> connectionFutures;
+  // Extra queue pairs to each network peer, [qp - 1][rank].
+  std::vector<std::vector<std::shared_future<Connection>>> extraConnectionFutures(p.netQps - 1);
   std::vector<std::shared_future<Semaphore>> semaphoreFutures;
   std::vector<uint64_t> peerPointers;
   collectiveCheck(comm, "peer exchange setup", [&] {
@@ -553,6 +569,10 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
         endpoint.transport = netTransport(p.device);
         endpoint.ib.mode = EndpointConfig::Ib::Mode::Device;
         connectionFutures[rank] = p.communicator->connect(endpoint, rank, tag + 2);
+        for (auto& futures : extraConnectionFutures) {
+          futures.resize(c.worldSize);
+          futures[rank] = p.communicator->connect(endpoint, rank, tag + 2);
+        }
         p.communicator->sendMemory(p.netMemory, rank, tag + 3);
         memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 3);
         continue;
@@ -562,6 +582,8 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       memoryFutures[rank] = p.communicator->recvMemory(rank, tag + 1);
     }
   });
+  std::vector<std::vector<std::shared_future<Semaphore>>> extraSemaphoreFutures(
+      p.netQps - 1, std::vector<std::shared_future<Semaphore>>(c.worldSize));
   collectiveCheck(comm, "peer mapping", [&] {
     semaphoreFutures.resize(c.worldSize);
     for (int rank = 0; rank < c.worldSize; ++rank) {
@@ -571,6 +593,11 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
         if (p.netPeerMemories[rank].size() != p.netLayout.bytes)
           throw std::runtime_error("MegaMoE could not register a matching network peer workspace");
         semaphoreFutures[rank] = p.communicator->buildSemaphore(p.netConnections.back(), rank, tag + 4);
+        for (int qp = 1; qp < p.netQps; ++qp) {
+          p.netConnections.push_back(extraConnectionFutures[qp - 1][rank].get());
+          extraSemaphoreFutures[qp - 1][rank] =
+              p.communicator->buildSemaphore(p.netConnections.back(), rank, tag + 4);
+        }
         peerPointers[rank] = 0;
         continue;
       }
@@ -585,12 +612,16 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
   });
   if (p.netLayout.bytes) {
     collectiveCheck(comm, "network channel setup", [&] {
-      std::vector<NetChannel> channels(c.worldSize);
-      for (int rank = 0; rank < c.worldSize; ++rank) {
-        if (!isNet(rank)) continue;
-        auto semaphore = std::make_shared<PortDevice2DeviceSemaphore>(semaphoreFutures[rank].get());
-        p.netPortChannels.emplace_back(semaphore, p.netPeerMemories[rank], p.netMemory);
-        channels[rank] = p.netPortChannels.back().deviceHandle<PortChannelBackend::Device>();
+      std::vector<NetChannel> channels(size_t(p.netQps) * c.worldSize);
+      for (int qp = 0; qp < p.netQps; ++qp) {
+        for (int rank = 0; rank < c.worldSize; ++rank) {
+          if (!isNet(rank)) continue;
+          auto semaphore = std::make_shared<PortDevice2DeviceSemaphore>(
+              (qp ? extraSemaphoreFutures[qp - 1][rank] : semaphoreFutures[rank]).get());
+          p.netPortChannels.emplace_back(semaphore, p.netPeerMemories[rank], p.netMemory);
+          channels[size_t(qp) * c.worldSize + rank] =
+              p.netPortChannels.back().deviceHandle<PortChannelBackend::Device>();
+        }
       }
       p.netChannels = mscclpp::detail::gpuCallocShared<NetChannel>(channels.size());
       MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.netChannels.get(), channels.data(), channels.size() * sizeof(NetChannel),
@@ -602,14 +633,14 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(p.peerBases.get(), peerPointers.data(), c.worldSize * sizeof(uint64_t),
                                       cudaMemcpyHostToDevice, stream));
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-    const NetPlan net{p.rackSize, p.netBuffer ? p.netBuffer->data() : nullptr, p.netChannels.get()};
+    const NetPlan net{p.rackSize, p.netBuffer ? p.netBuffer->data() : nullptr, p.netChannels.get(), p.netQps};
     if (p.module) {
       p.jitPlan = std::make_unique<JitPlan>(p.module);
       const auto config = jitConfig(c);
       const auto weights = jitWeights(packed);
       char error[ErrorCapacity]{};
       if (p.module->createPlanNet) {
-        const MegaMoeJitNetV1 jitNet{net.rackSize, 0, p.netLayout.bytes, net.buffer, net.channels};
+        const MegaMoeJitNetV1 jitNet{net.rackSize, net.qps, p.netLayout.bytes, net.buffer, net.channels};
         checkJit(p.module->createPlanNet(&config, p.symmetric->data(), p.peerBases.get(), p.workspace.get(), &weights,
                                          &jitNet, &p.jitPlan->handle, error, sizeof(error)),
                  error, "plan creation");

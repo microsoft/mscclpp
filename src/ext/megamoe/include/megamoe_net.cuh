@@ -22,23 +22,29 @@ constexpr int NetSendThreads = 512;
 constexpr int NetZeroRow = -2;
 constexpr int64_t NetSpinLimit = 1000000000;
 
-/// The signals a peer sends per launch, in this order on the pair's queue pair.
+/// The signals a peer sends per launch. Routes travel on queue pair 0 only; rows and results are striped over every
+/// queue pair of the pair, each signaling its share. Each queue pair's signals follow this order.
 enum class NetPhase : int { Routes = 0, Rows = 1, Results = 2 };
-constexpr int NetPhases = 3;
 
-MSCCLPP_DEVICE_INLINE uint64_t netExpected(NetPhase phase, uint64_t epoch) {
-  return NetPhases * epoch - (NetPhases - 1) + uint64_t(phase);
+/// Signal count of queue pair `qp` that completes `phase` of launch `epoch`: queue pair 0 carries 3 signals per launch,
+/// the others 2.
+MSCCLPP_DEVICE_INLINE uint64_t netExpected(int qp, NetPhase phase, uint64_t epoch) {
+  const uint64_t perLaunch = qp == 0 ? 3 : 2;
+  const uint64_t index = qp == 0 ? uint64_t(phase) : uint64_t(phase) - 1;
+  return perLaunch * (epoch - 1) + index + 1;
 }
 
-MSCCLPP_DEVICE_INLINE bool netArrived(const NetDevice& net, int peer, NetPhase phase, uint64_t epoch) {
-  return atomicLoad<uint64_t, scopeSystem>(net.channels[peer].semaphore_.inboundToken, memoryOrderAcquire) >=
-         netExpected(phase, epoch);
+MSCCLPP_DEVICE_INLINE bool netArrived(const NetDevice& net, int peer, int qp, NetPhase phase, uint64_t epoch) {
+  return atomicLoad<uint64_t, scopeSystem>(net.channel(qp, peer).semaphore_.inboundToken, memoryOrderAcquire) >=
+         netExpected(qp, phase, epoch);
 }
 
-/// Wait until `peer` has sent `phase` of launch `epoch`. The pair's single semaphore counts every phase in strict
-/// order, so waiting does not consume a signal and any number of threads may wait.
+/// Wait until `peer` has sent `phase` of launch `epoch` on every queue pair that carries it. Each queue pair's
+/// semaphore counts its phases in strict order, so waiting does not consume a signal and any number of threads may
+/// wait.
 MSCCLPP_DEVICE_INLINE void netWait(const NetDevice& net, int peer, NetPhase phase, uint64_t epoch) {
-  POLL_MAYBE_JAILBREAK(!netArrived(net, peer, phase, epoch), NetSpinLimit);
+  const int qps = phase == NetPhase::Routes ? 1 : net.qps;
+  for (int qp = 0; qp < qps; ++qp) POLL_MAYBE_JAILBREAK(!netArrived(net, peer, qp, phase, epoch), NetSpinLimit);
 }
 
 MSCCLPP_DEVICE_INLINE const NetHeader* netRecvHeader(const NetDevice& net, int index) {
@@ -120,6 +126,19 @@ MSCCLPP_DEVICE_INLINE void netPutWithSignal(NetChannel& channel, uint64_t dst, u
   channel.putWithSignal<PortChannelSharingMode::Exclusive>(dst, src, bytes);
 }
 
+/// Put `rows` rows of `rowBytes` to `peer`, split into near-equal row ranges over its queue pairs, and signal each
+/// queue pair (also when its range is empty). `wqeSlot` is the caller's shared-memory BlueFlame slot, or null.
+MSCCLPP_DEVICE_INLINE void netPutRowsWithSignal(const NetDevice& net, int peer, uint64_t dst, uint64_t src,
+                                                uint64_t rows, uint64_t rowBytes, GpuNetIoWqeSlot* wqeSlot) {
+  for (int qp = 0; qp < net.qps; ++qp) {
+    const uint64_t begin = rows * qp / net.qps;
+    const uint64_t end = rows * (qp + 1) / net.qps;
+    NetChannel channel = net.channel(qp, peer);
+    if (wqeSlot) channel.setWqeSlot(wqeSlot);
+    netPutWithSignal(channel, dst + begin * rowBytes, src + begin * rowBytes, (end - begin) * rowBytes);
+  }
+}
+
 struct NetSendArguments {
   int rank;
   int maxTokens;
@@ -156,7 +175,7 @@ __global__ void __launch_bounds__(Threads) netSendKernel(NetDevice net, NetSendA
   uint8_t* rows = net.base + net.layout.sendRows + size_t(index) * a.maxTokens * net.layout.rowBytes;
   const int sourceIndex = net.indexFrom(owner, a.rank);
   auto send = [&](uint64_t dst, uint64_t src, uint64_t bytes) {
-    NetChannel channel = net.channels[owner];
+    NetChannel channel = net.channel(0, owner);
     channel.setWqeSlot(&wqeSlot);
     netPutWithSignal(channel, dst, src, bytes);
   };
@@ -263,9 +282,9 @@ __global__ void __launch_bounds__(Threads) netSendKernel(NetDevice net, NetSendA
       POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(done, memoryOrderAcquire) < parts - 1), NetSpinLimit);
       *done = 0;
       __threadfence_system();
-      send(net.layout.recvRows + size_t(sourceIndex) * a.maxTokens * net.layout.rowBytes,
-           net.layout.sendRows + size_t(index) * a.maxTokens * net.layout.rowBytes,
-           size_t(nRows) * net.layout.rowBytes);
+      netPutRowsWithSignal(net, owner, net.layout.recvRows + size_t(sourceIndex) * a.maxTokens * net.layout.rowBytes,
+                           net.layout.sendRows + size_t(index) * a.maxTokens * net.layout.rowBytes, nRows,
+                           net.layout.rowBytes, &wqeSlot);
     }
   }
 }
@@ -358,9 +377,9 @@ MSCCLPP_DEVICE_INLINE void netSnapshotHeaders(const NetDevice& net, uint64_t epo
 MSCCLPP_DEVICE_INLINE void netReturnResults(const NetDevice& net) {
   const auto* info = reinterpret_cast<const NetHeader*>(net.base + net.layout.recvInfo);
   auto post = [&](int index, uint64_t src, uint64_t rows) {
-    NetChannel channel = net.channels[net.rankOf(index)];
-    netPutWithSignal(channel, net.layout.combineIn + size_t(info[index].outBase) * net.layout.outBytes, src,
-                     rows * net.layout.outBytes);
+    netPutRowsWithSignal(net, net.rankOf(index),
+                         net.layout.combineIn + size_t(info[index].outBase) * net.layout.outBytes, src, rows,
+                         net.layout.outBytes, nullptr);
   };
   if (!net.reduce) {
     for (int index = threadIdx.x; blockIdx.x == 0 && index < net.nNet; index += blockDim.x) {
