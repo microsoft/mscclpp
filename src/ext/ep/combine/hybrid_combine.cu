@@ -147,27 +147,36 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peer, flag,
                                                          mscclpp::memoryOrderRelease);
   }
-  if (queue < 0 || queue >= network->numQpsPerPeer || getLaneId() != 0) return;
-  const int rows = *context->aggregateIncomingRows_;
-  const int nTokensPerChunk = context->nTokensPerChunk_;
-  using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
-  constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
-  const int gateway = context->gatewayRank_;
-  auto handle = network->channel(gateway, queue);
-  handle.setWqeSlot(&wqeSlots[queue]);
-  const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
-  const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
-  const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
-  for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
-       chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
-    const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
-    handle.device_.putWithAccumulateAfter<kExclusive>(
-        handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
-        count * RowBytes, handle.dstMemory_, flagOffset, 1, [&] {
-          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
-                                                                mscclpp::memoryOrderAcquire) != count) {
-          }
-        });
+  if (queue >= 0 && queue < network->numQpsPerPeer && getLaneId() == 0) {
+    const int rows = *context->aggregateIncomingRows_;
+    const int nTokensPerChunk = context->nTokensPerChunk_;
+    using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
+    constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
+    const int gateway = context->gatewayRank_;
+    auto handle = network->channel(gateway, queue);
+    handle.setWqeSlot(&wqeSlots[queue]);
+    const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
+    const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
+    const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
+    for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
+         chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
+      const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
+      handle.device_.putWithAccumulateAfter<kExclusive>(
+          handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
+          count * RowBytes, handle.dstMemory_, flagOffset, 1, [&] {
+            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + chunk,
+                                                                  mscclpp::memoryOrderAcquire) != count) {
+            }
+          });
+    }
+  }
+  for (int index = threadIdx.x; index < nRanks; index += blockDim.x) {
+    workspace.dispatchRankPayloadSlots_[index] = 0;
+    workspace.dispatchRankPayloadCompletions_[index] = 0;
+  }
+  const int dispatchCounters = 3 + configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
+  for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
+    context->distributeScratch_[index] = 0;
   }
 }
 
@@ -275,28 +284,6 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     }
     for (int token = worker; token < workload.numTokens_; token += workers) {
       aggregateFinalize<Hidden, DispatchType>(output, token, context);
-    }
-  }
-  workspace.combineSyncer_->sync(gridDim.x);
-  if (blockIdx.x == 0) {
-    const int chunks = configCellDiv(context->distributeScratch_[0], context->nTokensPerChunk_);
-    const int qps = transport.portChannels_->numQpsPerPeer;
-    for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
-      context->aggregateControl_->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
-    }
-    __syncthreads();
-    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
-      workspace.dispatchRankPayloadSlots_[peer] = 0;
-      workspace.dispatchRankPayloadCompletions_[peer] = 0;
-      workspace.combineRankReadyFlags_[peer] = 0;
-    }
-    const int dispatchCounters = 3 + configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
-    for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
-      context->distributeScratch_[index] = 0;
-    }
-    const int combineCounters = configCellDiv(context->distributeCapacity_, context->nTokensPerChunk_);
-    for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
-      context->aggregateChunkReady_[index] = 0;
     }
   }
 }

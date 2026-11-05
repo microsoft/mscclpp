@@ -78,6 +78,7 @@ struct alignas(BufferAlignmentBytes) HybridDispatchControl {
 struct alignas(BufferAlignmentBytes) HybridAggregateControl {
   uint64_t chunks[4];
   uint64_t chunkBase[4];
+  uint64_t nextChunkBase[4];
 };
 static_assert(sizeof(HybridAggregateControl) == BufferAlignmentBytes);
 

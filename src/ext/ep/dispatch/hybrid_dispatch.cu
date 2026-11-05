@@ -201,6 +201,17 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
           });
     }
   }
+  const int sentChunks = configCellDiv(rows, nTokensPerChunk);
+  for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
+    auto* aggregateControl = context->aggregateControl_;
+    const uint64_t base = aggregateControl->nextChunkBase[queue];
+    aggregateControl->chunkBase[queue] = base;
+    aggregateControl->nextChunkBase[queue] = base + (sentChunks + qps - 1 - queue) / qps;
+  }
+  const int combineCounters = configCellDiv(context->distributeCapacity_, nTokensPerChunk);
+  for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
+    context->aggregateChunkReady_[index] = 0;
+  }
   __syncthreads();
 
   if (threadIdx.x == 0) {
