@@ -31,7 +31,8 @@ class QuantConfig:
     dispatch.
     Rank-major combine input defaults to BF16. Set ``combine_format`` to
     ``FP8_E4M3_STATIC`` for static-FP8 dispatch to consume MM2 output stored as
-    E4M3(real * scale); combine dequantizes it with the existing dispatch scale.
+    E4M3(real * combine_scale); combine dequantizes it with ``combine_scale``,
+    defaulting to the dispatch ``scale`` when unset.
     MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
     RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
     ``[rank, row, hidden // 32]``.
@@ -45,6 +46,7 @@ class QuantConfig:
     scale: Optional[float] = None
     input_mode: NativeQuantConfig.InputMode = NativeQuantConfig.InputMode.PREQUANTIZED
     combine_format: DispatchDataType = DispatchDataType.BF16
+    combine_scale: Optional[float] = None
 
 
 @dataclass(frozen=True)

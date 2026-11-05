@@ -8,11 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -243,7 +245,7 @@ __global__ void stageRankMajorExpertOutput(Bf16* output, const void* input, cons
 __global__ void stageStaticFp8RankMajorExpertOutput(void* output, const Fp8E4M3* input, const int* topkIdx,
                                                     const float* topkWeights, int rank, int rows, int hidden,
                                                     bool directSend, int numExperts, float dispatchScale,
-                                                    bool fp8Output) {
+                                                    bool fp8Output, float combineScale) {
   const size_t thread = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
   const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? static_cast<size_t>(NumTopk) : size_t{1});
@@ -271,7 +273,7 @@ __global__ void stageStaticFp8RankMajorExpertOutput(void* output, const Fp8E4M3*
                                                      (localWeight / dispatchScale);
     if (fp8Output) {
       mscclpp::f32x2 scaled;
-      scaled.data[0] = weighted * dispatchScale;
+      scaled.data[0] = weighted * combineScale;
       scaled.data[1] = scaled.data[0];
       static_cast<Fp8E4M3*>(output)[index] = mscclpp::to<mscclpp::f8_e4m3x2>(scaled).data[0];
     } else {
@@ -350,6 +352,7 @@ std::vector<OutputExpectation> makeOutputExpectation(int rank, int numTokens, in
   const bool expertMajor = layout == DispatchLayout::EXPERT_MAJOR;
   const bool staticFp8 = quant.dispatchDataType == DispatchDataType::FP8_E4M3_STATIC;
   const bool fp8Combine = quant.combineDataType == DispatchDataType::FP8_E4M3_STATIC;
+  const float combineScale = quant.combineScale.value_or(quant.dispatchScale);
   constexpr float Weight = 1.0f / NumTopk;
   std::vector<OutputExpectation> expectation;
   expectation.reserve(numTokens);
@@ -399,10 +402,10 @@ std::vector<OutputExpectation> makeOutputExpectation(int rank, int numTokens, in
           weighted = std::fma(dispatched, Weight, weighted);
         }
       }
-      const float partial =
-          fp8Combine ? static_cast<float>(referenceFp8E4M3Value(referenceFp8E4M3(weighted * quant.dispatchScale)))
-                     : static_cast<float>(static_cast<Bf16>(weighted));
-      const float accumulationScale = (fp8Combine ? 1.0f / quant.dispatchScale : 1.0f) * (directSend ? Weight : 1.0f);
+      const float partial = fp8Combine
+                                ? static_cast<float>(referenceFp8E4M3Value(referenceFp8E4M3(weighted * combineScale)))
+                                : static_cast<float>(static_cast<Bf16>(weighted));
+      const float accumulationScale = (fp8Combine ? 1.0f / combineScale : 1.0f) * (directSend ? Weight : 1.0f);
       accumulated = std::fma(partial, accumulationScale, accumulated);
     }
     expectation.push_back({static_cast<float>(static_cast<Bf16>(accumulated)), highPrecision});
@@ -576,7 +579,8 @@ void runCorrectnessCase(
     int hidden = CorrectnessHidden,
     const std::array<int, NumRanks>& numTokensPerRank = uniformTokens(CorrectnessTokens),
     mscclpp::ep::QuantConfig::InputMode inputMode = mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED,
-    mscclpp::ep::DispatchDataType combineDataType = mscclpp::ep::DispatchDataType::BF16) {
+    mscclpp::ep::DispatchDataType combineDataType = mscclpp::ep::DispatchDataType::BF16,
+    std::optional<float> combineScale = std::nullopt) {
   const int numTokens = numTokensPerRank[rank];
   // Every rank must use the same active capacity, so take it from the shared token counts.
   const int maxTokensPerRank = *std::max_element(numTokensPerRank.begin(), numTokensPerRank.end());
@@ -606,6 +610,7 @@ void runCorrectnessCase(
       .dispatchScale = staticFp8 ? StaticFp8Scale : 1.0f,
       .inputMode = inputMode,
       .combineDataType = combineDataType,
+      .combineScale = combineScale,
   };
   const void* dispatchInput = buffers.input.data();
   if (staticFp8 && inputMode == mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED) {
@@ -658,7 +663,7 @@ void runCorrectnessCase(
     const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? NumTopk : 1);
     stageStaticFp8RankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
         combineInput, static_cast<const Fp8E4M3*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows, hidden,
-        directSend, NumExperts, StaticFp8Scale, fp8Combine);
+        directSend, NumExperts, StaticFp8Scale, fp8Combine, quant.combineScale.value_or(quant.dispatchScale));
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = combineInput;
   } else if (!expertMajor) {
@@ -1180,6 +1185,24 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
     request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
     runtime->dispatch(mscclpp::ep::DispatchRequest{request});
   }));
+  for (const float scale : {0.0f, -1.0f, std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::denorm_min()}) {
+    ASSERT_TRUE(rejectsEpRequest([&] {
+      mscclpp::ep::LatencyDispatchRequest request{};
+      request.maxTokensPerRank = 1;
+      request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+      request.quant.dispatchScale = 0.5f;
+      request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
+      request.quant.combineScale = scale;
+      runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+    }));
+  }
+  ASSERT_TRUE(rejectsEpRequest([&] {
+    mscclpp::ep::LatencyDispatchRequest request{};
+    request.maxTokensPerRank = 1;
+    request.quant.combineScale = 1.0f;
+    runtime->dispatch(mscclpp::ep::DispatchRequest{request});
+  }));
   ASSERT_TRUE(rejectsEpRequest([&] {
     mscclpp::ep::LatencyDispatchRequest request{};
     request.output = runtime->dispatchOutputBuffer();
@@ -1258,6 +1281,10 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
       runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                          mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
                          uniformTokens(CorrectnessTokens), inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC);
+      runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC, CorrectnessHidden,
+                         uniformTokens(CorrectnessTokens), inputMode, mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC,
+                         0.25f);
     }
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::MXFP8_E4M3);

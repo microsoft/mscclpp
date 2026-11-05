@@ -104,9 +104,11 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, _, scale, input_mode, combine_data_type = resolve_dispatch_format(config, quant)
+        data_type, _, scale, input_mode, combine_data_type, combine_scale = resolve_dispatch_format(config, quant)
         rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3_STATIC
+        if combine_data_type == DispatchDataType.FP8_E4M3_STATIC and combine_scale is None:
+            combine_scale = scale
         prequantized_static_fp8 = static_fp8 and input_mode == QuantConfig.InputMode.PREQUANTIZED
         input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
@@ -155,6 +157,7 @@ class RequestBuilder:
                 block_scales=scales,
                 scale=scale,
                 combine_format=combine_data_type,
+                combine_scale=combine_scale,
             )
         )
         output = DispatchOutput(
@@ -174,6 +177,7 @@ class RequestBuilder:
         native_quant.dispatch_scale = 1.0 if scale is None else scale
         native_quant.input_mode = input_mode
         native_quant.combine_data_type = combine_data_type
+        native_quant.combine_scale = combine_scale
         return _DispatchRequest(
             arguments=dict(
                 input_ptr=ptr(input),
@@ -225,7 +229,7 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, input_scales, _, _, _ = resolve_dispatch_format(config, quant)
+        data_type, input_scales, _, _, _, _ = resolve_dispatch_format(config, quant)
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, payload_dtype(data_type), active)
         if data_type == DispatchDataType.FP8_E4M3:
             if input_scales is None:

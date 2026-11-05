@@ -189,9 +189,12 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   destination. Neither mode has a block-scale sideband.
 * Latency RANK_MAJOR combine input is BF16 by default. This means MM2 has
   already produced/dequantized BF16 output. Static-FP8 dispatch may instead set
-  `combine_format=DispatchDataType.FP8_E4M3_STATIC`; MM2 writes
-  `q = E4M3(real * S)` to `combine_input_buffer`, and combine computes
-  `FP32(q) * (1 / S)` with the existing dispatch scale. Combine never
+  `combine_format=DispatchDataType.FP8_E4M3_STATIC` and an independent
+  `combine_scale=C`; MM2 writes `q = E4M3(real * C)` to `combine_input_buffer`,
+  and combine computes `FP32(q) * (1 / C)`. Omitting `combine_scale` preserves
+  the dispatch scale `S`. An explicit combine scale must be finite and positive
+  with a finite float32 reciprocal, and is accepted only for static-FP8 combine.
+  Both scales are selected at dispatch and retained by its handle. Combine never
   quantizes; it applies FP32 route weights only for `DIRECT_SEND`, accumulates
   in FP32, and writes BF16.
 * Throughput FP8 requires `torch.float8_e4m3fn` input and

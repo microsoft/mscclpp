@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <mscclpp/gpu.hpp>
+#include <optional>
 #include <utility>
 #include <variant>
 
@@ -85,9 +86,14 @@ struct QuantConfig {
   /// PREQUANTIZED for every other layout and format.
   InputMode inputMode = InputMode::PREQUANTIZED;
   /// Rank-major combine input format. BF16 is the default; FP8_E4M3_STATIC is
-  /// supported only with static FP8 dispatch and uses dispatchScale for
-  /// dequantization.
+  /// supported only with static FP8 dispatch.
   DispatchDataType combineDataType = DispatchDataType::BF16;
+  /// Optional static FP8 combine multiplier. Expert computation stores
+  /// E4M3(real * combineScale); combine divides by this scale.
+  /// When unset, FP8 combine uses dispatchScale for backward compatibility.
+  /// May be set only for FP8_E4M3_STATIC combine; must be finite and positive
+  /// with a finite reciprocal.
+  std::optional<float> combineScale;
 };
 
 /// Arguments for throughput-mode routing preparation.
@@ -190,11 +196,11 @@ struct LatencyDispatchRequest {
   /// This is an output sentinel; input topkIdx entries must still be valid
   /// global expert IDs or negative values for dropped routes.
   int invalidTokenExpertId = -1;
-  /// Dispatch quantization and rank-major combine datatype settings.
+  /// Dispatch quantization and rank-major combine datatype and scale settings.
   ///
-  /// FP8_E4M3_STATIC combine is supported only with matching static FP8 dispatch
-  /// and reuses the dispatch scale for dequantization; all other rank-major
-  /// combines use BF16.
+  /// FP8_E4M3_STATIC combine is supported only with matching static FP8 dispatch.
+  /// Its scale may differ from the dispatch scale; all other rank-major combines
+  /// use BF16.
   QuantConfig quant;
   /// Dispatch grid block count. Zero uses the default number of blocks.
   int numBlocks = 0;
@@ -291,8 +297,8 @@ struct LatencyCombineRequest {
   /// [numRanks, active capacity, hidden] elements and an extra top-k dimension
   /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
   /// request's quant.combineDataType: BF16 by default, or FP8_E4M3_STATIC with
-  /// matching static FP8 dispatch. Static FP8 input is dequantized with the
-  /// dispatch scale.
+  /// matching static FP8 dispatch. Static FP8 input is dequantized with
+  /// quant.combineScale, defaulting to quant.dispatchScale.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

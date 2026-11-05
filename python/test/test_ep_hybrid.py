@@ -588,16 +588,28 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
-@pytest.mark.parametrize("combine_format", [DispatchDataType.BF16, DispatchDataType.FP8_E4M3_STATIC])
+@pytest.mark.parametrize(
+    "combine_format,combine_scale",
+    [
+        (DispatchDataType.BF16, None),
+        (DispatchDataType.FP8_E4M3_STATIC, None),
+        (DispatchDataType.FP8_E4M3_STATIC, 0.25),
+        (DispatchDataType.FP8_E4M3_STATIC, 448 / 79488.0),
+    ],
+)
 @pytest.mark.parametrize("input_mode", [QuantConfig.InputMode.PREQUANTIZED, QuantConfig.InputMode.QUANTIZE])
-def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input_mode, emit_local_expert_ids):
+def test_latency_hybrid_static_fp8(
+    ep_group, combine_mode, combine_format, combine_scale, input_mode, emit_local_expert_ids
+):
     num_tokens, capacity, scale = 5, 8, 0.5
     quant = QuantConfig(
         format=DispatchDataType.FP8_E4M3_STATIC,
         scale=scale,
         input_mode=input_mode,
         combine_format=combine_format,
+        combine_scale=combine_scale,
     )
+    expert_scale = scale if combine_scale is None else combine_scale
     with initialized_runtime(
         ep_group,
         mode=MoEMode.LATENCY,
@@ -630,6 +642,10 @@ def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input
                     torch.float8_e4m3fn if combine_format == DispatchDataType.FP8_E4M3_STATIC else torch.bfloat16
                 )
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
+                assert result.quant.scale == scale
+                assert result.quant.combine_scale == (
+                    expert_scale if combine_format == DispatchDataType.FP8_E4M3_STATIC else None
+                )
                 stream.synchronize()
                 _check_dispatch_metadata(ep_group, result, num_tokens)
                 valid_rows = torch.arange(capacity, device="cuda")[None, :] < result.layout.num_tokens_per_rank[:, None]
@@ -654,7 +670,7 @@ def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input
                 local_weights = torch.where(valid_rows[..., None], result.weights, 0).sum(dim=-1, keepdim=True)
                 expert_out = torch.where(valid_rows[..., None], dequant_tokens * local_weights, 0)
             if combine_format == DispatchDataType.FP8_E4M3_STATIC:
-                result.combine_input_buffer.copy_((expert_out * scale).to(torch.float8_e4m3fn))
+                result.combine_input_buffer.copy_((expert_out * expert_scale).to(torch.float8_e4m3fn))
             else:
                 result.combine_input_buffer.copy_(expert_out.to(torch.bfloat16))
             combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
@@ -664,7 +680,7 @@ def test_latency_hybrid_static_fp8(ep_group, combine_mode, combine_format, input
 
             def stage(values):
                 if combine_fp8:
-                    return (values * scale).to(torch.float8_e4m3fn).float() / scale
+                    return (values * expert_scale).to(torch.float8_e4m3fn).float() / expert_scale
                 return values.to(torch.bfloat16).float()
 
             if combine_mode == CombineMode.DIRECT_SEND:

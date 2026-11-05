@@ -64,6 +64,7 @@ struct DispatchHandle::Impl {
         dispatchDataType_(request.quant.dispatchDataType),
         combineDataType_(request.quant.combineDataType),
         dispatchScale_(request.quant.dispatchScale),
+        combineScale_(request.quant.combineScale.value_or(request.quant.dispatchScale)),
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
@@ -82,6 +83,7 @@ struct DispatchHandle::Impl {
   DispatchDataType dispatchDataType_;
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
   float dispatchScale_ = 1.0f;
+  float combineScale_ = 1.0f;
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
   std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };

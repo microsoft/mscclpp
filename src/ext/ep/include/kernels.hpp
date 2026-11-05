@@ -49,6 +49,8 @@ struct Workload {
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
   /// FP8_E4M3_STATIC dispatch multiplier; one for other formats.
   float dispatchScale_ = 1.0f;
+  /// FP8_E4M3_STATIC combine multiplier, resolved independently of dispatch.
+  float combineScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
   /// Whether direct-send combine scales each route by its router weight.
