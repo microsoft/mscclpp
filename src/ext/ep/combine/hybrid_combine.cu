@@ -242,14 +242,32 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     const int worker = static_cast<int>(blockIdx.x) - 1;
     const int workers = static_cast<int>(gridDim.x) - 1;
     const int incoming = *context->aggregateIncomingRows_;
+    const int nTokensPerChunk = context->nTokensPerChunk_;
+    const int qps = transport.portChannels_->numQpsPerPeer;
     const float dequantScale =
         DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
     auto* sendBase = reinterpret_cast<WireElement*>(context->aggregateSendBuffer_);
     for (int row = worker; row < incoming; row += workers) {
+      if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {
+        const int previous = row / nTokensPerChunk - qps;
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + previous,
+                                                              mscclpp::memoryOrderAcquire) != nTokensPerChunk) {
+        }
+      }
+      __syncthreads();
       aggregateReduceRow<Mode, Hidden, DispatchType, true>(sendBase + static_cast<size_t>(row) * Hidden, expertOutput,
                                                            topkIndices, topkWeights, row, workload, context, transport,
                                                            workspace, flag, sharedMemory, phase, dequantScale);
     }
+    if (threadIdx.x == 0) {
+      for (int begin = 0; begin < incoming; begin += nTokensPerChunk) {
+        const int count = min(nTokensPerChunk, incoming - begin);
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->aggregateChunkReady_ + begin / nTokensPerChunk,
+                                                              mscclpp::memoryOrderAcquire) != count) {
+        }
+      }
+    }
+    __syncthreads();
     for (int row = worker; row < workload.numTokens_; row += workers) {
       aggregateReduceRow<Mode, Hidden, DispatchType, false>(
           context->aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput, topkIndices, topkWeights,
