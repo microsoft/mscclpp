@@ -49,7 +49,7 @@ class MoERuntime {
   /// until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
-             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE, int qpsPerPeer = 1, int nTokensPerChunk = 8);
+             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE, int qpsPerPeer = 4, int nTokensPerChunk = 8);
   /// Release owned resources without explicitly synchronizing user streams.
   /// The caller must ensure all local and peer GPU work using these resources,
   /// including graph replays, has completed before destruction.
@@ -192,7 +192,7 @@ std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator
                                              int hidden, int numExperts, int numTopk,
                                              DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
                                              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE,
-                                             int qpsPerPeer = 1, int nTokensPerChunk = 8);
+                                             int qpsPerPeer = 4, int nTokensPerChunk = 8);
 
 }  // namespace ep
 }  // namespace mscclpp

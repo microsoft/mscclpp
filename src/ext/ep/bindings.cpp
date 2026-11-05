@@ -58,7 +58,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   m.def("create_moe_runtime", &createMoERuntime, nb::arg("comm"), nb::arg("mode"), nb::arg("max_tokens_per_rank"),
         nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"),
         nb::arg("output_layout") = DispatchLayout::EXPERT_MAJOR,
-        nb::arg("combine_mode") = CombineMode::RANK_LOCAL_REDUCE, nb::arg("qps_per_peer") = 1,
+        nb::arg("combine_mode") = CombineMode::RANK_LOCAL_REDUCE, nb::arg("qps_per_peer") = 4,
         nb::arg("n_tokens_per_chunk") = 8, nb::keep_alive<0, 1>());
 
   nb::class_<MoERuntime>(m, "MoERuntime")

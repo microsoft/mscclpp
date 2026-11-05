@@ -75,7 +75,7 @@ class MoECommunicatorConfig:
     num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     emit_local_expert_ids: bool = False
-    qps_per_peer: int = 1
+    qps_per_peer: int = 4
     n_tokens_per_chunk: int = 8
 
     def __post_init__(self) -> None:

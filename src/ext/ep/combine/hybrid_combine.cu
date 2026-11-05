@@ -178,6 +178,12 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
     context->distributeScratch_[index] = 0;
   }
+  if (threadIdx.x == 0) {
+    auto* state = context->distributeControl_;
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) <
+           state->ackBase) {
+    }
+  }
 }
 
 template <int Hidden, DispatchDataType DispatchType>

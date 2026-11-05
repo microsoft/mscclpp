@@ -200,6 +200,15 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
             }
           });
     }
+    if (queue == 0) {
+      const auto ackOffset = transport.symmetricOffset(&state->ack);
+      handle.device_.accumulateAfter<kExclusive>(handle.dstMemory_, ackOffset, 1, [&] {
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
+                                                              mscclpp::memoryOrderAcquire) != 1) {
+        }
+      });
+      ++state->ackBase;
+    }
   }
   const int sentChunks = configCellDiv(rows, nTokensPerChunk);
   for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
@@ -211,22 +220,6 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   const int combineCounters = configCellDiv(context->distributeCapacity_, nTokensPerChunk);
   for (int index = threadIdx.x; index < combineCounters; index += blockDim.x) {
     context->aggregateChunkReady_[index] = 0;
-  }
-  __syncthreads();
-
-  if (threadIdx.x == 0) {
-    const auto offset = transport.symmetricOffset(&state->ack);
-    auto channel = network->channel(gateway, 0);
-    channel.setWqeSlot(&wqeSlots[0]);
-    channel.device_.accumulateAfter<kExclusive>(channel.dstMemory_, offset, 1, [&] {
-      while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2,
-                                                            mscclpp::memoryOrderAcquire) != 1) {
-      }
-    });
-    const uint64_t ack = state->ackBase + 1;
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) < ack) {
-    }
-    state->ackBase = ack;
   }
 }
 

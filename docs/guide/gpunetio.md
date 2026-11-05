@@ -95,7 +95,7 @@ devices via `ibverbs` when `MSCCLPP_HCA_DEVICES` is unset. If a rank's process s
 single HCA name (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
 
 For latency `RANK_MAJOR` EP, `qpsPerPeer` (`qps_per_peer` in `MoECommunicatorConfig`) selects the number of QPs created
-per peer (1 or 4, default 1). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct
+per peer (1 or 4, default 4). Hybrid dispatch and aggregate combine distribute chunks across all configured QPs; direct
 combine uses one payload QP per peer.
 
 ### Hybrid dispatch
