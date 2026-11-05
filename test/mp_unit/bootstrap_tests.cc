@@ -3,7 +3,10 @@
 
 #include <mpi.h>
 
+#include <cstring>
+
 #include "mp_unit_tests.hpp"
+#include "socket.h"
 
 void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   std::vector<int> tmp(bootstrap->getNranks(), 0);
@@ -112,6 +115,78 @@ TEST(BootstrapTest, TimeoutWithId) {
   // Timeout should be sligtly greater than 1 second
   ASSERT_GT(timer.elapsed(), 1000000);
   ASSERT_LT(timer.elapsed(), 1100000);
+}
+
+TEST(BootstrapTest, RejectInvalidRemoteAddresses) {
+  struct UniqueIdInternal {
+    uint64_t magic;
+    mscclpp::SocketAddress addr;
+  };
+  struct ExtInfo {
+    int rank;
+    int nRanks;
+    mscclpp::SocketAddress extAddressListenRoot;
+    mscclpp::SocketAddress extAddressListen;
+  };
+
+  auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
+  mscclpp::UniqueId id;
+  if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
+  MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  if (gEnv->rank == 1) {
+    UniqueIdInternal internalId{};
+    std::memcpy(&internalId, id.data(), sizeof(internalId));
+    volatile uint32_t abortFlag = 0;
+
+    auto sendRawExtInfo = [&](int rank, int nRanks) {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
+      sock.connect();
+      ExtInfo info{};
+      info.rank = rank;
+      info.nRanks = nRanks;
+      std::memset(&info.extAddressListenRoot, 0x41, sizeof(info.extAddressListenRoot));
+      std::memset(&info.extAddressListen, 0x41, sizeof(info.extAddressListen));
+      int size = sizeof(info);
+      sock.send(&size, sizeof(size));
+      sock.send(&info, sizeof(info));
+    };
+
+    // Wrong socket type
+    {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeProxy, &abortFlag);
+      sock.connect();
+    }
+    // Oversized, negative, and truncated length prefixes
+    {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
+      sock.connect();
+      int badSize = sizeof(ExtInfo) + 64;
+      sock.send(&badSize, sizeof(badSize));
+    }
+    {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
+      sock.connect();
+      int badSize = -1;
+      sock.send(&badSize, sizeof(badSize));
+    }
+    {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
+      sock.connect();
+      int badSize = sizeof(int) * 2;
+      sock.send(&badSize, sizeof(badSize));
+    }
+    // Mismatched nRanks
+    sendRawExtInfo(1, gEnv->worldSize + 1);
+    // Out-of-range ranks (negative, boundary, near-OOB, far-OOB)
+    sendRawExtInfo(-1, gEnv->worldSize);
+    sendRawExtInfo(gEnv->worldSize, gEnv->worldSize);
+    sendRawExtInfo(gEnv->worldSize + 2, gEnv->worldSize);
+    sendRawExtInfo(1000000, gEnv->worldSize);
+  }
+
+  bootstrap->initialize(id);
+  bootstrapTestAll(bootstrap);
 }
 
 class MPIBootstrap : public mscclpp::Bootstrap {

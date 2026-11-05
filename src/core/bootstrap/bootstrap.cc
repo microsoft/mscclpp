@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <sys/resource.h>
 
@@ -231,7 +231,7 @@ TcpBootstrap::Impl::~Impl() {
 
 void TcpBootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<SocketAddress>& rankAddresses,
                                             std::vector<SocketAddress>& rankAddressesRoot, int& rank) {
-  ExtInfo info;
+  ExtInfo info{};
   SocketAddress zero;
   std::memset(&zero, 0, sizeof(SocketAddress));
 
@@ -244,6 +244,12 @@ void TcpBootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<Sock
   if (this->nRanks_ != info.nRanks) {
     throw Error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) + " : " +
                     std::to_string(info.nRanks),
+                ErrorCode::InternalError);
+  }
+
+  if (info.rank < 0 || info.rank >= this->nRanks_) {
+    throw Error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " + std::to_string(this->nRanks_) +
+                    " is out of range",
                 ErrorCode::InternalError);
   }
 
@@ -302,7 +308,13 @@ void TcpBootstrap::Impl::bootstrapRoot() {
   /* Receive addresses from all ranks */
   do {
     int rank;
-    getRemoteAddresses(listenSockRoot_.get(), rankAddresses, rankAddressesRoot, rank);
+    try {
+      getRemoteAddresses(listenSockRoot_.get(), rankAddresses, rankAddressesRoot, rank);
+    } catch (const std::exception& e) {
+      if (abortFlag_ && *abortFlag_) break;
+      WARN("Bootstrap Root : ignoring invalid connection: %s", e.what());
+      continue;
+    }
     ++numCollected;
     TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d", rank, numCollected, nRanks_);
   } while (numCollected < nRanks_ && (!abortFlag_ || *abortFlag_ == 0));
@@ -590,12 +602,12 @@ void TcpBootstrap::Impl::netSend(Socket* sock, const void* data, int size) {
 void TcpBootstrap::Impl::netRecv(Socket* sock, void* data, int size) {
   int recvSize;
   sock->recv(&recvSize, sizeof(int));
-  if (recvSize > size) {
+  if (recvSize != size) {
     std::stringstream ss;
     ss << "Message truncated : received " << recvSize << " bytes instead of " << size;
     throw Error(ss.str(), ErrorCode::InvalidUsage);
   }
-  sock->recv(data, std::min(recvSize, size));
+  sock->recv(data, size);
 }
 
 void TcpBootstrap::Impl::send(void* data, int size, int peer, int tag) {
@@ -611,6 +623,12 @@ void TcpBootstrap::Impl::recv(void* data, int size, int peer, int tag) {
 void TcpBootstrap::Impl::barrier() { allGather(barrierArr_.data(), sizeof(int)); }
 
 void TcpBootstrap::Impl::close() {
+  if (abortFlag_) {
+    *abortFlag_ = 1;
+  }
+  if (rootThread_.joinable()) {
+    rootThread_.join();
+  }
   listenSockRoot_.reset(nullptr);
   listenSock_.reset(nullptr);
   ringRecvSocket_.reset(nullptr);
