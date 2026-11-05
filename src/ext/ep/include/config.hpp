@@ -40,7 +40,6 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 // Send-and-distribute owns separate registered send and landing rows. Routing slots
 // are the source's freshly allocated compact slots, not input-token indices.
 struct HybridDispatchRow {
-  size_t stride_;
   int* ids_;
   float* weights_;
   int* slots_;
@@ -51,8 +50,7 @@ struct HybridDispatchRow {
   }
 
   MSCCLPP_HOST_DEVICE_INLINE HybridDispatchRow(void* row, int hidden, int topk, size_t elementBytes = sizeof(uint16_t))
-      : stride_(stride(hidden, topk, elementBytes)),
-        ids_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
+      : ids_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
         weights_(reinterpret_cast<float*>(ids_ + topk)),
         slots_(reinterpret_cast<int*>(weights_ + topk)) {}
 };
@@ -80,7 +78,6 @@ struct alignas(BufferAlignmentBytes) HybridDispatchControl {
 struct alignas(BufferAlignmentBytes) HybridAggregateControl {
   uint64_t chunks[4];
   uint64_t chunkBase[4];
-  uint32_t lastCombineEpoch;
 };
 static_assert(sizeof(HybridAggregateControl) == BufferAlignmentBytes);
 

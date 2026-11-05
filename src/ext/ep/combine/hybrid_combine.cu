@@ -315,20 +315,6 @@ __global__ __launch_bounds__(CombineNThreads,
                 (DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC)) {
     WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
-    if (blockIdx.x == 0) {
-      if (threadIdx.x == 0) {
-        auto* control = context->aggregateControl_;
-        if (flag == 0 || control->lastCombineEpoch == flag) {
-          printf(
-              "[EP] hybrid Combine requires one fresh Dispatch per Combine, including graph replays "
-              "(rank=%d epoch=%u last=%u)\n",
-              context->rank_, flag, control->lastCombineEpoch);
-          __trap();
-        }
-        control->lastCombineEpoch = flag;
-      }
-      __syncthreads();
-    }
     combineBody<Mode, Hidden, DispatchType>(output, expertOutput, topkIndices, topkWeights, workload, context, flag);
   }
 #endif

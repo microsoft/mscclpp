@@ -29,7 +29,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   const int producers = static_cast<int>(gridDim.x) - firstProducer;
   const int warp = threadIdx.x / WARP_SIZE;
   const int lane = getLaneId();
-  if (producer < 0 || warp >= DispatchMaxNWarpGroups) return;
+  if (warp >= DispatchMaxNWarpGroups) return;
 
   using ElementType = DispatchElementType<DataType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
@@ -69,7 +69,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     }
     const RankMajorRoute route = prepareRankMajorRoute(workspace, routes, token, topk, localExperts,
                                                        workload.maxTokensPerRank_, lane, workload.numExperts_);
-    const int expert = distributeExpert(routes, token, lane, workload);
+    const int expert = route.expertIdx;
     const float weight = expert >= 0 ? (weights == nullptr ? 1.0f : weights[token * topk + lane]) : 0.0f;
     const bool remote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
     const bool hasRemote = __any_sync(0xffffffff, remote);
@@ -236,25 +236,7 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   const int qps = transport.portChannels_->numQpsPerPeer;
   auto* state = context->distributeControl_;
 
-  if (threadIdx.x == 0) {
-    shared[0] = state->recvHeader.rows.read(flag, -1);
-    if (forward == 0) {
-      *context->aggregateIncomingRows_ = shared[0];
-    }
-  }
-  __syncthreads();
-  const int rows = shared[0];
-  if (forward == 0) {
-    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
-      if (transport.isNvlinkPeer(peer)) {
-        auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, peer));
-        counts[source].write(state->recvHeader.counts[peer].read(flag, -1), flag);
-      }
-    }
-  }
-
   using ElementType = DispatchElementType<DataType>;
-  const int chunks = configCellDiv(rows, nTokensPerChunk);
   const size_t stride = HybridDispatchRow::stride(Hidden, topk, sizeof(ElementType));
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
@@ -263,7 +245,23 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
                                                            ForwardWarps * payloadStride);
   if (warp < ForwardWarps && lane == 0) barriers[warp].init();
+  if (threadIdx.x == 0) {
+    shared[0] = state->recvHeader.rows.read(flag, -1);
+    if (forward == 0) {
+      *context->aggregateIncomingRows_ = shared[0];
+    }
+  }
+  if (forward == 0) {
+    for (int peer = threadIdx.x; peer < context->numRanks_; peer += blockDim.x) {
+      if (transport.isNvlinkPeer(peer)) {
+        auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, peer));
+        counts[source].write(state->recvHeader.counts[peer].read(flag, -1), flag);
+      }
+    }
+  }
   __syncthreads();
+  const int rows = shared[0];
+  const int chunks = configCellDiv(rows, nTokensPerChunk);
 
   uint32_t phase = 0;
   if (warp < ForwardWarps) {
@@ -327,7 +325,6 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
     for (int queue = threadIdx.x; queue < qps; queue += blockDim.x) {
       state->chunkBase[queue] += (chunks + qps - 1 - queue) / qps;
     }
-    __syncthreads();
     if (threadIdx.x == configAlign(context->numRanks_, WARP_SIZE)) {
       mscclpp::atomicStore<int, mscclpp::scopeDevice>(context->distributeScratch_ + 2, 1, mscclpp::memoryOrderRelease);
     }
