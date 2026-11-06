@@ -14,8 +14,9 @@ namespace mscclpp::megamoe {
 /// Owns a native MegaMoE plan, packed weights, registered workspace, and peer mappings.
 ///
 /// Ranks form contiguous racks that each share an NVLink fabric. Peers in the local rack
-/// use CUDA IPC; peers in other racks use IB through device-mode (GPUNetIO) MSCCL++ port
-/// channels, which post RDMA work requests from the GPU without a host proxy thread.
+/// use CUDA IPC; other racks are reached over IB through the rank's rail peers (same lane in
+/// each other rack), which forward for their rack over NVLink, using device-mode (GPUNetIO)
+/// MSCCL++ port channels that post RDMA work requests from the GPU without a host proxy thread.
 ///
 /// Construction is collective and must take place outside CUDA Graph capture on
 /// the rank's current CUDA device. All ranks must keep their contexts alive until

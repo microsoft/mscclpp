@@ -48,6 +48,10 @@ constexpr bool validW4RegisterBudget(int epilogueWarps, int epilogueRegisters, i
 
 static_assert(validW4RegisterBudget(W4EpilogueWarps, W4EpilogueRegisters, W4TransferRegisters));
 
+// With an inter-rack path, the first idle warp past the dispatch warps runs the network agent (megamoe_net.cuh).
+constexpr int W4NetAgentWarp = W4A8WarpSchedule::DispatchEnd;
+constexpr bool W4NetAgent = W4NetAgentWarp < W4NumWarps;
+
 struct Control {
   uint64_t epoch;
   int tokenBlocks;
@@ -56,6 +60,8 @@ struct Control {
 
 // Routing exchanges a rank's routes in chunks of one route per kernel thread; even an empty batch has one chunk.
 constexpr int RouteChunk = W4Threads;
+// Network messages size their per-chunk count tables for the smallest routing chunk.
+static_assert(RouteChunk >= NetMinRouteChunk);
 
 __host__ __device__ constexpr int routeChunks(int routes) {
   return routes > RouteChunk ? routes / RouteChunk + (routes % RouteChunk != 0) : 1;

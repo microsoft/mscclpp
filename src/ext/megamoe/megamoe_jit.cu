@@ -114,7 +114,7 @@ int jitPack(const MegaMoeJitConfigV1* config, const MegaMoeJitWeightsV1* source,
 }
 
 int jitCreateNet(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peers, void* workspace,
-                 const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV1* net, void** plan, char* error,
+                 const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV2* net, void** plan, char* error,
                  size_t capacity) noexcept {
   if (plan) *plan = nullptr;
   return jitCall(error, capacity, [&] {
@@ -123,7 +123,7 @@ int jitCreateNet(const MegaMoeJitConfigV1* config, void* symmetric, const uint64
     NetPlan netPlan{};
     if (net) {
       netPlan = NetPlan{net->rackSize, net->buffer, static_cast<const NetChannel*>(net->channels),
-                        net->qps > 0 ? net->qps : 1};
+                        net->qps > 0 ? net->qps : 1, net->rackBases};
       if (net->bufferBytes != getNetLayout(c, net->rackSize).bytes)
         throw std::invalid_argument("MegaMoE JIT network workspace size does not match the module layout");
     }
@@ -212,8 +212,8 @@ extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch
                          error, capacity);
 }
 
-extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_create_plan_net_v1(
+extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_create_plan_net_v2(
     const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases, void* workspace,
-    const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV1* net, void** plan, char* error, size_t capacity) {
+    const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV2* net, void** plan, char* error, size_t capacity) {
   return jitCreateNet(config, symmetric, peerBases, workspace, weights, net, plan, error, capacity);
 }

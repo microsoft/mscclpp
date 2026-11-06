@@ -242,16 +242,12 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
     const uint8_t* source = nullptr;
     const uint8_t* sourceScale = nullptr;
-    float netWeight = 0.0f;
     // computeOnly gathers already-delivered rows locally, so it never reads network staging.
-    const bool netRow = !LocalGather && hasRow && p.net.isNet(route.rank);
-    if (netRow) {
-      // Network sources' entries and rows arrived before routing completed.
-      NetEntry entry = netRouteEntry(p.net, route.rank, route.token, route.slot, p.config.topK,
-                                     size_t(p.config.maxTokens) * p.config.topK);
-      source = netRecvRow(p.net, route.rank, entry.row, p.config.maxTokens);
+    const bool fromNet = !LocalGather && hasRow && p.net.isNet(route.rank);
+    if (fromNet) {
+      // A network source's row sits in its forwarder's recvRows; lane 0 waits for it before loading.
+      source = netRow(p.net, route.rank, route.token);
       sourceScale = source + hidden;
-      netWeight = entry.weight;
     } else if (hasRow) {
       if constexpr (LocalGather)
         resolveLocalGatherSource<IsBf16>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
@@ -276,14 +272,19 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     };
     float routeWeight = 1.0f;
     if (lane == 0 && hasRow) {
+      const uint64_t epoch = p.workspace.control->epoch;
+      if (fromNet) netWaitRows(p.net, route.rank, epoch);
       bulkFence();
 #pragma unroll
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
-      if (!p.config.combineRouteWeights)
-        routeWeight = netRow        ? netWeight
-                      : LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens)
-                                    : loadRouteWeight(p, route);
+      // Owners weight network sources' rows even with combineRouteWeights: racks return weighted sums.
+      if (fromNet)
+        routeWeight = netRouteWeight(p.net, route.rank, route.token * p.config.topK + route.slot,
+                                     p.config.maxTokens * p.config.topK, epoch);
+      else if (!p.config.combineRouteWeights)
+        routeWeight =
+            LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
     }
     auto process = [&](int chunk) {
       int stage = chunk % DispatchStages;
@@ -294,7 +295,8 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
                                                           [&] { load(chunk + DispatchStages); });
       if (lane == 0) {
         auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
-        if (hasRow && chunk == chunks - 1 && !p.config.combineRouteWeights) w.routes[row].weight = routeWeight;
+        if (hasRow && chunk == chunks - 1 && (!p.config.combineRouteWeights || p.net.nNet))
+          w.routes[row].weight = routeWeight;
         publicationPhase ^= 1u;
         publishDispatchChunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
       }

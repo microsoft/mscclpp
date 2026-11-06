@@ -62,6 +62,10 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     }
   }(s.activationLoad);
   auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
+  // CTA i < nNet serves the rail peer of remote rack i: an idle warp past the dispatch warps runs its network agent
+  // during the GEMM, and thread 0 returns its results once the CTA's roles finished.
+  const bool netAgentWarp = W4NetAgent && blockIdx.x < p.net.nNet && warp == W4NetAgentWarp;
+
   if (warp < Schedule::DispatchBegin) {
     loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
@@ -113,6 +117,12 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
         runEpilogueRole<Schedule>(p, s, accumulatePipeline, tmemStorage.accumulators, hidden, intermediate, cluster,
                                   tasks, output, tokens);
+        if (p.net.nNet) {
+          // Every epilogue lane has drained its FC2 bulk stores and reductions.
+          cutlass::arch::NamedBarrier::sync(Types::EpilogueWarps * warpSize,
+                                            cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+          if (warp == Schedule::EpilogueBegin) netEpilogueDone(p.net);
+        }
       } else {
         runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
                    warp, cta, cluster, tasks);
@@ -121,8 +131,11 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   } else {
     // Lower dispatch/idle warp groups to 32 registers per thread to fund epilogue growth.
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
-    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
-                                                                         scores);
+    if (netAgentWarp)
+      netAgent(p.net, blockIdx.x, p.workspace.control->epoch);
+    else
+      runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
+                                                                           scores);
   }
   // Join even idle roles before the next register reconfiguration.
   __syncthreads();
@@ -135,6 +148,9 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
+  // The GEMM no longer uses its shared tensor storage, which holds the BlueFlame slots.
+  if (blockIdx.x < p.net.nNet)
+    netReturnResults(p.net, blockIdx.x, p.workspace.control->epoch, reinterpret_cast<GpuNetIoWqeSlot*>(s.routing));
   finishAndCombine<Hidden>(p, tokens, output);
 }
 

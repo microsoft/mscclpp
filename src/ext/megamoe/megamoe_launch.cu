@@ -176,8 +176,9 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
   }
 }
 
+// With an inter-rack path, `netRows` also receives every token row (activations, then scales) for the rail peers.
 __global__ void quantizeInputKernel(const __bfloat16* input, uint8_t* quantizedInput, uint8_t* quantizedInputScale,
-                                    int tokens, int hidden) {
+                                    int tokens, int hidden, uint8_t* netRows, size_t netRowBytes) {
   constexpr int ValuesPerThread = 8;
   constexpr int ThreadsPerBlockScale = 4;
   constexpr int BlockScalesPerCta = 128 / ThreadsPerBlockScale;
@@ -204,6 +205,11 @@ __global__ void quantizeInputKernel(const __bfloat16* input, uint8_t* quantizedI
     auto output = quantizedInput + size_t(token) * hidden + block * 32 + lane * ValuesPerThread;
     *reinterpret_cast<uint2*>(output) = quantized.storage;
     if (lane == 0) quantizedInputScale[size_t(token) * scaleStride + block] = scale;
+    if (netRows) {
+      uint8_t* row = netRows + size_t(token) * netRowBytes;
+      *reinterpret_cast<uint2*>(row + block * 32 + lane * ValuesPerThread) = quantized.storage;
+      if (lane == 0) row[hidden + block] = scale;
+    }
   }
 }
 
@@ -502,6 +508,14 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
     throw std::invalid_argument("MegaMoE computeOnly does not support inter-rack execution");
   if (c.weightDtype == WeightDtype::Mxfp4) {
     plan->params = detail::makeParameters<detail::W4A8Parameters>(c, symmetric, peers, workspace, weights, net);
+    const int nNet = std::get<detail::W4A8Parameters>(plan->params).net.nNet;
+    if (nNet && !detail::W4NetAgent)
+      throw std::invalid_argument(
+          "MegaMoE inter-rack execution needs an idle warp after the dispatch warps (num_warps > epilogue_warps + 4 + "
+          "dispatch_warps)");
+    // Distinct CTAs build, send rows, and relay for each remote rack.
+    if (3 * nNet >= plan->ctas)
+      throw std::invalid_argument("MegaMoE inter-rack execution needs more than three CTAs per remote rack");
   } else if (net && net->rackSize > 0 && net->rackSize < c.worldSize) {
     throw std::invalid_argument("MegaMoE inter-rack execution supports only MXFP4 weights");
   } else if (plan->localExpert) {
@@ -541,27 +555,9 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     } else {
       detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
           source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
-          detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden);
+          detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden,
+          params.net.nNet ? params.net.base + params.net.layout.sendRows : nullptr, params.net.layout.rowBytes);
     }
-    MSCCLPP_CUDATHROW(cudaGetLastError());
-  }
-  if (params.net.nNet) {
-    // Every launch sends each network owner a message, even when empty; owners count them per launch.
-    const auto& c = params.config;
-    const bool staticFp8 = c.activationDtype == ActivationDtype::Fp8Static;
-    detail::NetSendArguments arguments{c.rank,
-                                       c.maxTokens,
-                                       c.topK,
-                                       c.numExperts / c.worldSize,
-                                       c.hidden,
-                                       staticFp8 ? 0 : detail::w4SourceScaleStride(c.hidden),
-                                       tokens,
-                                       ids ? ids : detail::at<int32_t>(params.local, params.symmetric.topkIds),
-                                       scores ? scores : detail::at<float>(params.local, params.symmetric.topkWeights),
-                                       detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
-                                       detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale)};
-    detail::netSendKernel<<<params.net.nNet * netSendParts(params.net.nNet), detail::NetSendThreads, 0, stream>>>(
-        params.net, arguments);
     MSCCLPP_CUDATHROW(cudaGetLastError());
   }
   std::array<cudaLaunchAttribute, 2> launchAttributes{};

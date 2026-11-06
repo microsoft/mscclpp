@@ -20,7 +20,7 @@
 #define MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT "mscclpp_megamoe_jit_fixed_token_count_v1"
 #define MSCCLPP_MEGAMOE_JIT_OPTIMIZATION_FLAGS_ENTRYPOINT "mscclpp_megamoe_jit_optimization_flags_v1"
 #define MSCCLPP_MEGAMOE_JIT_LAUNCH_DIRECT_ENTRYPOINT "mscclpp_megamoe_jit_launch_direct_v1"
-#define MSCCLPP_MEGAMOE_JIT_CREATE_PLAN_NET_ENTRYPOINT "mscclpp_megamoe_jit_create_plan_net_v1"
+#define MSCCLPP_MEGAMOE_JIT_CREATE_PLAN_NET_ENTRYPOINT "mscclpp_megamoe_jit_create_plan_net_v2"
 #define MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS 1u
 #define MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS 2u
 #define MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS 4u
@@ -106,20 +106,22 @@ typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
 
 // Inter-rack network path of a plan (mscclpp::megamoe::NetPlan). rackSize 0 or worldSize disables it.
 // bufferBytes must equal the module's network layout size; channels is a device array of
-// qps * worldSize mscclpp::megamoe::NetChannel (device-mode GPUNetIO PortChannel handles), by queue pair then rank.
-// qps 0 means 1.
-typedef struct MegaMoeJitNetV1 {
+// qps * (worldSize / rackSize - 1) mscclpp::megamoe::NetChannel (device-mode GPUNetIO PortChannel handles to the rail
+// peers), by queue pair then remote rack network index; rackBases is a device array of the rackSize network workspace
+// addresses of the local rack's ranks by lane. qps 0 means 1.
+typedef struct MegaMoeJitNetV2 {
   int32_t rackSize;
   int32_t qps;
   uint64_t bufferBytes;
   void* buffer;
   const void* channels;
-} MegaMoeJitNetV1;
+  const uint64_t* rackBases;
+} MegaMoeJitNetV2;
 
 // MegaMoeJitApiV1::createPlan with an inter-rack network path.
-typedef int (*MegaMoeJitCreatePlanNetV1)(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases,
+typedef int (*MegaMoeJitCreatePlanNetV2)(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases,
                                          void* workspace, const MegaMoeJitWeightsV1* weights,
-                                         const MegaMoeJitNetV1* net, void** plan, char* error, size_t capacity);
+                                         const MegaMoeJitNetV2* net, void** plan, char* error, size_t capacity);
 
 // MegaMoeJitApiV1::launch with caller-owned BF16 input, top-k IDs, and top-k weights: the launch reads them directly
 // and fuses their workspace staging, so no separate copy precedes it. A null array selects its staged workspace copy.
@@ -139,9 +141,9 @@ __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch_direct_v1(
     void* plan, const void* input, const uint8_t* inputScales, const int32_t* topkIds, const float* topkWeights,
     int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity);
-__attribute__((visibility("default"))) int mscclpp_megamoe_jit_create_plan_net_v1(
+__attribute__((visibility("default"))) int mscclpp_megamoe_jit_create_plan_net_v2(
     const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t* peerBases, void* workspace,
-    const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV1* net, void** plan, char* error, size_t capacity);
+    const MegaMoeJitWeightsV1* weights, const MegaMoeJitNetV2* net, void** plan, char* error, size_t capacity);
 #ifdef __cplusplus
 }
 #endif

@@ -86,29 +86,40 @@ same size, and a single rank when no fabric is active. An explicit value smaller
 than a fabric routes the remaining fabric peers over InfiniBand, which is useful
 for testing. `MegaMoE.ranks_per_rack` reports the value in effect.
 
-Per forward, every rank sends each network peer one message before the routed
-kernel: the routes that peer owns, then each needed token once, as FP8 activations
-and E8M0 scales. The owner relays the routes into the same routing slots NVLink
-sources write while the token rows are still in flight, computes them with the
-NVLink-routed tokens, and returns its results in one transfer per source after FC2.
-Without `combine_route_weights`, the owner first sums each token's weighted rows,
-so it returns one BF16 row per token instead of one per routed expert (about 1.5x
-fewer bytes for top-8 over 32 experts per GPU); this adds one BF16 rounding of the
-owner's partial sum. Each (source, owner) pair uses `MSCCLPP_MEGAMOE_NET_QPS`
-queue pairs (default 4, at most 8; set it identically on every rank): the routes
-go on the first, and the token rows and results are striped by row over all of
-them, each queue pair signaling its share with an RDMA atomic. The forward stays
-CUDA Graph capturable. GPU *i* uses IB device *i*; `MSCCLPP_HCA_DEVICES` remaps
-devices, which matters when NICs use Data Direct: a GPU must use the NIC whose
-Data Direct engine shares its PCIe switch, or registration falls back to the
-slower non-Data-Direct path.
+Inter-rack traffic is aggregated per rack over NIC rails: a rank talks over
+InfiniBand only to its rail peers, the ranks of the same lane (rank modulo
+`ranks_per_rack`) in the other racks, and each rail peer forwards for its rack
+over NVLink. Per forward and remote rack, every rank sends its rail peer there
+every token row once, as FP8 activations and E8M0 scales, plus the routes owned
+in that rack; the token rows leave at the start of the routed kernel, written
+there by the input quantization. The rail peer relays the routes into the routing
+slots of the rack's owners as if the source shared the rack, and the owners copy
+the token rows from the rail peer over NVLink as soon as they arrive, while the
+GEMM already runs on other rows. During FC2, owners add each weighted output row
+into the rail peer's per-token partial sum with BF16 bulk reductions over NVLink;
+once every owner of the rack has drained its FC2 stores, the rail peer returns
+one BF16 row per token, and the source's final combine adds it instead of the
+routes owned in that rack. So a token crosses InfiniBand at most once per remote
+rack in each direction. The rack partial sums accumulate in BF16, one rounding per
+added route, so inter-rack results carry more rounding error than NVLink-only
+ones. Inter-rack execution requires MXFP8 activations, and an idle warp after the
+dispatch warps (the default kernel configuration has a full idle warpgroup).
 
-The registered network workspace (`workspace_bytes["network"]`) grows with the
-number of network peers `P`, about
-`2 * P * max_tokens * (hidden + hidden/32) + P * max_tokens * (top_k + 1) * hidden * 2`
-bytes for MXFP8, and is registered as one IB memory region. JIT modules built
-before inter-rack support must be recompiled; the content-addressed cache does
-this automatically.
+Each rail pair uses `MSCCLPP_MEGAMOE_NET_QPS` queue pairs (default 4, at most 8;
+set it identically on every rank): the routes go on the first, the token rows
+on the others (or on the first if it is the only one), and the results on all
+of them, split by row; each queue pair signals its share with an RDMA atomic,
+posted by its own warp. The forward stays CUDA Graph capturable. GPU *i* uses IB
+device *i*; `MSCCLPP_HCA_DEVICES` remaps devices, which matters when NICs use
+Data Direct: a GPU must use the NIC whose Data Direct engine shares its PCIe
+switch, or registration falls back to the slower non-Data-Direct path.
+
+The network workspace (`workspace_bytes["network"]`) is registered for
+InfiniBand and mapped by the rack's ranks over CUDA IPC. With `R` remote racks it
+is about `(1 + R) * max_tokens * (hidden + hidden/32) + 3 * R * max_tokens * hidden * 2`
+bytes plus the routing messages and `8 * max_tokens * top_k` bytes per rank
+outside the rack. JIT modules built before rail aggregation must be recompiled;
+the content-addressed cache does this automatically.
 
 ## Kernel policy and JIT
 

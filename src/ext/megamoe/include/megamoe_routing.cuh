@@ -438,6 +438,26 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   const int nLocalExperts = c.numExperts / c.worldSize;
   const uint64_t epoch = *at<uint64_t>(p.local, p.symmetric.epoch) + 1;
   if (blockIdx.x == 0 && threadIdx.x == 0) w.control->epoch = epoch;
+  extern __shared__ __align__(1024) char storage[];
+  auto& shared = *reinterpret_cast<SharedStorage*>(storage);
+  if (p.net.nNet) {
+    // The last CTAs send this rank's message to each remote rack before anything waits, including when every rank is
+    // empty: rail peers count the signals of every launch.
+    for (int index = gridDim.x - 1 - blockIdx.x; index < p.net.nNet; index += gridDim.x) {
+      const NetSource source{nTokens, c.topK, nLocalExperts, ids ? ids : at<int32_t>(p.local, p.symmetric.topkIds),
+                             scores ? scores : at<float>(p.local, p.symmetric.topkWeights)};
+      constexpr int SlotInts = MaxNetQps * sizeof(GpuNetIoWqeSlot) / sizeof(int);
+      netSendRoutes<P::ThreadCount>(p.net, index, source, shared.routing + SlotInts,
+                                    reinterpret_cast<GpuNetIoWqeSlot*>(shared.routing));
+    }
+    // Further CTAs send the rows on their own queue pairs meanwhile.
+    for (int index = gridDim.x - 1 - 2 * p.net.nNet - blockIdx.x; index >= 0 && index < p.net.nNet;
+         index += gridDim.x) {
+      if (netFirstRowQp(p.net.qps))
+        netSendRows(p.net, index, nTokens, reinterpret_cast<GpuNetIoWqeSlot*>(shared.routing));
+    }
+    netZeroAccum(p.net, epoch);
+  }
   if (!FixedTokenCount && c.worldSize > 1 && blockIdx.x == gridDim.x - 1) {
     for (int peer = threadIdx.x; peer < c.worldSize; peer += P::ThreadCount) {
       if (peer != c.rank && !p.net.isNet(peer))
@@ -454,8 +474,6 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
     return;
   }
 
-  extern __shared__ __align__(1024) char storage[];
-  auto& shared = *reinterpret_cast<SharedStorage*>(storage);
   const RoutingScratch scratch = makeRoutingScratch(shared, nLocalExperts, c.worldSize);
   // Each thread clears at most a few counters, so unrolling would only lengthen the setup every warp executes.
 #pragma unroll 1
@@ -466,14 +484,15 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   processSourceRouteChunks<true>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
                                  cacheOwnedRoute);
   if (p.net.nNet) {
-    // Republish network sources' routes as if their owners had received them over NVLink.
-    const NetRouting netRouting{FixedTokenCount ? nullptr : at<mscclpp::LL8Packet>(p.local, p.symmetric.tokenCount),
-                                at<mscclpp::LL8Packet>(p.local, p.symmetric.routingHeaders),
-                                at<mscclpp::LL8Packet>(p.local, p.symmetric.routingPackets),
+    // Republish rail peers' routes to every owner of this rack as if their sources shared the rack.
+    const NetRouting netRouting{p.peers,
+                                FixedTokenCount ? 0 : p.symmetric.tokenCount,
+                                p.symmetric.routingHeaders,
+                                p.symmetric.routingPackets,
                                 routeChunks(c.maxTokens * c.topK),
-                                c.maxTokens,
-                                c.topK};
-    for (int index = blockIdx.x; index < p.net.nNet; index += gridDim.x)
+                                c.maxTokens * c.topK};
+    // CTAs past the builders relay, so the relay does not queue behind a CTA's own route chunks.
+    for (int index = gridDim.x - 1 - p.net.nNet - blockIdx.x; index >= 0 && index < p.net.nNet; index += gridDim.x)
       netRelaySource<RouteChunk>(p.net, netRouting, index, epoch);
   }
   if (c.worldSize > 1) {
