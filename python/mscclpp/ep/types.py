@@ -25,13 +25,15 @@ class QuantConfig:
     and returns scales with logical shape ``[local_expert, row, hidden // 128]``
     and transposed physical storage. Throughput FP8 dispatch requires contiguous
     input scales with shape ``[num_tokens, hidden // 128]``.
-    Latency RANK_MAJOR ``FP8_E4M3_STATIC`` uses the scalar multiplier ``scale``:
-    values are stored as E4M3 after multiplication by ``scale``. ``input_mode``
-    selects externally quantized E4M3 input or fused BF16 quantization inside
-    dispatch.
+    Latency RANK_MAJOR ``FP8_E4M3_STATIC`` uses ``scale``, either a scalar
+    multiplier or a ``(dispatch_scale, combine_scale)`` pair: values are stored
+    as E4M3 after multiplication by the scale. ``input_mode`` selects externally
+    quantized E4M3 input or fused BF16 quantization inside dispatch.
     Rank-major combine input defaults to BF16. Set ``combine_format`` to
     ``FP8_E4M3_STATIC`` for static-FP8 dispatch to consume MM2 output stored as
-    E4M3(real * scale); combine dequantizes it with the existing dispatch scale.
+    E4M3(real * combine_scale); combine dequantizes it with ``combine_scale``,
+    defaulting to the dispatch scale when ``scale`` is a scalar or
+    ``combine_scale`` is ``None``.
     MXFP8 E4M3 uses one uint8 E8M0 scale per 32 hidden elements. Latency
     RANK_MAJOR MXFP8 quantizes BF16 input and returns contiguous scales with shape
     ``[rank, row, hidden // 32]``.
@@ -42,7 +44,7 @@ class QuantConfig:
 
     format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
-    scale: Optional[float] = None
+    scale: Optional[Union[float, Tuple[Optional[float], Optional[float]]]] = None
     input_mode: NativeQuantConfig.InputMode = NativeQuantConfig.InputMode.PREQUANTIZED
     combine_format: DispatchDataType = DispatchDataType.BF16
 
@@ -75,17 +77,23 @@ class MoECommunicatorConfig:
     num_blocks: Optional[Union[int, Tuple[Optional[int], Optional[int]]]] = None
     combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     emit_local_expert_ids: bool = False
+    qps_per_peer: int = 4
+    n_tokens_per_chunk: int = 8
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
         from .utils import resolve_num_blocks, validate_quant
 
-        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank"):
+        for name in ("num_experts", "hidden_size", "topk", "max_tokens_per_rank", "qps_per_peer", "n_tokens_per_chunk"):
             value = getattr(self, name)
             if type(value) is not int or not 0 < value < (1 << 31):
                 raise ValueError(f"{name} must be a positive int32")
         if self.topk > 8:
             raise ValueError("topk must be in [1, 8]")
+        if self.qps_per_peer not in (1, 4):
+            raise ValueError("qps_per_peer must be 1 or 4")
+        if not 1 <= self.n_tokens_per_chunk <= 128:
+            raise ValueError("n_tokens_per_chunk must be in [1, 128]")
         if not isinstance(self.mode, MoEMode):
             raise TypeError("mode must be a MoEMode")
         if not isinstance(self.combine_mode, CombineMode):
@@ -110,9 +118,10 @@ class MoECommunicatorConfig:
         if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
             raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
         if latency:
-            if self.hidden_size not in (1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216):
+            # The native runtime validates the hidden size against the selected transport.
+            if self.hidden_size not in (1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216):
                 raise ValueError(
-                    "latency hidden_size must be one of 1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216"
+                    "latency hidden_size must be one of 1024, 2048, 4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216"
                 )
         elif self.hidden_size % 8:
             raise ValueError("throughput combine requires 16-byte-aligned BF16 rows, even after FP8 dispatch")
@@ -121,8 +130,12 @@ class MoECommunicatorConfig:
         if not isinstance(self.comm, CommGroup):
             raise TypeError("comm must be an mscclpp.CommGroup")
         world_size = self.comm.nranks
-        if not 1 <= world_size <= 64 or self.comm.nranks_per_ipc_domain != world_size:
-            raise ValueError("EP requires 1-64 ranks in one CUDA IPC domain")
+        cross_domain = self.comm.nranks_per_ipc_domain != world_size
+        max_ranks = 128 if cross_domain else 64
+        if not 1 <= world_size <= max_ranks:
+            raise ValueError(f"EP requires 1-{max_ranks} ranks")
+        if cross_domain and not (latency and layout == DispatchLayout.RANK_MAJOR):
+            raise ValueError("EP across multiple CUDA IPC domains requires LATENCY mode with RANK_MAJOR layout")
         if self.num_experts % world_size:
             raise ValueError("num_experts must be divisible by world_size")
         num_local = self.num_experts // world_size

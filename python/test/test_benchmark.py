@@ -2,9 +2,12 @@
 # Licensed under the MIT License.
 
 import json
+import sys
 from types import SimpleNamespace
 
 import cupy as cp
+import pytest
+import torch
 
 from mscclpp_benchmark.correctness import (
     _comparison_tolerance,
@@ -106,6 +109,60 @@ def test_generic_config_matches_any_dtype():
 
     assert config is not None
     assert config.algorithm == "generic-allgather"
+
+
+def test_ep_hybrid_cli_options(monkeypatch):
+    from mscclpp_benchmark.ep.bench import parse_args
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ep-bench",
+            "--backend",
+            "mscclpp",
+            "--ep-layout",
+            "rank_major",
+            "--qps-per-peer",
+            "4",
+            "--n-tokens-per-chunk",
+            "16",
+            "-d",
+            "4096",
+            "-e",
+            "512",
+        ],
+    )
+    args = parse_args()
+    assert args.qps_per_peer == 4
+    assert args.n_tokens_per_chunk == 16
+    assert args.hidden == 4096 and args.num_experts == 512
+
+
+def test_ep_hybrid_cli_preserves_defaults(monkeypatch):
+    from mscclpp_benchmark.ep.bench import parse_args
+
+    monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "mscclpp"])
+    args = parse_args()
+    assert args.qps_per_peer is None and args.n_tokens_per_chunk is None
+
+
+@pytest.mark.parametrize("chunk", ["0", "129"])
+def test_ep_hybrid_cli_rejects_bad_chunk(monkeypatch, chunk):
+    from mscclpp_benchmark.ep.bench import parse_args
+
+    monkeypatch.setattr(sys, "argv", ["ep-bench", "--n-tokens-per-chunk", chunk])
+    with pytest.raises(SystemExit, match=r"\[1, 128\]"):
+        parse_args()
+
+
+def test_ep_rank_major_unit_output_counts_destinations():
+    from mscclpp_benchmark.ep.bench_common import rank_major_unit_output
+
+    routes = torch.tensor([[0, 1, 16, -1], [31, 32, 33, 48], [-1, -1, -1, -1]])
+    actual = rank_major_unit_output(routes, 16, 8)
+    expected = torch.tensor([2, 3, 0], dtype=torch.bfloat16)[:, None].expand(-1, 8)
+    assert torch.equal(actual, expected)
 
 
 def test_upsert_and_write_preserve_dtype_qualifiers(tmp_path):

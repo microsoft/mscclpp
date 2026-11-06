@@ -1809,6 +1809,82 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
+template <int PayloadElements, bool BlueFlame>
+__global__ void kernelGpuNetIoDeferredSubmission(int* buffer, int rank, int iterations, int* errors) {
+  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  if (threadIdx.x != 0) return;
+  constexpr auto Exclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  auto channel = gMultiQpDevicePortChans[0];
+  channel.setWqeSlot(&wqeSlot);
+  channel.device_.blueFlameLimit = BlueFlame ? mscclpp::GpuNetIoDeviceHandle::kDefaultBlueFlameLimit : 0;
+  constexpr size_t PayloadBytes = PayloadElements * sizeof(int);
+  constexpr size_t FlagOffset = 2 * PayloadBytes;
+  auto* flags = reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(buffer) + FlagOffset);
+  const int peer = 1 - rank;
+  int calls = 0;
+  for (int iteration = 1; iteration <= iterations; ++iteration) {
+    channel.device_.putWithAccumulateAfter<Exclusive>(
+        channel.dstMemory_, rank * PayloadBytes, channel.srcMemory_, rank * PayloadBytes, PayloadBytes,
+        channel.dstMemory_, FlagOffset + rank * sizeof(uint64_t), 1, [&] {
+          ++calls;
+          for (int element = 0; element < PayloadElements; ++element) {
+            buffer[rank * PayloadElements + element] = rank * 1000000 + iteration * PayloadElements + element;
+          }
+        });
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + peer, mscclpp::memoryOrderAcquire) <
+           static_cast<uint64_t>(iteration)) {
+    }
+    for (int element = 0; element < PayloadElements; ++element) {
+      if (buffer[peer * PayloadElements + element] != peer * 1000000 + iteration * PayloadElements + element) {
+        ++*errors;
+      }
+    }
+    channel.device_.accumulateAfter<Exclusive>(channel.dstMemory_, FlagOffset + (2 + rank) * sizeof(uint64_t), 1,
+                                               [&] { ++calls; });
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + 2 + peer, mscclpp::memoryOrderAcquire) <
+           static_cast<uint64_t>(iteration)) {
+    }
+  }
+  if (calls != 2 * iterations) ++*errors;
+  channel.flush<Exclusive>();
+}
+
+void PortChannelOneToOneTest::testDeferredSubmission(bool inlinePayload, bool blueFlame) {
+  if (gEnv->rank >= numRanksToUse) return;
+  const int elements = inlinePayload ? 4 : 64;
+  const int rank = communicator->bootstrap()->getRank();
+  std::vector<std::shared_ptr<int>> buffers;
+  std::vector<mscclpp::RegisteredMemory> localMems;
+  std::vector<mscclpp::RegisteredMemory> remoteMems;
+  std::vector<mscclpp::PortChannel> channels;
+  setupMultiQpChannels(1, 2 * elements + 8, IbMode::Device, 950, buffers, localMems, remoteMems, channels);
+  copyMultiQpChannelsToSymbol(channels, IbMode::Device);
+  MSCCLPP_CUDATHROW(cudaMemset(buffers[0].get(), 0, (2 * elements + 8) * sizeof(int)));
+  auto errors = mscclpp::GpuBuffer<int>(1);
+  MSCCLPP_CUDATHROW(cudaMemset(errors.memory().get(), 0, sizeof(int)));
+  communicator->bootstrap()->barrier();
+  auto kernel =
+      inlinePayload
+          ? (blueFlame ? kernelGpuNetIoDeferredSubmission<4, true> : kernelGpuNetIoDeferredSubmission<4, false>)
+          : (blueFlame ? kernelGpuNetIoDeferredSubmission<64, true> : kernelGpuNetIoDeferredSubmission<64, false>);
+  kernel<<<1, 32>>>(buffers[0].get(), rank, 512, errors.memory().get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  int result = -1;
+  MSCCLPP_CUDATHROW(cudaMemcpy(&result, errors.memory().get(), sizeof(int), cudaMemcpyDeviceToHost));
+  EXPECT_EQ(result, 0);
+  communicator->bootstrap()->barrier();
+  for (auto& memory : localMems) registeredMemories.push_back(memory);
+  for (auto& memory : remoteMems) registeredMemories.push_back(memory);
+}
+
+TEST(PortChannelOneToOneTest, DeferredSubmissionIbDeviceMode) {
+  REQUIRE_GPUNETIO;
+  for (bool inlinePayload : {true, false}) {
+    for (bool blueFlame : {true, false}) testDeferredSubmission(inlinePayload, blueFlame);
+  }
+}
+
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {
   REQUIRE_GPUNETIO;
   testPingPongPerf(PingPongTestParams{

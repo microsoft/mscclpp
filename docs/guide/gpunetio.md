@@ -88,6 +88,81 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
+### EP NIC selection and queue pairs
+
+Cross-domain EP uses `MSCCLPP_HCA_DEVICES` to map each GPU to its IB transport (`IB0`–`IB7`), or discovers IB
+devices via `ibverbs` when `MSCCLPP_HCA_DEVICES` is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a
+single HCA name (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
+
+For latency `RANK_MAJOR` EP, `qpsPerPeer` (`qps_per_peer` in `MoECommunicatorConfig`) selects the number of QPs created
+per peer (1 or 4, default 4). Hybrid dispatch and combine stripe their chunks round-robin across all configured QPs.
+
+### Hybrid dispatch
+
+Latency `RANK_MAJOR` EP automatically uses the hybrid algorithm when ranks span CUDA IPC domains. It requires exactly
+two equal, fully IPC-mapped domains, 1 or 4 QPs per peer, `topk <= 8`, and BF16 or `FP8_E4M3_STATIC` dispatch;
+initialization or dispatch fails otherwise. Rank `r` is paired with gateway rank `(r + domainSize) % worldSize` in
+the other domain, so every rank both sends to and forwards for exactly one remote peer. `nTokensPerChunk`
+(`n_tokens_per_chunk` in `MoECommunicatorConfig`) sets the tokens per IB chunk (1–128, default eight).
+
+The dispatch grid needs at least 10 resident blocks, and the launcher checks full-grid residency:
+
+- **Control block (block 0).** Counts tokens per destination rank and the number of remote tokens, writes a
+  self-validating header (`nRemoteTokens` and per-rank counts, each an `LL8Packet` carrying the round epoch), and
+  publishes NVLink counts and payload-ready signals for local destinations. One posting warp per QP (lane 0,
+  `PortChannelSharingMode::Exclusive`, no locks) sends chunk `c` on QP `c % nQps`. QP 0 first sends the active
+  `(1 + worldSize) * sizeof(LL8Packet)` header bytes with one plain RDMA write, then its chunks, then the
+  buffer-reuse acknowledgment described below.
+- **Producer blocks (blocks 9 and up).** Each of the two TMA warps per block handles one input token. It allocates
+  destination slots, stores the token directly to NVLink-local destinations, and, if any top-k destination is in
+  the other domain, copies the token once (payload, top-k IDs, weights, and destination slots) into a compact
+  remote-token slot of the send buffer. It then increments that chunk's ready counter with a device-scoped release.
+  Producer blocks join the forwarders when they finish.
+- **Forwarder blocks (blocks 1 and up).** These read the peer's header. Forwarder 0 republishes the per-destination
+  counts to the local peers. Each forwarding warp waits until the RDMA atomic for its token's chunk has incremented
+  the per-QP `qpSignalCount` past the chunk's position on that QP. It then TMA-loads the token from the landing
+  buffer, stores it and its metadata to local destinations over NVLink, and caches the routes for combine. The last
+  forwarder resets `qpSignalCount`, sets the local forward-complete flag, and publishes the per-source
+  payload-ready epoch to every local peer with a system-scoped release.
+- **Receive.** Each block finalizes the counts and padding metadata for a grid-stride subset of source ranks. It
+  waits on the NVLink semaphore for local sources and on the payload-ready epoch for remote sources.
+
+Memory ordering: the RDMA atomic for a chunk is applied only after earlier writes on the same QP are placed, so
+observing `qpSignalCount` publishes the chunk payload; the header publishes itself through its per-word epochs.
+Send-buffer and header writers join through warp or CTA barriers and device-scoped release counters, and the
+posting thread acquires those counters. The writers' data stays in GPU memory, so DOCA's GPU-scoped release
+before the doorbell publishes it to the NIC; the hybrid path adds no system fences.
+
+Buffer reuse: dispatch does not drain its QPs before returning. After its forwarders finish, each rank sends a
+`bufferReuseReady` RDMA atomic to its paired rank. The next Combine control block waits for and clears the peer's
+acknowledgment. This guarantees that the peer has consumed this rank's chunks and header, so the next Dispatch may
+overwrite this rank's send buffer and the peer's landing buffer. Counters are per round, not cumulative: dispatch
+chunk counters are reset by Combine, and Combine's chunk counters and `qpSignalCount` are reset at the start of the
+next Dispatch, before its header is sent.
+
+### Hybrid combine
+
+Hybrid runtimes always use gateway aggregation, for both `RANK_LOCAL_REDUCE` and `DIRECT_SEND`. Each gateway
+reduces, in FP32, the local-domain expert outputs for the tokens it forwarded. Inputs are the preweighted BF16 rank
+partials for `RANK_LOCAL_REDUCE` and the per-route outputs, weighted on the fly, for `DIRECT_SEND`. The gateway
+returns compact rows (FP32, or BF16 when the combine input is `FP8_E4M3_STATIC`) in ordered per-QP chunks. Each
+owner reduces its own local-domain contributions in FP32, adds the returned row, and casts to BF16 once.
+**FP32 addition grouping differs** from single-domain combine.
+
+- **Control block (block 0).** Exchanges start signals with local peers and publishes their ready epochs. One
+  posting warp per QP sends chunk `c` once all of its gateway rows are reduced. The block also resets the dispatch
+  counters, and its thread 0 waits for and clears `bufferReuseReady`.
+- **Worker blocks.** Reduce the gateway rows first. A row in chunk `c` waits until chunk `c - nQps` is complete,
+  which prioritizes the first chunk on each QP. Workers then wait for all gateway rows, reduce their local tokens,
+  and wait for each token's returned chunk before writing the final BF16 output.
+
+Combine requires at least `worldSize` blocks. There must be **exactly one fresh Dispatch before every Combine**,
+including CUDA graph replays. No device-side guard enforces this: replaying Combine without a new Dispatch reuses
+stale chunk counters and blocks in the `bufferReuseReady` wait.
+
+The hybrid paths reuse `LatencyRuntimeContext`, including its workspace, IPC channels, and device context. Its
+symmetric allocation additionally reserves the send and landing regions and the control blocks targeted by RDMA.
+
 ### Queue pair sharing modes and BlueFlame configuration
 
 By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when threads across the GPU share a QP).

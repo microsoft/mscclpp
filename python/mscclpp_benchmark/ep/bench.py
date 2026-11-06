@@ -8,8 +8,8 @@ and cross-rank statistics. Kineto optionally reports kernel-only phase times.
 Input tensors and synthetic BF16 expert output are prepared outside the timed loop.
 NCCL-EP runs first, matching the ordering in the feature/ep benchmark.
 
-Launch with mpirun and mpi4py. MSCCL++ requires CUDA
-SM90+ and a single IPC domain. Both latency and throughput support CUDA graph
+Launch with mpirun and mpi4py. MSCCL++ requires CUDA SM90+; its hybrid latency
+rank-major path supports two equal IPC domains connected by GPUNetIO. Both latency and throughput support CUDA graph
 replay. See python/mscclpp/ep/README.md for dependencies,
 launch examples, layouts, and timing limitations.
 """
@@ -17,7 +17,9 @@ launch examples, layouts, and timing limitations.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
+import json
 
 import torch
 
@@ -69,6 +71,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-w", "--num-warmup", type=int, default=10, help="warmup iterations")
     p.add_argument("-i", "--num-iters", type=int, default=50, help="timed iterations")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
+    p.add_argument(
+        "--qps-per-peer",
+        type=int,
+        choices=(1, 4),
+        default=None,
+        help="MSCCL++ hybrid QPs per remote peer and NCCL-EP QPs per rank; omitted uses backend defaults.",
+    )
+    p.add_argument(
+        "--n-tokens-per-chunk",
+        type=int,
+        default=None,
+        help="MSCCL++ hybrid latency tokens per IB chunk (1-128); omitted uses the runtime default.",
+    )
     p.add_argument(
         "--dispatch-dtype",
         choices=("bf16", "fp8_e4m3", "fp8_e4m3_static", "mxfp8_e4m3"),
@@ -135,7 +150,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--validate",
         action="store_true",
-        help="mscclpp: run a one-time combine correctness check before timing.",
+        help="validate backend outputs where supported; BF16 rank-local aggregation is also checked after timing.",
     )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
@@ -148,6 +163,8 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
     if args.num_sms < 0:
         raise SystemExit("--num-sms must be non-negative")
+    if args.n_tokens_per_chunk is not None and not 1 <= args.n_tokens_per_chunk <= 128:
+        raise SystemExit("--n-tokens-per-chunk must be in [1, 128]")
     if args.iters_per_graph <= 0:
         raise SystemExit("--iters-per-graph must be positive")
     if not args.cuda_graph:
@@ -246,7 +263,15 @@ def torch_profiler_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
-    return parse_kernels(ka)
+    phase_us = parse_kernels(ka)
+    counts = {
+        event.key: int(event.count)
+        for event in ka
+        if any(phase in event.key.split("<", 1)[0].lower() for phase in ("dispatch", "combine"))
+        and int(event.count) > 0
+    }
+    print(f"[kernel-counts] rank={MPI.COMM_WORLD.rank} " + json.dumps(counts), flush=True)
+    return phase_us
 
 
 # ============================================================================
@@ -299,8 +324,8 @@ def run_backend(
     raw_comb_dtype = args.combine_dtype
     disp_elt = 2 if raw_disp_dtype == "bf16" else 1
     comb_elt = 1 if raw_comb_dtype == "fp8_e4m3_static" else 2
-    disp_bytes = num_valid_selections * hidden * disp_elt  # dispatch wire format
-    comb_bytes = num_valid_selections * hidden * comb_elt  # combine wire format
+    disp_bytes = num_valid_selections * hidden * disp_elt  # Logical routed bytes, not measured link traffic.
+    comb_bytes = num_valid_selections * hidden * comb_elt
 
     stream = torch.cuda.current_stream()
 
@@ -404,36 +429,47 @@ def run_backend(
                 f"max={throughputs[high_rank]:.2f} GB/s (rank {high_rank})"
             )
 
-    # --- Kernel-only (torch kineto) cross-rank reduction. The LL dispatch
-    # kernel ends in a cross-rank recv spin-wait, so a lagging rank's device time
-    # includes wait skew; the cross-rank MIN (the rank that did not wait) is the
-    # representative kernel floor. Combine has little recv-spin and is stable. ---
+    # Rank means include communication waits in both phases. Min/max describe
+    # rank skew; they are not substitutes for the all-rank arithmetic mean.
     kernel_ok = comm.allreduce(1 if inproc_ok else 0, op=MPI.MIN)
+    if not kernel_ok:
+        raise RuntimeError(f"{name}: Kineto did not capture both EP phases on every rank")
     gk_d_avg, gk_d_min, gk_d_max = _mpi_stats(comm, ck_disp, ck_disp, ck_disp, num_ranks)
     gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
 
     if rank == 0:
+        print(
+            "[result] "
+            + json.dumps(
+                {
+                    "backend": name,
+                    "tokens_per_rank": args.num_tokens,
+                    "hidden": hidden,
+                    "experts": args.num_experts,
+                    "topk": args.num_topk,
+                    "ranks": num_ranks,
+                    "dispatch_us": gk_d_avg,
+                    "combine_us": gk_c_avg,
+                    "total_us": gk_d_avg + gk_c_avg,
+                    "combine_mode": (summary_meta or {}).get("combine_mode", args.combine_mode),
+                    "iterations": iters,
+                    "pairs_per_graph": group,
+                    "metric": "all-rank arithmetic mean of per-kernel launch means",
+                }
+            ),
+            flush=True,
+        )
         _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
         print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
         if kernel_ok:
-            # Report BOTH min and avg for dispatch and combine. The LL dispatch
-            # kernel ends in a cross-rank recv spin-wait, so its avg/max carry
-            # wait skew on lagging ranks; the cross-rank MIN is the representative
-            # kernel floor. Combine has little recv-spin, so its min ~ avg.
-            print(
-                f"Dispatch:    avg={gk_d_avg:.2f} us, min={gk_d_min:.2f} us (representative), "
-                f"max={gk_d_max:.2f} us [avg/max carry recv-spin skew on lagging ranks]"
-            )
+            print(f"Dispatch:    avg={gk_d_avg:.2f} us, min={gk_d_min:.2f} us, max={gk_d_max:.2f} us")
             print(
                 f"                  throughput: avg={(disp_bytes / 1e9) / (gk_d_avg * 1e-6):.2f} GB/s, "
                 f"@min={(disp_bytes / 1e9) / (gk_d_min * 1e-6):.2f} GB/s"
             )
             print(f"Combine:     avg={gk_c_avg:.2f} us, min={gk_c_min:.2f} us, max={gk_c_max:.2f} us")
             print(f"                  throughput: avg={(comb_bytes / 1e9) / (gk_c_avg * 1e-6):.2f} GB/s")
-            print(
-                f"Total (D+C): avg={gk_d_avg + gk_c_avg:.2f} us (dispatch avg + combine avg), "
-                f"floor={gk_d_min + gk_c_avg:.2f} us (dispatch min + combine avg)"
-            )
+            print(f"Total (D+C): avg={gk_d_avg + gk_c_avg:.2f} us (dispatch avg + combine avg)")
         else:
             print("  NOTE: kineto captured 0 EP kernels (collector unavailable).")
 
@@ -474,6 +510,16 @@ def main() -> None:
         args.num_experts,
         rank,
         args.seed,
+    )
+    print(
+        f"[inputs] rank={rank} "
+        + json.dumps(
+            {
+                name: hashlib.sha256(value.view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+                for name, value in zip(("tokens", "routes", "weights"), inputs[:3])
+            }
+        ),
+        flush=True,
     )
 
     backends = ["nccl", "mscclpp", "deepep"] if args.backend == "all" else [args.backend]
@@ -527,6 +573,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         teardown = ops["teardown"]
         backend_barrier = ops.get("barrier")
         summary_meta = ops.get("summary_meta")
+        print(f"[backend-config] rank={rank} " + json.dumps({"backend": name, **(summary_meta or {})}), flush=True)
         if summary_meta is not None:
             comparison_meta[name] = summary_meta
         graph = None
@@ -562,6 +609,11 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 graph=graph,
                 summary_meta=summary_meta,
             )
+            if args.validate and ops.get("validate") is not None:
+                # The hook also checks changed expert outputs against replayed graph addresses.
+                replay = graph.replay if graph is not None else lambda: combine_fn(dispatch_fn())
+                ops["validate"](replay)
+                replay = None
         finally:
             torch.cuda.synchronize()
             comm.barrier()

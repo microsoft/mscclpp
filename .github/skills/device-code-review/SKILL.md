@@ -41,14 +41,16 @@ Perform a read-only review of MSCCL++ device-side code. Review CUDA and HIP kern
 
 6. **Data types and conversions**
    - Prefer the portable scalar types, vector types, `DataType`, `mscclpp::to`, `mscclpp::bit_cast`, and other helpers from `include/mscclpp/gpu_data_types.hpp` over raw CUDA/HIP types or locally duplicated conversion code.
+   - Use vector arithmetic operators and helpers from `include/mscclpp/gpu_data_types.hpp` (such as `f32x2` `operator+`, `operator*`, and `mscclpp::fma`) instead of manually expanding lane-by-lane `.data[0]` / `.data[1]` scalar operations.
    - Search `gpu_data_types.hpp` before recommending a new packed type, alias, bit representation, clipping operation, or numeric conversion.
    - If a required reusable type or conversion helper is missing, recommend adding a documented CUDA/HIP-compatible definition or function to `include/mscclpp/gpu_data_types.hpp` instead of an ad hoc helper in a kernel file.
    - Keep unavoidable backend-native types and intrinsics isolated at hardware or ABI boundaries, and convert to MSCCL++ types at the boundary.
 
-7. **Portability and maintainability**
-   - Check CUDA/HIP portability and architecture guards when the code is not intentionally backend-specific.
-   - Prefer existing MSCCL++ helpers and established patterns when they preserve the required low-level semantics.
-   - Flag confusing naming or duplication only when it increases correctness or maintenance risk.
+7. **Code style, naming, and readability**
+   - **Counts (`n` prefix) and indices (`Idx` suffix)**: Use the `n` prefix for counts (e.g., `nRanks`, `nTokens`, `nRemoteTokens`, `nQps`, `nForwarders`, `nProducers`, `nWorkers`, `nLocalExperts`) rather than bare plural nouns (such as `ranks`, `forwarders`, `producers`, or `workers`, which look like arrays or collide with singular `rank`). Use the `Idx` suffix for indices/IDs (e.g., `tokenIdx`, `expertIdx`, `warpIdx`, `laneIdx`, `chunkIdx`, `queueIdx`, `forwarderIdx`, `producerIdx`, `workerIdx`, `peerIdx`) rather than bare nouns (`forward`, `producer`, `worker`, `chunk`, `queue`).
+   - **Consistent domain terminology**: Do not mix terms for the same unit of work (for example, use `token` / `tokenIdx` / `nTokens` consistently when each entry is a token rather than alternating between `row` / `rows` and `token`). Name plural array fields explicitly (e.g., `chunkReadySignals` instead of `chunkReady`).
+   - **No magic scratch offsets or ad hoc `shared[0]` / `shared[1]` slots**: Flag raw pointer/array indexing with magic offsets for control or scratch state (such as `scratch + 1`, `scratch + 2`, `3 + configCellDiv(...)`, or borrowing `shared[0]` / `shared[1]` for unrelated block-wide scalars). Require named structures (with `offsetof` where trailing arrays are sized) for device control/scratch layouts and named `__shared__` variables for block-broadcast scalars.
+   - **Portability**: Check CUDA/HIP portability and architecture guards when the code is not intentionally backend-specific, and prefer existing MSCCL++ helpers and established patterns.
 
 ## Review Method
 
