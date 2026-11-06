@@ -9,99 +9,98 @@ namespace ep {
 #if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, bool Gateway>
-MSCCLPP_DEVICE_INLINE void aggregateReduceRow(void* destination, const void* expertOutput, const int64_t* topkIndices,
-                                              const float* topkWeights, int row, const Workload& workload,
-                                              const DeviceContext* context, const TransportView& transport,
-                                              const WorkspaceView& workspace, uint32_t flag, uint8_t* sharedMemory,
-                                              uint32_t& phase, float dequantScale) {
+MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* expertOutput, const int64_t* topkIndices,
+                                                const float* topkWeights, int tokenIdx, const Workload& workload,
+                                                const DeviceContext* context, const TransportView& transport,
+                                                const WorkspaceView& workspace, uint32_t flag, uint8_t* sharedMemory,
+                                                uint32_t& phase, float dequantScale) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   using ElementType = DispatchElementType<DispatchType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  constexpr int HiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
-  constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  constexpr size_t RowsBytes = MaxNumTopk * HiddenBytes;
-  const auto& hybrid = context->hybrid_;
-  const int lane = getLaneId();
-  const int topk = workload.numTopk_;
-  const int localExperts = workload.numExperts_ / context->numRanks_;
-  const int owner = Gateway ? hybrid.gatewayRank_ : context->rank_;
-  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
+  constexpr int NHiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
+  constexpr int NPairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
+  constexpr size_t TokensBytes = MaxNumTopk * HiddenBytes;
+  const auto& hybridCtx = context->hybridCtx_;
+  const int laneIdx = getLaneId();
+  const int nTopk = workload.numTopk_;
+  const int nLocalExperts = workload.numExperts_ / context->numRanks_;
+  const int ownerRank = Gateway ? hybridCtx.gatewayRank_ : context->rank_;
+  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + TokensBytes);
   auto* valid = reinterpret_cast<int*>(barriers + MaxNumTopk);
   auto* weights = reinterpret_cast<float*>(valid + MaxNumTopk);
   if (threadIdx.x < WARP_SIZE) {
-    int64_t expert = -1;
-    int slot = -1;
+    int64_t expertIdx = -1;
+    int slotIdx = -1;
     float weight = 1.0f;
-    if (lane < topk) {
+    if (laneIdx < nTopk) {
       if constexpr (Gateway) {
-        const auto* cached = hybrid.aggregateRoutes_ + static_cast<size_t>(row) * 3 * topk;
-        expert = cached[lane];
-        slot = cached[topk + lane];
+        const auto* cached = hybridCtx.aggregateRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
+        expertIdx = cached[laneIdx];
+        slotIdx = cached[nTopk + laneIdx];
         if (IsDirectSend && workload.applyRouterWeights_) {
-          weight = reinterpret_cast<const float*>(cached + 2 * topk)[lane];
+          weight = reinterpret_cast<const float*>(cached + 2 * nTopk)[laneIdx];
         }
       } else {
-        expert = topkIndices[row * topk + lane];
-        slot = workspace.rankMajorSendIndices_[row * topk + lane];
+        expertIdx = topkIndices[tokenIdx * nTopk + laneIdx];
+        slotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + laneIdx];
         if (IsDirectSend && workload.applyRouterWeights_ && topkWeights != nullptr) {
-          weight = topkWeights[row * topk + lane];
+          weight = topkWeights[tokenIdx * nTopk + laneIdx];
         }
       }
     }
-    const int peer = expert >= 0 && expert < workload.numExperts_ ? static_cast<int>(expert) / localExperts : -1;
-    const bool leader = isFirstLaneForRank(peer, lane);
-    const bool active = peer >= 0 && (IsDirectSend || leader) && transport.isNvlinkPeer(peer);
-    if (lane < MaxNumTopk) {
-      valid[lane] = active;
-      if constexpr (IsDirectSend) weights[lane] = weight;
+    const int peerIdx =
+        expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) / nLocalExperts : -1;
+    const bool leader = isFirstLaneForRank(peerIdx, laneIdx);
+    const bool active = peerIdx >= 0 && (IsDirectSend || leader) && transport.isNvlinkPeer(peerIdx);
+    if (laneIdx < MaxNumTopk) {
+      valid[laneIdx] = active;
+      if constexpr (IsDirectSend) weights[laneIdx] = weight;
     }
     bool pending = active;
     while (__any_sync(0xffffffff, pending)) {
-      if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peer,
+      if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
                                                                          mscclpp::memoryOrderAcquire) == flag) {
-        EP_DEVICE_ASSERT(slot >= 0 && slot < workload.maxTokensPerRank_);
+        EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_);
         const auto* peerOutput =
-            static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peer));
-        const size_t sourceRow = static_cast<size_t>(owner) * workload.maxTokensPerRank_ + slot;
-        const size_t inputRow = IsDirectSend ? sourceRow * topk + lane : sourceRow;
-        barriers[lane].arriveAndExpect(HiddenBytes);
-        mscclpp::bulkLoad(sharedMemory + lane * HiddenBytes, peerOutput + inputRow * HiddenBytes, HiddenBytes,
-                          barriers[lane]);
+            static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
+        const size_t sourceTokenIdx = static_cast<size_t>(ownerRank) * workload.maxTokensPerRank_ + slotIdx;
+        const size_t inputTokenIdx = IsDirectSend ? sourceTokenIdx * nTopk + laneIdx : sourceTokenIdx;
+        barriers[laneIdx].arriveAndExpect(HiddenBytes);
+        mscclpp::bulkLoad(sharedMemory + laneIdx * HiddenBytes, peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes,
+                          barriers[laneIdx]);
         pending = false;
       }
     }
-    if (active) barriers[lane].wait(phase);
+    if (active) barriers[laneIdx].wait(phase);
     __syncwarp();
-    if (lane == 0) mscclpp::bulkFence();
+    if (laneIdx == 0) mscclpp::bulkFence();
   }
   __syncthreads();
-  for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
-    mscclpp::f32x2 sum[PairsPerVector];
+  for (int vectorIdx = threadIdx.x; vectorIdx < NHiddenVectors; vectorIdx += blockDim.x) {
+    mscclpp::f32x2 sum[NPairsPerVector];
 #pragma unroll
-    for (int pair = 0; pair < PairsPerVector; ++pair) {
-      sum[pair].storage = make_float2(0.0f, 0.0f);
+    for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+      sum[pairIdx].storage = make_float2(0.0f, 0.0f);
     }
 #pragma unroll
-    for (int route = 0; route < MaxNumTopk; ++route) {
-      if (!valid[route]) continue;
-      const float routeWeight = IsDirectSend ? weights[route] : 1.0f;
-      const auto* routeRow = sharedMemory + static_cast<size_t>(route) * HiddenBytes;
+    for (int routeIdx = 0; routeIdx < MaxNumTopk; ++routeIdx) {
+      if (!valid[routeIdx]) continue;
+      const float routeWeight = IsDirectSend ? weights[routeIdx] : 1.0f;
+      const auto* routeToken = sharedMemory + static_cast<size_t>(routeIdx) * HiddenBytes;
       if constexpr (DispatchType == DispatchDataType::BF16) {
-        const int4 packed = reinterpret_cast<const int4*>(routeRow)[vector];
+        const int4 packed = reinterpret_cast<const int4*>(routeToken)[vectorIdx];
         const auto* pairs = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
 #pragma unroll
-        for (int pair = 0; pair < PairsPerVector; ++pair) {
-          const auto value = mscclpp::to<mscclpp::f32x2>(pairs[pair]);
+        for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+          const auto value = mscclpp::to<mscclpp::f32x2>(pairs[pairIdx]);
           if constexpr (IsDirectSend) {
-            sum[pair].data[0] = fmaf(value.data[0], routeWeight, sum[pair].data[0]);
-            sum[pair].data[1] = fmaf(value.data[1], routeWeight, sum[pair].data[1]);
+            sum[pairIdx] = mscclpp::fma(value, mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sum[pairIdx]);
           } else {
-            sum[pair].data[0] += value.data[0];
-            sum[pair].data[1] += value.data[1];
+            sum[pairIdx] = sum[pairIdx] + value;
           }
         }
       } else {
-        const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeRow)[vector];
+        const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeToken)[vectorIdx];
         const float scale = IsDirectSend ? dequantScale * routeWeight : dequantScale;
         if (scale != 0.0f) {
           dequantizeAndAccumulateFp8E4M3(values, scale, sum);
@@ -112,14 +111,14 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(void* destination, const void* exp
       int4 packedOut;
       auto* outPairs = reinterpret_cast<mscclpp::bf16x2*>(&packedOut);
 #pragma unroll
-      for (int pair = 0; pair < PairsPerVector; ++pair) {
-        outPairs[pair] = mscclpp::to<mscclpp::bf16x2>(sum[pair]);
+      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+        outPairs[pairIdx] = mscclpp::to<mscclpp::bf16x2>(sum[pairIdx]);
       }
-      reinterpret_cast<int4*>(destination)[vector] = packedOut;
+      reinterpret_cast<int4*>(destination)[vectorIdx] = packedOut;
     } else {
 #pragma unroll
-      for (int pair = 0; pair < PairsPerVector; ++pair) {
-        reinterpret_cast<mscclpp::f32x2*>(destination)[vector * PairsPerVector + pair] = sum[pair];
+      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+        reinterpret_cast<mscclpp::f32x2*>(destination)[vectorIdx * NPairsPerVector + pairIdx] = sum[pairIdx];
       }
     }
   }
@@ -127,61 +126,64 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceRow(void* destination, const void* exp
   __syncthreads();
   if (Gateway && threadIdx.x == 0) {
     (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
-        hybrid.aggregateChunkReady_ + row / hybrid.nTokensPerChunk_, 1, mscclpp::memoryOrderRelease);
+        hybridCtx.aggregateChunkReady_ + tokenIdx / hybridCtx.nTokensPerChunk_, 1, mscclpp::memoryOrderRelease);
   }
 }
 
 template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const TransportView& transport,
                                             const WorkspaceView& workspace, uint32_t flag) {
-  const int peer = threadIdx.x;
+  const int peerIdx = threadIdx.x;
   const int nRanks = context->numRanks_;
-  const auto& hybrid = context->hybrid_;
+  const auto& hybridCtx = context->hybridCtx_;
   auto* network = transport.portChannels_;
-  const int queue = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(nRanks, WARP_SIZE);
+  const int queueIdx = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(nRanks, WARP_SIZE);
   __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
-  if (peer < nRanks && transport.isNvlinkPeer(peer)) {
-    if (!transport.isSelf(peer)) {
-      transport.baseMemoryChannels_[peer].signal();
-      transport.baseMemoryChannels_[peer].wait(-1);
+  if (peerIdx < nRanks && transport.isNvlinkPeer(peerIdx)) {
+    if (!transport.isSelf(peerIdx)) {
+      transport.baseMemoryChannels_[peerIdx].signal();
+      transport.baseMemoryChannels_[peerIdx].wait(-1);
     }
-    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peer, flag,
+    mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx, flag,
                                                          mscclpp::memoryOrderRelease);
   }
-  if (queue >= 0 && queue < network->numQpsPerPeer && getLaneId() == 0) {
-    const int rows = *hybrid.aggregateIncomingRows_;
-    const int nTokensPerChunk = hybrid.nTokensPerChunk_;
+  if (queueIdx >= 0 && queueIdx < network->numQpsPerPeer && getLaneId() == 0) {
+    const int nTokens = *hybridCtx.aggregateIncomingTokens_;
+    const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
     using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
-    constexpr size_t RowBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
-    const int gateway = hybrid.gatewayRank_;
-    auto handle = network->channel(gateway, queue);
-    handle.setWqeSlot(&wqeSlots[queue]);
-    const uint64_t dstOffset = transport.symmetricOffset(hybrid.aggregateRecvBuffer_);
-    const uint64_t srcOffset = transport.symmetricOffset(hybrid.aggregateSendBuffer_);
-    const uint64_t flagOffset = transport.symmetricOffset(hybrid.aggregateControl_->qpSignalCount + queue);
-    for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
-         chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
-      const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
+    constexpr size_t TokenBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
+    const int gatewayRank = hybridCtx.gatewayRank_;
+    auto handle = network->channel(gatewayRank, queueIdx);
+    handle.setWqeSlot(&wqeSlots[queueIdx]);
+    const uint64_t dstOffset = transport.symmetricOffset(hybridCtx.aggregateRecvBuffer_);
+    const uint64_t srcOffset = transport.symmetricOffset(hybridCtx.aggregateSendBuffer_);
+    const uint64_t flagOffset = transport.symmetricOffset(hybridCtx.aggregateControl_->qpSignalCount + queueIdx);
+    for (int chunkIdx = queueIdx, tokenBegin = queueIdx * nTokensPerChunk; tokenBegin < nTokens;
+         chunkIdx += network->numQpsPerPeer, tokenBegin += network->numQpsPerPeer * nTokensPerChunk) {
+      const int nChunkTokens = nTokens - tokenBegin < nTokensPerChunk ? nTokens - tokenBegin : nTokensPerChunk;
       handle.device_.putWithAccumulateAfter<kExclusive>(
-          handle.dstMemory_, dstOffset + begin * RowBytes, handle.srcMemory_, srcOffset + begin * RowBytes,
-          count * RowBytes, handle.dstMemory_, flagOffset, 1, [&] {
-            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybrid.aggregateChunkReady_ + chunk,
-                                                                  mscclpp::memoryOrderAcquire) != count) {
+          handle.dstMemory_, dstOffset + tokenBegin * TokenBytes, handle.srcMemory_,
+          srcOffset + tokenBegin * TokenBytes, nChunkTokens * TokenBytes, handle.dstMemory_, flagOffset, 1, [&] {
+            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybridCtx.aggregateChunkReady_ + chunkIdx,
+                                                                  mscclpp::memoryOrderAcquire) != nChunkTokens) {
             }
           });
     }
   }
-  for (int index = threadIdx.x; index < nRanks; index += blockDim.x) {
-    workspace.dispatchRankPayloadSlots_[index] = 0;
-    workspace.dispatchRankPayloadCompletions_[index] = 0;
+  for (int idx = threadIdx.x; idx < nRanks; idx += blockDim.x) {
+    workspace.dispatchRankPayloadSlots_[idx] = 0;
+    workspace.dispatchRankPayloadCompletions_[idx] = 0;
   }
-  const int dispatchCounters = 3 + configCellDiv(hybrid.distributeCapacity_, hybrid.nTokensPerChunk_);
-  for (int index = threadIdx.x; index < dispatchCounters; index += blockDim.x) {
-    hybrid.distributeScratch_[index] = 0;
+  const int nDispatchChunks = configCellDiv(hybridCtx.distributeCapacity_, hybridCtx.nTokensPerChunk_);
+  for (int chunkIdx = threadIdx.x; chunkIdx < nDispatchChunks; chunkIdx += blockDim.x) {
+    hybridCtx.distributeScratch_->chunkReadySignals[chunkIdx] = 0;
   }
   if (threadIdx.x == 0) {
-    auto* state = hybrid.distributeControl_;
+    hybridCtx.distributeScratch_->nRemoteTokens = 0;
+    hybridCtx.distributeScratch_->nCompletedForwarders = 0;
+    hybridCtx.distributeScratch_->forwardComplete = 0;
+    auto* state = hybridCtx.distributeControl_;
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->bufferReuseReady, mscclpp::memoryOrderAcquire) ==
            0) {
     }
@@ -190,54 +192,51 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
 }
 
 template <int Hidden, DispatchDataType DispatchType>
-MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const DeviceContext* context) {
-  constexpr int HiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
-  constexpr int PairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  const auto& hybrid = context->hybrid_;
-  const int row = hybrid.aggregateTokenRows_[token];
-  if (threadIdx.x == 0 && row >= 0) {
-    const int chunk = row / hybrid.nTokensPerChunk_;
-    const int qps = hybrid.portChannels_->numQpsPerPeer;
-    const int queue = chunk % qps;
-    auto* control = hybrid.aggregateControl_;
-    const uint64_t target = chunk / qps + 1;
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(control->qpSignalCount + queue,
+MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int tokenIdx, const DeviceContext* context) {
+  constexpr int NHiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
+  constexpr int NPairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
+  const auto& hybridCtx = context->hybridCtx_;
+  const int remoteTokenIdx = hybridCtx.aggregateRemoteTokenIdx_[tokenIdx];
+  if (threadIdx.x == 0 && remoteTokenIdx >= 0) {
+    const int chunkIdx = remoteTokenIdx / hybridCtx.nTokensPerChunk_;
+    const int nQps = hybridCtx.portChannels_->numQpsPerPeer;
+    const int queueIdx = chunkIdx % nQps;
+    auto* control = hybridCtx.aggregateControl_;
+    const uint64_t target = chunkIdx / nQps + 1;
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(control->qpSignalCount + queueIdx,
                                                                mscclpp::memoryOrderAcquire) < target) {
     }
   }
   __syncthreads();
   const auto* local =
-      reinterpret_cast<const mscclpp::f32x2*>(hybrid.aggregateLocalBuffer_ + static_cast<size_t>(token) * Hidden);
-  for (int vector = threadIdx.x; vector < HiddenVectors; vector += blockDim.x) {
+      reinterpret_cast<const mscclpp::f32x2*>(hybridCtx.aggregateLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
+  for (int vectorIdx = threadIdx.x; vectorIdx < NHiddenVectors; vectorIdx += blockDim.x) {
     int4 packed;
     auto* pairs = reinterpret_cast<mscclpp::bf16x2*>(&packed);
     int4 remotePacked{};
     if constexpr (DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
-      if (row >= 0) {
-        remotePacked = reinterpret_cast<const int4*>(reinterpret_cast<const Bf16*>(hybrid.aggregateRecvBuffer_) +
-                                                     static_cast<size_t>(row) * Hidden)[vector];
+      if (remoteTokenIdx >= 0) {
+        remotePacked = reinterpret_cast<const int4*>(reinterpret_cast<const Bf16*>(hybridCtx.aggregateRecvBuffer_) +
+                                                     static_cast<size_t>(remoteTokenIdx) * Hidden)[vectorIdx];
       }
     }
 #pragma unroll
-    for (int pair = 0; pair < PairsPerVector; ++pair) {
-      auto value = local[vector * PairsPerVector + pair];
-      if (row >= 0) {
+    for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+      auto value = local[vectorIdx * NPairsPerVector + pairIdx];
+      if (remoteTokenIdx >= 0) {
         if constexpr (DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
           const auto partial =
-              mscclpp::to<mscclpp::f32x2>(reinterpret_cast<const mscclpp::bf16x2*>(&remotePacked)[pair]);
-          value.data[0] += partial.data[0];
-          value.data[1] += partial.data[1];
+              mscclpp::to<mscclpp::f32x2>(reinterpret_cast<const mscclpp::bf16x2*>(&remotePacked)[pairIdx]);
+          value = value + partial;
         } else {
-          const auto* remote =
-              reinterpret_cast<const mscclpp::f32x2*>(hybrid.aggregateRecvBuffer_ + static_cast<size_t>(row) * Hidden);
-          const auto partial = remote[vector * PairsPerVector + pair];
-          value.data[0] += partial.data[0];
-          value.data[1] += partial.data[1];
+          const auto* remote = reinterpret_cast<const mscclpp::f32x2*>(hybridCtx.aggregateRecvBuffer_ +
+                                                                       static_cast<size_t>(remoteTokenIdx) * Hidden);
+          value = value + remote[vectorIdx * NPairsPerVector + pairIdx];
         }
       }
-      pairs[pair] = mscclpp::to<mscclpp::bf16x2>(value);
+      pairs[pairIdx] = mscclpp::to<mscclpp::bf16x2>(value);
     }
-    static_cast<int4*>(output)[static_cast<size_t>(token) * HiddenVectors + vector] = packed;
+    static_cast<int4*>(output)[static_cast<size_t>(tokenIdx) * NHiddenVectors + vectorIdx] = packed;
   }
 }
 
@@ -253,47 +252,48 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
   } else {
     using ElementType = DispatchElementType<DispatchType>;
     using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
-    constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(ElementType);
-    const auto& hybrid = context->hybrid_;
-    auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
+    constexpr size_t TokensBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(ElementType);
+    const auto& hybridCtx = context->hybridCtx_;
+    auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + TokensBytes);
     if (threadIdx.x < MaxNumTopk) barriers[threadIdx.x].init();
     __syncthreads();
     uint32_t phase = 0;
-    const int worker = static_cast<int>(blockIdx.x) - 1;
-    const int workers = static_cast<int>(gridDim.x) - 1;
-    const int incoming = *hybrid.aggregateIncomingRows_;
-    const int nTokensPerChunk = hybrid.nTokensPerChunk_;
-    const int qps = transport.portChannels_->numQpsPerPeer;
+    const int workerIdx = static_cast<int>(blockIdx.x) - 1;
+    const int nWorkers = static_cast<int>(gridDim.x) - 1;
+    const int nIncomingTokens = *hybridCtx.aggregateIncomingTokens_;
+    const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
+    const int nQps = transport.portChannels_->numQpsPerPeer;
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
-    auto* sendBase = reinterpret_cast<WireElement*>(hybrid.aggregateSendBuffer_);
-    for (int row = worker; row < incoming; row += workers) {
-      if (threadIdx.x == 0 && row >= qps * nTokensPerChunk) {
-        const int previous = row / nTokensPerChunk - qps;
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybrid.aggregateChunkReady_ + previous,
+    auto* sendBase = reinterpret_cast<WireElement*>(hybridCtx.aggregateSendBuffer_);
+    for (int tokenIdx = workerIdx; tokenIdx < nIncomingTokens; tokenIdx += nWorkers) {
+      if (threadIdx.x == 0 && tokenIdx >= nQps * nTokensPerChunk) {
+        const int previousChunkIdx = tokenIdx / nTokensPerChunk - nQps;
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybridCtx.aggregateChunkReady_ + previousChunkIdx,
                                                               mscclpp::memoryOrderAcquire) != nTokensPerChunk) {
         }
       }
       __syncthreads();
-      aggregateReduceRow<Mode, Hidden, DispatchType, true>(sendBase + static_cast<size_t>(row) * Hidden, expertOutput,
-                                                           topkIndices, topkWeights, row, workload, context, transport,
-                                                           workspace, flag, sharedMemory, phase, dequantScale);
+      aggregateReduceToken<Mode, Hidden, DispatchType, true>(
+          sendBase + static_cast<size_t>(tokenIdx) * Hidden, expertOutput, topkIndices, topkWeights, tokenIdx, workload,
+          context, transport, workspace, flag, sharedMemory, phase, dequantScale);
     }
     if (threadIdx.x == 0) {
-      for (int begin = 0; begin < incoming; begin += nTokensPerChunk) {
-        const int count = min(nTokensPerChunk, incoming - begin);
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybrid.aggregateChunkReady_ + begin / nTokensPerChunk,
-                                                              mscclpp::memoryOrderAcquire) != count) {
+      for (int tokenBegin = 0; tokenBegin < nIncomingTokens; tokenBegin += nTokensPerChunk) {
+        const int nChunkTokens = min(nTokensPerChunk, nIncomingTokens - tokenBegin);
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
+                   hybridCtx.aggregateChunkReady_ + tokenBegin / nTokensPerChunk, mscclpp::memoryOrderAcquire) !=
+               nChunkTokens) {
         }
       }
     }
     __syncthreads();
-    for (int row = worker; row < workload.numTokens_; row += workers) {
-      aggregateReduceRow<Mode, Hidden, DispatchType, false>(
-          hybrid.aggregateLocalBuffer_ + static_cast<size_t>(row) * Hidden, expertOutput, topkIndices, topkWeights, row,
-          workload, context, transport, workspace, flag, sharedMemory, phase, dequantScale);
+    for (int tokenIdx = workerIdx; tokenIdx < workload.numTokens_; tokenIdx += nWorkers) {
+      aggregateReduceToken<Mode, Hidden, DispatchType, false>(
+          hybridCtx.aggregateLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden, expertOutput, topkIndices,
+          topkWeights, tokenIdx, workload, context, transport, workspace, flag, sharedMemory, phase, dequantScale);
     }
-    for (int token = worker; token < workload.numTokens_; token += workers) {
-      aggregateFinalize<Hidden, DispatchType>(output, token, context);
+    for (int tokenIdx = workerIdx; tokenIdx < workload.numTokens_; tokenIdx += nWorkers) {
+      aggregateFinalize<Hidden, DispatchType>(output, tokenIdx, context);
     }
   }
 }
@@ -328,7 +328,7 @@ struct HybridCombineKernelSelector {
 void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                    const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
                    const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  EP_HOST_ASSERT(context.hybrid_.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
+  EP_HOST_ASSERT(context.hybridCtx_.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
                  workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC);

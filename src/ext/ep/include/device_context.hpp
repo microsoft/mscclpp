@@ -27,6 +27,7 @@ struct PortChannelDeviceContext {
 
 struct HybridDispatchControl;
 struct HybridAggregateControl;
+struct HybridDistributeScratch;
 
 struct HybridDeviceContext {
   /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
@@ -39,18 +40,17 @@ struct HybridDeviceContext {
   void* distributeSendBuffer_ = nullptr;
   void* distributeRecvBuffer_ = nullptr;
   HybridDispatchControl* distributeControl_ = nullptr;
-  /// Local [compact row allocator, completed forward CTAs, forward-complete flag, per-chunk staged rows].
-  int* distributeScratch_ = nullptr;
-  int* aggregateTokenRows_ = nullptr;
-  int* aggregateIncomingRows_ = nullptr;
-  /// Private [compact row, IDs then destination slots then weights] cache, never exposed to remote writes.
+  HybridDistributeScratch* distributeScratch_ = nullptr;
+  int* aggregateRemoteTokenIdx_ = nullptr;
+  int* aggregateIncomingTokens_ = nullptr;
+  /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
   int* aggregateRoutes_ = nullptr;
   float* aggregateLocalBuffer_ = nullptr;
-  /// Independent registered FP32 send/landing rows, indexed by compact remote row.
+  /// Independent registered FP32 send/landing tokens, indexed by compact remote token.
   float* aggregateSendBuffer_ = nullptr;
   float* aggregateRecvBuffer_ = nullptr;
   HybridAggregateControl* aggregateControl_ = nullptr;
-  /// Private completed-row counters, reset on the caller stream before each aggregate combine.
+  /// Private completed-token counters, reset on the caller stream before each aggregate combine.
   int* aggregateChunkReady_ = nullptr;
 };
 
@@ -77,7 +77,7 @@ struct DeviceContext {
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
   /// Cross-domain resources for hybrid dispatch and combine.
-  HybridDeviceContext hybrid_{};
+  HybridDeviceContext hybridCtx_{};
 };
 
 struct TransportView {
@@ -94,7 +94,7 @@ struct TransportView {
         baseMemoryChannels_(context->channels_),
         rank_(context->rank_),
         numRanks_(context->numRanks_),
-        portChannels_(context->hybrid_.portChannels_) {}
+        portChannels_(context->hybridCtx_.portChannels_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 

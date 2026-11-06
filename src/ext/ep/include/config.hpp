@@ -42,9 +42,9 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 //   [data: ElementType[hidden]]
 //   [expertIds: int[topk]]
 //   [topkWeights: float[topk]]
-//   [dstSlots: int[topk] (compact row index on each destination rank)]
+//   [dstSlots: int[topk] (compact token index on each destination rank)]
 //
-// Each payload row is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
+// Each token payload is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
 struct InterRackDispatchPayload {
   int* expertIds_;
   float* topkWeights_;
@@ -56,19 +56,31 @@ struct InterRackDispatchPayload {
     return configAlign<size_t>(dataBytes + metadataBytes, BufferAlignmentBytes);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* row, int hidden, int topk,
+  MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* token, int hidden, int topk,
                                                       size_t elementBytes = sizeof(uint16_t))
-      : expertIds_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
+      : expertIds_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + hidden * elementBytes)),
         topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
         dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
 };
 
 struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
-  mscclpp::LL8Packet nRows;
+  mscclpp::LL8Packet nRemoteTokens;
   mscclpp::LL8Packet nTokens[MaxNumRanks];
 
   MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
     return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
+  }
+};
+
+struct HybridDistributeScratch {
+  int nRemoteTokens;
+  int nCompletedForwarders;
+  int forwardComplete;
+  int chunkReadySignals[1];
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t numInts(int maxTokensPerRank, int nTokensPerChunk) {
+    return offsetof(HybridDistributeScratch, chunkReadySignals) / sizeof(int) +
+           static_cast<size_t>(configCellDiv(maxTokensPerRank, nTokensPerChunk));
   }
 };
 

@@ -195,28 +195,30 @@ void LatencyRuntimeContext::initialize() {
     portChannelContext_ = mscclpp::GpuBuffer<PortChannelDeviceContext>(1).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceContext>(portChannelContext_.get(), &portChannelContext, 1,
                                                  cudaMemcpyHostToDevice);
-    distributeScratch_ = mscclpp::detail::gpuCallocShared<int>(3 + configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
+    distributeScratch_ =
+        mscclpp::detail::gpuCallocShared<int>(HybridDistributeScratch::numInts(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
     aggregateMetadata_ =
         mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
     aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
     aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
-    deviceContext_.hybrid_ = {.portChannels_ = portChannelContext_.get(),
-                              .nTokensPerChunk_ = nTokensPerChunk_,
-                              .gatewayRank_ = gatewayRank,
-                              .distributeCapacity_ = maxTokensPerRank_,
-                              .distributeSendBuffer_ = storage.distributeSendBuffer_,
-                              .distributeRecvBuffer_ = storage.distributeRecvBuffer_,
-                              .distributeControl_ = storage.distributeControl_,
-                              .distributeScratch_ = distributeScratch_.get(),
-                              .aggregateTokenRows_ = aggregateMetadata_.get() + 1,
-                              .aggregateIncomingRows_ = aggregateMetadata_.get(),
-                              .aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_,
-                              .aggregateLocalBuffer_ = aggregateLocal_.get(),
-                              .aggregateSendBuffer_ = storage.aggregateSendBuffer_,
-                              .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
-                              .aggregateControl_ = storage.aggregateControl_,
-                              .aggregateChunkReady_ = aggregateChunkReady_.get()};
+    deviceContext_.hybridCtx_ = {
+        .portChannels_ = portChannelContext_.get(),
+        .nTokensPerChunk_ = nTokensPerChunk_,
+        .gatewayRank_ = gatewayRank,
+        .distributeCapacity_ = maxTokensPerRank_,
+        .distributeSendBuffer_ = storage.distributeSendBuffer_,
+        .distributeRecvBuffer_ = storage.distributeRecvBuffer_,
+        .distributeControl_ = storage.distributeControl_,
+        .distributeScratch_ = reinterpret_cast<HybridDistributeScratch*>(distributeScratch_.get()),
+        .aggregateRemoteTokenIdx_ = aggregateMetadata_.get() + 1,
+        .aggregateIncomingTokens_ = aggregateMetadata_.get(),
+        .aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_,
+        .aggregateLocalBuffer_ = aggregateLocal_.get(),
+        .aggregateSendBuffer_ = storage.aggregateSendBuffer_,
+        .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
+        .aggregateControl_ = storage.aggregateControl_,
+        .aggregateChunkReady_ = aggregateChunkReady_.get()};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
