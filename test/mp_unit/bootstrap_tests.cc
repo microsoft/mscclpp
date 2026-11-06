@@ -157,7 +157,14 @@ TEST(BootstrapTest, RejectInvalidRemoteAddresses) {
       mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeProxy, &abortFlag);
       sock.connect();
     }
-    // Oversized, negative, and truncated length prefixes
+    // Peer resets the connection before sending metadata
+    {
+      mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
+      sock.connect();
+      linger resetOnClose{1, 0};
+      EXPECT_EQ(::setsockopt(sock.getFd(), SOL_SOCKET, SO_LINGER, &resetOnClose, sizeof(resetOnClose)), 0);
+    }
+    // Oversized, negative, and undersized messages
     {
       mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
       sock.connect();
@@ -173,8 +180,12 @@ TEST(BootstrapTest, RejectInvalidRemoteAddresses) {
     {
       mscclpp::Socket sock(&internalId.addr, internalId.magic, mscclpp::SocketTypeBootstrap, &abortFlag);
       sock.connect();
-      int badSize = sizeof(int) * 2;
-      sock.send(&badSize, sizeof(badSize));
+      struct {
+        int size;
+        int rank;
+        int nRanks;
+      } badFrame{sizeof(int) * 2, 1, gEnv->worldSize};
+      sock.send(&badFrame, sizeof(badFrame));
     }
     // Mismatched nRanks
     sendRawExtInfo(1, gEnv->worldSize + 1);

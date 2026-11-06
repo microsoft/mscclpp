@@ -3,6 +3,7 @@
 
 #include <sys/resource.h>
 
+#include <cerrno>
 #include <cstring>
 #include <iomanip>
 #include <mscclpp/core.hpp>
@@ -180,7 +181,7 @@ void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec
 
   char line[MAX_IF_NAME_SIZE + 1];
   SocketToString(&uniqueId_.addr, line);
-  INFO(NET, "rank ", rank_, " nranks ", nRanks_, " - connecting to ", line);
+  INFO(NET, "rank ", rank_, " nranks ", nRanks_, " - connecting to ", std::string(line));
   establishConnections(timeoutSec);
 
   unixSocketServer_.start();
@@ -308,9 +309,14 @@ void TcpBootstrap::Impl::bootstrapRoot() {
     int rank;
     try {
       getRemoteAddresses(listenSockRoot_.get(), rankAddresses, rankAddressesRoot, rank);
-    } catch (const std::exception& e) {
+    } catch (const SysError& e) {
       if (abortFlag_ && *abortFlag_) break;
-      WARN(NET, "Bootstrap Root : ignoring invalid connection: ", e.what());
+      if (e.getErrorCode() != ECONNRESET && e.getErrorCode() != ECONNABORTED) throw;
+      WARN(NET, "Bootstrap Root : ignoring invalid connection: ", std::string(e.what()));
+      continue;
+    } catch (const Error& e) {
+      if (abortFlag_ && *abortFlag_) break;
+      WARN(NET, "Bootstrap Root : ignoring invalid connection: ", std::string(e.what()));
       continue;
     }
     ++numCollected;
@@ -359,7 +365,7 @@ void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface, 
   char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
   std::sprintf(line, " %s:", netIfName);
   SocketToString(&netIfAddr, line + strlen(line));
-  INFO(NET, "TcpBootstrap : Using", line);
+  INFO(NET, "TcpBootstrap : Using", std::string(line));
 }
 
 #define TIMEOUT(__exp)                                                            \
