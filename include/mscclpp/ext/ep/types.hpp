@@ -71,7 +71,7 @@ enum class DispatchDataType {
 struct QuantConfig {
   /// Input representation for latency rank-major static FP8 dispatch.
   enum class InputMode {
-    /// Input is already quantized as E4M3(real * dispatchScale).
+    /// Input is already quantized as E4M3(real * scale.first).
     PREQUANTIZED,
     /// Input is BF16 and is quantized once inside dispatch before transport.
     QUANTIZE
@@ -79,21 +79,18 @@ struct QuantConfig {
 
   /// Dispatch payload format.
   DispatchDataType dispatchDataType = DispatchDataType::BF16;
-  /// Static FP8 dispatch multiplier. Dispatch stores E4M3(real * dispatchScale).
-  /// Must be finite and positive for FP8_E4M3_STATIC, and one otherwise.
-  float dispatchScale = 1.0f;
+  /// Static FP8 (dispatch, combine) multipliers. Dispatch stores
+  /// E4M3(real * scale.first); FP8_E4M3_STATIC combine divides by
+  /// scale.second.value_or(scale.first). scale.first must be finite and
+  /// positive for FP8_E4M3_STATIC, and one otherwise. scale.second may be set
+  /// only for FP8_E4M3_STATIC combine.
+  std::pair<float, std::optional<float>> scale = {1.0f, std::nullopt};
   /// Input representation for latency rank-major static FP8 dispatch. Must remain
   /// PREQUANTIZED for every other layout and format.
   InputMode inputMode = InputMode::PREQUANTIZED;
   /// Rank-major combine input format. BF16 is the default; FP8_E4M3_STATIC is
   /// supported only with static FP8 dispatch.
   DispatchDataType combineDataType = DispatchDataType::BF16;
-  /// Optional static FP8 combine multiplier. Expert computation stores
-  /// E4M3(real * combineScale); combine divides by this scale.
-  /// When unset, FP8 combine uses dispatchScale for backward compatibility.
-  /// May be set only for FP8_E4M3_STATIC combine; must be finite and positive
-  /// with a finite reciprocal.
-  std::optional<float> combineScale;
 };
 
 /// Arguments for throughput-mode routing preparation.
@@ -298,7 +295,7 @@ struct LatencyCombineRequest {
   /// before hidden for DIRECT_SEND. Its element format is the matching dispatch
   /// request's quant.combineDataType: BF16 by default, or FP8_E4M3_STATIC with
   /// matching static FP8 dispatch. Static FP8 input is dequantized with
-  /// quant.combineScale, defaulting to quant.dispatchScale.
+  /// quant.scale.second.
   const void* input;
   /// Handle returned by the matching dispatch.
   DispatchHandle handle;

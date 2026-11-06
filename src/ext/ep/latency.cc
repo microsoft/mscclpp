@@ -186,10 +186,7 @@ void LatencyRuntimeContext::initialize() {
                     .numSms_ = numSms,
                     .deviceId_ = deviceId_,
                     .rank_ = rank_,
-                    .numRanks_ = numRanks_,
-                    .nTokensPerChunk_ = isHybrid_ ? nTokensPerChunk_ : 0,
-                    .gatewayRank_ = gatewayRank,
-                    .distributeCapacity_ = isHybrid_ ? maxTokensPerRank_ : 0};
+                    .numRanks_ = numRanks_};
   if (isHybrid_) {
     portChannelHandles_ = mscclpp::GpuBuffer<PortChannelDeviceHandle>(portChannelHandles.size()).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceHandle>(portChannelHandles_.get(), portChannelHandles.data(),
@@ -200,23 +197,26 @@ void LatencyRuntimeContext::initialize() {
                                                  cudaMemcpyHostToDevice);
     distributeScratch_ = mscclpp::detail::gpuCallocShared<int>(3 + configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
-    deviceContext_.portChannels_ = portChannelContext_.get();
-    deviceContext_.distributeSendBuffer_ = storage.distributeSendBuffer_;
-    deviceContext_.distributeRecvBuffer_ = storage.distributeRecvBuffer_;
-    deviceContext_.distributeControl_ = storage.distributeControl_;
-    deviceContext_.distributeScratch_ = distributeScratch_.get();
-    deviceContext_.aggregateSendBuffer_ = storage.aggregateSendBuffer_;
-    deviceContext_.aggregateRecvBuffer_ = storage.aggregateRecvBuffer_;
-    deviceContext_.aggregateControl_ = storage.aggregateControl_;
     aggregateMetadata_ =
         mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
-    deviceContext_.aggregateIncomingRows_ = aggregateMetadata_.get();
-    deviceContext_.aggregateTokenRows_ = aggregateMetadata_.get() + 1;
-    deviceContext_.aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_;
     aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
-    deviceContext_.aggregateLocalBuffer_ = aggregateLocal_.get();
     aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
-    deviceContext_.aggregateChunkReady_ = aggregateChunkReady_.get();
+    deviceContext_.hybrid_ = {.portChannels_ = portChannelContext_.get(),
+                              .nTokensPerChunk_ = nTokensPerChunk_,
+                              .gatewayRank_ = gatewayRank,
+                              .distributeCapacity_ = maxTokensPerRank_,
+                              .distributeSendBuffer_ = storage.distributeSendBuffer_,
+                              .distributeRecvBuffer_ = storage.distributeRecvBuffer_,
+                              .distributeControl_ = storage.distributeControl_,
+                              .distributeScratch_ = distributeScratch_.get(),
+                              .aggregateTokenRows_ = aggregateMetadata_.get() + 1,
+                              .aggregateIncomingRows_ = aggregateMetadata_.get(),
+                              .aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_,
+                              .aggregateLocalBuffer_ = aggregateLocal_.get(),
+                              .aggregateSendBuffer_ = storage.aggregateSendBuffer_,
+                              .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
+                              .aggregateControl_ = storage.aggregateControl_,
+                              .aggregateChunkReady_ = aggregateChunkReady_.get()};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
@@ -243,10 +243,10 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const bool emitLocalExpertIds = request.emitLocalExpertIds;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = request.quant.dispatchDataType;
-  const float dispatchScale = request.quant.dispatchScale;
+  const float dispatchScale = request.quant.scale.first;
   const QuantConfig::InputMode inputMode = request.quant.inputMode;
   const DispatchDataType combineDataType = request.quant.combineDataType;
-  const float combineScale = request.quant.combineScale.value_or(dispatchScale);
+  const float combineScale = request.quant.scale.second.value_or(dispatchScale);
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
@@ -299,7 +299,7 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
     if (!std::isfinite(combineScale) || combineScale <= 0.0f || !std::isfinite(1.0f / combineScale)) {
       EP_THROW("Static FP8 combine requires a finite positive quantization scale with a finite reciprocal");
     }
-  } else if (request.quant.combineScale.has_value()) {
+  } else if (request.quant.scale.second.has_value()) {
     EP_THROW("A combine scale is supported only by FP8_E4M3_STATIC combine input");
   }
 
@@ -393,8 +393,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
   const DispatchDataType combineDataType = handle.combineDataType_;
-  const float dispatchScale = handle.dispatchScale_;
-  const float combineScale = handle.combineScale_;
+  const float dispatchScale = handle.scale_.first;
+  const float combineScale = handle.scale_.second;
   const CombineMode mode = context.combineMode_;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;

@@ -3,6 +3,7 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 
 #include <cstdint>
@@ -49,10 +50,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("QUANTIZE", QuantConfig::InputMode::QUANTIZE);
   quantConfig.def(nb::init<>())
       .def_rw("dispatch_data_type", &QuantConfig::dispatchDataType)
-      .def_rw("dispatch_scale", &QuantConfig::dispatchScale)
+      .def_rw("scale", &QuantConfig::scale)
       .def_rw("input_mode", &QuantConfig::inputMode)
-      .def_rw("combine_data_type", &QuantConfig::combineDataType)
-      .def_rw("combine_scale", &QuantConfig::combineScale, nb::arg().none());
+      .def_rw("combine_data_type", &QuantConfig::combineDataType);
 
   nb::class_<PrepareHandle>(m, "PrepareHandle").def(nb::init<>());
   nb::class_<DispatchHandle>(m, "DispatchHandle").def(nb::init<>());

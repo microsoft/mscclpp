@@ -602,12 +602,12 @@ def test_latency_hybrid_static_fp8(
     ep_group, combine_mode, combine_format, combine_scale, input_mode, emit_local_expert_ids
 ):
     num_tokens, capacity, scale = 5, 8, 0.5
+    expected_scale = (scale, combine_scale) if combine_scale is not None else scale
     quant = QuantConfig(
         format=DispatchDataType.FP8_E4M3_STATIC,
-        scale=scale,
+        scale=expected_scale,
         input_mode=input_mode,
         combine_format=combine_format,
-        combine_scale=combine_scale,
     )
     expert_scale = scale if combine_scale is None else combine_scale
     with initialized_runtime(
@@ -642,9 +642,8 @@ def test_latency_hybrid_static_fp8(
                     torch.float8_e4m3fn if combine_format == DispatchDataType.FP8_E4M3_STATIC else torch.bfloat16
                 )
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
-                assert result.quant.scale == scale
-                assert result.quant.combine_scale == (
-                    expert_scale if combine_format == DispatchDataType.FP8_E4M3_STATIC else None
+                assert result.quant.scale == (
+                    (scale, expert_scale) if combine_format == DispatchDataType.FP8_E4M3_STATIC else scale
                 )
                 stream.synchronize()
                 _check_dispatch_metadata(ep_group, result, num_tokens)

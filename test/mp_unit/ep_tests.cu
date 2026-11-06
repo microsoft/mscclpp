@@ -352,7 +352,8 @@ std::vector<OutputExpectation> makeOutputExpectation(int rank, int numTokens, in
   const bool expertMajor = layout == DispatchLayout::EXPERT_MAJOR;
   const bool staticFp8 = quant.dispatchDataType == DispatchDataType::FP8_E4M3_STATIC;
   const bool fp8Combine = quant.combineDataType == DispatchDataType::FP8_E4M3_STATIC;
-  const float combineScale = quant.combineScale.value_or(quant.dispatchScale);
+  const float dispatchScale = quant.scale.first;
+  const float combineScale = quant.scale.second.value_or(dispatchScale);
   constexpr float Weight = 1.0f / NumTopk;
   std::vector<OutputExpectation> expectation;
   expectation.reserve(numTokens);
@@ -380,7 +381,7 @@ std::vector<OutputExpectation> makeOutputExpectation(int rank, int numTokens, in
         break;
       }
       case DispatchDataType::FP8_E4M3_STATIC:
-        dispatched = static_cast<float>(referenceFp8E4M3Value(referenceFp8E4M3(dispatched * quant.dispatchScale)));
+        dispatched = static_cast<float>(referenceFp8E4M3Value(referenceFp8E4M3(dispatched * dispatchScale)));
         break;
     }
     const auto experts = routedExperts(rank, token, NumExperts);
@@ -395,7 +396,7 @@ std::vector<OutputExpectation> makeOutputExpectation(int rank, int numTokens, in
       if (!directSend && visited[destination]) continue;
       visited[destination] = true;
       const float localWeight = directSend ? 1.0f : counts[destination] * Weight;
-      float weighted = staticFp8 ? dispatched * (localWeight / quant.dispatchScale) : dispatched * localWeight;
+      float weighted = staticFp8 ? dispatched * (localWeight / dispatchScale) : dispatched * localWeight;
       if (expertMajor && !directSend) {
         weighted = 0.0f;
         for (int localExpert = 0; localExpert < counts[destination]; ++localExpert) {
@@ -607,10 +608,9 @@ void runCorrectnessCase(
   constexpr float StaticFp8Scale = 0.5f;
   const mscclpp::ep::QuantConfig quant{
       .dispatchDataType = dataType,
-      .dispatchScale = staticFp8 ? StaticFp8Scale : 1.0f,
+      .scale = {staticFp8 ? StaticFp8Scale : 1.0f, combineScale},
       .inputMode = inputMode,
       .combineDataType = combineDataType,
-      .combineScale = combineScale,
   };
   const void* dispatchInput = buffers.input.data();
   if (staticFp8 && inputMode == mscclpp::ep::QuantConfig::InputMode::PREQUANTIZED) {
@@ -663,7 +663,7 @@ void runCorrectnessCase(
     const size_t elements = static_cast<size_t>(rows) * hidden * (directSend ? NumTopk : 1);
     stageStaticFp8RankMajorExpertOutput<<<numBlocks(elements), Threads, 0, stream>>>(
         combineInput, static_cast<const Fp8E4M3*>(dispatchOutput), outputTopkIdx, outputTopkWeights, rank, rows, hidden,
-        directSend, NumExperts, StaticFp8Scale, fp8Combine, quant.combineScale.value_or(quant.dispatchScale));
+        directSend, NumExperts, StaticFp8Scale, fp8Combine, quant.scale.second.value_or(quant.scale.first));
     MSCCLPP_CUDATHROW(cudaGetLastError());
     expertOutput = combineInput;
   } else if (!expertMajor) {
@@ -1191,16 +1191,15 @@ TEST(MoERuntimeTest, InitializationAndModeValidation) {
       mscclpp::ep::LatencyDispatchRequest request{};
       request.maxTokensPerRank = 1;
       request.quant.dispatchDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
-      request.quant.dispatchScale = 0.5f;
+      request.quant.scale = {0.5f, scale};
       request.quant.combineDataType = mscclpp::ep::DispatchDataType::FP8_E4M3_STATIC;
-      request.quant.combineScale = scale;
       runtime->dispatch(mscclpp::ep::DispatchRequest{request});
     }));
   }
   ASSERT_TRUE(rejectsEpRequest([&] {
     mscclpp::ep::LatencyDispatchRequest request{};
     request.maxTokensPerRank = 1;
-    request.quant.combineScale = 1.0f;
+    request.quant.scale = {1.0f, 1.0f};
     runtime->dispatch(mscclpp::ep::DispatchRequest{request});
   }));
   ASSERT_TRUE(rejectsEpRequest([&] {

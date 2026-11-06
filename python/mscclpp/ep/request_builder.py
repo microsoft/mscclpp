@@ -149,15 +149,19 @@ class RequestBuilder:
                 output_shape[:-1] + (config.hidden_size // 32,),
                 torch.uint8,
             )
+        output_scale = (
+            (scale, combine_scale)
+            if combine_data_type == DispatchDataType.FP8_E4M3_STATIC and combine_scale is not None
+            else scale
+        )
         output_quant = (
             None
             if data_type == DispatchDataType.BF16 and combine_data_type == DispatchDataType.BF16
             else QuantConfig(
                 format=data_type,
                 block_scales=scales,
-                scale=scale,
+                scale=output_scale,
                 combine_format=combine_data_type,
-                combine_scale=combine_scale,
             )
         )
         output = DispatchOutput(
@@ -174,10 +178,9 @@ class RequestBuilder:
         )
         native_quant = _cpp.NativeQuantConfig()
         native_quant.dispatch_data_type = data_type
-        native_quant.dispatch_scale = 1.0 if scale is None else scale
+        native_quant.scale = (1.0 if scale is None else scale, combine_scale)
         native_quant.input_mode = input_mode
         native_quant.combine_data_type = combine_data_type
-        native_quant.combine_scale = combine_scale
         return _DispatchRequest(
             arguments=dict(
                 input_ptr=ptr(input),

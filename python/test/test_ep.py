@@ -85,11 +85,11 @@ def test_local_id_flag_preserves_positional_config_compatibility():
 
 def test_config_validation_at_construction(ep_group):
     native_quant = NativeQuantConfig()
-    assert native_quant.combine_scale is None
-    native_quant.combine_scale = 0.25
-    assert native_quant.combine_scale == 0.25
-    native_quant.combine_scale = None
-    assert native_quant.combine_scale is None
+    assert native_quant.scale == (1.0, None)
+    native_quant.scale = (0.5, 0.25)
+    assert native_quant.scale == (0.5, 0.25)
+    native_quant.scale = (0.5, None)
+    assert native_quant.scale == (0.5, None)
     config = MoECommunicatorConfig(
         comm=ep_group,
         num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
@@ -124,20 +124,17 @@ def test_config_validation_at_construction(ep_group):
         ),
     )
     assert fp8_combine.quant.combine_format == DispatchDataType.FP8_E4M3_STATIC
-    assert fp8_combine.quant.combine_scale is None
-    independent_combine = replace(
-        fp8_combine, quant=replace(fp8_combine.quant, scale=448 / 24.375, combine_scale=448 / 79488.0)
-    )
-    assert independent_combine.quant.scale == 448 / 24.375
-    assert independent_combine.quant.combine_scale == 448 / 79488.0
+    assert fp8_combine.quant.scale == 0.5
+    independent_combine = replace(fp8_combine, quant=replace(fp8_combine.quant, scale=(448 / 24.375, 448 / 79488.0)))
+    assert independent_combine.quant.scale == (448 / 24.375, 448 / 79488.0)
     for combine_scale in (0.0, -1.0, float("inf"), float("nan")):
-        with pytest.raises(ValueError, match="quant.combine_scale must be finite and positive"):
-            replace(fp8_combine, quant=replace(fp8_combine.quant, combine_scale=combine_scale))
+        with pytest.raises(ValueError, match="quant.scale must be finite and positive"):
+            replace(fp8_combine, quant=replace(fp8_combine.quant, scale=(0.5, combine_scale)))
     for combine_scale in (True, "1.0"):
-        with pytest.raises(TypeError, match="quant.combine_scale must be a real number"):
-            replace(fp8_combine, quant=replace(fp8_combine.quant, combine_scale=combine_scale))
-    with pytest.raises(ValueError, match="combine_scale is supported only by FP8_E4M3_STATIC combine input"):
-        replace(static_fp8, quant=replace(static_fp8.quant, combine_scale=1.0))
+        with pytest.raises(TypeError, match="quant.scale must be a real number"):
+            replace(fp8_combine, quant=replace(fp8_combine.quant, scale=(0.5, combine_scale)))
+    with pytest.raises(ValueError, match="combine scale is supported only by FP8_E4M3_STATIC combine input"):
+        replace(static_fp8, quant=replace(static_fp8.quant, scale=(0.5, 1.0)))
     fused_static_fp8 = replace(
         static_fp8,
         quant=QuantConfig(
@@ -442,12 +439,12 @@ def _run_dispatch_combine_case(
             input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
             static_scale = 0.5 if static_fp8 else None
             expert_scale = static_scale if combine_scale is None else combine_scale
+            expected_scale = (static_scale, combine_scale) if combine_scale is not None else static_scale
             quant = QuantConfig(
                 format=data_type,
-                scale=static_scale,
+                scale=expected_scale,
                 input_mode=input_mode,
                 combine_format=combine_format,
-                combine_scale=combine_scale,
             )
             dispatch_input = input
             if fp8 and mode == MoEMode.THROUGHPUT:
@@ -473,7 +470,9 @@ def _run_dispatch_combine_case(
             else:
                 assert result.quant is None
             if static_scale is not None:
-                assert result.quant.scale == static_scale
+                assert result.quant.scale == (
+                    (static_scale, expert_scale) if combine_format == DispatchDataType.FP8_E4M3_STATIC else static_scale
+                )
                 assert result.quant.block_scales is None
                 assert result.quant.input_mode == QuantConfig.InputMode.PREQUANTIZED
             elif mxfp8:
@@ -486,9 +485,6 @@ def _run_dispatch_combine_case(
                 assert result.combine_input_buffer.dtype == expected_combine_dtype
                 if result.quant is not None:
                     assert result.quant.combine_format == combine_format
-                    assert result.quant.combine_scale == (
-                        expert_scale if combine_format == DispatchDataType.FP8_E4M3_STATIC else None
-                    )
             assert result.layout is handle.output_info.layout
             assert result.layout.kind == layout
             counts = (
@@ -1174,11 +1170,11 @@ def test_latency_rank_major_graph_replay(ep_group, combine_mode, graph_iteration
     num_tokens = ep_group.nranks + 2
     capacity, active_capacity = num_tokens + 1, num_tokens
     fp8 = data_type == DispatchDataType.FP8_E4M3_STATIC
+    expected_scale = (scale, combine_scale) if combine_scale is not None else scale
     quant = QuantConfig(
         format=data_type,
-        scale=scale,
+        scale=expected_scale,
         combine_format=DispatchDataType.FP8_E4M3_STATIC if fp8 else DispatchDataType.BF16,
-        combine_scale=combine_scale,
     )
     expert_scale = scale if combine_scale is None else combine_scale
     with initialized_runtime(
@@ -1271,8 +1267,7 @@ def test_latency_rank_major_graph_replay(ep_group, combine_mode, graph_iteration
                 torch.testing.assert_close(output, expected, rtol=0, atol=0)
 
             if fp8:
-                assert result.quant.scale == scale
-                assert result.quant.combine_scale == expert_scale
+                assert result.quant.scale == (scale, expert_scale)
             else:
                 assert result.quant is None
             assert handle.output_info.quant is result.quant

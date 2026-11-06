@@ -294,8 +294,9 @@ class MoECommunicator:
         inputs must use ``DispatchOutput.combine_input_buffer``.
         Latency RANK_MAJOR input dtype follows ``QuantConfig.combine_format``:
         BF16 by default, or ``FP8_E4M3_STATIC`` with matching static-FP8
-        dispatch. Static E4M3 input is dequantized with ``QuantConfig.combine_scale``,
-        defaulting to the dispatch scale. Both scales are retained by the handle.
+        dispatch. Static E4M3 input is dequantized with the combine scale from
+        ``QuantConfig.scale``, defaulting to the dispatch scale. Both scales are
+        retained by the handle.
         For latency DIRECT_SEND, set ``apply_router_weights=False`` for
         preweighted expert outputs. By default it is enabled only for
         DIRECT_SEND; other modes ignore this option.

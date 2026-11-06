@@ -45,8 +45,9 @@ def _stage_expert_output(dispatch_out, config):
             expert_output = torch.addcmul(expert_output, tokens, weight[..., None])
     quant = dispatch_out.quant
     if quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC:
+        combine_scale = quant.scale[1] if isinstance(quant.scale, tuple) else quant.scale
         dispatch_out.combine_input_buffer.copy_(
-            (expert_output * quant.scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+            (expert_output * combine_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
         )
     else:
         dispatch_out.combine_input_buffer.copy_(expert_output.to(torch.bfloat16))
