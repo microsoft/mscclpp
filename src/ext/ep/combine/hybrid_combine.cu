@@ -157,7 +157,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     handle.setWqeSlot(&wqeSlots[queue]);
     const uint64_t dstOffset = transport.symmetricOffset(context->aggregateRecvBuffer_);
     const uint64_t srcOffset = transport.symmetricOffset(context->aggregateSendBuffer_);
-    const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->chunks + queue);
+    const uint64_t flagOffset = transport.symmetricOffset(context->aggregateControl_->qpSignalCount + queue);
     for (int chunk = queue, begin = queue * nTokensPerChunk; begin < rows;
          chunk += network->numQpsPerPeer, begin += network->numQpsPerPeer * nTokensPerChunk) {
       const int count = rows - begin < nTokensPerChunk ? rows - begin : nTokensPerChunk;
@@ -180,9 +180,10 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   }
   if (threadIdx.x == 0) {
     auto* state = context->distributeControl_;
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->ack, mscclpp::memoryOrderAcquire) <
-           state->ackBase) {
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(&state->bufferReuseReady, mscclpp::memoryOrderAcquire) ==
+           0) {
     }
+    state->bufferReuseReady = 0;
   }
 }
 
@@ -196,9 +197,9 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int token, const Devi
     const int qps = context->portChannels_->numQpsPerPeer;
     const int queue = chunk % qps;
     auto* control = context->aggregateControl_;
-    const uint64_t target = control->chunkBase[queue] + chunk / qps + 1;
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(control->chunks + queue, mscclpp::memoryOrderAcquire) <
-           target) {
+    const uint64_t target = chunk / qps + 1;
+    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(control->qpSignalCount + queue,
+                                                               mscclpp::memoryOrderAcquire) < target) {
     }
   }
   __syncthreads();

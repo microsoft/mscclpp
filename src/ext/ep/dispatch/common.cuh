@@ -138,7 +138,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
                                                        const TransportView& transport, WorkspaceView& workspaceView,
                                                        int sourceRank, int nTopk, int maxTokensPerRank,
                                                        int invalidTokenExpertId, void* recvBuffer, uint32_t flag,
-                                                       int* sharedMem, uint32_t* forwardReady = nullptr) {
+                                                       int* sharedMem, uint32_t* payloadReady = nullptr) {
   if (threadIdx.x == 0) {
     auto* rankTokenCounts = static_cast<mscclpp::LL8Packet*>(recvBuffer);
     const int nRankTokens = static_cast<int>(rankTokenCounts[sourceRank].read(flag, -1));
@@ -157,8 +157,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
   }
 
   if (threadIdx.x == 0) {
-    if (forwardReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
-      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(forwardReady + sourceRank,
+    if (payloadReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(payloadReady + sourceRank,
                                                                  mscclpp::memoryOrderAcquire) != flag) {
       }
     } else if (nRankTokens > 0) {

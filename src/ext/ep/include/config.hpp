@@ -22,7 +22,7 @@ inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
 inline constexpr int MaxNumRanks = 128;
 
-inline constexpr int MaxQpsPerPeer = 64;
+inline constexpr int MaxQpsPerPeer = 4;
 inline constexpr int HybridForwardBlocks = 8;
 
 inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
@@ -37,50 +37,52 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
 
-// Send-and-distribute owns separate registered send and landing rows. Routing slots
-// are the source's freshly allocated compact slots, not input-token indices.
-struct HybridDispatchRow {
-  int* ids_;
-  float* weights_;
-  int* slots_;
+// Inter-rack (hybrid) dispatch RDMA payload layout per compact remote token:
+//
+//   [data: ElementType[hidden]]
+//   [expertIds: int[topk]]
+//   [topkWeights: float[topk]]
+//   [dstSlots: int[topk] (compact row index on each destination rank)]
+//
+// Each payload row is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
+struct InterRackDispatchPayload {
+  int* expertIds_;
+  float* topkWeights_;
+  int* dstSlots_;
 
   MSCCLPP_HOST_DEVICE_INLINE static size_t stride(int hidden, int topk, size_t elementBytes = sizeof(uint16_t)) {
-    return configAlign<size_t>(static_cast<size_t>(hidden) * elementBytes + topk * 3 * sizeof(int),
-                               BufferAlignmentBytes);
+    const size_t dataBytes = static_cast<size_t>(hidden) * elementBytes;
+    const size_t metadataBytes = static_cast<size_t>(topk) * (sizeof(int) + sizeof(float) + sizeof(int));
+    return configAlign<size_t>(dataBytes + metadataBytes, BufferAlignmentBytes);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE HybridDispatchRow(void* row, int hidden, int topk, size_t elementBytes = sizeof(uint16_t))
-      : ids_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
-        weights_(reinterpret_cast<float*>(ids_ + topk)),
-        slots_(reinterpret_cast<int*>(weights_ + topk)) {}
+  MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* row, int hidden, int topk,
+                                                      size_t elementBytes = sizeof(uint16_t))
+      : expertIds_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(row) + hidden * elementBytes)),
+        topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
+        dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
 };
 
-struct alignas(BufferAlignmentBytes) HybridDispatchHeader {
-  mscclpp::LL8Packet rows;
-  mscclpp::LL8Packet counts[MaxNumRanks];
+struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
+  mscclpp::LL8Packet nRows;
+  mscclpp::LL8Packet nTokens[MaxNumRanks];
 
   MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
     return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
   }
 };
-static_assert(offsetof(HybridDispatchHeader, counts) == sizeof(mscclpp::LL8Packet));
 
 struct alignas(BufferAlignmentBytes) HybridDispatchControl {
-  uint64_t chunks[4];
-  uint64_t chunkBase[4];
-  uint64_t ack;
-  uint64_t ackBase;
-  uint32_t forwardReady[MaxNumRanks];
-  HybridDispatchHeader sendHeader;
-  HybridDispatchHeader recvHeader;
+  uint64_t qpSignalCount[MaxQpsPerPeer];
+  uint64_t bufferReuseReady;
+  uint32_t payloadReady[MaxNumRanks];
+  InterRackDispatchHeader sendHeader;
+  InterRackDispatchHeader recvHeader;
 };
 
 struct alignas(BufferAlignmentBytes) HybridAggregateControl {
-  uint64_t chunks[4];
-  uint64_t chunkBase[4];
-  uint64_t nextChunkBase[4];
+  uint64_t qpSignalCount[MaxQpsPerPeer];
 };
-static_assert(sizeof(HybridAggregateControl) == BufferAlignmentBytes);
 
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
@@ -290,7 +292,7 @@ struct LatencyStorageLayout {
 
     const size_t distributeOffset = totalBytes_;
     const size_t distributeBytes =
-        isHybrid ? static_cast<size_t>(maxTokensPerRank) * HybridDispatchRow::stride(hidden, numTopk) : 0;
+        isHybrid ? static_cast<size_t>(maxTokensPerRank) * InterRackDispatchPayload::stride(hidden, numTopk) : 0;
     if (isHybrid) totalBytes_ += 2 * distributeBytes + sizeof(HybridDispatchControl);
     const size_t aggregateOffset = totalBytes_;
     const size_t aggregateBytes = isHybrid ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
