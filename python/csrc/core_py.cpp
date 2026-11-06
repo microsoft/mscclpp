@@ -29,6 +29,7 @@ extern void register_algorithm(nb::module_& m);
 
 // ext
 extern void register_algorithm_collection_builder(nb::module_& m);
+extern void register_megamoe(nb::module_& m);
 
 template <typename T>
 void def_shared_future(nb::handle& m, const std::string& typestr) {
@@ -331,4 +332,5 @@ NB_MODULE(_mscclpp, m) {
 
   // ext
   register_algorithm_collection_builder(m);
+  register_megamoe(m);
 }
