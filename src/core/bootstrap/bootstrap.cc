@@ -4,6 +4,7 @@
 #include <sys/resource.h>
 
 #include <cstring>
+#include <iomanip>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
 #include <sstream>
@@ -12,7 +13,7 @@
 #include <vector>
 
 #include "api.h"
-#include "debug.h"
+#include "logger.hpp"
 #include "socket.h"
 #include "unix_socket.hpp"
 #include "utils_internal.hpp"
@@ -179,11 +180,11 @@ void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec
 
   char line[MAX_IF_NAME_SIZE + 1];
   SocketToString(&uniqueId_.addr, line);
-  INFO(MSCCLPP_INIT, "rank %d nranks %d - connecting to %s", rank_, nRanks_, line);
+  INFO(NET, "rank ", rank_, " nranks ", nRanks_, " - connecting to ", line);
   establishConnections(timeoutSec);
 
   unixSocketServer_.start();
-  INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
+  INFO(NET, "rank ", rank_, " - unix socket server started");
 }
 
 void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t timeoutSec) {
@@ -217,7 +218,7 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
 
   establishConnections(timeoutSec);
   unixSocketServer_.start();
-  INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
+  INFO(NET, "rank ", rank_, " - unix socket server started");
 }
 
 TcpBootstrap::Impl::~Impl() {
@@ -242,21 +243,18 @@ void TcpBootstrap::Impl::getRemoteAddresses(Socket* listenSock, std::vector<Sock
   }
 
   if (this->nRanks_ != info.nRanks) {
-    throw Error("Bootstrap Root : mismatch in rank count from procs " + std::to_string(this->nRanks_) + " : " +
-                    std::to_string(info.nRanks),
-                ErrorCode::InternalError);
+    THROW(NET, Error, ErrorCode::InternalError, "Bootstrap Root : mismatch in rank count from procs ", this->nRanks_,
+          " : ", info.nRanks);
   }
 
   if (info.rank < 0 || info.rank >= this->nRanks_) {
-    throw Error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " + std::to_string(this->nRanks_) +
-                    " is out of range",
-                ErrorCode::InternalError);
+    THROW(NET, Error, ErrorCode::InternalError, "Bootstrap Root : rank ", info.rank, " of ", this->nRanks_,
+          " is out of range");
   }
 
   if (std::memcmp(&zero, &rankAddressesRoot[info.rank], sizeof(SocketAddress)) != 0) {
-    throw Error("Bootstrap Root : rank " + std::to_string(info.rank) + " of " + std::to_string(this->nRanks_) +
-                    " has already checked in",
-                ErrorCode::InternalError);
+    THROW(NET, Error, ErrorCode::InternalError, "Bootstrap Root : rank ", info.rank, " of ", this->nRanks_,
+          " has already checked in");
   }
 
   // Save the connection handle for that rank
@@ -304,7 +302,7 @@ void TcpBootstrap::Impl::bootstrapRoot() {
   std::memset(rankAddressesRoot.data(), 0, sizeof(SocketAddress) * nRanks_);
   setFilesLimit();
 
-  TRACE(MSCCLPP_INIT, "BEGIN");
+  DEBUG(NET, "BEGIN");
   /* Receive addresses from all ranks */
   do {
     int rank;
@@ -312,26 +310,26 @@ void TcpBootstrap::Impl::bootstrapRoot() {
       getRemoteAddresses(listenSockRoot_.get(), rankAddresses, rankAddressesRoot, rank);
     } catch (const std::exception& e) {
       if (abortFlag_ && *abortFlag_) break;
-      WARN("Bootstrap Root : ignoring invalid connection: %s", e.what());
+      WARN(NET, "Bootstrap Root : ignoring invalid connection: ", e.what());
       continue;
     }
     ++numCollected;
-    TRACE(MSCCLPP_INIT, "Received connect from rank %d total %d/%d", rank, numCollected, nRanks_);
+    DEBUG(NET, "Received connect from rank ", rank, " total ", numCollected, "/", nRanks_);
   } while (numCollected < nRanks_ && (!abortFlag_ || *abortFlag_ == 0));
 
   if (abortFlag_ && *abortFlag_) {
-    TRACE(MSCCLPP_INIT, "ABORTED");
+    DEBUG(NET, "ABORTED");
     return;
   }
 
-  TRACE(MSCCLPP_INIT, "COLLECTED ALL %d HANDLES", nRanks_);
+  DEBUG(NET, "COLLECTED ALL ", nRanks_, " HANDLES");
 
   // Send the connect handle for the next rank in the AllGather ring
   for (int peer = 0; peer < nRanks_; ++peer) {
     sendHandleToPeer(peer, rankAddresses, rankAddressesRoot);
   }
 
-  TRACE(MSCCLPP_INIT, "DONE");
+  DEBUG(NET, "DONE");
 }
 
 void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface, SocketAddress& netIfAddr) {
@@ -340,39 +338,40 @@ void TcpBootstrap::Impl::netInit(std::string ipPortPair, std::string interface, 
     if (interface != "") {
       // we know the <interface>
       int ret = FindInterfaces(netIfName, &netIfAddr, MAX_IF_NAME_SIZE, 1, interface.c_str());
-      if (ret <= 0) throw Error("NET/Socket : No interface named " + interface + " found.", ErrorCode::InternalError);
+      if (ret <= 0)
+        THROW(NET, Error, ErrorCode::InternalError, "NET/Socket : No interface named ", interface, " found.");
     } else {
       // we do not know the <interface> try to match it next
       SocketAddress remoteAddr;
       SocketGetAddrFromString(&remoteAddr, ipPortPair.c_str());
       if (FindInterfaceMatchSubnet(netIfName, &netIfAddr, &remoteAddr, MAX_IF_NAME_SIZE, 1) <= 0) {
-        throw Error("NET/Socket : No usable listening interface found", ErrorCode::InternalError);
+        THROW(NET, Error, ErrorCode::InternalError, "NET/Socket : No usable listening interface found");
       }
     }
 
   } else {
     int ret = FindInterfaces(netIfName, &netIfAddr, MAX_IF_NAME_SIZE, 1);
     if (ret <= 0) {
-      throw Error("TcpBootstrap : no socket interface found", ErrorCode::InternalError);
+      THROW(NET, Error, ErrorCode::InternalError, "TcpBootstrap : no socket interface found");
     }
   }
 
   char line[SOCKET_NAME_MAXLEN + MAX_IF_NAME_SIZE + 2];
   std::sprintf(line, " %s:", netIfName);
   SocketToString(&netIfAddr, line + strlen(line));
-  INFO(MSCCLPP_INIT, "TcpBootstrap : Using%s", line);
+  INFO(NET, "TcpBootstrap : Using", line);
 }
 
-#define TIMEOUT(__exp)                                                      \
-  do {                                                                      \
-    try {                                                                   \
-      __exp;                                                                \
-    } catch (const Error& e) {                                              \
-      if (e.getErrorCode() == ErrorCode::Timeout) {                         \
-        throw Error("TcpBootstrap connection timeout", ErrorCode::Timeout); \
-      }                                                                     \
-      throw;                                                                \
-    }                                                                       \
+#define TIMEOUT(__exp)                                                            \
+  do {                                                                            \
+    try {                                                                         \
+      __exp;                                                                      \
+    } catch (const Error& e) {                                                    \
+      if (e.getErrorCode() == ErrorCode::Timeout) {                               \
+        THROW(NET, Error, ErrorCode::Timeout, "TcpBootstrap connection timeout"); \
+      }                                                                           \
+      throw;                                                                      \
+    }                                                                             \
   } while (0);
 
 void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
@@ -381,7 +380,7 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
   SocketAddress nextAddr;
   ExtInfo info;
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d", rank_, nRanks_);
+  DEBUG(NET, "rank ", rank_, " nranks ", nRanks_);
 
   auto getLeftTime = [&]() {
     if (connectionTimeoutUs < 0) {
@@ -389,7 +388,7 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
       return int64_t(1e9);
     }
     int64_t timeout = connectionTimeoutUs - timer.elapsed();
-    if (timeout <= 0) throw Error("TcpBootstrap connection timeout", ErrorCode::Timeout);
+    if (timeout <= 0) THROW(NET, Error, ErrorCode::Timeout, "TcpBootstrap connection timeout");
     return timeout;
   };
 
@@ -413,7 +412,7 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
       timespec tv;
       tv.tv_sec = rank / 1000;
       tv.tv_nsec = 1000000 * (rank % 1000);
-      TRACE(MSCCLPP_INIT, "rank %d delaying connection to root by %ld msec", rank, rank);
+      DEBUG(NET, "rank ", rank, " delaying connection to root by ", rank, " msec");
       (void)nanosleep(&tv, NULL);
     };
     if (nRanks_ > 128) {
@@ -445,7 +444,7 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
   peerCommAddresses_[rank_] = listenSock_->getAddr();
   allGather(peerCommAddresses_.data(), sizeof(SocketAddress));
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d - DONE", rank_, nRanks_);
+  DEBUG(NET, "rank ", rank_, " nranks ", nRanks_, " - DONE");
 }
 
 int TcpBootstrap::Impl::getNranksPerNode() {
@@ -483,23 +482,26 @@ int TcpBootstrap::Impl::getNranksPerIpcDomain() {
   const std::string invalidIpcDomainLayout =
       "IPC domain ranks must have the same size and be arranged in consecutive rank order";
   if (nRanks_ % nRanksPerIpcDomain != 0) {
-    throw Error(invalidIpcDomainLayout + ": rank count is not divisible by IPC domain size", ErrorCode::InvalidUsage);
+    THROW(NET, Error, ErrorCode::InvalidUsage, invalidIpcDomainLayout,
+          ": rank count is not divisible by IPC domain size");
   }
 
   for (const auto& entry : ipcDomainCounts) {
     if (entry.second != nRanksPerIpcDomain) {
-      throw Error(invalidIpcDomainLayout + ": IPC domains have different sizes", ErrorCode::InvalidUsage);
+      THROW(NET, Error, ErrorCode::InvalidUsage, invalidIpcDomainLayout, ": IPC domains have different sizes");
     }
   }
   for (int i = 0; i < nRanks_; ++i) {
     const int ipcDomainFirstRank = i - i % nRanksPerIpcDomain;
     if (ipcDomainHashes[i] != ipcDomainHashes[ipcDomainFirstRank]) {
-      throw Error(invalidIpcDomainLayout + ": ranks are not grouped by IPC domain", ErrorCode::InvalidUsage);
+      THROW(NET, Error, ErrorCode::InvalidUsage, invalidIpcDomainLayout, ": ranks are not grouped by IPC domain");
     }
   }
 
-  INFO(MSCCLPP_INIT, "rank %d IPC domain fabric hash 0x%016llx nRanksPerIpcDomain %d", rank_,
-       static_cast<unsigned long long>(ipcDomainHashes[rank_]), nRanksPerIpcDomain);
+  std::stringstream ipcDomainHash;
+  ipcDomainHash << std::hex << std::setw(16) << std::setfill('0') << ipcDomainHashes[rank_];
+  INFO(NET, "rank ", rank_, " IPC domain fabric hash 0x", ipcDomainHash.str(), " nRanksPerIpcDomain ",
+       nRanksPerIpcDomain);
   nRanksPerIpcDomain_ = nRanksPerIpcDomain;
   return nRanksPerIpcDomain_;
 }
@@ -509,7 +511,7 @@ void TcpBootstrap::Impl::allGather(void* allData, int size) {
   int rank = rank_;
   int nRanks = nRanks_;
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d", rank, nRanks, size);
+  DEBUG(NET, "rank ", rank, " nranks ", nRanks, " size ", size);
 
   /* Simple ring based AllGather
    * At each step i receive data from (rank-i-1) from left
@@ -525,7 +527,7 @@ void TcpBootstrap::Impl::allGather(void* allData, int size) {
     netRecv(ringRecvSocket_.get(), data + rSlice * size, size);
   }
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d size %d - DONE", rank, nRanks, size);
+  DEBUG(NET, "rank ", rank, " nranks ", nRanks, " size ", size, " - DONE");
 }
 
 void TcpBootstrap::Impl::broadcast(void* data, int size, int root) {
@@ -534,7 +536,7 @@ void TcpBootstrap::Impl::broadcast(void* data, int size, int root) {
 
   if (nRanks == 1) return;
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d root %d size %d", rank, nRanks, root, size);
+  DEBUG(NET, "rank ", rank, " nranks ", nRanks, " root ", root, " size ", size);
 
   /*Ring-based broadcast, propagate data in nRanks-1 steps*/
 
@@ -559,7 +561,7 @@ void TcpBootstrap::Impl::broadcast(void* data, int size, int root) {
     }
   }
 
-  TRACE(MSCCLPP_INIT, "rank %d nranks %d root %d size %d - DONE", rank, nRanks, root, size);
+  DEBUG(NET, "rank ", rank, " nranks ", nRanks, " root ", root, " size ", size, " - DONE");
 }
 
 std::shared_ptr<Socket> TcpBootstrap::Impl::getPeerSendSocket(int peer, int tag) {
@@ -605,7 +607,7 @@ void TcpBootstrap::Impl::netRecv(Socket* sock, void* data, int size) {
   if (recvSize != size) {
     std::stringstream ss;
     ss << "Message truncated : received " << recvSize << " bytes instead of " << size;
-    throw Error(ss.str(), ErrorCode::InvalidUsage);
+    THROW(NET, Error, ErrorCode::InvalidUsage, ss.str());
   }
   sock->recv(data, size);
 }
