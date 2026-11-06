@@ -25,9 +25,10 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   const int ownerRank = Gateway ? hybridCtx.gatewayRank_ : context->rank_;
-  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + TokensBytes);
-  auto* valid = reinterpret_cast<int*>(barriers + MaxNumTopk);
-  auto* weights = reinterpret_cast<float*>(valid + MaxNumTopk);
+  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + TokensBytes);
+  auto* barriers = sharedControl.barriers;
+  auto* validRoutes = sharedControl.validRoutes;
+  auto* routeWeights = sharedControl.routeWeights;
   if (threadIdx.x < WARP_SIZE) {
     int64_t expertIdx = -1;
     int slotIdx = -1;
@@ -53,8 +54,8 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
     const bool leader = isFirstLaneForRank(peerIdx, laneIdx);
     const bool active = peerIdx >= 0 && (IsDirectSend || leader) && transport.isNvlinkPeer(peerIdx);
     if (laneIdx < MaxNumTopk) {
-      valid[laneIdx] = active;
-      if constexpr (IsDirectSend) weights[laneIdx] = weight;
+      validRoutes[laneIdx] = active;
+      if constexpr (IsDirectSend) routeWeights[laneIdx] = weight;
     }
     bool pending = active;
     while (__any_sync(0xffffffff, pending)) {
@@ -84,8 +85,8 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
     }
 #pragma unroll
     for (int routeIdx = 0; routeIdx < MaxNumTopk; ++routeIdx) {
-      if (!valid[routeIdx]) continue;
-      const float routeWeight = IsDirectSend ? weights[routeIdx] : 1.0f;
+      if (!validRoutes[routeIdx]) continue;
+      const float routeWeight = IsDirectSend ? routeWeights[routeIdx] : 1.0f;
       const auto* routeToken = sharedMemory + static_cast<size_t>(routeIdx) * HiddenBytes;
       if constexpr (DispatchType == DispatchDataType::BF16) {
         const int4 packed = reinterpret_cast<const int4*>(routeToken)[vectorIdx];
@@ -149,7 +150,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
                                                          mscclpp::memoryOrderRelease);
   }
   if (queueIdx >= 0 && queueIdx < network->numQpsPerPeer && getLaneId() == 0) {
-    const int nTokens = *hybridCtx.aggregateIncomingTokens_;
+    const int nTokens = *hybridCtx.nIncomingTokens_;
     const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
     using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
     constexpr size_t TokenBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
@@ -196,7 +197,7 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int tokenIdx, const D
   constexpr int NHiddenVectors = Hidden * sizeof(Bf16) / sizeof(int4);
   constexpr int NPairsPerVector = sizeof(int4) / sizeof(mscclpp::bf16x2);
   const auto& hybridCtx = context->hybridCtx_;
-  const int remoteTokenIdx = hybridCtx.aggregateRemoteTokenIdx_[tokenIdx];
+  const int remoteTokenIdx = hybridCtx.aggregateRemoteTokenIndices_[tokenIdx];
   if (threadIdx.x == 0 && remoteTokenIdx >= 0) {
     const int chunkIdx = remoteTokenIdx / hybridCtx.nTokensPerChunk_;
     const int nQps = hybridCtx.portChannels_->numQpsPerPeer;
@@ -254,13 +255,13 @@ MSCCLPP_DEVICE_INLINE void combineBody(void* output, const void* expertOutput, c
     using WireElement = std::conditional_t<DispatchType == DispatchDataType::FP8_E4M3_STATIC, Bf16, float>;
     constexpr size_t TokensBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(ElementType);
     const auto& hybridCtx = context->hybridCtx_;
-    auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + TokensBytes);
-    if (threadIdx.x < MaxNumTopk) barriers[threadIdx.x].init();
+    auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + TokensBytes);
+    if (threadIdx.x < MaxNumTopk) sharedControl.barriers[threadIdx.x].init();
     __syncthreads();
     uint32_t phase = 0;
     const int workerIdx = static_cast<int>(blockIdx.x) - 1;
     const int nWorkers = static_cast<int>(gridDim.x) - 1;
-    const int nIncomingTokens = *hybridCtx.aggregateIncomingTokens_;
+    const int nIncomingTokens = *hybridCtx.nIncomingTokens_;
     const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
     const int nQps = transport.portChannels_->numQpsPerPeer;
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;

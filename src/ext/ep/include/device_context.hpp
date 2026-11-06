@@ -41,8 +41,8 @@ struct HybridDeviceContext {
   void* distributeRecvBuffer_ = nullptr;
   HybridDispatchControl* distributeControl_ = nullptr;
   HybridDistributeScratch* distributeScratch_ = nullptr;
-  int* aggregateRemoteTokenIdx_ = nullptr;
-  int* aggregateIncomingTokens_ = nullptr;
+  int* aggregateRemoteTokenIndices_ = nullptr;
+  int* nIncomingTokens_ = nullptr;
   /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
   int* aggregateRoutes_ = nullptr;
   float* aggregateLocalBuffer_ = nullptr;

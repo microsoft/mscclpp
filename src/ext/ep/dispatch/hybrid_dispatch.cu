@@ -74,7 +74,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     int remoteTokenIdx = -1;
     if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hybridCtx.distributeScratch_->nRemoteTokens, 1);
     remoteTokenIdx = __shfl_sync(0xffffffff, remoteTokenIdx, 0);
-    if (laneIdx == 0) hybridCtx.aggregateRemoteTokenIdx_[tokenIdx] = remoteTokenIdx;
+    if (laneIdx == 0) hybridCtx.aggregateRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
 
     if (!quantizeInput && laneIdx == 0) barrier.wait(phase);
     __syncwarp();
@@ -154,7 +154,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   __syncthreads();
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) {
-    state->sendHeader.nTokens[peerIdx].write(shared[peerIdx], flag);
+    state->sendHeader.nTokensPerRank[peerIdx].write(shared[peerIdx], flag);
   }
   const int nRemoteTokens = shared[nRanks];
   if (threadIdx.x == 0) state->sendHeader.nRemoteTokens.write(nRemoteTokens, flag);
@@ -252,14 +252,14 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   if (threadIdx.x == 0) {
     nIncomingTokens = state->recvHeader.nRemoteTokens.read(flag, -1);
     if (forwarderIdx == 0) {
-      *hybridCtx.aggregateIncomingTokens_ = nIncomingTokens;
+      *hybridCtx.nIncomingTokens_ = nIncomingTokens;
     }
   }
   if (forwarderIdx == 0) {
     for (int peerIdx = threadIdx.x; peerIdx < context->numRanks_; peerIdx += blockDim.x) {
       if (transport.isNvlinkPeer(peerIdx)) {
         auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, peerIdx));
-        counts[sourceRank].write(state->recvHeader.nTokens[peerIdx].read(flag, -1), flag);
+        counts[sourceRank].write(state->recvHeader.nTokensPerRank[peerIdx].read(flag, -1), flag);
       }
     }
   }

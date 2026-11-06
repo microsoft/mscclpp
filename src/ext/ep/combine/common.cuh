@@ -38,13 +38,18 @@ MSCCLPP_HOST_DEVICE_INLINE int directSendWorkerCount(int nLocalExperts) {
   return availableWorkers < DirectSendMaxNWorkers ? availableWorkers : DirectSendMaxNWorkers;
 }
 
+// Rank-major combine shared-memory control state, placed after the MaxNumTopk staged expert-output tiles.
+struct RankMajorCombineSharedControl {
+  mscclpp::BulkBarrier barriers[MaxNumTopk];
+  int validRoutes[MaxNumTopk];
+  float routeWeights[MaxNumTopk];
+};
+
 template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(DispatchElementType<DispatchType>);
-    constexpr size_t BarrierBytes = static_cast<size_t>(MaxNumTopk) * sizeof(mscclpp::BulkBarrier);
-    constexpr size_t MetadataBytes = static_cast<size_t>(MaxNumTopk) * (sizeof(int) + sizeof(float));
-    constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + BarrierBytes + MetadataBytes, 128);
+    constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + sizeof(RankMajorCombineSharedControl), 128);
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
     return SharedBytes;
   }
@@ -105,8 +110,9 @@ MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const vo
   const int laneId = getLaneId();
   const int nLocalExperts = nExperts / nRanks;
   auto* sharedRows = sharedMemory;
-  auto* bulkBarriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
-  auto* validRows = reinterpret_cast<int*>(bulkBarriers + MaxNumTopk);
+  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + RowsBytes);
+  auto* bulkBarriers = sharedControl.barriers;
+  auto* validRows = sharedControl.validRoutes;
 
   const int nWorkerBlocks = static_cast<int>(gridDim.x) - 1;
   const int firstTokenIdx = static_cast<int>(blockIdx.x) - 1;

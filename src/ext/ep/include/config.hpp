@@ -65,7 +65,7 @@ struct InterRackDispatchPayload {
 
 struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
   mscclpp::LL8Packet nRemoteTokens;
-  mscclpp::LL8Packet nTokens[MaxNumRanks];
+  mscclpp::LL8Packet nTokensPerRank[MaxNumRanks];
 
   MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
     return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
