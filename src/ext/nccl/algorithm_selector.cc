@@ -36,6 +36,12 @@ static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, Da
 }
 
 bool matchExecutionPlan(std::shared_ptr<DslAlgorithm> algo, const CollectiveRequest& request) {
+#if !defined(__HIP_PLATFORM_AMD__)
+  // The CUDA execution kernel cannot run FP8, so leave these requests to the native algorithms.
+  if (collective::isFp8DataType(request.dtype)) {
+    return false;
+  }
+#endif
   bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
   bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = algo->collective() == request.collective;
