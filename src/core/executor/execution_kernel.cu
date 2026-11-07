@@ -82,13 +82,14 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
     case DataType::FLOAT8_E4M3FNUZ:
     case DataType::FLOAT8_E5M2:
     case DataType::FLOAT8_E5M2FNUZ:
-      // FP8 is not supported in CUDA execution kernel.
-      break;
     case DataType::FLOAT8_E4M3B15:
-      // fp8_e4m3b15 is a software type not supported in the CUDA execution kernel.
+      // The CUDA execution kernel has no FP8 instantiation. Returning here would look like success with the output
+      // buffer left untouched, so fail loudly instead.
+      THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+            "The CUDA execution kernel does not support FP8 data types");
       break;
     case DataType::AUTO:
-      // AUTO is a sentinel resolved before reaching this point; nothing to do.
+      THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage, "DataType::AUTO must be resolved before kernel launch");
       break;
   }
 }
