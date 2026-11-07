@@ -157,7 +157,8 @@ void register_core(nb::module_& m) {
   nb::enum_<EndpointConfig::Ib::Mode>(m, "CppIbMode")
       .value("Default", EndpointConfig::Ib::Mode::Default)
       .value("Host", EndpointConfig::Ib::Mode::Host)
-      .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic);
+      .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic)
+      .value("Device", EndpointConfig::Ib::Mode::Device);
 
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())

@@ -19,6 +19,7 @@
 
 #include "api.h"
 #include "context.hpp"
+#include "gpunetio.hpp"
 #if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
 #if defined(MSCCLPP_USE_MLX5DV)
@@ -543,6 +544,8 @@ IbCtx::IbCtx(const std::string& devName)
 }
 
 IbCtx::~IbCtx() {
+  // Opened on pd_.
+  gpuNetIoDevice_.reset();
   if (pd_ != nullptr) {
     IBVerbs::ibv_dealloc_pd(pd_);
   }
@@ -606,6 +609,39 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
   }
   return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
                                         maxRecvWr, maxWrPerSend, noAtomic));
+}
+
+IbQpInfo IbCtx::getPortInfo(int& port, int gidIndex) const {
+  if (port == -1) {
+    port = this->getAnyUsablePort(gidIndex);
+    if (port == -1) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "No usable port found (device: ", devName_, ")");
+    }
+  } else if (!this->isPortUsable(port, gidIndex)) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
+  }
+  struct ibv_port_attr portAttr;
+  if (IBVerbs::ibv_query_port(ctx_, port, &portAttr) != 0) {
+    THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ")");
+  }
+  IbQpInfo info = {};
+  info.lid = portAttr.lid;
+  info.linkLayer = portAttr.link_layer;
+  info.mtu = portAttr.active_mtu;
+  info.isGrh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
+  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info.isGrh) {
+    if (gidIndex < 0 || gidIndex >= portAttr.gid_tbl_len) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "invalid GID index ", gidIndex, " for port ", port, " (max index is ",
+            portAttr.gid_tbl_len - 1, ")");
+    }
+    union ibv_gid gid = {};
+    if (IBVerbs::ibv_query_gid(ctx_, port, gidIndex, &gid) != 0) {
+      THROW(NET, IbError, errno, "ibv_query_gid failed for port ", port, " index ", gidIndex, " (errno ", errno, ")");
+    }
+    info.spn = gid.global.subnet_prefix;
+    info.iid = gid.global.interface_id;
+  }
+  return info;
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {

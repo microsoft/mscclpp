@@ -114,6 +114,35 @@ class MemoryDevice2DeviceSemaphore {
   DeviceHandle deviceHandle() const;
 };
 
+/// A semaphore for sending signals from the local device to a peer device through a PortChannel in device mode
+/// (PortChannelBackend::Device).
+class PortDevice2DeviceSemaphore {
+ private:
+  Semaphore semaphore_;
+  detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
+  DeviceMemoryHandle remoteInboundToken_;
+
+ public:
+  /// Constructor.
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
+  PortDevice2DeviceSemaphore(const Semaphore& semaphore);
+
+  /// Constructor.
+  /// @param communicator The communicator.
+  /// @param connection The PortChannel device-mode connection associated with this semaphore.
+  PortDevice2DeviceSemaphore(Communicator& communicator, const Connection& connection);
+
+  /// Returns the connection.
+  /// @return The connection associated with this semaphore.
+  Connection& connection();
+
+  /// Device-side handle for PortDevice2DeviceSemaphore.
+  using DeviceHandle = PortDevice2DeviceSemaphoreDeviceHandle;
+
+  /// Returns the device-side handle.
+  DeviceHandle deviceHandle() const;
+};
+
 /// @deprecated Use MemoryDevice2DeviceSemaphore instead.
 [[deprecated(
     "Use MemoryDevice2DeviceSemaphore instead.")]] typedef MemoryDevice2DeviceSemaphore SmDevice2DeviceSemaphore;
