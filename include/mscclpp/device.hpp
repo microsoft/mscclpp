@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_DEVICE_HPP_
 #define MSCCLPP_DEVICE_HPP_
@@ -27,21 +27,5 @@
 #define MSCCLPP_HOST_DEVICE_INLINE inline
 
 #endif  // !(defined(__NVCC__) || defined(__HIP_PLATFORM_AMD__))
-
-#include <cstdint>
-
-namespace mscclpp {
-
-/// Resource sharing mode for a PortChannel's device-initiated queue pair.
-enum class PortChannelSharingMode : uint8_t {
-  /// The queue pair is accessed by a single thread at a time (serialized by the caller).
-  Exclusive = 0,
-  /// The queue pair is shared among threads within a CTA.
-  Cta = 1,
-  /// The queue pair is shared among threads across the GPU.
-  Gpu = 2,
-};
-
-}  // namespace mscclpp
 
 #endif  // MSCCLPP_DEVICE_HPP_

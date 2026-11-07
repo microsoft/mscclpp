@@ -140,7 +140,7 @@ template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
-using SharingMode = mscclpp::PortChannelSharingMode;
+using Concurrency = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>::Concurrency;
 
 // Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
 // concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one
@@ -166,8 +166,8 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useEthernet;
     bool waitWithPoll;
     IbMode ibMode;
-    // Queue pair sharing mode of device-mode channels.
-    SharingMode sharingMode = SharingMode::Exclusive;
+    // Concurrency scope of callers accessing device-mode queue pairs.
+    Concurrency concurrency = Concurrency::Exclusive;
   };
 
   void SetUp() override;
@@ -179,11 +179,11 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default,
-                          SharingMode sharingMode = SharingMode::Exclusive);
+                          Concurrency concurrency = Concurrency::Exclusive);
   void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default,
-                              SharingMode sharingMode = SharingMode::Exclusive);
+                              Concurrency concurrency = Concurrency::Exclusive);
   void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default,
-                      SharingMode sharingMode = SharingMode::Exclusive);
+                      Concurrency concurrency = Concurrency::Exclusive);
   void testAccumulateRejected(mscclpp::Transport transport, IbMode ibMode, int tag, const char* backendMessage,
                               bool checkHugeOffset);
   void testBandwidth(PingPongTestParams params);
@@ -192,11 +192,11 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             std::vector<mscclpp::RegisteredMemory>& localMems,
                             std::vector<mscclpp::RegisteredMemory>& remoteMems,
                             std::vector<mscclpp::PortChannel>& portChannels);
-  void testMultiQpBandwidth(IbMode ibMode, int numQps, SharingMode sharingMode = SharingMode::Exclusive,
+  void testMultiQpBandwidth(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,
                             int threadsPerQp = 1);
-  void testMultiQpFlushStress(IbMode ibMode, int numQps, SharingMode sharingMode = SharingMode::Exclusive,
+  void testMultiQpFlushStress(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,
                               int threadsPerQp = 1);
-  void testSameChanConcurrentFlush(IbMode ibMode, SharingMode sharingMode = SharingMode::Gpu);
+  void testSameChanConcurrentFlush(IbMode ibMode, Concurrency concurrency = Concurrency::Device);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

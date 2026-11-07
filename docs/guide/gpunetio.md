@@ -52,9 +52,10 @@ transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
+  using Concurrency = decltype(channel)::Concurrency;
   if (threadIdx.x != 0) return;
-  channel.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
-  channel.flush<mscclpp::PortChannelSharingMode::Exclusive>();
+  channel.putWithSignal<Concurrency::Exclusive>(0, bytes);
+  channel.flush<Concurrency::Exclusive>();
 }
 
 // One block exclusively owns this QP.
@@ -82,19 +83,24 @@ Callers must make source data ready before `put` or `putWithSignal`, synchronizi
 These operations rely on DOCA's queue-publication release ordering rather than adding a full system fence for
 every submission. Keep non-inline source buffers unchanged until their transfers complete.
 
-### Queue pair sharing modes and BlueFlame configuration
+### Queue pair concurrency and BlueFlame configuration
 
-By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when threads across the GPU share a QP).
-Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `PortChannelSharingMode::Exclusive`
-(operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
+Channel handles expose a nested `Concurrency` type: use `decltype(channel)::Concurrency` for a handle value.
+For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
+PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
+select `Concurrency::Block` for callers confined to one thread block, or `Concurrency::Exclusive` when the caller
+serializes access, as a template argument to posting and `flush` methods.
+
+Host-backed channels accept the same template argument but only support `Concurrency::Device`; other values produce
+a compile-time error. Calls without an explicit template argument continue to use `Device` for either backend.
 
 `device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame (default:
 `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust it to change which transfer sizes use
 BlueFlame). Payloads above this limit write their WQEs directly to the GPU-resident send queue and ring the regular
 doorbell, matching NCCL GIN's `submit_db` path.
-Only `PortChannelSharingMode::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work
-request directly only if all earlier ones were already submitted, which threads sharing a queue pair cannot ensure
-without serializing each other, so `Cta` and `Gpu` operations always ring the regular doorbell.
+Only `Concurrency::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work request directly
+only if all earlier ones were already submitted, which concurrent callers cannot ensure without serializing each
+other, so `Block` and `Device` operations always ring the regular doorbell.
 
 ### Internal WQE slots
 
@@ -107,9 +113,9 @@ The default slot index is the linear thread index, including all three block dim
 optional `wqeSlotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
 
 ```cpp
-using Mode = mscclpp::PortChannelSharingMode;
-channel.put<Mode::Exclusive>(dstOffset, srcOffset, bytes, slotIdx);
-channel.signal<Mode::Exclusive>(slotIdx);
+using Concurrency = decltype(channel)::Concurrency;
+channel.put<Concurrency::Exclusive>(dstOffset, srcOffset, bytes, slotIdx);
+channel.signal<Concurrency::Exclusive>(slotIdx);
 ```
 
 For `put` and `putWithSignal`, specify both source and destination offsets when passing an explicit index, avoiding
@@ -120,7 +126,7 @@ threads must use distinct indices, even when they own different QPs. BlueFlame w
 before returning, so one thread can reuse a slot sequentially across QPs without an extra barrier or flush.
 Prefer one capacity per kernel: different capacities instantiate separate scratch arrays. Scratch is statically
 allocated for compiled BlueFlame paths, so runtime doorbell fallback does not reduce its footprint. Large capacities
-must respect the kernel's shared-memory limits; `Cta` and `Gpu` operations do not use this scratch.
+must respect the kernel's shared-memory limits; `Block` and `Device` operations do not use this scratch.
 
 ## Limitations
 
