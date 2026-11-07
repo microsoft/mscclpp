@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_PORT_CHANNEL_HPP_
 #define MSCCLPP_PORT_CHANNEL_HPP_
@@ -145,6 +145,20 @@ struct BasePortChannel {
   /// @return The device-side handle.
   template <PortChannelBackend Backend = PortChannelBackend::Host>
   BasePortChannelDeviceHandleT<Backend> deviceHandle() const;
+
+  /// Returns a device-side handle with a custom internal BlueFlame WQE capacity.
+  /// @tparam Backend The backend to use on the device.
+  /// @tparam MaxWqeSlots Number of 64-byte WQE slots per CTA; zero disables BlueFlame. Ignored by the host backend.
+  /// @return The device-side handle, valid while this BasePortChannel remains alive.
+  template <PortChannelBackend Backend, uint32_t MaxWqeSlots>
+  BasePortChannelDeviceHandleT<Backend, MaxWqeSlots> deviceHandle() const {
+    const auto handle = deviceHandle<Backend>();
+    if constexpr (Backend == PortChannelBackend::Device) {
+      return {handle.semaphore_, handle.device_};
+    } else {
+      return {handle.semaphoreId_, handle.semaphore_, handle.fifo_, handle.flushDonePos_};
+    }
+  }
 };
 
 /// Port channel.
@@ -200,6 +214,20 @@ struct PortChannel : public BasePortChannel {
   /// @return The device-side handle.
   template <PortChannelBackend Backend = PortChannelBackend::Host>
   PortChannelDeviceHandleT<Backend> deviceHandle() const;
+
+  /// Returns a device-side handle with a custom internal BlueFlame WQE capacity.
+  /// @tparam Backend The backend to use on the device.
+  /// @tparam MaxWqeSlots Number of 64-byte WQE slots per CTA; zero disables BlueFlame. Ignored by the host backend.
+  /// @return The device-side handle, valid while this PortChannel remains alive.
+  template <PortChannelBackend Backend, uint32_t MaxWqeSlots>
+  PortChannelDeviceHandleT<Backend, MaxWqeSlots> deviceHandle() const {
+    const auto handle = deviceHandle<Backend>();
+    if constexpr (Backend == PortChannelBackend::Device) {
+      return {handle.semaphore_, handle.device_, handle.dstMemory_, handle.srcMemory_};
+    } else {
+      return {handle.semaphoreId_, handle.semaphore_, handle.fifo_, handle.dst_, handle.src_, handle.flushDonePos_};
+    }
+  }
 };
 
 /// @deprecated Use BasePortChannel instead.

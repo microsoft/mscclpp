@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
 #define MSCCLPP_PORT_CHANNEL_DEVICE_HPP_
@@ -40,12 +40,15 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 /// Device-side handle template for BasePortChannel.
 /// A non-templated alias `BasePortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
 /// so existing code can use `BasePortChannelDeviceHandle` without `<>`.
-template <PortChannelBackend Backend = PortChannelBackend::Host>
+/// @tparam MaxWqeSlots Number of internal 64-byte BlueFlame slots per CTA (0 disables BlueFlame, default 32).
+/// Slots are shared across handles with the same capacity. Concurrent posting threads must use distinct indices.
+template <PortChannelBackend Backend = PortChannelBackend::Host,
+          uint32_t MaxWqeSlots = GpuNetIoDeviceHandle::kDefaultWqeSlots>
 struct BasePortChannelDeviceHandleT;
 
 /// Host-backend specialization of BasePortChannelDeviceHandleT.
-template <>
-struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
+template <uint32_t MaxWqeSlots>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots> {
   SemaphoreId semaphoreId_;
 
   Host2DeviceSemaphoreDeviceHandle semaphore_;
@@ -165,8 +168,10 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
 };
 
 /// Device-backend specialization of BasePortChannelDeviceHandleT.
-template <>
-struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+template <uint32_t MaxWqeSlots>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots> {
+  static_assert(MaxWqeSlots <= 1024, "At most 1024 BlueFlame WQE slots per CTA are supported");
+
   PortDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
   DeviceBackendHandle device_;
@@ -178,20 +183,17 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
       : semaphore_(semaphore), device_(device) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions. See GpuNetIoDeviceHandle::setWqeSlot().
-  /// @param wqeSlot The shared-memory WQE slot.
-  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlot) { device_.setWqeSlot(wqeSlot); }
-
   /// Put data to the destination memory region via the device backend.
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, uint64_t dstOffset, const DeviceMemoryHandle& src,
-                                 uint64_t srcOffset, uint64_t size) {
-    device_.put<Mode>(dst, dstOffset, src, srcOffset, size);
+                                 uint64_t srcOffset, uint64_t size, int wqeSlotIdx = -1) {
+    device_.put<Mode, MaxWqeSlots>(dst, dstOffset, src, srcOffset, size, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region via the device backend.
@@ -199,16 +201,18 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src, uint64_t offset,
-                                 uint64_t size) {
-    put<Mode>(dst, offset, src, offset, size);
+                                 uint64_t size, int wqeSlotIdx = -1) {
+    put<Mode>(dst, offset, src, offset, size, wqeSlotIdx);
   }
 
   /// Signal the remote peer via the device backend.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void signal() {
-    device_.accumulate<Mode>(semaphore_.remoteInboundToken, 0, 1);
+  MSCCLPP_DEVICE_INLINE void signal(int wqeSlotIdx = -1) {
+    device_.accumulate<Mode, MaxWqeSlots>(semaphore_.remoteInboundToken, 0, 1, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
@@ -217,10 +221,13 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, uint64_t dstOffset,
-                                           const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size) {
-    device_.putWithAccumulate<Mode>(dst, dstOffset, src, srcOffset, size, semaphore_.remoteInboundToken, 0, 1);
+                                           const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
+                                           int wqeSlotIdx = -1) {
+    device_.putWithAccumulate<Mode, MaxWqeSlots>(dst, dstOffset, src, srcOffset, size, semaphore_.remoteInboundToken, 0,
+                                                 1, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
@@ -228,10 +235,11 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
-                                           uint64_t offset, uint64_t size) {
-    putWithSignal<Mode>(dst, offset, src, offset, size);
+                                           uint64_t offset, uint64_t size, int wqeSlotIdx = -1) {
+    putWithSignal<Mode>(dst, offset, src, offset, size, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
@@ -241,11 +249,12 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                                    const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
-                                                   int64_t maxSpinCount = 1000000) {
-    putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size);
+                                                   int64_t maxSpinCount = 1000000, int wqeSlotIdx = -1) {
+    putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size, wqeSlotIdx);
     flush<Mode>(maxSpinCount);
   }
 
@@ -255,10 +264,12 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
-                                                   uint64_t offset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    putWithSignalAndFlush<Mode>(dst, offset, src, offset, size, maxSpinCount);
+                                                   uint64_t offset, uint64_t size, int64_t maxSpinCount = 1000000,
+                                                   int wqeSlotIdx = -1) {
+    putWithSignalAndFlush<Mode>(dst, offset, src, offset, size, maxSpinCount, wqeSlotIdx);
   }
 
   /// Flush pending operations on the channel via the device backend.
@@ -273,9 +284,11 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void accumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset, int64_t value) {
-    device_.accumulate<Mode>(dst, dstOffset, value);
+  MSCCLPP_DEVICE_INLINE void accumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset, int64_t value,
+                                        int wqeSlotIdx = -1) {
+    device_.accumulate<Mode, MaxWqeSlots>(dst, dstOffset, value, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region, then atomically add a 64-bit value to remote memory. Observing the
@@ -288,11 +301,14 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// @param acc The memory region of the accumulated word.
   /// @param accOffset The offset of the accumulated word in `acc`.
   /// @param value The 64-bit signed value to add.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                                const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
-                                               const DeviceMemoryHandle& acc, uint64_t accOffset, int64_t value) {
-    device_.putWithAccumulate<Mode>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value);
+                                               const DeviceMemoryHandle& acc, uint64_t accOffset, int64_t value,
+                                               int wqeSlotIdx = -1) {
+    device_.putWithAccumulate<Mode, MaxWqeSlots>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value,
+                                                 wqeSlotIdx);
   }
 
   /// Check if the port channel has been signaled.
@@ -312,13 +328,16 @@ using BasePortChannelDeviceHandle = BasePortChannelDeviceHandleT<PortChannelBack
 /// Device-side handle template for PortChannel.
 /// A non-templated alias `PortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
 /// so existing code can use `PortChannelDeviceHandle` without `<>`.
-template <PortChannelBackend Backend = PortChannelBackend::Host>
+/// @tparam MaxWqeSlots Number of internal 64-byte BlueFlame slots per CTA (0 disables BlueFlame, default 32).
+/// Slots are shared across handles with the same capacity. Concurrent posting threads must use distinct indices.
+template <PortChannelBackend Backend = PortChannelBackend::Host,
+          uint32_t MaxWqeSlots = GpuNetIoDeviceHandle::kDefaultWqeSlots>
 struct PortChannelDeviceHandleT;
 
 /// Host-backend specialization of PortChannelDeviceHandleT.
-template <>
-struct PortChannelDeviceHandleT<PortChannelBackend::Host>
-    : public BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
+template <uint32_t MaxWqeSlots>
+struct PortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots> {
   MemoryId dst_;
   MemoryId src_;
 
@@ -327,7 +346,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(SemaphoreId semaphoreId,
                                                       Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
                                                       MemoryId dst, MemoryId src, uint64_t* flushDonePos)
-      : BasePortChannelDeviceHandleT<PortChannelBackend::Host>(semaphoreId, semaphore, fifo, flushDonePos),
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>(semaphoreId, semaphore, fifo, flushDonePos),
         dst_(dst),
         src_(src) {}
 
@@ -337,7 +356,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::put(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>::put(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPut to the FIFO.
@@ -350,7 +369,8 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::putWithSignal(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>::putWithSignal(dst_, dstOffset, src_, srcOffset,
+                                                                                       size);
   }
 
   /// Push a TriggerPutWithSignal to the FIFO.
@@ -365,8 +385,8 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::putWithSignalAndFlush(dst_, dstOffset, src_, srcOffset,
-                                                                                  size, maxSpinCount);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>::putWithSignalAndFlush(
+        dst_, dstOffset, src_, srcOffset, size, maxSpinCount);
   }
 
   /// Push a TriggerPutWithSignalAndFlush to the FIFO.
@@ -381,15 +401,15 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Host>::accumulate(dst_, dstOffset, value);
+    BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>::accumulate(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
 /// Device-backend specialization of PortChannelDeviceHandleT.
-template <>
-struct PortChannelDeviceHandleT<PortChannelBackend::Device>
-    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+template <uint32_t MaxWqeSlots>
+struct PortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots> {
   DeviceMemoryHandle dstMemory_;
   DeviceMemoryHandle srcMemory_;
 
@@ -398,7 +418,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                       DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
                                                       DeviceMemoryHandle srcMemory)
-      : BasePortChannelDeviceHandleT<PortChannelBackend::Device>(semaphore, device),
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>(semaphore, device),
         dstMemory_(dstMemory),
         srcMemory_(srcMemory) {}
 
@@ -407,10 +427,11 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::put<Mode>(dstMemory_, dstOffset, srcMemory_, srcOffset,
-                                                                        size);
+  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int wqeSlotIdx = -1) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>::template put<Mode>(
+        dstMemory_, dstOffset, srcMemory_, srcOffset, size, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region via the device backend.
@@ -425,10 +446,11 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignal<Mode>(dstMemory_, dstOffset, srcMemory_,
-                                                                                  srcOffset, size);
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int wqeSlotIdx = -1) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>::template putWithSignal<Mode>(
+        dstMemory_, dstOffset, srcMemory_, srcOffset, size, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
@@ -444,11 +466,12 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                                   int64_t maxSpinCount = 1000000) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignalAndFlush<Mode>(
-        dstMemory_, dstOffset, srcMemory_, srcOffset, size, maxSpinCount);
+                                                   int64_t maxSpinCount = 1000000, int wqeSlotIdx = -1) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>::template putWithSignalAndFlush<Mode>(
+        dstMemory_, dstOffset, srcMemory_, srcOffset, size, maxSpinCount, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
@@ -462,9 +485,11 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// Atomically add a 64-bit value to the destination memory via the device backend.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
-  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::accumulate<Mode>(dstMemory_, dstOffset, value);
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value, int wqeSlotIdx = -1) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>::template accumulate<Mode>(
+        dstMemory_, dstOffset, value, wqeSlotIdx);
   }
 
   /// Put data to the destination memory region, then atomically add a 64-bit value to the destination memory.
@@ -474,11 +499,12 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// @param size The size of the transfer.
   /// @param accOffset The offset of the accumulated word in the destination memory region.
   /// @param value The 64-bit signed value to add.
+  /// @param wqeSlotIdx Internal slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
   template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
-                                               uint64_t accOffset, int64_t value) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithAccumulate<Mode>(
-        dstMemory_, dstOffset, srcMemory_, srcOffset, size, dstMemory_, accOffset, value);
+                                               uint64_t accOffset, int64_t value, int wqeSlotIdx = -1) {
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots>::template putWithAccumulate<Mode>(
+        dstMemory_, dstOffset, srcMemory_, srcOffset, size, dstMemory_, accOffset, value, wqeSlotIdx);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -246,12 +247,9 @@ struct TestPortChannelHandle {
 
 template <mscclpp::PortChannelBackend Backend,
           mscclpp::PortChannelSharingMode Mode = mscclpp::PortChannelSharingMode::Exclusive>
-__device__ TestPortChannelHandle<Backend, Mode> loadPortChannel(const ConstPortChannelStorage& storage,
-                                                                mscclpp::GpuNetIoWqeSlot* wqeSlot = nullptr) {
+__device__ TestPortChannelHandle<Backend, Mode> loadPortChannel(const ConstPortChannelStorage& storage) {
   if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
-    auto chan = storage.device;
-    chan.setWqeSlot(wqeSlot);
-    return {chan};
+    return {storage.device};
   } else {
     return {storage.host};
   }
@@ -284,8 +282,7 @@ inline void copyChannelToSymbol(mscclpp::PortChannel& ch, IbMode ibMode,
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
           SharingMode Mode = SharingMode::Exclusive>
 __global__ void kernelProxyPingPong(int* buff, int rank, int nElem, bool waitWithPoll, int nTries, int* ret) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans);
   volatile int* sendBuff = (volatile int*)buff;
   int flusher = 0;
   int rank1Offset = 10000000;
@@ -566,8 +563,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
                                       int nElem, int nTries, int* ret) {
   if (rank > 1) return;
 
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans);
   volatile int* buffPtr = (volatile int*)buff;
   int putOffset = (rank == 0) ? 0 : 10000000;
   int getOffset = (rank == 0) ? 10000000 : 0;
@@ -764,8 +760,7 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
 // Both ranks do signal+wait+putWithSignal+wait per iteration.
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans);
   if (threadIdx.x != 0) return;
   const uint64_t srcOffset = rank * nElem * sizeof(int);
   const uint64_t dstOffset = srcOffset;
@@ -856,8 +851,7 @@ static_assert(kAccumulateNet > 0 && kAccumulateNet <= std::numeric_limits<int64_
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
           SharingMode Mode = SharingMode::Exclusive>
 __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer, int* ret) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans);
   const int numBlocks = gridDim.x;
   const int numWriters = gridDim.x * blockDim.x;
 
@@ -890,8 +884,7 @@ __global__ void kernelPortChannelAccumulate(int64_t* localBuff, int nTries, mscc
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
           SharingMode Mode = SharingMode::Exclusive>
 __global__ void kernelPortChannelAccumulateWrap(uint64_t* localBuff, int* ret) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend, Mode>(gChannelOneToOneTestConstPortChans);
   portChan.accumulate(0, 1);
   portChan.signal();
   portChan.flush();
@@ -1083,11 +1076,9 @@ inline void copyMultiQpChannelsToSymbol(std::vector<mscclpp::PortChannel>& portC
 
 template <mscclpp::PortChannelBackend Backend,
           mscclpp::PortChannelSharingMode Mode = mscclpp::PortChannelSharingMode::Exclusive>
-__device__ TestPortChannelHandle<Backend, Mode> loadMultiQpPortChannel(int q, mscclpp::GpuNetIoWqeSlot* wqeSlot) {
+__device__ TestPortChannelHandle<Backend, Mode> loadMultiQpPortChannel(int q) {
   if constexpr (Backend == mscclpp::PortChannelBackend::Device) {
-    auto chan = gMultiQpDevicePortChans[q];
-    chan.setWqeSlot(wqeSlot);
-    return {chan};
+    return {gMultiQpDevicePortChans[q]};
   } else {
     return {gMultiQpPortChans[q]};
   }
@@ -1100,12 +1091,11 @@ static constexpr int kMaxMultiQpThreadsPerQp = 2;
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
           SharingMode Mode = SharingMode::Exclusive>
 __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[kMaxQps * kMaxMultiQpThreadsPerQp];
   const int q = threadIdx.x % numQps;
   const int threadsPerQp = blockDim.x / numQps;
   const uint64_t sliceBytes = nElemPerChan * sizeof(int) / threadsPerQp;
   const uint64_t offset = threadIdx.x / numQps * sliceBytes;
-  auto portChan = loadMultiQpPortChannel<Backend, Mode>(q, &wqeSlots[threadIdx.x]);
+  auto portChan = loadMultiQpPortChannel<Backend, Mode>(q);
   for (int i = 0; i < nIters; i++) {
     if (threadIdx.x == 0) {
       portChan.signal();
@@ -1279,12 +1269,11 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbHostNoAtomicMode) {
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
           SharingMode Mode = SharingMode::Exclusive>
 __global__ void kernelMultiQpFlushStress(int nElemPerChan, int nIters, int numQps) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[kMaxQps * kMaxMultiQpThreadsPerQp];
   const int q = threadIdx.x % numQps;
   const int threadsPerQp = blockDim.x / numQps;
   const uint64_t sliceBytes = nElemPerChan * sizeof(int) / threadsPerQp;
   const uint64_t offset = threadIdx.x / numQps * sliceBytes;
-  auto portChan = loadMultiQpPortChannel<Backend, Mode>(q, &wqeSlots[threadIdx.x]);
+  auto portChan = loadMultiQpPortChannel<Backend, Mode>(q);
   for (int i = 0; i < nIters; i++) {
     if (threadIdx.x == 0) {
       portChan.signal();
@@ -1480,8 +1469,7 @@ void PortChannelFanInTest::TearDown() { CommunicatorTestBase::TearDown(); }
 // Each rank other than 0 pushes nTries accumulates at rank 0's single counter.
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host>
 __global__ void kernelFanInAccumulate(int nTries) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
-  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans, &wqeSlot);
+  auto portChan = loadPortChannel<Backend>(gChannelOneToOneTestConstPortChans);
   if (threadIdx.x != 0 || blockIdx.x != 0) return;
   for (int i = 0; i < nTries; i++) {
     portChan.accumulate(0, kAccumulatePositive);
@@ -1751,11 +1739,9 @@ static constexpr int kPutWithAccumulateElems = kPutWithAccumulateFlagInts + 4 * 
 // that every addition is counted and that the payload is no older than the flag.
 template <bool BlueFlame>
 __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, int nIters, int* ret) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
   if (threadIdx.x != 0) return;
   constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
   auto chan = gMultiQpDevicePortChans[0];
-  chan.setWqeSlot(&wqeSlot);
   if constexpr (!BlueFlame) chan.device_.blueFlameLimit = 0;
   const int peer = 1 - rank;
   auto* flags = reinterpret_cast<uint64_t*>(buff + kPutWithAccumulateFlagInts);
