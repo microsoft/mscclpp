@@ -52,7 +52,7 @@ transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
-  using Concurrency = decltype(channel)::Concurrency;
+  using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
   if (threadIdx.x != 0) return;
   channel.putWithSignal<Concurrency::Exclusive>(0, bytes);
   channel.flush<Concurrency::Exclusive>();
@@ -85,7 +85,7 @@ every submission. Keep non-inline source buffers unchanged until their transfers
 
 ### Queue pair concurrency and BlueFlame configuration
 
-Channel handles expose a nested `Concurrency` type: use `decltype(channel)::Concurrency` for a handle value.
+Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelDeviceHandle::Concurrency`).
 The type is defined in `BasePortChannelDeviceHandle` in `port_channel_device.hpp` and shared by both backends.
 For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
 PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
@@ -103,17 +103,17 @@ Only `Concurrency::Exclusive` operations submit through BlueFlame. The NIC execu
 only if all earlier ones were already submitted, which concurrent callers cannot ensure without serializing each
 other, so `Block` and `Device` operations always ring the regular doorbell.
 
-### Internal WQE slots
+### Internal shared-memory slots
 
-`PortChannelDeviceHandleT<Backend, MaxWqeSlots>` and `BasePortChannelDeviceHandleT<Backend, MaxWqeSlots>` configure the
-internal capacity at compile time. The default is 32 slots (2 KiB per CTA); use `channel.deviceHandle<8>()` for eight
-slots, or a capacity of zero to disable BlueFlame without allocating scratch. The host backend ignores this parameter.
+`PortChannelDeviceHandleT<Backend, SmemSlots>` and `BasePortChannelDeviceHandleT<Backend, SmemSlots>` configure the
+internal shared-memory capacity at compile time. The default is 32 slots (2 KiB per CTA); use `channel.deviceHandle<8>()`
+for eight slots, or a capacity of zero to disable BlueFlame without allocating scratch.
 
 The default slot index is the linear thread index, including all three block dimensions. Posting methods accept an
-optional `wqeSlotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
+optional `slotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
 
 ```cpp
-using Concurrency = decltype(channel)::Concurrency;
+using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
 channel.put<Concurrency::Exclusive>(dstOffset, srcOffset, bytes, slotIdx);
 channel.signal<Concurrency::Exclusive>(slotIdx);
 ```

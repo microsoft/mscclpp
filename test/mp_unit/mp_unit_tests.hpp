@@ -141,7 +141,7 @@ template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
-using Concurrency = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>::Concurrency;
+using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
 using TestPortChannel = std::variant<mscclpp::PortChannelT<mscclpp::PortChannelBackend::Host>,
                                      mscclpp::PortChannelT<mscclpp::PortChannelBackend::Device>>;
 
