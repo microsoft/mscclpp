@@ -10,6 +10,7 @@
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
+#include <variant>
 
 #include "../framework.hpp"
 #include "ib.hpp"
@@ -141,6 +142,8 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
 using Concurrency = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>::Concurrency;
+using TestPortChannel = std::variant<mscclpp::PortChannelT<mscclpp::PortChannelBackend::Host>,
+                                     mscclpp::PortChannelT<mscclpp::PortChannelBackend::Device>>;
 
 // Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
 // concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one
@@ -173,7 +176,7 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
+  void setupMeshConnections(std::vector<TestPortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
                             void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
                             IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
@@ -191,7 +194,7 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             std::vector<std::shared_ptr<int>>& sendBuffs,
                             std::vector<mscclpp::RegisteredMemory>& localMems,
                             std::vector<mscclpp::RegisteredMemory>& remoteMems,
-                            std::vector<mscclpp::PortChannel>& portChannels);
+                            std::vector<TestPortChannel>& portChannels);
   void testMultiQpBandwidth(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,
                             int threadsPerQp = 1);
   void testMultiQpFlushStress(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,

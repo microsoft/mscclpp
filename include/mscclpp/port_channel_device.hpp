@@ -48,10 +48,17 @@ struct BasePortChannelDeviceHandleT;
 
 /// Host-backend specialization of BasePortChannelDeviceHandleT.
 /// Posting and flush methods only support Concurrency::Device, enforced at compile time.
-template <uint32_t MaxWqeSlots>
-struct BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots> {
-  /// Caller concurrency scope; the host backend requires Device.
-  using Concurrency = DeviceBackendHandle::Concurrency;
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
+  /// Scope of concurrent callers posting and flushing through a PortChannel.
+  enum class Concurrency : uint8_t {
+    /// Only one thread accesses the queue pair at a time; the caller serializes access.
+    Exclusive = 0,
+    /// Concurrent callers are confined to one thread block.
+    Block = 1,
+    /// Concurrent callers may run across the device.
+    Device = 2,
+  };
 
   SemaphoreId semaphoreId_;
 
@@ -188,13 +195,20 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots> {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
+/// Host-backend handles reuse the default implementation because WQE capacity is unused.
+template <uint32_t MaxWqeSlots>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Host, MaxWqeSlots>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
+  using BasePortChannelDeviceHandleT<PortChannelBackend::Host>::BasePortChannelDeviceHandleT;
+};
+
 /// Device-backend specialization of BasePortChannelDeviceHandleT.
 template <uint32_t MaxWqeSlots>
 struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, MaxWqeSlots> {
   static_assert(MaxWqeSlots <= 1024, "At most 1024 BlueFlame WQE slots per CTA are supported");
 
-  /// Scope of concurrent callers accessing this channel's queue pair.
-  using Concurrency = DeviceBackendHandle::Concurrency;
+  /// Scope of concurrent callers posting and flushing through a PortChannel.
+  using Concurrency = BasePortChannelDeviceHandleT<PortChannelBackend::Host>::Concurrency;
 
   PortDevice2DeviceSemaphoreDeviceHandle semaphore_;
 

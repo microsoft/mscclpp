@@ -43,8 +43,8 @@ communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
 auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
-mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
-auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
+mscclpp::PortChannelT channel(semaphore, remoteMem, localMem);
+auto deviceHandle = channel.deviceHandle();
 ```
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
@@ -86,6 +86,7 @@ every submission. Keep non-inline source buffers unchanged until their transfers
 ### Queue pair concurrency and BlueFlame configuration
 
 Channel handles expose a nested `Concurrency` type: use `decltype(channel)::Concurrency` for a handle value.
+The type is defined in `BasePortChannelDeviceHandle` in `port_channel_device.hpp` and shared by both backends.
 For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
 PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
 select `Concurrency::Block` for callers confined to one thread block, or `Concurrency::Exclusive` when the caller
@@ -105,9 +106,8 @@ other, so `Block` and `Device` operations always ring the regular doorbell.
 ### Internal WQE slots
 
 `PortChannelDeviceHandleT<Backend, MaxWqeSlots>` and `BasePortChannelDeviceHandleT<Backend, MaxWqeSlots>` configure the
-internal capacity at compile time. The default is 32 slots (2 KiB per CTA); use
-`channel.deviceHandle<mscclpp::PortChannelBackend::Device, 8>()` for eight slots, or a capacity of zero to disable
-BlueFlame without allocating scratch. The host backend ignores this parameter.
+internal capacity at compile time. The default is 32 slots (2 KiB per CTA); use `channel.deviceHandle<8>()` for eight
+slots, or a capacity of zero to disable BlueFlame without allocating scratch. The host backend ignores this parameter.
 
 The default slot index is the linear thread index, including all three block dimensions. Posting methods accept an
 optional `wqeSlotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
