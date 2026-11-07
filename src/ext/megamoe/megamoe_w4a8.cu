@@ -31,7 +31,8 @@ struct FinalOutputParameterView : P {
 template <int Hidden, int Intermediate, bool FixedTokenCount = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
-                                                            const int32_t* ids, const float* scores) {
+                                                            const int32_t* ids, const float* scores,
+                                                            const __bfloat16* input = nullptr) {
   using namespace cute;
   using Parameters = W4A8Parameters;
   using Types = typename Parameters::Collective;
@@ -57,34 +58,33 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   // Notify a consumer stream of kernel entry, not output readiness.
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
-  traceKernel(KernelTracePhase::Routing, true);
-  // Local routes read source inputs directly; remote routes consume current-epoch packets.
-  prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
-  traceKernel(KernelTracePhase::Routing, false);
   cute::conditional_t<ClusterSize == 1, cute::TMEM::Allocator1Sm, cute::TMEM::Allocator2Sm> allocator;
-
+  auto loadPipeline = makeW4A8LoadPipeline<false, Types>(s.mainloop, warp, lane, cta);
+  auto activationPipeline = [&](auto& activationStorage) {
+    if constexpr (Types::SplitPipelines) {
+      return makeW4A8LoadPipeline<true, Types>(activationStorage, warp, lane, cta);
+    } else {
+      return loadPipeline;
+    }
+  }(s.activationLoad);
+  auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
   if (warp < Schedule::DispatchBegin) {
-    if (threadIdx.x == 0) s.tmemReady.init(ClusterSize);
-    auto loadPipeline = makeW4A8LoadPipeline<false, Types>(s.mainloop, warp, lane, cta);
-    auto activationPipeline = [&](auto& activationStorage) {
-      if constexpr (Types::SplitPipelines) {
-        return makeW4A8LoadPipeline<true, Types>(activationStorage, warp, lane, cta);
-      } else {
-        return loadPipeline;
-      }
-    }(s.activationLoad);
-    auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
-    cutlass::arch::fence_barrier_init();
     loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
     accumulatePipeline.init_masks(ClusterShape{});
-    cutlass::arch::NamedBarrier::sync(Schedule::DispatchBegin * warpSize, 0);
-    cute::cluster_arrive();
-    cute::cluster_wait();
+    if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
+  } else {
+    initDispatchStorage<Types::DispatchStages, Schedule>(s, warp, lane);
+  }
+  cutlass::arch::fence_barrier_init();
+  traceKernel(KernelTracePhase::Routing, true);
+  // Local routes read source inputs directly; remote routes consume current-epoch packets.
+  int tokenBlocks = prepareRoutes<FixedTokenCount>(p, tokens, ids, scores, input);
+  traceKernel(KernelTracePhase::Routing, false);
 
+  if (warp < Schedule::DispatchBegin) {
     Mainloop fc1(p.fc1, ClusterShape{}, cta);
     Mainloop fc2(p.fc2, ClusterShape{}, cta);
-    int tokenBlocks = p.workspace.control->tokenBlocks;
     int tasks = tokenBlocks * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
     int localExperts = p.config.numExperts / p.config.worldSize;
     ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
@@ -100,21 +100,14 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
                       lane, cta, cluster, tasks);
     } else {
-      if (warp == Schedule::MmaWarp) {
-        allocator.allocate(W4TmemColumns, &s.tmem);
-        if constexpr (ActDtype == ActivationDtype::Fp8Static) {
+      if constexpr (ActDtype == ActivationDtype::Fp8Static) {
+        if (warp == Schedule::MmaWarp) {
           constexpr int SfbWordsPerStage = sizeof(s.tensors.smem_SFB) / (Types::Load::Stages * sizeof(uint32_t));
           auto* sfbStage0 = reinterpret_cast<uint32_t*>(s.tensors.smem_SFB.begin());
           for (int i = lane; i < SfbWordsPerStage; i += warpSize) sfbStage0[i] = 0x7f7f7f7fU;
           cutlass::arch::fence_view_async_shared();
         }
       }
-      cutlass::arch::NamedBarrier::sync((Schedule::DispatchBegin - Types::LoadWarps) * warpSize, 2);
-      if (threadIdx.x == 0) {
-#pragma unroll
-        for (int peerCta = 0; peerCta < ClusterSize; ++peerCta) s.tmemReady.arrive(peerCta);
-      }
-      s.tmemReady.wait(0);
       using EpilogueTile = Shape<Int<Parameters::Tiles::CtaM>, Int<Parameters::Tiles::N>>;
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
@@ -129,8 +122,6 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   } else {
     // Lower dispatch/idle warp groups to 32 registers per thread to fund epilogue growth.
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
-    // Arrive without waiting so copies overlap the compute-side initialization.
-    cute::cluster_arrive_relaxed();
     runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
   }
   // Join even idle roles before the next register reconfiguration.
@@ -139,12 +130,13 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     cutlass::arch::warpgroup_reg_dealloc<EntryRegisters>();
   else
     cutlass::arch::warpgroup_reg_alloc<EntryRegisters>();
-  cute::cluster_sync();
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   if (warp == Schedule::MmaWarp) {
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
-  finishAndCombine<Hidden>(p, tokens, output);
+  finishAndCombine<Hidden, false>(p, tokens, output);
 }
 
 struct W4A8KernelRegistration {
@@ -166,9 +158,9 @@ constexpr W4A8KernelRegistration registerW4A8Kernel() {
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing) {
-  static constexpr std::array kernels{registerW4A8Kernel<4096, 5120>(), registerW4A8Kernel<4096, 6656>(),
-                                      registerW4A8Kernel<8192, 4096>(), registerW4A8Kernel<9216, 4096>(),
-                                      registerW4A8Kernel<9216, 4608>()};
+  static constexpr std::array kernels{registerW4A8Kernel<4096, 4608>(), registerW4A8Kernel<4096, 5120>(),
+                                      registerW4A8Kernel<4096, 6656>(), registerW4A8Kernel<8192, 4096>(),
+                                      registerW4A8Kernel<9216, 4096>(), registerW4A8Kernel<9216, 4608>()};
   const bool staticFp8 = config.activationDtype == ActivationDtype::Fp8Static;
   for (const auto& kernel : kernels) {
     if (kernel.matches(config))

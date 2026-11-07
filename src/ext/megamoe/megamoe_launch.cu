@@ -247,6 +247,7 @@ P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, 
   p.fc2TaskDivisor = cutlass::FastDivmod((c.hidden + P::Tiles::M - 1) / P::Tiles::M);
   size_t bytes;
   p.workspace = workspaceLayout(c, workspace, bytes);
+  p.workspace.fc1Weights = weights.fc1;
   int experts = c.numExperts / c.worldSize;
   auto make = [&](int m, int k, int rows, uint8_t* weight, uint8_t* weightScale, void* input,
                   uint8_t* inputScale = nullptr) {
@@ -507,11 +508,17 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
   cudaStreamCaptureStatus capture;
   MSCCLPP_CUDATHROW(cudaStreamIsCapturing(stream, &capture));
-  if (tokens) {
+  const bool capturing = capture == cudaStreamCaptureStatusActive;
+  const auto* source =
+      input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
+  const bool fuseQuantize = capturing && detail::W4FixedTokenCount &&
+                            params.config.activationDtype == ActivationDtype::Mxfp8 && params.config.hidden == 4096 &&
+                            params.config.worldSize > 1 && params.config.worldSize <= 64 && tokens > 0 &&
+                            tokens <= 64 && tokens * params.config.topK <= detail::RouteChunk &&
+                            plan->ctas >= params.config.worldSize + 2 + tokens;
+  if (tokens && !fuseQuantize) {
     dim3 threads(128);
     dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
-    const auto* source =
-        input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
     if (params.config.activationDtype == ActivationDtype::Fp8Static) {
       detail::quantizeInputStaticKernel<<<blocks, threads, 0, stream>>>(
           source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput), params.config.activationScale,
@@ -526,9 +533,9 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
   std::array<cudaLaunchAttribute, 2> launchAttributes{};
   auto launch = detail::makeLaunchConfig(plan->ctas, detail::W4A8Parameters::ThreadCount, plan->sharedBytes, stream,
                                          launchAttributes, detail::W4ClusterSize);
-  MSCCLPP_CUDATHROW(
-      cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive),
-                         params, tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config, capturing), params, tokens,
+                                       static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores,
+                                       fuseQuantize ? source : nullptr));
 }
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE

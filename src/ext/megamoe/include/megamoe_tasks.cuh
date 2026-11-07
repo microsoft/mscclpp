@@ -23,6 +23,20 @@ __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
   return P::Tiles::ClusterSize * fc1TaskTiles<P>(intermediate);
 }
 
+__device__ __forceinline__ int stepClusterOffset(int c, int stride) {
+  if constexpr (!W4AdaptiveCacheWeights) {
+    if (stride > 29) {
+      c += 29;
+      if (c >= stride) c -= stride;
+    }
+  }
+  return c;
+}
+
+__device__ __forceinline__ int waveTaskOrdinal(int base, int c, int cluster, int stride, int tasks) {
+  return base + stride <= tasks ? base + c : base + cluster;
+}
+
 template <class P>
 __device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
   if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
@@ -32,9 +46,16 @@ __device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
 template <class P>
 __device__ __forceinline__ TokenBlock resolveTokenBlock(const P& p, int& block, int& m, int tiles, int tokens) {
   if constexpr (P::LocalExpert) {
-    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0};
+    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0, 0, 0};
   }
-  TokenBlock tokenBlock = p.workspace.blocks[block];
+  TokenBlock tokenBlock;
+  if constexpr (P::WeightMxfp4) {
+    extern __shared__ __align__(1024) char storage[];
+    const auto& s = *reinterpret_cast<const typename P::SharedStorage*>(storage);
+    tokenBlock = block < P::SharedStorage::SharedBlockCapacity ? s.blocks[block] : p.workspace.blocks[block];
+  } else {
+    tokenBlock = p.workspace.blocks[block];
+  }
   if (tokenBlock.groupShift > 0) {
     int inGroup = int(tokenBlock.groupOffset) * tiles + m;
     block += (inGroup & ((1 << tokenBlock.groupShift) - 1)) - int(tokenBlock.groupOffset);

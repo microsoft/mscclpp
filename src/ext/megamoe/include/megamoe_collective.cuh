@@ -93,11 +93,12 @@ struct W4A8CollectiveTypesT {
   using KernelSchedule =
       cute::conditional_t<W4ClusterSize == 1, cutlass::gemm::KernelTmaWarpSpecialized1SmMxf8f6f4Sm100,
                           cutlass::gemm::KernelTmaWarpSpecialized2SmMxf8f6f4Sm100>;
+  static constexpr int ActualLoadStages = (LoadStages_ == 10 && !SplitPipelines_) ? 11 : LoadStages_;
   using Builder = typename cutlass::gemm::collective::CollectiveBuilder<
       cutlass::arch::Sm100, cutlass::arch::OpClassBlockScaledTensorOp, Weight, cutlass::layout::RowMajor, 128,
       Activation, cutlass::layout::ColumnMajor, 16, float, W4TileShape, ClusterShape,
-      cutlass::gemm::collective::StageCount<LoadStages_>, KernelSchedule>::CollectiveOp;
-  using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, LoadStages_, SplitPipelines, W4ClusterSize>;
+      cutlass::gemm::collective::StageCount<ActualLoadStages>, KernelSchedule>::CollectiveOp;
+  using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, ActualLoadStages, SplitPipelines, W4ClusterSize>;
   using Load = typename Mainloop::MainloopPipeline;
   using Accumulate = cutlass::PipelineUmmaAsync<2, typename Mainloop::AtomThrShapeMNK>;
   using ScaleConfig = typename Mainloop::Sm1xxBlkScaledConfig;
@@ -120,7 +121,7 @@ using W4A8CollectiveTypes =
                          W4EpilogueTokens, W4EpilogueWarps, W4EpilogueRegisters, W4DispatchChunk, W4DispatchWarps,
                          W4DispatchStages>;
 
-static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
+static_assert(W4A8CollectiveTypes::Load::Stages == W4A8CollectiveTypes::ActualLoadStages);
 
 __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
   uint32_t decoded, expanded, result;

@@ -140,7 +140,12 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
     if constexpr (P::Activation == ActivationDtype::Fp8Static) {
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
-    for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
+    const int stride = gridDim.x / P::Tiles::ClusterSize;
+    int c = cluster;
+    for (int base = 0; base < tasks; base += stride) {
+      int i = waveTaskOrdinal(base, c, cluster, stride, tasks);
+      c = stepClusterOffset(c, stride);
+      if (i >= tasks) break;
       Task task = taskAt(p, i, hidden, intermediate);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);

@@ -70,8 +70,10 @@ struct alignas(16) Route {
 struct alignas(8) TokenBlock {
   int16_t expert;
   int16_t rows;
-  int16_t groupOffset;
-  int16_t groupShift;
+  int8_t groupOffset;
+  int8_t groupShift;
+  uint8_t cacheWeights;
+  uint8_t reserved;
 };
 
 static_assert(sizeof(TokenBlock) == sizeof(uint2));
@@ -97,6 +99,7 @@ struct Workspace {
   uint8_t* inputScale;
   uint8_t* quantizedHidden;
   uint8_t* hiddenScale;
+  const uint8_t* fc1Weights;
   int poolRows;
 };
 
@@ -167,20 +170,52 @@ struct alignas(1024) W8A16SharedStorageT {
   std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
+template <int DispatchWarps, int DispatchStages, int DispatchChunk, int ScaleStageBytes>
+struct W4DispatchBuffersT {
+  alignas(128) uint8_t tiles[DispatchWarps][DispatchStages][DispatchChunk];
+  alignas(128) uint8_t scales[DispatchWarps][DispatchStages][ScaleStageBytes];
+};
+
+template <class Types>
+struct W4SharedDispatchStateT {
+  BulkBarrier barriers[Types::DispatchWarps][Types::DispatchStages];
+  uint32_t arrivals;
+  uint32_t publishedPhase;
+  uint32_t dispatchDone;
+};
+
 template <class Types>
 struct alignas(1024) W4A8SharedStorageT {
+  static constexpr int SharedBlockCapacity = 64;
+  static constexpr int SharedExpertCapacity = 32;
+  static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
+  static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
+  static constexpr bool OverlapEpilogueAndDispatch = (Types::DispatchWarps * Types::DispatchStages > 2);
   // Routing finishes before GEMM uses these buffers; pipeline state and dispatch flags remain separate.
   union {
     typename Types::Mainloop::TensorStorage tensors;
     int routing[sizeof(typename Types::Mainloop::TensorStorage) / sizeof(int)];
   };
+  std::conditional_t<
+      OverlapEpilogueAndDispatch, EmptyStorage,
+      W4DispatchBuffersT<Types::DispatchWarps, Types::DispatchStages, Types::DispatchChunk, ScaleStageBytes>>
+      separateDispatchBuffers;
+  union {
+    EpilogueStorage<Types::EpilogueTokens> epilogue;
+    std::conditional_t<
+        OverlapEpilogueAndDispatch,
+        W4DispatchBuffersT<Types::DispatchWarps, Types::DispatchStages, Types::DispatchChunk, ScaleStageBytes>,
+        EmptyStorage>
+        sharedDispatchBuffers;
+  };
   typename Types::Load::SharedStorage mainloop;
   std::conditional_t<Types::SplitPipelines, typename Types::Load::SharedStorage, EmptyStorage> activationLoad;
   typename Types::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
-  cutlass::arch::ClusterBarrier tmemReady;
-  EpilogueStorage<Types::EpilogueTokens> epilogue;
-  W4DispatchStorageT<Types> dispatch;
+  int16_t expertFirstTile[SharedExpertCapacity];
+  int16_t expertRows[SharedExpertCapacity];
+  TokenBlock blocks[SharedBlockCapacity];
+  W4SharedDispatchStateT<Types> dispatch;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
@@ -217,7 +252,8 @@ __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig confi
   return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
-using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
+using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*,
+                                 const __bfloat16*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 
 template <int LocalMode = 0>
@@ -266,13 +302,24 @@ __device__ T* peerAt(const P& p, int rank, size_t offset) {
 }
 
 template <class P>
+__device__ __forceinline__ void signalPeer(const P& p, int peer) {
+  const uint64_t epoch = p.workspace.control->epoch;
+  if (peer != p.config.rank) {
+    auto* remote = peerAt<uint64_t>(p, peer, p.symmetric.peerSignals) + p.config.rank;
+    asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(remote), "l"(epoch) : "memory");
+  } else {
+    at<uint64_t>(p.local, p.symmetric.peerSignals)[peer] = epoch;
+  }
+  at<uint64_t>(p.local, p.symmetric.expectedPeerSignals)[peer] = epoch;
+}
+
+template <class P>
 __device__ __forceinline__ void signalAndWait(const P& p, int peer) {
-  BaseMemoryChannelDeviceHandle channel{
-      MemoryDevice2DeviceSemaphoreDeviceHandle{at<uint64_t>(p.local, p.symmetric.peerSignals) + peer,
-                                               peerAt<uint64_t>(p, peer, p.symmetric.peerSignals) + p.config.rank,
-                                               at<uint64_t>(p.local, p.symmetric.expectedPeerSignals) + peer}};
-  channel.signal();
-  channel.wait(SpinLimit);
+  signalPeer(p, peer);
+  if (peer != p.config.rank) {
+    waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + peer,
+                                       p.workspace.control->epoch);
+  }
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
