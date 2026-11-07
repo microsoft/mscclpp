@@ -360,6 +360,18 @@ sets NCCL-EP's QPs per rank; `--n-tokens-per-chunk` is MSCCL++-specific.
 Omitting these options preserves each backend's defaults. NCCL-EP rank-major
 supports rank-local reduction, not MSCCL++'s per-top-k direct-send input layout.
 
+`--routing random` preserves the default independent, approximately uniform
+expert selection. For sustained expert-load imbalance, add
+`--routing lognormal --routing-sigma 0.85`: all source ranks share expert
+popularities drawn from `LogNormal(0, 0.85**2)` with `--seed`, then each token
+samples distinct experts without replacement using those probabilities.
+Per-rank sampling uses separate seeds; token payloads and router weights are
+unchanged between routing modes. Expert IDs retain their normal placement;
+the benchmark does not rebalance hot experts across ranks. The `[routing]`
+record reports probabilities and actual global expert/rank assignment and
+unique received-row counts, including peak/mean and coefficient of variation.
+Input generation and load summaries are outside the timed region.
+
 Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
 `token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
 (`Layout.FLAT`, default) or `expert_major`. DeepEP accepts `rank_major` or
@@ -376,20 +388,35 @@ dispatch/combine block configuration or DeepEP's communication SM budget.
 mapped to static FP8 on `rank_major` for MSCCL++ latency and DeepEP),
 `fp8_e4m3_static` (`rank_major` static FP8 for MSCCL++ latency and DeepEP), or
 `mxfp8_e4m3` (`rank_major` MXFP8 for MSCCL++ latency and DeepEP). NCCL-EP
-supports `bf16` and `fp8_e4m3` (latency `expert_major`). For
+supports `bf16` and `fp8_e4m3` (latency `rank_major` or `expert_major`).
+NCCL-EP rank-major FP8 uses block scales and BF16 combine; MSCCL++ rank-major
+maps `fp8_e4m3` to static scaling, so the quantization formats are not identical.
+The installed NCCL-EP library also determines supported hidden sizes: a
+successful BF16 run does not establish FP8 support at the same hidden size.
+For
 static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
 `--fp8-input-mode` selects MSCCL++ fused BF16 quantization (`quantize`,
 default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`
 selects MSCCL++ latency `rank_major` combine input (`bf16` default or
 `fp8_e4m3_static`). `--validate` checks MSCCL++'s identity-expert combine
-result before timing. BF16 latency rank-major runs additionally check source
-counts and the timed synthetic aggregation on both NCCL-EP and MSCCL++,
-including graph replay after changing the expert-output buffer.
+result before timing. Latency rank-major runs additionally
+check source counts and the timed synthetic aggregation on both NCCL-EP and
+MSCCL++, including graph replay after changing the expert-output buffer.
+NCCL-EP rank-major BF16 and FP8 also check the received payload and routed
+token identities; FP8 is decoded using the returned scales.
+Newer NCCL-EP APIs use the explicit `DS_FP8E3M4` dispatch
+recipe and rank-major output scales. Legacy APIs retain their required
+expert-major scale capacity and column-plane indexing. The backend config
+reports the loaded native EP version and selected quantization recipe.
 
 CUDA events measure paired dispatch/combine, excluding input generation and
-synthetic expert-output construction. BF16 latency rank-major timings reuse
+synthetic expert-output construction. Latency rank-major timings reuse
 fixed unit-valued expert-output rows: local-reduce sums one partial per distinct
 destination rank, while direct-send applies the original per-slot routing weights.
+The unit-output reference preserves FP32 accumulation order within each NVLink
+domain. With static-FP8 combine inputs it also accounts for BF16 rounding of
+the remote domain sum transferred over IB. The final combine output is BF16,
+including when `--combine-dtype fp8_e4m3_static` selects FP8 expert inputs.
 This is communication-only timing, not an end-to-end weighted MoE computation.
 NCCL-EP uses a prebuilt routing handle;
 throughput MSCCL++ reuses a fixed-routing prepare handle. DeepEP eager dispatch

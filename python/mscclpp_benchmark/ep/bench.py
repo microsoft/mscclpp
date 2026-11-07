@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import math
 
 import torch
 
@@ -27,6 +28,8 @@ from .bench_common import (
     MPI,
     init_mpi,
     make_inputs,
+    lognormal_expert_probabilities,
+    routing_load_summary,
     _init_torch_nccl,
     _mpi_stats,
     sum_matching_kernel_us,
@@ -72,6 +75,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-i", "--num-iters", type=int, default=50, help="timed iterations")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     p.add_argument(
+        "--routing",
+        choices=("random", "lognormal"),
+        default="random",
+        help="random keeps independent uniform expert selection; lognormal uses shared per-expert popularity.",
+    )
+    p.add_argument(
+        "--routing-sigma",
+        type=float,
+        default=0.85,
+        help="LogNormal(0, sigma**2) expert popularity for --routing lognormal; weighted sampling without replacement.",
+    )
+    p.add_argument(
         "--qps-per-peer",
         type=int,
         choices=(1, 4),
@@ -91,7 +106,8 @@ def parse_args() -> argparse.Namespace:
         help="dispatch wire format. MSCCL++ latency supports bf16, fp8_e4m3 (block-scaled on expert_major "
         "or static FP8 on rank_major), fp8_e4m3_static (rank_major), and mxfp8_e4m3 (rank_major); "
         "MSCCL++ throughput supports bf16 and fp8_e4m3. DeepEP EPBuffer supports all four "
-        "(pre-quantized input). NCCL-EP supports bf16 and fp8_e4m3 (latency expert_major).",
+        "(pre-quantized input). NCCL-EP supports bf16 and fp8_e4m3 (latency rank_major or expert_major, "
+        "subject to the installed library's hidden-size support).",
     )
     p.add_argument(
         "--combine-dtype",
@@ -155,6 +171,8 @@ def parse_args() -> argparse.Namespace:
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
         raise SystemExit("--num-tokens and --num-experts must be positive")
+    if not math.isfinite(args.routing_sigma) or args.routing_sigma < 0:
+        raise SystemExit("--routing-sigma must be finite and non-negative")
     if args.num_topk <= 0 or args.num_topk > args.num_experts:
         raise SystemExit("--num-topk must be in [1, num-experts]")
     if args.hidden <= 0:
@@ -195,8 +213,8 @@ def parse_args() -> argparse.Namespace:
                 f"DeepEP --dispatch-dtype {args.dispatch_dtype} requires rank_major layout (omit --ep-layout or pass rank_major)"
             )
     if args.dispatch_dtype == "fp8_e4m3" and args.backend in ("nccl", "all"):
-        if args.mode != "latency" or args.ep_layout == "rank_major":
-            raise SystemExit("NCCL-EP --dispatch-dtype fp8_e4m3 is supported only in latency expert_major mode")
+        if args.mode != "latency":
+            raise SystemExit("NCCL-EP --dispatch-dtype fp8_e4m3 is supported only in latency mode")
     if args.combine_dtype != "bf16":
         if args.backend != "mscclpp" or args.mode != "latency" or args.ep_layout != "rank_major":
             raise SystemExit(
@@ -510,6 +528,8 @@ def main() -> None:
         args.num_experts,
         rank,
         args.seed,
+        routing=args.routing,
+        routing_sigma=args.routing_sigma,
     )
     print(
         f"[inputs] rank={rank} "
@@ -521,6 +541,17 @@ def main() -> None:
         ),
         flush=True,
     )
+    load = routing_load_summary(inputs[1], args.num_experts, num_ranks, comm)
+    if rank == 0:
+        routing_meta = {"distribution": args.routing, "seed": args.seed, "load": load}
+        if args.routing == "lognormal":
+            probabilities = lognormal_expert_probabilities(args.num_experts, args.routing_sigma, args.seed)
+            routing_meta.update(
+                sigma=args.routing_sigma,
+                expert_probabilities=probabilities.tolist(),
+                shared_popularity_sha256=hashlib.sha256(probabilities.numpy().tobytes()).hexdigest(),
+            )
+        print("[routing] " + json.dumps(routing_meta), flush=True)
 
     backends = ["nccl", "mscclpp", "deepep"] if args.backend == "all" else [args.backend]
     benchmark_stream = torch.cuda.Stream()
