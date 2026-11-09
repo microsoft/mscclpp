@@ -173,8 +173,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<TestPortChannel>&
     }
     auto sema = communicator->buildSemaphore(connectionFutures[r].get(), r).get();
     if (ibMode == IbMode::Device) {
-      portChannels.emplace_back(mscclpp::PortChannelT(std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(sema),
-                                                      remoteMemFutures[r].get(), sendBufRegMem));
+      portChannels.emplace_back(mscclpp::PortChannel(std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(sema),
+                                                     remoteMemFutures[r].get(), sendBufRegMem));
     } else {
       mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
       portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
@@ -1033,7 +1033,7 @@ TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
 }
 
 static constexpr int kMaxQps = 4;
-__constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
+__constant__ DeviceHandle<mscclpp::PortChannel<>> gMultiQpPortChans[kMaxQps];
 __constant__ mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
 
 inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& portChannels, IbMode ibMode) {
@@ -1042,12 +1042,12 @@ inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& port
   if (ibMode == IbMode::Device) {
     std::vector<mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>> handles;
     for (const auto& ch : portChannels) {
-      handles.push_back(std::get<mscclpp::PortChannelT<mscclpp::PortChannelBackend::Device>>(ch).deviceHandle());
+      handles.push_back(std::get<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>(ch).deviceHandle());
     }
     MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpDevicePortChans, handles.data(), numQps * sizeof(handles[0])));
   } else {
-    std::vector<DeviceHandle<mscclpp::PortChannel>> handles;
-    for (const auto& ch : portChannels) handles.push_back(std::get<mscclpp::PortChannel>(ch).deviceHandle());
+    std::vector<DeviceHandle<mscclpp::PortChannel<>>> handles;
+    for (const auto& ch : portChannels) handles.push_back(std::get<mscclpp::PortChannel<>>(ch).deviceHandle());
     MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), numQps * sizeof(handles[0])));
   }
 }
@@ -1124,7 +1124,7 @@ void PortChannelOneToOneTest::setupMultiQpChannels(int numQps, size_t elemsPerCh
     remoteMems[q] = remoteMemFutures[q].get();
     auto sema = communicator->buildSemaphore(conn, peer, tagBase + 2 * numQps + q).get();
     if (ibMode == IbMode::Device) {
-      portChannels.emplace_back(mscclpp::PortChannelT(sema, remoteMems[q], localMems[q]));
+      portChannels.emplace_back(mscclpp::PortChannel(sema, remoteMems[q], localMems[q]));
     } else {
       mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
       portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMems[q]),
@@ -1509,7 +1509,7 @@ void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, 
     for (int r = 1; r < worldSize; r++) {
       auto sema = communicator->buildSemaphore(connFutures[r].get(), r).get();
       if (ibMode == IbMode::Device) {
-        portChannels.emplace_back(mscclpp::PortChannelT(sema, remoteMemFutures[r].get(), localMem));
+        portChannels.emplace_back(mscclpp::PortChannel(sema, remoteMemFutures[r].get(), localMem));
       } else {
         mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
         portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
@@ -1520,7 +1520,7 @@ void PortChannelFanInTest::testFanIn(bool useIPC, bool useIb, bool useEthernet, 
   } else {
     auto sema = communicator->buildSemaphore(connFutures[0].get(), 0).get();
     if (ibMode == IbMode::Device) {
-      portChannels.emplace_back(mscclpp::PortChannelT(sema, remoteMemFutures[0].get(), localMem));
+      portChannels.emplace_back(mscclpp::PortChannel(sema, remoteMemFutures[0].get(), localMem));
     } else {
       mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
       portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[0].get()),

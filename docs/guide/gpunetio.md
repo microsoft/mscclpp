@@ -30,7 +30,8 @@ The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 ## Usage
 
 Create the connection with `EndpointConfig::Ib::Mode::Device` and construct the `PortChannel` directly from the
-semaphore and registered memories (no `ProxyService` is needed):
+semaphore and registered memories (`PortChannel<PortChannelBackend::Device>` is deduced automatically from the
+constructor; no `ProxyService` is needed):
 
 ```cpp
 mscclpp::EndpointConfig cfg;
@@ -43,7 +44,7 @@ communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 
 auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
-mscclpp::PortChannelT channel(semaphore, remoteMem, localMem);
+mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle();
 ```
 

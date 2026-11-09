@@ -398,7 +398,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
 // TODO(saemal): retrun the actual vector instead of void
-void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::PortChannel>>& portChannels,
+void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::PortChannel<>>>& portChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* outputBuff,
                                           size_t outputBuffBytes, SetupChannelFunc setupChannel) {
   mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
@@ -472,7 +472,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
 }
 
 void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels,
-                                          std::vector<DeviceHandle<mscclpp::PortChannel>>& portChannels,
+                                          std::vector<DeviceHandle<mscclpp::PortChannel<>>>& portChannels,
                                           void* inputBuff, size_t inputBuffBytes, void* putPacketBuff,
                                           size_t putPacketBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
                                           void* outputBuff, size_t outputBuffBytes) {

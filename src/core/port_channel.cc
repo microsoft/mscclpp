@@ -24,9 +24,9 @@ void warnNoexcept(Args&&... args) noexcept {
 }  // namespace
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(SemaphoreId semaphoreId,
-                                                            std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                                                            std::shared_ptr<Proxy> proxy)
+MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(SemaphoreId semaphoreId,
+                                                          std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                                                          std::shared_ptr<Proxy> proxy)
   requires(Backend == PortChannelBackend::Host)
     : semaphoreId_(semaphoreId), semaphore_(std::move(semaphore)), proxy_(std::move(proxy)) {
   if (semaphore_ && BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
@@ -36,7 +36,7 @@ MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(SemaphoreId semaphor
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore)
+MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore)
   requires(Backend == PortChannelBackend::Device)
     : semaphoreId_(0), semaphore_(std::move(semaphore)) {
   if (!semaphore_) {
@@ -45,44 +45,44 @@ MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(std::shared_ptr<Port
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(const Semaphore& semaphore)
+MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(const Semaphore& semaphore)
   requires(Backend == PortChannelBackend::Device)
-    : BasePortChannelT(std::make_shared<PortDevice2DeviceSemaphore>(semaphore)) {}
+    : BasePortChannel(std::make_shared<PortDevice2DeviceSemaphore>(semaphore)) {}
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelT<Backend>::BasePortChannelT(SemaphoreId semaphoreId, const Semaphore& semaphore,
-                                                            std::shared_ptr<Proxy> proxy)
+MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
+                                                          std::shared_ptr<Proxy> proxy)
   requires(Backend == PortChannelBackend::Host)
-    : BasePortChannelT(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), std::move(proxy)) {}
+    : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), std::move(proxy)) {}
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelT<Backend>::PortChannelT(SemaphoreId semaphoreId,
-                                                    std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                                                    std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
+MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(SemaphoreId semaphoreId,
+                                                  std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                                                  std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
   requires(Backend == PortChannelBackend::Host)
-    : BasePortChannelT<Backend>(semaphoreId, std::move(semaphore), std::move(proxy)), dst_(dst), src_(src) {}
+    : BasePortChannel<Backend>(semaphoreId, std::move(semaphore), std::move(proxy)), dst_(dst), src_(src) {}
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelT<Backend>::PortChannelT(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore,
-                                                    RegisteredMemory dst, RegisteredMemory src)
+MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore,
+                                                  RegisteredMemory dst, RegisteredMemory src)
   requires(Backend == PortChannelBackend::Device)
-    : BasePortChannelT<Backend>(std::move(semaphore)),
+    : BasePortChannel<Backend>(std::move(semaphore)),
       dst_(0),
       src_(0),
       dstMemory_(std::move(dst)),
       srcMemory_(std::move(src)) {}
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelT<Backend>::PortChannelT(const Semaphore& semaphore, RegisteredMemory dst,
-                                                    RegisteredMemory src)
+MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(const Semaphore& semaphore, RegisteredMemory dst,
+                                                  RegisteredMemory src)
   requires(Backend == PortChannelBackend::Device)
-    : PortChannelT(std::make_shared<PortDevice2DeviceSemaphore>(semaphore), std::move(dst), std::move(src)) {}
+    : PortChannel(std::make_shared<PortDevice2DeviceSemaphore>(semaphore), std::move(dst), std::move(src)) {}
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelT<Backend>::PortChannelT(SemaphoreId semaphoreId, const Semaphore& semaphore,
-                                                    std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
+MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
+                                                  std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
   requires(Backend == PortChannelBackend::Host)
-    : BasePortChannelT<Backend>(semaphoreId, semaphore, std::move(proxy)), dst_(dst), src_(src) {}
+    : BasePortChannel<Backend>(semaphoreId, semaphore, std::move(proxy)), dst_(dst), src_(src) {}
 
 MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
   int cudaDevice;
@@ -145,12 +145,12 @@ MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(Se
   return semaphores_[id];
 }
 
-MSCCLPP_API_CPP BasePortChannel ProxyService::basePortChannel(SemaphoreId id) {
-  return BasePortChannel(id, semaphores_[id], proxy_);
+MSCCLPP_API_CPP BasePortChannel<> ProxyService::basePortChannel(SemaphoreId id) {
+  return BasePortChannel<>(id, semaphores_[id], proxy_);
 }
 
-MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
-  return PortChannel(id, semaphores_[id], proxy_, dst, src);
+MSCCLPP_API_CPP PortChannel<> ProxyService::portChannel(SemaphoreId id, MemoryId dst, MemoryId src) {
+  return PortChannel<>(id, semaphores_[id], proxy_, dst, src);
 }
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
@@ -258,7 +258,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannelT<Backend>::deviceHandle() const {
+MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel<Backend>::deviceHandle() const {
   if constexpr (Backend == PortChannelBackend::Device) {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -277,8 +277,8 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannelT<Backend>:
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelDeviceHandleT<Backend> PortChannelT<Backend>::deviceHandle() const {
-  BasePortChannelDeviceHandleT<Backend> base = BasePortChannelT<Backend>::deviceHandle();
+MSCCLPP_API_CPP PortChannelDeviceHandleT<Backend> PortChannel<Backend>::deviceHandle() const {
+  BasePortChannelDeviceHandleT<Backend> base = BasePortChannel<Backend>::deviceHandle();
   if constexpr (Backend == PortChannelBackend::Device) {
     auto& conn = BaseConnection::getImpl(this->semaphore_->connection());
     return PortChannelDeviceHandleT<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
@@ -289,10 +289,10 @@ MSCCLPP_API_CPP PortChannelDeviceHandleT<Backend> PortChannelT<Backend>::deviceH
   }
 }
 
-template struct BasePortChannelT<PortChannelBackend::Host>;
-template struct BasePortChannelT<PortChannelBackend::Device>;
-template struct PortChannelT<PortChannelBackend::Host>;
-template struct PortChannelT<PortChannelBackend::Device>;
+template struct BasePortChannel<PortChannelBackend::Host>;
+template struct BasePortChannel<PortChannelBackend::Device>;
+template struct PortChannel<PortChannelBackend::Host>;
+template struct PortChannel<PortChannelBackend::Device>;
 
 void ProxyService::progressFlushes() {
   for (auto it = pendingFlushPos_.begin(); it != pendingFlushPos_.end();) {
