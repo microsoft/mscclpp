@@ -50,7 +50,7 @@ def test_presets_and_defaults():
         "layout": "expert_major",
         "num_gpus": 4,
         "communication_backend": "mscclpp",
-        "compute_backend": "torch",
+        "compute_backend": "cutlass_flashinfer",
         "cuda_graph": False,
     }
     large = _config(model="large", input_name="prefill", routing="hot_pair")
@@ -96,7 +96,7 @@ def test_environment_combinations(backend, world, graph):
         "layout": "expert_major",
         "num_gpus": world,
         "communication_backend": backend,
-        "compute_backend": "torch",
+        "compute_backend": "cutlass_flashinfer",
         "cuda_graph": graph,
     }
 

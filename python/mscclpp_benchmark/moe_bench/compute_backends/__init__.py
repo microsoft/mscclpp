@@ -5,11 +5,7 @@
 
 
 def create_mlp(config, rank, counts, device):
-    """Load optional compute dependencies only for the selected backend."""
-    if config["environment"]["compute_backend"] == "torch":
-        from .torch_reference import ExpertMLP
-
-        return ExpertMLP(config, rank, counts, device)
+    """Load compute dependencies only when the selected backend is constructed."""
     if config["environment"]["compute_backend"] != "cutlass_flashinfer":
         raise ValueError("Unsupported compute backend")
     from .flashinfer import FlashInferMLP

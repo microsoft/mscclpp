@@ -382,7 +382,7 @@ Capture errors stop the benchmark rather than silently falling back.
 [`mscclpp_benchmark/moe_bench`](../../mscclpp_benchmark/moe_bench/README.md)
 measures one complete MoE layer: dispatch, SwiGLU expert computation, and
 weighted combine. It uses synthetic inputs and weights with MSCCL++ or NCCL-EP
-communication and PyTorch BF16 or FlashInfer MXFP8/MXFP4 expert computation, on
+communication and FlashInfer MXFP8/MXFP4 expert computation on Blackwell GPUs, on
 one node or across MNNVL-connected nodes. From the repository root:
 
 ```bash

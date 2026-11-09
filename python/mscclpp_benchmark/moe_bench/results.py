@@ -79,7 +79,7 @@ def save_results(run_dir, latencies, config, metadata, expert_load):
         "distributed_latency": "maximum rank duration per iteration, not a globally synchronized wall clock",
         "throughput": "original global input tokens / mean distributed iteration duration",
         "routing": "fixed; generation and expert counts excluded from timing",
-        "compute": metadata.get("compute_implementation", "torch_bf16"),
+        "compute": metadata.get("compute_implementation", "unknown"),
         "warmup_included": False,
         "percentiles": "linear interpolation",
         "phase_timing": "adjacent CUDA events on the same stream; no synchronization between phases",
@@ -90,7 +90,7 @@ def save_results(run_dir, latencies, config, metadata, expert_load):
         "summary_phases": "per-rank only; global total is not the sum of independently slowest phases",
     }
     write_json(run_dir / "run.json", run)
-    print(f"\nMoE benchmark ({metadata.get('compute_implementation', 'torch_bf16')})", flush=True)
+    print(f"\nMoE benchmark ({metadata.get('compute_implementation', 'unknown')})", flush=True)
     print(" | ".join(f"{name}: {value}" for name, value in run["presets"].items()))
     settings = config["benchmark"]
     print(

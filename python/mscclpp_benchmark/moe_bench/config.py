@@ -11,7 +11,7 @@ import yaml
 # Common workload dimensions, constrained by MSCCL++ expert-major combine.
 SUPPORTED_D_MODEL = (4096, 4352, 5120, 6656, 7168, 8192, 8704, 9216)
 BENCHMARK_DEFAULTS = {"warmup": 10, "iterations": 100, "seed": 42, "output_dir": "benchmark_results"}
-COMPUTE_DEFAULTS = {"activation_dtype": "bf16", "weight_dtype": "bf16"}
+COMPUTE_DEFAULTS = {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
 COMMUNICATION_DEFAULTS = {"mode": "latency", "layout": "expert_major"}
 SUPPORTED_LAYOUTS = {
     "mscclpp": {"latency": ("expert_major", "rank_major"), "throughput": ("token_major", "rank_major")},
@@ -74,7 +74,7 @@ def _validate_section(section, value, path):
     elif section == "environment":
         _integer(value["num_gpus"], f"{path}.num_gpus")
         _choice(value["communication_backend"], ("mscclpp", "nccl"), f"{path}.communication_backend")
-        _choice(value["compute_backend"], ("torch", "cutlass_flashinfer"), f"{path}.compute_backend")
+        _choice(value["compute_backend"], ("cutlass_flashinfer",), f"{path}.compute_backend")
         _choice(value["cuda_graph"], (False, "mlp"), f"{path}.cuda_graph")
         _choice(value["mode"], ("latency", "throughput"), f"{path}.mode")
         _choice(value["layout"], ("expert_major", "rank_major", "token_major"), f"{path}.layout")
@@ -127,26 +127,14 @@ def validate_config(config: dict) -> None:
             raise ValueError("MSCCL++ throughput supports at most 128 local experts")
     compute = config.get("compute", COMPUTE_DEFAULTS)
     _fields(compute, set(COMPUTE_DEFAULTS), "compute", required=False)
-    activation = compute.get("activation_dtype", "bf16")
-    weight = compute.get("weight_dtype", "bf16")
-    _choice(activation, ("bf16", "mxfp8"), "compute.activation_dtype")
-    if weight == "mxfp8":
-        raise ValueError("MXFP8 weights (including BF16/MXFP8 weight-only compute) are not supported; use MXFP8/MXFP4")
-    _choice(weight, ("bf16", "mxfp4"), "compute.weight_dtype")
-    backend = config["environment"]["compute_backend"]
-    pairs = (("bf16", "bf16"),) if backend == "torch" else (("mxfp8", "mxfp4"),)
-    if (activation, weight) not in pairs:
-        raise ValueError(
-            f"{backend} requires (activation_dtype, weight_dtype) in {pairs}; "
-            "set --activation-dtype and --weight-dtype explicitly"
-        )
-    if backend == "cutlass_flashinfer":
-        for dimension in ("d_model", "intermediate_size"):
-            if config["model"][dimension] % 128:
-                raise ValueError(f"cutlass_flashinfer requires model.{dimension} divisible by 128")
-        assignments = config["environment"]["num_gpus"] * config["input"]["tokens_per_rank"] * config["model"]["top_k"]
-        if assignments + 128 * config["model"]["num_experts"] > 2**31 - 1:
-            raise ValueError("cutlass_flashinfer padded assignment schedule must fit in int32")
+    _choice(compute.get("activation_dtype", "mxfp8"), ("mxfp8",), "compute.activation_dtype")
+    _choice(compute.get("weight_dtype", "mxfp4"), ("mxfp4",), "compute.weight_dtype")
+    for dimension in ("d_model", "intermediate_size"):
+        if config["model"][dimension] % 128:
+            raise ValueError(f"cutlass_flashinfer requires model.{dimension} divisible by 128")
+    assignments = config["environment"]["num_gpus"] * config["input"]["tokens_per_rank"] * config["model"]["top_k"]
+    if assignments + 128 * config["model"]["num_experts"] > 2**31 - 1:
+        raise ValueError("cutlass_flashinfer padded assignment schedule must fit in int32")
     experts = config["model"]["num_experts"]
     if experts % config["environment"]["num_gpus"]:
         raise ValueError("model.num_experts must be divisible by environment.num_gpus")

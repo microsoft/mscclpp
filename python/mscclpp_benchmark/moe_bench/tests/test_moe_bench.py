@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Unit tests and opt-in two-GPU mathematical reference coverage."""
+"""Unit tests for configuration, results, and launching."""
 
-import copy
 import csv
-import itertools
 import json
 import os
 from pathlib import Path
@@ -16,21 +14,16 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-import torch.nn.functional as F
 
 if __package__:
-    from ..compute_backends.torch_reference import ExpertMLP
-    from ..config import SUPPORTED_LAYOUTS, load_config
-    from ..memory import estimate_tensor_bytes
+    from ..config import load_config
     from ..results import latency_stats, save_results, summarize, write_json
-    from ..workload import make_expert_weights, make_input, reference_output
+    from ..workload import make_input
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from compute_backends.torch_reference import ExpertMLP
-    from config import SUPPORTED_LAYOUTS, load_config
-    from memory import estimate_tensor_bytes
+    from config import load_config
     from results import latency_stats, save_results, summarize, write_json
-    from workload import make_expert_weights, make_input, reference_output
+    from workload import make_input
 
 
 def tiny_config():
@@ -42,7 +35,7 @@ def tiny_config():
         routing="balanced",
         overrides={"warmup": 0, "iterations": 3},
     )
-    config["model"]["intermediate_size"] = 32
+    config["model"]["intermediate_size"] = 128
     config["input"]["tokens_per_rank"] = 3
     return config
 
@@ -156,29 +149,6 @@ def test_result_files(tmp_path):
     assert "no synchronization" in metadata["measurement"]["phase_timing"]
 
 
-def test_compute_valid_rows_only_and_distinct_weights():
-    config = tiny_config()
-    config["model"]["d_model"] = 16
-    config["model"]["num_experts"] = 6
-    counts = [2, 0, 1]
-    compute = ExpertMLP(config, 0, counts, "cpu")
-    tokens = torch.randn(3, 4, 16, dtype=torch.bfloat16)
-    out = torch.full_like(tokens, float("nan"))
-    compute(tokens, out)
-    for expert, count in enumerate(counts):
-        gate, up, down = compute.weights[expert]
-        x = tokens[expert, :count]
-        expected = (F.silu(x @ gate) * (x @ up)) @ down
-        torch.testing.assert_close(out[expert, :count], expected, rtol=0, atol=0)
-        assert torch.isnan(out[expert, count:]).all()
-    assert not torch.equal(compute.weights[0][0], compute.weights[1][0])
-    again = make_expert_weights(config["model"], 0, config["benchmark"]["seed"], "cpu")
-    assert torch.equal(compute.weights[0][0], again[0])
-    assert estimate_tensor_bytes(config, counts) >= sum(
-        matrix.numel() * matrix.element_size() for weights in compute.weights for matrix in weights
-    )
-
-
 def test_input_reproducibility_without_global_rng_mutation():
     config = tiny_config()
     state = torch.random.get_rng_state()
@@ -191,16 +161,32 @@ def test_input_reproducibility_without_global_rng_mutation():
 @pytest.mark.parametrize(
     "options,environment",
     [
-        ([], {"num_gpus": 2, "communication_backend": "mscclpp", "compute_backend": "torch", "cuda_graph": False}),
+        (
+            [],
+            {
+                "num_gpus": 2,
+                "communication_backend": "mscclpp",
+                "compute_backend": "cutlass_flashinfer",
+                "cuda_graph": False,
+            },
+        ),
         (
             ["--backend", "nccl", "--graph", "mlp"],
-            {"num_gpus": 4, "communication_backend": "nccl", "compute_backend": "torch", "cuda_graph": "mlp"},
+            {
+                "num_gpus": 4,
+                "communication_backend": "nccl",
+                "compute_backend": "cutlass_flashinfer",
+                "cuda_graph": "mlp",
+            },
         ),
     ],
 )
 def test_launcher_records_failure_without_summary(tmp_path, monkeypatch, options, environment):
     import yaml
     from .. import run as launcher
+    from ..compute_backends import flashinfer as compute_flashinfer
+
+    monkeypatch.setattr(compute_flashinfer, "preflight", lambda config, device: None)
 
     environment = {"mode": "latency", "layout": "expert_major", **environment}
     config = tiny_config()
@@ -310,6 +296,9 @@ def test_launcher_resolves_environment_and_worker_command(
 ):
     import yaml
     from .. import run as launcher
+    from ..compute_backends import flashinfer as compute_flashinfer
+
+    monkeypatch.setattr(compute_flashinfer, "preflight", lambda config, device: None)
 
     document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
     document["environment"]["cuda_graph"] = "mlp"
@@ -423,84 +412,3 @@ def assert_idle_gpus():
     for row in csv.reader(usage.splitlines()):
         _, used, free, utilization = map(int, row)
         assert used <= 64 and free > 1024 and utilization == 0, "Shared GPUs not idle; refusing to run"
-
-
-@pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-def test_distributed_reference(backend):
-    variable = "MOE_BENCH_GPU_TESTS" if backend == "mscclpp" else "MOE_BENCH_NCCL_GPU_TESTS"
-    if os.environ.get(variable) != "1":
-        pytest.skip(f"Set {variable}=1 for the {backend} two-GPU test")
-    assert_idle_gpus()
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "torch.distributed.run",
-            "--standalone",
-            "--nnodes=1",
-            "--nproc-per-node=2",
-            str(Path(__file__).resolve()),
-            backend,
-        ],
-        check=True,
-        timeout=600,
-    )
-
-
-@torch.inference_mode()
-def distributed_reference(backend):
-    import torch.distributed as dist
-    from worker import Pipeline, initialize
-
-    rank, world, device = initialize()
-    pipeline = None
-    try:
-        combinations = [(mode, layout) for mode, layouts in SUPPORTED_LAYOUTS[backend].items() for layout in layouts]
-        for (mode, layout), graph_mode, routing in itertools.product(
-            combinations,
-            (False, "mlp"),
-            (
-                {"kind": "balanced"},
-                {"kind": "uniform"},
-                {"kind": "hot_experts", "expert_ids": [0, 1], "probability_mass": 0.999},
-            ),
-        ):
-            config = copy.deepcopy(tiny_config())
-            config["routing"] = routing
-            config["environment"]["cuda_graph"] = graph_mode
-            config["environment"]["communication_backend"] = backend
-            config["environment"].update(mode=mode, layout=layout)
-            if backend == "nccl" and mode == "throughput":
-                config["input"]["tokens_per_rank"] = 4
-            if rank == 0:
-                print(f"Testing {backend}/{mode}/{layout}, graph={graph_mode}, routing={routing['kind']}", flush=True)
-            pipeline = Pipeline(config, rank, device)
-            assert (pipeline.mlp_graph is not None) == (graph_mode == "mlp")
-            local_experts = config["model"]["num_experts"] // world
-            for _ in range(2):
-                events = [torch.cuda.Event(enable_timing=True) for _ in range(4)]
-                pipeline.step(events)
-                events[-1].synchronize()
-                phases = [events[i].elapsed_time(events[i + 1]) for i in range(3)]
-                assert all(value >= 0 for value in phases)
-                assert sum(phases) == pytest.approx(events[0].elapsed_time(events[-1]), abs=0.002, rel=1e-4)
-                expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-                valid = torch.tensor(int(torch.allclose(pipeline.output, expected, atol=0.025, rtol=0.025)))
-                dist.all_reduce(valid, op=dist.ReduceOp.MIN)
-                assert valid.item(), f"Distributed expert computation mismatch for {routing}"
-                pipeline.x.mul_(0.5)
-            dist.barrier()
-            pipeline.close()
-            pipeline = None
-        if rank == 0:
-            print("Distributed MoE reference comparisons passed", flush=True)
-    finally:
-        try:
-            if pipeline is not None:
-                pipeline.close()
-        finally:
-            dist.destroy_process_group()
-
-
-if __name__ == "__main__":
-    distributed_reference(sys.argv[1])

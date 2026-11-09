@@ -36,9 +36,9 @@ def parse_args(argv=None):
         choices=("expert_major", "rank_major", "token_major"),
         help="Native dispatch layout; default expert_major",
     )
-    parser.add_argument("--compute-backend", choices=("torch", "cutlass_flashinfer"))
-    parser.add_argument("--activation-dtype", choices=("bf16", "mxfp8"), help="Internal compute activation format")
-    parser.add_argument("--weight-dtype", choices=("bf16", "mxfp4"), help="Internal compute weight format")
+    parser.add_argument("--compute-backend", choices=("cutlass_flashinfer",))
+    parser.add_argument("--activation-dtype", choices=("mxfp8",), help="Internal compute activation format")
+    parser.add_argument("--weight-dtype", choices=("mxfp4",), help="Internal compute weight format")
     parser.add_argument(
         "--graph", choices=("none", "mlp"), help="Override environment.cuda_graph (none disables graphs)"
     )
@@ -53,7 +53,9 @@ def parse_args(argv=None):
     parser.add_argument("--master-port", type=int, default=29500, help="Cross-node coordination port")
     parser.add_argument("--timeout", type=int, default=600, help="Distributed job timeout in seconds")
     parser.add_argument(
-        "--check", action="store_true", help="Check Torch BF16 output against a reference before timing"
+        "--check",
+        action="store_true",
+        help="Check output against an independent quantization-aware reference before timing",
     )
     args = parser.parse_args(argv)
     if not 1 <= args.master_port <= 65535 or args.timeout <= 0:
@@ -101,8 +103,6 @@ def main():
     )
     if nodes and config["environment"]["communication_backend"] != "mscclpp":
         raise ValueError("--nodelist currently requires --backend mscclpp over shared MNNVL")
-    if args.check and config["environment"]["compute_backend"] != "torch":
-        raise ValueError("--check requires the Torch BF16 compute backend")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:8]
     run_dir = Path(config["benchmark"]["output_dir"]).expanduser().resolve() / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -177,7 +177,7 @@ def main():
     )
     returncode = None
     try:
-        if not nodes and config["environment"]["compute_backend"] == "cutlass_flashinfer":
+        if not nodes:
             if __package__:
                 from .compute_backends.flashinfer import preflight
             else:

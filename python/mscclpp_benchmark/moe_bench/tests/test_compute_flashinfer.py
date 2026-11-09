@@ -28,6 +28,7 @@ if __package__:
     )
     from ..config import SUPPORTED_LAYOUTS, load_config, validate_config
     from ..memory import estimate_tensor_bytes
+    from ..reference import decode, decoded_expert_weights, expert_output, quantize_mxfp8, relative_error, unswizzle
     from ..workload import make_expert_weights
     from .test_moe_bench import assert_idle_gpus, tiny_config
 else:
@@ -36,19 +37,13 @@ else:
     from compute_backends.flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
     from config import SUPPORTED_LAYOUTS, load_config, validate_config
     from memory import estimate_tensor_bytes
+    from reference import decode, decoded_expert_weights, expert_output, quantize_mxfp8, relative_error, unswizzle
     from test_moe_bench import assert_idle_gpus, tiny_config
     from workload import make_expert_weights
 
 
 def mx_config():
-    config = tiny_config()
-    config["model"]["intermediate_size"] = 128
-    config["environment"]["compute_backend"] = "cutlass_flashinfer"
-    config["compute"] = {
-        "activation_dtype": "mxfp8",
-        "weight_dtype": "mxfp4",
-    }
-    return config
+    return tiny_config()
 
 
 @pytest.mark.parametrize(
@@ -61,10 +56,7 @@ def test_config_pairs(backend, activation, weight):
     config = mx_config()
     config["environment"]["compute_backend"] = backend
     config["compute"] = {"activation_dtype": activation, "weight_dtype": weight}
-    valid = (backend, activation, weight) in (
-        ("torch", "bf16", "bf16"),
-        ("cutlass_flashinfer", "mxfp8", "mxfp4"),
-    )
+    valid = (backend, activation, weight) == ("cutlass_flashinfer", "mxfp8", "mxfp4")
     if valid:
         validate_config(config)
     else:
@@ -75,7 +67,7 @@ def test_config_pairs(backend, activation, weight):
 def test_weight_only_rejected():
     config = mx_config()
     config["compute"] = {"activation_dtype": "bf16", "weight_dtype": "mxfp8"}
-    with pytest.raises(ValueError, match="BF16/MXFP8 weight-only compute.*not supported"):
+    with pytest.raises(ValueError, match="compute.activation_dtype"):
         validate_config(config)
     with pytest.raises(ValueError, match="requires MXFP8 activations and MXFP4 weights"):
         preflight(config, "cpu")
@@ -85,7 +77,8 @@ def test_optional_compute_defaults_and_overrides():
     config = tiny_config()
     del config["compute"]
     validate_config(config)
-    assert tiny_config()["compute"] == {"activation_dtype": "bf16", "weight_dtype": "bf16"}
+    assert tiny_config()["compute"] == {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
+    assert tiny_config()["environment"]["compute_backend"] == "cutlass_flashinfer"
     document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
     with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
         resolved = load_config(
@@ -94,7 +87,6 @@ def test_optional_compute_defaults_and_overrides():
             model="small",
             input_name="decode",
             routing="balanced",
-            environment_overrides={"compute_backend": "cutlass_flashinfer"},
             compute_overrides={"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"},
         )
     assert resolved["compute"] == {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
@@ -128,6 +120,9 @@ def test_cli_compute_flags():
     assert (args.compute_backend, args.activation_dtype, args.weight_dtype) == ("cutlass_flashinfer", "mxfp8", "mxfp4")
     for flag, value in (
         ("--compute-backend", "flashinfer"),
+        ("--compute-backend", "torch"),
+        ("--activation-dtype", "bf16"),
+        ("--weight-dtype", "bf16"),
         ("--activation-dtype", "fp8"),
         ("--weight-dtype", "fp4"),
         ("--weight-dtype", "mxfp8"),
@@ -207,6 +202,8 @@ def test_initialization_failure_coordination_and_cleanup(monkeypatch, stage):
     if stage == "compile":
         monkeypatch.setattr(worker, "create_mlp", Mock(side_effect=RuntimeError("compiler failure")))
     else:
+        monkeypatch.setattr(worker, "create_mlp", Mock(return_value=Mock()))
+        monkeypatch.setattr(torch.cuda, "synchronize", Mock())
         monkeypatch.setattr(worker.Pipeline, "_initialize_compute", Mock(side_effect=RuntimeError("capture failure")))
     with pytest.raises(RuntimeError, match="(Runtime/compute|Compute) .*failed"):
         worker.Pipeline(config, 0, "cpu")
@@ -214,7 +211,7 @@ def test_initialization_failure_coordination_and_cleanup(monkeypatch, stage):
     assert backend.close.call_count == (stage == "capture")
 
 
-def test_torch_has_no_optional_compute_imports():
+def test_optional_compute_imports_are_lazy():
     source = """
 import builtins
 import torch
@@ -225,11 +222,7 @@ def guarded(name, *args, **kwargs):
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
 from moe_bench.compute_backends import create_mlp
-from moe_bench.tests.test_moe_bench import tiny_config
-config = tiny_config()
-config['model']['d_model'] = 16
-create_mlp(config, 0, [1, 0, 1, 0], 'cpu')
-from moe_bench import worker
+from moe_bench import reference, worker
 """
     subprocess.run([sys.executable, "-c", source], cwd=Path(__file__).resolve().parents[2], check=True, timeout=30)
 
@@ -291,43 +284,6 @@ def test_memory_estimate():
     assert estimate_tensor_bytes(config, counts) > estimate
 
 
-def unswizzle(sf, rows, k):
-    return (
-        sf.reshape(-1)
-        .view((rows + 127) // 128, (k // 32 + 3) // 4, 32, 4, 4)
-        .permute(0, 3, 2, 1, 4)
-        .reshape((rows + 127) // 128 * 128, (k // 32 + 3) // 4 * 4)[:rows, : k // 32]
-    )
-
-
-def decode(q, sf, bits, swizzled=False):
-    """Independent byte decoding, not a FlashInfer dequantization call."""
-    rows, cols = q.shape
-    k = cols * (2 if bits == 4 else 1)
-    codes = unswizzle(sf, rows, k) if swizzled else sf.reshape(rows, k // 32)
-    scales = torch.exp2(codes.to(torch.int32).float() - 127)
-    if bits == 4:
-        lut = torch.tensor([0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6], device=q.device)
-        values = lut[torch.stack((q & 15, q >> 4), dim=-1).reshape(rows, k).long()]
-    else:
-        values = q.float()
-    return (values.reshape(rows, k // 32, 32) * scales[:, :, None]).reshape(rows, k)
-
-
-def reference_quant8(x):
-    blocks = x.float().reshape(x.shape[0], -1, 32)
-    maximum = blocks.abs().amax(-1)
-    exponent = torch.ceil(torch.log2((maximum / 448).clamp_min(2.0**-126)))
-    scale = torch.exp2(exponent)
-    values = (blocks / scale[:, :, None]).clamp(-448, 448).to(torch.float8_e4m3fn).float()
-    return (values * scale[:, :, None]).reshape_as(x)
-
-
-def relative_error(actual, expected):
-    assert torch.isfinite(actual).all()
-    return ((actual.float() - expected.float()).norm() / expected.float().norm().clamp_min(1e-30)).item()
-
-
 @torch.inference_mode()
 def layout_reference(device):
     rows, k = 129, 256
@@ -346,15 +302,6 @@ def layout_reference(device):
         assert torch.equal(decode(q, sf, bits, swizzled), x.float())
         q, sf = quantizer(torch.zeros_like(x))
         assert not decode(q, sf, bits, swizzled).count_nonzero()
-
-
-def projection_reference(x, weights):
-    first, down = weights
-    proj = reference_quant8(x) @ first.T
-    chunks = proj.reshape(x.shape[0], -1, 2, 64)
-    up, gate = chunks[:, :, 0].reshape(x.shape[0], -1), chunks[:, :, 1].reshape(x.shape[0], -1)
-    act = reference_quant8(F.silu(gate) * up)
-    return (act @ down.T).bfloat16()
 
 
 @torch.inference_mode()
@@ -397,14 +344,14 @@ def multitile_reference(rank, device):
             assert torch.equal(actual, captured[expert, :count])
             assert torch.isnan(out[expert, count:]).all()
             weights = [decode(w[expert], sf[expert], 4, True) for w, sf in zip(mlp.weights, mlp.scales)]
-            expected = projection_reference(tokens[expert, :count], weights)
+            expected = expert_output(tokens[expert, :count], weights)
             assert relative_error(actual, expected) < 0.025
             all_act = decode(mlp.activation, mlp.activation_scales, 8, True)
             act = all_act[padded_offset : padded_offset + count]
-            first = reference_quant8(tokens[expert, :count]) @ weights[0].T
+            first = quantize_mxfp8(tokens[expert, :count]) @ weights[0].T
             chunks = first.reshape(count, -1, 2, 64)
             up, gate = chunks[:, :, 0].reshape(count, -1), chunks[:, :, 1].reshape(count, -1)
-            assert relative_error(act, reference_quant8(F.silu(gate) * up)) < 0.015
+            assert relative_error(act, quantize_mxfp8(F.silu(gate) * up)) < 0.015
             padded_offset += (count + 127) // 128 * 128
             arithmetic = relative_error(actual, act @ weights[1].T)
             assert arithmetic < 0.004
@@ -479,16 +426,10 @@ def distributed_reference(backend):
             decoded = [
                 [decode(w[e], sf[e], 4, True) for w, sf in zip(mlp.weights, mlp.scales)] for e in range(len(mlp.counts))
             ]
-            global_decoded = []
-            for expert in range(config["model"]["num_experts"]):
-                raw = make_expert_weights(config["model"], expert, config["benchmark"]["seed"], device)
-                # Build weight layout independently of production fc1_weight.
-                up, gate = raw[1].T, raw[0].T
-                first = torch.empty(2 * mlp.inter, mlp.hidden, device=device, dtype=torch.bfloat16)
-                for start in range(0, mlp.inter, 64):
-                    first[2 * start : 2 * start + 64] = up[start : start + 64]
-                    first[2 * start + 64 : 2 * start + 128] = gate[start : start + 64]
-                global_decoded.append([decode(*quantize_weights(w), 4, True) for w in (first, raw[2].T)])
+            global_decoded = [
+                decoded_expert_weights(config["model"], expert, config["benchmark"]["seed"], device)
+                for expert in range(config["model"]["num_experts"])
+            ]
             previous = None
             for revision in range(2):
                 pipeline.step()
@@ -496,7 +437,7 @@ def distributed_reference(backend):
                 graph_result = pipeline.output.clone()
                 for expert, count in enumerate(pipeline.counts):
                     if count:
-                        expected = projection_reference(pipeline.recv[expert, :count], decoded[expert])
+                        expected = expert_output(pipeline.recv[expert, :count], decoded[expert])
                         assert relative_error(pipeline.expert_output[expert, :count], expected) < 0.025
                 # Replay and eager must consume the same new BF16 dispatch data.
                 eager_experts = torch.empty_like(pipeline.expert_output)
@@ -513,7 +454,7 @@ def distributed_reference(backend):
                 for expert, weights in enumerate(global_decoded):
                     token, slot = (pipeline.ids == expert).nonzero(as_tuple=True)
                     if len(token):
-                        routes[token, slot] = projection_reference(pipeline.x[token], weights)
+                        routes[token, slot] = expert_output(pipeline.x[token], weights)
                 expected = torch.zeros_like(pipeline.x, dtype=torch.float32)
                 for destination in range(world if backend == "mscclpp" else 1):
                     partial = torch.zeros_like(expected)

@@ -85,10 +85,10 @@ class Pipeline:
             self.expert_output = torch.empty_like(self.recv)
             self.output = torch.empty_like(self.x)
             self.mlp = create_mlp(config, rank, self.counts, device)
-            if environment["compute_backend"] != "torch":
-                self.recv.zero_()
-                self.mlp(self.recv, self.expert_output)
-                torch.cuda.synchronize()
+            # Compile kernels before entering native collectives.
+            self.recv.zero_()
+            self.mlp(self.recv, self.expert_output)
+            torch.cuda.synchronize()
         except (RuntimeError, ImportError, ValueError, OSError, AssertionError) as exception:
             error = f"rank {rank}: {type(exception).__name__}: {exception}"
         errors = [None] * world
@@ -211,26 +211,24 @@ def make_timing_events(iterations):
 
 def run(config, run_dir, check=False):
     validate_config(config)
-    if check and config["environment"]["compute_backend"] != "torch":
-        raise ValueError("--check requires the Torch BF16 compute backend")
     rank, world, device = initialize()
     pipeline = None
     try:
         pipeline = Pipeline(config, rank, device)
         if check:
             if __package__:
-                from .workload import reference_output
+                from .reference import CHECK_RELATIVE_L2, reference_output, relative_error
             else:
-                from workload import reference_output
+                from reference import CHECK_RELATIVE_L2, reference_output, relative_error
             pipeline.step()
             torch.cuda.synchronize()
             expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-            valid = torch.tensor(int(torch.allclose(pipeline.output, expected, atol=0.025, rtol=0.025)))
+            valid = torch.tensor(int(relative_error(pipeline.output, expected) < CHECK_RELATIVE_L2))
             dist.all_reduce(valid, op=dist.ReduceOp.MIN)
             if not valid.item():
-                raise RuntimeError("Distributed output differs from the independent Torch BF16 reference")
+                raise RuntimeError("Distributed output differs from the independent MXFP8/MXFP4 reference")
             if rank == 0:
-                print("Distributed Torch BF16 reference check passed", flush=True)
+                print("Distributed MXFP8/MXFP4 reference check passed", flush=True)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
         for _ in range(settings["warmup"]):

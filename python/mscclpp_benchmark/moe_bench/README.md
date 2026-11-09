@@ -6,7 +6,8 @@ during each run. This measures one MoE layer, not full-model inference.
 
 ## Quick start
 
-From the repository root, in a CUDA 13 environment:
+From the repository root, in a CUDA 13 environment on Blackwell (SM100/SM103)
+GPUs:
 
 ```bash
 python3 -m venv .venv
@@ -16,15 +17,18 @@ python3 -m venv .venv
   --warmup 10 --iterations 10 --check
 ```
 
-- Uses MSCCL++ communication and PyTorch BF16 computation by default.
+- Uses MSCCL++ BF16 communication and FlashInfer MXFP8/MXFP4 expert
+  computation. The `moe-benchmark` extra installs the required
+  `flashinfer-python==0.7.1` and `nvidia-cutlass-dsl==4.8.0`.
 - Runs 16 input tokens per GPU, with eight experts and two experts per token.
 - Runs on **one node by default**, using all visible GPUs. Use idle GPUs;
   `CUDA_VISIBLE_DEVICES` is respected.
 - Use `--nodelist` for [multiple MNNVL-connected nodes](#multiple-nodes).
   The selected backend's topology and GPU-count limits still apply.
 - Starts workers automatically. Do not wrap the command in `torchrun` or `mpirun`.
-- Checks output against a reference before timing. The 10 warmup iterations
-  are excluded from the 10 measured iterations.
+- `--check` compares the output with an independent MXFP8/MXFP4 reference
+  before timing (relative L2 error below 3%). The 10 warmup iterations are
+  excluded from the 10 measured iterations.
 
 ## Results
 
@@ -96,33 +100,16 @@ fit available memory and backend limits.
 Unsupported combinations fail rather than selecting a fallback. NCCL-EP
 throughput requires an even token count per GPU.
 
-The default `--compute-backend torch` supports BF16 activations and weights.
-Optional FlashInfer compute requires Blackwell SM100/SM103, CUDA 13 PyTorch,
-and dimensions divisible by 128. Install the
-[optional dependencies](#optional-backend-setup), then run:
+Expert computation uses FlashInfer CuTe grouped GEMMs with MXFP8 activations
+and MXFP4 weights (`--compute-backend cutlass_flashinfer`, the only compute
+backend). It requires Blackwell SM100/SM103, CUDA 13 PyTorch, and model
+dimensions divisible by 128. Communication remains BF16; activation
+quantization is included in compute timing.
 
-```bash
-.venv/bin/python python/mscclpp_benchmark/moe_bench/run.py \
-  --model scaled_small --input decode --routing balanced \
-  --compute-backend cutlass_flashinfer \
-  --activation-dtype mxfp8 --weight-dtype mxfp4 --graph mlp
-```
+### Optional NCCL-EP setup
 
-Communication remains BF16; activation quantization is included in compute
-timing. `--check` is available only for Torch BF16, not FlashInfer compute.
-
-### Optional backend setup
-
-These packages are not needed for the default example:
-
-- **NCCL-EP:** install `nccl-extensions[cu13]` (or `[cu12]` for CUDA 12).
-  See [NVIDIA's installation instructions](https://github.com/NVIDIA/nccl-extensions#installation).
-- **FlashInfer MX compute:** requires CUDA 13 PyTorch, Blackwell SM100/SM103,
-  MXFP8 activations, and MXFP4 weights. The benchmark requires these versions:
-
-  ```bash
-  .venv/bin/python -m pip install 'flashinfer-python==0.7.1' 'nvidia-cutlass-dsl==4.8.0'
-  ```
+To use `--backend nccl`, install `nccl-extensions[cu13]`. See
+[NVIDIA's installation instructions](https://github.com/NVIDIA/nccl-extensions#installation).
 
 ## Multiple nodes
 
@@ -155,12 +142,12 @@ IPv4 addresses and SSH username:
 This builds MSCCL++ once and copies a checked bundle to each node. Targets
 install into new virtual environments without downloading packages or compiling
 MSCCL++. No shared filesystem is needed. Drivers and system services are not
-installed; optional NCCL-EP/FlashInfer packages are not bundled.
+installed; FlashInfer is bundled, but optional NCCL-EP packages are not.
 
 Deployments are stored under `~/.local/share/mscclpp/moe-bench/` without
 overwriting existing ones. Use `--build-only` to create a bundle without
 contacting nodes, or `--bundle "<bundle-path>"` to deploy an existing bundle.
-CUDA 13 is the default; use `--cuda 12` with a compatible build environment.
+Keep the default `--cuda 13`; FlashInfer compute requires CUDA 13 PyTorch.
 
 ### 2. Run one distributed workload
 
@@ -202,10 +189,11 @@ With `pytest` installed:
 .venv/bin/python -m pytest python/mscclpp_benchmark/moe_bench/tests -q
 ```
 
-GPU tests are opt-in. On two idle GPUs, run the MSCCL++ reference checks with:
+GPU tests are opt-in. On two idle Blackwell GPUs, run the MSCCL++ MXFP8/MXFP4
+reference checks with:
 
 ```bash
 GLOO_SOCKET_IFNAME=lo .venv/bin/python -m torch.distributed.run \
   --standalone --local-addr=127.0.0.1 --nnodes=1 --nproc-per-node=2 \
-  python/mscclpp_benchmark/moe_bench/tests/test_moe_bench.py mscclpp
+  python/mscclpp_benchmark/moe_bench/tests/test_compute_flashinfer.py mscclpp
 ```

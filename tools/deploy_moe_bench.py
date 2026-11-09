@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Build once and deploy the MSCCL++/Torch BF16 MoE benchmark over SSH."""
+"""Build once and deploy the MSCCL++ MoE benchmark over SSH."""
 
 import argparse
 from datetime import datetime, timezone

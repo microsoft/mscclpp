@@ -606,10 +606,7 @@ def test_invalid_distributed_cli_options(option, value):
 
 @pytest.mark.parametrize(
     "backend,check,compute,message",
-    [
-        ("nccl", False, "torch", "requires --backend mscclpp"),
-        ("mscclpp", True, "cutlass_flashinfer", "requires the Torch BF16"),
-    ],
+    [("nccl", False, "cutlass_flashinfer", "requires --backend mscclpp")],
 )
 def test_incompatible_distributed_options_rejected(monkeypatch, backend, check, compute, message):
     from .test_moe_bench import tiny_config

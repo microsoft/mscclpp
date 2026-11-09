@@ -159,6 +159,9 @@ def test_transfer_failure_is_not_reported_as_success(bundle, monkeypatch):
 def test_benchmark_uses_bundled_source_metadata(tmp_path, monkeypatch):
     import torch
     from .. import run as launcher
+    from ..compute_backends import flashinfer as compute_flashinfer
+
+    monkeypatch.setattr(compute_flashinfer, "preflight", lambda config, device: None)
 
     config_path = Path(launcher.__file__).with_name("configs.yaml")
     source = {"git_commit": "a" * 40, "git_dirty": False, "git_status": []}

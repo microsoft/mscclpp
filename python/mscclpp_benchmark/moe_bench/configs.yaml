@@ -52,12 +52,12 @@ environment:
   mode: latency
   layout: expert_major
   communication_backend: mscclpp
-  compute_backend: torch
+  compute_backend: cutlass_flashinfer
   cuda_graph: false
 
 compute:
-  activation_dtype: bf16
-  weight_dtype: bf16
+  activation_dtype: mxfp8
+  weight_dtype: mxfp4
 
 routing:
   balanced:
