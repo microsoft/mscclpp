@@ -48,8 +48,10 @@ add_library(mscclpp_gpunetio_obj OBJECT
 )
 target_link_libraries(mscclpp_gpunetio_obj PUBLIC mscclpp_gpunetio_headers)
 target_include_directories(mscclpp_gpunetio_obj PRIVATE ${GPUNETIO_HOME}/src)
-target_include_directories(mscclpp_gpunetio_obj SYSTEM PRIVATE ${GPU_INCLUDE_DIRS} ${IBVERBS_INCLUDE_DIRS}
-    ${MLX5_INCLUDE_DIRS})
+target_include_directories(mscclpp_gpunetio_obj SYSTEM PRIVATE ${GPU_INCLUDE_DIRS} ${IBVERBS_INCLUDE_DIRS})
+if(MLX5_FOUND)
+    target_include_directories(mscclpp_gpunetio_obj SYSTEM PRIVATE ${MLX5_INCLUDE_DIRS})
+endif()
 # Third-party code: do not enforce MSCCL++ warning flags.
 target_compile_options(mscclpp_gpunetio_obj PRIVATE -w)
 # Select the dlopen-based ibverbs/mlx5dv wrappers.

@@ -236,7 +236,7 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSe
 };
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Semaphore& semaphore)
-    : semaphore_(semaphore), expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()) {
+    : semaphore_(semaphore) {
   auto& conn = BaseConnection::getImpl(connection());
   if (!conn->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -246,6 +246,8 @@ MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Sem
   if (remoteInboundToken_.addr == 0 || remoteInboundToken_.addr % sizeof(uint64_t) != 0) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "remote semaphore token is not addressable in PortChannel device mode");
   }
+  CudaDeviceGuard deviceGuard(connection().localDevice().id);
+  expectedInboundToken_ = detail::gpuCallocUnique<uint64_t>();
 }
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(Communicator& communicator,

@@ -13,7 +13,7 @@
 #include "atomic_device.hpp"
 #endif
 
-#if defined(MSCCLPP_DEVICE_COMPILE) && defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #include <doca_gpunetio_device.h>
 
 #include "bulk_device.hpp"
@@ -26,7 +26,7 @@ struct alignas(16) GpuNetIoWqeSlot {
   uint64_t storage[8];
 };
 
-#if defined(MSCCLPP_DEVICE_COMPILE) && defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 template <uint32_t SmemSlots>
 MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_wqe* gpuNetIoWqeSlot(uint32_t slotIdx) {
   static_assert(SmemSlots > 0 && SmemSlots <= 1024);
@@ -76,7 +76,7 @@ struct GpuNetIoDeviceHandle {
                                  [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
                                  [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
                                  [[maybe_unused]] int slotIdx = -1) {
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     putImpl<docaConcurrency<Mode>(), SmemSlots>(dst, dstOffset, src, srcOffset, size, slotIdx);
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
@@ -96,7 +96,7 @@ struct GpuNetIoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void accumulate([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                         [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value,
                                         [[maybe_unused]] int slotIdx = -1) {
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     const uint64_t addr = dst.addr + dstOffset;
     MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
@@ -142,7 +142,7 @@ struct GpuNetIoDeviceHandle {
                                                [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& acc,
                                                [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value,
                                                [[maybe_unused]] int slotIdx = -1) {
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     const uint64_t accAddr = acc.addr + accOffset;
     MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
     if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
@@ -173,7 +173,7 @@ struct GpuNetIoDeviceHandle {
   /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
   template <auto Mode>
   MSCCLPP_DEVICE_INLINE void flush([[maybe_unused]] int64_t maxSpinCount) {
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = docaConcurrency<Mode>();
     const uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, sharing>(&q->sq_rsvd_index);
@@ -191,7 +191,7 @@ struct GpuNetIoDeviceHandle {
   }
 
  private:
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
   template <auto Mode>
   MSCCLPP_HOST_DEVICE_INLINE static constexpr doca_gpu_dev_verbs_resource_sharing_mode docaConcurrency() {
     using Concurrency = decltype(Mode);
@@ -368,7 +368,7 @@ struct GpuNetIoDeviceHandle {
     }
 #endif
   }
-#endif  // defined(MSCCLPP_USE_GPUNETIO)
+#endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 

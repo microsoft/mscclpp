@@ -14,7 +14,7 @@
 #include "logger.hpp"
 #include "registered_memory.hpp"
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 #include <infiniband/verbs.h>
 
 #include "common/doca_gpunetio_verbs_dev.h"
@@ -26,11 +26,11 @@
       THROW(NET, Error, ErrorCode::SystemError, "DOCA GPUNetIO call failed: ", #expr, " (", status__, ")"); \
     }                                                                                                       \
   } while (0)
-#endif  // defined(MSCCLPP_USE_GPUNETIO)
+#endif  // defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 
 namespace mscclpp {
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 
 GpuNetIoDevice::GpuNetIoDevice(IbCtx& ibCtx) { MSCCLPP_DOCA_THROW(doca_verbs_dev_open(ibCtx.getPd(), &dev_)); }
 
@@ -52,10 +52,6 @@ doca_gpu_t* GpuNetIoDevice::gpu(int gpuId) {
 }
 
 namespace {
-
-// Outstanding RDMA atomics per queue pair. Signals are atomics, so a limit of 1 would serialize back-to-back signals
-// on a queue pair to one per round trip.
-constexpr uint8_t kMaxRdAtomic = 8;
 
 doca_verbs_mtu_size docaMtu(int mtu) {
   switch (mtu) {
@@ -163,7 +159,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_path_mtu(attr, docaMtu(std::min(info_.mtu, remote.mtu))));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ah_attr(attr, ah));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_min_rnr_timer(attr, 12));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, kMaxRdAtomic));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_dest_rd_atomic(attr, 1));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_RQ_PSN |
                                               DOCA_VERBS_QP_ATTR_DEST_QP_NUM | DOCA_VERBS_QP_ATTR_PATH_MTU |
@@ -175,7 +171,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_ack_timeout(attr, 18));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_retry_cnt(attr, 7));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_rnr_retry(attr, 7));
-  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, kMaxRdAtomic));
+  MSCCLPP_DOCA_THROW(doca_verbs_qp_attr_set_max_rd_atomic(attr, 1));
   MSCCLPP_DOCA_THROW(doca_verbs_qp_modify(qp, attr,
                                           DOCA_VERBS_QP_ATTR_NEXT_STATE | DOCA_VERBS_QP_ATTR_SQ_PSN |
                                               DOCA_VERBS_QP_ATTR_ACK_TIMEOUT | DOCA_VERBS_QP_ATTR_RETRY_CNT |
@@ -188,7 +184,7 @@ void GpuNetIoQp::connect(const IbQpInfo& remote) {
   deviceQp_ = devQp;
 }
 
-#else  // !defined(MSCCLPP_USE_GPUNETIO)
+#else  // !defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 
 GpuNetIoDevice::GpuNetIoDevice(IbCtx&) {}
 
@@ -203,7 +199,7 @@ GpuNetIoQp::~GpuNetIoQp() = default;
 
 void GpuNetIoQp::connect(const IbQpInfo&) {}
 
-#endif  // !defined(MSCCLPP_USE_GPUNETIO)
+#endif  // !defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 
 GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint)
@@ -263,7 +259,7 @@ DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemor
     const auto& info = impl.getTransportInfo(remoteTransport_);
     if (!info.ibLocal) return {info.ibMrInfo.addr, htobe32(info.ibMrInfo.rkey)};
   }
-  return {};
+  THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
 }
 
 }  // namespace mscclpp

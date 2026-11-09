@@ -1584,7 +1584,7 @@ TEST(PortChannelFanInTest, AccumulateIb) {
 TEST(PortChannelFanInTest, AccumulateEthernet) { testFanIn(false, false, true); }
 
 // GPUNetIO (IbMode::Device): the same PortChannel workflows with GPU threads posting RDMA work requests directly.
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 // GPUNetIO submits through BlueFlame, which requires Hopper or newer. Check every rank before any connection setup so
 // that an unsupported rank cannot leave a supported peer waiting for its endpoint.
 inline void requireGpuNetIoCapableGpus() {
@@ -1609,9 +1609,9 @@ inline void requireGpuNetIoCapableGpus() {
   REQUIRE_IBVERBS;                   \
   requireIbRdmaAtomics(ibTransport); \
   requireGpuNetIoCapableGpus()
-#else  // !defined(MSCCLPP_USE_GPUNETIO)
+#else  // !defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #define REQUIRE_GPUNETIO SKIP_TEST() << "MSCCL++ was built without GPUNetIO (requires CUDA and InfiniBand)"
-#endif  // !defined(MSCCLPP_USE_GPUNETIO)
+#endif  // !defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 
 TEST(PortChannelOneToOneTest, PingPongIbDeviceMode) {
   REQUIRE_GPUNETIO;
