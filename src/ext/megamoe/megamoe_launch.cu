@@ -326,10 +326,8 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE requires 1 <= worldSize <= 72 and rank in [0, worldSize)");
   if (c.weightDtype != WeightDtype::Mxfp4 && c.weightDtype != WeightDtype::Mxfp8)
     throw std::invalid_argument("MegaMoE weightDtype must be Mxfp4 or Mxfp8");
-  const int minHidden = c.weightDtype == WeightDtype::Mxfp4 ? 4096 : 128;
-  if (c.maxTokens < 1 || c.hidden < minHidden || c.intermediate < 128 || c.hidden % 128 || c.intermediate % 128)
-    throw std::invalid_argument("MegaMoE requires positive capacity, hidden >= " + std::to_string(minHidden) +
-                                ", and H/I divisible by 128");
+  if (c.maxTokens < 1 || c.hidden < 4096 || c.intermediate < 128 || c.hidden % 128 || c.intermediate % 128)
+    throw std::invalid_argument("MegaMoE requires positive capacity, hidden >= 4096, and H/I divisible by 128");
   if (c.hidden > std::numeric_limits<int>::max() / 2 || c.intermediate > std::numeric_limits<int>::max() / 2)
     throw std::invalid_argument("MegaMoE H/I exceed 32-bit indexing");
   if (c.numExperts < 1 || c.numExperts % c.worldSize || c.topK < 1 || c.topK > 32 || c.topK > c.numExperts)
@@ -357,7 +355,13 @@ void validateNativeConfig(const NativeConfig& c) {
     if (detail::routingScratchHeaderInts(c.numExperts / c.worldSize, c.worldSize) > maxScratchInts)
       throw std::invalid_argument("MegaMoE local experts exceed the specialization's routing scratch");
   }
-  if (c.weightDtype == WeightDtype::Mxfp4) (void)detail::w4a8KernelEntry(c);
+  if (c.weightDtype == WeightDtype::Mxfp4) {
+    (void)detail::w4a8KernelEntry(c);
+  } else {
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+    (void)detail::w8a16KernelEntry<0>(c);
+#endif
+  }
 }
 
 SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
@@ -461,12 +465,12 @@ KernelResources preflightKernel(const NativeConfig& c) {
   }
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
   if (detail::isLocalExpert(c)) {
-    configure(detail::w8a16KernelEntry<1>(), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
+    configure(detail::w8a16KernelEntry<1>(c), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
               sizeof(detail::W8A16LocalParameters::SharedStorage));
-    configure(detail::w8a16KernelEntry<2>(), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
+    configure(detail::w8a16KernelEntry<2>(c), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
               sizeof(detail::W8A16LocalParameters::SharedStorage));
   } else {
-    configure(detail::w8a16KernelEntry<0>(), detail::W8A16Parameters::ThreadCount, detail::EntryRegisters,
+    configure(detail::w8a16KernelEntry<0>(c), detail::W8A16Parameters::ThreadCount, detail::EntryRegisters,
               sizeof(detail::W8A16Parameters::SharedStorage));
   }
 #endif
@@ -553,7 +557,7 @@ void launchW8A16Mode(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids
   std::array<cudaLaunchAttribute, 2> launchAttributes{};
   auto launch = detail::makeLaunchConfig(plan->ctas, Parameters::ThreadCount, plan->sharedBytes, stream,
                                          launchAttributes, Parameters::Tiles::ClusterSize);
-  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w8a16KernelEntry<LocalMode>(), params, tokens,
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w8a16KernelEntry<LocalMode>(params.config), params, tokens,
                                        static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
 }
 

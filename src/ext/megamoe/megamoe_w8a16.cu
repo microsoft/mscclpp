@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <array>
+#include <stdexcept>
+
 #include "megamoe_routing.cuh"
 #include "megamoe_w8a16_roles.cuh"
 
@@ -27,16 +30,16 @@ __device__ __forceinline__ int prepareW8A16TokenBlocks(const Parameters& p, int 
   }
 }
 
-template <bool Local, class Parameters>
+template <int Hidden, bool Local, class Parameters>
 __device__ __forceinline__ void finalizeW8A16Output(const Parameters& p, int tokens, __bfloat16* output) {
-  if constexpr (!Local) finishAndCombine<0>(p, tokens, output);
+  if constexpr (!Local) finishAndCombine<Hidden>(p, tokens, output);
 }
 
-template <int LocalMode = 0,
+template <int Hidden, int Intermediate, int LocalMode = 0,
           class Parameters = std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>>
 __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
-                             1) void megaMoeW8A16(__grid_constant__ const Parameters p, int tokens, __bfloat16* output,
-                                                  uint32_t* kernelEntrySignal, const int32_t* ids,
+                             1) void megaMoeW8A16(__grid_constant__ const Parameters parameters, int tokens,
+                                                  __bfloat16* output, uint32_t* kernelEntrySignal, const int32_t* ids,
                                                   const float* scores) {
   using namespace cute;
   constexpr bool Local = LocalMode != 0;
@@ -52,6 +55,10 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   extern __shared__ __align__(1024) char storage[];
   constexpr int ClusterSize = Parameters::Tiles::ClusterSize;
   constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
+  NativeConfig configuration = parameters.config;
+  configuration.hidden = Hidden;
+  configuration.intermediate = Intermediate;
+  auto p = w8a16ParameterView(parameters, configuration);
   auto& s = *reinterpret_cast<SharedStorage*>(storage);
   int warp = threadIdx.x / warpSize;
   int lane = threadIdx.x % warpSize;
@@ -119,8 +126,9 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
     runW8A16TransformRole<Local>(p, tokens, s, aPipeline, tPipeline, fc1, shape1, acc, hidden, intermediate, cluster,
                                  tasks);
   } else {
-    runW8A16TransferRole<Local, Schedule>(p, tokens, s, aPipeline, bPipeline, tPipeline, cPipeline, fc1, fc2, shape1,
-                                          shape2, acc, hidden, intermediate, warp, lane, cta, cluster, tasks);
+    runW8A16TransferRole<Hidden, Local, Schedule>(p, tokens, s, aPipeline, bPipeline, tPipeline, cPipeline, fc1, fc2,
+                                                  shape1, shape2, acc, hidden, intermediate, warp, lane, cta, cluster,
+                                                  tasks);
   }
   __syncthreads();
   if ((warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) ||
@@ -133,16 +141,44 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
     allocator.release_allocation_lock();
     allocator.free(s.tmem, 512);
   }
-  finalizeW8A16Output<Local>(p, tokens, output);
+  finalizeW8A16Output<Hidden, Local>(p, tokens, output);
+}
+
+struct W8A16KernelRegistration {
+  bool (*matches)(const NativeConfig&);
+  W8A16KernelEntry<0> routedEntry;
+  W8A16KernelEntry<1> localEntry;
+  W8A16KernelEntry<2> sharedEntry;
+};
+
+template <int Hidden, int Intermediate>
+constexpr W8A16KernelRegistration registerW8A16Kernel() {
+  static_assert(Hidden >= 4096);
+  return {[](const NativeConfig& config) { return config.hidden == Hidden && config.intermediate == Intermediate; },
+          megaMoeW8A16<Hidden, Intermediate, 0>, megaMoeW8A16<Hidden, Intermediate, 1>,
+          megaMoeW8A16<Hidden, Intermediate, 2>};
 }
 
 template <int LocalMode>
-W8A16KernelEntry<LocalMode> w8a16KernelEntry() {
-  return megaMoeW8A16<LocalMode>;
+W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config) {
+  static constexpr std::array kernels{registerW8A16Kernel<4096, 4608>(), registerW8A16Kernel<4096, 5120>(),
+                                      registerW8A16Kernel<4096, 6656>(), registerW8A16Kernel<8192, 4096>(),
+                                      registerW8A16Kernel<9216, 4096>(), registerW8A16Kernel<9216, 4608>()};
+  for (const auto& kernel : kernels) {
+    if (kernel.matches(config)) {
+      if constexpr (LocalMode == 0)
+        return kernel.routedEntry;
+      else if constexpr (LocalMode == 1)
+        return kernel.localEntry;
+      else
+        return kernel.sharedEntry;
+    }
+  }
+  throw std::invalid_argument("MegaMoE W8A16 H/I has no compiled specialization");
 }
 
-template W8A16KernelEntry<0> w8a16KernelEntry<0>();
-template W8A16KernelEntry<1> w8a16KernelEntry<1>();
-template W8A16KernelEntry<2> w8a16KernelEntry<2>();
+template W8A16KernelEntry<0> w8a16KernelEntry<0>(const NativeConfig&);
+template W8A16KernelEntry<1> w8a16KernelEntry<1>(const NativeConfig&);
+template W8A16KernelEntry<2> w8a16KernelEntry<2>(const NativeConfig&);
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

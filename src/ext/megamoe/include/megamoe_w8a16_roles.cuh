@@ -61,7 +61,7 @@ __device__ __forceinline__ void loadW8A16ActivationTiles(const P& p, const Task&
   }
 }
 
-template <bool Local, class Schedule, class P, class Storage, class LoadA, class LoadB, class Transform,
+template <int Hidden, bool Local, class Schedule, class P, class Storage, class LoadA, class LoadB, class Transform,
           class Accumulate, class Mainloop, class Accumulators>
 __device__ __forceinline__ void runW8A16TransferRole(const P& p, int tokens, Storage& s, LoadA& aPipeline,
                                                      LoadB& bPipeline, Transform& tPipeline, Accumulate& cPipeline,
@@ -73,7 +73,7 @@ __device__ __forceinline__ void runW8A16TransferRole(const P& p, int tokens, Sto
   using Types = typename P::Collective;
   cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
   if constexpr (!Local) {
-    runDispatchRole<0, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
+    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
   }
   if (warp == Schedule::LoadAWarp && lane == 0) {
     auto state = cutlass::make_producer_start_state<LoadA>();

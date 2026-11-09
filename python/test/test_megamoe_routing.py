@@ -335,8 +335,8 @@ def test_native_routing_capacity_boundary(routing_runtime, top_k, weight_dtype):
     runtime, torch = routing_runtime, routing_runtime.torch
     routing_slots = 4096
     capacity = routing_slots // (runtime.world * top_k)
-    hidden = 4096 if weight_dtype == "mxfp4" else 128
-    intermediate = 6656 if weight_dtype == "mxfp4" else 128
+    hidden = 4096
+    intermediate = 6656
     configs = [
         runtime.config(
             capacity + extra, top_k=top_k, hidden=hidden, intermediate=intermediate, weight_dtype=weight_dtype

@@ -166,9 +166,9 @@ constexpr W4A8KernelRegistration registerW4A8Kernel() {
 }
 
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing) {
-  static constexpr std::array kernels{registerW4A8Kernel<4096, 5120>(), registerW4A8Kernel<4096, 6656>(),
-                                      registerW4A8Kernel<8192, 4096>(), registerW4A8Kernel<9216, 4096>(),
-                                      registerW4A8Kernel<9216, 4608>()};
+  static constexpr std::array kernels{registerW4A8Kernel<4096, 4608>(), registerW4A8Kernel<4096, 5120>(),
+                                      registerW4A8Kernel<4096, 6656>(), registerW4A8Kernel<8192, 4096>(),
+                                      registerW4A8Kernel<9216, 4096>(), registerW4A8Kernel<9216, 4608>()};
   const bool staticFp8 = config.activationDtype == ActivationDtype::Fp8Static;
   for (const auto& kernel : kernels) {
     if (kernel.matches(config))

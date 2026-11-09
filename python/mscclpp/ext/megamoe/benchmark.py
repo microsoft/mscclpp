@@ -310,7 +310,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tokens", type=int, default=32, help="tokens per rank")
     parser.add_argument("--hidden", type=int, default=4096)
-    parser.add_argument("--intermediate", type=int, default=4352, help="post-SwiGLU intermediate width")
+    parser.add_argument("--intermediate", type=int, default=4608, help="post-SwiGLU intermediate width")
     parser.add_argument("--experts", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=7)
     parser.add_argument("--sm-margin", type=int, default=32)
@@ -422,15 +422,15 @@ def main():
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
-    is_w8a16 = args.weight_dtype == "mxfp8" or args.activation_dtype == "bf16"
-    if not is_w8a16 and (args.hidden, args.intermediate) not in (
+    if (args.hidden, args.intermediate) not in (
+        (4096, 4608),
         (4096, 5120),
         (4096, 6656),
         (8192, 4096),
         (9216, 4096),
         (9216, 4608),
     ):
-        parser.error("W4A8 H/I must be 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
+        parser.error("MegaMoE H/I must be 4096/4608, 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:

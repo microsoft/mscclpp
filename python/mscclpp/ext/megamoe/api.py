@@ -79,14 +79,13 @@ class MegaMoEConfig:
             object.__setattr__(self, "activation_dtype", "bf16")
         elif self.activation_dtype == "bf16" and self.weight_dtype == "mxfp4":
             object.__setattr__(self, "weight_dtype", "mxfp8")
+        if self.hidden < 4096:
+            raise ValueError("MegaMoE requires hidden >= 4096")
         if self.weight_dtype == "mxfp8":
             if self.activation_dtype != "bf16" or self.activation_scale is not None:
                 raise ValueError("weight_dtype='mxfp8' requires activation_dtype='bf16' without activation_scale")
-        else:
-            if self.hidden < 4096:
-                raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
-            if (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
-                raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
+        elif (self.world_size, self.num_experts, self.top_k) == (1, 1, 1):
+            raise ValueError("MXFP4/MXFP8 currently supports routed experts only")
         if self.activation_scale is not None:
             if (
                 isinstance(self.activation_scale, bool)

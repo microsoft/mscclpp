@@ -217,6 +217,11 @@ __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig confi
   return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
+template <class P>
+__device__ __forceinline__ auto w8a16ParameterView(const P& p, NativeConfig config) {
+  return w4a8ParameterView<ActivationDtype::Bf16>(p, config);
+}
+
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 
@@ -225,7 +230,7 @@ using W8A16KernelEntry = void (*)(std::conditional_t<LocalMode != 0, W8A16LocalP
                                   __bfloat16*, uint32_t*, const int32_t*, const float*);
 
 template <int LocalMode = 0>
-W8A16KernelEntry<LocalMode> w8a16KernelEntry();
+W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config);
 
 // Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
 // RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached

@@ -81,8 +81,8 @@ def test_w8a16_config_and_local_expert():
     local_cfg = _config(
         world_size=1,
         max_tokens=16,
-        hidden=128,
-        intermediate=128,
+        hidden=4096,
+        intermediate=4608,
         num_experts=1,
         top_k=1,
         weight_dtype="mxfp8",
@@ -186,8 +186,8 @@ def test_native_w8a16_local_and_shared_expert_graph():
     config = _config(
         world_size=1,
         max_tokens=33,
-        hidden=128,
-        intermediate=128,
+        hidden=4096,
+        intermediate=4608,
         num_experts=1,
         top_k=1,
         sm_margin=32,
@@ -196,14 +196,14 @@ def test_native_w8a16_local_and_shared_expert_graph():
     bootstrap = TcpBootstrap.create(0, 1)
     bootstrap.initialize(TcpBootstrap.create_unique_id())
     generator = torch.Generator(device=device).manual_seed(1729)
-    source1 = torch.randn((1, 256, 128), generator=generator, device=device).mul_(0.03125)
-    source2 = torch.randn((1, 128, 128), generator=generator, device=device).mul_(0.03125)
+    source1 = torch.randn((1, 9216, 4096), generator=generator, device=device).mul_(0.03125)
+    source2 = torch.randn((1, 4096, 4608), generator=generator, device=device).mul_(0.03125)
     fc1, scale1 = quantize_mxfp8(source1)
     fc2, scale2 = quantize_mxfp8(source2)
     first = dequantize_mxfp8(fc1, scale1, dtype=torch.bfloat16).float()[0]
     second = dequantize_mxfp8(fc2, scale2, dtype=torch.bfloat16).float()[0]
     context = MegaMoE(config, Communicator(bootstrap), fc1, scale1, fc2, scale2)
-    inputs = torch.randn((33, 128), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
+    inputs = torch.randn((33, 4096), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
     ids = torch.zeros((33, 1), dtype=torch.int32, device=device)
     ids[::5] = -1
     scores = torch.rand((33, 1), generator=generator, device=device, dtype=torch.float32)
@@ -240,8 +240,8 @@ def test_native_w8a16_routed_and_graph():
     config = _config(
         world_size=1,
         max_tokens=65,
-        hidden=384,
-        intermediate=640,
+        hidden=4096,
+        intermediate=4608,
         num_experts=4,
         top_k=2,
         sm_margin=sm_count - 8,
@@ -251,16 +251,29 @@ def test_native_w8a16_routed_and_graph():
     bootstrap = TcpBootstrap.create(0, 1)
     bootstrap.initialize(TcpBootstrap.create_unique_id())
     generator = torch.Generator(device=device).manual_seed(4189)
-    source1 = torch.randn((4, 1280, 384), generator=generator, device=device).mul_(0.03125)
-    source2 = torch.randn((4, 384, 640), generator=generator, device=device).mul_(0.03125)
+    source1 = torch.randn((4, 9216, 4096), generator=generator, device=device).mul_(0.03125)
+    source2 = torch.randn((4, 4096, 4608), generator=generator, device=device).mul_(0.03125)
     fc1, sf1 = quantize_mxfp8(source1)
     fc2, sf2 = quantize_mxfp8(source2)
+    with pytest.raises(ValueError, match="has no compiled specialization"):
+        bad_cfg = _config(
+            world_size=1,
+            max_tokens=65,
+            hidden=4096,
+            intermediate=4352,
+            num_experts=4,
+            top_k=2,
+            weight_dtype="mxfp8",
+        )
+        bad_fc1, bad_sf1 = quantize_mxfp8(torch.zeros((4, 8704, 4096), device=device))
+        bad_fc2, bad_sf2 = quantize_mxfp8(torch.zeros((4, 4096, 4352), device=device))
+        MegaMoE(bad_cfg, Communicator(bootstrap), bad_fc1, bad_sf1, bad_fc2, bad_sf2, tag=18050)
     context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
     assert context.effective_kernel_config["tile_n"] == 128
     assert context.effective_kernel_config["transform_stages"] == 4
     first = dequantize_mxfp8(fc1, sf1, dtype=torch.bfloat16).float()
     second = dequantize_mxfp8(fc2, sf2, dtype=torch.bfloat16).float()
-    inputs = torch.randn((65, 384), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
+    inputs = torch.randn((65, 4096), generator=generator, device=device, dtype=torch.bfloat16).mul_(0.125)
     ids = torch.arange(65, device=device, dtype=torch.int32).remainder(4)
     ids = torch.stack((ids, (ids + 1).remainder(4)), dim=1).contiguous()
     scores = torch.rand((65, 2), generator=generator, device=device)
@@ -268,7 +281,7 @@ def test_native_w8a16_routed_and_graph():
     output = torch.empty_like(inputs)
 
     def reference(tokens):
-        partial = torch.zeros((tokens, 2, 384), device=device, dtype=torch.float32)
+        partial = torch.zeros((tokens, 2, 4096), device=device, dtype=torch.float32)
         for expert in range(4):
             rows, slots = torch.where(ids[:tokens] == expert)
             if rows.numel() == 0:
@@ -302,8 +315,8 @@ def test_native_w8a16_routed_and_graph():
     config_combine = _config(
         world_size=1,
         max_tokens=65,
-        hidden=384,
-        intermediate=640,
+        hidden=4096,
+        intermediate=4608,
         num_experts=4,
         top_k=2,
         sm_margin=sm_count - 8,
@@ -314,7 +327,7 @@ def test_native_w8a16_routed_and_graph():
     context_combine = MegaMoE(config_combine, Communicator(bootstrap), fc1, sf1, fc2, sf2, tag=18100)
 
     def reference_combine(tokens):
-        partial = torch.zeros((tokens, 2, 384), device=device, dtype=torch.float32)
+        partial = torch.zeros((tokens, 2, 4096), device=device, dtype=torch.float32)
         for expert in range(4):
             rows, slots = torch.where(ids[:tokens] == expert)
             if rows.numel() == 0:
