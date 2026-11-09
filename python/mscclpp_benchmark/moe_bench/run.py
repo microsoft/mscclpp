@@ -126,7 +126,7 @@ def main():
         command = commands[0]
     elif args.check:
         command.append("--check")
-    root = Path(__file__).resolve().parents[4]
+    root = Path(__file__).resolve().parents[3]
     deployment = root / "moe_deployment.json"
     if deployment.is_file():
         with deployment.open() as stream:

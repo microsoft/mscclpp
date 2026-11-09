@@ -54,7 +54,7 @@ def test_platform_probe_matches_local(monkeypatch):
 def bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(deploy, "platform_info", lambda: {"python": [3, 12], "machine": "aarch64"})
     root = tmp_path / "source"
-    benchmark = root / "test/python/ep/moe_bench"
+    benchmark = root / "python/mscclpp_benchmark/moe_bench"
     benchmark.mkdir(parents=True)
     (benchmark / "run.py").write_text("benchmark")
     (root / "LICENSE").write_text("MIT")
@@ -72,7 +72,7 @@ def bundle(tmp_path, monkeypatch):
             wheels = Path(command[command.index("--dest") + 1])
             (wheels / "torch-1.0-py3-none-any.whl").write_bytes(b"dependency wheel")
         else:
-            return SimpleNamespace(stdout="test/python/ep/moe_bench/run.py\0")
+            return SimpleNamespace(stdout="python/mscclpp_benchmark/moe_bench/run.py\0")
 
     monkeypatch.setattr(deploy, "run", fake_run)
     path = deploy.build_bundle(root, tmp_path / "output", "13")
@@ -98,7 +98,7 @@ def test_bundle_contents_and_offline_install(bundle, tmp_path, monkeypatch):
     assert "--find-links" in commands[0]
     assert "[cuda13,moe-benchmark]" in commands[0][-1]
     assert "torch.cuda.is_available()" in commands[1][-1]
-    (destination / "test/python/ep/moe_bench/run.py").write_text("corrupt")
+    (destination / "python/mscclpp_benchmark/moe_bench/run.py").write_text("corrupt")
     with pytest.raises(ValueError, match="integrity"):
         deploy.install_bundle(destination)
 
@@ -163,7 +163,7 @@ def test_benchmark_uses_bundled_source_metadata(tmp_path, monkeypatch):
     config_path = Path(launcher.__file__).with_name("configs.yaml")
     source = {"git_commit": "a" * 40, "git_dirty": False, "git_status": []}
     (tmp_path / deploy.MANIFEST).write_text(json.dumps({"source": source}))
-    monkeypatch.setattr(launcher, "__file__", str(tmp_path / "test/python/ep/moe_bench/run.py"))
+    monkeypatch.setattr(launcher, "__file__", str(tmp_path / "python/mscclpp_benchmark/moe_bench/run.py"))
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
     monkeypatch.setattr(
         sys,

@@ -11,7 +11,7 @@ From the repository root, in a CUDA 13 environment:
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[cuda13,moe-benchmark]'
-.venv/bin/python test/python/ep/moe_bench/run.py \
+.venv/bin/python python/mscclpp_benchmark/moe_bench/run.py \
   --model small --input decode --routing balanced \
   --warmup 10 --iterations 10 --check
 ```
@@ -96,10 +96,10 @@ throughput requires an even token count per GPU.
 The default `--compute-backend torch` supports BF16 activations and weights.
 Optional FlashInfer compute requires Blackwell SM100/SM103, CUDA 13 PyTorch,
 and dimensions divisible by 128. Install the
-[optional dependencies](../../../../src/ext/ep/README.md#optional-backend-setup), then run:
+[optional dependencies](../../../src/ext/ep/README.md#optional-backend-setup), then run:
 
 ```bash
-.venv/bin/python test/python/ep/moe_bench/run.py \
+.venv/bin/python python/mscclpp_benchmark/moe_bench/run.py \
   --model scaled_small --input decode --routing balanced \
   --compute-backend cutlass_flashinfer \
   --activation-dtype mxfp8 --weight-dtype mxfp4 --graph mlp
@@ -151,7 +151,7 @@ CUDA 13 is the default; use `--cuda 12` with a compatible build environment.
 From the controller:
 
 ```bash
-.venv/bin/python test/python/ep/moe_bench/run.py \
+.venv/bin/python python/mscclpp_benchmark/moe_bench/run.py \
   --nodelist "<node-1-ip>,<node-2-ip>" --user "<ssh-user>" \
   --model small --input decode --routing balanced \
   --warmup 10 --iterations 10 --check
@@ -183,9 +183,9 @@ alone do not prove communication works.
 With `pytest` installed:
 
 ```bash
-.venv/bin/python -m pytest test/python/ep/moe_bench/tests -q
+.venv/bin/python -m pytest python/mscclpp_benchmark/moe_bench/tests -q
 ```
 
 GPU tests are skipped by default. See the
-[GPU test command](../../../../src/ext/ep/README.md#benchmark-tests) and run it
+[GPU test command](../../../src/ext/ep/README.md#benchmark-tests) and run it
 only on idle GPUs.

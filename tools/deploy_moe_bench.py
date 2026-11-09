@@ -122,7 +122,7 @@ def build_bundle(root, output_dir, cuda):
             ]
         )
         tracked = run(
-            ["git", "-C", str(root), "ls-files", "-z", "--", "test/python/ep/moe_bench"],
+            ["git", "-C", str(root), "ls-files", "-z", "--", "python/mscclpp_benchmark/moe_bench"],
             capture_output=True,
             text=True,
         ).stdout.split("\0")
