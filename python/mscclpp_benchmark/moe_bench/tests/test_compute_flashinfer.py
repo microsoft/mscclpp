@@ -29,7 +29,15 @@ if __package__:
     )
     from ..config import SUPPORTED_LAYOUTS, load_config, validate_config
     from ..memory import estimate_tensor_bytes
-    from ..reference import decode, decoded_expert_weights, expert_output, quantize_mxfp8, relative_error, unswizzle
+    from ..reference import (
+        compare_outputs,
+        decode,
+        decoded_expert_weights,
+        expert_output,
+        quantize_mxfp8,
+        relative_error,
+        unswizzle,
+    )
     from ..workload import make_expert_weights
     from .test_moe_bench import assert_idle_gpus, tiny_config
 else:
@@ -45,7 +53,15 @@ else:
     )
     from config import SUPPORTED_LAYOUTS, load_config, validate_config
     from memory import estimate_tensor_bytes
-    from reference import decode, decoded_expert_weights, expert_output, quantize_mxfp8, relative_error, unswizzle
+    from reference import (
+        compare_outputs,
+        decode,
+        decoded_expert_weights,
+        expert_output,
+        quantize_mxfp8,
+        relative_error,
+        unswizzle,
+    )
     from test_moe_bench import assert_idle_gpus, tiny_config
     from workload import make_expert_weights
 
@@ -423,6 +439,7 @@ def distributed_reference(backend):
         multitile_reference(rank, device)
         combinations = [(mode, layout) for mode, layouts in SUPPORTED_LAYOUTS[backend].items() for layout in layouts]
         pipelines = comparisons = 0
+        worst = 0.0
         for (mode, layout), graph, routing in itertools.product(
             combinations,
             (False, "mlp", "layer"),
@@ -496,7 +513,9 @@ def distributed_reference(backend):
                             weight = weight.masked_fill(pipeline.ids[:, slot] // len(mlp.counts) != destination, 0)
                         partial.addcmul_(routes[:, slot].float(), weight[:, None])
                     expected.add_(partial.bfloat16().float() if backend == "mscclpp" else partial)
-                assert relative_error(graph_result, expected.bfloat16()) < 0.03
+                stats, first = compare_outputs(graph_result, expected.bfloat16())
+                assert stats["mismatched_elements"] == stats["non_finite_elements"] == 0, (stats, first)
+                worst = max(worst, stats["max_tolerance_fraction"])
                 if previous is not None:
                     assert not torch.equal(previous, graph_result)
                 previous = graph_result
@@ -510,7 +529,8 @@ def distributed_reference(backend):
             pipeline = None
         if rank == 0:
             print(
-                f"MX distributed {backend}: {pipelines} pipelines, {comparisons} changed-input comparisons passed",
+                f"MX distributed {backend}: {pipelines} pipelines, {comparisons} changed-input comparisons passed; "
+                f"worst element used {worst:.1%} of its tolerance",
                 flush=True,
             )
     finally:

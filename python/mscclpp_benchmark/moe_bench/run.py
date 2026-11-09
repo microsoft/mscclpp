@@ -6,6 +6,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 import getpass
 from pathlib import Path
@@ -60,9 +61,15 @@ def parse_args(argv=None):
         action="store_true",
         help="Check output against an independent quantization-aware reference before timing",
     )
+    parser.add_argument("--rtol", type=float, help="--check relative tolerance per element (default 0.05)")
+    parser.add_argument("--atol", type=float, help="--check absolute tolerance per element (default 0.01)")
     args = parser.parse_args(argv)
     if not 1 <= args.master_port <= 65535 or args.timeout <= 0:
         parser.error("--master-port must be in [1, 65535] and --timeout must be positive")
+    for name in ("rtol", "atol"):
+        value = getattr(args, name)
+        if value is not None and (not args.check or not math.isfinite(value) or value < 0):
+            parser.error(f"--{name} requires --check and a finite nonnegative value")
     return args
 
 
@@ -167,6 +174,8 @@ def main():
             "gloo_socket_ifname": worker_env["GLOO_SOCKET_IFNAME"],
         },
     }
+    if args.check:
+        run["check_tolerance"] = {"rtol": args.rtol, "atol": args.atol}
     if nodes:
         run["invocation"]["worker_commands"] = [shlex.join(item) for item in commands]
         run["metadata"]["nodes"] = nodes

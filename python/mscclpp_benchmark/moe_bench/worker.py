@@ -246,26 +246,66 @@ def make_timing_events(iterations):
     return events
 
 
-def run(config, run_dir, check=False):
+def check_output(pipeline, config, rank, world, rtol, atol):
+    """Compare every rank's output element-wise; all ranks agree on the verdict."""
+    if __package__:
+        from .reference import compare_outputs, reference_output
+    else:
+        from reference import compare_outputs, reference_output
+    expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
+    stats, first = compare_outputs(pipeline.output, expected, rtol, atol)
+    ranks = [None] * world
+    dist.all_gather_object(ranks, {"rank": rank, **stats, "first_mismatch": first})
+    total = sum(item["total_elements"] for item in ranks)
+    summary = {
+        "status": "passed",
+        "rtol": rtol,
+        "atol": atol,
+        "max_tolerance_fraction": max(item["max_tolerance_fraction"] for item in ranks),
+        "max_abs_error": max(item["max_abs_error"] for item in ranks),
+        "mean_abs_error": sum(item["mean_abs_error"] * item["total_elements"] for item in ranks) / total,
+        "mismatched_elements": sum(item["mismatched_elements"] for item in ranks),
+        "non_finite_elements": sum(item["non_finite_elements"] for item in ranks),
+        "total_elements": total,
+        "max_rank_relative_l2": max(
+            float("inf") if item["relative_l2"] is None else item["relative_l2"] for item in ranks
+        ),
+    }
+    if summary["mismatched_elements"] or summary["non_finite_elements"]:
+        failed = next(item for item in ranks if item["first_mismatch"] is not None or item["non_finite_elements"])
+        raise RuntimeError(
+            f"Distributed output differs from the independent MXFP8/MXFP4 reference: "
+            f"{summary['mismatched_elements']}/{total} elements outside rtol={rtol}, atol={atol} "
+            f"({summary['non_finite_elements']} non-finite); max_abs_error={summary['max_abs_error']:.4g}; "
+            f"first mismatch on rank {failed['rank']}: {failed['first_mismatch']}"
+        )
+    if rank == 0:
+        print(
+            f"Distributed MXFP8/MXFP4 reference check passed: 0/{total} elements outside "
+            f"rtol={rtol}, atol={atol}; worst element used {summary['max_tolerance_fraction']:.1%} of its "
+            f"tolerance; max_abs_error={summary['max_abs_error']:.4g}, mean_abs_error={summary['mean_abs_error']:.4g}",
+            flush=True,
+        )
+    return summary
+
+
+def run(config, run_dir, check=False, rtol=None, atol=None):
     validate_config(config)
     rank, world, device = initialize()
     pipeline = None
     try:
         pipeline = Pipeline(config, rank, device)
+        correctness = None
         if check:
             if __package__:
-                from .reference import CHECK_RELATIVE_L2, reference_output, relative_error
+                from .reference import CHECK_ATOL, CHECK_RTOL
             else:
-                from reference import CHECK_RELATIVE_L2, reference_output, relative_error
+                from reference import CHECK_ATOL, CHECK_RTOL
             pipeline.step()
             torch.cuda.synchronize()
-            expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-            valid = torch.tensor(int(relative_error(pipeline.output, expected) < CHECK_RELATIVE_L2))
-            dist.all_reduce(valid, op=dist.ReduceOp.MIN)
-            if not valid.item():
-                raise RuntimeError("Distributed output differs from the independent MXFP8/MXFP4 reference")
-            if rank == 0:
-                print("Distributed MXFP8/MXFP4 reference check passed", flush=True)
+            rtol = CHECK_RTOL if rtol is None else rtol
+            atol = CHECK_ATOL if atol is None else atol
+            correctness = check_output(pipeline, config, rank, world, rtol, atol)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
         stream = torch.cuda.current_stream()
@@ -303,6 +343,7 @@ def run(config, run_dir, check=False):
                 "torch_version": torch.__version__,
                 "cuda_version": torch.version.cuda,
                 "reference_check": "passed" if check else "not_requested",
+                "correctness": correctness,
                 **pipeline.backend.metadata,
                 **pipeline.mlp.metadata,
                 "cuda_graph_scope": (
@@ -337,8 +378,9 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     with (args.run_dir / "run.json").open() as stream:
-        config = json.load(stream)["config"]
-    run(config, args.run_dir, args.check)
+        document = json.load(stream)
+    tolerance = document.get("check_tolerance") or {}
+    run(document["config"], args.run_dir, args.check, tolerance.get("rtol"), tolerance.get("atol"))
 
 
 if __name__ == "__main__":

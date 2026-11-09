@@ -480,3 +480,59 @@ def assert_idle_gpus():
     for row in csv.reader(usage.splitlines()):
         _, used, free, utilization = map(int, row)
         assert used <= 64 and free > 1024 and utilization == 0, "Shared GPUs not idle; refusing to run"
+
+
+def test_elementwise_check_catches_one_bad_token_at_prefill_scale():
+    from ..reference import compare_outputs
+
+    generator = torch.Generator().manual_seed(0)
+    expected = torch.randn(4096, 1024, generator=generator)
+    good = expected * (1 + 0.002 * torch.randn(expected.shape, generator=generator))
+    stats, first = compare_outputs(good, expected)
+    assert stats["mismatched_elements"] == stats["non_finite_elements"] == 0 and first is None
+    assert 0 < stats["max_tolerance_fraction"] < 1
+    bad = good.clone()
+    bad[7] = torch.randn(1024, generator=generator)
+    stats, first = compare_outputs(bad, expected)
+    # One wrong token barely moves the aggregate error, but every element is checked.
+    assert stats["relative_l2"] < 0.03
+    assert stats["mismatched_elements"] > 900 and first["token"] == 7
+    bad[0, 0] = float("nan")
+    stats, _ = compare_outputs(bad, expected)
+    assert stats["non_finite_elements"] == 1 and stats["relative_l2"] is None
+
+
+@pytest.mark.parametrize("failing_rank", [None, 1])
+def test_check_output_agrees_across_ranks(monkeypatch, failing_rank):
+    from .. import reference, worker
+
+    expected = torch.ones(4, 8)
+    pipeline = SimpleNamespace(x=None, ids=None, weights=None, output=expected.clone())
+    monkeypatch.setattr(reference, "reference_output", lambda *args: expected)
+
+    def gather(values, value):
+        for rank in range(2):
+            stats, first = reference.compare_outputs(
+                expected + (1 if rank == failing_rank else 0) * (torch.arange(32).reshape(4, 8) == 9), expected
+            )
+            values[rank] = {"rank": rank, **stats, "first_mismatch": first}
+
+    monkeypatch.setattr(worker.dist, "all_gather_object", gather)
+    if failing_rank is None:
+        summary = worker.check_output(pipeline, {}, 0, 2, 0.05, 0.01)
+        assert summary["status"] == "passed" and summary["total_elements"] == 64
+        assert (summary["rtol"], summary["atol"], summary["mismatched_elements"]) == (0.05, 0.01, 0)
+    else:
+        with pytest.raises(RuntimeError, match=r"1/64 elements .* rank 1: \{'token': 1, 'column': 1"):
+            worker.check_output(pipeline, {}, 0, 2, 0.05, 0.01)
+
+
+def test_check_tolerance_options():
+    from ..run import parse_args
+
+    base = ["--model", "small", "--input", "decode", "--routing", "balanced"]
+    args = parse_args(base + ["--check", "--rtol", "0.1", "--atol", "0"])
+    assert (args.rtol, args.atol) == (0.1, 0.0)
+    for extra in (["--rtol", "0.1"], ["--check", "--atol", "-1"], ["--check", "--rtol", "nan"]):
+        with pytest.raises(SystemExit):
+            parse_args(base + extra)

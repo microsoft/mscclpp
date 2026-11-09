@@ -26,9 +26,9 @@ python3 -m venv .venv
 - Use `--nodelist` for [multiple MNNVL-connected nodes](#multiple-nodes).
   The selected backend's topology and GPU-count limits still apply.
 - Starts workers automatically. Do not wrap the command in `torchrun` or `mpirun`.
-- `--check` compares the output with an independent MXFP8/MXFP4 reference
-  before timing (relative L2 error below 3%). The 10 warmup iterations are
-  excluded from the 10 measured iterations.
+- `--check` compares every output element with an independent MXFP8/MXFP4
+  reference before timing (see [Correctness check](#correctness-check)). The 10
+  warmup iterations are excluded from the 10 measured iterations.
 
 ## Results
 
@@ -44,6 +44,19 @@ Use `--output-dir` to change the location. Analyze only completed runs.
 CUDA-event timings exclude warmup but include launch gaps, waits for other GPUs,
 and any layout conversion or quantization. Global total is the maximum GPU
 duration per iteration, not the sum of GPU times.
+
+### Correctness check
+
+With `--check`, each GPU computes its expected output locally with plain PyTorch:
+it regenerates the routed experts' weights, applies the kernels' MXFP4 weight and
+MXFP8 activation rounding, runs SwiGLU, and combines routes as the selected
+communication backend does. No dispatch, combine, or FlashInfer kernel is used.
+Every element must satisfy `|actual - expected| <= atol + rtol * |expected|`
+(defaults `rtol=0.05`, `atol=0.01`; override with `--rtol` and `--atol`), and
+non-finite values fail. All GPUs agree on the result; a failure reports the
+first mismatching rank, token, and column. `run.json` records `correctness`:
+maximum and mean absolute error, mismatched elements, and
+`max_tolerance_fraction` (how much of its tolerance the worst element used).
 
 ### CUDA graphs
 

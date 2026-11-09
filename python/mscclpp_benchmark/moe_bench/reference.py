@@ -15,8 +15,9 @@ if __package__:
 else:
     from workload import make_expert_weights
 
-# Relative L2 bound for the full layer output, matching the MX GPU tests.
-CHECK_RELATIVE_L2 = 0.03
+# Element-wise |actual - expected| <= atol + rtol * |expected|, as in MegaMoE's check.
+CHECK_RTOL = 0.05
+CHECK_ATOL = 0.01
 E2M1_VALUES = (0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6)
 
 
@@ -86,6 +87,35 @@ def relative_error(actual, expected):
     if not torch.isfinite(actual).all():
         return float("inf")
     return ((actual.float() - expected.float()).norm() / expected.float().norm().clamp_min(1e-30)).item()
+
+
+def compare_outputs(actual, expected, rtol=CHECK_RTOL, atol=CHECK_ATOL):
+    """Element-wise comparison statistics, plus the first out-of-tolerance element."""
+    actual, expected = actual.float(), expected.float()
+    finite = torch.isfinite(actual)
+    mismatched = ~torch.isclose(actual, expected, rtol=rtol, atol=atol)
+    error = (actual - expected).abs()[finite]
+    # Fraction of the allowed error used by the worst element; above 1.0 fails.
+    used = error / (atol + rtol * expected.abs()[finite])
+    stats = {
+        "max_tolerance_fraction": used.max().item() if used.numel() else 0.0,
+        "max_abs_error": error.max().item() if error.numel() else 0.0,
+        "mean_abs_error": error.mean().item() if error.numel() else 0.0,
+        "mismatched_elements": int(mismatched.sum()),
+        "non_finite_elements": int((~finite).sum()),
+        "total_elements": actual.numel(),
+        "relative_l2": relative_error(actual, expected) if finite.all() else None,
+    }
+    first = None
+    if stats["mismatched_elements"]:
+        token, column = mismatched.nonzero()[0].tolist()
+        first = {
+            "token": token,
+            "column": column,
+            "actual": actual[token, column].item(),
+            "expected": expected[token, column].item(),
+        }
+    return stats, first
 
 
 @torch.inference_mode()
