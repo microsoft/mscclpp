@@ -62,6 +62,14 @@ class Pipeline:
         world = environment["num_gpus"]
         if dist.get_world_size() != world:
             raise ValueError("Launched world size does not match environment.num_gpus")
+        route = config["routing"]
+        if route["kind"] == "locality" and route["scope"] == "node":
+            launched = int(os.environ.get("LOCAL_WORLD_SIZE", world))
+            if route.get("gpus_per_node") != launched:
+                raise ValueError(
+                    f"routing.gpus_per_node={route.get('gpus_per_node')} does not match the "
+                    f"{launched} GPUs launched per node; node-local traffic would be mislabeled"
+                )
         ids, weights = make_routing(config, rank)
         counts = torch.bincount(ids.flatten(), minlength=model["num_experts"])
         dist.all_reduce(counts)

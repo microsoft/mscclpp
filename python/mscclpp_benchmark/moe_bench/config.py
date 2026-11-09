@@ -27,12 +27,25 @@ _FIELDS = {
     "benchmark": set(BENCHMARK_DEFAULTS),
 }
 _CATEGORIES = {"models": "model", "inputs": "input", "routing": "routing"}
-ROUTING_KINDS = ("balanced", "uniform", "hot_experts", "zipf", "zipf_skewed", "lognormal")
+ROUTING_KINDS = (
+    "balanced",
+    "uniform",
+    "hot_experts",
+    "zipf",
+    "zipf_skewed",
+    "lognormal",
+    "hot_rank",
+    "idle_ranks",
+    "locality",
+)
 _ROUTING_OPTIONS = {
     "hot_experts": {"expert_ids", "probability_mass"},
     "zipf": {"alpha"},
     "zipf_skewed": {"alpha"},
     "lognormal": {"sigma"},
+    "hot_rank": {"rank", "probability_mass"},
+    "idle_ranks": {"stride"},
+    "locality": {"scope", "local_fraction", "gpus_per_node"},
 }
 
 
@@ -97,6 +110,26 @@ def _validate_section(section, value, path):
                 number = value[option]
                 if type(number) not in (float, int) or not math.isfinite(number) or number < 0:
                     raise ValueError(f"{path}.{option} must be a finite number >= 0")
+        if value["kind"] == "hot_rank":
+            if "rank" in value and type(value["rank"]) is not int:
+                raise ValueError(f"{path}.rank must be an integer (negative counts from the last rank)")
+            probability = value.get("probability_mass", 0.8)
+            if type(probability) not in (float, int) or not 0 < probability < 1:
+                raise ValueError(f"{path}.probability_mass must be a number strictly between 0 and 1")
+        if value["kind"] == "idle_ranks" and "stride" in value:
+            _integer(value["stride"], f"{path}.stride", 2)
+        if value["kind"] == "locality":
+            for option in ("scope", "local_fraction"):
+                if option not in value:
+                    raise ValueError(f"{path}: missing fields: {option}")
+            _choice(value["scope"], ("rank", "node"), f"{path}.scope")
+            fraction = value["local_fraction"]
+            if type(fraction) not in (float, int) or not 0 <= fraction <= 1:
+                raise ValueError(f"{path}.local_fraction must be a number in [0, 1]")
+            if "gpus_per_node" in value:
+                if value["scope"] != "node":
+                    raise ValueError(f"{path}.gpus_per_node applies only to scope=node")
+                _integer(value["gpus_per_node"], f"{path}.gpus_per_node")
         explicit = {"expert_ids", "probability_mass"} & set(value)
         if value["kind"] == "hot_experts" and explicit and len(explicit) != 2:
             raise ValueError(f"{path}: explicit hot_experts requires both expert_ids and probability_mass")
@@ -163,9 +196,30 @@ def validate_config(config: dict) -> None:
     if config["input"]["tokens_per_rank"] * config["model"]["top_k"] > 2**31 - 1:
         raise ValueError("input.tokens_per_rank * model.top_k must fit in int32")
     route = config["routing"]
+    world = config["environment"]["num_gpus"]
+    local_experts = experts // world
+    top_k = config["model"]["top_k"]
     if route["kind"] == "hot_experts" and "expert_ids" in route:
         if len(route["expert_ids"]) >= experts or any(expert >= experts for expert in route["expert_ids"]):
             raise ValueError("routing.expert_ids must be a strict subset of valid expert IDs [0, num_experts)")
+    if route["kind"] == "hot_rank":
+        if world < 2:
+            raise ValueError("hot_rank routing needs at least two GPUs")
+        if not -world <= route.get("rank", -1) < world:
+            raise ValueError(f"routing.rank must be in [-{world}, {world})")
+    if route["kind"] == "idle_ranks":
+        stride = route.get("stride", 2)
+        if world < 2:
+            raise ValueError("idle_ranks routing needs at least two GPUs")
+        if -(-world // stride) * local_experts < top_k:
+            raise ValueError("idle_ranks leaves fewer receiving experts than model.top_k")
+    if route["kind"] == "locality":
+        group = 1 if route["scope"] == "rank" else route.get("gpus_per_node")
+        if group is not None and world % group:
+            raise ValueError("routing.gpus_per_node must divide environment.num_gpus")
+        if group is not None and route["local_fraction"] < 1 and group >= world:
+            scope = "rank" if route["scope"] == "rank" else "node"
+            raise ValueError(f"locality routing with local_fraction < 1 needs more than one {scope}")
 
 
 def load_config(

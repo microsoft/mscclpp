@@ -97,7 +97,7 @@ Choose presets from [configs.yaml](configs.yaml):
 |---|---|
 | `--model` | `small`, `medium`, `large`, `scaled_small`, `scaled_medium`, `scaled_large` |
 | `--input` | `decode` (16 tokens/GPU), `prefill` (1024 tokens/GPU) |
-| `--routing` | `balanced`, `uniform`, `hot_pair`, `zipf`, `zipf_skewed`, `hot_experts`, `lognormal` |
+| `--routing` | `balanced`, `uniform`, `hot_pair`, `zipf`, `zipf_skewed`, `hot_experts`, `lognormal`; traffic: `hot_last_rank`, `idle_half`, `local_heavy`, `remote_heavy`, `intra_node_heavy`, `cross_node_heavy` |
 | `--backend` | `mscclpp` (default), `nccl` |
 | `--mode` | `latency` (default), `throughput` |
 | `--graph` | `none` (default), `mlp` (expert compute only), `layer` (whole layer) |
@@ -162,6 +162,22 @@ routing:
     expert_ids: [6, 7]
     probability_mass: 0.8
 ```
+
+Traffic scenarios target placement rather than popularity:
+
+| Preset | Traffic |
+|---|---|
+| `hot_last_rank` | The last rank's experts share 80% of the routes (`rank` and `probability_mass` are configurable) |
+| `idle_half` | Only every second rank receives routes; the others are idle (`stride`) |
+| `local_heavy` | 90% of routes stay on the sending GPU |
+| `remote_heavy` | Every route goes to another GPU |
+| `intra_node_heavy` | 90% of routes stay within the sending node (multi-node runs only) |
+| `cross_node_heavy` | Every route crosses to another node (multi-node runs only) |
+
+Locality presets (`kind: locality`) set `scope` (`rank` or `node`) and
+`local_fraction`. For `scope: node`, `gpus_per_node` defaults to the launched
+GPUs per node, and workers fail if it does not match. Node-scope presets with
+`local_fraction < 1` need more than one node.
 
 `run.json` records the realized `assignments_per_expert`, `assignments_per_rank`,
 and `rank_max_over_mean`.

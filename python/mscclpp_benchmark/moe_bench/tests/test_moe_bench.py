@@ -620,3 +620,23 @@ def test_rounding_slack_covers_cancelling_bf16_partials():
     # A wrong result of the terms' own size still fails with the slack.
     stats, _ = compare_outputs(expected + 1.0, expected, magnitude=magnitude)
     assert stats["mismatched_elements"] == 1
+
+
+def test_node_locality_topology_is_filled_and_verified(tmp_path, monkeypatch):
+    from .. import run as launcher
+    from .. import worker
+
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
+    argv = ["run.py", "--model", "small", "--input", "decode", "--routing", "cross_node_heavy"]
+    monkeypatch.setattr(sys, "argv", argv + ["--output-dir", str(tmp_path)])
+    # One node: the launcher fills gpus_per_node=4, so there is no remote node.
+    with pytest.raises(ValueError, match="more than one node"):
+        launcher.main()
+    assert not list(tmp_path.iterdir())
+    config = tiny_config()
+    config["environment"]["num_gpus"] = 8
+    config["routing"] = {"kind": "locality", "scope": "node", "local_fraction": 0.9, "gpus_per_node": 4}
+    monkeypatch.setattr(worker.dist, "get_world_size", lambda: 8)
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
+    with pytest.raises(ValueError, match="gpus_per_node=4 does not match the 8 GPUs launched per node"):
+        worker.Pipeline(config, 0, "cpu")

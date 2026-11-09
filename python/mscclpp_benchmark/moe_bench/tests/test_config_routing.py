@@ -496,3 +496,94 @@ def test_profile_routing_options_validation():
     ids, _ = _global_routing(config)
     per_rank = torch.bincount(ids.flatten() // 2, minlength=4)
     assert per_rank.argmax().item() == 3
+
+
+def _node_config(routing, num_gpus=8, model="large", input_name="decode", gpus_per_node=4):
+    config = _config(num_gpus=num_gpus, model=model, input_name=input_name, routing=routing)
+    if config["routing"].get("scope") == "node":
+        config["routing"]["gpus_per_node"] = gpus_per_node
+        validate_config(config)
+    return config
+
+
+def _traffic(config):
+    world = config["environment"]["num_gpus"]
+    local_experts = config["model"]["num_experts"] // world
+    ids, _ = _global_routing(config)
+    source = torch.arange(world).repeat_interleave(config["input"]["tokens_per_rank"])[:, None]
+    destination = ids // local_experts
+    return ids, destination, source, torch.bincount(destination.flatten(), minlength=world)
+
+
+@pytest.mark.parametrize(
+    "routing", ["hot_last_rank", "idle_half", "local_heavy", "remote_heavy", "intra_node_heavy", "cross_node_heavy"]
+)
+@pytest.mark.parametrize("num_gpus", [8, 16])
+def test_traffic_scenarios(routing, num_gpus):
+    config = _node_config(routing, num_gpus=num_gpus, input_name="prefill")
+    top_k = config["model"]["top_k"]
+    ids, destination, source, received = _traffic(config)
+    assert all(len(set(row)) == top_k for row in ids.tolist())
+    share = received.float() / received.sum()
+    rank_local = (destination == source).float().mean().item()
+    node_local = (destination // 4 == source // 4).float().mean().item()
+    if routing == "hot_last_rank":
+        assert share.argmax().item() == num_gpus - 1 and share[-1] > 0.6
+    elif routing == "idle_half":
+        assert received[1::2].sum() == 0 and (received[0::2] > 0).all()
+    elif routing == "local_heavy":
+        assert 0.85 < rank_local < 0.95
+    elif routing == "remote_heavy":
+        assert rank_local == 0
+    elif routing == "intra_node_heavy":
+        assert 0.85 < node_local < 0.95
+    else:
+        assert node_local == 0
+    # Deterministic: every launch derives the same plan.
+    assert torch.equal(ids, _global_routing(config)[0])
+
+
+def test_hot_rank_accepts_any_rank():
+    config = _config(routing="hot_last_rank")
+    config["routing"]["rank"] = 1
+    _, _, _, received = _traffic(config)
+    assert received.argmax().item() == 1
+    for rank in (4, -5):
+        config["routing"]["rank"] = rank
+        with pytest.raises(ValueError, match=r"routing.rank must be in \[-4, 4\)"):
+            validate_config(config)
+    config["routing"]["rank"] = 1.0
+    with pytest.raises(ValueError, match="rank must be an integer"):
+        validate_config(config)
+
+
+def test_traffic_scenario_validation():
+    config = _config(routing="idle_half")
+    config["routing"]["stride"] = 1
+    with pytest.raises(ValueError, match="stride"):
+        validate_config(config)
+    # Small model: 2 experts per GPU and top-2; one receiving GPU still has enough experts.
+    config["routing"]["stride"] = 4
+    validate_config(config)
+    config = _config(routing="local_heavy")
+    for fraction in (-0.1, 1.5, "0.9", True):
+        config["routing"]["local_fraction"] = fraction
+        with pytest.raises(ValueError, match="local_fraction"):
+            validate_config(config)
+    config["routing"] = {"kind": "locality", "scope": "rank", "local_fraction": 0.5, "gpus_per_node": 4}
+    with pytest.raises(ValueError, match="gpus_per_node applies only to scope=node"):
+        validate_config(config)
+    config["routing"] = {"kind": "locality", "local_fraction": 0.5}
+    with pytest.raises(ValueError, match="missing fields: scope"):
+        validate_config(config)
+    # Node-scope traffic needs more than one node unless every route stays local.
+    for routing in ("intra_node_heavy", "cross_node_heavy"):
+        with pytest.raises(ValueError, match="more than one node"):
+            _node_config(routing, num_gpus=4, model="small")
+    config = _node_config("intra_node_heavy", num_gpus=8)
+    config["routing"]["gpus_per_node"] = 3
+    with pytest.raises(ValueError, match="divide"):
+        validate_config(config)
+    del config["routing"]["gpus_per_node"]
+    with pytest.raises(ValueError, match="gpus_per_node is required"):
+        _global_routing(config)

@@ -80,6 +80,31 @@ routing:
   lognormal:
     kind: lognormal
     sigma: 0.85
+  # Traffic scenarios. "Local" is the sending GPU (scope: rank) or its node
+  # (scope: node; gpus_per_node defaults to the launched topology).
+  hot_last_rank:
+    kind: hot_rank
+    rank: -1
+    probability_mass: 0.8
+  idle_half:
+    kind: idle_ranks
+    stride: 2
+  local_heavy:
+    kind: locality
+    scope: rank
+    local_fraction: 0.9
+  remote_heavy:
+    kind: locality
+    scope: rank
+    local_fraction: 0.0
+  intra_node_heavy:
+    kind: locality
+    scope: node
+    local_fraction: 0.9
+  cross_node_heavy:
+    kind: locality
+    scope: node
+    local_fraction: 0.0
 
 benchmark:
   warmup: 10

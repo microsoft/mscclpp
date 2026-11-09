@@ -16,10 +16,10 @@ import sys
 import uuid
 
 if __package__:
-    from .config import load_config
+    from .config import load_config, validate_config
     from .results import write_json
 else:
-    from config import load_config
+    from config import load_config, validate_config
     from results import write_json
 
 
@@ -126,6 +126,11 @@ def main():
             "output_dir": args.output_dir,
         },
     )
+    route = config["routing"]
+    if route["kind"] == "locality" and route["scope"] == "node" and "gpus_per_node" not in route:
+        # Node-local routing follows the launched topology unless a preset fixes it.
+        route["gpus_per_node"] = nodes[0]["num_gpus"] if nodes else num_gpus
+        validate_config(config)
     if nodes and config["environment"]["communication_backend"] != "mscclpp":
         raise ValueError("--nodelist currently requires --backend mscclpp over shared MNNVL")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:8]

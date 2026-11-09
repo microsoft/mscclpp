@@ -38,6 +38,8 @@ def make_routing(config: dict, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
 
     if route["kind"] in PROFILE_KINDS and not (route["kind"] == "hot_experts" and "expert_ids" in route):
         ids = profile_routing(config)[rank * tokens : (rank + 1) * tokens]
+    elif route["kind"] == "locality":
+        ids = locality_routing(config, rank, placement_generator)
     elif route["kind"] == "balanced":
         # Every rank uses the same permutation so global counts differ by at most one.
         global_generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -52,6 +54,21 @@ def make_routing(config: dict, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
             mass = route["probability_mass"]
             probabilities.fill_((1 - mass) / (experts - len(hot)))
             probabilities[hot] = mass / len(hot)
+        elif route["kind"] in ("hot_rank", "idle_ranks"):
+            world = config["environment"]["num_gpus"]
+            local_experts = experts // world
+            owner = torch.arange(experts) // local_experts
+            if route["kind"] == "hot_rank":
+                # All of one rank's experts share probability_mass; the rest share the remainder.
+                hot = owner == route.get("rank", DEFAULT_HOT_RANK) % world
+                mass = route.get("probability_mass", DEFAULT_HOT_RANK_MASS)
+                probabilities.fill_((1 - mass) / (experts - local_experts))
+                probabilities[hot] = mass / local_experts
+            else:
+                # Only every stride-th rank owns experts that receive routes; the others stay idle.
+                receiving = owner % route.get("stride", DEFAULT_IDLE_STRIDE) == 0
+                probabilities.zero_()
+                probabilities[receiving] = 1.0 / int(receiving.sum())
         ids = torch.empty((tokens, top_k), dtype=torch.int64, device="cpu")
         # Bound the temporary multinomial matrix for large token counts.
         for start in range(0, tokens, 1024):
@@ -66,6 +83,9 @@ def make_routing(config: dict, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 PROFILE_KINDS = ("zipf", "zipf_skewed", "hot_experts", "lognormal")
+DEFAULT_HOT_RANK = -1
+DEFAULT_HOT_RANK_MASS = 0.8
+DEFAULT_IDLE_STRIDE = 2
 DEFAULT_ZIPF_ALPHA = 1.2
 DEFAULT_LOGNORMAL_SIGMA = 0.85
 
@@ -176,3 +196,42 @@ def profile_routing(config):
     ids = grid.view(top_k, tokens).t()
     permutation = torch.randperm(tokens, generator=torch.Generator(device="cpu").manual_seed(seed))
     return ids[permutation].contiguous()
+
+
+def locality_groups(config, rank):
+    """Return (local, remote) global expert IDs for a source rank's locality scope."""
+    route = config["routing"]
+    world = config["environment"]["num_gpus"]
+    local_experts = config["model"]["num_experts"] // world
+    if route["scope"] == "node" and "gpus_per_node" not in route:
+        raise ValueError("routing.gpus_per_node is required for scope=node; the launcher sets it from the topology")
+    group = 1 if route["scope"] == "rank" else route["gpus_per_node"]
+    first = rank // group * group
+    owner = torch.arange(config["model"]["num_experts"]) // local_experts
+    local = (owner >= first) & (owner < first + group)
+    return local.nonzero().flatten(), (~local).nonzero().flatten()
+
+
+def locality_routing(config, rank, generator):
+    """Route each slot locally with probability local_fraction, keeping experts distinct.
+
+    "Local" means the source rank's experts (scope ``rank``) or its node's experts
+    (scope ``node``). Each token draws its local route count, clamped to what the
+    local and remote expert sets can supply, then picks distinct experts from each.
+    """
+    tokens = config["input"]["tokens_per_rank"]
+    top_k = config["model"]["top_k"]
+    local, remote = locality_groups(config, rank)
+    draws = torch.rand((tokens, top_k), generator=generator) < config["routing"]["local_fraction"]
+    local_count = draws.sum(dim=1).clamp(min=top_k - len(remote), max=len(local))
+    local_pick = local[torch.rand((tokens, len(local)), generator=generator).argsort(dim=1)[:, :top_k]]
+    slots = torch.arange(top_k).expand(tokens, -1)
+    from_local = slots < local_count[:, None]
+    ids = local_pick.gather(1, slots.clamp(max=local_pick.shape[1] - 1))
+    if len(remote):
+        remote_pick = remote[torch.rand((tokens, len(remote)), generator=generator).argsort(dim=1)[:, :top_k]]
+        remote_slot = (slots - local_count[:, None]).clamp(min=0, max=remote_pick.shape[1] - 1)
+        ids = torch.where(from_local, ids, remote_pick.gather(1, remote_slot))
+    # Shuffle slots so local routes are not always first.
+    order = torch.rand((tokens, top_k), generator=generator).argsort(dim=1)
+    return ids.gather(1, order)
