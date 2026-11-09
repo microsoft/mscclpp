@@ -222,7 +222,6 @@ def launch(nodes, run_dir, commands, timeout):
             environment = {
                 "GLOO_SOCKET_IFNAME": node["interface"],
                 "MSCCLPP_SOCKET_IFNAME": node["interface"],
-                "MSCCLPP_EP_ENABLE_GPUNETIO": "0",
                 "PYTHONUNBUFFERED": "1",
             }
             if node["cuda_visible_devices"] is not None:

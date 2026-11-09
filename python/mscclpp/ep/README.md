@@ -376,3 +376,21 @@ NVLink path (`EP_DISABLE_GIN=1`). A captured graph contains
 pair. The harness replays the graph directly as one operation during warmup,
 timing, and profiling, while Kineto attributes kernel times to each phase.
 Capture errors stop the benchmark rather than silently falling back.
+
+## MoE layer benchmark
+
+[`mscclpp_benchmark/moe_bench`](../../mscclpp_benchmark/moe_bench/README.md)
+measures one complete MoE layer: dispatch, SwiGLU expert computation, and
+weighted combine. It uses synthetic inputs and weights with MSCCL++ or NCCL-EP
+communication and PyTorch BF16 or FlashInfer MXFP8/MXFP4 expert computation, on
+one node or across MNNVL-connected nodes. From the repository root:
+
+```bash
+python3 -m pip install '.[cuda13,moe-benchmark]'
+python3 python/mscclpp_benchmark/moe_bench/run.py \
+    --model small --input decode --routing balanced \
+    --warmup 10 --iterations 10 --check
+```
+
+The launcher starts one worker per visible GPU itself; do not wrap it in
+`mpirun` or `torchrun`.

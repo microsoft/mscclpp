@@ -77,9 +77,12 @@ inputs:
 
 Select them with `--model custom_model --input custom_input`. Expert count must
 be divisible by the total GPU count; top-k must be between 1 and
-`min(9, num_experts)`. Supported hidden dimensions are 4096, 4352, 5120, 6656,
-7168, 8192, 8704, and 9216. Token counts and intermediate dimensions must be
-positive and fit available memory and backend limits.
+`min(9, num_experts)` (at most 8 for MSCCL++). Supported hidden dimensions are
+4096, 4352, 5120, 6656, 7168, 8192, 8704, and 9216; MSCCL++ latency mode does
+not support 5120, so the `medium` and `scaled_medium` presets require
+`--mode throughput` or `--backend nccl`. MSCCL++ throughput supports at most 128
+experts per GPU. Token counts and intermediate dimensions must be positive and
+fit available memory and backend limits.
 
 ### Backends and layouts
 
@@ -96,7 +99,7 @@ throughput requires an even token count per GPU.
 The default `--compute-backend torch` supports BF16 activations and weights.
 Optional FlashInfer compute requires Blackwell SM100/SM103, CUDA 13 PyTorch,
 and dimensions divisible by 128. Install the
-[optional dependencies](../../../src/ext/ep/README.md#optional-backend-setup), then run:
+[optional dependencies](#optional-backend-setup), then run:
 
 ```bash
 .venv/bin/python python/mscclpp_benchmark/moe_bench/run.py \
@@ -107,6 +110,19 @@ and dimensions divisible by 128. Install the
 
 Communication remains BF16; activation quantization is included in compute
 timing. `--check` is available only for Torch BF16, not FlashInfer compute.
+
+### Optional backend setup
+
+These packages are not needed for the default example:
+
+- **NCCL-EP:** install `nccl-extensions[cu13]` (or `[cu12]` for CUDA 12).
+  See [NVIDIA's installation instructions](https://github.com/NVIDIA/nccl-extensions#installation).
+- **FlashInfer MX compute:** requires CUDA 13 PyTorch, Blackwell SM100/SM103,
+  MXFP8 activations, and MXFP4 weights. The benchmark requires these versions:
+
+  ```bash
+  .venv/bin/python -m pip install 'flashinfer-python==0.7.1' 'nvidia-cutlass-dsl==4.8.0'
+  ```
 
 ## Multiple nodes
 
@@ -160,7 +176,7 @@ From the controller:
 This uses all visible GPUs on each target, respecting its SSH-session
 `CUDA_VISIBLE_DEVICES`. Two four-GPU nodes use eight GPUs in total; the `small`
 preset fits this setup. For other sizes, ensure the expert count is divisible
-by the total GPU count. MSCCL++ throughput supports 2, 4, 8, or 16 total GPUs.
+by the total GPU count.
 
 The newest deployment on each target is selected by default. Use `--remote-dir`
 to choose an exact deployment or parent directory at the same path on every
@@ -186,6 +202,10 @@ With `pytest` installed:
 .venv/bin/python -m pytest python/mscclpp_benchmark/moe_bench/tests -q
 ```
 
-GPU tests are skipped by default. See the
-[GPU test command](../../../src/ext/ep/README.md#benchmark-tests) and run it
-only on idle GPUs.
+GPU tests are opt-in. On two idle GPUs, run the MSCCL++ reference checks with:
+
+```bash
+GLOO_SOCKET_IFNAME=lo .venv/bin/python -m torch.distributed.run \
+  --standalone --local-addr=127.0.0.1 --nnodes=1 --nproc-per-node=2 \
+  python/mscclpp_benchmark/moe_bench/tests/test_moe_bench.py mscclpp
+```

@@ -253,16 +253,18 @@ def fake_mscclpp(monkeypatch):
     native.CommGroup = Mock(return_value=SimpleNamespace(nranks_per_ipc_domain=2))
     ep = ModuleType("mscclpp.ep")
     native.ep = ep
-    ep.MoEMode = SimpleNamespace(LATENCY="latency")
-    ep.DispatchLayout = SimpleNamespace(EXPERT_MAJOR="expert-major")
+    ep.MoEMode = SimpleNamespace(LATENCY="latency", THROUGHPUT="throughput")
+    ep.DispatchLayout = SimpleNamespace(EXPERT_MAJOR="expert-major", RANK_MAJOR="rank-major", TOKEN_MAJOR="token-major")
     ep.CombineMode = SimpleNamespace(RANK_LOCAL_REDUCE="rank-local-reduce")
+    ep.MoECommunicatorConfig = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
     tensors = buffers()
     x, ids, weights, recv, expert_output, output = tensors
     counts = torch.tensor([1, 2, 3, 0])
     dispatched = SimpleNamespace(tokens=recv, layout=SimpleNamespace(num_tokens_per_expert=counts))
     comm = SimpleNamespace(
         is_available=lambda: True,
-        is_internode=lambda: False,
+        initialize=Mock(),
+        prepare=Mock(return_value="prepared"),
         dispatch=Mock(return_value=(dispatched, "handle")),
         combine=Mock(),
     )
@@ -276,7 +278,7 @@ def fake_mscclpp(monkeypatch):
 
 
 @pytest.mark.parametrize("world,rank,internode", [(2, 0, False), (8, 5, True)])
-def test_mscclpp_adapter_preserves_contract(fake_mscclpp, world, rank, internode):
+def test_mscclpp_adapter_preserves_contract(fake_mscclpp, monkeypatch, world, rank, internode):
     native, ep, tensors, counts, comm = (
         fake_mscclpp.native,
         fake_mscclpp.ep,
@@ -286,25 +288,80 @@ def test_mscclpp_adapter_preserves_contract(fake_mscclpp, world, rank, internode
     )
     x, ids, weights, recv, expert_output, output = tensors
     native.CommGroup.return_value.nranks_per_ipc_domain = world
-    comm.is_internode = lambda: internode
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", str(world // 2 if internode else world))
     config = tiny_config()
     config["environment"]["num_gpus"] = world
     adapter = create_backend(config, rank, *tensors)
     tokens, actual_counts = adapter.dispatch()
     adapter.combine()
     assert tokens is recv and actual_counts is counts
+    comm.initialize.assert_called_once_with()
+    comm.prepare.assert_not_called()
     comm.dispatch.assert_called_once_with(x, ids, weights, output_buffer=recv)
     comm.combine.assert_called_once_with(expert_output, "handle", out=output)
-    assert ep.MoECommunicator.call_args.kwargs["combine_mode"] == "rank-local-reduce"
+    communicator_config = ep.MoECommunicator.call_args.args[0]
+    assert communicator_config.combine_mode == "rank-local-reduce"
+    assert communicator_config.mode == "latency" and communicator_config.output_layout == "expert-major"
+    assert communicator_config.device == x.device
     assert adapter.metadata["mscclpp_version"] == "test-version"
     assert adapter.metadata["ipc_domain_ranks"] == world
     assert adapter.metadata["communication_transport"] == ("cuda_ipc_mnnvl" if internode else "cuda_ipc")
     assert adapter.route_id_base == rank * (8 // world)
-    assert ep.MoECommunicator.call_args.kwargs["num_local_experts"] == 8 // world
     assert "nccl_ep_version" not in adapter.metadata
     adapter.close()
     adapter.close()
     torch.cuda.synchronize.assert_called_once_with(x.device)
+
+
+@pytest.mark.parametrize("layout", ["token_major", "rank_major"])
+def test_mscclpp_throughput_prepares_once_and_masks_unused_rows(fake_mscclpp, monkeypatch, layout):
+    from ..communication_backends import mscclpp as adapter_module
+
+    comm, tensors = fake_mscclpp.comm, fake_mscclpp.tensors
+    x, ids, weights = tensors[:3]
+    world, capacity, topk = 2, 3, 2
+    # Rank 0 sends tokens 0 and 2 to rank 1 (experts 4-7) and token 1 only to itself.
+    ids.copy_(torch.tensor([[0, 4], [1, 2], [5, 6]]))
+    shape = (world, capacity) if layout == "rank_major" else (world * capacity,)
+    combine_input = torch.empty(*shape, 16, dtype=torch.bfloat16)
+    received = torch.tensor([2, 1], dtype=torch.int32)
+    dispatched = SimpleNamespace(
+        tokens=torch.empty(*shape, 16, dtype=torch.bfloat16),
+        topk_ids=torch.zeros(*shape, topk, dtype=torch.int32),
+        weights=torch.zeros(*shape, topk),
+        combine_input_buffer=combine_input,
+        layout=SimpleNamespace(num_tokens_per_rank=received if layout == "rank_major" else None),
+    )
+    comm.dispatch.return_value = (dispatched, "handle")
+    reduced = []
+
+    def all_reduce(tensor):
+        reduced.append(tensor.tolist())
+        tensor.mul_(world)
+
+    monkeypatch.setattr(adapter_module.dist, "all_reduce", all_reduce)
+    config = tiny_config()
+    config["environment"].update(mode="throughput", layout=layout)
+    adapter = create_backend(config, 1, *tensors)
+    for _ in range(2):
+        tokens, counts = adapter.dispatch()
+        adapter.combine()
+    assert tokens is dispatched.tokens and counts is None
+    assert adapter.route_id_base == 0 and adapter.combine_buffer is combine_input
+    comm.prepare.assert_called_once()
+    assert comm.prepare.call_args.args == (ids,)
+    for call in comm.dispatch.call_args_list:
+        assert call.args == (x, ids, weights) and call.kwargs == {"prepare_handle": "prepared"}
+    comm.combine.assert_called_with(combine_input, "handle", out=tensors[5])
+    if layout == "rank_major":
+        assert reduced == []
+        assert comm.prepare.call_args.kwargs["output_count"].shape == (world,)
+        expected = [True, True, False, True, False, False]
+    else:
+        assert reduced == [[2, 2]]
+        assert comm.prepare.call_args.kwargs["output_count"] is None
+        expected = [True] * 4 + [False] * 2
+    assert adapter.route_valid_rows.tolist() == expected
 
 
 def test_split_ipc_domain_rejected_before_native_runtime(fake_mscclpp):
@@ -312,13 +369,6 @@ def test_split_ipc_domain_rejected_before_native_runtime(fake_mscclpp):
     config["environment"]["num_gpus"] = 8
     with pytest.raises(RuntimeError, match="domain has 2 of 8 ranks"):
         create_backend(config, 0, *fake_mscclpp.tensors)
-    fake_mscclpp.ep.MoECommunicator.assert_not_called()
-
-
-def test_forced_partial_ipc_domain_rejected(fake_mscclpp, monkeypatch):
-    monkeypatch.setenv("MSCCLPP_EP_IPC_DOMAIN_SIZE", "1")
-    with pytest.raises(RuntimeError, match="Unset MSCCLPP_EP_IPC_DOMAIN_SIZE"):
-        create_backend(tiny_config(), 0, *fake_mscclpp.tensors)
     fake_mscclpp.ep.MoECommunicator.assert_not_called()
 
 

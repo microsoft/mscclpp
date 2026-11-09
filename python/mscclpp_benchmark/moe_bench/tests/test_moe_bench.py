@@ -359,16 +359,6 @@ def test_launcher_resolves_environment_and_worker_command(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(launcher.subprocess, "run", fake_run)
-    if (
-        expected["communication_backend"] == "mscclpp"
-        and expected["mode"] == "throughput"
-        and num_gpus not in (2, 4, 8, 16)
-    ):
-        with pytest.raises(ValueError, match="environment.num_gpus for MSCCL\\+\\+ throughput"):
-            launcher.main()
-        assert not commands
-        assert not output_dir.exists()
-        return
     launcher.main()
     (run_path,) = output_dir.glob("*/run.json")
     metadata = json.loads(run_path.read_text())

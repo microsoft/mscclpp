@@ -265,7 +265,6 @@ def test_launch_snapshots_workers_and_collects_only_rank_zero_results(monkeypatc
         invocation = shlex.split(call.args[0][-1])
         assert f"GLOO_SOCKET_IFNAME=eth{rank}" in invocation
         assert f"MSCCLPP_SOCKET_IFNAME=eth{rank}" in invocation
-        assert "MSCCLPP_EP_ENABLE_GPUNETIO=0" in invocation
         assert json.loads(invocation[-1]) == commands[rank]
         assert ("CUDA_VISIBLE_DEVICES=2,3,0,1" in invocation) == (rank == 1)
         assert "StrictHostKeyChecking=yes" in call.args[0]

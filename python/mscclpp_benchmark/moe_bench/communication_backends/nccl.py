@@ -19,7 +19,7 @@ def preflight(config):
         raise RuntimeError(
             "NCCL-EP requires nccl.core and nccl.ep. Install NVIDIA's "
             "'nccl-extensions[cu13]' (or [cu12] matching PyTorch), with a matching "
-            "CUDA toolkit/nvcc; see src/ext/ep/README.md. MSCCL++ does not require this extra."
+            "CUDA toolkit/nvcc; see python/mscclpp_benchmark/moe_bench/README.md. MSCCL++ does not require this extra."
         ) from error
     environment = config["environment"]
     mode, layout = environment.get("mode", "latency"), environment.get("layout", "expert_major")

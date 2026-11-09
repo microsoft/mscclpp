@@ -25,8 +25,8 @@ def estimate_tensor_bytes(config, counts):
             adapter_bytes *= 2
         dispatch_and_output += adapter_bytes
         if environment["communication_backend"] == "mscclpp" and mode == "throughput":
-            # RecvPoolConfig: fixed 65536 rows, 16384 payload + 768 metadata bytes.
-            dispatch_and_output += 65536 * (16384 + 768) + 4 * 65536 * environment["num_gpus"] + 1024**2
+            # Capacity-sized peer-visible receive payload/metadata and combine rows.
+            dispatch_and_output += capacity * (4 * hidden + 8 * model["top_k"]) + 1024**2
     workspace = 4 * max(counts, default=0) * intermediate
     inputs_and_output = 4 * inputs["tokens_per_rank"] * hidden
     if environment["compute_backend"] == "cutlass_flashinfer":

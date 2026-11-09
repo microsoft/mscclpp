@@ -79,9 +79,7 @@ class Pipeline:
         try:
             preflight_backend(config)
             self.x = make_input(config, rank, device)
-            # Throughput's fixed-routing cache checks tensor version counters.
-            with torch.inference_mode(False):
-                self.ids, self.weights = ids.to(device), weights.to(device)
+            self.ids, self.weights = ids.to(device), weights.to(device)
             shape = (local_experts, world * inputs["tokens_per_rank"], model["d_model"])
             self.recv = torch.empty(shape, dtype=torch.bfloat16, device=device)
             self.expert_output = torch.empty_like(self.recv)

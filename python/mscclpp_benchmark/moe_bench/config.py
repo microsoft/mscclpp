@@ -17,6 +17,7 @@ SUPPORTED_LAYOUTS = {
     "mscclpp": {"latency": ("expert_major", "rank_major"), "throughput": ("token_major", "rank_major")},
     "nccl": {"latency": ("expert_major", "rank_major"), "throughput": ("expert_major", "token_major")},
 }
+MSCCLPP_LATENCY_HIDDEN_SIZES = (1024, 2048, 4096, 4352, 6656, 7168, 8192, 8704, 9216)
 _FIELDS = {
     "model": {"d_model", "num_experts", "top_k", "intermediate_size", "activation"},
     "input": {"tokens_per_rank", "dtype"},
@@ -117,15 +118,13 @@ def validate_config(config: dict) -> None:
         )
     if communication == "nccl" and mode == "throughput" and config["input"]["tokens_per_rank"] % 2:
         raise ValueError("NCCL-EP throughput benchmark requires even tokens_per_rank for native S2D transfer alignment")
-    if communication == "mscclpp" and mode == "throughput":
-        _choice(environment["num_gpus"], (2, 4, 8, 16), "environment.num_gpus for MSCCL++ throughput")
-        if config["model"]["num_experts"] // environment["num_gpus"] > 1024:
-            raise ValueError("MSCCL++ throughput supports at most 1024 local experts")
-        if environment["num_gpus"] * config["input"]["tokens_per_rank"] > 65536:
-            raise ValueError("MSCCL++ throughput receive pool supports at most 65536 rows (num_gpus * tokens_per_rank)")
-        capacity = environment["num_gpus"] * config["input"]["tokens_per_rank"]
-        if capacity * config["model"]["d_model"] * 2 > 65536 * 16384:
-            raise ValueError("MSCCL++ throughput worst-case receive payload exceeds the native 1 GiB pool")
+    if communication == "mscclpp":
+        if config["model"]["top_k"] > 8:
+            raise ValueError("MSCCL++ EP supports top_k <= 8")
+        if mode == "latency":
+            _choice(config["model"]["d_model"], MSCCLPP_LATENCY_HIDDEN_SIZES, "model.d_model for MSCCL++ latency")
+        elif config["model"]["num_experts"] // environment["num_gpus"] > 128:
+            raise ValueError("MSCCL++ throughput supports at most 128 local experts")
     compute = config.get("compute", COMPUTE_DEFAULTS)
     _fields(compute, set(COMPUTE_DEFAULTS), "compute", required=False)
     activation = compute.get("activation_dtype", "bf16")

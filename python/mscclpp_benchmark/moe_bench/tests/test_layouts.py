@@ -68,30 +68,23 @@ def test_nccl_throughput_transfer_alignment():
         validate_config(config)
 
 
-@pytest.mark.parametrize(
-    "field,value,match",
-    [
-        ("num_experts", 4096, "1024 local experts"),
-        ("tokens_per_rank", 32769, "65536 rows"),
-    ],
-)
-def test_mscclpp_throughput_capacity_errors(field, value, match):
+def test_mscclpp_throughput_local_expert_limit():
     config = tiny_config()
     config["environment"].update(mode="throughput", layout="rank_major")
-    config["input" if field == "tokens_per_rank" else "model"][field] = value
-    with pytest.raises(ValueError, match=match):
+    config["model"]["num_experts"] = 129 * config["environment"]["num_gpus"]
+    with pytest.raises(ValueError, match="128 local experts"):
         validate_config(config)
+    config["model"]["num_experts"] = 128 * config["environment"]["num_gpus"]
+    validate_config(config)
 
 
 def test_native_payload_capacity_and_adapter_memory():
     config = tiny_config()
     baseline = estimate_tensor_bytes(config, [2, 0, 1, 0])
     config["environment"].update(mode="throughput", layout="rank_major")
-    assert estimate_tensor_bytes(config, [2, 0, 1, 0]) > baseline + 65536 * (16384 + 768)
-    config["input"]["tokens_per_rank"] = 32768
-    config["model"]["d_model"] = 9216
-    with pytest.raises(ValueError, match="1 GiB pool"):
-        validate_config(config)
+    capacity = config["environment"]["num_gpus"] * config["input"]["tokens_per_rank"]
+    native = capacity * (4 * config["model"]["d_model"] + 8 * config["model"]["top_k"])
+    assert estimate_tensor_bytes(config, [2, 0, 1, 0]) > baseline + native
 
 
 def test_initial_layout_failure_drains_native_collective(monkeypatch):
@@ -119,55 +112,6 @@ def test_initial_layout_failure_drains_native_collective(monkeypatch):
     pipeline.backend.combine.assert_called_once()
     pipeline.mlp.assert_not_called()
     assert not pipeline.expert_output.count_nonzero()
-
-
-def test_throughput_empty_native_pointer_contract(monkeypatch):
-    # Regression for a genuinely empty receive rank: empty Torch tensors have
-    # data_ptr()==0 even when their storage aliases the native registered pool.
-    ep = pytest.importorskip("mscclpp.ep")
-    from mscclpp.ep import throughput
-
-    empty = torch.empty(0, 16, dtype=torch.bfloat16)
-    cpp = SimpleNamespace(dispatch=Mock(), dispatch_output_buffer_ptr=Mock(return_value=1234), combine=Mock())
-    context = SimpleNamespace(
-        dispatch_blocks=20,
-        output_layout=ep.DispatchLayout.TOKEN_MAJOR,
-        group_size=2,
-        rank=0,
-        combine_blocks=20,
-    )
-    runtime = SimpleNamespace(
-        context=context, cpp_runtime=cpp, _allocate_recv=Mock(return_value=empty), _validate_combine=Mock()
-    )
-    original_empty = torch.empty
-
-    def cpu_empty(*args, **kwargs):
-        kwargs["device"] = "cpu"
-        return original_empty(*args, **kwargs)
-
-    monkeypatch.setattr(torch, "empty", cpu_empty)
-    monkeypatch.setattr(throughput, "_stream_ptr", lambda: 0)
-    send_head = torch.empty(3, 2, dtype=torch.int32)
-    throughput.ThroughputRuntime._dispatch_throughput(
-        runtime,
-        torch.empty(3, 16),
-        None,
-        None,
-        None,
-        None,
-        torch.empty(3, 2, dtype=torch.bool),
-        None,
-        0,
-        torch.empty(2, 2, dtype=torch.int32),
-        torch.empty(2, 20, dtype=torch.int32),
-        1,
-    )
-    assert empty.data_ptr() == 0
-    assert cpp.dispatch.call_args.args[0] == 1234
-    handle = SimpleNamespace(_context=SimpleNamespace(recv_topk_weights=torch.empty(0, 2), send_head=send_head))
-    throughput.ThroughputRuntime.combine.__wrapped__(runtime, empty, handle, out=None, stream=None)
-    args = cpp.combine.call_args.args
-    assert args[1] == args[3] == 0  # optional received/combined weights are both null
 
 
 @pytest.mark.parametrize("empty", [False, True])

@@ -11,7 +11,13 @@ import pytest
 import torch
 import yaml
 
-from ..config import BENCHMARK_DEFAULTS, SUPPORTED_D_MODEL, load_config, validate_config
+from ..config import (
+    BENCHMARK_DEFAULTS,
+    MSCCLPP_LATENCY_HIDDEN_SIZES,
+    SUPPORTED_D_MODEL,
+    load_config,
+    validate_config,
+)
 from ..routing import make_routing
 
 PRESETS = Path(__file__).resolve().parents[1] / "configs.yaml"
@@ -194,11 +200,7 @@ def test_multinode_throughput_world_size(num_gpus):
         num_gpus=num_gpus,
         environment_overrides={"mode": "throughput", "layout": "token_major"},
     )
-    if num_gpus in (2, 4, 8, 16):
-        assert _load_document(document, **kwargs)["environment"]["num_gpus"] == num_gpus
-    else:
-        with pytest.raises(ValueError, match=r"must be one of \(2, 4, 8, 16\)"):
-            _load_document(document, **kwargs)
+    assert _load_document(document, **kwargs)["environment"]["num_gpus"] == num_gpus
 
 
 @pytest.mark.parametrize("argument", ["model", "input_name", "routing"])
@@ -291,15 +293,23 @@ def test_no_extra_controls(name):
 
 
 @pytest.mark.parametrize("dimension", SUPPORTED_D_MODEL)
-def test_supported_dimensions(dimension):
-    config = _config()
+@pytest.mark.parametrize("mode,layout", [("latency", "expert_major"), ("throughput", "token_major")])
+def test_supported_dimensions(dimension, mode, layout):
+    config = _config(environment_overrides={"mode": mode, "layout": layout})
     config["model"]["d_model"] = dimension
-    validate_config(config)
+    if mode == "latency" and dimension not in MSCCLPP_LATENCY_HIDDEN_SIZES:
+        with pytest.raises(ValueError, match="d_model for MSCCL\\+\\+ latency"):
+            validate_config(config)
+    else:
+        validate_config(config)
 
 
 def test_top_k_limit_and_row_limit():
     config = _config(model="large")
     config["model"]["top_k"] = 9
+    with pytest.raises(ValueError, match="top_k <= 8"):
+        validate_config(config)
+    config["environment"]["communication_backend"] = "nccl"
     validate_config(config)
     config["model"]["top_k"] = 10
     with pytest.raises(ValueError, match="EP combine limit"):
